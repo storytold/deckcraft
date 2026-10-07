@@ -97,7 +97,7 @@ pub fn skip_hrd(r: &mut BitReader, common: bool, max_sub_layers_minus1: u32) -> 
         }
         let mut cpb_cnt = 1;
         if !low_delay {
-            cpb_cnt = r.read_ue()? + 1;
+            cpb_cnt = r.read_ue_plus(1)?;
             ensure!(cpb_cnt <= 32, "cpb_cnt_minus1 out of range");
         }
         if nal {
@@ -259,7 +259,7 @@ impl ScalingList {
             while m < 6 {
                 let coef_num = if size == 0 { 16 } else { 64 };
                 if !r.read_flag()? {
-                    let delta = r.read_ue()? as usize * step;
+                    let delta = (r.read_ue()? as usize).saturating_mul(step);
                     ensure!(delta <= m, "scaling_list_pred_matrix_id_delta out of range");
                     if delta == 0 {
                         // default list
@@ -349,12 +349,13 @@ impl StRps {
     pub fn parse(r: &mut BitReader, idx: usize, sets: &[StRps], num_sets: usize) -> Result<StRps> {
         let inter = if idx != 0 { r.read_flag()? } else { false };
         if inter {
-            let delta_idx = if idx == num_sets { r.read_ue()? as usize + 1 } else { 1 };
+            let delta_idx = if idx == num_sets { r.read_ue_plus(1)? as usize } else { 1 };
             ensure!(delta_idx <= idx, "delta_idx_minus1 out of range");
             let rf = &sets[idx - delta_idx];
             let sign = r.read_flag()?;
-            let abs = r.read_ue()? as i32 + 1;
+            let abs = r.read_ue_plus(1)?;
             ensure!(abs <= 1 << 15, "abs_delta_rps_minus1 out of range");
+            let abs = abs as i32;
             let delta_rps = if sign { -abs } else { abs };
             let n = rf.num_delta_pocs();
             let mut used = vec![false; n + 1];
@@ -406,15 +407,17 @@ impl StRps {
             let mut out = StRps::default();
             let mut poc = 0i32;
             for _ in 0..nneg {
-                let d = r.read_ue()? as i32 + 1;
+                let d = r.read_ue_plus(1)?;
                 ensure!(d <= 1 << 15, "delta_poc_s0_minus1 out of range");
+                let d = d as i32;
                 poc -= d;
                 out.s0.push((poc, r.read_flag()?));
             }
             poc = 0;
             for _ in 0..npos {
-                let d = r.read_ue()? as i32 + 1;
+                let d = r.read_ue_plus(1)?;
                 ensure!(d <= 1 << 15, "delta_poc_s1_minus1 out of range");
+                let d = d as i32;
                 poc += d;
                 out.s1.push((poc, r.read_flag()?));
             }
@@ -491,25 +494,25 @@ impl Sps {
         if r.read_flag()? {
             conf_win = (r.read_ue()?, r.read_ue()?, r.read_ue()?, r.read_ue()?);
         }
-        let bit_depth_luma = r.read_ue()? + 8;
-        let bit_depth_chroma = r.read_ue()? + 8;
+        let bit_depth_luma = r.read_ue_plus(8)?;
+        let bit_depth_chroma = r.read_ue_plus(8)?;
         ensure!(bit_depth_luma <= 16 && bit_depth_chroma <= 16, "bit depth out of range");
-        let log2_max_poc_lsb = r.read_ue()? + 4;
+        let log2_max_poc_lsb = r.read_ue_plus(4)?;
         ensure!(log2_max_poc_lsb <= 16, "log2_max_pic_order_cnt_lsb_minus4 out of range");
         let ordering_all = r.read_flag()?;
         let (mut dpb, mut reorder, mut latency) = (1, 0, 0);
         let start = if ordering_all { 0 } else { max_sub_layers_minus1 };
         for _ in start..=max_sub_layers_minus1 {
             // the values of the highest sub-layer are used
-            dpb = r.read_ue()? + 1;
+            dpb = r.read_ue_plus(1)?;
             reorder = r.read_ue()?;
             latency = r.read_ue()?;
         }
         ensure!(dpb <= 16 && reorder <= 16, "sps_max_dec_pic_buffering out of range");
-        let log2_min_cb = r.read_ue()? + 3;
-        let log2_ctb = log2_min_cb + r.read_ue()?;
-        let log2_min_tb = r.read_ue()? + 2;
-        let log2_max_tb = log2_min_tb + r.read_ue()?;
+        let log2_min_cb = r.read_ue_plus(3)?;
+        let log2_ctb = log2_min_cb.saturating_add(r.read_ue()?);
+        let log2_min_tb = r.read_ue_plus(2)?;
+        let log2_max_tb = log2_min_tb.saturating_add(r.read_ue()?);
         ensure!((4..=6).contains(&log2_ctb) && log2_min_cb <= log2_ctb, "CTB size out of range");
         ensure!(log2_min_tb < log2_min_cb && log2_max_tb <= log2_ctb.min(5), "transform block sizes out of range");
         ensure!(width % (1 << log2_min_cb) == 0 && height % (1 << log2_min_cb) == 0, "picture size not a multiple of MinCbSizeY");
@@ -532,8 +535,8 @@ impl Sps {
         if pcm {
             pcm_bit_depth_luma = r.read_bits(4)? + 1;
             pcm_bit_depth_chroma = r.read_bits(4)? + 1;
-            log2_min_pcm = r.read_ue()? + 3;
-            log2_max_pcm = log2_min_pcm + r.read_ue()?;
+            log2_min_pcm = r.read_ue_plus(3)?;
+            log2_max_pcm = log2_min_pcm.saturating_add(r.read_ue()?);
             pcm_loop_filter_disabled = r.read_flag()?;
             ensure!(pcm_bit_depth_luma <= bit_depth_luma && pcm_bit_depth_chroma <= bit_depth_chroma, "PCM bit depth out of range");
             ensure!(log2_max_pcm <= log2_ctb.min(5), "PCM size out of range");
@@ -637,10 +640,10 @@ impl Sps {
     pub fn crop_rect(&self) -> (u32, u32, u32, u32) {
         let (l, r, t, b) = self.conf_win;
         let (sw, sh) = (self.sub_width_c(), self.sub_height_c());
-        let x = (l * sw).min(self.width - 1);
-        let y = (t * sh).min(self.height - 1);
-        let w = self.width.saturating_sub(x + r * sw).max(1);
-        let h = self.height.saturating_sub(y + b * sh).max(1);
+        let x = l.saturating_mul(sw).min(self.width - 1);
+        let y = t.saturating_mul(sh).min(self.height - 1);
+        let w = self.width.saturating_sub(x.saturating_add(r.saturating_mul(sw))).max(1);
+        let h = self.height.saturating_sub(y.saturating_add(b.saturating_mul(sh))).max(1);
         (x, y, w, h)
     }
 
@@ -720,8 +723,8 @@ impl Pps {
         let num_extra_slice_header_bits = r.read_bits(3)?;
         let sign_data_hiding = r.read_flag()?;
         let cabac_init_present = r.read_flag()?;
-        let num_ref_idx_l0_default = r.read_ue()? + 1;
-        let num_ref_idx_l1_default = r.read_ue()? + 1;
+        let num_ref_idx_l0_default = r.read_ue_plus(1)?;
+        let num_ref_idx_l1_default = r.read_ue_plus(1)?;
         ensure!(num_ref_idx_l0_default <= 15 && num_ref_idx_l1_default <= 15, "num_ref_idx_default_active out of range");
         let init_qp = 26 + r.read_se()?;
         let constrained_intra_pred = r.read_flag()?;
@@ -742,8 +745,8 @@ impl Pps {
         let (mut column_widths, mut row_heights) = (Vec::new(), Vec::new());
         let mut loop_filter_across_tiles = true;
         if tiles_enabled {
-            num_tile_columns = r.read_ue()? + 1;
-            num_tile_rows = r.read_ue()? + 1;
+            num_tile_columns = r.read_ue_plus(1)?;
+            num_tile_rows = r.read_ue_plus(1)?;
             ensure!(num_tile_columns <= 64 && num_tile_rows <= 64, "too many tiles");
             uniform_spacing = r.read_flag()?;
             if !uniform_spacing {
@@ -770,7 +773,7 @@ impl Pps {
         }
         let scaling_list = if r.read_flag()? { Some(ScalingList::parse(&mut r)?) } else { None };
         let lists_modification_present = r.read_flag()?;
-        let log2_parallel_merge_level = r.read_ue()? + 2;
+        let log2_parallel_merge_level = r.read_ue_plus(2)?;
         ensure!(log2_parallel_merge_level <= 6, "log2_parallel_merge_level out of range");
         let slice_header_extension_present = r.read_flag()?;
         let mut range_extension = false;
@@ -931,5 +934,69 @@ impl Layout {
     #[inline]
     pub fn tile_of_rs(&self, rs: u32) -> u32 {
         self.tile_id[self.rs_to_ts[rs as usize] as usize]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_bitstream::BitWriter;
+
+    /// A 64x64 Main-profile SPS (CTB 64, no VUI) with a chosen conformance window and CTB-size delta.
+    fn sps_bits(conf_win: Option<[u32; 4]>, log2_diff_cb: u32) -> Vec<u8> {
+        let mut w = BitWriter::new();
+        w.write_bits(0, 4); // vps id
+        w.write_bits(0, 3); // max_sub_layers_minus1
+        w.write_bit(true); // temporal_id_nesting
+        w.write_bits(0, 2); // profile_space
+        w.write_bit(false); // tier
+        w.write_bits(1, 5); // profile_idc
+        w.write_bits(0x6000_0000, 32); // compatibility
+        w.write_bits(0b1001, 4); // progressive, interlaced, non_packed, frame_only
+        w.write_bits(0, 32);
+        w.write_bits(0, 12); // 43 constraint bits + 1 reserved
+        w.write_bits(93, 8); // level_idc
+        [0, 1, 64, 64].iter().for_each(|&v| w.write_ue(v)); // sps id, chroma 4:2:0, width, height
+        w.write_bit(conf_win.is_some());
+        conf_win.iter().flatten().for_each(|&v| w.write_ue(v));
+        [0, 0, 4].iter().for_each(|&v| w.write_ue(v)); // bit depths, log2_max_poc_lsb_minus4
+        w.write_bit(true); // sub_layer_ordering_info_present
+        [0, 0, 0].iter().for_each(|&v| w.write_ue(v)); // dpb, reorder, latency
+        w.write_ue(0); // log2_min_cb_minus3
+        w.write_ue(log2_diff_cb);
+        w.write_ue(0); // log2_min_tb_minus2
+        w.write_ue(3); // log2_diff_max_min_tb
+        w.write_ue(1); // max_transform_hierarchy_depth_inter
+        w.write_ue(1); // ... intra
+        [false; 4].iter().for_each(|&b| w.write_bit(b)); // scaling list, amp, sao, pcm
+        w.write_ue(0); // num_short_term_ref_pic_sets
+        [false; 5].iter().for_each(|&b| w.write_bit(b)); // long term, temporal mvp, strong intra, vui, extension
+        w.rbsp_trailing();
+        w.finish()
+    }
+
+    #[test]
+    fn hostile_sps_values_are_errors_not_overflows() {
+        assert!(Sps::parse(&sps_bits(None, 3)).is_ok());
+        // log2_diff_max_min_luma_coding_block_size = u32::MAX: `log2_min_cb + ue` used to overflow.
+        assert!(Sps::parse(&sps_bits(None, u32::MAX)).is_err());
+        // Conformance window offsets whose product with SubWidthC / SubHeightC exceeds u32.
+        let sps = Sps::parse(&sps_bits(Some([u32::MAX; 4]), 3)).unwrap();
+        let (x, y, w, h) = sps.crop_rect();
+        assert!(x < 64 && y < 64 && w >= 1 && h >= 1, "{:?}", (x, y, w, h));
+    }
+
+    #[test]
+    fn hostile_st_rps_deltas_are_errors_not_overflows() {
+        for ue in [0x7FFF_FFFF, 0x8000_0000, u32::MAX] {
+            let mut w = BitWriter::new();
+            w.write_ue(1); // num_negative_pics
+            w.write_ue(0); // num_positive_pics
+            w.write_ue(ue); // delta_poc_s0_minus1
+            w.write_bit(true);
+            w.rbsp_trailing();
+            let b = w.finish();
+            assert!(StRps::parse(&mut BitReader::new(&b), 0, &[], 1).is_err(), "ue {ue:#x}");
+        }
     }
 }
