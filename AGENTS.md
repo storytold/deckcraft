@@ -3,7 +3,7 @@
 DeckCraft is a clean-room, open-source, pure-Rust presentation application targeting Microsoft
 PowerPoint parity — and superiority (speed, openness, agent control). It runs natively on macOS,
 Windows, Linux and FreeBSD, and on the web via WASM. Siblings with the same conventions:
-PhotoCraft, VectorCraft, FilmCraft, LightCraft, PrintCraft, EffectCraft, DesignCraft
+PhotoCraft, VectorCraft, FilmCraft, LightCraft, PdfCraft, EffectCraft, DesignCraft
 (`../<app>`).
 
 Standards and learnings shared across the crafting apps live in `../../craftrules` (checked out
