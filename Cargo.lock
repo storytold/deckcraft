@@ -1109,6 +1109,7 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
+ "unicode-bidi",
  "unicode-linebreak",
  "unicode-segmentation",
 ]

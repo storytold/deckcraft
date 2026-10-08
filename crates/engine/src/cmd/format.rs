@@ -71,7 +71,24 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             text_outline
         ),
-        cmd!("format.align", "Align", ["Home", "Paragraph"], None, "{align: left|center|right|justify|distributed}", has_text_or_shapes, align),
+        cmd!(
+            "format.align",
+            "Align",
+            ["Home", "Paragraph"],
+            None,
+            "{align: left|center|right|justify|justifyLow|distributed}",
+            has_text_or_shapes,
+            align
+        ),
+        cmd!(
+            "format.rtl",
+            "Right-to-Left Text Direction",
+            ["Home", "Paragraph"],
+            None,
+            "{on?: bool} (off = left-to-right; switching mirrors left/right alignment)",
+            has_text_or_shapes,
+            rtl
+        ),
         cmd!("format.alignLeft", "Align Left", ["Home", "Paragraph"], Some("Cmd+L"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Left)),
         cmd!("format.alignCenter", "Center", ["Home", "Paragraph"], Some("Cmd+E"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Center)),
         cmd!("format.alignRight", "Align Right", ["Home", "Paragraph"], Some("Cmd+R"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Right)),
@@ -367,10 +384,27 @@ fn align(s: &mut Session, p: &Value) -> Result<Value> {
         "center" | "centre" | "ctr" => Align::Center,
         "right" | "r" => Align::Right,
         "justify" | "just" => Align::Justify,
+        "justifyLow" | "justLow" => Align::JustLow,
         "distributed" | "dist" => Align::Distributed,
         _ => Align::Left,
     };
     align_to(s, a)
+}
+
+/// Paragraph reading direction. Switching it mirrors left and right alignment, so text that sat
+/// at the start edge stays there.
+fn rtl(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = on_param(p, current_para(s).rtl);
+    format_para(s, &move |para| {
+        if para.props.rtl.unwrap_or(false) != on {
+            para.props.align = match para.props.align {
+                None | Some(Align::Left) => Some(Align::Right),
+                Some(Align::Right) => Some(Align::Left),
+                other => other,
+            };
+        }
+        para.props.rtl = Some(on);
+    })
 }
 
 fn bullets(s: &mut Session, p: &Value) -> Result<Value> {

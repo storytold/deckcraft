@@ -686,3 +686,28 @@ fn bisect_slide_variants() {
         std::fs::write(format!("{dir}/v-only{k}.pptx"), one(s)).expect("write");
     }
 }
+
+#[test]
+fn rtl_paragraphs_script_fonts_and_just_low_round_trip() {
+    let mut p = rich_deck();
+    let fonts = &mut Arc::make_mut(&mut p.masters[0]).theme.fonts;
+    fonts.minor.cs = "Noto Naskh Arabic".into();
+    fonts.minor.scripts = vec![
+        deckcraft_model::theme::ScriptFont { script: "Arab".into(), typeface: "Noto Naskh Arabic".into() },
+        deckcraft_model::theme::ScriptFont { script: "Hebr".into(), typeface: "Noto Sans Hebrew".into() },
+    ];
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    let sh = slide.shapes.iter_mut().find(|s| s.text.is_some()).expect("a text shape");
+    let body = sh.text.as_mut().expect("text");
+    body.paragraphs = vec![Paragraph { runs: vec![Run::new("سنة 2024 (Retrait) فقط")], ..Default::default() }];
+    body.paragraphs[0].props.rtl = Some(true);
+    body.paragraphs[0].props.align = Some(Align::JustLow);
+    let name = sh.name.clone();
+    let q = round(&p);
+    assert_eq!(q.masters[0].theme.fonts.minor.scripts, p.masters[0].theme.fonts.minor.scripts);
+    assert_eq!(q.masters[0].theme.fonts.minor.script("arab"), Some("Noto Naskh Arabic"));
+    let para = &by_name(&q.slides[0], &name).text.as_ref().expect("text").paragraphs[0];
+    assert_eq!(para.props.rtl, Some(true));
+    assert_eq!(para.props.align, Some(Align::JustLow));
+    assert_eq!(para.runs[0].text, "سنة 2024 (Retrait) فقط");
+}

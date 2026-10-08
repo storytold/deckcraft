@@ -15,3 +15,4 @@ deckcraft-color = { workspace = true }
 deckcraft-fonts = { workspace = true }
 unicode-linebreak = { workspace = true }
 unicode-segmentation = { workspace = true }
+unicode-bidi = { workspace = true }

@@ -2,14 +2,22 @@
 
 use deckcraft_color::{ColorScheme, Rgba, SchemeSlot};
 use deckcraft_model::style::{ColorBase, Effects};
-use deckcraft_model::theme::{FontScheme, FontSet, FormatScheme, Theme, default_format};
+use deckcraft_model::theme::{FontScheme, FontSet, FormatScheme, ScriptFont, Theme, default_format};
 
 use super::{Imp, Part, dml};
 use crate::xml::El;
 
 fn font_set(e: Option<&El>) -> FontSet {
     let tf = |n: &str| e.and_then(|e| e.child(n)).and_then(|c| c.attr("typeface")).unwrap_or("").to_string();
-    FontSet { latin: tf("latin"), ea: tf("ea"), cs: tf("cs") }
+    let scripts = e
+        .map(|e| {
+            e.children_named("font")
+                .filter_map(|f| Some(ScriptFont { script: f.attr("script")?.to_string(), typeface: f.attr("typeface").unwrap_or("").to_string() }))
+                .take(256)
+                .collect()
+        })
+        .unwrap_or_default();
+    FontSet { latin: tf("latin"), ea: tf("ea"), cs: tf("cs"), scripts }
 }
 
 pub fn read_theme(imp: &mut Imp, part: &Part, root: &El) -> Theme {

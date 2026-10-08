@@ -210,6 +210,8 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Center", "format.alignCenter"),
                 ("Align Right", "format.alignRight"),
                 ("Justify", "format.justify"),
+                ("-", ""),
+                ("Right-to-Left Text Direction", "format.rtl"),
             ],
         ),
         (

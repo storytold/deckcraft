@@ -11,6 +11,24 @@ pub struct FontSet {
     pub latin: String,
     pub ea: String,
     pub cs: String,
+    /// Per-script typefaces (`a:font script="Arab" typeface="…"`), in document order.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub scripts: Vec<ScriptFont>,
+}
+
+/// A theme font for one script (ISO 15924 tag, e.g. `Arab`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ScriptFont {
+    pub script: String,
+    pub typeface: String,
+}
+
+impl FontSet {
+    /// The typeface the theme gives `script` (`"Arab"`), if any.
+    pub fn script(&self, script: &str) -> Option<&str> {
+        self.scripts.iter().find(|f| f.script.eq_ignore_ascii_case(script) && !f.typeface.is_empty()).map(|f| f.typeface.as_str())
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

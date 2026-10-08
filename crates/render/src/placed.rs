@@ -107,9 +107,9 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, bod
     for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
         let Some(link) = run_link(body, run.para, run.chars.0) else { continue };
         let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
-        let x0 = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
-        let last = run.glyphs.last().map(|g| g.1).unwrap_or(x0);
-        let x1 = line.caret_x.get(run.chars.1.saturating_sub(line.start)).copied().unwrap_or(last).max(last);
+        // The run's visual extent (right-to-left runs run from right to left).
+        let first = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
+        let (x0, x1) = line.span(run.chars.0, run.chars.1).unwrap_or((first, first));
         let r = Rect::new(x0, line.top, x1, line.bottom);
         out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link });
     }

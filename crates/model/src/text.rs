@@ -132,6 +132,8 @@ pub enum Align {
     Center,
     Right,
     Justify,
+    /// Justified with kashida (tatweel) elongation for Arabic (`justLow`).
+    JustLow,
     Distributed,
 }
 
@@ -142,6 +144,7 @@ impl Align {
             Align::Center => "ctr",
             Align::Right => "r",
             Align::Justify => "just",
+            Align::JustLow => "justLow",
             Align::Distributed => "dist",
         }
     }
@@ -150,7 +153,8 @@ impl Align {
             "l" => Align::Left,
             "ctr" => Align::Center,
             "r" => Align::Right,
-            "just" | "justLow" | "thaiDist" => Align::Justify,
+            "just" | "thaiDist" => Align::Justify,
+            "justLow" => Align::JustLow,
             "dist" => Align::Distributed,
             _ => return None,
         })

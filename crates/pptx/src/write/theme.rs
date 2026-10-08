@@ -13,6 +13,9 @@ fn font_set(w: &mut W, tag: &str, f: &FontSet) {
     w.empty("a:latin", A::new().a("typeface", if f.latin.is_empty() { "Arial" } else { &f.latin }));
     w.empty("a:ea", A::new().a("typeface", &f.ea));
     w.empty("a:cs", A::new().a("typeface", &f.cs));
+    for sf in &f.scripts {
+        w.empty("a:font", A::new().a("script", &sf.script).a("typeface", &sf.typeface));
+    }
     w.close(tag);
 }
 

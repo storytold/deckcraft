@@ -557,7 +557,7 @@ impl FontDb {
         DB.get_or_init(|| FontDb::with_font_dirs(system_font_dirs()))
     }
 
-    fn read_faces(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<FontFace>>> {
+    pub(crate) fn read_faces(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<FontFace>>> {
         self.faces.read().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -744,7 +744,7 @@ impl FontDb {
         false
     }
 
-    fn is_loaded(&self, family: &str) -> bool {
+    pub(crate) fn is_loaded(&self, family: &str) -> bool {
         self.read_faces().iter().any(|f| f.family.eq_ignore_ascii_case(family))
     }
 
@@ -842,7 +842,7 @@ impl FontDb {
     /// Load a system font covering `c` (preferred fallback families first, then any cataloged
     /// file under 40 MB). Returns true if one was loaded. Misses are remembered.
     #[cfg(not(target_arch = "wasm32"))]
-    fn system_fallback(&self, c: char) -> bool {
+    pub(crate) fn system_fallback(&self, c: char) -> bool {
         if c.is_control() || c.is_whitespace() {
             return false;
         }

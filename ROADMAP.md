@@ -17,6 +17,11 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
   basic SmartArt, groups, connectors, ink, action buttons, WordArt.
 - Text: in-place editing with caret, selection, keyboard and mouse; every Home-tab font and paragraph
   control; bullets and numbering; levels; autofit; columns; vertical text; fields; hyperlinks.
+  Right-to-left and Arabic text: UAX #9 bidi (levels per paragraph, L1/L2 per line, mirrored
+  brackets), contextual HarfRust shaping across style runs, `a:latin`/`a:ea`/`a:cs` slots with
+  per-cluster fallback through theme script fonts, RTL start edge and bullets, `justLow` kashida,
+  bidi caret/hit-testing/selection (`format.rtl`). Arrow keys still move logically (visual
+  movement with caret affinity lands with the keyboard sprint).
 - Editing: select, marquee, move, resize, rotate, adjust; smart guides; nudge; duplicate; z-order;
   group/ungroup; align/distribute; Format Painter; Selection pane; clipboard incl. images.
 - Transitions (fade, push, wipe, split, cover, uncover, zoom, morph…) and animations (entrance,

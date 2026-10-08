@@ -400,3 +400,28 @@ fn grown_table_frame_covers_its_drawn_rows() {
     let below_stored = deckcraft_geom::Point::new(120.0, 100.0 + drawn - 2.0);
     assert!(matches!(s.hit_test(below_stored, 1.0), Some(tools::Hit::Shape { .. })));
 }
+
+#[test]
+fn right_to_left_paragraphs() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "سنة 2024 (Retrait) فقط"})).unwrap();
+    s.execute("format.rtl", &json!({})).unwrap();
+    let para = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes[0].text.as_ref().unwrap().paragraphs[0].props.clone();
+    assert_eq!(para(&s).rtl, Some(true));
+    // Left (the default) becomes right: the text stays at its start edge.
+    assert_eq!(para(&s).align, Some(deckcraft_model::text::Align::Right));
+    s.execute("format.align", &json!({"align": "justifyLow"})).unwrap();
+    assert_eq!(para(&s).align, Some(deckcraft_model::text::Align::JustLow));
+    // Toggling back keeps a justified alignment.
+    s.execute("format.rtl", &json!({})).unwrap();
+    assert_eq!(para(&s).rtl, Some(false));
+    assert_eq!(para(&s).align, Some(deckcraft_model::text::Align::JustLow));
+    s.execute("format.rtl", &json!({"on": true})).unwrap();
+    s.execute("format.alignLeft", &json!({})).unwrap();
+    s.execute("format.rtl", &json!({"on": false})).unwrap();
+    assert_eq!(para(&s).align, Some(deckcraft_model::text::Align::Right));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(para(&s).rtl, Some(true));
+}
