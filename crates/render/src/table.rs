@@ -3,9 +3,10 @@
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::style::{ColorRef, Fill};
-use deckcraft_model::table::Table;
-use deckcraft_model::text::Anchor;
+use deckcraft_model::table::{Cell, Table};
+use deckcraft_model::text::{Anchor, TextBody, TextDir};
 use deckcraft_model::{Presentation, Shape};
+use deckcraft_text::Fields;
 use kurbo::{Affine, BezPath, Rect, Shape as _};
 use vello_cpu::{RenderContext, peniko};
 
@@ -94,21 +95,76 @@ pub fn look(ctx: &Ctx, t: &Table, r: usize, c: usize) -> CellLook {
     }
 }
 
+/// Running edges 0, s0, s0+s1, … of a list of sizes (negative sizes count as 0).
+fn edges(sizes: &[f64]) -> Vec<f64> {
+    std::iter::once(0.0)
+        .chain(sizes.iter().scan(0.0, |a, s| {
+            *a += s.max(0.0);
+            Some(*a)
+        }))
+        .collect()
+}
+
+/// A cell's text as drawn: its margins, anchor and direction, plus the table style's text colour and bold.
+pub(crate) fn cell_body(rctx: &Ctx, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
+    let lk = look(rctx, t, r, c);
+    let mut body = cell.text.clone();
+    let [ml, mr, mt, mb] = cell.margins.unwrap_or([7.2, 7.2, 3.6, 3.6]);
+    body.body.inset_l = Some(ml);
+    body.body.inset_r = Some(mr);
+    body.body.inset_t = Some(mt);
+    body.body.inset_b = Some(mb);
+    body.body.anchor = Some(cell.anchor.unwrap_or(Anchor::Top));
+    if cell.vertical.is_some() {
+        body.body.vert = cell.vertical;
+    }
+    for p in &mut body.paragraphs {
+        for run in &mut p.runs {
+            if run.props.fill.is_none()
+                && let Some(tc) = lk.text
+            {
+                run.props.fill = Some(Fill::solid(ColorRef::rgb(tc)));
+            }
+            if lk.bold && run.props.bold.is_none() {
+                run.props.bold = Some(true);
+            }
+        }
+    }
+    body
+}
+
+/// Heights the rows are drawn at. A stored row height (`a:tr/@h`) is a minimum: the row grows so the
+/// text of each of its cells fits, as in PowerPoint. Files from pandoc or python-pptx store 0.
+/// Cells spanning several rows and vertical text keep the stored height.
+pub fn row_heights(rctx: &Ctx, t: &Table, fields: &dyn Fields) -> Vec<f64> {
+    let xs = edges(&t.cols);
+    let mut out = Vec::with_capacity(t.rows.len());
+    for (ri, row) in t.rows.iter().enumerate() {
+        let mut h = row.height.max(0.0);
+        for (ci, cell) in row.cells.iter().enumerate().take(t.cols.len()) {
+            if cell.is_covered() || cell.row_span > 1 || !matches!(cell.vertical, None | Some(TextDir::Horizontal)) {
+                continue;
+            }
+            let c1 = ci.saturating_add(cell.grid_span.max(1) as usize).min(t.cols.len());
+            let (Some(x0), Some(x1)) = (xs.get(ci), xs.get(c1)) else { continue };
+            let body = cell_body(rctx, t, ri, ci, cell);
+            let tmp = Shape { text: Some(body.clone()), ..Default::default() };
+            let need = deckcraft_text::fit_height(rctx, &tmp, &body, Rect::new(*x0, 0.0, *x1, h.max(1.0)), fields);
+            if need.is_finite() {
+                h = h.max(need.min(20_000.0));
+            }
+        }
+        out.push(h);
+    }
+    out
+}
+
 /// Cell rectangles in table-local space, honouring merges: (row, col, rect) for visible cells.
-pub fn cell_rects(t: &Table) -> Vec<(usize, usize, Rect)> {
+/// `heights` are the drawn row heights ([`row_heights`]).
+pub fn cell_rects(t: &Table, heights: &[f64]) -> Vec<(usize, usize, Rect)> {
     let mut out = vec![];
-    let xs: Vec<f64> = std::iter::once(0.0)
-        .chain(t.cols.iter().scan(0.0, |a, w| {
-            *a += w.max(0.0);
-            Some(*a)
-        }))
-        .collect();
-    let ys: Vec<f64> = std::iter::once(0.0)
-        .chain(t.rows.iter().scan(0.0, |a, r| {
-            *a += r.height.max(0.0);
-            Some(*a)
-        }))
-        .collect();
+    let xs = edges(&t.cols);
+    let ys = edges(heights);
     for (ri, row) in t.rows.iter().enumerate() {
         for (ci, cell) in row.cells.iter().enumerate().take(t.cols.len()) {
             if cell.is_covered() {
@@ -125,7 +181,7 @@ pub fn cell_rects(t: &Table) -> Vec<(usize, usize, Rect)> {
 
 pub fn draw(ctx: &mut RenderContext, pres: &Presentation, rctx: &Ctx, t: &Table, m: Affine, _w: f64, _h: f64, fields: &dyn deckcraft_text::Fields) {
     let _ = pres;
-    let rects = cell_rects(t);
+    let rects = cell_rects(t, &row_heights(rctx, t, fields));
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
         let lk = look(rctx, t, *r, *c);
@@ -180,29 +236,7 @@ pub fn draw(ctx: &mut RenderContext, pres: &Presentation, rctx: &Ctx, t: &Table,
         if cell.text.is_empty() {
             continue;
         }
-        let lk = look(rctx, t, *r, *c);
-        let mut body = cell.text.clone();
-        let [ml, mr, mt, mb] = cell.margins.unwrap_or([7.2, 7.2, 3.6, 3.6]);
-        body.body.inset_l = Some(ml);
-        body.body.inset_r = Some(mr);
-        body.body.inset_t = Some(mt);
-        body.body.inset_b = Some(mb);
-        body.body.anchor = Some(cell.anchor.unwrap_or(Anchor::Top));
-        if cell.vertical.is_some() {
-            body.body.vert = cell.vertical;
-        }
-        for p in &mut body.paragraphs {
-            for run in &mut p.runs {
-                if run.props.fill.is_none()
-                    && let Some(tc) = lk.text
-                {
-                    run.props.fill = Some(Fill::solid(ColorRef::rgb(tc)));
-                }
-                if lk.bold && run.props.bold.is_none() {
-                    run.props.bold = Some(true);
-                }
-            }
-        }
+        let body = cell_body(rctx, t, *r, *c, cell);
         let tmp = Shape { text: Some(body.clone()), ..Default::default() };
         crate::draw_text(ctx, rctx, &tmp, &body, *rect, m, fields, None);
         let _ = peniko::Fill::NonZero;

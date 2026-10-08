@@ -157,3 +157,35 @@ fn custom_path_parse() {
     assert!(p.elements().len() >= 5);
     assert!(parse_path("").elements().is_empty());
 }
+
+#[test]
+fn table_rows_of_zero_height_grow_to_fit_text() {
+    // pandoc and python-pptx write `<a:tr h="0">`: the stored row height is only a minimum.
+    let mut t = Table::new(3, 2, 300.0, 0.0);
+    for (r, row) in [["Col A", "Col B"], ["1", "alpha"], ["2", "beta"]].iter().enumerate() {
+        for (c, text) in row.iter().enumerate() {
+            t.cell_mut(r, c).unwrap().text = TextBody::from_text(text);
+        }
+    }
+    let tbl = Shape { id: ShapeId(610), xfrm: Some(Xfrm::new(100.0, 100.0, 300.0, 0.0)), kind: ShapeKind::Table(t.clone()), ..Default::default() };
+    let p = deck_with(vec![tbl]);
+    let ctx = deckcraft_model::resolve::Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let hs = crate::table::row_heights(&ctx, &t, &deckcraft_text::NoFields);
+    assert_eq!(hs.len(), 3);
+    assert!(hs.iter().all(|h| *h > 10.0), "{hs:?}");
+    let tops: Vec<f64> = crate::table::cell_rects(&t, &hs).iter().filter(|(_, c, _)| *c == 0).map(|(_, _, r)| r.y0).collect();
+    assert!(tops.len() == 3 && tops.windows(2).all(|w| w[1] > w[0] + 10.0), "{tops:?}");
+    // A taller stored height is kept.
+    let mut tall = t;
+    tall.rows[1].height = 200.0;
+    assert_eq!(crate::table::row_heights(&ctx, &tall, &deckcraft_text::NoFields)[1], 200.0);
+    // The PDF text layer gets every cell's text, rows one below the other.
+    let placed = place_slide(&p, 0);
+    let top = |s: &str| {
+        let pt = placed.texts.iter().find(|pt| pt.body.text() == s).unwrap_or_else(|| panic!("no placed text {s:?}"));
+        (pt.transform * kurbo::Point::new(0.0, pt.layout.lines[0].top)).y
+    };
+    assert!(top("Col A") < top("1") && top("1") < top("2"));
+    assert!((top("alpha") - top("1")).abs() < 1.0 && (top("beta") - top("2")).abs() < 1.0);
+    assert!(top("Col B") >= 100.0);
+}

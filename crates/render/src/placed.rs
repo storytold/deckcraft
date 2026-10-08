@@ -7,7 +7,7 @@ use deckcraft_model::{Presentation, Shape, ShapeKind};
 use deckcraft_text::{Opts, TextLayout};
 use kurbo::{Affine, Rect};
 
-use crate::{SlideFields, shape_geometry};
+use crate::{SlideFields, shape_geometry, table};
 
 /// One shape's text as drawn on the slide.
 pub struct PlacedText {
@@ -76,30 +76,44 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
                 place(out, rctx, fields, c, gm, depth + 1);
             }
         }
-        ShapeKind::Table(_) | ShapeKind::Chart(_) | ShapeKind::Ink { .. } => {}
+        ShapeKind::Table(t) => {
+            // Cell text, laid out exactly as the table draws it.
+            for (r, c, rect) in table::cell_rects(t, &table::row_heights(rctx, t, fields)) {
+                let Some(cell) = t.cell(r, c).filter(|cell| !cell.text.is_empty()) else { continue };
+                let body = table::cell_body(rctx, t, r, c, cell);
+                let tmp = Shape { text: Some(body.clone()), ..Default::default() };
+                place_text(out, rctx, fields, &tmp, &body, rect, m);
+            }
+        }
+        ShapeKind::Chart(_) | ShapeKind::Ink { .. } => {}
         _ => {
             let Some(body) = s.text.as_ref().filter(|b| !b.is_empty()) else { return };
             let tr = shape_geometry(s, x.w, x.h).text_rect;
-            let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: None, no_shrink: false });
-            let m = if layout.rotation != 0.0 {
-                let c = tr.center().to_vec2();
-                m * Affine::translate(c) * Affine::rotate(layout.rotation.to_radians()) * Affine::translate(-c)
-            } else {
-                m
-            };
-            // Text hyperlinks: one box per line segment of a linked run.
-            for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
-                let Some(link) = run_link(body, run.para, run.chars.0) else { continue };
-                let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
-                let x0 = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
-                let last = run.glyphs.last().map(|g| g.1).unwrap_or(x0);
-                let x1 = line.caret_x.get(run.chars.1.saturating_sub(line.start)).copied().unwrap_or(last).max(last);
-                let r = Rect::new(x0, line.top, x1, line.bottom);
-                out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link });
-            }
-            out.texts.push(PlacedText { layout, transform: m, body: body.clone() });
+            place_text(out, rctx, fields, s, body, tr, m);
         }
     }
+}
+
+/// Lay out `body` in text rect `tr` of shape `s` (shape-local → slide `m`) and record it and its hyperlinks.
+fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, body: &TextBody, tr: Rect, m: Affine) {
+    let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: None, no_shrink: false });
+    let m = if layout.rotation != 0.0 {
+        let c = tr.center().to_vec2();
+        m * Affine::translate(c) * Affine::rotate(layout.rotation.to_radians()) * Affine::translate(-c)
+    } else {
+        m
+    };
+    // Text hyperlinks: one box per line segment of a linked run.
+    for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
+        let Some(link) = run_link(body, run.para, run.chars.0) else { continue };
+        let Some(line) = layout.lines.iter().find(|l| l.para == run.para && l.start <= run.chars.0 && run.chars.0 <= l.end) else { continue };
+        let x0 = run.glyphs.first().map(|g| g.1).unwrap_or(0.0);
+        let last = run.glyphs.last().map(|g| g.1).unwrap_or(x0);
+        let x1 = line.caret_x.get(run.chars.1.saturating_sub(line.start)).copied().unwrap_or(last).max(last);
+        let r = Rect::new(x0, line.top, x1, line.bottom);
+        out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link });
+    }
+    out.texts.push(PlacedText { layout, transform: m, body: body.clone() });
 }
 
 /// The hyperlink of the model run containing character `at` of paragraph `para`.

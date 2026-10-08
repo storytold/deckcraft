@@ -366,3 +366,17 @@ fn freeform_tools_and_command() {
         g => panic!("{g:?}"),
     }
 }
+
+#[test]
+fn double_click_in_table_uses_grown_row_heights() {
+    // Rows stored 4 pt tall are drawn tall enough for their text, so 6 pt down is still row 0.
+    let mut s = session();
+    let data = json!([["a", "b"], ["c", "d"], ["e", "f"]]);
+    let id = s.execute("insert.table", &json!({"rows": 3, "cols": 2, "rect": [100.0, 100.0, 400.0, 120.0], "data": data})).unwrap()["id"].clone();
+    for row in 0..3 {
+        s.execute("table.rowHeight", &json!({"id": id, "row": row, "height": 4.0})).unwrap();
+    }
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0 };
+    s.pointer(ev(PointerKind::DoubleClick, 120.0, 106.0)).unwrap();
+    assert_eq!(s.doc().unwrap().selection.text.as_ref().and_then(|t| t.cell), Some((0, 0)));
+}

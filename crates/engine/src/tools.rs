@@ -789,7 +789,7 @@ impl Session {
                         let x = xfrm_of(&st.doc, &st.selection, &sh);
                         let local = x.affine().inverse() * p;
                         if let ShapeKind::Table(t) = &sh.kind {
-                            let cell = deckcraft_render_cell(t, local);
+                            let cell = deckcraft_render_cell(t, &table_rows(st, t), local);
                             return self.execute("text.edit", &json!({"id": id, "cell": [cell.0, cell.1]}));
                         }
                         Ok(Value::Null)
@@ -1257,16 +1257,24 @@ pub fn text_pos(st: &crate::DocState, sh: &Shape, p: Point) -> (usize, usize) {
     }
 }
 
-/// Which table cell contains a table-local point.
-fn deckcraft_render_cell(t: &deckcraft_model::Table, p: Point) -> (usize, usize) {
+/// Row heights of table `t` as drawn: rows grow to fit their text.
+pub fn table_rows(st: &crate::DocState, t: &deckcraft_model::Table) -> Vec<f64> {
+    match cmd::text::ctx_for(&st.doc, &st.selection) {
+        Some(ctx) => deckcraft_render::table_row_heights(&ctx, t, &deckcraft_text::NoFields),
+        None => t.rows.iter().map(|r| r.height).collect(),
+    }
+}
+
+/// Which table cell contains a table-local point (`heights` from [`table_rows`]).
+fn deckcraft_render_cell(t: &deckcraft_model::Table, heights: &[f64], p: Point) -> (usize, usize) {
     let mut y = 0.0;
-    let mut row = t.rows.len().saturating_sub(1);
-    for (i, r) in t.rows.iter().enumerate() {
-        if p.y < y + r.height {
+    let mut row = heights.len().saturating_sub(1);
+    for (i, h) in heights.iter().enumerate() {
+        if p.y < y + h {
             row = i;
             break;
         }
-        y += r.height;
+        y += h;
     }
     let mut x = 0.0;
     let mut col = t.cols.len().saturating_sub(1);

@@ -407,9 +407,10 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
         && let deckcraft_model::ShapeKind::Table(tb) = &sh.kind
     {
         let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
-        let y0: f64 = tb.rows.iter().take(r).map(|rr| rr.height).sum();
+        let heights = deckcraft_engine::tools::table_rows(st, tb);
+        let y0: f64 = heights.iter().take(r).sum();
         let x0: f64 = tb.cols.iter().take(c).sum();
-        let (w, h) = (tb.cols.get(c).copied().unwrap_or(0.0), tb.rows.get(r).map(|rr| rr.height).unwrap_or(0.0));
+        let (w, h) = (tb.cols.get(c).copied().unwrap_or(0.0), heights.get(r).copied().unwrap_or(0.0));
         let a = x.affine();
         let pts = [Point::new(x0, y0), Point::new(x0 + w, y0), Point::new(x0 + w, y0 + h), Point::new(x0, y0 + h)].map(|q| xf.to_screen(a * q));
         poly(painter, pts, Stroke::new(2.0, t.accent));
