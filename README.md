@@ -106,6 +106,18 @@ Fonts come from [craft-fonts](https://github.com/storytold/craft-fonts): clone i
 (`../craft-fonts`) and local builds pick it up automatically; without it DeckCraft uses your system
 fonts.
 
+Each [GitHub release](https://github.com/storytold/deckcraft/releases) has ready-made builds, on Linux as
+an AppImage, a `.deb`, an `.rpm` and a tarball. On Gentoo, the community [::snakebyte
+overlay](https://github.com/switch87/snakebyte-overlay) packages the Linux release as
+`app-office/deckcraft-bin` (not maintained by the DeckCraft team):
+
+```sh
+eselect repository add snakebyte git https://github.com/switch87/snakebyte-overlay.git
+emaint sync -r snakebyte
+echo 'app-office/deckcraft-bin ~amd64' >> /etc/portage/package.accept_keywords/deckcraft
+emerge --ask app-office/deckcraft-bin
+```
+
 ## Agents, CLI and MCP
 
 Every action in DeckCraft is a command with a stable id, so people, scripts and AI agents use the
