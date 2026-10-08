@@ -543,6 +543,58 @@ fn morph_xfrm_interpolates() {
     assert!(m.rot.is_finite());
 }
 
+fn solid(s: Shape, r: u8) -> Shape {
+    Shape { fill: Some(deckcraft_model::Fill::solid(ColorRef::rgb(Rgba { r, g: 0, b: 0, a: 255 }))), ..s }
+}
+
+#[test]
+fn morph_frame_moves_blends_and_fades() {
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    let moved = |id, x| Shape { xfrm: Some(Xfrm::new(x, 100.0, 200.0, 100.0)), ..shape(id, "Box") };
+    a.shapes = vec![solid(moved(1, 0.0), 0), shape(2, "Gone")];
+    let new = Shape { text: Some(TextBody::from_text("Hi")), ..shape(3, "New") };
+    b.shapes = vec![solid(moved(1, 400.0), 200), new, shape(4, "Later")];
+    let f = morph_frame(&p, &a, &b, 0.5, &|id| id == ShapeId(4));
+    assert!((f.mix - 0.5).abs() < 1e-9);
+    // Gone fades out, Box moves halfway and blends red, New fades in, Later stays out.
+    let names: Vec<(&str, bool)> = f.shapes.iter().map(|(s, old)| (s.name.as_str(), *old)).collect();
+    assert_eq!(names, [("Gone", true), ("Box", false), ("New", false)]);
+    let m = &f.shapes[1].0;
+    assert!((m.xfrm.unwrap().x - 200.0).abs() < 1e-9);
+    assert_eq!(m.fill, Some(deckcraft_model::Fill::solid(ColorRef::rgb(Rgba { r: 100, g: 0, b: 0, a: 255 }))));
+    assert_eq!(f.opacity_of(m.id), 1.0);
+    assert!((f.opacity_of(f.shapes[0].0.id) - 0.5).abs() < 1e-9);
+    assert!((f.opacity_of(f.shapes[2].0.id) - 0.5).abs() < 1e-9);
+    // Ids are fresh and unique.
+    let mut ids: Vec<_> = f.shapes.iter().map(|(s, _)| s.id).collect();
+    ids.dedup();
+    assert_eq!(ids.len(), 3);
+    assert!(ids.iter().all(|i| i.0 > 4));
+    // At the start only the old slide shows.
+    let f0 = morph_frame(&p, &a, &b, 0.0, &|id| id == ShapeId(4));
+    assert!(f0.shapes.iter().filter(|(s, _)| f0.opacity_of(s.id) > 0.0).all(|(s, _)| s.name != "New"));
+    assert_eq!(morph_frame(&p, &a, &b, f64::NAN, &|_| false).mix, 0.0);
+}
+
+#[test]
+fn morph_frame_cross_fades_changed_content() {
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    a.shapes = vec![Shape { text: Some(TextBody::from_text("Before")), ..shape(1, "T") }];
+    b.shapes = vec![Shape { text: Some(TextBody::from_text("After")), ..shape(1, "T") }];
+    let f = morph_frame(&p, &a, &b, 0.25, &|_| false);
+    // The new text under the fading old one, both on the moving box.
+    assert_eq!(f.shapes.len(), 2);
+    assert_eq!((&f.shapes[0].0.text, f.shapes[0].1), (&b.shapes[0].text, false));
+    assert_eq!((&f.shapes[1].0.text, f.shapes[1].1), (&a.shapes[0].text, true));
+    let s = f.mix;
+    assert!((f.opacity_of(f.shapes[0].0.id) - s).abs() < 1e-9);
+    assert!((f.opacity_of(f.shapes[1].0.id) - (1.0 - s)).abs() < 1e-9);
+}
+
 fn pres(n: usize) -> Presentation {
     Presentation { slides: (0..n).map(|i| Arc::new(Slide { id: SlideId(1000 + i as u32), ..Default::default() })).collect(), ..Default::default() }
 }

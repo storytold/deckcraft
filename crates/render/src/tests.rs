@@ -157,3 +157,29 @@ fn custom_path_parse() {
     assert!(p.elements().len() >= 5);
     assert!(parse_path("").elements().is_empty());
 }
+
+#[test]
+fn blend_ends_match_the_slides_and_mixes_backdrops() {
+    let sh = Shape {
+        id: ShapeId(500),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let mut p = deck_with(vec![sh.clone()]);
+    let mut dark = (*p.slides[0]).clone();
+    dark.background =
+        Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 0))) });
+    p.slides.push(std::sync::Arc::new(dark));
+    let o = RenderOpts { scale: 0.5, ..Default::default() };
+    let shapes = vec![(sh, false)];
+    // At the ends the frame is the slide itself; the shape stays opaque throughout.
+    assert_eq!(render_blend(&p, 0, 1, 1.0, &shapes, &o).pixels, render_slide(&p, 1, &o).pixels);
+    let mid = render_blend(&p, 0, 1, 0.5, &shapes, &o);
+    let px = mid.pixel(5, 5);
+    assert!((px[0] as i32 - 128).abs() <= 3, "{px:?}");
+    assert_eq!(mid.pixel(100, 75), render_slide(&p, 1, &o).pixel(100, 75));
+    // Hostile input: bad indices and NaN never panic.
+    assert_eq!(render_blend(&p, 0, 9, 0.5, &shapes, &o).width, 0);
+    let _ = render_blend(&p, 0, 1, f64::NAN, &shapes, &o);
+}

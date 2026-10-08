@@ -241,6 +241,24 @@ pub fn render_slide(pres: &Presentation, index: usize, opts: &RenderOpts) -> Ima
     }
 }
 
+/// Render a frame between slides `old` and `new` (indices into `pres.slides`), e.g. of Morph: the
+/// backdrop (background, master and layout graphics) of `old` cross-fading into that of `new` by
+/// `mix` (0..1), then `shapes` in order, each resolved against the slide it comes from (`true`:
+/// `old`). `opts.state` applies to `shapes` only.
+pub fn render_blend(pres: &Presentation, old: usize, new: usize, mix: f64, shapes: &[(Shape, bool)], opts: &RenderOpts) -> Image {
+    let (Some(a), Some(b)) = (pres.slides.get(old), pres.slides.get(new)) else { return Image::default() };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        RENDERER.with(|r| r.borrow_mut().blend(pres, (a, old), (b, new), mix, shapes, opts))
+    })) {
+        Ok(img) => img,
+        Err(_) => {
+            log::error!("rendering a frame between slides {old} and {new} panicked; showing the new slide");
+            RENDERER.with(|r| *r.borrow_mut() = Renderer::default());
+            render_slide(pres, new, opts)
+        }
+    }
+}
+
 /// Render a layout (Slide Master view thumbnail and canvas).
 pub fn render_layout(pres: &Presentation, master: usize, layout: Option<usize>, opts: &RenderOpts) -> Image {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| RENDERER.with(|r| r.borrow_mut().layout(pres, master, layout, opts)))) {
@@ -371,49 +389,97 @@ struct Frame<'a> {
 }
 
 impl Renderer {
-    fn slide(&mut self, pres: &Presentation, slide: &Slide, index: usize, opts: &RenderOpts) -> Image {
+    fn canvas(pres: &Presentation, opts: &RenderOpts, filters: bool) -> (RenderContext, u16, u16, Affine) {
         let (w, h) = output_size(pres, opts);
         let mut ctx = RenderContext::new_with(
             w,
             h,
-            vello_cpu::RenderSettings {
-                num_threads: if cfg!(target_arch = "wasm32") || needs_filters(pres, slide) { 0 } else { opts.threads },
-                ..Default::default()
-            },
+            vello_cpu::RenderSettings { num_threads: if cfg!(target_arch = "wasm32") || filters { 0 } else { opts.threads }, ..Default::default() },
         );
         if let Some(c) = opts.clear {
             ctx.set_paint(color(c, 1.0));
             ctx.fill_rect(&Rect::new(0.0, 0.0, w as f64, h as f64));
         }
         let view = Affine::translate((opts.offset.0, opts.offset.1)) * Affine::scale(opts.scale);
-        let fields = SlideFields {
+        (ctx, w, h, view)
+    }
+
+    fn fields(pres: &Presentation, index: usize, opts: &RenderOpts) -> SlideFields {
+        SlideFields {
             num: pres.slide_number(index),
             date: opts.date_text.clone().unwrap_or_else(|| pres.header_footer.date_text.clone()),
             footer: pres.header_footer.footer_text.clone(),
-        };
-        let f = Frame { pres, opts, fields };
+        }
+    }
+
+    /// Background plus the master and layout graphics the slide shows.
+    fn backdrop(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: &Slide, view: Affine) {
+        self.background(ctx, f, rctx, Some(slide), view);
+        let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
+        if show_master {
+            let mctx = Ctx::for_master(f.pres, rctx.master);
+            for s in &rctx.master.shapes {
+                if s.ph.is_none() {
+                    self.shape(ctx, f, &mctx, s, view, 0);
+                }
+            }
+        }
+        if show_layout && let Some(l) = rctx.layout {
+            let lctx = Ctx::for_layout(f.pres, rctx.master, l);
+            for s in &l.shapes {
+                if s.ph.is_none() {
+                    self.shape(ctx, f, &lctx, s, view, 0);
+                }
+            }
+        }
+    }
+
+    fn slide(&mut self, pres: &Presentation, slide: &Slide, index: usize, opts: &RenderOpts) -> Image {
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
+        let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
         if let Some(rctx) = Ctx::for_slide(pres, slide) {
-            self.background(&mut ctx, &f, &rctx, Some(slide), view);
-            let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
-            if show_master {
-                let mctx = Ctx::for_master(pres, rctx.master);
-                for s in &rctx.master.shapes {
-                    if s.ph.is_none() {
-                        self.shape(&mut ctx, &f, &mctx, s, view, 0);
-                    }
-                }
-            }
-            if show_layout && let Some(l) = rctx.layout {
-                let lctx = Ctx::for_layout(pres, rctx.master, l);
-                for s in &l.shapes {
-                    if s.ph.is_none() {
-                        self.shape(&mut ctx, &f, &lctx, s, view, 0);
-                    }
-                }
-            }
+            self.backdrop(&mut ctx, &f, &rctx, slide, view);
             for s in &slide.shapes {
                 self.shape(&mut ctx, &f, &rctx, s, view, 0);
             }
+        }
+        self.finish(ctx, w, h)
+    }
+
+    fn blend(
+        &mut self,
+        pres: &Presentation,
+        old: (&Slide, usize),
+        new: (&Slide, usize),
+        mix: f64,
+        shapes: &[(Shape, bool)],
+        opts: &RenderOpts,
+    ) -> Image {
+        let mix = if mix.is_finite() { mix.clamp(0.0, 1.0) } else { 1.0 };
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, old.0) || needs_filters(pres, new.0));
+        let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else { return self.finish(ctx, w, h) };
+        // Backdrop graphics never take shape states: their ids may clash with the frame's shapes.
+        let bopts = RenderOpts { state: None, date_text: opts.date_text.clone(), ..*opts };
+        if mix < 1.0 {
+            let f = Frame { pres, opts: &bopts, fields: Self::fields(pres, old.1, opts) };
+            self.backdrop(&mut ctx, &f, &co, old.0, view);
+        }
+        if mix > 0.0 {
+            let f = Frame { pres, opts: &bopts, fields: Self::fields(pres, new.1, opts) };
+            let layered = mix < 1.0;
+            if layered {
+                ctx.push_layer(None, None, Some(mix as f32), None, None);
+            }
+            self.backdrop(&mut ctx, &f, &cn, new.0, view);
+            if layered {
+                ctx.pop_layer();
+            }
+        }
+        let fo = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
+        let fnew = Frame { pres, opts, fields: Self::fields(pres, new.1, opts) };
+        for (s, from_old) in shapes {
+            let (f, c) = if *from_old { (&fo, &co) } else { (&fnew, &cn) };
+            self.shape(&mut ctx, f, c, s, view, 0);
         }
         self.finish(ctx, w, h)
     }

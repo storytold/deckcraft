@@ -199,7 +199,7 @@ fn scale_rect(r: R, s: f64) -> R {
 /// Layers of the transition `kind` (a [`deckcraft_model::anim::TRANSITIONS`] id) with `option` at
 /// progress `t` (0..1). Draw in order over black. At `t >= 1` the result is the new slide alone;
 /// at `t <= 0` (or NaN) the old slide alone. Morph returns a plain crossfade (the UI renders morph
-/// frames with [`crate::morph_pairs`]).
+/// frames with [`crate::morph_frame`]).
 pub fn transition_layers(kind: &str, option: &str, t: f64) -> Vec<Layer> {
     let t = clampf(t, 0.0, 1.0, 0.0);
     let v = if t >= 1.0 {

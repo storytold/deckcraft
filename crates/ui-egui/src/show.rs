@@ -51,6 +51,9 @@ struct Key {
 
 struct Transition {
     old: Option<TextureHandle>,
+    /// The slide left behind (Morph matches its shapes) and the Morph frame texture.
+    from: Option<usize>,
+    morph: Option<TextureHandle>,
     start: f64,
     kind: String,
     option: String,
@@ -119,8 +122,9 @@ impl Show {
                     .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
                     .unwrap_or(("none".into(), String::new(), 0.0));
                 let old = self.tex.as_ref().map(|(_, t)| t.clone());
+                let from = self.tex.as_ref().map(|(k, _)| k.slide);
                 self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
-                    Some(Transition { old, start: now, kind, option, dur })
+                    Some(Transition { old, from, morph: None, start: now, kind, option, dur })
                 } else {
                     None
                 };
@@ -383,7 +387,42 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             Some(tex)
         };
         let mut drew = false;
-        if let (Some(tr), Some(new)) = (&show.trans, &tex) {
+        let morphing = show.trans.as_ref().is_some_and(|tr| tr.kind == "morph" && tr.from.is_some() && now - tr.start < tr.dur);
+        let tl = if morphing { Some(show.timeline(&doc).clone()) } else { None };
+        let morph = match (&show.trans, tl) {
+            (Some(tr), Some(tl)) => {
+                let p = ((now - tr.start) / tr.dur.max(0.01)).clamp(0.0, 1.0);
+                let hidden_b = |id: ShapeId| {
+                    let st = state_for(&tl, id, 0, 0.0);
+                    !st.visible || st.opacity <= 0.0 || hidden.contains(&id)
+                };
+                tr.from
+                    .and_then(|i| doc.slides.get(i).map(|a| (i, a)))
+                    .zip(doc.slides.get(idx))
+                    .map(|((i, a), b)| (i, deckcraft_anim::morph_frame(&doc, a, b, p, &hidden_b)))
+            }
+            _ => None,
+        };
+        if let (Some((from, m)), Some(tr)) = (morph, show.trans.as_mut()) {
+            let f = |id: ShapeId| ShapeState { opacity: m.opacity_of(id), ..Default::default() };
+            let threads =
+                if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+            let opts =
+                RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), state: Some(&f), threads, ..Default::default() };
+            let img = deckcraft_render::render_blend(&doc, from, idx, m.mix, &m.shapes, &opts);
+            let ci = crate::textures::to_color_image(&img, false);
+            let frame = match tr.morph.take() {
+                Some(mut h) => {
+                    h.set(ci, egui::TextureOptions::LINEAR);
+                    h
+                }
+                None => ctx.load_texture("morph", ci, egui::TextureOptions::LINEAR),
+            };
+            painter.image(frame.id(), srect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+            tr.morph = Some(frame);
+            drew = true;
+            ctx.request_repaint();
+        } else if let (Some(tr), Some(new)) = (&show.trans, &tex) {
             let p = ((now - tr.start) / tr.dur.max(0.01)).clamp(0.0, 1.0);
             if p < 1.0 {
                 for l in deckcraft_anim::transition_layers(&tr.kind, &tr.option, p) {
