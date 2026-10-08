@@ -409,7 +409,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
             let opts =
                 RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), state: Some(&f), threads, ..Default::default() };
-            let img = deckcraft_render::render_blend(&doc, from, idx, m.mix, &m.shapes, &opts);
+            let text: Vec<deckcraft_render::TextMorph> = m
+                .text
+                .iter()
+                .map(|x| deckcraft_render::TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix })
+                .collect();
+            let img = deckcraft_render::render_blend(&doc, from, idx, m.mix, &m.shapes, &text, &opts);
             let ci = crate::textures::to_color_image(&img, false);
             let frame = match tr.morph.take() {
                 Some(mut h) => {

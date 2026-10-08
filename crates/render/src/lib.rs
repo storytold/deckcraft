@@ -9,6 +9,7 @@
 
 mod chart;
 mod images;
+mod morph_text;
 mod paint;
 mod placed;
 mod table;
@@ -29,6 +30,7 @@ use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::{RenderContext, Resources, peniko};
 
 pub use images::decode as decode_image;
+pub use morph_text::TextMorph;
 pub use placed::{Placed, PlacedLink, PlacedText, place_slide};
 
 /// Largest pixmap side we render (vello_cpu uses u16 sizes).
@@ -244,11 +246,13 @@ pub fn render_slide(pres: &Presentation, index: usize, opts: &RenderOpts) -> Ima
 /// Render a frame between slides `old` and `new` (indices into `pres.slides`), e.g. of Morph: the
 /// backdrop (background, master and layout graphics) of `old` cross-fading into that of `new` by
 /// `mix` (0..1), then `shapes` in order, each resolved against the slide it comes from (`true`:
-/// `old`). `opts.state` applies to `shapes` only.
-pub fn render_blend(pres: &Presentation, old: usize, new: usize, mix: f64, shapes: &[(Shape, bool)], opts: &RenderOpts) -> Image {
+/// `old`). Pairs of shapes in `text` draw their boxes as usual but their texts morph by words or
+/// characters ([`TextMorph`]), on top of the later shape of the pair. `opts.state` applies to
+/// `shapes` only.
+pub fn render_blend(pres: &Presentation, old: usize, new: usize, mix: f64, shapes: &[(Shape, bool)], text: &[TextMorph], opts: &RenderOpts) -> Image {
     let (Some(a), Some(b)) = (pres.slides.get(old), pres.slides.get(new)) else { return Image::default() };
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        RENDERER.with(|r| r.borrow_mut().blend(pres, (a, old), (b, new), mix, shapes, opts))
+        RENDERER.with(|r| r.borrow_mut().blend(pres, (a, old), (b, new), mix, shapes, text, opts))
     })) {
         Ok(img) => img,
         Err(_) => {
@@ -446,6 +450,7 @@ impl Renderer {
         self.finish(ctx, w, h)
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn blend(
         &mut self,
         pres: &Presentation,
@@ -453,6 +458,7 @@ impl Renderer {
         new: (&Slide, usize),
         mix: f64,
         shapes: &[(Shape, bool)],
+        text: &[TextMorph],
         opts: &RenderOpts,
     ) -> Image {
         let mix = if mix.is_finite() { mix.clamp(0.0, 1.0) } else { 1.0 };
@@ -477,9 +483,23 @@ impl Renderer {
         }
         let fo = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
         let fnew = Frame { pres, opts, fields: Self::fields(pres, new.1, opts) };
+        let mut drawn: Vec<ShapeId> = Vec::new();
         for (s, from_old) in shapes {
             let (f, c) = if *from_old { (&fo, &co) } else { (&fnew, &cn) };
-            self.shape(&mut ctx, f, c, s, view, 0);
+            let Some(tm) = text.iter().find(|m| m.old == s.id || m.new == s.id) else {
+                self.shape(&mut ctx, f, c, s, view, 0);
+                continue;
+            };
+            self.shape(&mut ctx, f, c, &Shape { text: None, ..s.clone() }, view, 0);
+            drawn.push(s.id);
+            if !(drawn.contains(&tm.old) && drawn.contains(&tm.new)) {
+                continue;
+            }
+            let find = |id: ShapeId| shapes.iter().map(|(s, _)| s).find(|s| s.id == id);
+            if let (Some(a), Some(b)) = (find(tm.old), find(tm.new)) {
+                let now = b.xfrm.unwrap_or_else(|| resolve::xfrm(&cn, b));
+                morph_text::draw(&mut ctx, (&co, a, &fo.fields), (&cn, b, &fnew.fields), tm, now, view);
+            }
         }
         self.finish(ctx, w, h)
     }
@@ -1037,34 +1057,40 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             continue;
         }
         let m = m * Affine::translate(ps.offset);
-        let alpha = run.alpha * ps.opacity;
-        let k = run.size / run.face.upem.max(1.0);
-        ctx.set_paint(color(run.color, alpha));
         for (gid, x, y) in &run.glyphs {
-            let path = glyph(&run.face, *gid);
-            if path.elements().is_empty() {
-                continue;
-            }
-            let skew = if run.fake_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
-            let gm = m * Affine::translate((*x, *y)) * skew * Affine::scale(k);
-            ctx.set_transform(gm);
-            if alpha > 0.0 && run.color.a > 0 {
-                ctx.fill_path(&path);
-                if run.fake_bold {
-                    ctx.set_stroke(kurbo::Stroke::new(run.face.upem * 0.025).with_join(kurbo::Join::Round));
-                    ctx.stroke_path(&path);
-                }
-            }
-            if let Some((oc, ow)) = run.outline {
-                ctx.set_paint(color(oc, ps.opacity));
-                ctx.set_stroke(kurbo::Stroke::new(ow / k.max(1e-9)).with_join(kurbo::Join::Round));
-                ctx.stroke_path(&path);
-                ctx.set_paint(color(run.color, alpha));
-            }
+            draw_glyph(ctx, run, *gid, m * Affine::translate((*x, *y)), ps.opacity);
         }
     }
     for d in l.decos.iter().filter(|d| !d.behind) {
         deco(ctx, d);
+    }
+}
+
+/// Draw glyph `gid` of `run` with its origin (on the baseline) mapped by `at`, faded by `opacity`.
+pub(crate) fn draw_glyph(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64) {
+    let alpha = run.alpha * opacity;
+    if (alpha <= 0.0 || run.color.a == 0) && run.outline.is_none() {
+        return;
+    }
+    let path = glyph(&run.face, gid);
+    if path.elements().is_empty() {
+        return;
+    }
+    let k = run.size / run.face.upem.max(1.0);
+    let skew = if run.fake_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
+    ctx.set_transform(at * skew * Affine::scale(k));
+    if alpha > 0.0 && run.color.a > 0 {
+        ctx.set_paint(color(run.color, alpha));
+        ctx.fill_path(&path);
+        if run.fake_bold {
+            ctx.set_stroke(kurbo::Stroke::new(run.face.upem * 0.025).with_join(kurbo::Join::Round));
+            ctx.stroke_path(&path);
+        }
+    }
+    if let Some((oc, ow)) = run.outline {
+        ctx.set_paint(color(oc, opacity));
+        ctx.set_stroke(kurbo::Stroke::new(ow / k.max(1e-9)).with_join(kurbo::Join::Round));
+        ctx.stroke_path(&path);
     }
 }
 

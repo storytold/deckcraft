@@ -26,6 +26,8 @@ pub struct GlyphRun {
     pub color: Rgba,
     /// Glyph id and pen position of its origin (baseline), in shape-local points.
     pub glyphs: Vec<(u32, f64, f64)>,
+    /// Per glyph: the paragraph character it draws (index, char); empty for bullets.
+    pub cells: Vec<(usize, char)>,
     /// Draw a heavier stroke because the family has no bold face.
     pub fake_bold: bool,
     /// Slant because the family has no italic face.
@@ -849,6 +851,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     .into_iter()
                     .map(|(gid, x)| (gid, ox + bx + x + if line.column > 0 { line.column as f64 * (col_w + col_gap) } else { 0.0 }, by + oy))
                     .collect(),
+                cells: vec![],
                 fake_bold: false,
                 fake_italic: false,
                 outline: None,
@@ -881,6 +884,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     size,
                     color: st.color,
                     glyphs: vec![],
+                    cells: vec![],
                     fake_bold: st.fake_bold,
                     fake_italic: st.fake_italic,
                     outline: st.outline,
@@ -897,6 +901,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                 for (gid, gx, gy) in &cell.glyphs {
                     let k = if st.baseline != 0.0 { 0.66 } else { 1.0 };
                     r.glyphs.push((*gid, x + gx * k, base_y + gy));
+                    r.cells.push((*ci, cell.ch));
                 }
             }
             let adv = line.caret_x.get(ci - line.start + 1).copied().unwrap_or(x) - line.caret_x.get(ci - line.start).copied().unwrap_or(x);

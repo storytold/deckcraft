@@ -1,7 +1,7 @@
 //! Morph: matching shapes between two slides, interpolating their boxes and building the frames.
 
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::{ColorRef, Fill, Presentation, Rgba, Shape, ShapeId, Slide, Xfrm, walk};
+use deckcraft_model::{ColorRef, Fill, Presentation, Rgba, Shape, ShapeId, ShapeKind, Slide, Xfrm, walk};
 
 use crate::clampf;
 use crate::easing::smooth;
@@ -104,6 +104,21 @@ pub struct MorphFrame {
     /// Opacity of the frame's shapes by id; shapes not listed are opaque.
     pub opacity: Vec<(ShapeId, f64)>,
     pub mix: f64,
+    /// With the Words or Characters option: pairs of frame shapes whose texts morph by words or
+    /// characters instead of cross-fading (the renderer's `TextMorph`).
+    pub text: Vec<MorphText>,
+}
+
+/// Two frame shapes whose texts morph by words or characters.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MorphText {
+    /// Frame shape ids: from the old slide, from the new slide.
+    pub old: ShapeId,
+    pub new: ShapeId,
+    /// The boxes of the two shapes on their own slides.
+    pub from: Xfrm,
+    pub to: Xfrm,
+    pub chars: bool,
 }
 
 impl MorphFrame {
@@ -141,7 +156,8 @@ fn content(s: &Shape) -> Shape {
 /// Morph frame from slide `a` to slide `b` at progress `t` (0..1, eased here). Paired shapes
 /// ([`morph_pairs`]) move along [`morph_xfrm`]; when they differ only in solid fill colour the
 /// colour blends, otherwise the new shape fades in under the fading old one on the same moving
-/// box. Unpaired shapes of `a` fade out, unpaired shapes of `b` fade in, and shapes of `b` for
+/// box; with the transition option `words` or `characters` their texts are listed in
+/// [`MorphFrame::text`] to morph word by word or character by character. Unpaired shapes of `a` fade out, unpaired shapes of `b` fade in, and shapes of `b` for
 /// which `hidden_b` is true (entrance animations, hidden media) stay out of the frame.
 pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: &dyn Fn(ShapeId) -> bool) -> MorphFrame {
     let s = smooth(clampf(t, 0.0, 1.0, 0.0));
@@ -152,13 +168,19 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
     walk(&a.shapes, &mut |x, _| next = next.max(x.id.0.saturating_add(1)));
     walk(&b.shapes, &mut |x, _| next = next.max(x.id.0.saturating_add(1)));
     let mut f = MorphFrame { mix: s, ..Default::default() };
+    let by = b.transition.as_ref().map(|tr| tr.option.as_str()).unwrap_or("");
+    let (by_text, chars) = (by == "words" || by == "characters", by == "characters");
+    let has_text = |x: &Shape| x.text.as_ref().is_some_and(|t| !t.is_empty()) && !matches!(x.kind, ShapeKind::Group { .. } | ShapeKind::Table(_));
+    let mut text = Vec::new();
     let mut push = |mut sh: Shape, old: bool, op: f64| {
-        sh.id = ShapeId(next);
+        let id = ShapeId(next);
+        sh.id = id;
         next = next.saturating_add(1);
         if op < 1.0 {
-            f.opacity.push((sh.id, op));
+            f.opacity.push((id, op));
         }
         f.shapes.push((sh, old));
+        id
     };
     for sa in &a.shapes {
         if !pairs.iter().any(|(ia, _)| *ia == sa.id) {
@@ -186,9 +208,17 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
             }
             push(m, false, 1.0);
         } else {
-            push(Shape { xfrm: x, ..sb.clone() }, false, s);
-            push(Shape { xfrm: x, ..sa.clone() }, true, 1.0 - s);
+            let new = push(Shape { xfrm: x, ..sb.clone() }, false, s);
+            let old = push(Shape { xfrm: x, ..sa.clone() }, true, 1.0 - s);
+            if by_text
+                && has_text(sa)
+                && has_text(sb)
+                && let (Some(from), Some(to)) = (box_of(ca.as_ref(), sa), box_of(cb.as_ref(), sb))
+            {
+                text.push(MorphText { old, new, from, to, chars });
+            }
         }
     }
+    f.text = text;
     f
 }

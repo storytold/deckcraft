@@ -174,12 +174,69 @@ fn blend_ends_match_the_slides_and_mixes_backdrops() {
     let o = RenderOpts { scale: 0.5, ..Default::default() };
     let shapes = vec![(sh, false)];
     // At the ends the frame is the slide itself; the shape stays opaque throughout.
-    assert_eq!(render_blend(&p, 0, 1, 1.0, &shapes, &o).pixels, render_slide(&p, 1, &o).pixels);
-    let mid = render_blend(&p, 0, 1, 0.5, &shapes, &o);
+    assert_eq!(render_blend(&p, 0, 1, 1.0, &shapes, &[], &o).pixels, render_slide(&p, 1, &o).pixels);
+    let mid = render_blend(&p, 0, 1, 0.5, &shapes, &[], &o);
     let px = mid.pixel(5, 5);
     assert!((px[0] as i32 - 128).abs() <= 3, "{px:?}");
     assert_eq!(mid.pixel(100, 75), render_slide(&p, 1, &o).pixel(100, 75));
     // Hostile input: bad indices and NaN never panic.
-    assert_eq!(render_blend(&p, 0, 9, 0.5, &shapes, &o).width, 0);
-    let _ = render_blend(&p, 0, 1, f64::NAN, &shapes, &o);
+    assert_eq!(render_blend(&p, 0, 9, 0.5, &shapes, &[], &o).width, 0);
+    let _ = render_blend(&p, 0, 1, f64::NAN, &shapes, &[], &o);
+}
+
+fn text_shape(id: u32, text: &str, x: f64, y: f64) -> Shape {
+    let mut t = TextBody::from_text(text);
+    for p in &mut t.paragraphs {
+        for r in &mut p.runs {
+            r.props.size = Some(40.0);
+        }
+    }
+    Shape { id: ShapeId(id), xfrm: Some(Xfrm::new(x, y, 600.0, 120.0)), text_box: true, text: Some(t), ..Default::default() }
+}
+
+#[test]
+fn morph_text_tokens_are_words_or_characters() {
+    let p = Presentation::default();
+    let rctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let s = text_shape(1, "Hello big  world\nHello", 0.0, 0.0);
+    let l = deckcraft_text::layout(
+        &rctx,
+        &s,
+        s.text.as_ref().unwrap(),
+        &Opts { rect: Rect::new(0.0, 0.0, 600.0, 120.0), fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
+    );
+    assert_eq!(morph_text::token_keys(&l, false), ["Hello", "big", "world", "Hello"]);
+    assert_eq!(morph_text::token_keys(&l, true).concat(), "Hellobigworld".to_string() + "Hello");
+    assert_eq!(morph_text::token_keys(&l, true).len(), 18);
+}
+
+#[test]
+fn morph_text_ends_match_the_slides() {
+    let from = Xfrm::new(100.0, 60.0, 600.0, 120.0);
+    let to = Xfrm::new(200.0, 300.0, 600.0, 120.0);
+    let mut p = deck_with(vec![text_shape(1, "Hello wide world", from.x, from.y)]);
+    let mut b = (*p.slides[0]).clone();
+    b.shapes = vec![text_shape(1, "world says Hello", to.x, to.y)];
+    p.slides.push(std::sync::Arc::new(b));
+    let o = RenderOpts { scale: 0.5, ..Default::default() };
+    let frame = |t: f64| {
+        let x = Xfrm::new(from.x + (to.x - from.x) * t, from.y + (to.y - from.y) * t, 600.0, 120.0);
+        let mut sb = text_shape(10, "world says Hello", 0.0, 0.0);
+        let mut sa = text_shape(11, "Hello wide world", 0.0, 0.0);
+        sb.xfrm = Some(x);
+        sa.xfrm = Some(x);
+        let tm = TextMorph { old: ShapeId(11), new: ShapeId(10), from, to, chars: false, t };
+        render_blend(&p, 0, 1, t, &[(sb, false), (sa, true)], &[tm], &o)
+    };
+    // Warm up: faces load lazily (a background scan runs), so the first render may still fall back.
+    let _ = (render_slide(&p, 0, &o), render_slide(&p, 1, &o), frame(0.5));
+    let close = |a: &Image, b: &Image| a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 8).count();
+    let d0 = close(&frame(0.0), &render_slide(&p, 0, &o));
+    assert!(d0 < 40, "start differs {d0}");
+    let d1 = close(&frame(1.0), &render_slide(&p, 1, &o));
+    assert!(d1 < 40, "end differs {d1}");
+    // Halfway the shared words are on their way: ink between the two texts' rows.
+    let mid = frame(0.5);
+    let ink = (95..140).flat_map(|y| (0..480).map(move |x| (x, y))).filter(|&(x, y)| mid.pixel(x, y)[0] < 128).count();
+    assert!(ink > 50, "ink {ink}");
 }

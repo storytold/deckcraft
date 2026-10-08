@@ -595,6 +595,27 @@ fn morph_frame_cross_fades_changed_content() {
     assert!((f.opacity_of(f.shapes[1].0.id) - (1.0 - s)).abs() < 1e-9);
 }
 
+#[test]
+fn morph_frame_lists_texts_for_words_and_characters() {
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    a.shapes = vec![Shape { text: Some(TextBody::from_text("The Science")), ..shape(1, "T") }];
+    b.shapes = vec![Shape { text: Some(TextBody::from_text("Science rocks")), ..shape(1, "T") }];
+    for (option, want) in [("objects", None), ("words", Some(false)), ("characters", Some(true))] {
+        b.transition = Some(Transition { kind: "morph".into(), option: option.into(), ..Default::default() });
+        let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+        assert_eq!(f.text.first().map(|m| m.chars), want, "{option}");
+        if let Some(m) = f.text.first() {
+            assert_eq!((m.new, m.old), (f.shapes[0].0.id, f.shapes[1].0.id));
+            assert_eq!(m.from, a.shapes[0].xfrm.unwrap());
+        }
+    }
+    // Same text: one shape moves, nothing to morph.
+    b.shapes[0].text = a.shapes[0].text.clone();
+    assert!(morph_frame(&p, &a, &b, 0.5, &|_| false).text.is_empty());
+}
+
 fn pres(n: usize) -> Presentation {
     Presentation { slides: (0..n).map(|i| Arc::new(Slide { id: SlideId(1000 + i as u32), ..Default::default() })).collect(), ..Default::default() }
 }
