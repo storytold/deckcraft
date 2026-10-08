@@ -8,6 +8,8 @@
 #   flatpak run ai.storyteller.deckcraft
 #
 # For Flathub, replace the `dir` source with a `git` source pinned to a release tag and commit.
+# The release's .flatpak bundles are built from ai.storyteller.deckcraft.bundle.yml instead (it
+# repackages the Linux tarball); keep runtime-version and finish-args identical in both.
 id: ai.storyteller.deckcraft
 runtime: org.freedesktop.Platform
 runtime-version: '25.08'
@@ -16,14 +18,23 @@ sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
 command: deckcraft
 finish-args:
-  - --share=ipc
+  # Display: Wayland first; X11 only when no Wayland compositor is running.
   - --socket=wayland
   - --socket=fallback-x11
+  # X11 shared memory (MIT-SHM). Without it the X11 fallback is slow or fails.
+  - --share=ipc
+  # GPU access for the wgpu renderer (Vulkan, or GL as a fallback).
   - --device=dri
-  # Open/Save dialogs use the file-chooser portal (rfd), and drag-and-drop uses the document
-  # portal, so broad filesystem access isn't needed. Documents is granted for opening decks by
-  # path from the command line.
+  # Sound for audio and video in slide shows (cpal over ALSA, routed to PulseAudio/PipeWire by
+  # the runtime's ALSA plugin).
+  - --socket=pulseaudio
+  # Open/Save dialogs go through the file-chooser portal (rfd) and drag-and-drop through the
+  # document portal, so picked files work anywhere without broad filesystem access. Documents is
+  # granted so decks passed by path (the command line, Open Recent) work in the usual place.
   - --filesystem=xdg-documents
+  # Deliberately not granted: network (the optional --control server listens on 127.0.0.1 in
+  # the sandbox; `flatpak override --user --share=network ai.storyteller.deckcraft` exposes it to
+  # host agents) and home/host filesystem access.
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
 modules:

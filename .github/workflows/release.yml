@@ -6,9 +6,11 @@
 # `cargo xtask version set X.Y.Z`). The app shows it in About and `--version`; the release name
 # and tag use it too. workflow_dispatch can override it for a test build (applied to the build).
 #
-# All jobs run in the `release` environment (restricted to the `release` branch), which holds
-# the signing secrets. Every secret is optional: missing ones produce unsigned artifacts and a
-# warning, never a failed build.
+# The jobs that sign (macOS, Windows) and the one that drafts the release run in the `release`
+# environment (restricted to the `release` branch), which holds the signing secrets. Every secret
+# is optional: missing ones produce unsigned artifacts and a warning, never a failed build. The
+# other jobs sign nothing and get no secrets, so a workflow_dispatch from another branch is a dry
+# run: they build, the signed jobs are refused by the environment, and no release is drafted.
 name: Release
 
 on:
@@ -42,11 +44,8 @@ env:
 jobs:
   version:
     name: version
-    # Only the release branch builds (a manual dispatch from any other ref skips everything). The
-    # branch itself is writable only by release-managers and org admins (ruleset "release").
-    if: github.ref == 'refs/heads/release'
     runs-on: ubuntu-latest
-    environment: release
+    # No `environment: release`: no secrets needed, so branch dry runs get past it.
     outputs:
       version: ${{ steps.v.outputs.version }}
       date: ${{ steps.v.outputs.date }}
@@ -131,6 +130,10 @@ jobs:
         include:
           - { arch: x64, target: x86_64-pc-windows-msvc }
           - { arch: x86, target: i686-pc-windows-msvc }
+          # Windows on ARM: cross-compiled on the x64 runner, so signing (x64 signtool / Azure
+          # Trusted Signing) and WiX (-arch arm64) run as above. package.ps1 checks the PE machine
+          # type and skips the CLI smoke test, since an ARM64 exe can't run on the x64 runner.
+          - { arch: arm64, target: aarch64-pc-windows-msvc }
     env:
       DECKCRAFT_VERSION: ${{ needs.version.outputs.version }}
       DECKCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -181,7 +184,7 @@ jobs:
     # The oldest GitHub-hosted image, so the binaries only need glibc >= 2.35 (Ubuntu 22.04+,
     # Debian 12+, Fedora 36+, RHEL 10).
     runs-on: ${{ matrix.runner }}
-    environment: release
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
     strategy:
       fail-fast: false
       matrix:
@@ -205,7 +208,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libasound2-dev libxkbcommon-dev libwayland-dev libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev \
-            desktop-file-utils appstream python3-yaml
+            desktop-file-utils appstream python3-yaml zsync
           curl -fsSL -o "$RUNNER_TEMP/nfpm.deb" \
             "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_${{ matrix.deb }}.deb"
           sudo dpkg -i "$RUNNER_TEMP/nfpm.deb"
@@ -229,6 +232,9 @@ jobs:
           for appimage in dist/release/*.AppImage; do
             chmod +x "$appimage"
             APPIMAGE_EXTRACT_AND_RUN=1 "$appimage" --version
+            # Update information is embedded, and the .zsync for delta updates sits beside it.
+            "$appimage" --appimage-updateinformation | grep -F 'gh-releases-zsync|'
+            test -s "$appimage.zsync"
           done
       - uses: actions/upload-artifact@v4
         with:
@@ -236,67 +242,51 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
 
-  flatpak-sources:
-    name: Flatpak crate sources
-    needs: version
-    runs-on: ubuntu-latest
-    environment: release
-    steps:
-      - uses: actions/checkout@v4
-      - name: Vendor the crate sources (flatpak builds run offline)
-        run: |
-          python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet aiohttp tomlkit
-          curl -fsSL -o "$RUNNER_TEMP/flatpak-cargo-generator.py" \
-            https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
-          "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP/flatpak-cargo-generator.py" Cargo.lock -o cargo-sources.json
-      - uses: actions/upload-artifact@v4
-        with:
-          name: flatpak-cargo-sources
-          path: cargo-sources.json
-          if-no-files-found: error
-
   flatpak:
-    name: Linux Flatpak
-    needs: [version, flatpak-sources]
-    runs-on: ubuntu-latest
-    environment: release
-    # Best effort: Flathub builds from source itself (playbook §7); the bundle is a convenience.
-    continue-on-error: true
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:freedesktop-25.08
-      options: --privileged
+    name: Flatpak ${{ matrix.arch }}
+    needs: [version, linux]
+    # Repackages the Linux job's tarball (the same binaries as the AppImage/deb/rpm, with the
+    # craft-fonts embedded); no Rust build here. packaging/linux/flatpak/ai.storyteller.deckcraft.yml
+    # stays the from-source manifest for Flathub. 24.04 for a newer flatpak-builder (1.4) than
+    # 22.04 ships.
+    runs-on: ${{ matrix.runner }}
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
     env:
       DECKCRAFT_VERSION: ${{ needs.version.outputs.version }}
+      DECKCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
     steps:
       - uses: actions/checkout@v4
-      - name: Apply version override
-        if: inputs.version != ''
-        run: |
-          # No cargo in this container: the same edit `cargo xtask version set` makes.
-          sed -i "0,/^version = \".*\"/s//version = \"$DECKCRAFT_VERSION\"/" Cargo.toml
-          grep -m1 '^version' Cargo.toml
       - uses: actions/download-artifact@v4
         with:
-          name: flatpak-cargo-sources
-          path: packaging/linux/flatpak
-      - uses: flatpak/flatpak-github-actions/flatpak-builder@v6
-        with:
-          manifest-path: packaging/linux/flatpak/ai.storyteller.deckcraft.yml
-          bundle: deckcraft-${{ needs.version.outputs.version }}-linux-x86_64.flatpak
-          upload-artifact: false
-          cache-key: flatpak-builder-${{ github.sha }}
+          name: release-linux-${{ matrix.arch }}
+          path: dist/linux
+      - name: Install flatpak-builder
+        run: |
+          sudo apt-get update
+          # librsvg2-common: the SVG pixbuf loader. flatpak-builder runs the host's
+          # `appstreamcli compose`, which can fail without it.
+          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder librsvg2-common
+          # Ubuntu 24.04's AppArmor blocks the unprivileged user namespaces bubblewrap needs.
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build the Flatpak bundle
+        run: packaging/linux/flatpak-bundle.sh "dist/linux/deckcraft-$DECKCRAFT_VERSION-linux-${{ matrix.arch }}.tar.gz"
       - uses: actions/upload-artifact@v4
         with:
-          name: release-flatpak
-          path: deckcraft-*.flatpak
+          name: release-flatpak-${{ matrix.arch }}
+          path: dist/release/*.flatpak
           if-no-files-found: error
 
   freebsd:
     name: FreeBSD x86_64
     needs: version
     runs-on: ubuntu-latest
-    environment: release
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
     timeout-minutes: 240
     env:
       DECKCRAFT_VERSION: ${{ needs.version.outputs.version }}
@@ -330,6 +320,8 @@ jobs:
             export CARGO_TARGET_DIR="$HOME/target" CRAFT_FONTS_DIR="$PWD/craft-fonts" CRAFT_FONTS_REQUIRED=1
             if [ -n "$VERSION_OVERRIDE" ]; then cargo xtask version set "$DECKCRAFT_VERSION"; fi
             bash packaging/freebsd/package.sh
+            tar -tzf dist/release/deckcraft-*-freebsd-x86_64.tar.gz \
+              | grep -E '/bin/deckcraft$|/bin/deckcraft-cli$|/share/applications/ai\.storyteller\.deckcraft\.desktop$'
       - uses: actions/upload-artifact@v4
         with:
           name: release-freebsd
@@ -340,7 +332,7 @@ jobs:
     name: Web (wasm)
     needs: version
     runs-on: ubuntu-latest
-    environment: release
+    # No `environment: release`: this job signs nothing, so it gets no release secrets.
     env:
       DECKCRAFT_VERSION: ${{ needs.version.outputs.version }}
       DECKCRAFT_BUILD_DATE: ${{ needs.version.outputs.date }}
@@ -380,12 +372,9 @@ jobs:
 
   release:
     name: Draft GitHub Release
+    # Every build is required, so the draft always has the full set the README lists. Needing the
+    # signed jobs also keeps branch dry runs from drafting a release.
     needs: [version, macos, windows, linux, flatpak, freebsd, web]
-    # The installers are required; the Flatpak bundle and FreeBSD tarball are attached when they
-    # built.
-    if: >-
-      !cancelled() && needs.version.result == 'success' && needs.macos.result == 'success' &&
-      needs.windows.result == 'success' && needs.linux.result == 'success' && needs.web.result == 'success'
     runs-on: ubuntu-latest
     environment: release
     permissions:
