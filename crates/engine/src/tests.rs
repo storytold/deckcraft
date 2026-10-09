@@ -380,3 +380,23 @@ fn double_click_in_table_uses_grown_row_heights() {
     s.pointer(ev(PointerKind::DoubleClick, 120.0, 106.0)).unwrap();
     assert_eq!(s.doc().unwrap().selection.text.as_ref().and_then(|t| t.cell), Some((0, 0)));
 }
+
+#[test]
+fn grown_table_frame_covers_its_drawn_rows() {
+    // Rows stored 4 pt tall are drawn taller: the box, its handles and hit tests follow the drawn rows.
+    let mut s = session();
+    let data = json!([["a", "b"], ["c", "d"], ["e", "f"]]);
+    let id = s.execute("insert.table", &json!({"rows": 3, "cols": 2, "rect": [100.0, 100.0, 400.0, 120.0], "data": data})).unwrap()["id"].clone();
+    for row in 0..3 {
+        s.execute("table.rowHeight", &json!({"id": id, "row": row, "height": 4.0})).unwrap();
+    }
+    let st = s.doc().unwrap();
+    let sh = st.shapes().iter().find(|sh| json!(sh.id) == id).unwrap().clone();
+    let deckcraft_model::ShapeKind::Table(t) = &sh.kind else { panic!("not a table") };
+    let drawn: f64 = tools::table_rows(st, t).iter().sum();
+    assert!(drawn > 12.0, "rows should grow: {drawn}");
+    let x = cmd::xfrm_of(&st.doc, &st.selection, &sh);
+    assert!((x.h - drawn).abs() < 1e-6, "frame {} vs drawn {drawn}", x.h);
+    let below_stored = deckcraft_geom::Point::new(120.0, 100.0 + drawn - 2.0);
+    assert!(matches!(s.hit_test(below_stored, 1.0), Some(tools::Hit::Shape { .. })));
+}

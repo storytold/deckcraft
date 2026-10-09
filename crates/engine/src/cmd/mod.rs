@@ -246,12 +246,25 @@ pub(crate) fn shape_of(s: &Session, id: ShapeId) -> Result<deckcraft_model::Shap
     s.doc()?.shape(id).cloned().ok_or_else(|| EngineError::Other(format!("no shape {id}")))
 }
 
-/// Effective box of a shape (placeholders inherit theirs).
+/// Effective box of a shape (placeholders inherit theirs). A table's box is at least as tall as its
+/// rows are drawn (rows grow to fit their text), so handles and hit tests match what is shown.
 pub fn xfrm_of(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Xfrm {
-    if let Some(x) = shape.xfrm {
-        return x;
+    let mut x = shape.xfrm.unwrap_or_else(|| ctx_xfrm(doc, sel, shape));
+    if let deckcraft_model::ShapeKind::Table(t) = &shape.kind {
+        let drawn: f64 = table_drawn_heights(doc, sel, t).iter().sum();
+        if drawn.is_finite() && drawn > x.h {
+            x.h = drawn;
+        }
     }
-    ctx_xfrm(doc, sel, shape)
+    x
+}
+
+/// Row heights of table `t` as drawn: a stored height is a minimum, rows grow to fit their text.
+pub fn table_drawn_heights(doc: &deckcraft_model::Presentation, sel: &crate::Selection, t: &deckcraft_model::Table) -> Vec<f64> {
+    match text::ctx_for(doc, sel) {
+        Some(ctx) => deckcraft_render::table_row_heights(&ctx, t, &deckcraft_text::NoFields),
+        None => t.rows.iter().map(|r| r.height).collect(),
+    }
 }
 
 fn ctx_xfrm(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Xfrm {

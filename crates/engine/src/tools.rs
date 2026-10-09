@@ -855,16 +855,28 @@ impl Session {
     }
 
     fn set_xfrm(&mut self, id: ShapeId, x: Xfrm) -> Result<()> {
+        // Rows scale from their drawn heights: a stored height is only a minimum (often 0).
+        let drawn = self.active().and_then(|st| match &st.shape(id)?.kind {
+            ShapeKind::Table(t) => Some(table_rows(st, t)),
+            _ => None,
+        });
         self.edit(|doc, sel| {
             let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("tool", "no slide"))?;
             if let Some(sh) = deckcraft_model::find_shape_mut(list, id) {
                 sh.xfrm = Some(x);
                 if let ShapeKind::Table(t) = &mut sh.kind {
                     // Tables resize their columns and rows proportionally.
-                    let (tw, th) = (t.width().max(1e-6), t.height().max(1e-6));
-                    let (kx, ky) = (x.w / tw, x.h / th);
+                    let heights: Vec<f64> = match &drawn {
+                        Some(d) if d.len() == t.rows.len() => d.clone(),
+                        _ => t.rows.iter().map(|r| r.height).collect(),
+                    };
+                    let (tw, th) = (t.width().max(1e-6), heights.iter().map(|h| h.max(0.0)).sum::<f64>());
+                    let kx = x.w / tw;
                     t.cols.iter_mut().for_each(|c| *c *= kx);
-                    t.rows.iter_mut().for_each(|r| r.height *= ky);
+                    if th > 1e-6 {
+                        let ky = x.h / th;
+                        t.rows.iter_mut().zip(&heights).for_each(|(r, h)| r.height = h.max(0.0) * ky);
+                    }
                 }
             }
             Ok(())
@@ -1259,10 +1271,7 @@ pub fn text_pos(st: &crate::DocState, sh: &Shape, p: Point) -> (usize, usize) {
 
 /// Row heights of table `t` as drawn: rows grow to fit their text.
 pub fn table_rows(st: &crate::DocState, t: &deckcraft_model::Table) -> Vec<f64> {
-    match cmd::text::ctx_for(&st.doc, &st.selection) {
-        Some(ctx) => deckcraft_render::table_row_heights(&ctx, t, &deckcraft_text::NoFields),
-        None => t.rows.iter().map(|r| r.height).collect(),
-    }
+    cmd::table_drawn_heights(&st.doc, &st.selection, t)
 }
 
 /// Which table cell contains a table-local point (`heights` from [`table_rows`]).
