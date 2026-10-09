@@ -292,6 +292,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     if secondary && !show.ended {
         actions.push(show.state.prev(&doc));
     }
+    // Apply input first: a step started by this click must restart the clock before it is read.
+    for a in actions.drain(..) {
+        if !show.apply(a, &doc, now) {
+            keep = false;
+        }
+    }
     // Step clock.
     let (step, playing) = (show.state.step, show.state.playing);
     let t_step = if playing { now - show.step_start } else { 0.0 };

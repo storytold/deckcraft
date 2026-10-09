@@ -34,8 +34,14 @@ pub enum PptxError {
 }
 
 /// Does this look like an OOXML package (zip with `[Content_Types].xml`)?
+///
+/// The part is looked up in the zip's central directory, not in the leading bytes: writers may
+/// store it anywhere in the archive (recent PowerPoint builds put it last, megabytes in).
 pub fn sniff(bytes: &[u8]) -> bool {
-    bytes.starts_with(b"PK") && bytes.windows(19).take(4096).any(|w| w == b"[Content_Types].xml")
+    if !bytes.starts_with(b"PK") {
+        return false;
+    }
+    zip::ZipArchive::new(std::io::Cursor::new(bytes)).map(|z| z.index_for_name("[Content_Types].xml").is_some()).unwrap_or(false)
 }
 
 /// Read a `.pptx` / `.potx` / `.ppsx` package.

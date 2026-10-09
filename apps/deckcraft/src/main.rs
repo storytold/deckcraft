@@ -5,12 +5,18 @@
 //! `--control <port>` (or `DECKCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
 //! `{"id":1,"method":"ui.inspect","params":{}}` → `{"id":1,"ok":true,"result":…}`.
 //! See `deckcraft_ui_egui::control` for the methods.
+//!
+//! `log` records go to standard error and `<settings dir>/logs/deckcraft.log` (`RUST_LOG` sets the
+//! levels); see [`logging`].
 #![cfg_attr(all(target_os = "windows", not(debug_assertions)), windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod audio;
 mod control_server;
+#[cfg(any(target_os = "windows", test))]
+mod graphics;
+mod logging;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -32,8 +38,9 @@ impl eframe::App for App {
     }
 }
 
-fn prefs_path() -> Option<std::path::PathBuf> {
-    let base = if cfg!(target_os = "macos") {
+/// The per-user settings directory: `ui.json`, `prefs.json` and `logs/` live here.
+fn config_dir() -> Option<std::path::PathBuf> {
+    if cfg!(target_os = "macos") {
         std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/DeckCraft"))
     } else if cfg!(windows) {
         std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("DeckCraft"))
@@ -42,8 +49,11 @@ fn prefs_path() -> Option<std::path::PathBuf> {
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
             .map(|c| c.join("deckcraft"))
-    };
-    base.map(|b| b.join("ui.json"))
+    }
+}
+
+fn prefs_path() -> Option<std::path::PathBuf> {
+    config_dir().map(|b| b.join("ui.json"))
 }
 
 fn load_prefs(app: &mut SlideApp) {
@@ -125,6 +135,9 @@ fn app_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result {
+    // First, so every start-up record (and the engine's panic hook, installed with the first
+    // Session) is captured; see `logging`.
+    let logger = logging::install();
     let mut control_port: Option<u16> = std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok());
     let mut files = Vec::new();
     let mut sample = false;
@@ -140,6 +153,19 @@ fn main() -> eframe::Result {
                 return Ok(());
             }
             _ => files.push(a),
+        }
+    }
+    log::info!("DeckCraft {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
+    // The log file lives under the settings directory; opened after the arguments, so `--version`
+    // leaves no file behind. Records logged until now are written to it first.
+    if let Some(logger) = logger {
+        match config_dir().map(|d| logger.attach_dir(&d.join(logging::LOG_DIR))) {
+            Some(Ok(path)) => log::info!("log file {}", path.display()),
+            Some(Err(e)) => log::warn!("no log file: {e}"),
+            None => {
+                logger.stderr_only();
+                log::warn!("no log file: no settings directory (HOME, XDG_CONFIG_HOME or APPDATA is not set)");
+            }
         }
     }
     let mut options = eframe::NativeOptions {
@@ -164,6 +190,9 @@ fn main() -> eframe::Result {
             b.with_x11();
         }));
     }
+    // Before eframe creates the wgpu instance: default Windows to DirectX 12 only (see graphics.rs).
+    #[cfg(target_os = "windows")]
+    graphics::configure(&mut options, eframe::wgpu::Backends::from_env());
     eframe::run_native(
         "DeckCraft",
         options,
@@ -185,11 +214,11 @@ fn main() -> eframe::Result {
                 app = app.with_control(rx);
             }
             if sample && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
-                eprintln!("deckcraft: sample: {e}");
+                log::error!("sample: {e}");
             }
             for f in files {
                 if let Err(e) = app.open_path(&f) {
-                    eprintln!("deckcraft: {f}: {e}");
+                    log::error!("{f}: {e}");
                 }
             }
             if show {

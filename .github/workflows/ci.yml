@@ -23,7 +23,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        # No macOS on PRs or main: the org's 5 macOS slots are kept for release builds, and
+        # release.yml builds macOS (a failing release is fixed and rebuilt).
+        os: [ubuntu-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

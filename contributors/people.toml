@@ -24,3 +24,8 @@ sync_github_name = false
 
 [people.alexanderalber]
 real_name = "Alexander Alber"
+
+[people.switch87]
+real_name = "Gert Pellin"
+display_name = "Gert Pellin"
+sync_github_name = false

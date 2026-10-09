@@ -853,8 +853,7 @@ pub fn start_screen(app: &mut SlideApp, ui: &mut Ui) {
             ui.label(egui::RichText::new("New presentation").font(theme::bold(16.0)));
         });
         ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            ui.add_space(40.0);
+        inset_wrapped(ui, |ui| {
             for th in deckcraft_model::theme::builtin_themes() {
                 let (r, resp) = ui.allocate_exact_size(vec2(180.0, 128.0), Sense::click());
                 let tile = Rect::from_min_size(r.min, vec2(180.0, 101.0));
@@ -905,7 +904,50 @@ pub fn start_screen(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
+/// Wrapped rows that all start 40 points in from the left, in line with the start screen's
+/// headings. The inset is a margin on the container: an `add_space` inside `horizontal_wrapped`
+/// would indent only the first row.
+fn inset_wrapped(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui)) {
+    egui::Frame::NONE.inner_margin(egui::Margin { left: 40, ..Default::default() }).show(ui, |ui| {
+        ui.horizontal_wrapped(add_contents);
+    });
+}
+
 /// PDF bytes with the export dialog's options (web: downloaded instead of written).
 fn deckcraft_pdf_bytes(doc: &deckcraft_model::Presentation, params: &serde_json::Value) -> Vec<u8> {
     deckcraft_engine::cmd::file::pdf_bytes(doc, params).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    /// Start screen theme tiles that wrap onto a second row keep the 40-point inset (#17).
+    #[test]
+    fn inset_wrapped_indents_every_row() {
+        let left = Cell::new(0.0_f32);
+        let tiles = RefCell::new(Vec::<Rect>::new());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(500.0, 400.0)).build_ui(|ui| {
+            left.set(ui.max_rect().left());
+            tiles.borrow_mut().clear();
+            inset_wrapped(ui, |ui| {
+                for _ in 0..4 {
+                    let (r, _) = ui.allocate_exact_size(vec2(180.0, 128.0), Sense::click());
+                    tiles.borrow_mut().push(r);
+                }
+            });
+        });
+        harness.run();
+        let tiles = tiles.borrow().clone();
+        let first_top = tiles.first().map_or(0.0, |r| r.top());
+        assert!(tiles.iter().any(|r| r.top() > first_top), "tiles should wrap onto a second row: {tiles:?}");
+        let mut row_top = f32::NEG_INFINITY;
+        for r in &tiles {
+            if r.top() > row_top {
+                row_top = r.top();
+                assert!((r.left() - (left.get() + 40.0)).abs() < 0.5, "row starts at {} instead of {}", r.left(), left.get() + 40.0);
+            }
+        }
+    }
 }
