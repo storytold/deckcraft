@@ -3,12 +3,11 @@
 //! The cascade for a cluster (a base character with its marks, never split across faces) is:
 //! 1. the faces the document asks for, in order (the run's slot typeface, then the theme's script
 //!    font, `a:font[@script="Arab"]`);
-//! 2. for scripts with a platform cascade (Arabic, Hebrew, Thai, Devanagari): the families the
-//!    macOS and Windows text stacks fall back to for the script (CoreText's and DirectWrite's
-//!    usual picks, found by name among the installed fonts; no platform API is called), then any
-//!    installed face covering the cluster;
-//! 3. the craft-fonts face bundled for the script (Noto Naskh Arabic for Arabic);
-//! 4. any loaded face (bundled first: Japanese keeps its craft-fonts faces), then the first
+//! 2. for scripts with a platform cascade (Arabic, Hebrew, Thai, Devanagari): the craft-fonts face
+//!    bundled for the script (Noto Naskh Arabic for Arabic), so every machine draws the same; then
+//!    openly licensed or OS-native families found by name among the installed fonts (no platform
+//!    API is called); then any installed face covering the cluster;
+//! 3. any loaded face (bundled first: Japanese keeps its craft-fonts faces), then the first
 //!    requested face (drawn as .notdef).
 
 use std::sync::Arc;
@@ -30,14 +29,15 @@ pub fn covers_cluster(face: &FontFace, cluster: &[char]) -> bool {
     cluster.iter().all(|c| ignorable(*c) || face.covers(*c))
 }
 
-/// Installed families the platform's own text stack falls back to for a script, tried before
-/// scanning every installed font.
+/// Installed families tried by name for a script after the bundled face, before scanning every
+/// installed font. Microsoft font names are not listed (AGENTS.md §1.1); an installed one is
+/// still used by the scan when nothing earlier covers the cluster.
 fn os_families(script: ScriptTag) -> &'static [&'static str] {
     match &script {
-        b"Arab" => &["Geeza Pro", "SF Arabic", "Noto Naskh Arabic", "Segoe UI", "Arial", "Tahoma", "Noto Sans Arabic", "DejaVu Sans"],
-        b"Hebr" => &["Arial Hebrew", "SF Hebrew", "Segoe UI", "Arial", "Noto Sans Hebrew", "DejaVu Sans"],
-        b"Thai" => &["Thonburi", "Leelawadee UI", "Tahoma", "Noto Sans Thai"],
-        b"Deva" => &["Kohinoor Devanagari", "Devanagari Sangam MN", "Nirmala UI", "Noto Sans Devanagari"],
+        b"Arab" => &["Noto Naskh Arabic", "Noto Sans Arabic", "Geeza Pro", "SF Arabic", "DejaVu Sans"],
+        b"Hebr" => &["Noto Sans Hebrew", "Arial Hebrew", "SF Hebrew", "DejaVu Sans"],
+        b"Thai" => &["Noto Sans Thai", "Thonburi"],
+        b"Deva" => &["Noto Sans Devanagari", "Kohinoor Devanagari", "Devanagari Sangam MN"],
         _ => &[],
     }
 }
@@ -52,7 +52,7 @@ pub fn bundled_families(script: ScriptTag) -> Vec<&'static str> {
 
 impl FontDb {
     /// The face for one grapheme cluster: the first of `chain` that draws all of it, else the
-    /// system's fallback for its script, else the bundled face for the script, else any loaded
+    /// bundled face for its script, else an installed face for the script, else any loaded
     /// face that draws it, else `chain[0]` (or the default face if `chain` is empty).
     pub fn cascade(&self, cluster: &[char], chain: &[Arc<FontFace>], style: &str) -> Arc<FontFace> {
         if let Some(f) = chain.iter().find(|f| covers_cluster(f, cluster)) {
@@ -61,13 +61,18 @@ impl FontDb {
         let first = || chain.first().cloned().unwrap_or_else(|| self.face(crate::DEFAULT_FAMILY, style));
         let Some(key) = cluster.iter().copied().find(|c| !ignorable(*c)) else { return first() };
         let script = cluster.iter().find_map(|c| script_of(*c));
-        // Scripts with a platform cascade (Arabic, Hebrew, Thai, Devanagari) go to the system
-        // before the bundled face; the others keep the loaded-faces-first order (Japanese
-        // documents prefer the bundled craft-fonts faces).
+        // Scripts with a platform cascade (Arabic, Hebrew, Thai, Devanagari): the bundled face,
+        // then installed ones; the others keep the loaded-faces-first order (Japanese documents
+        // prefer the bundled craft-fonts faces).
         if let Some(s) = script.filter(|s| !os_families(*s).is_empty()) {
             let bundled = bundled_families(s);
+            for fam in &bundled {
+                let f = self.face(fam, style);
+                if f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
+                    return f;
+                }
+            }
             for fam in os_families(s) {
-                // The bundled face is step 3, even when it is also installed.
                 if bundled.contains(fam) {
                     continue;
                 }
@@ -81,12 +86,6 @@ impl FontDb {
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(f) = self.system_face_for(key, cluster, &bundled) {
                 return f;
-            }
-            for fam in &bundled {
-                let f = self.face(fam, style);
-                if f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
-                    return f;
-                }
             }
         }
         let exclude = chain.first().map(|f| f.id()).unwrap_or(u32::MAX);
