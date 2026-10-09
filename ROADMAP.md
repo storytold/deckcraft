@@ -27,7 +27,8 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 - Transitions (fade, push, wipe, split, cover, uncover, zoom, morph…) and animations (entrance,
   emphasis, exit, motion paths, triggers, by-paragraph builds) on a shared timeline engine.
 - Slide show: full screen, keyboard/mouse navigation, blank screens, go-to-slide, pen, presenter
-  window, rehearse timings, custom shows, Set Up Show; Reading View.
+  window, rehearse timings, custom shows, Set Up Show; Reading View; hyperlinks and shape actions
+  are followed on click (slides, web pages, email, End Show, Last Slide Viewed).
 - Views: Normal (thumbnails with sections, slide, notes), Outline, Slide Sorter, Notes Page,
   Slide Master; zoom; grayscale.
 - Review: comments, accessibility checker, spelling.

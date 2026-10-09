@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 pub use easing::ease;
 pub use morph::{MorphFrame, MorphText, morph_frame, morph_pairs, morph_xfrm};
 pub use path::{MotionPath, default_path};
-pub use show::{ShowAction, ShowState, show_order};
+pub use show::{LinkJump, ShowAction, ShowState, show_order};
 pub use timeline::{EffectTiming, Sequence, Timeline, TriggerPlay};
 pub use transition::{Layer, Source, transition_layers};
 

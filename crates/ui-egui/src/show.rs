@@ -1,7 +1,8 @@
 //! Slide Show: full-screen playback with transitions and animations (`deckcraft-anim`),
 //! keyboard/mouse navigation, pen, black/white screens, presenter view and rehearsed timings.
 
-use deckcraft_anim::{Layer, ShowAction, ShowState, Source, Timeline};
+use deckcraft_anim::{Layer, LinkJump, ShowAction, ShowState, Source, Timeline};
+use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Presentation, ShapeId};
 use deckcraft_render::{ParaState, RenderOpts, ShapeState};
 use egui::{Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, pos2, vec2};
@@ -37,6 +38,10 @@ pub struct Show {
     pub ended: bool,
     /// The slide whose media was last started (auto-play runs once per visit).
     media_slide: Option<usize>,
+    /// The slide shown before the current one (the Last Slide Viewed action).
+    last_viewed: Option<usize>,
+    /// Click areas of hyperlinks and shape actions on slide `.0`, in slide points.
+    links: Option<(usize, Vec<deckcraft_render::PlacedLink>)>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -86,6 +91,8 @@ impl Show {
             last_move: 0.0,
             ended: false,
             media_slide: None,
+            last_viewed: None,
+            links: None,
         }
     }
 
@@ -123,6 +130,9 @@ impl Show {
                     .unwrap_or(("none".into(), String::new(), 0.0));
                 let old = self.tex.as_ref().map(|(_, t)| t.clone());
                 let from = self.tex.as_ref().map(|(k, _)| k.slide);
+                if from != Some(i) {
+                    self.last_viewed = from;
+                }
                 self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
                     Some(Transition { old, from, morph: None, start: now, kind, option, dur })
                 } else {
@@ -277,9 +287,19 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             _ => {}
         }
     }
-    let media_click = if clicked && !show.pen && !show.ended && show.blank.is_none() { media_hit(&ctx, ui, &show, &doc) } else { None };
+    let on_slide = !show.pen && !show.ended && show.blank.is_none() && !show.reading_bar_hit(&ctx);
+    let media_click = if clicked && on_slide { media_hit(&ctx, ui, &show, &doc) } else { None };
+    let link = if on_slide && media_click.is_none() { link_hit(&ctx, ui, &mut show, &doc) } else { None };
     if let Some((id, clip)) = media_click {
         app.media.toggle(&doc, id, &clip, crate::media::Owner::Show);
+    } else if clicked && let Some(l) = &link {
+        let last = show.last_viewed;
+        match show.state.follow(&doc, &l.action, last) {
+            LinkJump::Show(a) => actions.push(a),
+            LinkJump::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
+            LinkJump::Exit => keep = false,
+            LinkJump::None => {}
+        }
     } else if clicked && !show.pen && !show.reading_bar_hit(&ctx) {
         if show.ended {
             keep = false;
@@ -490,6 +510,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             s.push(pos2((p.x - srect.min.x) / srect.width(), (p.y - srect.min.y) / srect.height()));
         }
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+    } else if link.is_some() {
+        ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
     } else if now - show.last_move > 2.5 && !show.reading {
         ctx.set_cursor_icon(egui::CursorIcon::None);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
@@ -632,6 +654,23 @@ fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Presentation) -> O
         let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
         r.contains(p).then_some((id, clip))
     })
+}
+
+/// The link under the pointer: the topmost shape action or text hyperlink on the current slide
+/// (a text link wins over its shape's action).
+fn link_hit(ctx: &egui::Context, ui: &Ui, show: &mut Show, doc: &Presentation) -> Option<Hyperlink> {
+    let p = ctx.input(|i| i.pointer.hover_pos())?;
+    let full = ui.max_rect();
+    let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
+    let srect = fit(avail, doc);
+    let k = (srect.width() / doc.slide_size.width.max(1.0) as f32) as f64;
+    let (x, y) = ((p.x - srect.min.x) as f64 / k, (p.y - srect.min.y) as f64 / k);
+    let i = show.state.slide;
+    if show.links.as_ref().is_none_or(|(s, _)| *s != i) {
+        show.links = Some((i, deckcraft_render::place_slide(doc, i).links));
+    }
+    let (_, links) = show.links.as_ref()?;
+    links.iter().rev().find(|l| l.rect.x0 <= x && x <= l.rect.x1 && l.rect.y0 <= y && y <= l.rect.y1).map(|l| l.link.clone())
 }
 
 impl Show {

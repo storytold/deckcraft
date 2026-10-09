@@ -723,3 +723,25 @@ fn compose_and_sanitize() {
     let bad = AnimState { opacity: f64::NAN, rotate: f64::INFINITY, clip: Some([f64::NAN, 2.0, -1.0, 0.5]), ..Default::default() }.sanitized();
     assert!(finite(&bad));
 }
+
+#[test]
+fn show_follows_links() {
+    use deckcraft_model::text::Action;
+    let mut p = pres(4);
+    Arc::make_mut(&mut p.slides[3]).hidden = true;
+    let mut s = ShowState::new(&p);
+    assert_eq!(s.follow(&p, &Action::Slide { slide: SlideId(1002) }, None), LinkJump::Show(ShowAction::Slide(2)));
+    assert_eq!(s.follow(&p, &Action::PreviousSlide, None), LinkJump::Show(ShowAction::Slide(1)));
+    assert_eq!(s.follow(&p, &Action::NextSlide, None), LinkJump::Show(ShowAction::Slide(2)));
+    // Last skips the hidden slide; a link to the hidden slide shows it.
+    assert_eq!(s.follow(&p, &Action::LastSlide, None), LinkJump::Show(ShowAction::Slide(2)));
+    assert_eq!(s.follow(&p, &Action::Slide { slide: SlideId(1003) }, None), LinkJump::Show(ShowAction::Slide(3)));
+    assert_eq!(s.follow(&p, &Action::FirstSlide, None), LinkJump::Show(ShowAction::Slide(0)));
+    assert_eq!(s.follow(&p, &Action::LastViewed, Some(3)), LinkJump::Show(ShowAction::Slide(3)));
+    assert_eq!(s.slide, 3);
+    assert_eq!(s.follow(&p, &Action::Url { url: "https://example.org".into() }, None), LinkJump::Open("https://example.org".into()));
+    assert_eq!(s.follow(&p, &Action::EndShow, None), LinkJump::Exit);
+    assert_eq!(s.follow(&p, &Action::Slide { slide: SlideId(9) }, None), LinkJump::None, "a link to a deleted slide does nothing");
+    assert_eq!(s.follow(&p, &Action::LastViewed, None), LinkJump::None);
+    assert_eq!(s.slide, 3);
+}

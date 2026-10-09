@@ -425,3 +425,53 @@ fn right_to_left_paragraphs() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(para(&s).rtl, Some(true));
 }
+
+/// (text, linked?) of each run in the first paragraph of the current slide's title.
+fn title_runs(s: &Session) -> Vec<(String, bool)> {
+    let sh = &s.doc().unwrap().current_slide().unwrap().shapes[0];
+    let p = &sh.text.as_ref().unwrap().paragraphs[0];
+    p.runs.iter().map(|r| (r.text.clone(), r.props.link.is_some())).collect()
+}
+
+#[test]
+fn hyperlink_with_a_bare_caret_inserts_the_address() {
+    // #31: with the caret at the end of the text, Insert Hyperlink used to format an empty range
+    // and change nothing.
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "See "})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    s.execute("text.insert", &json!({"text": " now"})).unwrap();
+    assert_eq!(
+        title_runs(&s),
+        vec![("See ".into(), false), ("https://example.org".into(), true), (" now".into(), false)],
+        "the address is inserted as a link, and typing after it doesn't extend it"
+    );
+}
+
+#[test]
+fn hyperlink_display_text_and_targets() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "mailto:a@b.org"})).unwrap();
+    assert_eq!(title_runs(&s), vec![("a@b.org".into(), true)], "email links show the address without mailto:");
+    s.execute("text.insert", &json!({"text": " "})).unwrap();
+    s.execute("insert.hyperlink", &json!({"slide": 0, "text": "start"})).unwrap();
+    assert_eq!(title_runs(&s), vec![("a@b.org".into(), true), (" ".into(), false), ("start".into(), true)]);
+}
+
+#[test]
+fn hyperlink_on_a_word_or_shape_links_it() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "Hello world"})).unwrap();
+    s.execute("text.move", &json!({"to": "left"})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    assert_eq!(title_runs(&s), vec![("Hello ".into(), false), ("world".into(), true)], "a caret inside a word links the word");
+    s.execute("text.exit", &json!({})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    assert!(s.doc().unwrap().current_slide().unwrap().shapes[0].click.is_some(), "a selected shape gets the link as its click action");
+}
