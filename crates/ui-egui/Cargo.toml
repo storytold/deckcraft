@@ -18,6 +18,7 @@ deckcraft-render = { workspace = true }
 deckcraft-anim = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-media = { workspace = true }
+epaint_default_fonts = "0.36"
 egui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

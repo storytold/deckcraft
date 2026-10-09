@@ -7,6 +7,8 @@
 //!
 //! Layouts: one slide per page, notes pages (slide above its speaker notes) and handouts (1, 2, 3,
 //! 4, 6 or 9 slides per page).
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable))]
+#![forbid(unsafe_code)]
 
 use std::collections::HashMap;
 

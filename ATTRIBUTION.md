@@ -32,7 +32,9 @@ deck and UI icons are original work of the DeckCraft contributors (drawn or gene
 | Asset | Author | Source | Licence | Used for |
 |---|---|---|---|---|
 | Ubuntu Light (`Ubuntu-Light.ttf`, via the `epaint_default_fonts` crate 0.36) | Dalton Maag Ltd for Canonical | https://crates.io/crates/epaint_default_fonts | Ubuntu Font Licence 1.0 | Last-resort text face when no other font is available; UI fallback |
-| Hack Regular, Noto Emoji, emoji-icon-font (via `epaint_default_fonts` / egui) | Source Foundry; Google; Jakub Steiner et al. | https://crates.io/crates/epaint_default_fonts | MIT / Bitstream-Vera, OFL-1.1, MIT | egui UI fallback glyphs |
+
+DeckCraft disables egui/eframe's `default_fonts` feature so the other faces in
+`epaint_default_fonts` (including Noto Emoji) are not selected or linked into the applications.
 
 ## Embedded at build time from craft-fonts (`CRAFT_FONTS_DIR`)
 
