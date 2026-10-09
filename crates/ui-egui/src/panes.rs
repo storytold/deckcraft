@@ -75,7 +75,7 @@ fn color_button(
         ui.label(label);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             let r = widgets::drop_button(ui, "Color", vec2(70.0, 22.0), true);
-            egui::Popup::menu(&r).show(|ui| {
+            widgets::color_popup(&r).show(|ui| {
                 if let Some(c) = widgets::color_grid(ui, &sc, none_label) {
                     let (id, p) = on_pick(c);
                     run(app, &id, p);
@@ -391,7 +391,7 @@ fn background(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.label("Color");
                 let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
-                egui::Popup::menu(&r).show(|ui| {
+                widgets::color_popup(&r).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                         run(app, "design.background", json!({"color": cref_param(&c)}));
                     }
@@ -417,7 +417,7 @@ fn background(app: &mut SlideApp, ui: &mut Ui) {
                 ui.horizontal(|ui| {
                     ui.label(label);
                     let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
-                    egui::Popup::menu(&r).show(|ui| {
+                    widgets::color_popup(&r).show(|ui| {
                         if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                             let (f, b) = if fg { (c, pt.bg.clone()) } else { (pt.fg.clone(), c) };
                             run(app, "design.background", json!({"pattern": {"preset": pt.preset, "fg": cref_param(&f), "bg": cref_param(&b)}}));
