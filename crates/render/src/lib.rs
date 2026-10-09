@@ -29,7 +29,7 @@ use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _, Vec2};
 use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::{RenderContext, Resources, peniko};
 
-pub use images::decode as decode_image;
+pub use images::{decode as decode_image, gif_frame};
 pub use morph_text::TextMorph;
 pub use placed::{Placed, PlacedLink, PlacedText, place_slide};
 pub use table::row_heights as table_row_heights;
@@ -143,6 +143,8 @@ pub struct RenderOpts<'a> {
     pub skip: &'a [ShapeId],
     /// Hide the text of this shape (the UI draws it while editing).
     pub skip_text: Option<ShapeId>,
+    /// Animated GIF pictures and how far into their play they are (seconds); others show frame 1.
+    pub gif_times: &'a [(ShapeId, f64)],
     /// Worker threads (0 = this thread; required when effects use filters).
     pub threads: u16,
     /// Translate the slide within the output (pixels) and output size override.
@@ -162,6 +164,7 @@ impl Default for RenderOpts<'_> {
             state: None,
             skip: &[],
             skip_text: None,
+            gif_times: &[],
             threads: 0,
             offset: (0.0, 0.0),
             size: None,
@@ -641,7 +644,8 @@ impl Renderer {
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 ctx.push_clip_layer(&outline);
-                paint::picture(ctx, f.pres, pf, bounds, m);
+                let t = f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1);
+                paint::picture(ctx, f.pres, pf, bounds, m, t);
                 ctx.pop_layer();
             }
             ShapeKind::Media(mc) => {
@@ -649,7 +653,7 @@ impl Renderer {
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 if let Some(p) = mc.poster {
                     let pf = deckcraft_model::style::PictureFill { media: p, ..Default::default() };
-                    paint::picture(ctx, f.pres, &pf, bounds, m);
+                    paint::picture(ctx, f.pres, &pf, bounds, m, None);
                 } else if mc.video {
                     ctx.set_paint(peniko::Color::from_rgba8(20, 20, 24, 255));
                     ctx.fill_rect(&bounds);

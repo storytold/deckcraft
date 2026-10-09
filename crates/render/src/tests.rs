@@ -272,3 +272,36 @@ fn morph_text_ends_match_the_slides() {
     let ink = (95..140).flat_map(|y| (0..480).map(move |x| (x, y))).filter(|&(x, y)| mid.pixel(x, y)[0] < 128).count();
     assert!(ink > 50, "ink {ink}");
 }
+
+/// Two 8×8 frames, red then blue, 100 ms each.
+fn two_frame_gif() -> Vec<u8> {
+    use image::{Delay, Frame, Rgba, RgbaImage};
+    let frame = |c: [u8; 4]| Frame::from_parts(RgbaImage::from_pixel(8, 8, Rgba(c)), 0, 0, Delay::from_numer_denom_ms(100, 1));
+    let mut out = Vec::new();
+    image::codecs::gif::GifEncoder::new(&mut out).encode_frames([frame([255, 0, 0, 255]), frame([0, 0, 255, 255])]).expect("gif");
+    out
+}
+
+#[test]
+fn animated_gif_shows_the_frame_for_its_time() {
+    let mut p = Presentation::default();
+    let media = p.add_media("a.gif", "image/gif", two_frame_gif());
+    let fill = deckcraft_model::style::PictureFill { media, ..Default::default() };
+    let sh = Shape { id: ShapeId(600), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Picture { fill }, ..Default::default() };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];
+    let at = |t: Option<f64>| {
+        let times: Vec<(ShapeId, f64)> = t.map(|t| vec![(ShapeId(600), t)]).unwrap_or_default();
+        render_slide(&p, 0, &RenderOpts { scale: 0.1, gif_times: &times, ..Default::default() }).pixel(48, 27)
+    };
+    let red = |px: [u8; 4]| px[0] > 200 && px[2] < 60;
+    let blue = |px: [u8; 4]| px[2] > 200 && px[0] < 60;
+    assert!(red(at(None)), "no time: the first frame, as exports draw it");
+    assert!(red(at(Some(0.05))));
+    assert!(blue(at(Some(0.15))));
+    assert!(red(at(Some(0.25))), "it loops");
+    let bytes = p.media(media).map(|m| m.data.clone()).expect("media");
+    let adj = Default::default();
+    assert_eq!(gif_frame(&bytes, &adj, 0.15).map(|f| f.0), Some(1));
+    assert_eq!(gif_frame(&bytes, &adj, f64::NAN).map(|f| f.0), Some(0));
+    assert!(gif_frame(&std::sync::Arc::new(b"\x89PNG".to_vec()), &adj, 0.0).is_none());
+}

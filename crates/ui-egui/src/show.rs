@@ -47,6 +47,8 @@ struct Key {
     doc: usize,
     /// Media hidden while not playing.
     hidden: Vec<ShapeId>,
+    /// The frames animated GIFs show.
+    gif: u64,
 }
 
 struct Transition {
@@ -277,8 +279,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             _ => {}
         }
     }
+    let gif_click = if clicked && !show.pen && !show.ended && show.blank.is_none() { gif_hit(&ctx, ui, &show, &doc, app) } else { None };
     let media_click = if clicked && !show.pen && !show.ended && show.blank.is_none() { media_hit(&ctx, ui, &show, &doc) } else { None };
-    if let Some((id, clip)) = media_click {
+    if let Some(id) = gif_click {
+        let _ = app.run("media.gifPlay", json!({"id": id}));
+    } else if let Some((id, clip)) = media_click {
         app.media.toggle(&doc, id, &clip, crate::media::Owner::Show);
     } else if clicked && !show.pen && !show.reading_bar_hit(&ctx) {
         if show.ended {
@@ -355,7 +360,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             })
             .map(|m| m.0)
             .collect();
-        let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: hidden.clone() };
+        let gifs = app.media.gifs(&doc, idx, now, &app.session.gif_paused);
+        let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
+        crate::media::gif_repaint(&ctx, &gifs);
+        let gif = crate::media::gif_key(&gifs);
+        let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: hidden.clone(), gif };
         let tex = if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == key) {
             show.tex.as_ref().map(|(_, t)| t.clone())
         } else {
@@ -377,6 +386,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     scale: size.0 as f64 / doc.slide_size.width.max(1.0),
                     size: Some(size),
                     state: Some(&f),
+                    gif_times: &times,
                     threads,
                     ..Default::default()
                 },
@@ -469,6 +479,16 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k))
                 };
                 crate::media::paint_frame(&painter, &app.media, *id, r);
+            }
+            // Play/pause on the animated GIF under the pointer.
+            if let Some(p) = ctx.input(|i| i.pointer.hover_pos()).filter(|_| !show.pen && now - show.last_move < 2.5) {
+                for g in &gifs {
+                    let r = on_screen(srect, k, &g.rect);
+                    if r.contains(p) {
+                        let b = crate::media::gif_button_rect(r);
+                        crate::media::paint_gif_button(&painter, b, g.paused, b.contains(p));
+                    }
+                }
             }
         }
         if animating {
@@ -632,6 +652,22 @@ fn media_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Presentation) -> O
         let r = Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k));
         r.contains(p).then_some((id, clip))
     })
+}
+
+/// A slide-space box on screen, the slide being drawn in `srect` at `k` pixels per point.
+fn on_screen(srect: Rect, k: f32, x: &deckcraft_geom::Xfrm) -> Rect {
+    Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k))
+}
+
+/// The animated GIF whose play/pause button is under the pointer on the shown slide.
+fn gif_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Presentation, app: &mut SlideApp) -> Option<ShapeId> {
+    let p = ctx.input(|i| i.pointer.interact_pos())?;
+    let full = ui.max_rect();
+    let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
+    let srect = fit(avail, doc);
+    let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
+    let gifs = app.media.gifs(doc, show.state.slide, ctx.input(|i| i.time), &app.session.gif_paused);
+    gifs.iter().rev().find(|g| crate::media::gif_button_rect(on_screen(srect, k, &g.rect)).contains(p)).map(|g| g.id)
 }
 
 impl Show {

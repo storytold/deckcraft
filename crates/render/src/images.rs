@@ -21,6 +21,31 @@ struct Cache {
     bytes: usize,
     clock: u64,
     bad: HashMap<usize, Arc<Vec<u8>>>,
+    /// GIFs by bytes address and adjustments (`None`: not animated); the bytes stay alive with them.
+    anims: HashMap<(usize, u64), (Arc<Vec<u8>>, Option<Arc<Anim>>)>,
+}
+
+/// Longest side and total decoded size kept for one animated GIF.
+const GIF_SIDE: u32 = 1024;
+const GIF_BUDGET: usize = 256 << 20;
+
+/// The frames of an animated GIF and when each one ends, in seconds from the start of a loop.
+struct Anim {
+    frames: Vec<Arc<Pixmap>>,
+    ends: Vec<f64>,
+}
+
+impl Anim {
+    /// The frame showing `t` seconds into the (looping) animation and the seconds until the next.
+    fn at(&self, t: f64) -> (usize, f64) {
+        let total = self.ends.last().copied().unwrap_or(0.0);
+        if total <= 0.0 || !t.is_finite() {
+            return (0, 1.0);
+        }
+        let local = t.max(0.0) % total;
+        let i = self.ends.partition_point(|e| *e <= local).min(self.ends.len().saturating_sub(1));
+        (i, (self.ends.get(i).copied().unwrap_or(total) - local).max(0.001))
+    }
 }
 
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
@@ -94,18 +119,7 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
     }
     apply_adjust(&mut img, adj);
     let (w, h) = img.dimensions();
-    if w > u16::MAX as u32 || h > u16::MAX as u32 {
-        return None;
-    }
-    let data: Vec<vello_cpu::color::PremulRgba8> = img
-        .pixels()
-        .map(|p| {
-            let a = p[3] as u16;
-            let m = |c: u8| ((c as u16 * a + 127) / 255) as u8;
-            vello_cpu::color::PremulRgba8 { r: m(p[0]), g: m(p[1]), b: m(p[2]), a: p[3] }
-        })
-        .collect();
-    let pm = Arc::new(Pixmap::from_parts(data, w as u16, h as u16));
+    let pm = pixmap(&img)?;
     with(|c| {
         c.clock += 1;
         let n = w as usize * h as usize * 4;
@@ -119,6 +133,88 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
         }
     });
     Some(pm)
+}
+
+/// Straight RGBA to a premultiplied pixmap.
+fn pixmap(img: &image::RgbaImage) -> Option<Arc<Pixmap>> {
+    let (w, h) = img.dimensions();
+    if w > u16::MAX as u32 || h > u16::MAX as u32 {
+        return None;
+    }
+    let data: Vec<vello_cpu::color::PremulRgba8> = img
+        .pixels()
+        .map(|p| {
+            let a = p[3] as u16;
+            let m = |c: u8| ((c as u16 * a + 127) / 255) as u8;
+            vello_cpu::color::PremulRgba8 { r: m(p[0]), g: m(p[1]), b: m(p[2]), a: p[3] }
+        })
+        .collect();
+    Some(Arc::new(Pixmap::from_parts(data, w as u16, h as u16)))
+}
+
+/// Decode every frame of an animated GIF (`None` for a still or broken one).
+fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
+    use image::{AnimationDecoder, ImageDecoder};
+    let mut dec = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).ok()?;
+    dec.set_limits(image::Limits::default()).ok()?;
+    let (w, h) = dec.dimensions();
+    if w == 0 || h == 0 || (w as u64) * (h as u64) > 100_000_000 {
+        return None;
+    }
+    let k = (GIF_SIDE as f64 / w.max(h) as f64).min(1.0);
+    let (nw, nh) = (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1));
+    let size = nw as usize * nh as usize * 4;
+    let (mut frames, mut ends, mut t) = (Vec::new(), Vec::new(), 0.0);
+    for f in dec.into_frames() {
+        let Ok(f) = f else { break };
+        if (frames.len() + 1) * size > GIF_BUDGET {
+            log::info!("animated GIF: keeping its first {} frames", frames.len());
+            break;
+        }
+        let (n, d) = f.delay().numer_denom_ms();
+        let ms = if d == 0 { 0.0 } else { n as f64 / d as f64 };
+        // Like browsers: frames of 10 ms or less show for 100 ms.
+        t += if ms <= 10.0 { 0.1 } else { ms / 1000.0 };
+        let mut img = f.into_buffer();
+        if img.dimensions() != (nw, nh) {
+            img = image::imageops::resize(&img, nw, nh, image::imageops::FilterType::Triangle);
+        }
+        apply_adjust(&mut img, adj);
+        frames.push(pixmap(&img)?);
+        ends.push(t);
+    }
+    (frames.len() > 1).then_some(Anim { frames, ends })
+}
+
+/// The decoded animation of GIF bytes, once per bytes and adjustments.
+fn anim(bytes: &Arc<Vec<u8>>, adj: &PictureAdjust) -> Option<Arc<Anim>> {
+    if !bytes.starts_with(b"GIF8") {
+        return None;
+    }
+    let key = (Arc::as_ptr(bytes) as usize, adjust_key(adj));
+    if let Some(a) = with(|c| c.anims.get(&key).map(|e| e.1.clone())) {
+        return a;
+    }
+    let a = decode_anim(bytes, adj).map(Arc::new);
+    with(|c| {
+        if c.anims.len() >= 8 {
+            c.anims.clear();
+        }
+        c.anims.insert(key, (bytes.clone(), a.clone()));
+    });
+    a
+}
+
+/// For an animated GIF: the frame showing `t` seconds into its (looping) play and the seconds until
+/// the next frame. `None` for anything else.
+pub fn gif_frame(bytes: &Arc<Vec<u8>>, adj: &PictureAdjust, t: f64) -> Option<(usize, f64)> {
+    anim(bytes, adj).map(|a| a.at(t))
+}
+
+/// The frame of an animated GIF at `t` seconds.
+pub(crate) fn gif_pixmap(bytes: &Arc<Vec<u8>>, adj: &PictureAdjust, t: f64) -> Option<Arc<Pixmap>> {
+    let a = anim(bytes, adj)?;
+    a.frames.get(a.at(t).0).cloned()
 }
 
 fn apply_adjust(img: &mut image::RgbaImage, a: &PictureAdjust) {
