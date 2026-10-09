@@ -24,6 +24,7 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::style::{Effects, Fill, Line};
 use deckcraft_model::text::TextBody;
 use deckcraft_model::{Geom, PhType, Presentation, Shape, ShapeId, ShapeKind, Slide};
+use deckcraft_text::datetime::{self, DateTime};
 use deckcraft_text::{Fields, Opts};
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _, Vec2};
 use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
@@ -150,7 +151,10 @@ pub struct RenderOpts<'a> {
     pub size: Option<(u32, u32)>,
     /// Draw a background colour outside the slide (output larger than slide).
     pub clear: Option<Rgba>,
+    /// Show this text in every date field instead of the date.
     pub date_text: Option<String>,
+    /// The local date and time date fields show (`None`: the system clock).
+    pub now: Option<DateTime>,
 }
 
 impl Default for RenderOpts<'_> {
@@ -167,23 +171,39 @@ impl Default for RenderOpts<'_> {
             size: None,
             clear: None,
             date_text: None,
+            now: None,
         }
     }
 }
 
 struct SlideFields {
     num: u32,
-    date: String,
+    /// Text for every date field instead of the date ([`RenderOpts::date_text`]).
+    date: Option<String>,
     footer: String,
+    /// The local date and time date fields show; `None`: they keep their saved text.
+    now: Option<DateTime>,
+}
+
+impl SlideFields {
+    fn new(num: u32, footer: String, opts: &RenderOpts) -> Self {
+        SlideFields { num, date: opts.date_text.clone(), footer, now: opts.now.or_else(DateTime::now_local) }
+    }
 }
 
 impl Fields for SlideFields {
     fn field(&self, kind: &str) -> Option<String> {
+        self.field_in(kind, None)
+    }
+
+    fn field_in(&self, kind: &str, lang: Option<&str>) -> Option<String> {
         if kind == "slidenum" {
             return Some(self.num.to_string());
         }
-        if kind.starts_with("datetime") {
-            return Some(self.date.clone());
+        if datetime::is_date_field(kind) {
+            // An automatic date: today's, in the format of its type. (A fixed date is plain text
+            // in the slide's placeholder, not a field.)
+            return self.date.clone().or_else(|| datetime::field_text(kind, lang, self.now?));
         }
         if kind == "footer" {
             return Some(self.footer.clone());
@@ -410,11 +430,7 @@ impl Renderer {
     }
 
     fn fields(pres: &Presentation, index: usize, opts: &RenderOpts) -> SlideFields {
-        SlideFields {
-            num: pres.slide_number(index),
-            date: opts.date_text.clone().unwrap_or_else(|| pres.header_footer.date_text.clone()),
-            footer: pres.header_footer.footer_text.clone(),
-        }
+        SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts)
     }
 
     /// Background plus the master and layout graphics the slide shows.
@@ -509,7 +525,7 @@ impl Renderer {
         let (w, h) = output_size(pres, opts);
         let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
         let view = Affine::translate((opts.offset.0, opts.offset.1)) * Affine::scale(opts.scale);
-        let f = Frame { pres, opts, fields: SlideFields { num: 1, date: String::new(), footer: String::new() } };
+        let f = Frame { pres, opts, fields: SlideFields::new(1, String::new(), opts) };
         if let Some(m) = pres.masters.get(mi) {
             match li.and_then(|i| m.layouts.get(i)) {
                 Some(l) => {
@@ -1105,7 +1121,7 @@ pub fn render_shape(pres: &Presentation, slide: &Slide, id: ShapeId, scale: f64)
     let h = (b.height() * scale).ceil().clamp(1.0, MAX_SIDE as f64) as u16;
     let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
     let opts = RenderOpts { scale, ..Default::default() };
-    let f = Frame { pres, opts: &opts, fields: SlideFields { num: 1, date: String::new(), footer: String::new() } };
+    let f = Frame { pres, opts: &opts, fields: SlideFields::new(1, String::new(), &opts) };
     let view = Affine::scale(scale) * Affine::translate(-b.origin().to_vec2());
     RENDERER.with(|r| {
         let mut r = r.borrow_mut();

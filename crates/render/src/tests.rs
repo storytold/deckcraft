@@ -272,3 +272,48 @@ fn morph_text_ends_match_the_slides() {
     let ink = (95..140).flat_map(|y| (0..480).map(move |x| (x, y))).filter(|&(x, y)| mid.pixel(x, y)[0] < 128).count();
     assert!(ink > 50, "ink {ink}");
 }
+
+/// A text box holding one run of `kind` (a field type, or plain text for `None`) saved as `saved`.
+fn field_shape(kind: Option<&str>, saved: &str) -> Shape {
+    let mut sh = text_shape(1, saved, 40.0, 40.0);
+    if let (Some(k), Some(run)) = (kind, sh.text.as_mut().and_then(|t| t.paragraphs[0].runs.first_mut())) {
+        run.kind = deckcraft_model::text::RunKind::Field { field: k.into() };
+    }
+    sh
+}
+
+#[test]
+fn date_fields_show_the_date_in_their_format() {
+    use deckcraft_text::datetime::DateTime;
+    let fri = DateTime::new(2026, 10, 9, 20, 5, 7);
+    let at = |p: &Presentation, now: DateTime| render_slide(p, 0, &RenderOpts { scale: 0.5, now: Some(now), ..Default::default() });
+    let mut p = deck_with(vec![field_shape(Some("datetime1"), "1/1/2000")]);
+    let _ = at(&p, fri); // faces load lazily
+    // The field shows the date (it changes with the clock), not its saved text.
+    let a = at(&p, fri);
+    assert!(diff_px(&a, &at(&p, DateTime::new(2027, 3, 4, 0, 0, 0))) > 0);
+    let shown = deck_with(vec![field_shape(None, "10/9/2026")]);
+    assert_eq!(diff_px(&a, &at(&shown, fri)), 0, "datetime1 is M/D/YYYY");
+    // Another slide's fixed date (a deck-wide Header & Footer text) doesn't replace it.
+    p.header_footer.date_text = "Fixed on another slide".into();
+    assert_eq!(diff_px(&a, &at(&p, fri)), 0);
+    // Every type has its format; the run's language orders numeric dates.
+    let f = Renderer::fields(&p, 0, &RenderOpts { now: Some(fri), ..Default::default() });
+    assert_eq!(f.field_in("datetime4", Some("en-US")).as_deref(), Some("October 9, 2026"));
+    assert_eq!(f.field_in("datetimeFigureOut", Some("en-GB")).as_deref(), Some("09/10/2026"));
+    assert_eq!(f.field("datetime13").as_deref(), Some("8:05:07 PM"));
+    assert_eq!(f.field("slidenum").as_deref(), Some("1"));
+    // A date the app can't compute (no clock, unknown type, other-language names) keeps the saved text.
+    assert_eq!(SlideFields { now: None, ..f }.field("datetime1"), None);
+    let unknown = deck_with(vec![field_shape(Some("datetime99"), "Saved text")]);
+    let plain = deck_with(vec![field_shape(None, "Saved text")]);
+    assert_eq!(diff_px(&at(&unknown, fri), &at(&plain, fri)), 0);
+    // An explicit override still wins.
+    let o = RenderOpts { date_text: Some("Today".into()), now: Some(fri), ..Default::default() };
+    assert_eq!(Renderer::fields(&p, 0, &o).field("datetime2").as_deref(), Some("Today"));
+}
+
+/// Channel values that differ noticeably between two images of the same size.
+fn diff_px(a: &Image, b: &Image) -> usize {
+    a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 64).count()
+}

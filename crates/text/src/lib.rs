@@ -20,6 +20,7 @@
 #![forbid(unsafe_code)]
 
 mod bidi;
+pub mod datetime;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -129,9 +130,15 @@ pub struct TextLayout {
     pub boundaries: Vec<Vec<bool>>,
 }
 
-/// Values for fields (`slidenum`, `datetime…`, `footer`).
+/// Values for fields (`slidenum`, `datetime…`, `footer`). `None` keeps the field's saved text.
 pub trait Fields {
     fn field(&self, kind: &str) -> Option<String>;
+    /// The value of field `kind` in a run of language `lang` (BCP 47, e.g. `en-US`): dates are
+    /// written the language's way.
+    fn field_in(&self, kind: &str, lang: Option<&str>) -> Option<String> {
+        let _ = lang;
+        self.field(kind)
+    }
 }
 
 pub struct NoFields;
@@ -421,7 +428,7 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
         let t: String = match &run.kind {
             RunKind::Text => run.text.clone(),
             RunKind::Break => "\u{b}".into(),
-            RunKind::Field { field } => opts.fields.field(field).unwrap_or_else(|| run.text.clone()),
+            RunKind::Field { field } => opts.fields.field_in(field, rp.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
             RunKind::Math { .. } => run.text.clone(),
         };
         let si = styles.len();

@@ -48,6 +48,7 @@ rayon = "1"
 unicode-bidi = "0.3"
 unicode-segmentation = "1"
 unicode-linebreak = "0.1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 # text / rendering / formats
 skrifa = "0.47"

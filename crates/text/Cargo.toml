@@ -16,3 +16,7 @@ deckcraft-fonts = { workspace = true }
 unicode-linebreak = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }
+
+# The local clock for date fields (no clock on wasm: fields keep their saved text).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+chrono = { workspace = true }

@@ -307,6 +307,7 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
             hf.hide_on_title = v;
         }
         let hf = hf.clone();
+        let date_given = str_param(p, "dateText").is_some();
         let all = bool_or(p, "all", true);
         let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![sel.slide] };
         for i in list {
@@ -372,6 +373,11 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
                             sh.text = Some(TextBody::from_text(&hf.footer_text));
                         }
                     }
+                    (Some(pos), true) if k == PhType::Date && date_given => {
+                        if let Some(sh) = sl.shapes.get_mut(pos) {
+                            set_date(sh, &hf.date_text);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -381,19 +387,32 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
-/// Today's date as M/D/YYYY (no clock crate: computed from the system time).
+/// Point a slide's date placeholder at a fixed date (its own plain text) or, for an empty
+/// `fixed`, at an automatic date field (one it already has keeps its format).
+fn set_date(sh: &mut Shape, fixed: &str) {
+    let runs = || sh.text.iter().flat_map(|t| &t.paragraphs).flat_map(|p| &p.runs);
+    let has_field = runs().any(|r| matches!(&r.kind, RunKind::Field { field } if deckcraft_text::datetime::is_date_field(field)));
+    let props = runs().next().map(|r| r.props.clone()).unwrap_or_default();
+    let (text, kind) = match fixed {
+        "" if has_field => return,
+        "" => (today(), RunKind::Field { field: "datetime1".into() }),
+        _ if !has_field && sh.text.as_ref().is_some_and(|t| t.text() == fixed) => return,
+        _ => (fixed.to_string(), RunKind::Text),
+    };
+    let para = deckcraft_model::Paragraph { runs: vec![Run { text, props, kind }], ..Default::default() };
+    sh.text = Some(TextBody { paragraphs: vec![para], ..sh.text.clone().unwrap_or_default() });
+}
+
+/// Today's local date as a `datetime1` field shows it (M/D/YYYY): the saved text of a new date
+/// field. Empty where there is no clock (wasm).
 pub fn today() -> String {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let days = (secs / 86_400) as i64;
-        let (y, m, d) = civil(days);
-        format!("{m}/{d}/{y}")
-    }
-    #[cfg(target_arch = "wasm32")]
-    {
-        String::new()
-    }
+    date_field_text("datetime1")
+}
+
+/// What date field `kind` shows now (empty if unknown or there is no clock).
+pub fn date_field_text(kind: &str) -> String {
+    use deckcraft_text::datetime::{DateTime, field_text};
+    DateTime::now_local().and_then(|now| field_text(kind, None, now)).unwrap_or_default()
 }
 
 /// Days since 1970-01-01 → (year, month, day) (Howard Hinnant's algorithm).

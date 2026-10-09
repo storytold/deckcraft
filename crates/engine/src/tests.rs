@@ -425,3 +425,31 @@ fn right_to_left_paragraphs() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(para(&s).rtl, Some(true));
 }
+
+#[test]
+fn header_footer_fixed_date_is_the_slides_own_text() {
+    use deckcraft_model::text::RunKind;
+    let mut s = session();
+    let date = |s: &Session| {
+        let slide = s.doc().unwrap().current_slide().unwrap();
+        slide.shapes.iter().find(|x| x.ph_type() == Some(deckcraft_model::PhType::Date)).and_then(|x| x.text.clone()).unwrap()
+    };
+    let kind = |s: &Session| date(s).paragraphs[0].runs[0].kind.clone();
+    // Automatic: a date field, saved with today's date.
+    s.execute("design.headerFooter", &json!({"date": true})).unwrap();
+    assert_eq!(kind(&s), RunKind::Field { field: "datetime1".into() });
+    assert_eq!(date(&s).text().matches('/').count(), 2, "M/D/YYYY");
+    // Fixed: plain text in the slide's own placeholder (other slides' fields aren't affected).
+    s.execute("design.headerFooter", &json!({"date": true, "dateText": "Launch day"})).unwrap();
+    assert_eq!((kind(&s), date(&s).text()), (RunKind::Text, "Launch day".to_string()));
+    // Back to automatic.
+    s.execute("design.headerFooter", &json!({"date": true, "dateText": ""})).unwrap();
+    assert!(matches!(kind(&s), RunKind::Field { .. }));
+    // A new date field is saved with the date it shows.
+    s.execute("text.edit", &json!({"id": s.doc().unwrap().current_slide().unwrap().shapes[0].id.0})).unwrap();
+    s.execute("text.insert", &json!({"text": "Updated "})).unwrap();
+    s.execute("insert.dateTime", &json!({"format": "datetime10"})).unwrap();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].text.clone().unwrap();
+    let run = title.paragraphs[0].runs.iter().find(|r| matches!(r.kind, RunKind::Field { .. })).cloned().unwrap();
+    assert!(run.text.contains(':'), "H:mm {run:?}");
+}

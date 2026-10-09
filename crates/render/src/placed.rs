@@ -35,8 +35,7 @@ pub fn place_slide(pres: &Presentation, index: usize) -> Placed {
     let mut out = Placed::default();
     let Some(slide) = pres.slides.get(index) else { return out };
     let Some(rctx) = Ctx::for_slide(pres, slide) else { return out };
-    let fields =
-        SlideFields { num: pres.slide_number(index), date: pres.header_footer.date_text.clone(), footer: pres.header_footer.footer_text.clone() };
+    let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), &crate::RenderOpts::default());
     let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
     if show_master {
         let mctx = Ctx::for_master(pres, rctx.master);

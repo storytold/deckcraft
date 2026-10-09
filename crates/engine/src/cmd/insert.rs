@@ -556,7 +556,8 @@ fn slide_number(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 fn date_time(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "format").unwrap_or("datetime1").to_string();
-    field_run(s, &f, "")
+    // Saved with the date it shows now (the text kept where the date can't be computed).
+    field_run(s, &f, &super::design::date_field_text(&f))
 }
 
 fn symbol(s: &mut Session, p: &Value) -> Result<Value> {
