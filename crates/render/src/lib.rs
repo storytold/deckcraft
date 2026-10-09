@@ -9,6 +9,7 @@
 
 mod chart;
 mod images;
+mod morph_path;
 mod morph_text;
 mod paint;
 mod placed;
@@ -30,6 +31,7 @@ use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::{RenderContext, Resources, peniko};
 
 pub use images::decode as decode_image;
+pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use placed::{Placed, PlacedLink, PlacedText, place_slide};
 pub use table::row_heights as table_row_heights;
@@ -194,11 +196,13 @@ impl Fields for SlideFields {
 
 pub struct Renderer {
     resources: Resources,
+    /// Outlines morphing in the frame being drawn by `blend`.
+    paths: Vec<PathMorph>,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
-        Renderer { resources: Resources::new() }
+        Renderer { resources: Resources::new(), paths: Vec::new() }
     }
 }
 
@@ -248,12 +252,22 @@ pub fn render_slide(pres: &Presentation, index: usize, opts: &RenderOpts) -> Ima
 /// backdrop (background, master and layout graphics) of `old` cross-fading into that of `new` by
 /// `mix` (0..1), then `shapes` in order, each resolved against the slide it comes from (`true`:
 /// `old`). Pairs of shapes in `text` draw their boxes as usual but their texts morph by words or
-/// characters ([`TextMorph`]), on top of the later shape of the pair. `opts.state` applies to
-/// `shapes` only.
-pub fn render_blend(pres: &Presentation, old: usize, new: usize, mix: f64, shapes: &[(Shape, bool)], text: &[TextMorph], opts: &RenderOpts) -> Image {
+/// characters ([`TextMorph`]), on top of the later shape of the pair. Shapes listed in `paths` draw
+/// an outline morphing from another geometry into their own ([`PathMorph`]). `opts.state` applies
+/// to `shapes` only.
+pub fn render_blend(
+    pres: &Presentation,
+    old: usize,
+    new: usize,
+    mix: f64,
+    shapes: &[(Shape, bool)],
+    text: &[TextMorph],
+    paths: &[PathMorph],
+    opts: &RenderOpts,
+) -> Image {
     let (Some(a), Some(b)) = (pres.slides.get(old), pres.slides.get(new)) else { return Image::default() };
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        RENDERER.with(|r| r.borrow_mut().blend(pres, (a, old), (b, new), mix, shapes, text, opts))
+        RENDERER.with(|r| r.borrow_mut().blend(pres, (a, old), (b, new), mix, shapes, text, paths, opts))
     })) {
         Ok(img) => img,
         Err(_) => {
@@ -460,6 +474,7 @@ impl Renderer {
         mix: f64,
         shapes: &[(Shape, bool)],
         text: &[TextMorph],
+        paths: &[PathMorph],
         opts: &RenderOpts,
     ) -> Image {
         let mix = if mix.is_finite() { mix.clamp(0.0, 1.0) } else { 1.0 };
@@ -485,6 +500,8 @@ impl Renderer {
         let fo = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
         let fnew = Frame { pres, opts, fields: Self::fields(pres, new.1, opts) };
         let mut drawn: Vec<ShapeId> = Vec::new();
+        // Set only now: the backdrop's ids may clash with the frame's.
+        self.paths = paths.to_vec();
         for (s, from_old) in shapes {
             let (f, c) = if *from_old { (&fo, &co) } else { (&fnew, &cn) };
             let Some(tm) = text.iter().find(|m| m.old == s.id || m.new == s.id) else {
@@ -502,6 +519,7 @@ impl Renderer {
                 morph_text::draw(&mut ctx, (&co, a, &fo.fields), (&cn, b, &fnew.fields), tm, now, view);
             }
         }
+        self.paths.clear();
         self.finish(ctx, w, h)
     }
 
@@ -616,7 +634,10 @@ impl Renderer {
     }
 
     fn geometry_shape(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, m: Affine, w: f64, h: f64, st: &ShapeState) {
-        let geo = shape_geometry(s, w, h);
+        let geo = match self.paths.iter().find(|p| p.id == s.id) {
+            Some(pm) => morph_path::geometry(pm, s, w, h),
+            None => shape_geometry(s, w, h),
+        };
         let (fill, fill_ph) = resolve::fill(rctx, s);
         let (line, line_ph) = resolve::line(rctx, s);
         let (effects, fx_ph) = resolve::effects(rctx, s);

@@ -206,14 +206,14 @@ fn blend_ends_match_the_slides_and_mixes_backdrops() {
     let o = RenderOpts { scale: 0.5, ..Default::default() };
     let shapes = vec![(sh, false)];
     // At the ends the frame is the slide itself; the shape stays opaque throughout.
-    assert_eq!(render_blend(&p, 0, 1, 1.0, &shapes, &[], &o).pixels, render_slide(&p, 1, &o).pixels);
-    let mid = render_blend(&p, 0, 1, 0.5, &shapes, &[], &o);
+    assert_eq!(render_blend(&p, 0, 1, 1.0, &shapes, &[], &[], &o).pixels, render_slide(&p, 1, &o).pixels);
+    let mid = render_blend(&p, 0, 1, 0.5, &shapes, &[], &[], &o);
     let px = mid.pixel(5, 5);
     assert!((px[0] as i32 - 128).abs() <= 3, "{px:?}");
     assert_eq!(mid.pixel(100, 75), render_slide(&p, 1, &o).pixel(100, 75));
     // Hostile input: bad indices and NaN never panic.
-    assert_eq!(render_blend(&p, 0, 9, 0.5, &shapes, &[], &o).width, 0);
-    let _ = render_blend(&p, 0, 1, f64::NAN, &shapes, &[], &o);
+    assert_eq!(render_blend(&p, 0, 9, 0.5, &shapes, &[], &[], &o).width, 0);
+    let _ = render_blend(&p, 0, 1, f64::NAN, &shapes, &[], &[], &o);
 }
 
 fn text_shape(id: u32, text: &str, x: f64, y: f64) -> Shape {
@@ -258,7 +258,7 @@ fn morph_text_ends_match_the_slides() {
         sb.xfrm = Some(x);
         sa.xfrm = Some(x);
         let tm = TextMorph { old: ShapeId(11), new: ShapeId(10), from, to, chars: false, t };
-        render_blend(&p, 0, 1, t, &[(sb, false), (sa, true)], &[tm], &o)
+        render_blend(&p, 0, 1, t, &[(sb, false), (sa, true)], &[tm], &[], &o)
     };
     // Warm up: faces load lazily (a background scan runs), so the first render may still fall back.
     let _ = (render_slide(&p, 0, &o), render_slide(&p, 1, &o), frame(0.5));
@@ -271,4 +271,43 @@ fn morph_text_ends_match_the_slides() {
     let mid = frame(0.5);
     let ink = (95..140).flat_map(|y| (0..480).map(move |x| (x, y))).filter(|&(x, y)| mid.pixel(x, y)[0] < 128).count();
     assert!(ink > 50, "ink {ink}");
+}
+
+#[test]
+fn morph_path_ends_match_the_slides() {
+    let from = Xfrm::new(100.0, 100.0, 200.0, 200.0);
+    let to = Xfrm::new(500.0, 150.0, 300.0, 150.0);
+    let form = |id: u32, g: &str, x: Xfrm| Shape {
+        id: ShapeId(id),
+        xfrm: Some(x),
+        geom: Geom::preset(g),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let mut p = deck_with(vec![form(1, "ellipse", from)]);
+    let mut b = (*p.slides[0]).clone();
+    b.shapes = vec![form(1, "star5", to)];
+    p.slides.push(std::sync::Arc::new(b));
+    let o = RenderOpts { scale: 0.5, ..Default::default() };
+    let frame = |t: f64| {
+        let lerp = |a: f64, b: f64| a + (b - a) * t;
+        let x = Xfrm::new(lerp(from.x, to.x), lerp(from.y, to.y), lerp(from.w, to.w), lerp(from.h, to.h));
+        let pm = PathMorph { id: ShapeId(10), from: Geom::preset("ellipse"), from_box: from, to_box: to, t };
+        render_blend(&p, 0, 1, t, &[(form(10, "star5", x), false)], &[], &[pm], &o)
+    };
+    // The morph splits the outlines into more curves, which flatten slightly differently: edge pixels
+    // may differ a little, a different shape differs a lot.
+    let differ = |a: &Image, b: &Image| a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 60).count();
+    // At the start the star is still the circle, at the end the star.
+    let d0 = differ(&frame(0.0), &render_slide(&p, 0, &o));
+    assert!(d0 < 40, "start differs {d0}");
+    let d1 = differ(&frame(1.0), &render_slide(&p, 1, &o));
+    assert!(d1 < 40, "end differs {d1}");
+    // Without the morph the start would show the star.
+    let star = render_blend(&p, 0, 1, 0.0, &[(form(10, "star5", from), false)], &[], &[], &o);
+    assert!(differ(&star, &render_slide(&p, 0, &o)) > 400);
+    // Halfway the shape is filled around the middle of its box.
+    let mid = frame(0.5);
+    let c = (from.center().to_vec2() + to.center().to_vec2()) * 0.5 * 0.5;
+    assert_ne!(mid.pixel(c.x as u32, c.y as u32), [255, 255, 255, 255]);
 }
