@@ -100,12 +100,19 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     painter.rect_filled(slide_rect.translate(vec2(0.0, 1.5)).expand(1.0), CornerRadius::same(2), t.shadow);
     let ppp = ui.ctx().pixels_per_point();
     let px = ((slide_rect.width() * ppp).round().max(1.0) as u32, (slide_rect.height() * ppp).round().max(1.0) as u32);
+    let now = ui.input(|i| i.time);
+    let gifs = match app.session.active() {
+        Some(d) if d.selection.target == Target::Slides => app.media.gifs(&d.doc, d.selection.slide, now, &app.session.gif_paused),
+        _ => vec![],
+    };
+    crate::media::gif_repaint(ui.ctx(), &gifs);
+    let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
     let st = app.session.active();
     let tex = match st.map(|d| (d.selection.target, d)) {
         Some((Target::Slides, d)) => {
             let idx = d.selection.slide;
             let doc = d.doc.clone();
-            app.textures.slide(ui.ctx(), &doc, idx, px, true, 0, app.ui.grayscale)
+            app.textures.slide(ui.ctx(), &doc, idx, px, true, crate::media::gif_key(&gifs), app.ui.grayscale, &times)
         }
         Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px),
         Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px),
@@ -146,7 +153,35 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     pointer(app, ui, &resp, xf);
     overlays(app, ui, &painter, xf, &t);
     media_bar(app, ui, xf);
+    gif_buttons(app, ui, xf, &gifs);
     context_menu(app, &resp);
+}
+
+/// Play/pause on an animated GIF under the pointer or selected on its own.
+fn gif_buttons(app: &mut SlideApp, ui: &mut Ui, xf: Xf, gifs: &[crate::media::Gif]) {
+    let Some(d) = app.session.active() else { return };
+    if d.selection.text.is_some() || app.session.tool.dragging() {
+        return;
+    }
+    let only = if d.selection.shapes.len() == 1 { d.selection.shapes.first().copied() } else { None };
+    let pointer = ui.input(|i| i.pointer.hover_pos());
+    let mut toggle = None;
+    for g in gifs {
+        let r = screen_rect(xf, &g.rect);
+        if only != Some(g.id) && !pointer.is_some_and(|p| r.contains(p)) {
+            continue;
+        }
+        let b = crate::media::gif_button_rect(r);
+        // Sensing drags too keeps the press from reaching the canvas (selecting or moving the GIF).
+        let resp = ui.interact(b, ui.id().with(("gif_button", g.id.0)), Sense::click_and_drag());
+        crate::media::paint_gif_button(ui.painter(), b, g.paused, resp.hovered());
+        if resp.clicked() {
+            toggle = Some(g.id);
+        }
+    }
+    if let Some(id) = toggle {
+        let _ = app.run("media.gifPlay", json!({"id": id}));
+    }
 }
 
 /// Screen rect of a slide-space box (rotation ignored).

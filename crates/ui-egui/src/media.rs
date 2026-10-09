@@ -1,7 +1,7 @@
 //! Media playback in the UI host: the [`deckcraft_media::Player`] (audio out + clocks), video
 //! feeds and their textures, the editor's media control bar, and the engine's `media.*` requests.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use deckcraft_engine::{MediaStatus, Session};
@@ -31,6 +31,18 @@ pub struct MediaHost {
     videos: HashMap<ShapeId, Video>,
     /// Probed durations by media bytes (for media imported without a probe).
     durations: HashMap<usize, f64>,
+    /// Animated GIF clocks: when each started and, while paused, the time it holds.
+    gifs: HashMap<ShapeId, (f64, Option<f64>)>,
+}
+
+/// An animated GIF picture on a slide: its box, play time, frame and seconds to the next frame.
+pub struct Gif {
+    pub id: ShapeId,
+    pub rect: deckcraft_geom::Xfrm,
+    pub t: f64,
+    pub frame: usize,
+    pub next: f64,
+    pub paused: bool,
 }
 
 impl Default for MediaHost {
@@ -45,7 +57,30 @@ fn key(id: ShapeId) -> u64 {
 
 impl MediaHost {
     pub fn new(out: Option<Box<dyn AudioOut>>) -> MediaHost {
-        MediaHost { player: Player::new(out), owners: HashMap::new(), videos: HashMap::new(), durations: HashMap::new() }
+        MediaHost { player: Player::new(out), owners: HashMap::new(), videos: HashMap::new(), durations: HashMap::new(), gifs: HashMap::new() }
+    }
+
+    /// The animated GIF pictures directly on slide `index` at `now`: each plays from when it was
+    /// first shown; a paused one holds its time and resumes from it.
+    pub fn gifs(&mut self, doc: &Presentation, index: usize, now: f64, paused: &HashSet<ShapeId>) -> Vec<Gif> {
+        let Some(slide) = doc.slides.get(index) else { return vec![] };
+        let mut out = vec![];
+        for sh in &slide.shapes {
+            let (ShapeKind::Picture { fill }, Some(rect)) = (&sh.kind, sh.xfrm) else { continue };
+            let Some(item) = doc.media(fill.media).filter(|m| m.data.starts_with(b"GIF8")) else { continue };
+            let p = paused.contains(&sh.id);
+            let c = self.gifs.entry(sh.id).or_insert((now, None));
+            if p && c.1.is_none() {
+                c.1 = Some(now - c.0);
+            } else if !p && let Some(held) = c.1.take() {
+                c.0 = now - held;
+            }
+            let t = c.1.unwrap_or(now - c.0);
+            if let Some((frame, next)) = deckcraft_render::gif_frame(&item.data, &fill.adjust, t) {
+                out.push(Gif { id: sh.id, rect, t, frame, next, paused: p });
+            }
+        }
+        out
     }
 
     /// Replace the audio output (the host injects cpal after start-up).
@@ -259,6 +294,37 @@ pub fn paint_frame(painter: &egui::Painter, host: &MediaHost, id: ShapeId, rect:
     painter.rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
     painter.image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
     true
+}
+
+/// Changes whenever a GIF shows another frame (part of the slide texture's cache key).
+pub fn gif_key(gifs: &[Gif]) -> u64 {
+    gifs.iter().fold(0, |h: u64, g| (h ^ (((g.id.0 as u64) << 32) | g.frame as u64)).wrapping_mul(1099511628211))
+}
+
+/// Come back when the next frame of a playing GIF is due.
+pub fn gif_repaint(ctx: &egui::Context, gifs: &[Gif]) {
+    if let Some(next) = gifs.iter().filter(|g| !g.paused).map(|g| g.next).reduce(f64::min) {
+        ctx.request_repaint_after(std::time::Duration::from_millis((next * 1000.0).clamp(5.0, 1000.0) as u64));
+    }
+}
+
+/// The play/pause button in the bottom-left corner of a GIF's box `r` (PowerPoint puts it there).
+pub fn gif_button_rect(r: Rect) -> Rect {
+    let s = 24.0f32.min(r.width() - 8.0).min(r.height() - 8.0).max(12.0);
+    Rect::from_min_size(pos2(r.min.x + 6.0, r.max.y - 6.0 - s), vec2(s, s))
+}
+
+pub fn paint_gif_button(painter: &egui::Painter, b: Rect, paused: bool, hot: bool) {
+    painter.circle_filled(b.center(), b.width() / 2.0, Color32::from_black_alpha(if hot { 210 } else { 150 }));
+    let r = b.shrink(b.width() * 0.3);
+    let white = Color32::from_gray(235);
+    if paused {
+        icons::paint(painter, r, Icon::Play, white, false);
+    } else {
+        let w = r.width() * 0.3;
+        painter.rect_filled(Rect::from_min_size(r.min, vec2(w, r.height())), CornerRadius::ZERO, white);
+        painter.rect_filled(Rect::from_min_size(pos2(r.max.x - w, r.min.y), vec2(w, r.height())), CornerRadius::ZERO, white);
+    }
 }
 
 /// What the control bar asks for.
