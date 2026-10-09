@@ -8,7 +8,7 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use deckcraft_model::text::{Paragraph, TextBody};
-use deckcraft_model::{LayoutType, Presentation, defaults};
+use deckcraft_model::{LayoutType, Presentation, Shape, ShapeKind, defaults};
 
 pub const MIMETYPE: &str = "application/vnd.storyteller.deckcraft+zip";
 /// Files written before the SlideCraft → DeckCraft rename (`.slidecraft`) are still read.
@@ -16,8 +16,14 @@ pub const LEGACY_MIMETYPE: &str = concat!("application/vnd.storyteller.", "slide
 pub const EXTENSION: &str = "deckcraft";
 /// Format version written into the manifest.
 pub const VERSION: u32 = 1;
-/// Largest entry we will inflate (guards against zip bombs).
-const MAX_ENTRY: u64 = 2 << 30;
+/// Largest embedded media entry we will inflate.
+const MAX_ENTRY: u64 = 256 * 1024 * 1024;
+/// Largest JSON manifest we will inflate.
+const MAX_MANIFEST: u64 = 64 * 1024 * 1024;
+/// Total decompressed bytes accepted for one native document.
+const MAX_TOTAL: u64 = 512 * 1024 * 1024;
+/// Maximum number of archive entries.
+const MAX_ENTRIES: usize = 10_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum FormatError {
@@ -86,28 +92,43 @@ pub fn sniff(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK") && [MIMETYPE, LEGACY_MIMETYPE].iter().any(|m| bytes.windows(m.len()).take(200).any(|w| w == m.as_bytes()))
 }
 
-fn read_entry(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>> {
+fn read_entry(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, limit: u64) -> Result<Vec<u8>> {
     let f = z.by_name(name).map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
-    if f.size() > MAX_ENTRY {
+    if f.size() > limit {
         return Err(FormatError::Damaged(format!("{name} is too large")));
     }
-    let mut out = Vec::with_capacity(f.size().min(64 << 20) as usize);
-    f.take(MAX_ENTRY).read_to_end(&mut out).map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
+    let mut out = Vec::with_capacity(f.size().min(16 * 1024 * 1024) as usize);
+    f.take(limit.saturating_add(1)).read_to_end(&mut out).map_err(|e| FormatError::Damaged(format!("{name}: {e}")))?;
+    if out.len() as u64 > limit {
+        return Err(FormatError::Damaged(format!("{name} is too large")));
+    }
     Ok(out)
 }
 
 /// Read a presentation.
 pub fn load(bytes: &[u8]) -> Result<Presentation> {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| FormatError::NotOurs(e.to_string()))?;
-    let json = read_entry(&mut z, "presentation.json").map_err(|_| FormatError::NotOurs("no presentation.json".into()))?;
+    if z.len() > MAX_ENTRIES {
+        return Err(FormatError::Damaged(format!("too many archive entries ({})", z.len())));
+    }
+    let json = read_entry(&mut z, "presentation.json", MAX_MANIFEST).map_err(|e| FormatError::NotOurs(format!("presentation.json: {e}")))?;
+    let mut total = json.len() as u64;
     let m: Manifest = serde_json::from_slice(&json).map_err(|e| FormatError::Damaged(e.to_string()))?;
     if m.format != "deckcraft" {
         return Err(FormatError::NotOurs(m.format));
     }
     let mut p = m.presentation;
     for item in &mut p.media {
-        if let Ok(data) = read_entry(&mut z, &format!("media/{}", item.id.0)) {
-            item.data = Arc::new(data);
+        let name = format!("media/{}", item.id.0);
+        let remaining = MAX_TOTAL.saturating_sub(total);
+        let limit = MAX_ENTRY.min(remaining);
+        match read_entry(&mut z, &name, limit) {
+            Ok(data) => {
+                total = total.saturating_add(data.len() as u64);
+                item.data = Arc::new(data);
+            }
+            Err(_) if item.link.is_some() => {}
+            Err(e) => return Err(e),
         }
     }
     repair(&mut p);
@@ -145,6 +166,35 @@ pub fn repair(p: &mut Presentation) {
     }
     p.slide_size.width = p.slide_size.width.min(4000.0);
     p.slide_size.height = p.slide_size.height.min(4000.0);
+    for slide in &mut p.slides {
+        normalize_tables(&mut Arc::make_mut(slide).shapes, 0);
+    }
+    for master in &mut p.masters {
+        let master = Arc::make_mut(master);
+        normalize_tables(&mut master.shapes, 0);
+        for layout in &mut master.layouts {
+            normalize_tables(&mut layout.shapes, 0);
+        }
+    }
+    if let Some(master) = &mut p.notes_master {
+        normalize_tables(&mut Arc::make_mut(master).shapes, 0);
+    }
+    if let Some(master) = &mut p.handout_master {
+        normalize_tables(&mut Arc::make_mut(master).shapes, 0);
+    }
+}
+
+fn normalize_tables(shapes: &mut [Shape], depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for shape in shapes {
+        match &mut shape.kind {
+            ShapeKind::Table(table) => table.normalize(),
+            ShapeKind::Group { children, .. } => normalize_tables(children, depth + 1),
+            _ => {}
+        }
+    }
 }
 
 /// Outline text: one slide per unindented line; tab-indented lines become body bullets at their
@@ -218,6 +268,24 @@ pub fn slides_to_outline(p: &Presentation) -> String {
 mod tests {
     use super::*;
 
+    fn manifest_only(p: &Presentation) -> Vec<u8> {
+        let mut out = Cursor::new(Vec::new());
+        {
+            let mut z = zip::ZipWriter::new(&mut out);
+            let opts = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+            z.start_file("presentation.json", opts).unwrap();
+            let manifest = Manifest {
+                format: "deckcraft".into(),
+                version: VERSION,
+                generator: "test".into(),
+                presentation: p.clone(),
+            };
+            z.write_all(&serde_json::to_vec(&manifest).unwrap()).unwrap();
+            z.finish().unwrap();
+        }
+        out.into_inner()
+    }
+
     #[test]
     fn roundtrip_with_media() {
         let mut p = Presentation::default();
@@ -242,6 +310,37 @@ mod tests {
     }
 
     #[test]
+    fn missing_embedded_media_is_an_error() {
+        let mut p = Presentation::default();
+        p.add_media("missing.png", "image/png", vec![1, 2, 3]);
+        let err = load(&manifest_only(&p)).unwrap_err().to_string();
+        assert!(err.contains("media/"), "{err}");
+    }
+
+    #[test]
+    fn missing_linked_media_is_allowed() {
+        let mut p = Presentation::default();
+        let id = p.add_media("remote.png", "image/png", vec![]);
+        if let Some(item) = p.media.iter_mut().find(|item| item.id == id) {
+            item.link = Some("https://example.invalid/remote.png".into());
+        }
+        assert!(load(&manifest_only(&p)).is_ok());
+    }
+
+    #[test]
+    fn entry_limit_uses_actual_and_declared_size() {
+        let mut out = Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut out);
+            writer.start_file("large", zip::write::SimpleFileOptions::default()).unwrap();
+            writer.write_all(&[1, 2, 3]).unwrap();
+            writer.finish().unwrap();
+        }
+        let mut archive = zip::ZipArchive::new(Cursor::new(out.get_ref().as_slice())).unwrap();
+        assert!(read_entry(&mut archive, "large", 2).is_err());
+    }
+
+    #[test]
     fn repair_fixes_missing_layout_and_size() {
         let mut p = Presentation::default();
         Arc::make_mut(&mut p.slides[0]).layout = deckcraft_model::LayoutId(99999);
@@ -249,6 +348,30 @@ mod tests {
         repair(&mut p);
         assert!(p.validate().is_empty());
         assert_eq!(p.slide_size.width, 960.0);
+    }
+
+    #[test]
+    fn repair_normalizes_nested_tables() {
+        let mut p = Presentation::default();
+        let mut table = deckcraft_model::Table::new(1, 2, 200.0, 30.0);
+        table.rows[0].cells.pop();
+        let table = Shape { kind: ShapeKind::Table(table), ..Default::default() };
+        let group = Shape {
+            kind: ShapeKind::Group {
+                children: vec![table],
+                child: deckcraft_model::Xfrm::default(),
+            },
+            ..Default::default()
+        };
+        Arc::make_mut(&mut p.slides[0]).shapes.push(group);
+        repair(&mut p);
+        let Some(ShapeKind::Group { children, .. }) = p.slides[0].shapes.last().map(|shape| &shape.kind) else {
+            panic!("expected group");
+        };
+        let Some(ShapeKind::Table(table)) = children.first().map(|shape| &shape.kind) else {
+            panic!("expected table");
+        };
+        assert_eq!(table.rows[0].cells.len(), table.cols.len());
     }
 
     #[test]

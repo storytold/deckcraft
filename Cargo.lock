@@ -1127,6 +1127,7 @@ dependencies = [
  "deckcraft-model",
  "deckcraft-render",
  "deckcraft-text",
+ "epaint_default_fonts",
  "egui",
  "egui_kittest",
  "js-sys",

@@ -153,9 +153,20 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
     });
 }
 
-/// UI fonts: Inter (from craft-fonts) when embedded, a Japanese UI face for CJK, then egui's.
+/// UI fonts: Inter (from craft-fonts) when embedded, Japanese and Arabic UI faces, then the
+/// approved Ubuntu Light last resort. Do not enable egui's `default_fonts` feature: that bundle
+/// contains vendor emoji artwork forbidden by the repository asset policy.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
+    defs.font_data.clear();
+    defs.families.clear();
+    let fallback = "deckcraft-ubuntu-light".to_string();
+    defs.font_data.insert(
+        fallback.clone(),
+        std::sync::Arc::new(FontData::from_static(epaint_default_fonts::UBUNTU_LIGHT)),
+    );
+    defs.families.insert(FontFamily::Proportional, vec![fallback.clone()]);
+    defs.families.insert(FontFamily::Monospace, vec![fallback.clone()]);
     let mut names = vec![];
     for (i, f) in deckcraft_fonts::CRAFT_FONTS.iter().enumerate() {
         let wanted = (f.family == "Inter" && (f.style == "Regular" || f.style == "SemiBold" || f.style == "Bold"))

@@ -61,10 +61,10 @@ quick-xml = "0.38"
 zip = { version = "3", default-features = false, features = ["deflate"] }
 
 # ui
-egui = "0.36"
+egui = { version = "0.36", default-features = false }
 egui_extras = { version = "0.36", default-features = false }
 eframe = { version = "0.36", default-features = false }
-egui_kittest = "0.36"
+egui_kittest = { version = "0.36", default-features = false }
 rfd = "0.17"
 arboard = { version = "3.6", default-features = false }
 

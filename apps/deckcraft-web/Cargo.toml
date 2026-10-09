@@ -22,7 +22,7 @@ serde_json = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # `wgpu` pulls egui-wgpu's defaults: WebGPU plus the WebGL2 fallback.
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit"] }
+eframe = { workspace = true, features = ["wgpu", "accesskit"] }
 rfd = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
