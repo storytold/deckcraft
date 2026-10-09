@@ -107,6 +107,36 @@ Fonts come from [craft-fonts](https://github.com/storytold/craft-fonts): clone i
 (`../craft-fonts`) and local builds pick it up automatically; without it DeckCraft uses your system
 fonts.
 
+Each [GitHub release](https://github.com/storytold/deckcraft/releases) has ready-made builds, on Linux as
+an AppImage, a `.deb`, an `.rpm` and a tarball. On Gentoo, the community [::snakebyte
+overlay](https://github.com/switch87/snakebyte-overlay) packages the Linux release as
+`app-office/deckcraft-bin` (not maintained by the DeckCraft team):
+
+```sh
+eselect repository add snakebyte git https://github.com/switch87/snakebyte-overlay.git
+emaint sync -r snakebyte
+echo 'app-office/deckcraft-bin ~amd64' >> /etc/portage/package.accept_keywords/deckcraft
+emerge --ask app-office/deckcraft-bin
+```
+
+### Logs
+
+The desktop app writes its `log` records to standard error and to `logs/deckcraft.log` in the
+settings directory, beside `ui.json` and `prefs.json` (Linux `~/.config/deckcraft/logs/`, or
+`$XDG_CONFIG_HOME/deckcraft/logs/`; macOS `~/Library/Application Support/DeckCraft/logs/`; Windows
+`%APPDATA%\DeckCraft\logs\`). A start from a desktop menu or the Dock has no terminal, so this file
+is what to attach to a bug report: the crash guard's panic report, a failed crash-recovery save,
+PowerPoint parts skipped on import and audio output problems land there. Each launch moves the
+previous log to `deckcraft.1.log` (and that one to `deckcraft.2.log`), so the log of a run that
+crashed survives the next start. The file stops growing at 16 MiB. `--version` writes no file.
+
+| Variable | Effect |
+|---|---|
+| `RUST_LOG` | Log levels for standard error and the log file. Default: `info` for DeckCraft's own crates, `warn` for everything else. env_logger-style directives replace that, e.g. `RUST_LOG=debug`, `RUST_LOG=warn,deckcraft_pptx=trace` or `RUST_LOG=info,wgpu_core=warn`; a directive ending in `*` covers every target starting with it (`deckcraft*=debug`). |
+
+The logger is `apps/deckcraft/src/logging.rs`; the realtime audio callback does not log. The web
+app logs to the browser console instead.
+
 ## Agents, CLI and MCP
 
 Every action in DeckCraft is a command with a stable id, so people, scripts and AI agents use the
@@ -139,6 +169,21 @@ scorecard.
 | x86 (32-bit) | `deckcraft-<ver>-windows-x86.msi` | `deckcraft-<ver>-windows-x86-portable.zip` |
 
 Installers and executables are code-signed.
+
+**If the app doesn't open on Windows:** the desktop app initializes only DirectX 12 by default.
+Letting wgpu also create an OpenGL instance can crash some graphics drivers (AMD's
+`atio6axx.dll`) before the window appears, so the app would flash in Task Manager and quit.
+`WGPU_BACKEND` overrides the default for troubleshooting (for example `dx12` or `vulkan`). In
+PowerShell, from the folder containing the executable:
+
+```powershell
+$env:WGPU_BACKEND = "vulkan"
+& .\deckcraft.exe
+Remove-Item Env:WGPU_BACKEND                     # restore the default for later launches
+```
+
+An explicit `gl` override can bring the driver crash back on affected systems. The macOS, Linux
+and web backend defaults are unchanged.
 
 ### macOS
 

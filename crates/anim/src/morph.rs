@@ -1,8 +1,10 @@
-//! Morph: matching shapes between two slides and interpolating their boxes.
+//! Morph: matching shapes between two slides, interpolating their boxes and building the frames.
 
-use deckcraft_model::{Shape, ShapeId, Slide, Xfrm};
+use deckcraft_model::resolve::{self, Ctx};
+use deckcraft_model::{ColorRef, Fill, Presentation, Rgba, Shape, ShapeId, ShapeKind, Slide, Xfrm, walk};
 
 use crate::clampf;
+use crate::easing::smooth;
 
 fn text_of(s: &Shape) -> String {
     s.text.as_ref().map(|t| t.text()).unwrap_or_default()
@@ -90,4 +92,133 @@ pub fn morph_xfrm(a: Xfrm, b: Xfrm, t: f64) -> Xfrm {
         flip_h: if late { b.flip_h } else { a.flip_h },
         flip_v: if late { b.flip_v } else { a.flip_v },
     }
+}
+
+/// One frame of a Morph transition, ready for the renderer's `render_blend`: the backdrops of the
+/// two slides cross-fade by [`MorphFrame::mix`], the shapes are drawn in order on top.
+#[derive(Clone, Debug, Default)]
+pub struct MorphFrame {
+    /// Shapes with fresh ids, each flagged `true` when it comes from the old slide (it resolves
+    /// its placeholder, theme and style against that slide).
+    pub shapes: Vec<(Shape, bool)>,
+    /// Opacity of the frame's shapes by id; shapes not listed are opaque.
+    pub opacity: Vec<(ShapeId, f64)>,
+    pub mix: f64,
+    /// With the Words or Characters option: pairs of frame shapes whose texts morph by words or
+    /// characters instead of cross-fading (the renderer's `TextMorph`).
+    pub text: Vec<MorphText>,
+}
+
+/// Two frame shapes whose texts morph by words or characters.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MorphText {
+    /// Frame shape ids: from the old slide, from the new slide.
+    pub old: ShapeId,
+    pub new: ShapeId,
+    /// The boxes of the two shapes on their own slides.
+    pub from: Xfrm,
+    pub to: Xfrm,
+    pub chars: bool,
+}
+
+impl MorphFrame {
+    /// Opacity of shape `id` of the frame.
+    pub fn opacity_of(&self, id: ShapeId) -> f64 {
+        self.opacity.iter().find(|(s, _)| *s == id).map(|(_, o)| *o).unwrap_or(1.0)
+    }
+}
+
+fn mix_color(a: Rgba, b: Rgba, t: f64) -> Rgba {
+    let m = |x: u8, y: u8| clampf(lerp(x as f64, y as f64, t), 0.0, 255.0, 0.0).round() as u8;
+    Rgba { r: m(a.r, b.r), g: m(a.g, b.g), b: m(a.b, b.b), a: m(a.a, b.a) }
+}
+
+fn solid_color(ctx: Option<&Ctx>, s: &Shape) -> Option<Rgba> {
+    let ctx = ctx?;
+    match resolve::fill(ctx, s) {
+        (Some(Fill::Solid { color }), ph) => Some(ctx.color(&color, ph)),
+        _ => None,
+    }
+}
+
+fn box_of(ctx: Option<&Ctx>, s: &Shape) -> Option<Xfrm> {
+    match ctx {
+        Some(c) => Some(resolve::xfrm(c, s)),
+        None => s.xfrm,
+    }
+}
+
+/// The content of a shape apart from what Morph interpolates (identity, box and fill).
+fn content(s: &Shape) -> Shape {
+    Shape { id: ShapeId(0), name: String::new(), xfrm: None, fill: None, ..s.clone() }
+}
+
+/// Morph frame from slide `a` to slide `b` at progress `t` (0..1, eased here). Paired shapes
+/// ([`morph_pairs`]) move along [`morph_xfrm`]; when they differ only in solid fill colour the
+/// colour blends, otherwise the new shape fades in under the fading old one on the same moving
+/// box; with the transition option `words` or `characters` their texts are listed in
+/// [`MorphFrame::text`] to morph word by word or character by character. Unpaired shapes of `a` fade out, unpaired shapes of `b` fade in, and shapes of `b` for
+/// which `hidden_b` is true (entrance animations, hidden media) stay out of the frame.
+pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: &dyn Fn(ShapeId) -> bool) -> MorphFrame {
+    let s = smooth(clampf(t, 0.0, 1.0, 0.0));
+    let ca = Ctx::for_slide(pres, a);
+    let cb = Ctx::for_slide(pres, b);
+    let pairs: Vec<(ShapeId, ShapeId)> = morph_pairs(a, b).into_iter().filter(|(_, ib)| !hidden_b(*ib)).collect();
+    let mut next = 1u32;
+    walk(&a.shapes, &mut |x, _| next = next.max(x.id.0.saturating_add(1)));
+    walk(&b.shapes, &mut |x, _| next = next.max(x.id.0.saturating_add(1)));
+    let mut f = MorphFrame { mix: s, ..Default::default() };
+    let by = b.transition.as_ref().map(|tr| tr.option.as_str()).unwrap_or("");
+    let (by_text, chars) = (by == "words" || by == "characters", by == "characters");
+    let has_text = |x: &Shape| x.text.as_ref().is_some_and(|t| !t.is_empty()) && !matches!(x.kind, ShapeKind::Group { .. } | ShapeKind::Table(_));
+    let mut text = Vec::new();
+    let mut push = |mut sh: Shape, old: bool, op: f64| {
+        let id = ShapeId(next);
+        sh.id = id;
+        next = next.saturating_add(1);
+        if op < 1.0 {
+            f.opacity.push((id, op));
+        }
+        f.shapes.push((sh, old));
+        id
+    };
+    for sa in &a.shapes {
+        if !pairs.iter().any(|(ia, _)| *ia == sa.id) {
+            push(sa.clone(), true, 1.0 - s);
+        }
+    }
+    for sb in &b.shapes {
+        let pair = pairs.iter().find(|(_, ib)| *ib == sb.id).and_then(|(ia, _)| a.shapes.iter().find(|x| x.id == *ia));
+        let Some(sa) = pair else {
+            if !hidden_b(sb.id) {
+                push(sb.clone(), false, s);
+            }
+            continue;
+        };
+        let x = match (box_of(ca.as_ref(), sa), box_of(cb.as_ref(), sb)) {
+            (Some(xa), Some(xb)) => Some(morph_xfrm(xa, xb, s)),
+            (_, xb) => xb,
+        };
+        if content(sa) == content(sb) {
+            let mut m = Shape { xfrm: x, ..sb.clone() };
+            if let (Some(fa), Some(fb)) = (solid_color(ca.as_ref(), sa), solid_color(cb.as_ref(), sb))
+                && fa != fb
+            {
+                m.fill = Some(Fill::solid(ColorRef::rgb(mix_color(fa, fb, s))));
+            }
+            push(m, false, 1.0);
+        } else {
+            let new = push(Shape { xfrm: x, ..sb.clone() }, false, s);
+            let old = push(Shape { xfrm: x, ..sa.clone() }, true, 1.0 - s);
+            if by_text
+                && has_text(sa)
+                && has_text(sb)
+                && let (Some(from), Some(to)) = (box_of(ca.as_ref(), sa), box_of(cb.as_ref(), sb))
+            {
+                text.push(MorphText { old, new, from, to, chars });
+            }
+        }
+    }
+    f.text = text;
+    f
 }

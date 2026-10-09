@@ -293,9 +293,9 @@ impl SliceHeader {
             if sh.slice_type != SliceType::I {
                 sh.num_ref_idx = [pps.num_ref_idx_l0_default, if sh.is_b() { pps.num_ref_idx_l1_default } else { 0 }];
                 if r.read_flag()? {
-                    sh.num_ref_idx[0] = r.read_ue()? + 1;
+                    sh.num_ref_idx[0] = r.read_ue_plus(1)?;
                     if sh.is_b() {
-                        sh.num_ref_idx[1] = r.read_ue()? + 1;
+                        sh.num_ref_idx[1] = r.read_ue_plus(1)?;
                     }
                 }
                 ensure!(sh.num_ref_idx[0] <= 15 && sh.num_ref_idx[1] <= 15, "num_ref_idx_active out of range");
@@ -365,7 +365,7 @@ impl SliceHeader {
             let n = r.read_ue()?;
             ensure!(n <= sps.pic_width_in_ctbs() * sps.pic_height_in_ctbs(), "num_entry_point_offsets out of range");
             if n > 0 {
-                let len = r.read_ue()? + 1;
+                let len = r.read_ue_plus(1)?;
                 ensure!(len <= 32, "offset_len_minus1 out of range");
                 for _ in 0..n {
                     sh.entry_points.push(r.read_bits(len)? + 1);
