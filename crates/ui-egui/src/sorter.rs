@@ -52,7 +52,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         Stroke::new(if selected { 3.0 } else { 1.0 }, if selected { t.accent } else { t.border }),
                         egui::StrokeKind::Outside,
                     );
-                    p.text(pos2(img.min.x, img.max.y + 12.0), Align2::LEFT_CENTER, format!("{}", i + 1), theme::font(12.0), t.text_dim);
+                    p.text(pos2(img.min.x, img.max.y + 12.0), Align2::LEFT_CENTER, (i + 1).to_string(), theme::font(12.0), t.text_dim);
                     if let Some(tr) = doc.slides.get(i).and_then(|s| s.transition.as_ref()).filter(|t| t.kind != "none") {
                         p.text(pos2(img.max.x, img.max.y + 12.0), Align2::RIGHT_CENTER, format!("★ {}", tr.kind), theme::font(10.5), t.text_faint);
                     }
@@ -137,7 +137,7 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let mut buf: String = child.data_mut(|d| d.get_temp(id).unwrap_or_else(|| current.clone()));
     let r = child.add(
         egui::TextEdit::multiline(&mut buf)
-            .hint_text("Click to add text")
+            .hint_text(crate::i18n::tr("Click to add text"))
             .desired_width(notes_rect.width())
             .desired_rows(12)
             .frame(egui::Frame::NONE)
@@ -170,7 +170,7 @@ pub fn outline_pane(app: &mut SlideApp, ui: &mut Ui) {
                 for (i, s) in doc.slides.iter().enumerate() {
                     let title_shape = s.shapes.iter().find(|x| x.ph_type().is_some_and(|k| k.is_title())).map(|x| x.id.0);
                     ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(format!("{}", i + 1)).color(t.text_dim));
+                        ui.label(egui::RichText::new((i + 1).to_string()).color(t.text_dim));
                         let (r, _) = ui.allocate_exact_size(vec2(14.0, 10.0), Sense::hover());
                         ui.painter().rect_stroke(
                             r,
