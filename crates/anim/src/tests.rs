@@ -569,6 +569,7 @@ fn morph_frame_moves_blends_and_fades() {
     assert!((f.opacity_of(f.shapes[2].0.id) - 0.5).abs() < 1e-9);
     // Ids are fresh and unique.
     let mut ids: Vec<_> = f.shapes.iter().map(|(s, _)| s.id).collect();
+    ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 3);
     assert!(ids.iter().all(|i| i.0 > 4));
