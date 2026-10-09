@@ -272,3 +272,78 @@ fn morph_text_ends_match_the_slides() {
     let ink = (95..140).flat_map(|y| (0..480).map(move |x| (x, y))).filter(|&(x, y)| mid.pixel(x, y)[0] < 128).count();
     assert!(ink > 50, "ink {ink}");
 }
+
+#[test]
+fn text_transform_unmirrors_flips() {
+    // Asymmetric text rect in a 100×50 box: flips move the rect, never mirror the text.
+    let tr = Rect::new(10.0, 0.0, 40.0, 50.0);
+    let at = |x: Xfrm, p: Point| text_transform(x.affine(), tr, 0.0) * p;
+    let near = |a: Point, b: Point| (a - b).hypot() < 1e-9;
+    let base = Xfrm::new(0.0, 0.0, 100.0, 50.0);
+    // flipH: the rect moves to 60..90 and the text still runs left to right.
+    let h = Xfrm { flip_h: true, ..base };
+    assert!(near(at(h, Point::new(10.0, 0.0)), Point::new(60.0, 0.0)));
+    assert!(near(at(h, Point::new(40.0, 50.0)), Point::new(90.0, 50.0)));
+    // flipV: the text is turned 180° in its (vertically mirrored) rect.
+    let v = Xfrm { flip_v: true, ..base };
+    assert!(near(at(v, Point::new(10.0, 0.0)), Point::new(40.0, 50.0)));
+    assert!(near(at(v, Point::new(40.0, 50.0)), Point::new(10.0, 0.0)));
+    // Both flips: the same as a 180° turn.
+    let hv = Xfrm { flip_h: true, flip_v: true, ..base };
+    let turned = Xfrm { rot: 180.0, ..base };
+    for p in [Point::new(10.0, 0.0), Point::new(40.0, 50.0), Point::new(25.0, 10.0)] {
+        assert!(near(at(hv, p), at(turned, p)));
+    }
+    // Unflipped and hostile input: plain transform, nothing NaN from the helper itself.
+    assert_eq!(text_transform(base.affine(), tr, 0.0), base.affine());
+    let _ = text_transform(h.affine(), Rect::new(f64::NAN, 0.0, f64::INFINITY, 1.0), f64::NAN);
+}
+
+/// Slide with text box `x` holding left-aligned, asymmetric text.
+fn flipped_text(x: Xfrm, group: Option<Xfrm>) -> Image {
+    let mut s = text_shape(1, "Fly 42 RJ", 0.0, 0.0);
+    s.xfrm = Some(x);
+    let s = match group {
+        Some(g) => Shape {
+            id: ShapeId(2),
+            xfrm: Some(g),
+            kind: ShapeKind::Group { children: vec![s], child: Xfrm::new(0.0, 0.0, 600.0, 120.0) },
+            ..Default::default()
+        },
+        None => s,
+    };
+    render_slide(&deck_with(vec![s]), 0, &RenderOpts { scale: 0.5, ..Default::default() })
+}
+
+fn differing(a: &Image, b: &Image) -> usize {
+    a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 64).count()
+}
+
+#[test]
+fn flipped_shapes_draw_readable_text() {
+    let base = Xfrm::new(180.0, 200.0, 600.0, 120.0);
+    let plain = flipped_text(base, None);
+    // Warm up: faces load lazily, so the first render may still fall back.
+    let plain = if differing(&plain, &flipped_text(base, None)) > 0 { flipped_text(base, None) } else { plain };
+    let turned = flipped_text(Xfrm { rot: 180.0, ..base }, None);
+    assert!(differing(&plain, &turned) > 200, "the comparisons below must mean something");
+    // flipH: text as unflipped (the text box is symmetric). flipV and both: turned 180°.
+    let d = differing(&plain, &flipped_text(Xfrm { flip_h: true, ..base }, None));
+    assert!(d < 40, "flipH mirrored the text: {d}");
+    let d = differing(&turned, &flipped_text(Xfrm { flip_v: true, ..base }, None));
+    assert!(d < 40, "flipV mirrored the text: {d}");
+    let d = differing(&turned, &flipped_text(Xfrm { flip_h: true, flip_v: true, ..base }, None));
+    assert!(d < 40, "flipH+flipV: {d}");
+    // Rotation then flipH: still the rotated text, not its mirror image.
+    let rot = Xfrm { rot: 30.0, ..base };
+    let d = differing(&flipped_text(rot, None), &flipped_text(Xfrm { flip_h: true, ..rot }, None));
+    assert!(d < 40, "rotated flipH: {d}");
+    // Groups: a flipped group's text isn't mirrored; a flipped child in a flipped group neither.
+    let child = Xfrm::new(0.0, 0.0, 600.0, 120.0);
+    let d = differing(&plain, &flipped_text(child, Some(Xfrm { flip_h: true, ..base })));
+    assert!(d < 40, "group flipH: {d}");
+    let d = differing(&plain, &flipped_text(Xfrm { flip_h: true, ..child }, Some(Xfrm { flip_h: true, ..base })));
+    assert!(d < 40, "flipH child in flipH group: {d}");
+    let d = differing(&turned, &flipped_text(child, Some(Xfrm { flip_v: true, ..base })));
+    assert!(d < 40, "group flipV: {d}");
+}
