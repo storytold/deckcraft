@@ -134,6 +134,12 @@ impl<'a> BitReader<'a> {
         u32::try_from(r).map_err(|_| BitError::InvalidExpGolomb)
     }
 
+    /// `ue(v) + add` (the `..._minus1` / `..._minus8` fields), failing instead of overflowing on a
+    /// hostile value near `u32::MAX`.
+    pub fn read_ue_plus(&mut self, add: u32) -> Result<u32> {
+        self.read_ue()?.checked_add(add).ok_or(BitError::InvalidExpGolomb)
+    }
+
     /// Signed Exp-Golomb `se(v)`.
     pub fn read_se(&mut self) -> Result<i32> {
         let k = self.read_ue()? as i64;
@@ -342,6 +348,18 @@ pub fn crc32(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn read_ue_plus_rejects_overflow() {
+        let mut w = BitWriter::new();
+        w.write_ue(7);
+        w.write_ue(u32::MAX);
+        w.rbsp_trailing();
+        let b = w.finish();
+        let mut r = BitReader::new(&b);
+        assert_eq!(r.read_ue_plus(1).unwrap(), 8);
+        assert!(r.read_ue_plus(1).is_err());
+    }
 
     #[test]
     fn reads_bits() {
