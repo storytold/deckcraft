@@ -311,3 +311,30 @@ fn morph_path_ends_match_the_slides() {
     let c = (from.center().to_vec2() + to.center().to_vec2()) * 0.5 * 0.5;
     assert_ne!(mid.pixel(c.x as u32, c.y as u32), [255, 255, 255, 255]);
 }
+
+#[test]
+fn morph_path_fades_a_fill_only_one_side_has() {
+    let bx = Xfrm::new(100.0, 100.0, 200.0, 200.0);
+    let form = |id: u32, g: &str| Shape {
+        id: ShapeId(id),
+        xfrm: Some(bx),
+        geom: Geom::preset(g),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let mut p = deck_with(vec![form(1, "rect")]);
+    let mut b = (*p.slides[0]).clone();
+    b.shapes = vec![form(1, "line")];
+    p.slides.push(std::sync::Arc::new(b));
+    let o = RenderOpts { scale: 0.5, ..Default::default() };
+    let at = |t: f64| {
+        let pm = PathMorph { id: ShapeId(10), from: Geom::preset("rect"), from_box: bx, to_box: bx, t };
+        // A point near the line but not on it: inside the shape all the way.
+        render_blend(&p, 0, 1, t, &[(form(10, "line"), false)], &[], &[pm], &o).pixel(110, 90)
+    };
+    let (full, half, none) = (at(0.0), at(0.5), at(1.0));
+    assert_eq!(none, [255, 255, 255, 255]);
+    assert!(full[0] < 128, "{full:?}");
+    // Halfway the fill is half there: between the full colour and the white slide.
+    assert!(half[0] > full[0] + 40 && half[0] < 215, "{half:?} vs {full:?}");
+}

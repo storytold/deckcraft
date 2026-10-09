@@ -292,7 +292,8 @@ struct Part {
 
 /// Two shape geometries brought to the same structure once, then blended per frame with
 /// [`GeometryMorph::at`]. Sub-paths pair up in order; one without partner grows out of (or shrinks
-/// into) a point. Fill mode, outline and fill rule of a pair switch at the midpoint when they differ.
+/// into) a point. When a pair differs in fill mode, outline or fill rule, the two looks cross-fade
+/// (see [`Fade`]).
 #[derive(Clone, Debug)]
 pub struct GeometryMorph {
     parts: Vec<Part>,
@@ -301,6 +302,40 @@ pub struct GeometryMorph {
 
 fn look(s: &SubPath) -> Look {
     Look { fill: s.fill, stroke: s.stroke, even_odd: s.even_odd }
+}
+
+/// How strongly a sub-path of a morphed geometry shows: its fill and its outline, 0..1.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fade {
+    pub fill: f64,
+    pub stroke: f64,
+}
+
+/// The layers a pair of looks is drawn with at `t`, bottom first. A fill or an outline only one side
+/// has fades out (or in). When both fill, the side with the even-odd rule lies opaque underneath and
+/// the other fades over it, so a donut's hole fills smoothly; with the same rule both cover the same
+/// area, so this is a plain cross-fade (shading of 3-D faces).
+fn layers(a: Option<Look>, b: Option<Look>, t: f64) -> Vec<(Look, Fade)> {
+    let (a, b) = match (a, b) {
+        (Some(a), Some(b)) if a != b => (a, b),
+        (Some(x), _) | (None, Some(x)) => return vec![(x, Fade { fill: 1.0, stroke: 1.0 })],
+        (None, None) => return vec![],
+    };
+    let side = |on_a: bool, on_b: bool| match (on_a, on_b) {
+        (true, true) => 1.0,
+        (true, false) => 1.0 - t,
+        (false, true) => t,
+        (false, false) => 0.0,
+    };
+    let (stroke, line) = (a.stroke || b.stroke, side(a.stroke, b.stroke));
+    let (fa, fb) = (a.fill != FillMode::None, b.fill != FillMode::None);
+    if fa && fb {
+        let (under, over, alpha) = if a.even_odd || !b.even_odd { (a, b, t) } else { (b, a, 1.0 - t) };
+        vec![(Look { stroke, ..under }, Fade { fill: 1.0, stroke: line }), (Look { stroke: false, ..over }, Fade { fill: alpha, stroke: 0.0 })]
+    } else {
+        let filled = if fa { a } else { b };
+        vec![(Look { stroke, ..filled }, Fade { fill: side(fa, fb), stroke: line })]
+    }
 }
 
 impl GeometryMorph {
@@ -319,19 +354,13 @@ impl GeometryMorph {
         GeometryMorph { parts, text: (a.text_rect, b.text_rect) }
     }
 
-    /// The geometry at `t` (0..1). The points of `a` are first scaled by `sa` and those of `b` by
-    /// `sb`, to bring both into the current box.
-    pub fn at(&self, t: f64, sa: Vec2, sb: Vec2) -> Geometry {
+    /// The geometry at `t` (0..1), with a [`Fade`] for each of its sub-paths. The points of `a` are
+    /// first scaled by `sa` and those of `b` by `sb`, to bring both into the current box.
+    pub fn at(&self, t: f64, sa: Vec2, sb: Vec2) -> (Geometry, Vec<Fade>) {
         let t = if t.is_finite() { t.clamp(0.0, 1.0) } else { 0.0 };
         let scale = |p: Point, s: Vec2| Point::new(p.x * s.x, p.y * s.y);
-        let mut paths = Vec::new();
+        let (mut paths, mut fades) = (Vec::new(), Vec::new());
         for part in &self.parts {
-            let Some(lk) = (match (part.a, part.b) {
-                (Some(x), Some(y)) => Some(if t < 0.5 { x } else { y }),
-                (x, y) => x.or(y),
-            }) else {
-                continue;
-            };
             let cs: Vec<Contour> = part
                 .ca
                 .iter()
@@ -341,12 +370,16 @@ impl GeometryMorph {
                     pts: x.pts.iter().zip(&y.pts).map(|(p, q)| scale(*p, sa).lerp(scale(*q, sb), t)).collect(),
                 })
                 .collect();
-            paths.push(SubPath { path: to_path(&cs), fill: lk.fill, stroke: lk.stroke, even_odd: lk.even_odd });
+            let path = to_path(&cs);
+            for (lk, fade) in layers(part.a, part.b, t) {
+                paths.push(SubPath { path: path.clone(), fill: lk.fill, stroke: lk.stroke, even_odd: lk.even_odd });
+                fades.push(fade);
+            }
         }
         let r = |r: Rect, s: Vec2| Rect::new(r.x0 * s.x, r.y0 * s.y, r.x1 * s.x, r.y1 * s.y);
         let (ta, tb) = (r(self.text.0, sa), r(self.text.1, sb));
         let text_rect = Rect::from_points(ta.origin().lerp(tb.origin(), t), Point::new(ta.x1, ta.y1).lerp(Point::new(tb.x1, tb.y1), t));
-        Geometry { paths, text_rect, handles: vec![], sites: vec![] }
+        (Geometry { paths, text_rect, handles: vec![], sites: vec![] }, fades)
     }
 }
 
@@ -411,13 +444,13 @@ mod tests {
         let (a, b) = (build("ellipse", 100.0, 100.0, &[]).unwrap(), build("star5", 200.0, 100.0, &[]).unwrap());
         let m = GeometryMorph::new(&a, &b);
         let one = Vec2::new(1.0, 1.0);
-        assert!(near(bbox(&m.at(0.0, one, one)), bbox(&a)));
-        assert!(near(bbox(&m.at(1.0, one, one)), bbox(&b)));
-        let mid = m.at(0.5, one, one);
+        assert!(near(bbox(&m.at(0.0, one, one).0), bbox(&a)));
+        assert!(near(bbox(&m.at(1.0, one, one).0), bbox(&b)));
+        let mid = m.at(0.5, one, one).0;
         assert_eq!(mid.paths.len(), 1);
         assert!(mid.paths[0].path.elements().iter().all(|e| e.end_point().is_none_or(|p| p.is_finite())));
         // Non-finite progress is the start.
-        assert!(near(bbox(&m.at(f64::NAN, one, one)), bbox(&a)));
+        assert!(near(bbox(&m.at(f64::NAN, one, one).0), bbox(&a)));
     }
 
     #[test]
@@ -437,17 +470,37 @@ mod tests {
         assert!(b.paths.len() > 1);
         let m = GeometryMorph::new(&a, &b);
         let one = Vec2::new(1.0, 1.0);
-        let start = m.at(0.0, one, one);
+        let start = m.at(0.0, one, one).0;
         assert_eq!(start.paths.len(), b.paths.len());
         for sp in start.paths.iter().skip(1) {
             let r = sp.path.bounding_box();
             assert!(r.width() < 1e-9 && r.height() < 1e-9, "{r:?}");
         }
         // Looks switch at the midpoint: the cube's shaded faces show from there on.
-        assert_eq!(m.at(1.0, one, one).paths.iter().map(|s| s.fill).collect::<Vec<_>>(), b.paths.iter().map(|s| s.fill).collect::<Vec<_>>());
+        assert_eq!(m.at(1.0, one, one).0.paths.iter().map(|s| s.fill).collect::<Vec<_>>(), b.paths.iter().map(|s| s.fill).collect::<Vec<_>>());
         // And the other way round, the faces shrink away.
-        let back = GeometryMorph::new(&b, &a).at(1.0, one, one);
+        let back = GeometryMorph::new(&b, &a).at(1.0, one, one).0;
         assert!(back.paths.iter().skip(1).all(|sp| sp.path.bounding_box().area() < 1e-9));
+    }
+
+    #[test]
+    fn differing_looks_cross_fade() {
+        let one = Vec2::new(1.0, 1.0);
+        let fades = |a: &Geometry, b: &Geometry, t: f64| {
+            let (g, f) = GeometryMorph::new(a, b).at(t, one, one);
+            g.paths.iter().zip(f).map(|(s, f)| (s.fill, s.even_odd, s.stroke, f.fill, f.stroke)).collect::<Vec<_>>()
+        };
+        // A filled rectangle into a line: the fill fades out, the outline stays.
+        let (r, line) = (build("rect", 100.0, 100.0, &[]).unwrap(), build("line", 100.0, 0.0, &[]).unwrap());
+        assert_eq!(fades(&r, &line, 0.25), [(FillMode::Norm, false, true, 0.75, 1.0)]);
+        assert_eq!(fades(&line, &r, 0.25), [(FillMode::Norm, false, true, 0.25, 1.0)]);
+        // A donut into a circle: the donut (even-odd) lies underneath, the circle fades in over its hole.
+        let (d, e) = (build("donut", 100.0, 100.0, &[]).unwrap(), build("ellipse", 100.0, 100.0, &[]).unwrap());
+        assert!(d.paths[0].even_odd && !e.paths[0].even_odd);
+        assert_eq!(fades(&d, &e, 0.25), [(FillMode::Norm, true, true, 1.0, 1.0), (FillMode::Norm, false, false, 0.25, 0.0)]);
+        assert_eq!(fades(&e, &d, 0.25), [(FillMode::Norm, true, true, 1.0, 1.0), (FillMode::Norm, false, false, 0.75, 0.0)]);
+        // Same looks: one layer, fully there.
+        assert_eq!(fades(&e, &r, 0.5), [(FillMode::Norm, false, true, 1.0, 1.0)]);
     }
 
     #[test]
@@ -455,10 +508,10 @@ mod tests {
         let (a, b) = (build("rect", 10.0, 10.0, &[]).unwrap(), build("ellipse", 40.0, 20.0, &[]).unwrap());
         let m = GeometryMorph::new(&a, &b);
         // Current box 20 x 20: a scaled up twice, b to half the width.
-        let g = m.at(0.0, Vec2::new(2.0, 2.0), Vec2::new(0.5, 1.0));
+        let g = m.at(0.0, Vec2::new(2.0, 2.0), Vec2::new(0.5, 1.0)).0;
         assert!(near(bbox(&g), Rect::new(0.0, 0.0, 20.0, 20.0)));
         assert!(near(g.text_rect, Rect::new(a.text_rect.x0 * 2.0, a.text_rect.y0 * 2.0, a.text_rect.x1 * 2.0, a.text_rect.y1 * 2.0)));
-        let g = m.at(1.0, Vec2::new(2.0, 2.0), Vec2::new(0.5, 1.0));
+        let g = m.at(1.0, Vec2::new(2.0, 2.0), Vec2::new(0.5, 1.0)).0;
         assert!(near(bbox(&g), Rect::new(0.0, 0.0, 20.0, 20.0)));
     }
 
@@ -473,12 +526,13 @@ mod tests {
         let bad = Geometry { paths: vec![SubPath { path: nan, fill: FillMode::Norm, stroke: true, even_odd: false }], ..empty.clone() };
         for (x, y) in [(&empty, &empty), (&empty, &r), (&r, &empty), (&r, &line), (&line, &r), (&bad, &r), (&r, &bad)] {
             for t in [0.0, 0.5, 1.0, f64::INFINITY] {
-                let g = GeometryMorph::new(x, y).at(t, Vec2::new(1.0, 1.0), Vec2::new(0.0, 1e300));
-                assert!(g.paths.len() <= x.paths.len().max(y.paths.len()));
+                let g = GeometryMorph::new(x, y).at(t, Vec2::new(1.0, 1.0), Vec2::new(0.0, 1e300)).0;
+                // At most two layers per sub-path pair.
+                assert!(g.paths.len() <= 2 * x.paths.len().max(y.paths.len()));
             }
         }
         // A rectangle into a line: the line is open, so the morph ends open.
-        let g = GeometryMorph::new(&r, &line).at(1.0, Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0));
+        let g = GeometryMorph::new(&r, &line).at(1.0, Vec2::new(1.0, 1.0), Vec2::new(1.0, 1.0)).0;
         assert!(!g.paths[0].path.elements().iter().any(|e| matches!(e, PathEl::ClosePath)));
     }
 

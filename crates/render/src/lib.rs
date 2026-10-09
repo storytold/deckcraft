@@ -634,10 +634,11 @@ impl Renderer {
     }
 
     fn geometry_shape(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, m: Affine, w: f64, h: f64, st: &ShapeState) {
-        let geo = match self.paths.iter().find(|p| p.id == s.id) {
+        let (geo, fades) = match self.paths.iter().find(|p| p.id == s.id) {
             Some(pm) => morph_path::geometry(pm, s, w, h),
-            None => shape_geometry(s, w, h),
+            None => (shape_geometry(s, w, h), Vec::new()),
         };
+        let fade = |i: usize| fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 });
         let (fill, fill_ph) = resolve::fill(rctx, s);
         let (line, line_ph) = resolve::line(rctx, s);
         let (effects, fx_ph) = resolve::effects(rctx, s);
@@ -683,13 +684,13 @@ impl Renderer {
                 if let Some(fl) = &fill
                     && !(empty_ph && f.opts.edit && s.fill.is_none())
                 {
-                    for sp in &geo.paths {
-                        if sp.fill == FillMode::None {
+                    for (i, sp) in geo.paths.iter().enumerate() {
+                        if sp.fill == FillMode::None || fade(i).fill <= 0.0 {
                             continue;
                         }
                         ctx.set_transform(m);
                         ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
-                        paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, 1.0, f.pres);
+                        paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres);
                         ctx.set_fill_rule(peniko::Fill::NonZero);
                     }
                 }
@@ -698,8 +699,8 @@ impl Renderer {
         // Outline.
         if line.fill.as_ref().is_some_and(|f| !f.is_none()) {
             let lw = line.width.unwrap_or(0.75).max(0.0);
-            for sp in geo.paths.iter().filter(|p| p.stroke) {
-                stroke(ctx, rctx, &line, line_ph, &sp.path, m, lw);
+            for (i, sp) in geo.paths.iter().enumerate().filter(|(i, p)| p.stroke && fade(*i).stroke > 0.0) {
+                stroke(ctx, rctx, &line, line_ph, &sp.path, m, lw, fade(i).stroke);
             }
             if s.is_line() || geo.is_open() {
                 arrowheads(ctx, rctx, &line, line_ph, &geo, m, lw);
@@ -854,7 +855,7 @@ fn blur(sigma: f64) -> Filter {
     Filter::from_primitive(FilterPrimitive::GaussianBlur { std_deviation: sigma.clamp(0.0, 500.0) as f32, edge_mode: EdgeMode::None })
 }
 
-fn stroke(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, path: &BezPath, m: Affine, lw: f64) {
+fn stroke(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, path: &BezPath, m: Affine, lw: f64, alpha: f64) {
     use deckcraft_model::style::{LineCap, LineJoin};
     let cap = match line.cap.unwrap_or_default() {
         LineCap::Flat => kurbo::Cap::Butt,
@@ -878,13 +879,13 @@ fn stroke(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, pa
     ctx.set_transform(m);
     match &line.fill {
         Some(Fill::Solid { color: c }) => {
-            ctx.set_paint(color(rctx.color(c, ph), 1.0));
+            ctx.set_paint(color(rctx.color(c, ph), alpha));
         }
         Some(Fill::Gradient(g)) => {
             let c = g.stops.first().map(|s| rctx.color(&s.color, ph)).unwrap_or(Rgba::BLACK);
-            ctx.set_paint(color(c, 1.0));
+            ctx.set_paint(color(c, alpha));
         }
-        _ => ctx.set_paint(peniko::Color::from_rgba8(0, 0, 0, 255)),
+        _ => ctx.set_paint(color(Rgba::BLACK, alpha)),
     }
     ctx.set_stroke(sk);
     ctx.stroke_path(path);
