@@ -425,3 +425,22 @@ fn right_to_left_paragraphs() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert_eq!(para(&s).rtl, Some(true));
 }
+
+#[test]
+fn inserted_hyperlinks_look_like_links() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "Read the docs"})).unwrap();
+    s.execute("text.move", &json!({"to": "wordLeft", "extend": true})).unwrap();
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["underline"], false);
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    // Underlined (and hlink-coloured: same resolution as files) without touching the run's own props.
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["underline"], true);
+    let body = s.doc().unwrap().current_slide().unwrap().shapes[0].text.clone().unwrap();
+    let run = body.paragraphs[0].runs.iter().find(|r| r.props.link.is_some()).unwrap();
+    assert!(run.props.fill.is_none() && run.props.underline.is_none(), "{run:?}");
+    // Underline off is the run's own u="none", as in PowerPoint.
+    s.execute("format.underline", &json!({})).unwrap();
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["underline"], false);
+}
