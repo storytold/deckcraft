@@ -797,7 +797,7 @@ mod tests {
         let ctx = egui::Context::default();
         let red = ctx.load_texture("show", egui::ColorImage::filled([1, 1], Color32::RED), egui::TextureOptions::LINEAR);
         let mut show = Show::new(&doc, 0, false, false);
-        show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![] }, red.clone()));
+        show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0 }, red.clone()));
         assert!(show.apply(ShowAction::Slide(1), &doc, 0.0));
         let tr = show.trans.as_ref().expect("the fade plays");
         assert_eq!(tr.old.as_ref().map(TextureHandle::id), Some(red.id()));

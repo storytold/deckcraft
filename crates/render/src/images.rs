@@ -25,9 +25,14 @@ struct Cache {
     anims: HashMap<(usize, u64), (Arc<Vec<u8>>, Option<Arc<Anim>>)>,
 }
 
-/// Longest side and total decoded size kept for one animated GIF.
+/// Longest side, total decoded size and frame count kept for one animated GIF; the largest canvas
+/// decoded at all; and the decoded size of all cached GIFs together. Hostile GIFs (millions of
+/// tiny frames, a huge canvas) stop at these instead of exhausting memory.
 const GIF_SIDE: u32 = 1024;
-const GIF_BUDGET: usize = 256 << 20;
+const GIF_BUDGET: usize = 64 << 20;
+const GIF_MAX_FRAMES: usize = 1000;
+const GIF_MAX_CANVAS: u64 = 4096 * 4096;
+const GIF_CACHE_BUDGET: usize = 192 << 20;
 
 /// The frames of an animated GIF and when each one ends, in seconds from the start of a loop.
 struct Anim {
@@ -36,6 +41,11 @@ struct Anim {
 }
 
 impl Anim {
+    /// Decoded bytes held by the frames.
+    fn bytes(&self) -> usize {
+        self.frames.iter().map(|f| f.width() as usize * f.height() as usize * 4).sum()
+    }
+
     /// The frame showing `t` seconds into the (looping) animation and the seconds until the next.
     fn at(&self, t: f64) -> (usize, f64) {
         let total = self.ends.last().copied().unwrap_or(0.0);
@@ -158,7 +168,7 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     let mut dec = image::codecs::gif::GifDecoder::new(std::io::Cursor::new(bytes)).ok()?;
     dec.set_limits(image::Limits::default()).ok()?;
     let (w, h) = dec.dimensions();
-    if w == 0 || h == 0 || (w as u64) * (h as u64) > 100_000_000 {
+    if w == 0 || h == 0 || (w as u64) * (h as u64) > GIF_MAX_CANVAS {
         return None;
     }
     let k = (GIF_SIDE as f64 / w.max(h) as f64).min(1.0);
@@ -167,7 +177,7 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     let (mut frames, mut ends, mut t) = (Vec::new(), Vec::new(), 0.0);
     for f in dec.into_frames() {
         let Ok(f) = f else { break };
-        if (frames.len() + 1) * size > GIF_BUDGET {
+        if frames.len() >= GIF_MAX_FRAMES || (frames.len() + 1) * size > GIF_BUDGET {
             log::info!("animated GIF: keeping its first {} frames", frames.len());
             break;
         }
@@ -197,7 +207,8 @@ fn anim(bytes: &Arc<Vec<u8>>, adj: &PictureAdjust) -> Option<Arc<Anim>> {
     }
     let a = decode_anim(bytes, adj).map(Arc::new);
     with(|c| {
-        if c.anims.len() >= 8 {
+        let held: usize = c.anims.values().filter_map(|e| e.1.as_ref()).map(|a| a.bytes()).sum();
+        if held + a.as_ref().map_or(0, |a| a.bytes()) > GIF_CACHE_BUDGET || c.anims.len() >= 64 {
             c.anims.clear();
         }
         c.anims.insert(key, (bytes.clone(), a.clone()));
@@ -246,5 +257,26 @@ fn apply_adjust(img: &mut image::RgbaImage, a: &PictureAdjust) {
                 *ch = v.round().clamp(0.0, 255.0) as u8;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn a_gif_of_many_tiny_frames_keeps_only_the_frame_cap() {
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        let frames = (0..GIF_MAX_FRAMES + 200).map(|i| {
+            let c = if i % 2 == 0 { [255, 0, 0, 255] } else { [0, 0, 255, 255] };
+            Frame::from_parts(RgbaImage::from_pixel(1, 1, Rgba(c)), 0, 0, Delay::from_numer_denom_ms(20, 1))
+        });
+        let mut out = Vec::new();
+        image::codecs::gif::GifEncoder::new(&mut out).encode_frames(frames).expect("gif");
+        let a = decode_anim(&out, &PictureAdjust::default()).expect("animated");
+        assert_eq!(a.frames.len(), GIF_MAX_FRAMES);
+        assert_eq!(a.ends.len(), GIF_MAX_FRAMES);
     }
 }
