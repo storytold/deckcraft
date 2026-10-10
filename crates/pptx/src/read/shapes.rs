@@ -271,6 +271,15 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
                         l.children_named("bmk").take(1000).map(|b| (b.attr("name").unwrap_or("").to_string(), ms(b.attr("time")))).collect();
                 }
             }
+            if let Some(o) = nvpr.and_then(|n| n.child("extLst")).and_then(|x| x.find("mediaOptions")) {
+                clip.volume = o.f64("volume").map_or(1.0, |v| v.clamp(0.0, 1.0));
+                clip.autoplay = o.bool("autoplay").unwrap_or(false);
+                clip.loop_play = o.bool("loop").unwrap_or(false);
+                clip.rewind = o.bool("rewind").unwrap_or(false);
+                clip.play_across_slides = o.bool("acrossSlides").unwrap_or(false);
+                clip.hide_while_not_playing = o.bool("hideWhileNotPlaying").unwrap_or(false);
+                clip.full_screen = o.bool("fullScreen").unwrap_or(false);
+            }
             s.kind = ShapeKind::Media(clip);
             return s;
         }
