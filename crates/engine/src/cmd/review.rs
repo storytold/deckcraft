@@ -43,18 +43,27 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn now() -> String {
+/// Seconds since the Unix epoch: the system clock, or the browser's on wasm (which has no `SystemTime`).
+fn now_secs() -> u64 {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        let (y, m, d) = super::design::civil((secs / 86_400) as i64);
-        let t = secs % 86_400;
-        format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", t / 3600, t / 60 % 60, t % 60)
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
     }
     #[cfg(target_arch = "wasm32")]
     {
-        String::new()
+        (js_sys::Date::now() / 1000.0).max(0.0) as u64
     }
+}
+
+/// A UTC timestamp as saved on comments: `2026-10-10T13:10:35Z`.
+fn iso_utc(secs: u64) -> String {
+    let (y, m, d) = super::design::civil((secs / 86_400) as i64);
+    let t = secs % 86_400;
+    format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", t / 3600, t / 60 % 60, t % 60)
+}
+
+fn now() -> String {
+    iso_utc(now_secs())
 }
 
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
@@ -263,4 +272,21 @@ fn custom_show(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timestamps_are_iso_utc() {
+        assert_eq!(iso_utc(0), "1970-01-01T00:00:00Z");
+        assert_eq!(iso_utc(1_791_637_835), "2026-10-10T13:10:35Z");
+    }
+
+    #[test]
+    fn the_clock_is_not_empty() {
+        // On wasm this used to return an empty string, so browser comments were saved undated.
+        assert!(now().starts_with("20"), "{}", now());
+    }
 }
