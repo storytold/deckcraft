@@ -847,6 +847,16 @@ pub fn start_screen(app: &mut SlideApp, ui: &mut Ui) {
             paint_logo(ui.painter(), r);
             ui.label(egui::RichText::new("DeckCraft").font(theme::bold(26.0)));
         });
+        if app.home_open() {
+            let title = app.session.active().map(|d| d.title()).unwrap_or_default();
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                ui.add_space(40.0);
+                if ui.button(format!("← Back to {title}")).on_hover_text("Esc").clicked() {
+                    let _ = app.run("app.home", json!({"on": false}));
+                }
+            });
+        }
         ui.add_space(16.0);
         ui.horizontal(|ui| {
             ui.add_space(40.0);

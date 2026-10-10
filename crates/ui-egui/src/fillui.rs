@@ -276,7 +276,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             let (sw, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
             ui.painter().rect(sw, CornerRadius::same(3), c32(&s.color, sc), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
             let r = widgets::drop_button(ui, "", vec2(24.0, 20.0), true);
-            egui::Popup::menu(&r).show(|ui| {
+            widgets::color_popup(&r).show(|ui| {
                 if let Some(Some(c)) = widgets::color_grid(ui, sc, None) {
                     let mut ng = g.clone();
                     ng.stops[sel].color = with_alpha(c, alpha_of(&s.color));

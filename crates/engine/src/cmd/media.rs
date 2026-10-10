@@ -33,6 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             poster_frame
         ),
+        cmd!(noundo "media.gifPlay", "Play/Pause GIF", [], None, "{id?, play?: bool (default: toggle)} → {id, playing}", has_doc, gif_play),
     ]
 }
 
@@ -148,6 +149,34 @@ fn poster_frame(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": id, "ms": ms}))
 }
 
+/// Pause or play an animated GIF picture (`id` / `ids` / the selection, else the only one on the
+/// slide). The UI host keeps its clock: a paused GIF holds its frame and resumes from it.
+fn gif_play(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "media.gifPlay";
+    let st = s.doc()?;
+    let is_gif = |id: ShapeId| {
+        let Some(ShapeKind::Picture { fill }) = st.shape(id).map(|sh| &sh.kind) else { return false };
+        st.doc.media(fill.media).and_then(|m| crate::render::gif_frame(&m.data, &fill.adjust, 0.0)).is_some()
+    };
+    let ids = targets(s, p)?;
+    let id = match ids.iter().copied().find(|id| is_gif(*id)) {
+        Some(id) => id,
+        None if !ids.is_empty() && (p.get("id").is_some() || p.get("ids").is_some()) => return Err(bad(cmd, "not an animated GIF")),
+        None => match st.shapes().iter().map(|sh| sh.id).filter(|id| is_gif(*id)).collect::<Vec<_>>().as_slice() {
+            [id] => *id,
+            [] => return Err(bad(cmd, "no animated GIF on this slide")),
+            _ => return Err(bad(cmd, "select an animated GIF, or pass `id`")),
+        },
+    };
+    let play = bool_param(p, "play").unwrap_or_else(|| s.gif_paused.contains(&id));
+    if play {
+        s.gif_paused.remove(&id);
+    } else {
+        s.gif_paused.insert(id);
+    }
+    Ok(json!({"id": id, "playing": play}))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,6 +235,27 @@ mod tests {
         assert!(s.execute("media.play", &json!({})).is_err());
         let sh = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).expect("shape");
         assert!(s.execute("media.play", &json!({"id": sh["id"]})).is_err());
+    }
+
+    #[test]
+    fn gif_play_pauses_and_resumes_an_animated_gif() {
+        use image::{Delay, Frame, Rgba, RgbaImage};
+        let frame = |c: [u8; 4]| Frame::from_parts(RgbaImage::from_pixel(8, 8, Rgba(c)), 0, 0, Delay::from_numer_denom_ms(100, 1));
+        let mut gif = Vec::new();
+        image::codecs::gif::GifEncoder::new(&mut gif).encode_frames([frame([255, 0, 0, 255]), frame([0, 0, 255, 255])]).expect("gif");
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        assert!(s.execute("media.gifPlay", &json!({})).is_err(), "no GIF yet");
+        let r = s.execute("insert.picture", &json!({"name": "a.gif", "data": base64_encode(&gif)})).expect("insert");
+        let id = ShapeId(r["id"].as_u64().expect("id") as u32);
+        let r = s.execute("media.gifPlay", &json!({})).expect("toggle");
+        assert_eq!(r["playing"], false);
+        assert!(s.gif_paused.contains(&id));
+        let r = s.execute("media.gifPlay", &json!({"id": id, "play": true})).expect("play");
+        assert_eq!(r["playing"], true);
+        assert!(s.gif_paused.is_empty());
+        let sh = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).expect("shape");
+        assert!(s.execute("media.gifPlay", &json!({"id": sh["id"]})).is_err());
     }
 
     #[test]

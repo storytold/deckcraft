@@ -336,6 +336,8 @@ fn select_all(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn deselect(s: &mut Session, _p: &Value) -> Result<Value> {
+    s.painter = None;
+    s.anim_painter = None;
     s.select(|_, sel| {
         if let Some(t) = sel.text.take() {
             // Esc while editing text selects the shape.

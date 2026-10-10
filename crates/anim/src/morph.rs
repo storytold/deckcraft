@@ -1,7 +1,7 @@
 //! Morph: matching shapes between two slides, interpolating their boxes and building the frames.
 
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::{ColorRef, Fill, Presentation, Rgba, Shape, ShapeId, ShapeKind, Slide, Xfrm, walk};
+use deckcraft_model::{ColorRef, Fill, Geom, Presentation, Rgba, Shape, ShapeId, ShapeKind, Slide, Xfrm, walk};
 
 use crate::clampf;
 use crate::easing::smooth;
@@ -107,6 +107,19 @@ pub struct MorphFrame {
     /// With the Words or Characters option: pairs of frame shapes whose texts morph by words or
     /// characters instead of cross-fading (the renderer's `TextMorph`).
     pub text: Vec<MorphText>,
+    /// Frame shapes whose outline turns from another geometry into their own (the renderer's
+    /// `PathMorph`).
+    pub paths: Vec<MorphPath>,
+}
+
+/// A frame shape whose outline morphs from `from` (the old shape's geometry) into its own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MorphPath {
+    pub id: ShapeId,
+    pub from: Geom,
+    /// The boxes of the old and the new shape on their own slides.
+    pub from_box: Xfrm,
+    pub to_box: Xfrm,
 }
 
 /// Two frame shapes whose texts morph by words or characters.
@@ -153,9 +166,17 @@ fn content(s: &Shape) -> Shape {
     Shape { id: ShapeId(0), name: String::new(), xfrm: None, fill: None, ..s.clone() }
 }
 
+/// Whether two shapes differ in their geometry only, and it is drawn as an outline (shapes,
+/// pictures, connectors), so the outline can morph.
+fn reshaped(a: &Shape, b: &Shape) -> bool {
+    let outlined = |s: &Shape| matches!(s.kind, ShapeKind::Shape | ShapeKind::Picture { .. } | ShapeKind::Connector { .. });
+    a.geom != b.geom && outlined(a) && outlined(b) && Shape { geom: Geom::default(), ..content(a) } == Shape { geom: Geom::default(), ..content(b) }
+}
+
 /// Morph frame from slide `a` to slide `b` at progress `t` (0..1, eased here). Paired shapes
 /// ([`morph_pairs`]) move along [`morph_xfrm`]; when they differ only in solid fill colour the
-/// colour blends, otherwise the new shape fades in under the fading old one on the same moving
+/// colour blends, when only in geometry (and fill colour) the outline morphs ([`MorphFrame::paths`]),
+/// otherwise the new shape fades in under the fading old one on the same moving
 /// box; with the transition option `words` or `characters` their texts are listed in
 /// [`MorphFrame::text`] to morph word by word or character by character. Unpaired shapes of `a` fade out, unpaired shapes of `b` fade in, and shapes of `b` for
 /// which `hidden_b` is true (entrance animations, hidden media) stay out of the frame.
@@ -172,6 +193,7 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
     let (by_text, chars) = (by == "words" || by == "characters", by == "characters");
     let has_text = |x: &Shape| x.text.as_ref().is_some_and(|t| !t.is_empty()) && !matches!(x.kind, ShapeKind::Group { .. } | ShapeKind::Table(_));
     let mut text = Vec::new();
+    let mut paths = Vec::new();
     let mut push = |mut sh: Shape, old: bool, op: f64| {
         let id = ShapeId(next);
         sh.id = id;
@@ -195,18 +217,23 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
             }
             continue;
         };
-        let x = match (box_of(ca.as_ref(), sa), box_of(cb.as_ref(), sb)) {
+        let (xa, xb) = (box_of(ca.as_ref(), sa), box_of(cb.as_ref(), sb));
+        let x = match (xa, xb) {
             (Some(xa), Some(xb)) => Some(morph_xfrm(xa, xb, s)),
             (_, xb) => xb,
         };
-        if content(sa) == content(sb) {
+        let reshape = reshaped(sa, sb);
+        if reshape || content(sa) == content(sb) {
             let mut m = Shape { xfrm: x, ..sb.clone() };
             if let (Some(fa), Some(fb)) = (solid_color(ca.as_ref(), sa), solid_color(cb.as_ref(), sb))
                 && fa != fb
             {
                 m.fill = Some(Fill::solid(ColorRef::rgb(mix_color(fa, fb, s))));
             }
-            push(m, false, 1.0);
+            let id = push(m, false, 1.0);
+            if reshape && let (Some(from_box), Some(to_box)) = (xa, xb) {
+                paths.push(MorphPath { id, from: sa.geom.clone(), from_box, to_box });
+            }
         } else {
             let new = push(Shape { xfrm: x, ..sb.clone() }, false, s);
             let old = push(Shape { xfrm: x, ..sa.clone() }, true, 1.0 - s);
@@ -220,5 +247,6 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
         }
     }
     f.text = text;
+    f.paths = paths;
     f
 }

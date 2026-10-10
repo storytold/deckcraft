@@ -115,9 +115,22 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export slides: png/jpeg (one slide, or all with all:true), pptx, outline text.",
+            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, or pdf (slides, notes pages or handouts).",
             obj(
-                json!({"path": string("Output path"), "format": string("png|jpeg|pptx|deckcraft|outline"), "slide": int("Slide index for images"), "all": boolean("All slides (images)"), "scale": num("Pixels per point for images (default 2)")}),
+                json!({
+                    "path": string("Output path"),
+                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "pdf"], "description": "Output format (default: from the path's extension)"},
+                    "slide": int("Slide index for images"),
+                    "all": boolean("All slides (images)"),
+                    "scale": num("Pixels per point for images (default 2)"),
+                    "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
+                    "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
+                    "dpi": num("PDF: raster resolution of slide artwork, 36-600 (default 200)"),
+                    "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF: slide indices to export (default all)"},
+                    "includeHidden": boolean("PDF: include hidden slides (default false)"),
+                    "textLayer": boolean("PDF: invisible text layer for search, select and copy (default true)"),
+                    "frame": boolean("PDF notes/handouts: thin frame around each slide (default true)")
+                }),
                 &["path"],
             ),
             false,

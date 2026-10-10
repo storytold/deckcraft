@@ -877,7 +877,7 @@ checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
 name = "deckcraft"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "arboard",
  "cpal",
@@ -896,7 +896,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-anim"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-geom",
  "deckcraft-model",
@@ -905,7 +905,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-av1"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -914,14 +914,14 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-bitstream"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "proptest",
 ]
 
 [[package]]
 name = "deckcraft-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-mcp",
@@ -930,14 +930,14 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-color"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "deckcraft-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
@@ -959,7 +959,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-fonts"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "epaint_default_fonts",
  "harfrust 0.13.3",
@@ -971,7 +971,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-format"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-model",
  "serde",
@@ -982,7 +982,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-geom"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "kurbo",
  "serde",
@@ -990,7 +990,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-h264"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -999,7 +999,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-hevc"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-isobmff"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-bitstream",
  "thiserror 2.0.21",
@@ -1016,11 +1016,11 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-matroska"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "deckcraft-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-render",
@@ -1030,7 +1030,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-media"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-av1",
  "deckcraft-h264",
@@ -1048,7 +1048,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-model"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
@@ -1059,15 +1059,15 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ogg"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "deckcraft-opus"
-version = "0.3.0"
+version = "0.4.0"
 
 [[package]]
 name = "deckcraft-pdf"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-fonts",
  "deckcraft-model",
@@ -1082,7 +1082,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-pptx"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-engine",
@@ -1098,7 +1098,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-render"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
@@ -1114,7 +1114,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-text"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "deckcraft-color",
@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-ui-egui"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-anim",
  "deckcraft-color",
@@ -1150,7 +1150,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-vp9"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-bitstream",
  "rayon",
@@ -1159,7 +1159,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-web"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-ui-egui",
@@ -1214,6 +1214,17 @@ dependencies = [
  "block2 0.6.2",
  "libc",
  "objc2 0.6.5",
+]
+
+[[package]]
+name = "displaydoc"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -1349,6 +1360,7 @@ dependencies = [
  "raw-window-handle",
  "smithay-clipboard",
  "web-time",
+ "webbrowser",
  "winit",
 ]
 
@@ -1646,6 +1658,15 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
+
+[[package]]
+name = "form_urlencoded"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf"
+dependencies = [
+ "percent-encoding",
+]
 
 [[package]]
 name = "futures-core"
@@ -2086,6 +2107,110 @@ dependencies = [
 ]
 
 [[package]]
+name = "icu_collections"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fa68d21081c4a05d5a901a1c62add574c77048b6a1c67be3b50ce0b60d4ca513"
+dependencies = [
+ "displaydoc",
+ "potential_utf",
+ "utf8_iter",
+ "yoke",
+ "zerofrom",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_locale_core"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d56e28588da92eee5c3201a6eff33fabdd49b62269c8938d4ff050ce4d900deb"
+dependencies = [
+ "displaydoc",
+ "litemap",
+ "tinystr",
+ "writeable",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_normalizer"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12f9cf5f235641ed274641dd81c3f28d870e276763d0797aeeab72317b1c646f"
+dependencies = [
+ "icu_collections",
+ "icu_normalizer_data",
+ "icu_properties",
+ "icu_provider",
+ "smallvec",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_normalizer_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1563da1ed3e0b3bf3d74c9b85917ac9c56464d2f57242270c09c9e752f8021a0"
+
+[[package]]
+name = "icu_properties"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e7ca276ad3145661a65914e6daf131ca5120cd3dcee8f8f3214b8875184a148"
+dependencies = [
+ "displaydoc",
+ "icu_collections",
+ "icu_locale_core",
+ "icu_properties_data",
+ "icu_provider",
+ "zerotrie",
+ "zerovec",
+]
+
+[[package]]
+name = "icu_properties_data"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e590f038c1464a96894fd6d10127e90a8be4509f56ff7ecef851b15cee0b7caa"
+
+[[package]]
+name = "icu_provider"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d27bbb9d3abbefac45d55f647c9de1d44aafcd1186eb91879afef17c396c3e73"
+dependencies = [
+ "displaydoc",
+ "icu_locale_core",
+ "writeable",
+ "yoke",
+ "zerofrom",
+ "zerotrie",
+ "zerovec",
+]
+
+[[package]]
+name = "idna"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
+dependencies = [
+ "idna_adapter",
+ "smallvec",
+ "utf8_iter",
+]
+
+[[package]]
+name = "idna_adapter"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb68373c0d6620ef8105e855e7745e18b0d00d3bdb07fb532e434244cdb9a714"
+dependencies = [
+ "icu_normalizer",
+ "icu_properties",
+]
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2385,6 +2510,12 @@ name = "linux-raw-sys"
 version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
+
+[[package]]
+name = "litemap"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d9d19d1d6efa0109d2f65ff4c85cddd50bd572e5a00127ab10987290bcefae"
 
 [[package]]
 name = "litrs"
@@ -3208,6 +3339,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "10ab3eb7f3becc3a1cbc4f2c6f20267996cfc1a6467a873763411b136a122715"
 dependencies = [
  "portable-atomic",
+]
+
+[[package]]
+name = "potential_utf"
+version = "0.1.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d83eb9bc6d8e5cf568e7a1101d60ee05e81ed50ea106026f3d18deeb046d7661"
+dependencies = [
+ "zerovec",
 ]
 
 [[package]]
@@ -4235,6 +4375,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tinystr"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1e27c91459209c2986af3dcf603a5a74a4368754ce37414f59acc971167f643"
+dependencies = [
+ "displaydoc",
+ "zerovec",
+]
+
+[[package]]
 name = "tokio"
 version = "1.53.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4420,6 +4570,24 @@ name = "unicode-width"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b4ac048d71ede7ee76d585517add45da530660ef4390e49b098733c6e897f254"
+
+[[package]]
+name = "url"
+version = "2.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed"
+dependencies = [
+ "form_urlencoded",
+ "idna",
+ "percent-encoding",
+ "serde",
+]
+
+[[package]]
+name = "utf8_iter"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
@@ -4735,6 +4903,22 @@ checksum = "5a6580f308b1fad9207618087a65c04e7a10bc77e02c8e84e9b00dd4b12fa0bb"
 dependencies = [
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "webbrowser"
+version = "1.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62c35be770821a214dbc362fc26908c853e776c0004294d0b10b8a6bad582f94"
+dependencies = [
+ "jni 0.22.4",
+ "log",
+ "ndk-context",
+ "objc2 0.6.5",
+ "objc2-app-kit 0.3.2",
+ "objc2-foundation 0.3.2",
+ "url",
+ "web-sys",
 ]
 
 [[package]]
@@ -5395,6 +5579,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "writeable"
+version = "0.6.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ad82d2a33cdc9674dc7465672f271e096168fcdbe0f799d9e6db8c5892679dc"
+
+[[package]]
 name = "x11-dl"
 version = "2.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5465,7 +5655,7 @@ checksum = "9440ea3e5aeabb0ac63af70daf835274065238cdd0cec83418f417eae38bacee"
 
 [[package]]
 name = "xtask"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde_json",
 ]
@@ -5638,6 +5828,39 @@ dependencies = [
  "quote",
  "syn 3.0.6",
  "synstructure",
+]
+
+[[package]]
+name = "zerotrie"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ea269c3bd32f0a32c321907a2ae912ba6f4649bb0fc764a15627e99a7095a3f"
+dependencies = [
+ "displaydoc",
+ "yoke",
+ "zerofrom",
+]
+
+[[package]]
+name = "zerovec"
+version = "0.11.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bb0464e17806c1d976d5cba29399c7f08e516e279e2ba493f63123b5fca67dd8"
+dependencies = [
+ "yoke",
+ "zerofrom",
+ "zerovec-derive",
+]
+
+[[package]]
+name = "zerovec-derive"
+version = "0.11.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34df6fc39dbd26ddc9c10e6a2984476e13acce22e64e4487636ef494369225da"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]

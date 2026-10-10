@@ -27,7 +27,8 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 - Transitions (fade, push, wipe, split, cover, uncover, zoom, morph…) and animations (entrance,
   emphasis, exit, motion paths, triggers, by-paragraph builds) on a shared timeline engine.
 - Slide show: full screen, keyboard/mouse navigation, blank screens, go-to-slide, pen, presenter
-  window, rehearse timings, custom shows, Set Up Show; Reading View.
+  window, rehearse timings, custom shows, Set Up Show; Reading View; hyperlinks and shape actions
+  are followed on click (slides, web pages, email, End Show, Last Slide Viewed).
 - Views: Normal (thumbnails with sections, slide, notes), Outline, Slide Sorter, Notes Page,
   Slide Master; zoom; grayscale.
 - Review: comments, accessibility checker, spelling.
@@ -35,7 +36,8 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
   HEVC, VP9 and AV1 video in MP4/MOV/WebM/MKV (pure-Rust decoders); poster frames, trim, fades,
   volume, loop, rewind, play across slides, hide during show, full screen; an in-place control bar
   in the editor and `media.play/pause/stop/seek/info/posterFrame` for agents. WMA/WMV are
-  recognised and embedded but not yet playable.
+  recognised and embedded but not yet playable. Animated GIFs play in the editor and the show;
+  pause them from their corner button or `media.gifPlay`.
 - PDF export: slides, notes pages and handouts (1–9 per page) with a selectable real-text layer, hyperlinks and slide bookmarks (`file.export {format: "pdf", layout}`, File › Export…).
 - UI: PowerPoint-style ribbon with contextual tabs, ~240 original icons, status bar, panes, command
   palette, light/dark.
@@ -78,7 +80,7 @@ AutoRecover, CLI/MCP automation, web build.
 
 ## How far from full parity (estimate, 2026-10-07)
 
-**Breadth: ~79% weighted** (P0 core 93%, P1 74%, P2 35%) over the 187 features of the PowerPoint catalogue, scored row by
+**Breadth: ~80% weighted** (P0 core 93%, P1 74%, P2 37%) over the 187 features of the PowerPoint catalogue, scored row by
 row in [docs/parity.md](docs/parity.md) (`cargo xtask parity` recomputes it). Many features scored
 done still lack some of PowerPoint's options, dialogs or pixel fidelity, so **overall parity
 including depth is about 62%**.

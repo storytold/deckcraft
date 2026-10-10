@@ -300,6 +300,8 @@ pub struct Session {
     pub(crate) untitled: u32,
     /// Format Painter: copied shape/text formatting and whether it stays on (double-click).
     pub painter: Option<(cmd::format::Painted, bool)>,
+    /// Animation Painter: copied shape animations and whether it stays on (double-click).
+    pub anim_painter: Option<(Vec<deckcraft_model::anim::Animation>, bool)>,
     /// Set as Default Shape: the look new shapes get.
     pub default_look: Option<cmd::format::Painted>,
     /// Nesting of commands run by commands: only the outermost one is an undo step and a journal
@@ -309,6 +311,8 @@ pub struct Session {
     pub recovery_dir: Option<std::path::PathBuf>,
     /// Media playback state, written by the UI host every frame (empty without a host).
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
+    /// Animated GIF pictures paused with `media.gifPlay` (the others play).
+    pub gif_paused: std::collections::HashSet<ShapeId>,
 }
 
 impl Default for Session {
@@ -331,9 +335,11 @@ impl Session {
             untitled: 0,
             default_look: None,
             painter: None,
+            anim_painter: None,
             depth: 0,
             recovery_dir: None,
             media_status: Default::default(),
+            gif_paused: Default::default(),
         }
     }
     /// A session with one new presentation open.

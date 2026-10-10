@@ -14,7 +14,7 @@ workspace = true
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 deckcraft-media = { workspace = true }
-eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "wayland", "x11"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "links", "wayland", "x11"] }
 egui = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
