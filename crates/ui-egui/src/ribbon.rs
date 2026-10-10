@@ -25,6 +25,123 @@ fn run(app: &mut SlideApp, id: &str, p: Value) {
 }
 
 /// The window's title row: traffic-light space, quick access, centred title, actions.
+/// Width of one window-control button on the title bar.
+pub const CONTROL_W: f32 = 46.0;
+/// How far in from a frameless window's edge the pointer resizes it.
+const RESIZE_BAND: f32 = 5.0;
+/// How far along an edge from a corner the pointer resizes diagonally.
+const RESIZE_CORNER: f32 = 14.0;
+
+/// A frameless window (`SlideApp::window_controls`): minimize, maximize/restore and close at the
+/// top right, resizing from the edges and corners, and a hairline border. Drawn above everything,
+/// so the controls stay reachable whatever covers the title bar.
+pub fn window_frame(app: &SlideApp, ctx: &egui::Context) {
+    if !app.window_controls {
+        return;
+    }
+    let (maximized, fullscreen) = ctx.input(|i| (i.viewport().maximized.unwrap_or(false), i.viewport().fullscreen.unwrap_or(false)));
+    if fullscreen {
+        return;
+    }
+    let t = Tokens::get(ctx);
+    let screen = ctx.content_rect();
+    let controls = egui::Rect::from_min_size(egui::pos2(screen.max.x - 3.0 * CONTROL_W, screen.min.y), egui::vec2(3.0 * CONTROL_W, TITLE_H));
+    egui::Area::new(egui::Id::new("dc_window_controls")).order(egui::Order::Foreground).fixed_pos(controls.min).show(ctx, |ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(0.0, 0.0);
+        ui.horizontal(|ui| {
+            for kind in ["minimize", "maximize", "close"] {
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(CONTROL_W, TITLE_H), egui::Sense::click());
+                let close = kind == "close";
+                let hot = resp.hovered() || resp.is_pointer_button_down_on();
+                let c = if close && hot {
+                    ui.painter().rect_filled(r, 0.0, egui::Color32::from_rgb(0xC4, 0x2B, 0x1C));
+                    egui::Color32::WHITE
+                } else {
+                    if hot {
+                        ui.painter().rect_filled(r, 0.0, if resp.is_pointer_button_down_on() { t.pressed } else { t.hover });
+                    }
+                    t.text
+                };
+                let stroke = egui::Stroke::new(1.0, c);
+                let m = r.center();
+                let p = ui.painter();
+                let tip = match kind {
+                    "minimize" => {
+                        p.line_segment([egui::pos2(m.x - 5.0, m.y), egui::pos2(m.x + 5.0, m.y)], stroke);
+                        "Minimize"
+                    }
+                    "maximize" if maximized => {
+                        let front = egui::Rect::from_min_size(egui::pos2(m.x - 5.0, m.y - 3.0), egui::vec2(8.0, 8.0));
+                        p.rect_stroke(front, 0.0, stroke, egui::StrokeKind::Inside);
+                        p.line_segment([egui::pos2(m.x - 3.0, m.y - 5.0), egui::pos2(m.x + 5.0, m.y - 5.0)], stroke);
+                        p.line_segment([egui::pos2(m.x + 5.0, m.y - 5.0), egui::pos2(m.x + 5.0, m.y + 3.0)], stroke);
+                        "Restore Down"
+                    }
+                    "maximize" => {
+                        p.rect_stroke(egui::Rect::from_center_size(m, egui::vec2(10.0, 10.0)), 0.0, stroke, egui::StrokeKind::Inside);
+                        "Maximize"
+                    }
+                    _ => {
+                        p.line_segment([egui::pos2(m.x - 5.0, m.y - 5.0), egui::pos2(m.x + 5.0, m.y + 5.0)], stroke);
+                        p.line_segment([egui::pos2(m.x - 5.0, m.y + 5.0), egui::pos2(m.x + 5.0, m.y - 5.0)], stroke);
+                        "Close"
+                    }
+                };
+                if resp.on_hover_text(tip).clicked() {
+                    ctx.send_viewport_cmd(match kind {
+                        "minimize" => egui::ViewportCommand::Minimized(true),
+                        "maximize" => egui::ViewportCommand::Maximized(!maximized),
+                        _ => egui::ViewportCommand::Close,
+                    });
+                }
+            }
+        });
+    });
+    if maximized {
+        return;
+    }
+    ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("dc_window_border"))).rect_stroke(
+        screen,
+        0.0,
+        egui::Stroke::new(1.0, t.border),
+        egui::StrokeKind::Inside,
+    );
+    let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else { return };
+    if !screen.contains(pos) {
+        return;
+    }
+    let near = |d: f32, band: f32| d < band;
+    let (dl, dr, dt, db) = (pos.x - screen.min.x, screen.max.x - pos.x, pos.y - screen.min.y, screen.max.y - pos.y);
+    let (w, e, n, s) = (near(dl, RESIZE_BAND), near(dr, RESIZE_BAND), near(dt, RESIZE_BAND), near(db, RESIZE_BAND));
+    let (cw, ce, cn, cs) = (near(dl, RESIZE_CORNER), near(dr, RESIZE_CORNER), near(dt, RESIZE_CORNER), near(db, RESIZE_CORNER));
+    use egui::{CursorIcon, ResizeDirection};
+    let hit = if (n && cw) || (w && cn) {
+        Some((ResizeDirection::NorthWest, CursorIcon::ResizeNorthWest))
+    } else if (n && ce) || (e && cn) {
+        Some((ResizeDirection::NorthEast, CursorIcon::ResizeNorthEast))
+    } else if (s && cw) || (w && cs) {
+        Some((ResizeDirection::SouthWest, CursorIcon::ResizeSouthWest))
+    } else if (s && ce) || (e && cs) {
+        Some((ResizeDirection::SouthEast, CursorIcon::ResizeSouthEast))
+    } else if n {
+        Some((ResizeDirection::North, CursorIcon::ResizeNorth))
+    } else if s {
+        Some((ResizeDirection::South, CursorIcon::ResizeSouth))
+    } else if w {
+        Some((ResizeDirection::West, CursorIcon::ResizeWest))
+    } else if e {
+        Some((ResizeDirection::East, CursorIcon::ResizeEast))
+    } else {
+        None
+    };
+    if let Some((dir, icon)) = hit {
+        ctx.set_cursor_icon(icon);
+        if ctx.input(|i| i.pointer.primary_pressed()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(dir));
+        }
+    }
+}
+
 pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     egui::Panel::top("title_bar").exact_size(TITLE_H).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
@@ -65,10 +182,10 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         let title =
             app.session.active().map(|d| format!("{}{}", d.title(), if dirty { " — Edited" } else { "" })).unwrap_or_else(|| "DeckCraft".into());
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, title, theme::font(13.0), t.text);
-        // Right side.
+        let right_x = rect.max.x - 10.0 - if app.window_controls { 3.0 * CONTROL_W } else { 0.0 };
         let mut right = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(pos2(rect.max.x - 320.0, rect.min.y), pos2(rect.max.x - 10.0, rect.max.y)))
+                .max_rect(Rect::from_min_max(pos2(right_x - 310.0, rect.min.y), pos2(right_x, rect.max.y)))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 6.0;
