@@ -52,6 +52,8 @@ struct Key {
     doc: usize,
     /// Media hidden while not playing.
     hidden: Vec<ShapeId>,
+    /// The frames animated GIFs show.
+    gif: u64,
 }
 
 struct Transition {
@@ -128,8 +130,10 @@ impl Show {
                     .and_then(|s| s.transition.as_ref())
                     .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
                     .unwrap_or(("none".into(), String::new(), 0.0));
-                let old = self.tex.as_ref().map(|(_, t)| t.clone());
-                let from = self.tex.as_ref().map(|(k, _)| k.slide);
+                // Take the old slide's texture rather than cloning its handle: the new slide is
+                // otherwise rendered into the same texture, and the transition blends the new
+                // slide with itself (#33).
+                let (from, old) = self.tex.take().map(|(k, t)| (k.slide, t)).unzip();
                 if from != Some(i) {
                     self.last_viewed = from;
                 }
@@ -288,9 +292,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
     }
     let on_slide = !show.pen && !show.ended && show.blank.is_none() && !show.reading_bar_hit(&ctx);
-    let media_click = if clicked && on_slide { media_hit(&ctx, ui, &show, &doc) } else { None };
-    let link = if on_slide && media_click.is_none() { link_hit(&ctx, ui, &mut show, &doc) } else { None };
-    if let Some((id, clip)) = media_click {
+    let gif_click = if clicked && on_slide { gif_hit(&ctx, ui, &show, &doc, app) } else { None };
+    let media_click = if clicked && on_slide && gif_click.is_none() { media_hit(&ctx, ui, &show, &doc) } else { None };
+    let link = if on_slide && gif_click.is_none() && media_click.is_none() { link_hit(&ctx, ui, &mut show, &doc) } else { None };
+    if let Some(id) = gif_click {
+        let _ = app.run("media.gifPlay", json!({"id": id}));
+    } else if let Some((id, clip)) = media_click {
         app.media.toggle(&doc, id, &clip, crate::media::Owner::Show);
     } else if clicked && let Some(l) = &link {
         let last = show.last_viewed;
@@ -375,7 +382,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             })
             .map(|m| m.0)
             .collect();
-        let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: hidden.clone() };
+        let gifs = app.media.gifs(&doc, idx, now, &app.session.gif_paused);
+        let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
+        crate::media::gif_repaint(&ctx, &gifs);
+        let gif = crate::media::gif_key(&gifs);
+        let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: hidden.clone(), gif };
         let tex = if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == key) {
             show.tex.as_ref().map(|(_, t)| t.clone())
         } else {
@@ -397,6 +408,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     scale: size.0 as f64 / doc.slide_size.width.max(1.0),
                     size: Some(size),
                     state: Some(&f),
+                    gif_times: &times,
                     threads,
                     ..Default::default()
                 },
@@ -440,7 +452,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 .iter()
                 .map(|x| deckcraft_render::TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix })
                 .collect();
-            let img = deckcraft_render::render_blend(&doc, from, idx, m.mix, &m.shapes, &text, &opts);
+            let paths: Vec<deckcraft_render::PathMorph> = m
+                .paths
+                .iter()
+                .map(|x| deckcraft_render::PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix })
+                .collect();
+            let img = deckcraft_render::render_blend(&doc, from, idx, m.mix, &m.shapes, &text, &paths, &opts);
             let ci = crate::textures::to_color_image(&img, false);
             let frame = match tr.morph.take() {
                 Some(mut h) => {
@@ -489,6 +506,16 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k))
                 };
                 crate::media::paint_frame(&painter, &app.media, *id, r);
+            }
+            // Play/pause on the animated GIF under the pointer.
+            if let Some(p) = ctx.input(|i| i.pointer.hover_pos()).filter(|_| !show.pen && now - show.last_move < 2.5) {
+                for g in &gifs {
+                    let r = on_screen(srect, k, &g.rect);
+                    if r.contains(p) {
+                        let b = crate::media::gif_button_rect(r);
+                        crate::media::paint_gif_button(&painter, b, g.paused, b.contains(p));
+                    }
+                }
             }
         }
         if animating {
@@ -673,6 +700,22 @@ fn link_hit(ctx: &egui::Context, ui: &Ui, show: &mut Show, doc: &Presentation) -
     links.iter().rev().find(|l| l.rect.x0 <= x && x <= l.rect.x1 && l.rect.y0 <= y && y <= l.rect.y1).map(|l| l.link.clone())
 }
 
+/// A slide-space box on screen, the slide being drawn in `srect` at `k` pixels per point.
+fn on_screen(srect: Rect, k: f32, x: &deckcraft_geom::Xfrm) -> Rect {
+    Rect::from_min_size(pos2(srect.min.x + x.x as f32 * k, srect.min.y + x.y as f32 * k), vec2(x.w as f32 * k, x.h as f32 * k))
+}
+
+/// The animated GIF whose play/pause button is under the pointer on the shown slide.
+fn gif_hit(ctx: &egui::Context, ui: &Ui, show: &Show, doc: &Presentation, app: &mut SlideApp) -> Option<ShapeId> {
+    let p = ctx.input(|i| i.pointer.interact_pos())?;
+    let full = ui.max_rect();
+    let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
+    let srect = fit(avail, doc);
+    let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
+    let gifs = app.media.gifs(doc, show.state.slide, ctx.input(|i| i.time), &app.session.gif_paused);
+    gifs.iter().rev().find(|g| crate::media::gif_button_rect(on_screen(srect, k, &g.rect)).contains(p)).map(|g| g.id)
+}
+
 impl Show {
     fn reading_bar_hit(&self, ctx: &egui::Context) -> bool {
         // Clicks on the on-screen controls must not also advance.
@@ -773,5 +816,31 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
         if !show.apply(a, doc, now) {
             *keep = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn a_transition_keeps_the_old_slide_in_its_own_texture() {
+        // #33: the old slide's handle was cloned, so the new slide was rendered into the same
+        // texture and every transition blended the new slide with itself.
+        let mut s = deckcraft_engine::Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("transition.set", &json!({"kind": "fade", "index": 1})).unwrap();
+        let doc = s.active().unwrap().doc.clone();
+        let ctx = egui::Context::default();
+        let red = ctx.load_texture("show", egui::ColorImage::filled([1, 1], Color32::RED), egui::TextureOptions::LINEAR);
+        let mut show = Show::new(&doc, 0, false, false);
+        show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![], gif: 0 }, red.clone()));
+        assert!(show.apply(ShowAction::Slide(1), &doc, 0.0));
+        let tr = show.trans.as_ref().expect("the fade plays");
+        assert_eq!(tr.old.as_ref().map(TextureHandle::id), Some(red.id()));
+        assert_eq!(tr.from, Some(0));
+        assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
     }
 }

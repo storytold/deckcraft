@@ -9,7 +9,7 @@ use deckcraft_text::{Fields, GlyphRun, Opts, TextLayout};
 use kurbo::{Affine, Point, Vec2};
 use vello_cpu::RenderContext;
 
-use crate::{color, draw_glyph, draw_layout, shape_geometry};
+use crate::{color, draw_glyph, draw_layout, shape_geometry, text_transform};
 
 /// The texts of two frame shapes (see [`crate::render_blend`]) morphed by words or characters.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -140,8 +140,11 @@ pub(crate) fn draw(
     let (ta, loose_a) = tokens(&la, m.chars);
     let (tb, loose_b) = tokens(&lb, m.chars);
     let pairs = matches(&ta, &tb);
-    let (ma, mb) = (view * m.from.affine(), view * m.to.affine());
-    let c = mt.as_coeffs();
+    // Flipped boxes keep their text readable, as when drawn (see `text_transform`).
+    let (tra, trb) = (shape_geometry(a, m.from.w, m.from.h).text_rect, shape_geometry(b, m.to.w, m.to.h).text_rect);
+    let (ma, mb) = (text_transform(view * m.from.affine(), tra, 0.0), text_transform(view * m.to.affine(), trb, 0.0));
+    let (mta, mtb) = (text_transform(mt, tra, 0.0), text_transform(mt, trb, 0.0));
+    let c = mta.as_coeffs();
     let linear = Affine::new([c[0], c[1], c[2], c[3], 0.0, 0.0]);
     let mut moved_a = vec![false; ta.len()];
     // Shared tokens travel.
@@ -195,7 +198,7 @@ pub(crate) fn draw(
         let b = Affine::translate(-c * ((1.0 - t) / s)) * Affine::scale((1.0 - t) / s + t);
         (a * ma, b * mb)
     } else {
-        (mt, mt)
+        (mta, mtb)
     };
     let unmatched_a =
         ta.iter().enumerate().filter(|(i, _)| !moved_a.get(*i).copied().unwrap_or(false)).flat_map(|(_, tok)| tok.glyphs.iter().copied());

@@ -89,3 +89,31 @@ fn errors_are_reported_not_panics() {
     let r = call(&mut s, 3, "tools/call", json!({"name": "add_shape", "arguments": {"preset": "rect"}}));
     assert_eq!(r["result"]["isError"], true);
 }
+
+#[test]
+fn export_tool_lists_pdf_and_its_options() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let export = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "export").unwrap().clone();
+    assert!(export["description"].as_str().unwrap().contains("pdf"), "{export}");
+    let props = &export["inputSchema"]["properties"];
+    let formats = props["format"]["enum"].as_array().unwrap();
+    for f in ["png", "jpeg", "pptx", "deckcraft", "outline", "pdf"] {
+        assert!(formats.iter().any(|x| x == f), "format {f}: {export}");
+    }
+    assert_eq!(props["layout"]["enum"], json!(["slides", "notes", "handouts"]));
+    assert_eq!(props["perPage"]["enum"], json!([1, 2, 3, 4, 6, 9]));
+    for p in ["dpi", "slides", "includeHidden", "textLayer", "frame"] {
+        assert!(props.get(p).is_some(), "{p}: {export}");
+    }
+    // What the schema describes is accepted.
+    let dir = std::env::temp_dir().join(format!("deckcraft-mcp-export-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    tool(&mut s, "new_presentation", json!({}));
+    for layout in ["slides", "notes", "handouts"] {
+        let path = dir.join(format!("{layout}.pdf"));
+        tool(&mut s, "export", json!({"path": path.to_string_lossy(), "format": "pdf", "layout": layout, "perPage": 3}));
+        assert!(std::fs::read(&path).unwrap().starts_with(b"%PDF"), "{layout}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

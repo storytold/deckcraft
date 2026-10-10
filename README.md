@@ -103,6 +103,9 @@ cd deckcraft
 cargo run --release -p deckcraft-cli -- render --sample --all --scale 1 out/
 ```
 
+On Linux, the build also needs the ALSA headers for slide-show sound: `alsa-lib-devel` on Fedora,
+`libasound2-dev` on Debian and Ubuntu, `alsa-lib` on Arch. Without them it stops at `alsa-sys`.
+
 Fonts come from [craft-fonts](https://github.com/storytold/craft-fonts): clone it next to this repo
 (`../craft-fonts`) and local builds pick it up automatically; without it DeckCraft uses your system
 fonts.

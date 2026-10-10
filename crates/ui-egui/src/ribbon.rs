@@ -47,8 +47,8 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         child.spacing_mut().item_spacing.x = 2.0;
         let has_doc = app.session.active().is_some();
         let dirty = app.session.active().is_some_and(|d| d.is_dirty());
-        if icon_toggle(&mut child, Icon::Home, "Home", true, false).clicked() {
-            let _ = app.run("file.new", json!({}));
+        if icon_toggle(&mut child, Icon::Home, "Home", true, app.home_open()).clicked() {
+            let _ = app.run("app.home", json!({}));
         }
         if icon_toggle(&mut child, Icon::Save, "Save (⌘S)", has_doc, false).clicked() {
             app.save();
@@ -473,7 +473,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 if m.clicked() {
                     run(app, "format.highlight", json!({"color": "#FFFF00"}));
                 }
-                egui::Popup::menu(&a).show(|ui| {
+                widgets::color_popup(&a).show(|ui| {
                     if let Some(c) = widgets::color_grid(ui, &sc, Some("No Color")) {
                         run(app, "format.highlight", json!({"color": c.map(|c| serde_json::to_value(cref_param(&c)).unwrap_or_default())}));
                     }
@@ -482,7 +482,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 if m.clicked() {
                     run(app, "format.color", json!({"color": "#C00000"}));
                 }
-                egui::Popup::menu(&a).show(|ui| {
+                widgets::color_popup(&a).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                         run(app, "format.color", json!({"color": cref_param(&c)}));
                     }
@@ -743,7 +743,7 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "shape.fill", json!({"color": "accent1"}));
             }
             if let Some(a) = a {
-                egui::Popup::menu(&a).show(|ui| {
+                widgets::color_popup(&a).show(|ui| {
                     if let Some(c) = widgets::color_grid(ui, &sc, Some("No Fill")) {
                         match c {
                             Some(c) => run(app, "shape.fill", json!({"color": cref_param(&c)})),
@@ -757,7 +757,7 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "shape.line", json!({"color": "tx1", "width": 1}));
             }
             if let Some(a) = a {
-                egui::Popup::menu(&a).show(|ui| outline_menu(app, ui, &sc));
+                widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc));
             }
             let (_, a) = small_button_ex(ui, Icon::ShapeEffects, "Shape Effects", sel, false, true);
             if let Some(a) = a {
@@ -778,6 +778,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
         for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
             if ui.button(format!("{w} pt")).clicked() {
                 run(app, "shape.line", json!({"width": w}));
+                ui.close();
             }
         }
     });
@@ -793,6 +794,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
         ] {
             if ui.button(l).clicked() {
                 run(app, "shape.line", json!({"dash": d}));
+                ui.close();
             }
         }
     });
@@ -807,6 +809,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
         ] {
             if ui.button(l).clicked() {
                 run(app, "shape.line", json!({"head": h, "tail": tl}));
+                ui.close();
             }
         }
     });
@@ -1881,7 +1884,7 @@ fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "shape.fill", json!({"color": "accent1"}));
             }
             if let Some(a) = a {
-                egui::Popup::menu(&a).show(|ui| {
+                widgets::color_popup(&a).show(|ui| {
                     if let Some(c) = widgets::color_grid(ui, &sc, Some("No Fill")) {
                         match c {
                             Some(c) => run(app, "shape.fill", json!({"color": cref_param(&c)})),
@@ -1890,12 +1893,13 @@ fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
                     }
                     if ui.button("Gradient…").clicked() {
                         let _ = app.run("view.pane", json!({"pane": "format", "tab": "fill"}));
+                        ui.close();
                     }
                 });
             }
             let (_, a) = small_button_ex(ui, Icon::ShapeOutline, "Shape Outline", sel, false, true);
             if let Some(a) = a {
-                egui::Popup::menu(&a).show(|ui| outline_menu(app, ui, &sc));
+                widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc));
             }
             let (_, a) = small_button_ex(ui, Icon::ShapeEffects, "Shape Effects", sel, false, true);
             if let Some(a) = a {
@@ -1907,7 +1911,7 @@ fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
         rows(ui, |ui| {
             let (_, a) = small_button_ex(ui, Icon::TextFill, "Text Fill", sel, false, true);
             if let Some(a) = a {
-                egui::Popup::menu(&a).show(|ui| {
+                widgets::color_popup(&a).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                         run(app, "format.color", json!({"color": cref_param(&c)}));
                     }
@@ -1915,7 +1919,7 @@ fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
             }
             let (_, a) = small_button_ex(ui, Icon::TextOutline, "Text Outline", sel, false, true);
             if let Some(a) = a {
-                egui::Popup::menu(&a).show(|ui| {
+                widgets::color_popup(&a).show(|ui| {
                     if let Some(c) = widgets::color_grid(ui, &sc, Some("No Outline")) {
                         run(app, "format.textOutline", json!({"color": c.map(|c| cref_param(&c))}));
                     }
@@ -2183,7 +2187,7 @@ fn table_design(app: &mut SlideApp, ui: &mut Ui) {
         if m.clicked() {
             run(app, "table.cellFill", json!({"color": "accent1"}));
         }
-        egui::Popup::menu(&a).show(|ui| {
+        widgets::color_popup(&a).show(|ui| {
             if let Some(c) = widgets::color_grid(ui, &sc, Some("No Fill")) {
                 match c {
                     Some(c) => run(app, "table.cellFill", json!({"color": cref_param(&c)})),

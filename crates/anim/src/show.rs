@@ -26,12 +26,25 @@ pub enum ShowAction {
     Exit,
 }
 
+/// Can a link from a (possibly untrusted) deck be opened outside the show? Only web pages and
+/// mail: `file:`, `javascript:`, relative paths and other schemes (OS protocol handlers) are not
+/// opened on a click.
+pub fn safe_url(url: &str) -> bool {
+    let u = url.trim();
+    let Some((scheme, rest)) = u.split_once(':') else { return false };
+    match scheme.to_ascii_lowercase().as_str() {
+        "http" | "https" => rest.starts_with("//") && rest.len() > 2,
+        "mailto" => !rest.is_empty(),
+        _ => false,
+    }
+}
+
 /// What a clicked link does in the show (`ShowState::follow`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LinkJump {
     /// Navigation inside the show (already applied to the state).
     Show(ShowAction),
-    /// Open this URL (web page, file, `mailto:`) outside the show.
+    /// Open this URL (`http`, `https` or `mailto`, see [`safe_url`]) outside the show.
     Open(String),
     /// End the show.
     Exit,
@@ -229,7 +242,7 @@ impl ShowState {
     /// current one (Last Slide Viewed). Moves to slide targets; everything else is for the UI.
     pub fn follow(&mut self, pres: &Presentation, action: &Action, last_viewed: Option<usize>) -> LinkJump {
         let target = match action {
-            Action::Url { url } => return LinkJump::Open(url.clone()),
+            Action::Url { url } => return if safe_url(url) { LinkJump::Open(url.trim().to_string()) } else { LinkJump::None },
             Action::EndShow => return LinkJump::Exit,
             Action::Slide { slide } => pres.slides.iter().position(|s| s.id == *slide),
             Action::NextSlide => self.next_index(pres),

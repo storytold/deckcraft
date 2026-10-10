@@ -309,6 +309,8 @@ pub struct Session {
     pub recovery_dir: Option<std::path::PathBuf>,
     /// Media playback state, written by the UI host every frame (empty without a host).
     pub media_status: std::collections::HashMap<ShapeId, MediaStatus>,
+    /// Animated GIF pictures paused with `media.gifPlay` (the others play).
+    pub gif_paused: std::collections::HashSet<ShapeId>,
 }
 
 impl Default for Session {
@@ -334,6 +336,7 @@ impl Session {
             depth: 0,
             recovery_dir: None,
             media_status: Default::default(),
+            gif_paused: Default::default(),
         }
     }
     /// A session with one new presentation open.

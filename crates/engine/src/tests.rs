@@ -475,3 +475,43 @@ fn hyperlink_on_a_word_or_shape_links_it() {
     s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
     assert!(s.doc().unwrap().current_slide().unwrap().shapes[0].click.is_some(), "a selected shape gets the link as its click action");
 }
+
+#[test]
+fn clicks_in_flipped_shapes_hit_the_text_where_it_is_drawn() {
+    // Flips don't mirror text, so a click lands on the character drawn under it.
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 400, 100], "text": "Hello flipped world"})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let pos = |s: &Session, x: f64, y: f64| {
+        let st = s.doc().unwrap();
+        tools::text_pos(st, st.shape(id).unwrap(), deckcraft_geom::Point::new(x, y))
+    };
+    let xs = [240.0, 300.0, 360.0];
+    let plain = xs.map(|x| pos(&s, x, 150.0));
+    assert!(plain[0].1 < plain[1].1 && plain[1].1 < plain[2].1, "{plain:?}");
+    s.execute("shape.flip", &json!({"axis": "horizontal"})).unwrap();
+    assert_eq!(xs.map(|x| pos(&s, x, 150.0)), plain);
+    // flipV turns the text 180° about the box centre (300, 150).
+    s.execute("shape.flip", &json!({"axis": "horizontal"})).unwrap();
+    s.execute("shape.flip", &json!({"axis": "vertical"})).unwrap();
+    assert_eq!(xs.map(|x| pos(&s, 600.0 - x, 150.0)), plain);
+}
+
+#[test]
+fn inserted_hyperlinks_look_like_links() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "Read the docs"})).unwrap();
+    s.execute("text.move", &json!({"to": "wordLeft", "extend": true})).unwrap();
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["underline"], false);
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    // Underlined (and hlink-coloured: same resolution as files) without touching the run's own props.
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["underline"], true);
+    let body = s.doc().unwrap().current_slide().unwrap().shapes[0].text.clone().unwrap();
+    let run = body.paragraphs[0].runs.iter().find(|r| r.props.link.is_some()).unwrap();
+    assert!(run.props.fill.is_none() && run.props.underline.is_none(), "{run:?}");
+    // Underline off is the run's own u="none", as in PowerPoint.
+    s.execute("format.underline", &json!({})).unwrap();
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["underline"], false);
+}
