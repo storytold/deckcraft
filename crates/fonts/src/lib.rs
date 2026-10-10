@@ -153,6 +153,34 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_lookups_all_find_an_installed_family() {
+        // Threads resolving an installed family nobody had loaded yet used to fall back to
+        // another face when a different thread finished loading it first, so the same text was
+        // laid out in different fonts depending on timing.
+        let dir = std::env::temp_dir().join(format!("deckcraft-fonts-concurrent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Hack-Regular.ttf"), epaint_default_fonts::HACK_REGULAR).unwrap();
+        for _ in 0..20 {
+            let db = FontDb::with_font_dirs(vec![dir.clone()]);
+            db.set_system_fallback(false);
+            let start = std::sync::Barrier::new(8);
+            let got: Vec<String> = std::thread::scope(|s| {
+                let threads: Vec<_> = (0..8)
+                    .map(|_| {
+                        s.spawn(|| {
+                            start.wait();
+                            db.face("Hack", "Regular").family.clone()
+                        })
+                    })
+                    .collect();
+                threads.into_iter().map(|t| t.join().unwrap()).collect()
+            });
+            assert!(got.iter().all(|f| f == "Hack"), "{got:?}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn office_fonts_have_substitutes() {
         assert!(substitutes("Calibri").contains(&"Carlito"));
         assert!(substitutes("Cambria").contains(&"Caladea"));
