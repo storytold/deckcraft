@@ -599,39 +599,44 @@ fn notes_xml(x: &mut Exp, o: &mut Out, notes: &TextBody) -> Vec<u8> {
 fn comments_xml(list: &[Comment], authors: &mut Vec<(String, String, u32)>) -> Vec<u8> {
     let mut w = W::new();
     root_open(&mut w, "p:cmLst", A::new());
-    let mut flat: Vec<&Comment> = vec![];
     for c in list.iter().take(10_000) {
-        flat.push(c);
-        for r in c.replies.iter().take(1000) {
-            flat.push(r);
-        }
-    }
-    for c in flat {
-        let author = if c.author.is_empty() { "Author".to_string() } else { c.author.clone() };
-        let ai = match authors.iter().position(|(n, _, _)| *n == author) {
-            Some(i) => i,
-            None => {
-                let ini = if c.initials.is_empty() { author.chars().filter(|c| c.is_alphabetic()).take(2).collect() } else { c.initials.clone() };
-                authors.push((author.clone(), ini, 0));
-                authors.len() - 1
-            }
-        };
-        let idx = match authors.get_mut(ai) {
-            Some(a) => {
-                a.2 += 1;
-                a.2
-            }
-            None => 1,
-        };
-        let dt = if valid_date(&c.date) { c.date.clone() } else { "2024-01-01T00:00:00.000".into() };
-        w.open("p:cm", A::new().a("authorId", ai).a("dt", dt).a("idx", idx));
-        let pos = |v: f64| if v.is_finite() { (v * 8.0).round().clamp(0.0, 1.0e9) as i64 } else { 0 };
-        w.empty("p:pos", A::new().a("x", pos(c.x)).a("y", pos(c.y)));
-        w.elt("p:text", &c.text);
-        w.close("p:cm");
+        comment_xml(&mut w, c, authors, "p:cm", 0);
     }
     w.close("p:cmLst");
     w.finish()
+}
+
+/// One comment; replies nest in a `p:replyLst` (the reader accepts the same depth) and a resolved thread gets `status="resolved"`.
+fn comment_xml(w: &mut W, c: &Comment, authors: &mut Vec<(String, String, u32)>, tag: &str, depth: usize) {
+    let author = if c.author.is_empty() { "Author".to_string() } else { c.author.clone() };
+    let ai = match authors.iter().position(|(n, _, _)| *n == author) {
+        Some(i) => i,
+        None => {
+            let ini = if c.initials.is_empty() { author.chars().filter(|c| c.is_alphabetic()).take(2).collect() } else { c.initials.clone() };
+            authors.push((author.clone(), ini, 0));
+            authors.len() - 1
+        }
+    };
+    let idx = match authors.get_mut(ai) {
+        Some(a) => {
+            a.2 += 1;
+            a.2
+        }
+        None => 1,
+    };
+    let dt = if valid_date(&c.date) { c.date.clone() } else { "2024-01-01T00:00:00.000".into() };
+    w.open(tag, A::new().a("authorId", ai).a("dt", dt).a("idx", idx).o("status", c.resolved.then_some("resolved")));
+    let pos = |v: f64| if v.is_finite() { (v * 8.0).round().clamp(0.0, 1.0e9) as i64 } else { 0 };
+    w.empty("p:pos", A::new().a("x", pos(c.x)).a("y", pos(c.y)));
+    w.elt("p:text", &c.text);
+    if depth < 4 && !c.replies.is_empty() {
+        w.open0("p:replyLst");
+        for r in c.replies.iter().take(1000) {
+            comment_xml(w, r, authors, "p:reply", depth + 1);
+        }
+        w.close("p:replyLst");
+    }
+    w.close(tag);
 }
 
 /// Sections with every slide in exactly one section, in slide order.

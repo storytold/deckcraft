@@ -581,6 +581,23 @@ fn comments_round_trip() {
 }
 
 #[test]
+fn comment_replies_and_resolved_state_round_trip() {
+    let mut p = rich_deck();
+    let reply = Comment { author: "Bob".into(), text: "Agreed".into(), date: "2025-02-04T04:05:06.000".into(), ..Default::default() };
+    let parent = Comment { author: "Ada".into(), text: "Thread".into(), resolved: true, replies: vec![reply], ..Default::default() };
+    let open = Comment { author: "Ada".into(), text: "Still open".into(), ..Default::default() };
+    Arc::make_mut(&mut p.slides[1]).comments = vec![parent, open];
+    let q = round(&p);
+    let c = &q.slides[1].comments;
+    assert_eq!(c.len(), 2);
+    assert_eq!(c[0].text, "Thread");
+    assert!(c[0].resolved);
+    assert_eq!(c[0].replies.len(), 1);
+    assert_eq!((c[0].replies[0].author.as_str(), c[0].replies[0].text.as_str()), ("Bob", "Agreed"));
+    assert!(!c[1].resolved && c[1].replies.is_empty());
+}
+
+#[test]
 fn every_transition_kind_survives() {
     let mut p = defaults::new_presentation(None);
     let base = p.slides[0].as_ref().clone();
