@@ -37,6 +37,8 @@ pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 pub type OpenAsyncFn = Box<dyn FnMut(&str)>;
 pub type DownloadFn = Box<dyn FnMut(&str, &[u8])>;
+/// Web: hand PDF bytes to the browser's print flow directly (no download).
+pub type PrintFn = Box<dyn FnMut(&[u8])>;
 /// Files `(name, bytes)` delivered asynchronously by the host (web file picker, dropped files).
 pub type Inbox = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
@@ -53,6 +55,8 @@ pub struct Services {
     pub open_async: Option<OpenAsyncFn>,
     /// Hand bytes to the user as a named file (browser download).
     pub download: Option<DownloadFn>,
+    /// Web: send PDF bytes straight to the browser's print dialog, no download.
+    pub print: Option<PrintFn>,
     pub inbox: Option<Inbox>,
     /// Image on the system clipboard (PNG bytes), when the host can read one.
     pub clipboard_image: Option<Box<dyn FnMut() -> Option<Vec<u8>>>>,
@@ -159,6 +163,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
+    ("app.print", "Print…", Some("Cmd+P"), "{}"),
     ("app.dialog", "Open Dialog", None, "{id}"),
     ("app.links", "Community Links", None, "{}"),
 ];
@@ -334,6 +339,7 @@ impl SlideApp {
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
+            "app.print" => self.print_now(),
             "app.dialog" => {
                 let d = p.get("id").and_then(Value::as_str).ok_or("missing `id`")?;
                 self.dialog = Some(dialogs::Dialog::new(d));
@@ -439,6 +445,25 @@ impl SlideApp {
             }
         } else {
             self.save_as_dialog("deckcraft");
+        }
+    }
+
+    /// Builds a PDF of the active presentation and (where the host provides the hook — the
+    /// web build) hands the bytes straight to the browser's print flow. There's no engine-level
+    /// `file.print` command (only `file.export`, which always writes to a path), so this goes
+    /// through `cmd::file::pdf_bytes` directly for raw bytes in memory.
+    pub fn print_now(&mut self) {
+        let Ok(doc) = self.session.doc() else {
+            self.set_status("Nothing to print");
+            return;
+        };
+        match deckcraft_engine::cmd::file::pdf_bytes(&doc.doc, &json!({})) {
+            Ok(bytes) => {
+                if let Some(print) = &mut self.services.print {
+                    print(&bytes);
+                }
+            }
+            Err(e) => self.set_status(e.to_string()),
         }
     }
 
