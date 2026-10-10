@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (core-workflow alpha gate added; stage stays alpha; previous: major, created; milestones carried from the local execution plan, the beta plan built from gaps.md) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (localization infrastructure and Ukrainian UI available) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -29,7 +29,7 @@ points and lead the beta plan.
 2. **PPTX on real decks:** build an owned corpus, round-trip checks in CI, fix what breaks;
    comment threads, media options and rewind on save (#70, #74, #77); EMF/WMF and SVG. 31–55 h.
 3. **Review the open PRs:** equations (#55), browser print (#66), Morph alignment (#67), macOS
-   open-with (#68), font lookup (#80), Ukrainian (#34, after the catalog exists). 4–8 h.
+   open-with (#68), font lookup (#80). 4–8 h. Ukrainian UI and its catalog are available (#34).
 
 ## Plan to beta (~120–210 h; ~40–70 h wall clock with 3–4 agents)
 
@@ -43,7 +43,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 3 | PPTX round-trip losses (#70, #74, #77), `.potx`/`.ppsx`/`.pptm` content types, embedded fonts | 8–15 | File formats → 80% |
 | 4 | EMF/WMF and SVG pictures | 8–14 | File formats, Pictures |
 | 5 | Vector PDF, printing | 10–16 | File formats, Files |
-| 6 | Localization infrastructure + zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
+| 6 | Additional catalogs for zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
 | 7 | Font weights (#69), image paste (#53), Tab in text (#78) | 6–11 | Features |
 | 8 | Charts: data grid, elements | 6–10 | Features |
 | 9 | Animation Pane timeline, preview, effect options | 5–8 | Features |
@@ -109,5 +109,6 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Recorded Ukrainian UI and catalog infrastructure; beta localization work now focuses on additional languages and IME |
 | 2026-10-10 | minor | Added the alpha gate (six core workflows): all pass, two with partial depth; stage stays alpha |
 | 2026-10-10 | major | Created: current focus, ranked beta plan with hours, milestones M0–M14 with status, the old alpha checklist as history |

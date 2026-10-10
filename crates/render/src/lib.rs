@@ -138,6 +138,8 @@ pub struct RenderOpts<'a> {
     pub scale: f64,
     /// Editor view: placeholder prompts and dashed placeholder outlines.
     pub edit: bool,
+    /// Optional interface prompt provider; custom layout prompts and document text stay intact.
+    pub placeholder_prompt: Option<fn(PhType) -> &'static str>,
     /// Draw shapes marked hidden (Selection pane) — the editor hides them like the show does.
     pub show_hidden: bool,
     /// Per-shape animation state.
@@ -166,6 +168,7 @@ impl Default for RenderOpts<'_> {
         RenderOpts {
             scale: 1.0,
             edit: false,
+            placeholder_prompt: None,
             show_hidden: false,
             state: None,
             skip: &[],
@@ -773,7 +776,7 @@ impl Renderer {
                 draw_layout_with(ctx, &l, tr, m, &st.paras);
             } else if f.opts.edit && s.ph.is_some() {
                 let kind = s.ph_type().unwrap_or(PhType::Body);
-                let prompt_body = prompt_body(rctx, s, kind);
+                let prompt_body = prompt_body(rctx, s, kind, f.opts.placeholder_prompt.map(|prompt| prompt(kind)));
                 if !prompt_body.is_empty() {
                     let grey = Rgba::rgb(0x59, 0x59, 0x59);
                     draw_text(ctx, rctx, s, &prompt_body, tr, m, &f.fields, Some(grey));
@@ -1009,7 +1012,7 @@ fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>
 }
 
 /// The prompt shown in an empty placeholder, formatted like its content would be.
-fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
+fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType, interface_prompt: Option<&str>) -> TextBody {
     // Layout/master prompt text when the layout supplies a custom one.
     let (lp, _) = resolve::parents(rctx, s);
     let custom = lp.and_then(|l| l.ph.as_ref().filter(|p| p.has_custom_prompt).and(l.text.as_ref())).filter(|t| !t.is_empty());
@@ -1019,7 +1022,7 @@ fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
     if matches!(rctx.owner, resolve::Owner::Layout | resolve::Owner::Master) {
         return TextBody::default();
     }
-    let txt = kind.prompt();
+    let txt = interface_prompt.unwrap_or_else(|| kind.prompt());
     if txt.is_empty() || kind.is_footer_kind() {
         return TextBody::default();
     }

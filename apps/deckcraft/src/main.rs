@@ -91,20 +91,21 @@ fn save_prefs(app: &SlideApp) {
 
 fn services() -> Services {
     Services {
+        system_locale: sys_locale::get_locale(),
         pick_open: Some(Box::new(|purpose: &str| {
             let d = rfd::FileDialog::new();
             let d = match purpose {
-                "picture" => d.add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]),
+                "picture" => d.add_filter(deckcraft_ui_egui::i18n::tr("Pictures"), &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]),
                 "audio" => d.add_filter(
-                    "Audio",
+                    deckcraft_ui_egui::i18n::tr("Audio"),
                     &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "caf", "wma", "weba", "mka"],
                 ),
-                "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
+                "video" => d.add_filter(deckcraft_ui_egui::i18n::tr("Video"), &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
                 _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
+                    .add_filter(deckcraft_ui_egui::i18n::tr("Presentations"), &["deckcraft", "pptx", "potx", "ppsx"])
                     .add_filter("DeckCraft", &["deckcraft"])
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
-                    .add_filter("Outline", &["txt", "md"]),
+                    .add_filter(deckcraft_ui_egui::i18n::tr("Outline"), &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
@@ -205,7 +206,8 @@ fn main() -> eframe::Result {
                 if let Ok(v) = app.session.execute("file.recovery.open", &serde_json::json!({}))
                     && let Some(n) = v.get("opened").and_then(|o| o.as_array()).map(Vec::len).filter(|n| *n > 0)
                 {
-                    app.set_status(format!("Recovered {n} unsaved presentation{} from the last session", if n == 1 { "" } else { "s" }));
+                    deckcraft_ui_egui::i18n::set_current(app.ui.interface_language.resolve(app.services.system_locale.as_deref()));
+                    app.set_status(deckcraft_ui_egui::i18n::recovered(n));
                 }
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
