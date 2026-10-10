@@ -80,6 +80,47 @@ fn agent_builds_a_deck() {
 }
 
 #[test]
+fn set_text_unknown_id_is_error() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let title_id = tool(&mut s, "inspect_slide", json!({}))["shapes"][0]["id"].as_u64().unwrap();
+    tool(&mut s, "select", json!({"ids": [title_id]}));
+    // -1 and 2^32 are not shape ids; they must not fall back to the selection.
+    for bad in [json!(999999), json!(-1), json!(4294967296u64)] {
+        let r = call(&mut s, 1, "tools/call", json!({"name": "set_text", "arguments": {"id": bad, "text": "x"}}));
+        assert_eq!(r["result"]["isError"], true, "{bad}: {r}");
+    }
+    // A real id, and a just-created shape, still work; omitting id still uses the selection.
+    tool(&mut s, "set_text", json!({"id": title_id, "text": "Real"}));
+    let sid = tool(&mut s, "add_shape", json!({"preset": "rect", "x": 10, "y": 10, "w": 50, "h": 50}))["id"].as_u64().unwrap();
+    tool(&mut s, "set_text", json!({"id": sid, "text": "Fresh"}));
+    tool(&mut s, "select", json!({"ids": [title_id]}));
+    tool(&mut s, "set_text", json!({"text": "Selected"}));
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let text_of = |id: u64| sl["shapes"].as_array().unwrap().iter().find(|x| x["id"].as_u64() == Some(id)).unwrap()["text"].clone();
+    assert_eq!(text_of(sid), "Fresh");
+    assert_eq!(text_of(title_id), "Selected");
+}
+
+#[test]
+fn invalid_id_never_falls_back_to_selection() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let title_id = tool(&mut s, "inspect_slide", json!({}))["shapes"][0]["id"].as_u64().unwrap();
+    tool(&mut s, "select", json!({"ids": [title_id]}));
+    for cmd in ["text.edit", "text.get", "shape.inspect", "table.selectCells", "arrange.reorder"] {
+        for bad in [json!(-1), json!(1.5), json!("7"), json!(4294967296u64)] {
+            let r = call(&mut s, 1, "tools/call", json!({"name": "run_command", "arguments": {"command": cmd, "params": {"id": bad, "index": 0}}}));
+            assert_eq!(r["result"]["isError"], true, "{cmd} {bad}: {r}");
+        }
+    }
+    // Absent id still means the selection, and a real id still works.
+    tool(&mut s, "run_command", json!({"command": "text.get", "params": {}}));
+    tool(&mut s, "run_command", json!({"command": "text.get", "params": {"id": title_id}}));
+    tool(&mut s, "run_command", json!({"command": "shape.inspect", "params": {"id": title_id}}));
+}
+
+#[test]
 fn errors_are_reported_not_panics() {
     let mut s = Server::new(Box::new(Headless::new()));
     let r = call(&mut s, 1, "tools/call", json!({"name": "run_command", "arguments": {"command": "no.such"}}));

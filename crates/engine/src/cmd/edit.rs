@@ -353,7 +353,10 @@ fn deselect(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = ids_param(p, "ids").or_else(|| id_param(p, "id").map(|i| vec![i])).unwrap_or_default();
+    let ids = match ids_param(p, "ids") {
+        Some(v) => v,
+        None => id_param(p, "id", "edit.select")?.map(|i| vec![i]).unwrap_or_default(),
+    };
     let add = bool_or(p, "add", false);
     let toggle = bool_or(p, "toggle", false);
     let valid: Vec<ShapeId> = ids.into_iter().filter(|i| s.active().is_some_and(|d| d.shape(*i).is_some())).collect();

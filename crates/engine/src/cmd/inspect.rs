@@ -136,7 +136,8 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn shape(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let id = id_param(p, "id").or_else(|| st.selection.shapes.first().copied()).ok_or_else(|| bad("shape.inspect", "missing `id`"))?;
+    let id =
+        id_param(p, "id", "shape.inspect")?.or_else(|| st.selection.shapes.first().copied()).ok_or_else(|| bad("shape.inspect", "missing `id`"))?;
     let sh = st.shape(id).ok_or_else(|| bad("shape.inspect", format!("no shape {id}")))?;
     let x = xfrm_of(&st.doc, &st.selection, sh);
     Ok(json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x}))
