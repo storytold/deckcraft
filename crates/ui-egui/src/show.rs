@@ -123,8 +123,10 @@ impl Show {
                     .and_then(|s| s.transition.as_ref())
                     .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
                     .unwrap_or(("none".into(), String::new(), 0.0));
-                let old = self.tex.as_ref().map(|(_, t)| t.clone());
-                let from = self.tex.as_ref().map(|(k, _)| k.slide);
+                // Take the old slide's texture rather than cloning its handle: the new slide is
+                // otherwise rendered into the same texture, and the transition blends the new
+                // slide with itself (#33).
+                let (from, old) = self.tex.take().map(|(k, t)| (k.slide, t)).unzip();
                 self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
                     Some(Transition { old, from, morph: None, start: now, kind, option, dur })
                 } else {
@@ -430,7 +432,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 .iter()
                 .map(|x| deckcraft_render::TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix })
                 .collect();
-            let img = deckcraft_render::render_blend(&doc, from, idx, m.mix, &m.shapes, &text, &opts);
+            let paths: Vec<deckcraft_render::PathMorph> = m
+                .paths
+                .iter()
+                .map(|x| deckcraft_render::PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix })
+                .collect();
+            let img = deckcraft_render::render_blend(&doc, from, idx, m.mix, &m.shapes, &text, &paths, &opts);
             let ci = crate::textures::to_color_image(&img, false);
             let frame = match tr.morph.take() {
                 Some(mut h) => {
@@ -770,5 +777,31 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
         if !show.apply(a, doc, now) {
             *keep = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    #[test]
+    fn a_transition_keeps_the_old_slide_in_its_own_texture() {
+        // #33: the old slide's handle was cloned, so the new slide was rendered into the same
+        // texture and every transition blended the new slide with itself.
+        let mut s = deckcraft_engine::Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("transition.set", &json!({"kind": "fade", "index": 1})).unwrap();
+        let doc = s.active().unwrap().doc.clone();
+        let ctx = egui::Context::default();
+        let red = ctx.load_texture("show", egui::ColorImage::filled([1, 1], Color32::RED), egui::TextureOptions::LINEAR);
+        let mut show = Show::new(&doc, 0, false, false);
+        show.tex = Some((Key { slide: 0, step: 0, size: (1, 1), doc: 0, hidden: vec![] }, red.clone()));
+        assert!(show.apply(ShowAction::Slide(1), &doc, 0.0));
+        let tr = show.trans.as_ref().expect("the fade plays");
+        assert_eq!(tr.old.as_ref().map(TextureHandle::id), Some(red.id()));
+        assert_eq!(tr.from, Some(0));
+        assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
     }
 }

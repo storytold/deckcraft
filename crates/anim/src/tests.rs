@@ -569,6 +569,7 @@ fn morph_frame_moves_blends_and_fades() {
     assert!((f.opacity_of(f.shapes[2].0.id) - 0.5).abs() < 1e-9);
     // Ids are fresh and unique.
     let mut ids: Vec<_> = f.shapes.iter().map(|(s, _)| s.id).collect();
+    ids.sort();
     ids.dedup();
     assert_eq!(ids.len(), 3);
     assert!(ids.iter().all(|i| i.0 > 4));
@@ -614,6 +615,43 @@ fn morph_frame_lists_texts_for_words_and_characters() {
     // Same text: one shape moves, nothing to morph.
     b.shapes[0].text = a.shapes[0].text.clone();
     assert!(morph_frame(&p, &a, &b, 0.5, &|_| false).text.is_empty());
+}
+
+#[test]
+fn morph_frame_morphs_the_outline_of_a_changed_geometry() {
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let mut a = Slide::default();
+    let mut b = Slide::default();
+    let geo = |s: Shape, g: &str| Shape { geom: deckcraft_model::Geom::preset(g), ..s };
+    a.shapes = vec![solid(geo(shape(1, "Form"), "ellipse"), 0)];
+    b.shapes = vec![solid(Shape { xfrm: Some(Xfrm::new(300.0, 100.0, 100.0, 100.0)), ..geo(shape(1, "Form"), "star5") }, 200)];
+    let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+    // One shape: the new one, on the moving box, its colour blending and its outline listed to morph.
+    assert_eq!(f.shapes.len(), 1);
+    let (m, old) = &f.shapes[0];
+    assert!(!old && m.geom == b.shapes[0].geom);
+    assert_eq!(f.opacity_of(m.id), 1.0);
+    assert_eq!(m.fill, Some(deckcraft_model::Fill::solid(ColorRef::rgb(Rgba { r: 100, g: 0, b: 0, a: 255 }))));
+    assert_eq!(f.paths.len(), 1);
+    assert_eq!(f.paths[0].id, m.id);
+    assert_eq!(f.paths[0].from, a.shapes[0].geom);
+    assert_eq!((f.paths[0].from_box, f.paths[0].to_box), (a.shapes[0].xfrm.unwrap(), b.shapes[0].xfrm.unwrap()));
+    // Other adjust values of the same preset morph too.
+    b.shapes[0].geom = deckcraft_model::Geom::Preset { name: "ellipse".into(), adj: vec![1.0] };
+    assert_eq!(morph_frame(&p, &a, &b, 0.5, &|_| false).paths.len(), 1);
+    // The same geometry only moves.
+    b.shapes[0].geom = a.shapes[0].geom.clone();
+    assert!(morph_frame(&p, &a, &b, 0.5, &|_| false).paths.is_empty());
+    // Another text as well: the two cross-fade as before.
+    b.shapes[0].geom = deckcraft_model::Geom::preset("star5");
+    b.shapes[0].text = Some(TextBody::from_text("Star"));
+    let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+    assert!(f.paths.is_empty() && f.shapes.len() == 2);
+    // Tables and groups have no outline to morph.
+    let table = |g: &str| Shape { kind: deckcraft_model::ShapeKind::Table(Default::default()), ..geo(shape(1, "Form"), g) };
+    a.shapes = vec![table("rect")];
+    b.shapes = vec![table("ellipse")];
+    assert!(morph_frame(&p, &a, &b, 0.5, &|_| false).paths.is_empty());
 }
 
 fn pres(n: usize) -> Presentation {

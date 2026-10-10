@@ -150,6 +150,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("show.start", "Slide Show", Some("F5"), "{from?: index}"),
     ("show.presenter", "Presenter View", None, "{on?: bool}"),
     ("show.end", "End Show", None, "{}"),
+    ("app.home", "Home", None, "{on?}"),
     ("app.about", "About DeckCraft", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
@@ -190,6 +191,9 @@ pub struct SlideApp {
     pub palette: Option<(String, usize)>,
     /// Integrated title bar (macOS traffic lights over our chrome).
     pub integrated_titlebar: bool,
+    /// The start screen is shown over the open presentations (Home), with the document count
+    /// and active index when it was opened: opening or creating a presentation leaves it.
+    pub home: Option<(usize, Option<usize>)>,
     pending_urls: Vec<String>,
     shot_token: u64,
     queued_shots: Vec<(u64, f64, u32)>,
@@ -227,6 +231,7 @@ impl SlideApp {
             slide_rect: None,
             palette: None,
             integrated_titlebar: false,
+            home: None,
             pending_urls: vec![],
             shot_token: 0,
             queued_shots: vec![],
@@ -264,6 +269,15 @@ impl SlideApp {
         }
         self.drain_requests();
         r
+    }
+
+    fn docs_key(&self) -> (usize, Option<usize>) {
+        (self.session.documents().len(), self.session.active_index())
+    }
+
+    /// Home is open over a presentation (not just the start screen with nothing open).
+    pub fn home_open(&self) -> bool {
+        self.home.is_some() && self.session.active().is_some()
     }
 
     fn flag(&mut self, params: &Value, cur: bool) -> bool {
@@ -324,6 +338,10 @@ impl SlideApp {
             "show.end" => {
                 self.show = None;
                 self.media.stop_owned(media::Owner::Show);
+            }
+            "app.home" => {
+                let on = self.flag(p, self.home.is_some());
+                self.home = (on && self.session.active().is_some()).then(|| self.docs_key());
             }
             "app.about" => self.dialog = Some(dialogs::Dialog::new("about")),
             "app.palette" => self.palette = Some((String::new(), 0)),
@@ -593,6 +611,22 @@ impl SlideApp {
             return;
         }
         let events = ctx.input(|i| i.events.clone());
+        if self.home_open() {
+            // Only app shortcuts (Open, Command Palette…) and Escape, which goes back to the
+            // presentation: typing, pasting or deleting would edit the hidden presentation.
+            for e in events {
+                if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                    let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
+                    if key == egui::Key::Escape {
+                        self.home = None;
+                    } else if mods.cmd || mods.alt {
+                        menus::ui_shortcut(self, key, mods);
+                    }
+                }
+            }
+            self.drain_requests();
+            return;
+        }
         for e in events {
             match e {
                 egui::Event::Text(t) => {
@@ -661,14 +695,17 @@ impl SlideApp {
             self.perf.frame_ms = now_ms() - t0;
             return;
         }
+        if self.home.is_some_and(|k| k != self.docs_key()) {
+            self.home = None;
+        }
         self.keyboard(&ctx);
         ribbon::title_bar(self, ui);
-        if self.session.active().is_some() {
+        if self.session.active().is_some() && !self.home_open() {
             ribbon::show(self, ui);
             status::status_bar(self, ui);
         }
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
-            if self.session.active().is_none() {
+            if self.session.active().is_none() || self.home_open() {
                 dialogs::start_screen(self, ui);
                 return;
             }
@@ -838,4 +875,67 @@ pub fn now_ms() -> f64 {
 #[cfg(target_arch = "wasm32")]
 fn js_now() -> f64 {
     js_sys::Date::now()
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    fn title_text(app: &SlideApp) -> String {
+        let d = app.session.active().unwrap();
+        let sh = &d.doc.slides[0].shapes[0];
+        sh.text.as_ref().map(|t| t.paragraphs.iter().map(|p| p.text()).collect::<Vec<_>>().join("\n")).unwrap_or_default()
+    }
+
+    /// #17: Home created a new blank presentation instead of going to the start screen.
+    #[test]
+    fn home_shows_the_start_screen_over_the_open_presentation() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        // The app keeps requesting repaints, so step frames instead of run().
+        harness.run_steps(2);
+        let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+        harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+
+        harness.state_mut().run("app.home", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().home_open());
+        assert_eq!(harness.state().session.documents().len(), 1, "Home doesn't create a presentation");
+
+        // Typing on the start screen doesn't reach the presentation behind it; Escape goes back.
+        harness.event(egui::Event::Text("a".into()));
+        harness.key_press(egui::Key::Backspace);
+        harness.run_steps(2);
+        assert_eq!(title_text(harness.state()), "");
+        assert!(!harness.state().session.active().unwrap().is_dirty());
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(!harness.state().home_open());
+
+        // Home again toggles; picking a theme on the start screen (a new presentation) leaves it.
+        harness.state_mut().run("app.home", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().home_open());
+        harness.state_mut().run("app.home", json!({})).unwrap();
+        assert!(!harness.state().home_open());
+        harness.state_mut().run("app.home", json!({"on": true})).unwrap();
+        harness.state_mut().run("file.new", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(!harness.state().home_open(), "a new presentation leaves Home");
+        assert_eq!(harness.state().session.documents().len(), 2);
+    }
+
+    #[test]
+    fn home_needs_an_open_presentation() {
+        let mut app = SlideApp::new(Session::new(), Services::default());
+        app.run("app.home", json!({})).unwrap();
+        assert!(!app.home_open() && app.home.is_none(), "with nothing open the start screen shows anyway");
+    }
 }

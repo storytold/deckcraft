@@ -239,6 +239,13 @@ pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool,
     resp
 }
 
+/// The drop-down for a `color_grid`: a menu that stays open when its hex field is clicked
+/// (egui menus close on any click inside). Picking a colour closes it (`color_grid` calls
+/// `ui.close()`); other buttons in it must close it themselves.
+pub fn color_popup(button: &Response) -> egui::Popup<'_> {
+    egui::Popup::menu(button).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+}
+
 /// The colour grid popup body: theme colours with tints/shades, standard colours, extra entries.
 /// Returns the picked colour (`Some(None)` = "No Fill"/"Automatic" when `none_label` is given).
 pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -> Option<Option<ColorRef>> {
@@ -439,4 +446,43 @@ pub fn drop_button(ui: &mut Ui, label: &str, size: egui::Vec2, enabled: bool) ->
     let col = if enabled { t.text_dim } else { t.text_faint };
     chevron(ui.painter(), egui::pos2(r.rect.max.x - 8.0, r.rect.center().y), 3.0, col);
     r
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use std::cell::RefCell;
+
+    use super::*;
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::Queryable;
+
+    /// #32: clicking the "More Colors" hex field closed the colour menu before anything could be
+    /// typed. It stays open now; Enter picks the colour and closes it.
+    #[test]
+    fn the_hex_field_keeps_the_color_menu_open() {
+        let picked = RefCell::new(None);
+        let scheme = deckcraft_model::Theme::default().colors;
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 500.0)).build_ui(|ui| {
+            theme::install_fonts(ui.ctx());
+            let r = ui.button("Pick");
+            color_popup(&r).show(|ui| {
+                if let Some(c) = color_grid(ui, &scheme, None) {
+                    *picked.borrow_mut() = Some(c);
+                }
+            });
+        });
+        harness.get_by_label("Pick").click();
+        harness.run();
+        harness.get_by_role(Role::TextInput).click();
+        harness.run();
+        assert!(harness.query_by_role(Role::TextInput).is_some(), "the menu is still open after clicking the hex field");
+        harness.get_by_role(Role::TextInput).type_text("00FF00");
+        harness.run();
+        harness.key_press(egui::Key::Enter);
+        harness.run();
+        assert_eq!(*picked.borrow(), Some(Some(ColorRef::rgb(Rgba::from_hex("00FF00").unwrap()))));
+        assert!(harness.query_by_role(Role::TextInput).is_none(), "picking a colour closes the menu");
+    }
 }
