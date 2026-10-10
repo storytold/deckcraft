@@ -245,6 +245,11 @@ pub struct FontDb {
     /// System fallback state: enabled, and characters no system font covers.
     #[cfg(not(target_arch = "wasm32"))]
     sys: Mutex<SysFallback>,
+    /// Held while installed fonts are loaded, so threads that need the same family wait for one
+    /// load instead of racing it: what a lookup finds doesn't depend on which thread got there
+    /// first.
+    #[cfg(not(target_arch = "wasm32"))]
+    loading: Mutex<()>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -535,6 +540,8 @@ impl FontDb {
             cataloged: std::sync::OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             sys: Mutex::new(SysFallback { enabled: true, ..Default::default() }),
+            #[cfg(not(target_arch = "wasm32"))]
+            loading: Mutex::new(()),
         }
     }
 
@@ -600,14 +607,33 @@ impl FontDb {
     /// Add a user font (TTF/OTF/TTC bytes). Returns the number of faces added (0 if unparseable or
     /// every face was already present).
     pub fn add_font(&self, bytes: Vec<u8>) -> usize {
-        let data = Arc::new(bytes);
-        let mut added = 0;
-        for (i, family, style, coords) in enumerate_faces(&data) {
-            if self.read_faces().iter().any(|f| f.family.eq_ignore_ascii_case(&family) && f.style.eq_ignore_ascii_case(&style)) {
-                continue;
+        self.add_fonts(vec![bytes])
+    }
+
+    /// Add font files together: lookups see all of their faces or none, never part of a family.
+    /// Returns the number of faces added.
+    fn add_fonts(&self, files: Vec<Vec<u8>>) -> usize {
+        let present = |faces: &[Arc<FontFace>], family: &str, style: &str| {
+            faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && f.style.eq_ignore_ascii_case(style))
+        };
+        let mut new = Vec::new();
+        for bytes in files {
+            let data = Arc::new(bytes);
+            for (i, family, style, coords) in enumerate_faces(&data) {
+                if present(&self.read_faces(), &family, &style) {
+                    continue;
+                }
+                if let Some(f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
+                    new.push(Arc::new(f));
+                }
             }
-            if let Some(f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
-                self.faces.write().unwrap_or_else(|e| e.into_inner()).push(Arc::new(f));
+        }
+        let mut faces = self.faces.write().unwrap_or_else(|e| e.into_inner());
+        let mut added = 0;
+        for f in new {
+            // Checked again under the lock: another thread may have added the same face.
+            if !present(&faces, &f.family, &f.style) {
+                faces.push(f);
                 added += 1;
             }
         }
@@ -677,9 +703,21 @@ impl FontDb {
         n
     }
 
-    /// Load the files of the installed `family`. Returns whether any face was added.
+    /// Load the files of the installed `family` unless it is loaded. Returns whether it is loaded
+    /// (by this call or any other).
     #[cfg(not(target_arch = "wasm32"))]
     fn load_cataloged(&self, family: &str) -> bool {
+        let loading = self.loading.lock().unwrap_or_else(|e| e.into_inner());
+        self.load_family(family, &loading)
+    }
+
+    /// [`FontDb::load_cataloged`] for a caller already holding `loading`.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_family(&self, family: &str, _loading: &std::sync::MutexGuard<'_, ()>) -> bool {
+        // Another thread may have loaded it while this one waited for the lock.
+        if self.is_loaded(family) {
+            return true;
+        }
         let paths: Vec<std::path::PathBuf> = {
             let cat = self.read_catalog();
             let mut p: Vec<_> = cat.iter().filter(|c| c.family.eq_ignore_ascii_case(family)).map(|c| c.path.clone()).collect();
@@ -687,13 +725,8 @@ impl FontDb {
             p.dedup();
             p
         };
-        let mut any = false;
-        for p in paths {
-            if let Ok(data) = std::fs::read(&p) {
-                any |= self.add_font(data) > 0;
-            }
-        }
-        any
+        self.add_fonts(paths.iter().filter_map(|p| std::fs::read(p).ok()).collect());
+        self.is_loaded(family)
     }
 
     /// Resolve a family + style to a face, falling back to the closest style of the family, then to
@@ -846,6 +879,7 @@ impl FontDb {
         if c.is_control() || c.is_whitespace() {
             return false;
         }
+        let seen = self.read_faces().len();
         {
             let sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
             if !sys.enabled || sys.misses.contains(&c) {
@@ -854,9 +888,18 @@ impl FontDb {
         }
         let covered = |db: &FontDb| db.read_faces().iter().any(|f| f.covers(c));
         let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
+        let loading = self.loading.lock().unwrap_or_else(|e| e.into_inner());
+        // Another thread may have loaded a face for `c` (faces are only ever added), or found
+        // there is none, while this one waited.
+        if self.read_faces().len() != seen && covered(self) {
+            return true;
+        }
+        if self.sys.lock().unwrap_or_else(|e| e.into_inner()).misses.contains(&c) {
+            return false;
+        }
         for fam in SYSTEM_FALLBACKS {
             if !self.is_loaded(fam) && cataloged.iter().any(|f| f.eq_ignore_ascii_case(fam)) {
-                self.load_cataloged(fam);
+                self.load_family(fam, &loading);
                 if covered(self) {
                     return true;
                 }
