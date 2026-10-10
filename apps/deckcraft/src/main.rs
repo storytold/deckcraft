@@ -168,6 +168,7 @@ fn main() -> eframe::Result {
             }
         }
     }
+    let window_controls = cfg!(not(any(target_os = "macos", target_os = "windows"))) && std::env::var_os("DECKCRAFT_SYSTEM_TITLEBAR").is_none();
     let mut options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("DeckCraft")
@@ -176,7 +177,8 @@ fn main() -> eframe::Result {
             .with_drag_and_drop(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
-            .with_title_shown(false),
+            .with_title_shown(false)
+            .with_decorations(!window_controls),
         ..Default::default()
     };
     options.viewport = options.viewport.with_app_id(APP_ID);
@@ -209,6 +211,7 @@ fn main() -> eframe::Result {
                 }
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            app.window_controls = window_controls;
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
