@@ -283,9 +283,16 @@ fn go_to(s: &mut Session, i: usize) -> Result<Value> {
 fn go(s: &mut Session, p: &Value) -> Result<Value> {
     let i = match (usize_param(p, "index"), p.get("id").and_then(Value::as_u64)) {
         (Some(i), _) => i,
-        (None, Some(id)) => s.doc()?.doc.slide_index(SlideId(u32::try_from(id).unwrap_or(0))).ok_or_else(|| bad("slide.go", "no such slide"))?,
+        (None, Some(id)) => s
+            .doc()?
+            .doc
+            .slide_index(SlideId(u32::try_from(id).map_err(|_| bad("slide.go", "no such slide"))?))
+            .ok_or_else(|| bad("slide.go", "no such slide"))?,
         _ => return Err(bad("slide.go", "missing `index`")),
     };
+    if i >= s.doc()?.doc.slides.len() {
+        return Err(bad("slide.go", format!("no slide {i}")));
+    }
     go_to(s, i)
 }
 fn next(s: &mut Session, _p: &Value) -> Result<Value> {
