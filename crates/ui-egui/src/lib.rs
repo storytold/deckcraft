@@ -486,6 +486,9 @@ pub struct SlideApp {
     /// slides and status bar until Esc or Back; with nothing open it is the start screen. Opening,
     /// creating or closing a presentation leaves it.
     pub backstage: Option<backstage::Backstage>,
+    /// Linux/BSD: the window has no system frame; the title bar draws minimize, maximize and
+    /// close, and the window resizes from its edges (`ribbon::window_frame`).
+    pub window_controls: bool,
     pending_urls: Vec<String>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
@@ -572,6 +575,7 @@ impl SlideApp {
             palette: None,
             integrated_titlebar: false,
             backstage: None,
+            window_controls: false,
             pending_urls: vec![],
             pending_copy: None,
             shot_token: 0,
@@ -1873,6 +1877,7 @@ impl SlideApp {
         if self.show.is_some() {
             self.anim_preview = None;
             show::ui(self, ui);
+            ribbon::window_frame(self, &ctx);
             doc_window::show(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
             return;
@@ -1923,6 +1928,8 @@ impl SlideApp {
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);
         menus::palette(self, &ctx);
+        // Last, so its resize cursors win over the widgets under the window edges.
+        ribbon::window_frame(self, &ctx);
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
