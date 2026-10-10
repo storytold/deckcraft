@@ -158,7 +158,7 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
         })?;
         return ok();
     }
-    let id = match id_param(p, "id") {
+    let id = match id_param(p, "id", "text.edit")? {
         Some(i) => i,
         None => s.doc()?.selection.shapes.first().copied().ok_or_else(|| bad("text.edit", "select a shape with text"))?,
     };
@@ -491,7 +491,7 @@ fn select_para(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").ok_or_else(|| bad("text.set", "missing `text`"))?.to_string();
-    let id = match id_param(p, "id") {
+    let id = match id_param(p, "id", "text.set")? {
         Some(i) => i,
         None => s.doc()?.selection.shapes.first().copied().ok_or_else(|| bad("text.set", "missing `id` (or select a shape)"))?,
     };
@@ -531,7 +531,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let id = match id_param(p, "id") {
+    let id = match id_param(p, "id", "text.get")? {
         Some(i) => i,
         None => match &st.selection.text {
             Some(t) => t.shape,

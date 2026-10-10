@@ -86,7 +86,7 @@ fn order(s: &mut Session, p: &Value, how: i32) -> Result<Value> {
 }
 
 fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
-    let id = id_param(p, "id").ok_or_else(|| bad("arrange.reorder", "missing `id`"))?;
+    let id = id_param(p, "id", "arrange.reorder")?.ok_or_else(|| bad("arrange.reorder", "missing `id`"))?;
     let to = usize_param(p, "index").ok_or_else(|| bad("arrange.reorder", "missing `index`"))?;
     s.edit(|doc, sel| {
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("arrange.reorder", "no slide"))?;

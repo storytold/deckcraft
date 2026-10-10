@@ -78,7 +78,7 @@ fn at(s: &Session, p: &Value) -> (usize, usize) {
 }
 
 fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> Result<()>) -> Result<Value> {
-    let id = match id_param(p, "id") {
+    let id = match id_param(p, "id", cmd)? {
         Some(i) => i,
         None => {
             let st = s.doc()?;
@@ -253,7 +253,7 @@ fn row_height(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn select_cells(s: &mut Session, p: &Value) -> Result<Value> {
-    let id = match id_param(p, "id") {
+    let id = match id_param(p, "id", "table.selectCells")? {
         Some(i) => i,
         None => s.doc()?.selection.shapes.first().copied().ok_or_else(|| bad("table.selectCells", "select a table"))?,
     };

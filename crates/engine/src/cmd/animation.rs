@@ -305,7 +305,7 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn painter_pick(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let id = id_param(p, "id")
+    let id = id_param(p, "id", "animation.painter")?
         .or_else(|| st.selection.shapes.first().copied())
         .ok_or_else(|| bad("animation.painter", "select an animated shape first"))?;
     let sl = st.current_slide().ok_or_else(|| bad("animation.painter", "no slide"))?;

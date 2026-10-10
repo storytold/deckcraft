@@ -171,8 +171,17 @@ pub(crate) fn str_param<'a>(p: &'a Value, key: &str) -> Option<&'a str> {
 pub(crate) fn usize_param(p: &Value, key: &str) -> Option<usize> {
     p.get(key).and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok())
 }
-pub(crate) fn id_param(p: &Value, key: &str) -> Option<ShapeId> {
-    p.get(key).and_then(Value::as_u64).and_then(|v| u32::try_from(v).ok()).map(ShapeId)
+/// A shape id param: `Ok(None)` when absent (callers may fall back to the selection), `Err` when
+/// present but not a valid id (negative, non-integer, beyond `u32`), so a bad id never edits the selection.
+pub(crate) fn id_param(p: &Value, key: &str, cmd: &str) -> Result<Option<ShapeId>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v
+            .as_u64()
+            .and_then(|v| u32::try_from(v).ok())
+            .map(|v| Some(ShapeId(v)))
+            .ok_or_else(|| bad(cmd, format!("`{key}` is not a valid shape id: {v}"))),
+    }
 }
 pub(crate) fn ids_param(p: &Value, key: &str) -> Option<Vec<ShapeId>> {
     p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).filter_map(|v| u32::try_from(v).ok()).map(ShapeId).collect())
@@ -196,7 +205,7 @@ pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<ShapeId>> {
     {
         return Ok(ids);
     }
-    if let Some(id) = id_param(p, "id") {
+    if let Some(id) = id_param(p, "id", "shape")? {
         return Ok(vec![id]);
     }
     Ok(s.doc()?.selection.shapes.clone())
