@@ -55,7 +55,7 @@ fn title(id: &str) -> &'static str {
         "chartData" => "Chart Data",
         "trim" => "Trim Media",
         "smartart" => "Choose a SmartArt Graphic",
-        "quit" => "DeckCraft",
+        "quit" | "close" => "DeckCraft",
         _ => "DeckCraft",
     }
 }
@@ -76,6 +76,13 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         });
     if open && !close && !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.dialog = Some(d);
+    }
+}
+
+/// Close the active presentation (the Close dialog's answer).
+fn close_presentation(app: &mut SlideApp) {
+    if let Err(e) = app.session.execute("file.close", &json!({})) {
+        app.set_status(e.to_string());
     }
 }
 
@@ -280,6 +287,42 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                         if app.save_all() {
                             app.quit_confirmed = true;
                             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                        done = true;
+                    }
+                    if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+                        done = true;
+                    }
+                });
+            });
+            done
+        }
+        "close" => {
+            // Saved or closed in the meantime: nothing to ask about any more.
+            let Some(name) = app.session.active().filter(|d| d.is_dirty()).map(|d| d.title()) else {
+                if app.session.active().is_some() {
+                    close_presentation(app);
+                }
+                return true;
+            };
+            ui.label(egui::RichText::new(format!("Do you want to save the changes you made to “{name}”?")).strong());
+            ui.label("Your changes will be lost if you don't save them.");
+            ui.add_space(8.0);
+            let mut done = false;
+            ui.horizontal(|ui| {
+                let t = Tokens::get(ui.ctx());
+                if ui.add(egui::Button::new("Don't Save").min_size(vec2(84.0, 24.0))).clicked() {
+                    close_presentation(app);
+                    done = true;
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let save = ui.add(egui::Button::new(egui::RichText::new("Save").color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
+                    if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                        app.save();
+                        // Closes only once it is saved: a cancelled Save As (or a web download,
+                        // which leaves it unsaved) keeps the presentation open.
+                        if app.session.active().is_some_and(|d| !d.is_dirty()) {
+                            close_presentation(app);
                         }
                         done = true;
                     }

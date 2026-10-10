@@ -159,6 +159,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
+    ("app.close", "Close", Some("Cmd+W"), "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.dialog", "Open Dialog", None, "{id}"),
     ("app.links", "Community Links", None, "{}"),
@@ -351,6 +352,7 @@ impl SlideApp {
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
+            "app.close" => return self.close_active(),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.dialog" => {
                 let d = p.get("id").and_then(Value::as_str).ok_or("missing `id`")?;
@@ -433,6 +435,17 @@ impl SlideApp {
                 Err(e) => self.set_status(e.to_string()),
             }
         }
+    }
+
+    /// File › Close, ⌘W and the command palette: a presentation with unsaved changes asks Save /
+    /// Don't Save / Cancel first, as quitting does (#60). `file.close` itself never asks, so
+    /// scripts and agents close without a dialog.
+    fn close_active(&mut self) -> Result<Value, String> {
+        if self.session.active().is_some_and(|d| d.is_dirty()) {
+            self.dialog = Some(dialogs::Dialog::new("close"));
+            return Ok(Value::Null);
+        }
+        self.session.execute("file.close", &json!({})).map_err(|e| e.to_string())
     }
 
     /// Save every presentation with unsaved changes (asking for a location where needed).
@@ -930,6 +943,58 @@ mod tests {
         harness.run_steps(2);
         assert!(!harness.state().home_open(), "a new presentation leaves Home");
         assert_eq!(harness.state().session.documents().len(), 2);
+    }
+
+    /// #60: Close discarded an edited presentation without asking.
+    #[test]
+    fn close_asks_before_discarding_unsaved_changes() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let edit = |h: &mut egui_kittest::Harness<'_, SlideApp>| {
+            h.state_mut().session.execute("slide.new", &json!({})).unwrap();
+            assert!(h.state().session.active().unwrap().is_dirty());
+        };
+        let open = |h: &egui_kittest::Harness<'_, SlideApp>| h.state().session.documents().len();
+
+        // Cancel keeps the presentation and its changes.
+        edit(&mut harness);
+        harness.state_mut().run("app.close", json!({})).unwrap();
+        harness.run_steps(2);
+        assert_eq!(harness.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+        assert_eq!(open(&harness), 1, "nothing closes before the answer");
+        harness.get_by_label("Cancel").click();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none());
+        assert_eq!(open(&harness), 1);
+        assert!(harness.state().session.active().unwrap().is_dirty());
+
+        // ⌘W asks too; Don't Save closes it.
+        harness.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::W);
+        harness.run_steps(2);
+        assert_eq!(harness.state().dialog.as_ref().map(|d| d.id.as_str()), Some("close"));
+        harness.get_by_label("Don't Save").click();
+        harness.run_steps(2);
+        assert_eq!(open(&harness), 0);
+
+        // Nothing unsaved: Close closes at once.
+        harness.state_mut().run("file.new", json!({})).unwrap();
+        harness.state_mut().run("app.close", json!({})).unwrap();
+        assert!(harness.state().dialog.is_none());
+        assert_eq!(open(&harness), 0);
+
+        // Scripts and agents: `file.close` never opens a dialog.
+        harness.state_mut().run("file.new", json!({})).unwrap();
+        edit(&mut harness);
+        harness.state_mut().run("file.close", json!({})).unwrap();
+        assert!(harness.state().dialog.is_none());
+        assert_eq!(open(&harness), 0);
     }
 
     #[test]
