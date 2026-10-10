@@ -90,6 +90,26 @@ fn errors_are_reported_not_panics() {
     assert_eq!(r["result"]["isError"], true);
 }
 
+fn current_slide_title(s: &mut Server) -> Value {
+    tool(s, "inspect_slide", json!({}))["title"].clone()
+}
+
+#[test]
+fn go_to_slide_out_of_range_is_error() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "titleAndContent", "title": "Second", "body": "x"}));
+    // Boundaries stay valid: first and last slide.
+    tool(&mut s, "go_to_slide", json!({"index": 0}));
+    tool(&mut s, "go_to_slide", json!({"index": 1}));
+    assert_eq!(current_slide_title(&mut s), "Second");
+    for bad in [json!(2), json!(99)] {
+        let r = call(&mut s, 1, "tools/call", json!({"name": "go_to_slide", "arguments": {"index": bad}}));
+        assert_eq!(r["result"]["isError"], true, "{bad}: {r}");
+        assert_eq!(current_slide_title(&mut s), "Second", "failed go_to_slide must not move");
+    }
+}
+
 #[test]
 fn export_tool_lists_pdf_and_its_options() {
     let mut s = Server::new(Box::new(Headless::new()));
