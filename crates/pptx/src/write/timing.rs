@@ -445,7 +445,7 @@ fn effect_par(w: &mut W, x: &mut Exp, ids: &mut Ids, e: &Eff, first_in_click: bo
             .o("accel", accel)
             .o("decel", decel)
             .t("autoRev", a.auto_reverse)
-            .a("fill", "hold")
+            .a("fill", if a.rewind { "remove" } else { "hold" })
             .a("grpId", e.grp)
             .a("nodeType", node),
     );
