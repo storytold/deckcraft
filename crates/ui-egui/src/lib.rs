@@ -6,12 +6,21 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// An English UI string in the current interface language ([`i18n::t`]).
+#[macro_export]
+macro_rules! tl {
+    ($s:expr) => {
+        $crate::i18n::t($s)
+    };
+}
+
 pub mod backstage;
 pub mod canvas;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -103,6 +112,7 @@ pub struct UiState {
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
     pub format_tab: String,
     pub grayscale: bool,
+    pub language: String,
     #[serde(skip)]
     pub backstage: bool,
     #[serde(skip)]
@@ -132,6 +142,7 @@ impl Default for UiState {
             ui_scale: 1.0,
             format_tab: "fill".into(),
             grayscale: false,
+            language: i18n::AUTO.into(),
             backstage: false,
             backstage_page: "new".into(),
         }
@@ -685,6 +696,7 @@ impl SlideApp {
             ctx.request_repaint();
             return;
         }
+        i18n::set_current(i18n::Lang::from_pref(&self.ui.language));
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.tick_media(&ctx);

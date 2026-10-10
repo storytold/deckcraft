@@ -29,6 +29,10 @@ impl Dialog {
 }
 
 fn title(id: &str) -> &'static str {
+    crate::tl!(title_en(id))
+}
+
+fn title_en(id: &str) -> &'static str {
     match id {
         "table" => "Insert Table",
         "slideSize" => "Slide Size",
@@ -85,12 +89,14 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new(egui::RichText::new(ok_label).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0))).clicked()
+        if ui
+            .add(egui::Button::new(egui::RichText::new(crate::tl!(ok_label)).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)))
+            .clicked()
             || ui.input(|i| i.key_pressed(egui::Key::Enter))
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(crate::tl!("Cancel")).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });
@@ -100,7 +106,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
 fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
     let mut v = d.get(key, default);
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(120.0, 20.0), egui::Label::new(label));
+        ui.add_sized(vec2(120.0, 20.0), egui::Label::new(crate::tl!(label)));
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(180.0));
     });
     d.fields.insert(key.into(), v);
@@ -108,7 +114,7 @@ fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
 
 fn check(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: bool) -> bool {
     let mut v = d.get(key, if default { "1" } else { "0" }) == "1";
-    ui.checkbox(&mut v, label);
+    ui.checkbox(&mut v, crate::tl!(label));
     d.fields.insert(key.into(), if v { "1".into() } else { "0".into() });
     v
 }

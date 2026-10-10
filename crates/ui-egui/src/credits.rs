@@ -231,7 +231,7 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
                 }
             }
         });
-        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text("Reverse the order").clicked() {
+        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text(crate::tl!("Reverse the order")).clicked() {
             v.ascending = !v.ascending;
         }
         ui.separator();

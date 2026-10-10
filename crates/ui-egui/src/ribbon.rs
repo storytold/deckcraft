@@ -76,7 +76,7 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
             app.palette = Some((String::new(), 0));
         }
         let share = right.add(
-            egui::Button::new(egui::RichText::new("  Present  ").color(t.accent_text).font(theme::bold(13.0)))
+            egui::Button::new(egui::RichText::new(format!("  {}  ", crate::tl!("Present"))).color(t.accent_text).font(theme::bold(13.0)))
                 .fill(t.accent)
                 .corner_radius(CornerRadius::same(13))
                 .min_size(vec2(84.0, 26.0)),
@@ -148,8 +148,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let y = rect.min.y + 2.0;
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
+            let label = crate::tl!(name);
             let font = theme::font(13.0);
-            let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.id().with(("tab", name)), Sense::click());
             let active = name != "File" && app.ui.tab == name;
@@ -164,7 +165,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text
             };
             let f = if active { theme::bold(13.0) } else { font };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, name, f, col);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, label, f, col);
             if active {
                 let uw = (w - 20.0).max(16.0);
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
@@ -274,7 +275,7 @@ pub fn fmt_state(app: &mut SlideApp) -> Value {
 fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::Paste, "Paste", enabled(app, "edit.paste"), true, false);
-        if main.on_hover_text("Paste (⌘V)").clicked() {
+        if main.on_hover_text(crate::tl!("Paste (⌘V)")).clicked() {
             run(app, "edit.paste", json!({}));
         }
         if let Some(a) = arrow {
@@ -295,7 +296,7 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
             small(app, ui, Icon::Copy, "Copy", "edit.copy", json!({}));
             let on = app.session.painter.is_some();
             let en = enabled(app, "format.painter");
-            let r = small_button(ui, Icon::FormatPainter, "Format", en, on).on_hover_text("Format Painter (double-click to keep it on)");
+            let r = small_button(ui, Icon::FormatPainter, "Format", en, on).on_hover_text(crate::tl!("Format Painter (double-click to keep it on)"));
             if r.double_clicked() {
                 run(app, "format.painter", json!({"sticky": true}));
             } else if r.clicked() {
@@ -360,7 +361,7 @@ fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
 fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
-        if main.on_hover_text("New Slide (⇧⌘N)").clicked() {
+        if main.on_hover_text(crate::tl!("New Slide (⇧⌘N)")).clicked() {
             run(app, "slide.new", json!({}));
         }
         if let Some(a) = arrow {
@@ -536,7 +537,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 ui.spacing_mut().item_spacing.x = 1.0;
                 let b = |k: &str| st.get(k).and_then(Value::as_bool).unwrap_or(false);
                 let (m, a) = small_button_ex(ui, Icon::Bullets, "", en, b("bullets"), true);
-                if m.on_hover_text("Bullets").clicked() {
+                if m.on_hover_text(crate::tl!("Bullets")).clicked() {
                     run(app, "format.bullets", json!({}));
                 }
                 if let Some(a) = a {
@@ -552,7 +553,7 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     });
                 }
                 let (m, a) = small_button_ex(ui, Icon::Numbering, "", en, b("numbering"), true);
-                if m.on_hover_text("Numbering").clicked() {
+                if m.on_hover_text(crate::tl!("Numbering")).clicked() {
                     run(app, "format.numbering", json!({}));
                 }
                 if let Some(a) = a {
@@ -732,7 +733,7 @@ fn kurbo_flatten(path: &deckcraft_geom::BezPath, mut f: impl FnMut(Fl)) {
 fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let en = enabled(app, "shape.insert");
-        let r = big_button(ui, Icon::Shapes, "Shapes", en).on_hover_text("Shapes");
+        let r = big_button(ui, Icon::Shapes, "Shapes", en).on_hover_text(crate::tl!("Shapes"));
         egui::Popup::menu(&r).show(|ui| {
             if let Some(p) = shapes_gallery(ui) {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: p.to_string() });
@@ -1022,7 +1023,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
         let r = big_button(ui, Icon::Screenshot, "Screenshot", false);
-        let _ = r.on_hover_text("Screenshot (not available yet)");
+        let _ = r.on_hover_text(crate::tl!("Screenshot (not available yet)"));
     });
     group(ui, |ui| {
         let r = big_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"));
@@ -1191,11 +1192,11 @@ fn draw(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let r = big_button(ui, Icon::InkToShape, "Ink to\nShape", false);
-        let _ = r.on_hover_text("Ink to Shape (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Ink to Shape (coming soon)"));
         let r = big_button(ui, Icon::InkToText, "Ink to\nText", false);
-        let _ = r.on_hover_text("Ink to Text (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Ink to Text (coming soon)"));
         let r = big_button(ui, Icon::InkToMath, "Ink to\nMath", false);
-        let _ = r.on_hover_text("Ink to Math (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Ink to Math (coming soon)"));
     });
 }
 
@@ -1711,7 +1712,7 @@ fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         let r = big_button(ui, Icon::Record, "Record", false);
-        let _ = r.on_hover_text("Recording narration needs audio capture (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Recording narration needs audio capture (coming soon)"));
     });
     group(ui, |ui| {
         rows(ui, |ui| {
@@ -1732,7 +1733,7 @@ fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
 fn record(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::Cameo, "Cameo", false);
-        let _ = r.on_hover_text("Camera capture is not available yet");
+        let _ = r.on_hover_text(crate::tl!("Camera capture is not available yet"));
         if big_button(ui, Icon::PlayFromStart, "From\nBeginning", true).clicked() {
             app.start_show(0, false);
             if let Some(s) = app.show.as_mut() {
@@ -1758,14 +1759,14 @@ fn review(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::Spelling, "Spelling", "app.dialog", json!({"id": "spelling"}));
         let r = big_button(ui, Icon::Thesaurus, "Thesaurus", false);
-        let _ = r.on_hover_text("Thesaurus (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Thesaurus (coming soon)"));
     });
     group(ui, |ui| {
         big(app, ui, Icon::Accessibility, "Check\nAccessibility", "app.dialog", json!({"id": "accessibility"}));
     });
     group(ui, |ui| {
         let r = big_button(ui, Icon::Translate, "Translate", false);
-        let _ = r.on_hover_text("Translation needs a language model (not bundled)");
+        let _ = r.on_hover_text(crate::tl!("Translation needs a language model (not bundled)"));
         big(app, ui, Icon::Language, "Language", "app.dialog", json!({"id": "language"}));
     });
     group(ui, |ui| {
@@ -1800,9 +1801,9 @@ fn view(app: &mut SlideApp, ui: &mut Ui) {
             let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
         }
         let r = big_button(ui, Icon::HandoutMaster, "Handout\nMaster", false);
-        let _ = r.on_hover_text("Handout Master (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Handout Master (coming soon)"));
         let r = big_button(ui, Icon::NotesMaster, "Notes\nMaster", false);
-        let _ = r.on_hover_text("Notes Master (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Notes Master (coming soon)"));
     });
     group(ui, |ui| {
         rows(ui, |ui| {
@@ -1870,7 +1871,7 @@ fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
         let can_merge = enabled(app, "shape.merge");
-        let r = big_button(ui, Icon::MergeShapes, "Merge\nShapes", can_merge).on_hover_text("Merge Shapes");
+        let r = big_button(ui, Icon::MergeShapes, "Merge\nShapes", can_merge).on_hover_text(crate::tl!("Merge Shapes"));
         egui::Popup::menu(&r).show(|ui| {
             for (op, label) in deckcraft_engine::cmd::merge::OPS {
                 if ui.button(label).clicked() {
@@ -2026,7 +2027,7 @@ fn size_group(app: &mut SlideApp, ui: &mut Ui) {
 fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::RemoveBackground, "Remove\nBackground", false);
-        let _ = r.on_hover_text("Remove Background (coming soon)");
+        let _ = r.on_hover_text(crate::tl!("Remove Background (coming soon)"));
         let r = big_button(ui, Icon::Corrections, "Corrections", true);
         egui::Popup::menu(&r).show(|ui| {
             for b in [-0.4, -0.2, 0.0, 0.2, 0.4] {

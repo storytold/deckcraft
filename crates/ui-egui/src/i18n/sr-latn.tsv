@@ -1,0 +1,229 @@
+# Serbian, Latin script (sr-latn) interface catalog. Columns, separated by a TAB:
+#   context <TAB> English source <TAB> translation
+#   context    empty (DeckCraft uses no contexts yet)
+#   source     the English text exactly as in the code (tl!(...), ribbon labels, command labels)
+#   escapes    \n  \t  \\  inside a column. `{name}` placeholders must appear in both columns, and a
+#              trailing "…" in one needs one in the other.
+#   Lines starting with # and blank lines are ignored. A missing entry shows in English.
+#
+# Clean room: every entry was written from the plain meaning of the English label in ordinary
+# computing vocabulary. No Microsoft PowerPoint (or other product) localisation, string table or
+# translated UI was consulted or copied; add entries the same way.
+# Product, format and technology names (DeckCraft, PDF, PPTX, MCP …) stay in Latin letters.
+
+	About	O programu
+	About DeckCraft	O DeckCraft-u
+	Accessibility Checker	Provera pristupačnosti
+	Action	Radnja
+	Add\nAnimation	Dodaj\nanimaciju
+	Address:	Adresa:
+	Align	Poravnanje
+	Align Text	Poravnaj tekst
+	Alt Text	Alternativni tekst
+	Animation Pane	Okno animacije
+	Animations	Animacije
+	Arrange	Ređanje
+	Automate	Automatizuj
+	Automatic	Automatski
+	Background\nStyles	Stilovi\npozadine
+	Before text (in):	Pre teksta (in):
+	Blank presentation	Prazna prezentacija
+	Bring\nForward	Pomeri\nnapred
+	Browse…	Potraži…
+	Bullets	Oznake
+	Cameo	Kameo
+	Camera capture is not available yet	Snimanje kamerom još nije dostupno
+	Cancel	Otkaži
+	Change Case	Promeni veličinu slova
+	Change\nChart Type	Promeni\ntip grafikona
+	Character Spacing	Razmak između znakova
+	Chart	Grafikon
+	Chart Data	Podaci grafikona
+	Chart Design	Dizajn grafikona
+	Choose a SmartArt Graphic	Izaberi SmartArt grafiku
+	Close	Zatvori
+	Close\nMaster View	Zatvori\nmaster prikaz
+	Color	Boja
+	Colors	Boje
+	Columns	Kolone
+	Comments	Komentari
+	Corrections	Ispravke
+	Create	Napravi
+	Crop	Iseci
+	Custom Shows	Prilagođene prezentacije
+	Dark\nMode	Tamni\nrežim
+	Date and time	Datum i vreme
+	DeckCraft	DeckCraft
+	Delete	Obriši
+	Design	Dizajn
+	Design Ideas	Ideje za dizajn
+	Done	Gotovo
+	Don't show on title slide	Ne prikazuj na naslovnom slajdu
+	Draw	Crtanje
+	Edit\nShape	Uredi\noblik
+	Effect\nOptions	Opcije\nefekta
+	Email address:	E-mail adresa:
+	End trim (s):	Kraj isecanja (s):
+	Equation	Jednačina
+	Eraser	Gumica
+	Export	Izvoz
+	Fade in (s):	Pojačavanje (s):
+	Fade out (s):	Utišavanje (s):
+	File	Fajl
+	Fit to\nWindow	Uklopi u\nprozor
+	  Fixed date (empty = update automatically):	  Fiksni datum (prazno = automatsko ažuriranje):
+	Font Color	Boja fonta
+	Fonts	Fontovi
+	Footer	Podnožje
+	  Footer text:	  Tekst podnožja:
+	Format	Format
+	Format Background	Formatiraj pozadinu
+	Format Painter (double-click to keep it on)	Kopiranje formata (duplim klikom ostaje uključeno)
+	Format Shape	Formatiraj oblik
+	From\nBeginning	Od\npočetka
+	From\nCurrent Slide	Od\ntrenutnog slajda
+	Grayscale	Sivi tonovi
+	Group	Grupiši
+	Handout Master (coming soon)	Master za materijale (uskoro)
+	Handout\nMaster	Master za\nmaterijale
+	Handouts (1 slide per page)	Materijali (1 slajd po strani)
+	Handouts (2 slides per page)	Materijali (2 slajda po strani)
+	Handouts (3 slides per page)	Materijali (3 slajda po strani)
+	Handouts (4 slides per page)	Materijali (4 slajda po strani)
+	Handouts (6 slides per page)	Materijali (6 slajdova po strani)
+	Handouts (9 slides per page)	Materijali (9 slajdova po strani)
+	Header and Footer	Zaglavlje i podnožje
+	Height (in):	Visina (in):
+	Hide\nSlide	Sakrij\nslajd
+	Home	Početak
+	Icons	Ikonice
+	Ink to Math (coming soon)	Rukopis u formulu (uskoro)
+	Ink to\nMath	Rukopis u\nformulu
+	Ink to\nShape	Rukopis u\noblik
+	Ink to\nText	Rukopis u\ntekst
+	Ink to Shape (coming soon)	Rukopis u oblik (uskoro)
+	Ink to Text (coming soon)	Rukopis u tekst (uskoro)
+	Insert	Umetanje
+	Insert Hyperlink	Umetni hipervezu
+	Insert\nPlaceholder	Umetni\nrezervisano mesto
+	Insert Table	Umetni tabelu
+	Interface language:	Jezik interfejsa:
+	Language	Jezik
+	Layout	Raspored
+	Learn\nMore	Saznaj\nviše
+	Light/Dark appearance	Svetli/tamni izgled
+	Line Spacing	Proređenost
+	Line spacing (lines):	Proređenost (redova):
+	Loop continuously until 'Esc'	Ponavljaj dok se ne pritisne 'Esc'
+	Mark as decorative	Označi kao dekorativno
+	Maximize content (else ensure fit)	Maksimizuj sadržaj (inače obezbedi uklapanje)
+	Merge\nShapes	Spoji\noblike
+	Merge Shapes	Spoji oblike
+	More Colors…	Više boja…
+	Name:	Naziv:
+	New Comment	Novi komentar
+	New\nSlide	Novi\nslajd
+	New show name:	Naziv nove prezentacije:
+	New Slide (⇧⌘N)	Novi slajd (⇧⌘N)
+	Notes	Napomene
+	Notes Master (coming soon)	Master za napomene (uskoro)
+	Notes\nMaster	Master za\nnapomene
+	Notes Pages	Strane sa napomenama
+	Numbering	Numeracija
+	Number of columns:	Broj kolona:
+	Number of rows:	Broj redova:
+	OK	U redu
+	Options	Opcije
+	Paragraph	Pasus
+	Paste	Nalepi
+	Paste (⌘V)	Nalepi (⌘V)
+	Path	Putanja
+	Picture	Slika
+	Picture Format	Format slike
+	Picture\nStyles	Stilovi\nslike
+	Playback	Reprodukcija
+	Play from\nCurrent Slide	Pusti od\ntrenutnog slajda
+	Play from\nStart	Pusti od\npočetka
+	Play from Start (F5)	Pusti od početka (F5)
+	Post	Objavi
+	Preferences	Podešavanja
+	Present	Prezentuj
+	Presentations you open will show up here.	Prezentacije koje otvorite pojaviće se ovde.
+	Presenter\nView	Prikaz za\nvoditelja
+	Preview	Pregled
+	Print	Štampaj
+	Quick\nStyles	Brzi\nstilovi
+	Recent	Nedavno
+	Record	Snimi
+	Recording narration needs audio capture (coming soon)	Snimanje naracije zahteva snimanje zvuka (uskoro)
+	Rectangular	Pravougaono
+	Redo (⌘Y)	Ponovi (⌘Y)
+	Rehearse\nTimings	Uvežbaj\ntrajanje
+	Remove Background (coming soon)	Ukloni pozadinu (uskoro)
+	Remove\nBackground	Ukloni\npozadinu
+	Rename	Preimenuj
+	Rename Layout	Preimenuj raspored
+	Rename Section	Preimenuj odeljak
+	Reverse the order	Obrni redosled
+	Review	Pregled
+	Rotate	Rotiraj
+	Save (⌘S)	Sačuvaj (⌘S)
+	Screenshot	Snimak ekrana
+	Screenshot (not available yet)	Snimak ekrana (još nije dostupno)
+	ScreenTip:	Opis pri zadržavanju:
+	Search commands (⇧⌘P)	Pretraga naredbi (⇧⌘P)
+	Section	Odeljak
+	Select	Izaberi
+	Selection	Izbor
+	Send\nBackward	Pomeri\nnazad
+	Send the active presentation straight to a printer.	Šalje aktivnu prezentaciju direktno na štampač.
+	Set Up Slide Show	Podešavanje prezentacije
+	Shading	Senčenje
+	Shape Effects	Efekti oblika
+	Shape Fill	Popuna oblika
+	Shape Format	Format oblika
+	Shape\nStyles	Stilovi\noblika
+	Shape Outline	Kontura oblika
+	Shapes	Oblici
+	Show\nComments	Prikaži\nkomentare
+	Show without animation	Prikaži bez animacije
+	Show without narration	Prikaži bez naracije
+	Slide Master	Master slajd
+	Slide\nMaster	Master\nslajd
+	Slide\nSize	Veličina\nslajda
+	Slide number	Broj slajda
+	Slides (e.g. 1,3,5):	Slajdovi (npr. 1,3,5):
+	Slides from Outline	Slajdovi iz konture
+	Slide Show	Prezentacija
+	Slide Size	Veličina slajda
+	Spacing after (pt):	Razmak posle (pt):
+	Spacing before (pt):	Razmak pre (pt):
+	Special — hanging (in):	Posebno — viseće (in):
+	Spelling	Pravopis
+	Standard Colors	Standardne boje
+	Start time (s):	Početak (s):
+	Symbol	Simbol
+	Table	Tabela
+	Table Design	Dizajn tabele
+	Text Direction	Smer teksta
+	Text Effects	Efekti teksta
+	Text Fill	Popuna teksta
+	Text Highlight Color	Boja isticanja teksta
+	Text Outline	Kontura teksta
+	Theme Colors	Boje teme
+	Themes	Teme
+	Thesaurus	Rečnik sinonima
+	Thesaurus (coming soon)	Rečnik sinonima (uskoro)
+	Transitions	Prelazi
+	Translate	Prevedi
+	Translation needs a language model (not bundled)	Prevođenje zahteva jezički model (nije uključen)
+	Transparency	Transparentnost
+	Trigger	Okidač
+	Trim Media	Iseci medij
+	Undo (⌘Z)	Opozovi (⌘Z)
+	Use timings, if present	Koristi trajanja, ako postoje
+	View	Prikaz
+	Volume	Jačina zvuka
+	Width (in):	Širina (in):
+	WordArt	WordArt
+	Zoom	Zumiranje
