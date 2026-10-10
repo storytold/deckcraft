@@ -51,6 +51,42 @@ fn split_at(p: &mut Paragraph, at: usize) -> usize {
     p.runs.len()
 }
 
+/// The char span `(start, end)` of the `Math` run that strictly contains offset `at` (the offset
+/// falls inside the equation, not on one of its edges). An equation is an atom: edits never cut it.
+fn math_span(p: &Paragraph, at: usize) -> Option<(usize, usize)> {
+    let mut pos = 0;
+    for r in &p.runs {
+        let len = r.char_len();
+        if matches!(r.kind, RunKind::Math { .. }) && pos < at && at < pos + len {
+            return Some((pos, pos + len));
+        }
+        pos += len;
+    }
+    None
+}
+
+/// The span `(start, end)` of the `Math` run that ends at (`forward` false) or starts at
+/// (`forward` true) offset `at`: word motion treats an equation as a word of its own.
+fn math_adjacent(p: &Paragraph, at: usize, forward: bool) -> Option<(usize, usize)> {
+    let mut pos = 0;
+    for r in &p.runs {
+        let len = r.char_len();
+        if matches!(r.kind, RunKind::Math { .. }) && len > 0 && ((forward && pos == at) || (!forward && pos + len == at)) {
+            return Some((pos, pos + len));
+        }
+        pos += len;
+    }
+    None
+}
+
+/// Move `at` out of an equation: to its start (`forward` false) or its end (`forward` true).
+fn snap_math(body: &TextBody, p: Pos, forward: bool) -> Pos {
+    match body.paragraphs.get(p.0).and_then(|para| math_span(para, p.1)) {
+        Some((a, b)) => (p.0, if forward { b } else { a }),
+        None => p,
+    }
+}
+
 /// The explicit run properties in effect at `pos` (the run before the caret, or the end mark).
 pub fn props_at(body: &TextBody, pos: Pos) -> RunProps {
     let (pi, ch) = clamp(body, pos);
@@ -77,7 +113,7 @@ pub fn insert(body: &mut TextBody, pos: Pos, text: &str, props: Option<RunProps>
     if body.paragraphs.is_empty() {
         body.paragraphs.push(Paragraph::default());
     }
-    let (mut pi, mut ch) = clamp(body, pos);
+    let (mut pi, mut ch) = snap_math(body, clamp(body, pos), true);
     let props = props.unwrap_or_else(|| props_at(body, (pi, ch)));
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut first = true;
@@ -127,6 +163,8 @@ pub fn delete(body: &mut TextBody, a: Pos, b: Pos) -> Pos {
     if s == e {
         return s;
     }
+    // A range that touches an equation takes the whole equation with it.
+    let (s, e) = (snap_math(body, s, false), snap_math(body, e, true));
     if s.0 == e.0 {
         if let Some(p) = body.paragraphs.get_mut(s.0) {
             let end_props = props_of_range(p, s.1);
@@ -181,6 +219,7 @@ pub fn format(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(&mut RunProps)) {
         return;
     }
     let (s, e) = order(clamp(body, a), clamp(body, b));
+    let (s, e) = if s == e { (s, e) } else { (snap_math(body, s, false), snap_math(body, e, true)) };
     for pi in s.0..=e.0 {
         let Some(p) = body.paragraphs.get_mut(pi) else { continue };
         let from = if pi == s.0 { s.1 } else { 0 };
@@ -215,6 +254,8 @@ pub fn format_all(body: &mut TextBody, f: &dyn Fn(&mut RunProps)) {
 /// The text between two positions (`\n` between paragraphs).
 pub fn text_range(body: &TextBody, a: Pos, b: Pos) -> String {
     let (s, e) = order(clamp(body, a), clamp(body, b));
+    // Like delete: a range touching an equation takes the whole equation.
+    let (s, e) = if s == e { (s, e) } else { (snap_math(body, s, false), snap_math(body, e, true)) };
     let mut out = String::new();
     for pi in s.0..=e.0 {
         let Some(p) = body.paragraphs.get(pi) else { continue };
@@ -232,6 +273,7 @@ pub fn text_range(body: &TextBody, a: Pos, b: Pos) -> String {
 /// A formatted copy of the range.
 pub fn slice(body: &TextBody, a: Pos, b: Pos) -> TextBody {
     let (s, e) = order(clamp(body, a), clamp(body, b));
+    let (s, e) = if s == e { (s, e) } else { (snap_math(body, s, false), snap_math(body, e, true)) };
     let mut out = TextBody { body: body.body.clone(), list_style: body.list_style.clone(), paragraphs: vec![] };
     for pi in s.0..=e.0 {
         let Some(p) = body.paragraphs.get(pi) else { continue };
@@ -307,6 +349,10 @@ pub fn word_at(body: &TextBody, pos: Pos) -> (Pos, Pos) {
 pub fn word_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     let (pi, ch) = clamp(body, pos);
     let t: Vec<char> = body.paragraphs.get(pi).map(|p| p.text().chars().collect()).unwrap_or_default();
+    // Word motion starting next to an equation steps over exactly that equation.
+    if let Some(span) = body.paragraphs.get(pi).and_then(|p| math_adjacent(p, ch, forward)) {
+        return (pi, if forward { span.1 } else { span.0 });
+    }
     if forward {
         if ch >= t.len() {
             return if pi + 1 < body.paragraphs.len() { (pi + 1, 0) } else { (pi, ch) };
@@ -336,6 +382,17 @@ pub fn word_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
 
 /// One character left/right across paragraph boundaries.
 pub fn char_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
+    // An equation is one step: from inside it the caret goes to the edge in the direction of
+    // travel; onto it, the caret jumps across the whole equation.
+    let from = clamp(body, pos);
+    let snapped = snap_math(body, from, forward);
+    if snapped != from {
+        return snapped;
+    }
+    snap_math(body, char_move_raw(body, from, forward), forward)
+}
+
+fn char_move_raw(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     let (pi, ch) = clamp(body, pos);
     let n = body.paragraphs.get(pi).map(Paragraph::char_len).unwrap_or(0);
     if forward {
@@ -471,5 +528,99 @@ mod tests {
         assert_eq!(c, (0, 2));
         assert_eq!(b.paragraphs[0].char_len(), 3);
         assert_eq!(b.paragraphs.len(), 1);
+    }
+
+    /// "ab" + equation "x=1/2" (5 chars) + "cd".
+    fn with_math() -> TextBody {
+        let mut b = body("ab");
+        if let Some(p) = b.paragraphs.get_mut(0) {
+            p.runs.push(Run { text: "x=1/2".into(), props: RunProps::default(), kind: RunKind::Math { omml: "<m:oMath/>".into() } });
+            p.runs.push(Run::new("cd"));
+        }
+        b
+    }
+
+    #[test]
+    fn math_run_is_deleted_whole() {
+        // Range starting inside, ending inside, and fully inside all take the whole equation.
+        for (a, e) in [(4, 9), (1, 4), (3, 5), (4, 4 + 1)] {
+            let mut b = with_math();
+            let c = delete(&mut b, (0, a), (0, e));
+            assert!(b.paragraphs[0].runs.iter().all(|r| r.kind == RunKind::Text), "{a}..{e}");
+            assert_eq!(c.0, 0);
+            assert!(c.1 <= 2, "{a}..{e} caret {c:?}");
+        }
+        // Backspace at the end of the equation (offset 7) removes it all.
+        let mut b = with_math();
+        let to = char_move(&b, (0, 7), false);
+        assert_eq!(to, (0, 2));
+        delete(&mut b, (0, 7), to);
+        assert_eq!(b.text(), "abcd");
+        // Forward delete at the start of the equation too.
+        let mut b = with_math();
+        let to = char_move(&b, (0, 2), true);
+        assert_eq!(to, (0, 7));
+        delete(&mut b, (0, 2), to);
+        assert_eq!(b.text(), "abcd");
+    }
+
+    #[test]
+    fn math_run_is_never_split_by_typing_or_formatting() {
+        let mut b = with_math();
+        let c = insert(&mut b, (0, 4), "Z", None);
+        assert_eq!(c, (0, 8));
+        assert_eq!(b.text(), "abx=1/2Zcd");
+        assert!(b.paragraphs[0].runs.iter().any(|r| matches!(&r.kind, RunKind::Math { .. }) && r.text == "x=1/2"));
+        // Paragraph split inside the equation lands after it.
+        let mut b = with_math();
+        insert(&mut b, (0, 3), "\n", None);
+        assert_eq!(b.paragraphs[0].text(), "abx=1/2");
+        assert_eq!(b.paragraphs[1].text(), "cd");
+        // Caret moves across the equation in one step from either side.
+        let b = with_math();
+        assert_eq!(char_move(&b, (0, 4), true), (0, 7));
+        assert_eq!(char_move(&b, (0, 4), false), (0, 2));
+    }
+
+    #[test]
+    fn math_run_is_atomic_for_copy_cut_and_format() {
+        // Partial selection inside the equation (offsets 4..5 of "ab|x=1/2|cd").
+        let b = with_math();
+        assert_eq!(text_range(&b, (0, 4), (0, 5)), "x=1/2");
+        let s = slice(&b, (0, 4), (0, 5));
+        assert_eq!(s.text(), "x=1/2");
+        assert!(matches!(s.paragraphs[0].runs[0].kind, RunKind::Math { .. }));
+        // Cut = copy + delete: the clipboard keeps the equation.
+        let mut c = with_math();
+        delete(&mut c, (0, 4), (0, 5));
+        assert_eq!(c.text(), "abcd");
+        // Paste puts it back.
+        insert_body(&mut c, (0, 2), &s);
+        assert_eq!(c.text(), "abx=1/2cd");
+        assert!(c.paragraphs[0].runs.iter().any(|r| matches!(r.kind, RunKind::Math { .. })));
+        // Formatting a partial selection formats the whole equation, never splits it.
+        let mut f = with_math();
+        format(&mut f, (0, 4), (0, 5), &|p| p.bold = Some(true));
+        let m = f.paragraphs[0].runs.iter().find(|r| matches!(r.kind, RunKind::Math { .. }));
+        assert!(m.is_some_and(|r| r.text == "x=1/2" && r.props.bold == Some(true)));
+        assert_eq!(f.text(), "abx=1/2cd");
+    }
+
+    #[test]
+    fn empty_math_run_can_be_deleted() {
+        let mut b = body("ab");
+        if let Some(p) = b.paragraphs.get_mut(0) {
+            p.runs.push(Run { text: String::new(), props: RunProps::default(), kind: RunKind::Math { omml: "<m:oMath/>".into() } });
+        }
+        assert_eq!(b.paragraphs[0].char_len(), 3);
+        delete(&mut b, (0, 0), (0, 3));
+        assert!(b.paragraphs[0].runs.is_empty());
+    }
+
+    #[test]
+    fn word_move_steps_over_adjacent_equation() {
+        let b = with_math();
+        assert_eq!(word_move(&b, (0, 7), false), (0, 2));
+        assert_eq!(word_move(&b, (0, 2), true), (0, 7));
     }
 }

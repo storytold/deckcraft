@@ -17,6 +17,13 @@ pub use templates::{Template, template, templates};
 
 use serde::{Deserialize, Serialize};
 
+/// The text a `Math` run carries for an equation: its linear form on one line (control
+/// characters, tabs and newlines become spaces) and never empty, so the run always has a width.
+pub fn run_text(m: &Math) -> String {
+    let t: String = to_linear(m).chars().map(|c| if c.is_control() { ' ' } else { c }).collect();
+    if t.trim().is_empty() { "\u{25A1}".to_string() } else { t }
+}
+
 /// Maximum nesting depth honoured anywhere in this crate (parsing, printing, layout).
 pub const MAX_DEPTH: usize = 48;
 
@@ -138,3 +145,14 @@ impl Node {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod run_text_tests {
+    use super::*;
+
+    #[test]
+    fn run_text_is_never_empty_or_multiline() {
+        assert_eq!(run_text(&from_omml("<m:oMath/>")), "\u{25A1}");
+        assert!(!run_text(&from_linear("a\nb\tc")).chars().any(char::is_control));
+    }
+}

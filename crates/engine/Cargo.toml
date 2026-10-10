@@ -14,6 +14,7 @@ deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }
 deckcraft-fonts = { workspace = true }
 deckcraft-text = { workspace = true }
+deckcraft-math = { workspace = true }
 deckcraft-render = { workspace = true }
 deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }

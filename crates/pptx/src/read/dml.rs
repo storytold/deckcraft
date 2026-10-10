@@ -586,7 +586,7 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
                 // Office Math (a14:m): keep the OMML verbatim; `text` is its linear form and the
                 // run props come from the first `a:rPr` inside an `m:r`.
                 let omml = math_xml(part, e);
-                let text = deckcraft_math::to_linear(&deckcraft_math::from_omml(&omml));
+                let text = deckcraft_math::run_text(&deckcraft_math::from_omml(&omml));
                 let mut rprs = vec![];
                 e.find_all("rPr", &mut rprs);
                 let props = rprs.into_iter().find(|r| r.prefix() == "a").map(|r| rpr(imp, part, r)).unwrap_or_default();

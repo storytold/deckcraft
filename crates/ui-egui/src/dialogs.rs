@@ -504,14 +504,8 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.add(egui::TextEdit::singleline(&mut v).desired_width(340.0).font(theme::font(15.0)));
             d.fields.insert("eq".into(), v.clone());
             let (ok, cancel) = buttons(ui, "Insert");
-            if ok && !v.is_empty() {
-                let pretty = pretty_equation(&v);
-                let size = app.session.active().map(|s| s.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
-                run(app, "insert.textBox", json!({"rect": [size.width / 2.0 - 150.0, size.height / 2.0 - 25.0, 300, 50], "text": pretty}));
-                run(app, "text.exit", json!({}));
-                run(app, "format.font", json!({"family": "Liberation Serif"}));
-                run(app, "format.italic", json!({"on": true}));
-                run(app, "format.size", json!({"size": 28}));
+            if ok && !v.trim().is_empty() {
+                run(app, "insert.equation", json!({"linear": v}));
             }
             ok || cancel
         }
@@ -742,48 +736,6 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ok || cancel
         }
     }
-}
-
-fn pretty_equation(s: &str) -> String {
-    let sup = |c: char| match c {
-        '0' => '⁰',
-        '1' => '¹',
-        '2' => '²',
-        '3' => '³',
-        '4' => '⁴',
-        '5' => '⁵',
-        '6' => '⁶',
-        '7' => '⁷',
-        '8' => '⁸',
-        '9' => '⁹',
-        'n' => 'ⁿ',
-        'i' => 'ⁱ',
-        '+' => '⁺',
-        '-' => '⁻',
-        _ => c,
-    };
-    let mut out = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '^' => {
-                while let Some(&n) = chars.peek() {
-                    if n.is_ascii_alphanumeric() || n == '+' || n == '-' {
-                        out.push(sup(n));
-                        chars.next();
-                        if !n.is_ascii_digit() {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            }
-            '*' => out.push('·'),
-            _ => out.push(c),
-        }
-    }
-    out.replace("sqrt", "√").replace("<=", "≤").replace(">=", "≥").replace("!=", "≠").replace("pi", "π").replace("+-", "±")
 }
 
 pub fn about(_app: &mut SlideApp, ui: &mut Ui) {

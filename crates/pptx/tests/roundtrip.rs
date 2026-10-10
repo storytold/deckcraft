@@ -763,3 +763,44 @@ fn equation_in_table_cell_survives_round_trip() {
     assert!(matches!(&run.kind, RunKind::Math { omml } if omml.contains("<m:f>")), "{run:?}");
     assert_eq!(run.text, "a/b");
 }
+
+/// An equation made by the engine command survives export and import: OMML re-parses to the
+/// same tree, the run keeps its linear text and its formatting, and a second pass is stable.
+#[test]
+fn engine_equation_round_trips_with_props_and_linear_text() {
+    let mut s = deckcraft_engine::Session::with_new();
+    let r = s.execute("insert.equation", &serde_json::json!({"linear": "(a+b)/c = sqrt(x^2)", "display": true})).expect("insert.equation");
+    let id = ShapeId(r["id"].as_u64().expect("id") as u32);
+    let p = (*s.doc().expect("doc").doc).clone();
+    let find = |p: &Presentation| {
+        let mut found = None;
+        for sl in &p.slides {
+            deckcraft_model::walk(&sl.shapes, &mut |x, _| {
+                if x.text.as_ref().is_some_and(|t| t.paragraphs.iter().flat_map(|q| &q.runs).any(|r| matches!(r.kind, RunKind::Math { .. }))) {
+                    found = Some(x.clone());
+                }
+            });
+        }
+        found.expect("math shape")
+    };
+    let before = find(&p);
+    assert_eq!(before.id, id);
+    let q = round(&p);
+    let after = find(&q);
+    let (a, b) = (&before.text.as_ref().expect("text").paragraphs[0].runs[0], &after.text.as_ref().expect("text").paragraphs[0].runs[0]);
+    let (RunKind::Math { omml: oa }, RunKind::Math { omml: ob }) = (&a.kind, &b.kind) else { panic!("not math: {b:?}") };
+    // The run properties now also sit inside each math run (as PowerPoint writes them); the
+    // equation itself is the same.
+    assert_eq!(deckcraft_math::to_linear(&deckcraft_math::from_omml(oa)), deckcraft_math::to_linear(&deckcraft_math::from_omml(ob)));
+    assert!(ob.contains("<m:oMathPara") && ob.contains("<m:f>") && ob.contains("<m:rad>") && ob.contains("sz=\"2800\""), "{ob}");
+    assert!(ob.contains("xmlns:m="));
+    assert_eq!(b.text, deckcraft_math::to_linear(&deckcraft_math::from_omml(ob)));
+    assert_eq!(b.text, a.text);
+    assert_eq!(b.props.size, Some(28.0));
+    assert_eq!(b.props.font, a.props.font);
+    // Stable on a second pass.
+    let q2 = round(&q);
+    let c = &find(&q2).text.expect("text").paragraphs[0].runs[0].clone();
+    assert_eq!(c.text, b.text);
+    assert_eq!(c.props, b.props);
+}

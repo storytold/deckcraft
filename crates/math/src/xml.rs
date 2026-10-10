@@ -156,6 +156,9 @@ pub fn write_el(e: &XEl, with_inherited: bool, out: &mut String, depth: usize) {
 /// name is `m:*` under a root that declares `xmlns:m`. Declarations of the OMML namespace are
 /// dropped (attributes in it are renamed to `m:`), a declaration an attribute needs is added from
 /// the inherited set, and an attribute whose prefix is unbound is left out.
+///
+/// Known limitation (accepted): OMML that rebinds prefixes, for example an alias prefix bound to
+/// the OMML URI together with a different URI bound to `m`, is mis-namespaced on rewrite.
 pub fn start_extras(e: &XEl, omml_ns: &str) -> String {
     if e.ns_lost {
         return String::new();

@@ -677,7 +677,13 @@ fn paragraph_mode(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: Math
                         w.open("mc:Choice", A::new().a("xmlns:a14", crate::opc::NS_A14).a("Requires", "a14"));
                     }
                     w.open("a14:m", A::new().a("xmlns:a14", crate::opc::NS_A14));
-                    w.raw(omml);
+                    if r.props == RunProps::default() {
+                        w.raw(omml);
+                    } else {
+                        let mut f = W::frag();
+                        rpr(&mut f, x, o, "a:rPr", &r.props);
+                        w.raw(&with_run_props(omml, &f.s));
+                    }
                     w.close("a14:m");
                     if alt {
                         w.close("mc:Choice");
@@ -698,6 +704,75 @@ fn paragraph_mode(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: Math
     w.close("a:p");
 }
 
+/// Give every `m:r` of `omml` that has no `a:rPr` the run properties `rpr_xml` (PowerPoint keeps an
+/// equation's size, font and colour in an `a:rPr` inside each math run, after `m:rPr`).
+fn with_run_props(omml: &str, rpr_xml: &str) -> String {
+    let mut out = String::with_capacity(omml.len() + rpr_xml.len());
+    let mut rest = omml;
+    while let Some(i) = rest.find("<m:r") {
+        let (head, tail) = rest.split_at(i);
+        out.push_str(head);
+        let after = tail.get(4..).unwrap_or("");
+        let is_run = after.starts_with('>') || after.starts_with(' ');
+        let Some(open_end) = tail.find('>').filter(|_| is_run) else {
+            // `<m:rPr`, `<m:rad` and friends, or a truncated tag: copy the opener and go on.
+            out.push_str("<m:r");
+            rest = after;
+            continue;
+        };
+        if tail.get(..open_end).is_some_and(|t| t.ends_with('/')) {
+            out.push_str(tail.get(..=open_end).unwrap_or(""));
+            rest = tail.get(open_end + 1..).unwrap_or("");
+            continue;
+        }
+        out.push_str(tail.get(..=open_end).unwrap_or(""));
+        let mut body = tail.get(open_end + 1..).unwrap_or("");
+        let end = body.find("</m:r>").unwrap_or(body.len());
+        if body.get(..end).is_some_and(|b| b.contains("<a:rPr")) {
+            rest = body;
+            continue;
+        }
+        // Skip a leading `m:rPr` so the properties follow it.
+        if body.starts_with("<m:rPr/>") {
+            out.push_str("<m:rPr/>");
+            body = body.get(8..).unwrap_or("");
+        } else if body.starts_with("<m:rPr>")
+            && let Some(c) = body.find("</m:rPr>")
+        {
+            out.push_str(body.get(..c + 8).unwrap_or(""));
+            body = body.get(c + 8..).unwrap_or("");
+        }
+        out.push_str(rpr_xml);
+        rest = body;
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn has_math(tb: &TextBody) -> bool {
     tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty()))
+}
+
+#[cfg(test)]
+mod math_props_tests {
+    use super::with_run_props;
+
+    #[test]
+    fn props_go_after_m_rpr_and_only_where_missing() {
+        let p = "<a:rPr sz=\"2800\"/>";
+        let got = with_run_props(
+            "<m:oMath><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r><m:r><m:t>y</m:t></m:r><m:rad><m:radPr/></m:rad></m:oMath>",
+            p,
+        );
+        assert_eq!(
+            got,
+            "<m:oMath><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><a:rPr sz=\"2800\"/><m:t>x</m:t></m:r><m:r><a:rPr sz=\"2800\"/><m:t>y</m:t></m:r><m:rad><m:radPr/></m:rad></m:oMath>"
+        );
+        // Already has properties: untouched. Hostile / truncated input does not panic.
+        let own = "<m:r><a:rPr sz=\"100\"/><m:t>x</m:t></m:r>";
+        assert_eq!(with_run_props(own, p), own);
+        for t in ["<m:r", "<m:r ", "<m:r>", "<m:r/>", "<m:rPr>", "<m:r><m:rPr>", "", "<m:r x=\"\u{e9}"] {
+            let _ = with_run_props(t, p);
+        }
+    }
 }

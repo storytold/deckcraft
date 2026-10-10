@@ -96,6 +96,9 @@ or roughly 65–90 hours with four agents in parallel on separate crates:
 | Depth and pixel fidelity of every ribbon group, dialog and pane against PowerPoint | 50 h |
 | Performance (incremental rendering, GPU raster, streaming media decode) | 20 h |
 
+Equation known limitation: OMML that rebinds prefixes (an alias prefix bound to the OMML URI plus a
+different URI bound to `m`) is mis-namespaced on rewrite in `crates/math/src/xml.rs` `start_extras`.
+
 Basis: in this session the engine, renderer, UI, show engine, PPTX, PDF, media and release
 pipeline were built in about 30 wall-clock hours with up to three agents in parallel; recent
 catalogue rows (connectors, freeform, merge shapes, AutoRecover, gradients) took 1–2 hours each.

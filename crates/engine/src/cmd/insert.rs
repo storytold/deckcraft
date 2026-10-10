@@ -99,7 +99,7 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Default size for a click-inserted shape (1 inch square, PowerPoint style).
-fn default_rect(s: &Session, w: f64, h: f64) -> Xfrm {
+pub(crate) fn default_rect(s: &Session, w: f64, h: f64) -> Xfrm {
     let size = s.active().map(|d| d.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
     Xfrm::new((size.width - w) / 2.0, (size.height - h) / 2.0, w, h)
 }
