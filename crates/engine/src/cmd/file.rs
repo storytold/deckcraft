@@ -264,11 +264,12 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
-        other => {
-            let bytes = save_bytes(&st.doc, other)?;
+        "pptx" | "potx" | "ppsx" | "deckcraft" | "outline" | "txt" => {
+            let bytes = save_bytes(&st.doc, &format)?;
             write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
+        other => Err(bad("file.export", format!("unknown format `{other}`"))),
     }
 }
 

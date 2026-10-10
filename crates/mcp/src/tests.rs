@@ -117,3 +117,15 @@ fn export_tool_lists_pdf_and_its_options() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn export_rejects_unknown_format() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let path = std::env::temp_dir().join(format!("deckcraft-mcp-unknown-format-{}.docx", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let r = call(&mut s, 1, "tools/call", json!({"name": "export", "arguments": {"path": path.to_str().unwrap(), "format": "docx"}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r["result"]["content"][0]["text"].as_str().unwrap().contains("docx"), "{r}");
+    assert!(!path.exists(), "nothing may be written for an unknown format");
+}
