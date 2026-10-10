@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod backstage;
 pub mod canvas;
 pub mod control;
 pub mod credits;
@@ -102,6 +103,10 @@ pub struct UiState {
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
     pub format_tab: String,
     pub grayscale: bool,
+    #[serde(skip)]
+    pub backstage: bool,
+    #[serde(skip)]
+    pub backstage_page: String,
 }
 
 impl Default for UiState {
@@ -127,6 +132,8 @@ impl Default for UiState {
             ui_scale: 1.0,
             format_tab: "fill".into(),
             grayscale: false,
+            backstage: false,
+            backstage_page: "new".into(),
         }
     }
 }
@@ -683,6 +690,11 @@ impl SlideApp {
         self.tick_media(&ctx);
         if self.show.is_some() {
             show::ui(self, ui);
+            self.perf.frame_ms = now_ms() - t0;
+            return;
+        }
+        if self.ui.backstage {
+            backstage::show(self, ui);
             self.perf.frame_ms = now_ms() - t0;
             return;
         }

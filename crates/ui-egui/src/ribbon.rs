@@ -131,7 +131,7 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     v
 }
 
-const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "Animations", "Slide Show", "Record", "Review", "View"];
+const TABS: [&str; 11] = ["File", "Home", "Insert", "Draw", "Design", "Transitions", "Animations", "Slide Show", "Record", "Review", "View"];
 
 /// Tab row and the ribbon card.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
@@ -152,11 +152,17 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.id().with(("tab", name)), Sense::click());
-            let active = app.ui.tab == name;
+            let active = name != "File" && app.ui.tab == name;
             if resp.hovered() && !active {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
-            let col = if contextual { t.contextual } else { t.text };
+            let col = if name == "File" {
+                t.accent
+            } else if contextual {
+                t.contextual
+            } else {
+                t.text
+            };
             let f = if active { theme::bold(13.0) } else { font };
             ui.painter().text(r.center(), Align2::CENTER_CENTER, name, f, col);
             if active {
@@ -164,7 +170,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
             }
             if resp.clicked() {
-                if active {
+                if name == "File" {
+                    app.ui.backstage = true;
+                } else if active {
                     app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
                 } else {
                     app.ui.tab = name.to_string();
