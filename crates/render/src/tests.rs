@@ -347,3 +347,35 @@ fn flipped_shapes_draw_readable_text() {
     let d = differing(&turned, &flipped_text(child, Some(Xfrm { flip_v: true, ..base })));
     assert!(d < 40, "group flipV: {d}");
 }
+
+/// A text box with one run of `props` (40 pt).
+fn run_deck(props: deckcraft_model::RunProps) -> Presentation {
+    let mut sh = text_shape(1, "Linked text", 40.0, 40.0);
+    if let Some(run) = sh.text.as_mut().and_then(|t| t.paragraphs[0].runs.first_mut()) {
+        run.props = deckcraft_model::RunProps { size: Some(40.0), ..props };
+    }
+    deck_with(vec![sh])
+}
+
+#[test]
+fn hyperlinks_draw_in_the_hyperlink_colour_underlined() {
+    use deckcraft_model::RunProps;
+    use deckcraft_model::text::{Action, Hyperlink};
+    let o = RenderOpts { scale: 0.5, ..Default::default() };
+    let px = |p: &Presentation| render_slide(p, 0, &o);
+    let diff = |a: &Image, b: &Image| a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x.abs_diff(**y) > 64).count();
+    let link = Some(Hyperlink { action: Action::Url { url: "https://example.org".into() }, tooltip: String::new(), highlight_click: false });
+    let hlink = Some(Fill::solid(ColorRef::scheme(deckcraft_color::SchemeSlot::Hlink)));
+    let red = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0))));
+    let _ = px(&run_deck(RunProps::default())); // faces load lazily
+    let linked = px(&run_deck(RunProps { link: link.clone(), ..Default::default() }));
+    assert!(diff(&linked, &px(&run_deck(RunProps::default()))) > 100, "a link doesn't look like plain text");
+    // Exactly the theme's hyperlink colour, single underline.
+    let styled = px(&run_deck(RunProps { fill: hlink, underline: Some("sng".into()), ..Default::default() }));
+    assert_eq!(diff(&linked, &styled), 0);
+    // A colour on the run itself wins; u="none" drops the underline.
+    let own = px(&run_deck(RunProps { link: link.clone(), fill: red.clone(), underline: Some("none".into()), ..Default::default() }));
+    assert_eq!(diff(&own, &px(&run_deck(RunProps { fill: red.clone(), ..Default::default() }))), 0);
+    let own = px(&run_deck(RunProps { link, fill: red.clone(), ..Default::default() }));
+    assert_eq!(diff(&own, &px(&run_deck(RunProps { fill: red, underline: Some("sng".into()), ..Default::default() }))), 0);
+}
