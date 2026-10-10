@@ -1624,6 +1624,19 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
         });
+        let on = app.session.anim_painter.is_some();
+        let en = enabled(app, "animation.painter");
+        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
+        let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
+        if r.double_clicked() {
+            run(app, "animation.painter", json!({"sticky": true}));
+        } else if r.clicked() {
+            if on {
+                app.session.anim_painter = None;
+            } else {
+                run(app, "animation.painter", json!({}));
+            }
+        }
     });
     group(ui, |ui| {
         rows(ui, |ui| {

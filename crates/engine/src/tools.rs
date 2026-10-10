@@ -434,6 +434,10 @@ impl Session {
                 if self.painter.is_some() && !toggle {
                     let _ = self.execute("format.painterApply", &json!({"ids": [id]}));
                 }
+                // Animation Painter applies on click.
+                if self.anim_painter.is_some() && !toggle {
+                    let _ = self.execute("animation.painterApply", &json!({"ids": [id]}));
+                }
             }
             None => {
                 let add = mods.shift || mods.cmd;

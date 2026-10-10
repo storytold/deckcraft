@@ -78,7 +78,7 @@ AutoRecover, CLI/MCP automation, web build.
 
 ## How far from full parity (estimate, 2026-10-07)
 
-**Breadth: ~79% weighted** (P0 core 93%, P1 74%, P2 35%) over the 187 features of the PowerPoint catalogue, scored row by
+**Breadth: ~80% weighted** (P0 core 93%, P1 74%, P2 37%) over the 187 features of the PowerPoint catalogue, scored row by
 row in [docs/parity.md](docs/parity.md) (`cargo xtask parity` recomputes it). Many features scored
 done still lack some of PowerPoint's options, dialogs or pixel fidelity, so **overall parity
 including depth is about 62%**.

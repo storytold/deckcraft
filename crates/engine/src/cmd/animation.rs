@@ -49,6 +49,16 @@ pub fn specs() -> Vec<CommandSpec> {
             options
         ),
         cmd!("animation.clear", "Remove All Animations", [], None, "{index?: slide}", has_slide, clear),
+        cmd!(
+            noundo "animation.painter",
+            "Animation Painter",
+            ["Animations", "Advanced Animation"],
+            Some("Alt+Shift+C"),
+            "{sticky?: bool, id?}",
+            has_selection,
+            painter_pick
+        ),
+        cmd!("animation.painterApply", "Apply Animation", [], Some("Alt+Shift+V"), "{ids?}", has_selection, painter_apply),
         cmd!(query "animation.list", "Animation Gallery", [], None, "{} → [{id, label, class, options}]", always, list),
         cmd!(query "animation.get", "Animations on Slide", [], None, "{slide?} → [animation]", has_slide, get),
     ]
@@ -291,4 +301,131 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
     let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
     Ok(serde_json::to_value(&sl.animations).unwrap_or_default())
+}
+
+fn painter_pick(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let id = id_param(p, "id")
+        .or_else(|| st.selection.shapes.first().copied())
+        .ok_or_else(|| bad("animation.painter", "select an animated shape first"))?;
+    let sl = st.current_slide().ok_or_else(|| bad("animation.painter", "no slide"))?;
+    let anims: Vec<Animation> = sl.animations.iter().filter(|a| a.shape == id).cloned().collect();
+    if anims.is_empty() {
+        return Err(bad("animation.painter", format!("shape {id} has no animations to copy")));
+    }
+    let sticky = bool_or(p, "sticky", false);
+    let count = anims.len();
+    s.anim_painter = Some((anims, sticky));
+    Ok(json!({"armed": true, "count": count}))
+}
+
+fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
+    let Some((painted, sticky)) = s.anim_painter.clone() else {
+        return Err(bad("animation.painterApply", "pick animations with the Animation Painter first"));
+    };
+    if !sticky {
+        s.anim_painter = None;
+    }
+    let ids = targets(s, p)?;
+    if ids.is_empty() {
+        return Err(bad("animation.painterApply", "no target shapes selected"));
+    }
+    s.edit(|doc, sel| {
+        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.painterApply", "no slide"))?);
+        let mut added = 0;
+        for id in &ids {
+            for a in &painted {
+                let mut cloned = a.clone();
+                cloned.shape = *id;
+                sl.animations.push(cloned);
+                added += 1;
+            }
+        }
+        Ok(json!({"applied": added}))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn animation_painter_copies_effects_between_shapes() {
+        let mut s = Session::with_new();
+        // Insert two shapes
+        let s1 = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id1 = s1.get("id").unwrap().as_u64().unwrap();
+        let s2 = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [150.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id2 = s2.get("id").unwrap().as_u64().unwrap();
+
+        // Add 2 animations to shape 1: fade (entrance) and spin (emphasis)
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id1]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "spin", "class": "emphasis", "ids": [id1]})).unwrap();
+
+        // Shape 2 initially has no animations
+        let anims_before = s.execute("animation.get", &json!({})).unwrap();
+        let arr_before = anims_before.as_array().unwrap();
+        assert_eq!(arr_before.len(), 2);
+        assert!(arr_before.iter().all(|a| a.get("shape").unwrap().as_u64().unwrap() == id1));
+
+        // Pick animations from shape 1
+        s.select(|_, sel| {
+            sel.shapes = vec![deckcraft_model::ShapeId(id1 as u32)];
+        })
+        .unwrap();
+        let res = s.execute("animation.painter", &json!({})).unwrap();
+        assert_eq!(res.get("armed").unwrap().as_bool(), Some(true));
+        assert_eq!(res.get("count").unwrap().as_u64(), Some(2));
+        assert!(s.anim_painter.is_some());
+
+        // Apply animations to shape 2
+        s.select(|_, sel| {
+            sel.shapes = vec![deckcraft_model::ShapeId(id2 as u32)];
+        })
+        .unwrap();
+        let applied = s.execute("animation.painterApply", &json!({})).unwrap();
+        assert_eq!(applied.get("applied").unwrap().as_u64(), Some(2));
+
+        // Single-click should disarm the painter
+        assert!(s.anim_painter.is_none());
+
+        // Verify shape 2 now has the 2 animations cloned
+        let anims_after = s.execute("animation.get", &json!({})).unwrap();
+        let arr_after = anims_after.as_array().unwrap();
+        assert_eq!(arr_after.len(), 4);
+        let s2_anims: Vec<_> = arr_after.iter().filter(|a| a.get("shape").unwrap().as_u64().unwrap() == id2).collect();
+        assert_eq!(s2_anims.len(), 2);
+        assert_eq!(s2_anims[0].get("effect").unwrap().as_str(), Some("fade"));
+        assert_eq!(s2_anims[1].get("effect").unwrap().as_str(), Some("spin"));
+
+        // Picking from shape with no animations returns an error
+        s.execute("animation.clear", &json!({})).unwrap();
+        let err = s.execute("animation.painter", &json!({"id": id1}));
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn animation_painter_sticky_mode() {
+        let mut s = Session::with_new();
+        let s1 = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id1 = s1.get("id").unwrap().as_u64().unwrap();
+        let s2 = s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [150.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id2 = s2.get("id").unwrap().as_u64().unwrap();
+        let s3 = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [300.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id3 = s3.get("id").unwrap().as_u64().unwrap();
+
+        s.execute("animation.add", &json!({"effect": "zoom", "class": "entrance", "ids": [id1]})).unwrap();
+
+        // Pick with sticky = true
+        s.execute("animation.painter", &json!({"id": id1, "sticky": true})).unwrap();
+        assert!(s.anim_painter.is_some());
+
+        // Apply to shape 2 - painter remains armed
+        s.execute("animation.painterApply", &json!({"ids": [id2]})).unwrap();
+        assert!(s.anim_painter.is_some());
+
+        // Apply to shape 3 - painter still armed
+        s.execute("animation.painterApply", &json!({"ids": [id3]})).unwrap();
+        assert!(s.anim_painter.is_some());
+    }
 }

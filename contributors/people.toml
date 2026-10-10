@@ -29,3 +29,6 @@ real_name = "Alexander Alber"
 real_name = "Gert Pellin"
 display_name = "Gert Pellin"
 sync_github_name = false
+
+[people.Johannesgauss]
+sync_github_name = true

@@ -11,13 +11,13 @@ Each row is scored **D** (done), **P** (partial: works but lacks options, UI or 
 Live Presentations), add-ins and VBA macros.
 
 <!-- SUMMARY -->
-**Weighted breadth parity: 79%** over 187 features.
+**Weighted breadth parity: 80%** over 187 features.
 
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 62 | 10 | 0 | 93% |
 | P1 | 65 | 37 | 22 | 6 | 74% |
-| P2 | 50 | 12 | 11 | 27 | 35% |
+| P2 | 50 | 13 | 11 | 26 | 37% |
 
 | Area | Parity |
 |---|---|
@@ -36,7 +36,7 @@ Live Presentations), add-ins and VBA macros.
 | Pictures | 58% |
 | Media | 68% |
 | Transitions | 83% |
-| Animations | 74% |
+| Animations | 79% |
 | Slide show | 66% |
 | Review | 60% |
 | Draw | 33% |
@@ -211,7 +211,7 @@ Open P0 items: Start screen (new, templates/themes, recent), Contextual tabs (Sh
 | Animations | Animation pane (reorder, timing) | P0 | P |
 | Animations | By-paragraph text builds | P1 | D |
 | Animations | Triggers | P2 | D |
-| Animations | Animation Painter | P2 | M |
+| Animations | Animation Painter | P2 | D |
 | Animations | Preview in editor | P1 | P |
 | Slide show | Full-screen show from start / current | P0 | D |
 | Slide show | Navigation (keys, click, go to slide, blank screen) | P0 | D |
