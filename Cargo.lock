@@ -1017,7 +1017,7 @@ dependencies = [
 
 [[package]]
 name = "deckcraft-math"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "quick-xml 0.38.4",
  "serde",
@@ -1130,7 +1130,9 @@ dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-geom",
+ "deckcraft-math",
  "deckcraft-model",
+ "kurbo",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-segmentation",

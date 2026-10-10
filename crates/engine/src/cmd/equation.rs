@@ -2,8 +2,8 @@
 //! text. The commands here create, replace and read those runs; the dialog and agents use them.
 
 use deckcraft_math::Math;
-use deckcraft_model::ShapeId;
 use deckcraft_model::text::{Run, RunKind, RunProps};
+use deckcraft_model::{ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
 use super::*;
@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Equation",
             ["Equation"],
             None,
-            "{linear? | omml?, display?: bool, id?, paragraph?, run?} replaces an equation, keeping its formatting",
+            "{linear? | omml?, display?: bool, id?, cell?: [row, col], paragraph?, run?} replaces an equation, keeping its formatting",
             has_slide,
             update
         ),
@@ -41,7 +41,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Get Equation",
             [],
             None,
-            "{id?, paragraph?, run?} → {id, paragraph, run, omml, linear, display, tree}",
+            "{id?, cell?: [row, col], paragraph?, run?} → {id, cell?, paragraph, run, omml, linear, display, tree}",
             has_slide,
             get
         ),
@@ -198,7 +198,28 @@ fn insert_equation(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// Where an equation lives: shape, paragraph, run.
-fn locate(s: &Session, cmd: &str, p: &Value) -> Result<(ShapeId, usize, usize)> {
+/// A table cell (row, column), or `None` for the shape's own text.
+type Cell = Option<(usize, usize)>;
+
+fn opt_cell(cmd: &str, p: &Value) -> Result<Cell> {
+    let Some(v) = opt(p, "cell") else { return Ok(None) };
+    let err = || bad(cmd, "`cell` must be [row, col]: two non-negative integers");
+    let a = v.as_array().filter(|a| a.len() == 2).ok_or_else(err)?;
+    let n = |i: usize| a.get(i).and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok()).ok_or_else(err);
+    Ok(Some((n(0)?, n(1)?)))
+}
+
+/// The text body of a shape or of one of its table cells.
+fn body_ref(shape: &deckcraft_model::Shape, cell: Cell) -> Option<&deckcraft_model::text::TextBody> {
+    match (&shape.kind, cell) {
+        (ShapeKind::Table(tb), Some((r, c))) => tb.cell(r, c).map(|x| &x.text),
+        (_, None) => shape.text.as_ref(),
+        _ => None,
+    }
+}
+
+/// Where an equation lives: shape, table cell, paragraph, run.
+fn locate(s: &Session, cmd: &str, p: &Value) -> Result<(ShapeId, Cell, usize, usize)> {
     let st = s.doc()?;
     let given = opt_u32(cmd, p, "id")?.map(ShapeId);
     let (para, run) = (opt_u32(cmd, p, "paragraph")?, opt_u32(cmd, p, "run")?);
@@ -210,21 +231,27 @@ fn locate(s: &Session, cmd: &str, p: &Value) -> Result<(ShapeId, usize, usize)> 
         .or_else(|| st.selection.shapes.first().copied())
         .ok_or_else(|| bad(cmd, "select an equation or pass `id`"))?;
     let shape = st.shape(id).ok_or_else(|| EngineError::Other(format!("no shape {id}")))?;
-    let body = shape.text.as_ref().ok_or_else(|| bad(cmd, "the shape has no text"))?;
+    let cell = opt_cell(cmd, p)?;
+    let body = match (&shape.kind, cell) {
+        (ShapeKind::Table(tb), Some((r, c))) => tb.cell(r, c).map(|x| &x.text).ok_or_else(|| bad(cmd, "no such cell"))?,
+        (ShapeKind::Table(_), None) => return Err(bad(cmd, "say which `cell` of the table")),
+        (_, Some(_)) => return Err(bad(cmd, "`cell` is only for tables")),
+        (_, None) => shape.text.as_ref().ok_or_else(|| bad(cmd, "the shape has no text"))?,
+    };
     let is_math = |pi: usize, ri: usize| body.paragraphs.get(pi).and_then(|q| q.runs.get(ri)).is_some_and(|r| matches!(r.kind, RunKind::Math { .. }));
     if let (Some(pi), Some(ri)) = (para, run) {
         let (pi, ri) = (pi as usize, ri as usize);
-        return if is_math(pi, ri) { Ok((id, pi, ri)) } else { Err(bad(cmd, "that run is not an equation")) };
+        return if is_math(pi, ri) { Ok((id, cell, pi, ri)) } else { Err(bad(cmd, "that run is not an equation")) };
     }
     // The equation the insertion point touches, else the first one in the shape.
-    if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == id) {
+    if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == id && t.cell == cell && !t.notes) {
         let (a, b) = t.ordered();
         if let Some(q) = body.paragraphs.get(a.0) {
             let mut at = 0;
             for (ri, r) in q.runs.iter().enumerate() {
                 let end = at + r.char_len();
                 if matches!(r.kind, RunKind::Math { .. }) && b.0 == a.0 && at <= b.1 && a.1 <= end {
-                    return Ok((id, a.0, ri));
+                    return Ok((id, cell, a.0, ri));
                 }
                 at = end;
             }
@@ -232,7 +259,7 @@ fn locate(s: &Session, cmd: &str, p: &Value) -> Result<(ShapeId, usize, usize)> 
     }
     for (pi, q) in body.paragraphs.iter().enumerate() {
         if let Some(ri) = q.runs.iter().position(|r| matches!(r.kind, RunKind::Math { .. })) {
-            return Ok((id, pi, ri));
+            return Ok((id, cell, pi, ri));
         }
     }
     Err(bad(cmd, "no equation found"))
@@ -240,13 +267,13 @@ fn locate(s: &Session, cmd: &str, p: &Value) -> Result<(ShapeId, usize, usize)> 
 
 fn update(s: &mut Session, p: &Value) -> Result<Value> {
     let mut m = math_param("equation.update", p)?;
-    let (id, pi, ri) = locate(s, "equation.update", p)?;
+    let (id, cell, pi, ri) = locate(s, "equation.update", p)?;
     // New linear text keeps the equation's inline / display setting unless `display` says otherwise.
     if p.get("omml").is_none_or(Value::is_null) && opt_bool("equation.update", p, "display")?.is_none() {
         let old = s
             .doc()?
             .shape(id)
-            .and_then(|sh| sh.text.as_ref())
+            .and_then(|sh| body_ref(sh, cell))
             .and_then(|tb| tb.paragraphs.get(pi))
             .and_then(|q| q.runs.get(ri))
             .map(|r| r.kind.clone());
@@ -258,8 +285,12 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
     let (o, l) = (omml.clone(), linear.clone());
     s.edit(|doc, sel| {
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("equation.update", "no slide"))?;
-        let run = deckcraft_model::find_shape_mut(shapes, id)
-            .and_then(|sh| sh.text.as_mut())
+        let body = deckcraft_model::find_shape_mut(shapes, id).and_then(|sh| match (&mut sh.kind, cell) {
+            (ShapeKind::Table(tb), Some((r, c))) => tb.cell_mut(r, c).map(|x| &mut x.text),
+            (_, None) => sh.text.as_mut(),
+            _ => None,
+        });
+        let run = body
             .and_then(|tb| tb.paragraphs.get_mut(pi))
             .and_then(|q| q.runs.get_mut(ri))
             .ok_or_else(|| bad("equation.update", "the equation is gone"))?;
@@ -267,7 +298,9 @@ fn update(s: &mut Session, p: &Value) -> Result<Value> {
         run.kind = RunKind::Math { omml: o };
         Ok(())
     })?;
-    super::text::fit_text_box(s, id)?;
+    if cell.is_none() {
+        super::text::fit_text_box(s, id)?;
+    }
     Ok(json!({"id": id, "paragraph": pi, "run": ri, "omml": omml, "linear": linear}))
 }
 
@@ -289,11 +322,11 @@ fn describe(m: &Math) -> Value {
 }
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
-    let (id, pi, ri) = locate(s, "equation.get", p)?;
+    let (id, cell, pi, ri) = locate(s, "equation.get", p)?;
     let run = s
         .doc()?
         .shape(id)
-        .and_then(|sh| sh.text.as_ref())
+        .and_then(|sh| body_ref(sh, cell))
         .and_then(|tb| tb.paragraphs.get(pi))
         .and_then(|q| q.runs.get(ri))
         .cloned()
@@ -304,6 +337,9 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
         o.insert("id".into(), json!(id));
         o.insert("paragraph".into(), json!(pi));
         o.insert("run".into(), json!(ri));
+        if let Some((r, c)) = cell {
+            o.insert("cell".into(), json!([r, c]));
+        }
     }
     Ok(v)
 }
@@ -544,6 +580,40 @@ mod tests {
         assert!(matches!(clip.paragraphs[0].runs[0].kind, deckcraft_model::text::RunKind::Math { .. }));
         let sh = s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().clone();
         assert!(sh.text.unwrap().paragraphs[0].runs.iter().all(|r| r.kind == deckcraft_model::text::RunKind::Text));
+    }
+
+    #[test]
+    fn equations_in_table_cells_are_reachable() {
+        use deckcraft_model::{
+            ShapeKind,
+            text::{Run, RunKind},
+        };
+        let mut s = session();
+        let tid = s.execute("insert.table", &json!({"rows": 2, "cols": 2})).unwrap()["id"].as_u64().unwrap();
+        let src = s.execute("equation.fromLinear", &json!({"linear": "x/2"})).unwrap();
+        let omml = src["omml"].as_str().unwrap().to_string();
+        let id = deckcraft_model::ShapeId(tid as u32);
+        s.edit(|doc, sel| {
+            let shapes = crate::shapes_mut(doc, sel).unwrap();
+            let sh = deckcraft_model::find_shape_mut(shapes, id).unwrap();
+            let ShapeKind::Table(tb) = &mut sh.kind else { panic!("table") };
+            let cell = tb.cell_mut(1, 0).unwrap();
+            cell.text.paragraphs[0].runs = vec![Run { text: "x/2".into(), props: Default::default(), kind: RunKind::Math { omml } }];
+            Ok(())
+        })
+        .unwrap();
+        assert!(s.execute("equation.get", &json!({"id": tid})).is_err(), "table needs a cell");
+        assert!(s.execute("equation.get", &json!({"id": tid, "cell": [0, 0]})).is_err(), "no equation there");
+        assert!(s.execute("equation.get", &json!({"id": tid, "cell": [9, 9]})).is_err());
+        assert!(s.execute("equation.get", &json!({"id": tid, "cell": "a"})).is_err());
+        let g = s.execute("equation.get", &json!({"id": tid, "cell": [1, 0]})).unwrap();
+        assert_eq!(g["cell"], json!([1, 0]));
+        s.execute("equation.update", &json!({"id": tid, "cell": [1, 0], "linear": "sqrt(y)"})).unwrap();
+        let g = s.execute("equation.get", &json!({"id": tid, "cell": [1, 0]})).unwrap();
+        assert!(g["omml"].as_str().unwrap().contains("m:rad"));
+        s.execute("edit.undo", &json!({})).unwrap();
+        let g = s.execute("equation.get", &json!({"id": tid, "cell": [1, 0]})).unwrap();
+        assert!(g["omml"].as_str().unwrap().contains("<m:f>"));
     }
 
     #[test]

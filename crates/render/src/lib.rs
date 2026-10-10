@@ -1100,7 +1100,10 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
         }
         ctx.set_transform(m * Affine::translate(ps.offset));
         ctx.set_paint(color(d.color, ps.opacity));
-        ctx.fill_rect(&d.rect);
+        match &d.path {
+            Some(p) => ctx.fill_path(p),
+            None => ctx.fill_rect(&d.rect),
+        }
     };
     for d in l.decos.iter().filter(|d| d.behind) {
         deco(ctx, d);
