@@ -418,6 +418,29 @@ fn morph_path_fades_a_fill_only_one_side_has() {
 }
 
 #[test]
+fn morph_path_aligns_once_per_transition() {
+    let (from, to) = (Xfrm::new(0.0, 0.0, 200.0, 200.0), Xfrm::new(0.0, 0.0, 300.0, 150.0));
+    let star = Shape { geom: Geom::preset("star5"), ..Default::default() };
+    let pm = |t: f64| PathMorph { id: ShapeId(10), from: Geom::preset("ellipse"), from_box: from, to_box: to, t };
+    let els = |(g, f): (deckcraft_geom::preset::Geometry, Vec<_>)| (g.paths.iter().map(|p| p.path.elements().to_vec()).collect::<Vec<_>>(), f);
+    let mut cache = morph_path::Cache::default();
+    for t in [0.0, 0.3, 0.7, 1.0] {
+        let got = els(cache.geometry(&pm(t), &star, 250.0, 175.0));
+        // The same as aligning afresh.
+        assert_eq!(got, els(morph_path::Cache::default().geometry(&pm(t), &star, 250.0, 175.0)));
+        cache.sweep();
+    }
+    assert_eq!(cache.len(), 1);
+    // Another target outline is another morph.
+    let _ = cache.geometry(&pm(0.5), &Shape { geom: Geom::preset("rect"), ..Default::default() }, 250.0, 175.0);
+    assert_eq!(cache.len(), 2);
+    // A frame without morphs ends the transition: the cache empties.
+    cache.sweep();
+    cache.sweep();
+    assert_eq!(cache.len(), 0);
+}
+
+#[test]
 fn text_transform_unmirrors_flips() {
     // Asymmetric text rect in a 100×50 box: flips move the rect, never mirror the text.
     let tr = Rect::new(10.0, 0.0, 40.0, 50.0);
