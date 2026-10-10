@@ -577,27 +577,47 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
     if let Some(l) = &link {
         w.empty(tag, A::new().a("r:link", l));
     }
-    if let Some(e) = &embed {
+    if embed.is_some() || link.is_some() {
         w.open0("p:extLst");
-        w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
-        w.open("p14:media", A::new().a("xmlns:p14", crate::opc::NS_P14).a("r:embed", e));
-        if m.trim_start_ms > 0 || m.trim_end_ms > 0 {
-            w.empty(
-                "p14:trim",
-                A::new().o("st", (m.trim_start_ms > 0).then_some(m.trim_start_ms)).o("end", (m.trim_end_ms > 0).then_some(m.trim_end_ms)),
-            );
-        }
-        if m.fade_in_ms > 0 || m.fade_out_ms > 0 {
-            w.empty("p14:fade", A::new().o("in", (m.fade_in_ms > 0).then_some(m.fade_in_ms)).o("out", (m.fade_out_ms > 0).then_some(m.fade_out_ms)));
-        }
-        if !m.bookmarks.is_empty() {
-            w.open0("p14:bmkLst");
-            for (n, t) in m.bookmarks.iter().take(1000) {
-                w.empty("p14:bmk", A::new().a("name", n).a("time", t));
+        if let Some(e) = &embed {
+            w.open("p:ext", A::new().a("uri", "{DAA4B4D4-6D71-4841-9C94-3DE7FCFB9230}"));
+            w.open("p14:media", A::new().a("xmlns:p14", crate::opc::NS_P14).a("r:embed", e));
+            if m.trim_start_ms > 0 || m.trim_end_ms > 0 {
+                w.empty(
+                    "p14:trim",
+                    A::new().o("st", (m.trim_start_ms > 0).then_some(m.trim_start_ms)).o("end", (m.trim_end_ms > 0).then_some(m.trim_end_ms)),
+                );
             }
-            w.close("p14:bmkLst");
+            if m.fade_in_ms > 0 || m.fade_out_ms > 0 {
+                w.empty(
+                    "p14:fade",
+                    A::new().o("in", (m.fade_in_ms > 0).then_some(m.fade_in_ms)).o("out", (m.fade_out_ms > 0).then_some(m.fade_out_ms)),
+                );
+            }
+            if !m.bookmarks.is_empty() {
+                w.open0("p14:bmkLst");
+                for (n, t) in m.bookmarks.iter().take(1000) {
+                    w.empty("p14:bmk", A::new().a("name", n).a("time", t));
+                }
+                w.close("p14:bmkLst");
+            }
+            w.close("p14:media");
+            w.close("p:ext");
         }
-        w.close("p14:media");
+        // PowerPoint keeps playback options in the timing tree; they are kept here so a round trip does not reset them.
+        w.open("p:ext", A::new().a("uri", "{6F1D3A52-5B0E-4C1B-9D6A-DECC4A17E001}"));
+        w.empty(
+            "dk:mediaOptions",
+            A::new()
+                .a("xmlns:dk", "urn:deckcraft:media")
+                .a("volume", m.volume)
+                .t("autoplay", m.autoplay)
+                .t("loop", m.loop_play)
+                .t("rewind", m.rewind)
+                .t("acrossSlides", m.play_across_slides)
+                .t("hideWhileNotPlaying", m.hide_while_not_playing)
+                .t("fullScreen", m.full_screen),
+        );
         w.close("p:ext");
         w.close("p:extLst");
     }

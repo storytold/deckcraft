@@ -243,9 +243,12 @@ pub fn rich_deck() -> Presentation {
         media: video,
         video: true,
         poster: Some(img),
-        volume: 1.0,
         trim_start_ms: 500,
         fade_in_ms: 250,
+        autoplay: true,
+        loop_play: true,
+        rewind: true,
+        volume: 0.25,
         ..Default::default()
     });
     let mut ink = shape(&mut p, "Ink", 100.0, 350.0, 200.0, 100.0);
@@ -483,11 +486,28 @@ fn pictures_media_and_ink_round_trip() {
     let ShapeKind::Media(m) = &v.kind else { panic!("not media: {:?}", v.kind) };
     assert!(m.video);
     assert_eq!((m.trim_start_ms, m.fade_in_ms), (500, 250));
+    assert!(m.autoplay && m.loop_play && m.rewind);
+    assert_eq!(m.volume, 0.25);
     assert!(q.media(m.media).is_some_and(|x| x.data.starts_with(b"\x00\x00\x00\x18ftyp")));
     assert!(m.poster.is_some());
     // Ink comes back as freeform lines in a group.
     let ink = by_name(&q.slides[2], "Ink");
     assert!(matches!(&ink.kind, ShapeKind::Group { children, .. } if children.len() == 1 && matches!(children[0].geom, Geom::Custom { .. })));
+}
+
+#[test]
+fn linked_media_keeps_playback_options() {
+    let mut p = rich_deck();
+    let id = deckcraft_model::MediaId(p.alloc_id());
+    let link = Some("https://example.com/song.mp3".to_string());
+    p.media.push(deckcraft_model::MediaItem { id, name: "song.mp3".into(), content_type: "audio/mpeg".into(), data: Arc::new(vec![]), link });
+    let mut a = shape(&mut p, "Linked", 10.0, 10.0, 50.0, 50.0);
+    a.kind = ShapeKind::Media(MediaClip { media: id, volume: 0.5, autoplay: true, rewind: true, ..Default::default() });
+    Arc::make_mut(&mut p.slides[2]).shapes.push(a);
+    let q = round(&p);
+    let ShapeKind::Media(m) = &by_name(&q.slides[2], "Linked").kind else { panic!("not media") };
+    assert!(!m.video && m.autoplay && m.rewind && !m.loop_play);
+    assert_eq!(m.volume, 0.5);
 }
 
 #[test]
