@@ -28,6 +28,10 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             app.save();
             return true;
         }
+        (P, true, false, false) => {
+            app.print_now();
+            return true;
+        }
         (S, true, true, false) => "app.saveAsDialog",
         (O, true, false, false) => "app.openDialog",
         (P, true, true, false) => "app.palette",
@@ -137,6 +141,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Save", "file.save"),
                 ("Save As…", "app.saveAsDialog"),
                 ("Export…", "app.exportDialog"),
+                ("Print…", "app.print"),
                 ("-", ""),
                 ("Properties", "file.properties"),
             ],
