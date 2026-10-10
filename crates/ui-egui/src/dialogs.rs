@@ -455,19 +455,17 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                         }
                     }
                 } else if let (Some(dl), Some(s)) = (app.services.download.as_mut(), app.session.active()) {
-                    let bytes = match ext {
-                        "png" | "jpg" => {
-                            let img = deckcraft_render::render_slide(
-                                &s.doc,
-                                s.selection.slide,
-                                &deckcraft_render::RenderOpts { scale: 2.0, ..Default::default() },
-                            );
-                            if ext == "png" { img.to_png() } else { img.to_jpeg(92) }
+                    if matches!(ext, "png" | "jpg") {
+                        for (file, bytes) in web_image_files(&s.doc, s.selection.slide, all, &name, ext) {
+                            dl(&file, &bytes);
                         }
-                        "pdf" => deckcraft_pdf_bytes(&s.doc, &pdf_params),
-                        other => deckcraft_engine::cmd::file::save_bytes(&s.doc, other).unwrap_or_default(),
-                    };
-                    dl(&suggested, &bytes);
+                    } else {
+                        let bytes = match ext {
+                            "pdf" => deckcraft_pdf_bytes(&s.doc, &pdf_params),
+                            other => deckcraft_engine::cmd::file::save_bytes(&s.doc, other).unwrap_or_default(),
+                        };
+                        dl(&suggested, &bytes);
+                    }
                 }
             }
             ok || cancel
@@ -928,10 +926,43 @@ fn deckcraft_pdf_bytes(doc: &deckcraft_model::Presentation, params: &serde_json:
     deckcraft_engine::cmd::file::pdf_bytes(doc, params).unwrap_or_default()
 }
 
+/// Images for the browser download: the current slide, or every slide (named `<name>1.png`, `<name>2.png`... like the native export) when `all`.
+fn web_image_files(doc: &deckcraft_model::Presentation, current: usize, all: bool, name: &str, ext: &str) -> Vec<(String, Vec<u8>)> {
+    let slides: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![current] };
+    let single = slides.len() == 1;
+    slides
+        .into_iter()
+        .enumerate()
+        .map(|(k, i)| {
+            let img = deckcraft_render::render_slide(doc, i, &deckcraft_render::RenderOpts { scale: 2.0, ..Default::default() });
+            let bytes = if ext == "png" { img.to_png() } else { img.to_jpeg(92) };
+            let file = if single { format!("{name}.{ext}") } else { format!("{name}{}.{ext}", k + 1) };
+            (file, bytes)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::{Cell, RefCell};
+
+    /// The browser "PNG images (all slides)" export yields one image per slide, not just the selected one (#64).
+    #[test]
+    fn web_export_all_slides_gives_one_file_per_slide() {
+        let mut doc = deckcraft_model::Presentation::default();
+        if let Some(first) = doc.slides.first().cloned() {
+            doc.slides.push(first.clone());
+            doc.slides.push(first);
+        }
+        assert_eq!(doc.slides.len(), 3);
+        let all = web_image_files(&doc, 1, true, "Deck", "png");
+        let names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["Deck1.png", "Deck2.png", "Deck3.png"]);
+        let one = web_image_files(&doc, 1, false, "Deck", "png");
+        assert_eq!(one.len(), 1);
+        assert_eq!(one[0].0, "Deck.png");
+    }
 
     /// Start screen theme tiles that wrap onto a second row keep the 40-point inset (#17).
     #[test]
