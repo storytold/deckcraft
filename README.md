@@ -58,7 +58,7 @@
 
 ## What works today
 
-DeckCraft is in early development, heading for its first alpha (see the [roadmap](ROADMAP.md)).
+DeckCraft is in alpha, heading for beta (see the [roadmap](ROADMAP.md)).
 Today it can:
 
 - **Make decks**: slide masters and eleven layouts with placeholders that inherit position and
@@ -154,10 +154,12 @@ deckcraft-cli mcp --connect 7990        # drive the running app (deckcraft --con
 
 ## Roadmap
 
-DeckCraft covers about **79% of PowerPoint's features by breadth** (93% of the core ones) and is
-roughly **80% of the way to a first alpha**. See [ROADMAP.md](ROADMAP.md) for the alpha checklist,
-parity estimates and what's next, and [docs/parity.md](docs/parity.md) for the feature-by-feature
-scorecard.
+DeckCraft is in **alpha**. It covers **79% of PowerPoint's features by breadth** (92% of the core
+ones, measured) and is about **56% of the way to replacing PowerPoint for real work** (estimated).
+See [ROADMAP.md](ROADMAP.md) for the stage, numbers by dimension and what's next,
+[docs/target-app-parity.md](docs/target-app-parity.md) for the full assessment,
+[docs/gaps.md](docs/gaps.md) for every known shortfall and
+[docs/parity-checklist.md](docs/parity-checklist.md) for the feature-by-feature checklist.
 
 ## Downloads
 

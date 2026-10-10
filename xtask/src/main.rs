@@ -22,7 +22,7 @@ commands:
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
   ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
-  parity          recompute the PowerPoint feature-parity summary in docs/parity.md
+  parity          recompute the PowerPoint feature-parity summary in docs/parity-checklist.md
   ico <out.ico> <in.png>...
                   pack square PNGs (<= 256 px) into a Windows .ico (see packaging/icons.sh)
 ";
