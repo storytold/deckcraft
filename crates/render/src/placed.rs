@@ -12,7 +12,7 @@ use crate::{SlideFields, shape_geometry, table};
 /// One shape's text as drawn on the slide.
 pub struct PlacedText {
     pub layout: TextLayout,
-    /// Shape-local → slide points (text rotation included).
+    /// Shape-local → slide points (text rotation included, flips not: see [`crate::text_transform`]).
     pub transform: Affine,
     pub body: TextBody,
 }
@@ -97,12 +97,7 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
 /// Lay out `body` in text rect `tr` of shape `s` (shape-local → slide `m`) and record it and its hyperlinks.
 fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, body: &TextBody, tr: Rect, m: Affine) {
     let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: None, no_shrink: false });
-    let m = if layout.rotation != 0.0 {
-        let c = tr.center().to_vec2();
-        m * Affine::translate(c) * Affine::rotate(layout.rotation.to_radians()) * Affine::translate(-c)
-    } else {
-        m
-    };
+    let m = crate::text_transform(m, tr, layout.rotation);
     // Text hyperlinks: one box per line segment of a linked run.
     for run in layout.runs.iter().filter(|r| r.link && !r.glyphs.is_empty()) {
         let Some(link) = run_link(body, run.para, run.chars.0) else { continue };

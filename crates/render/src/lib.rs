@@ -1045,6 +1045,25 @@ pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody
     draw_layout(ctx, &l, tr, m);
 }
 
+/// Where text laid out in text rect `tr` is drawn, for a shape drawn with `m` (shape-local →
+/// output): `m`, without mirroring, then the layout's `rotation` about the rect's centre.
+///
+/// Flips mirror a shape's geometry, never its text. When `m` reflects (flipH or flipV, the shape's
+/// own or a group's) the text rect keeps its mirrored place and the text is mirrored back about
+/// the rect's centre: a flipH shape's text stays readable and a flipV shape's text is turned 180°
+/// (both flips: 180°), as in PowerPoint. Rendering, hit testing and the caret all use this.
+pub fn text_transform(m: Affine, tr: Rect, rotation: f64) -> Affine {
+    let c = tr.center().to_vec2();
+    let mut t = m;
+    if m.determinant() < 0.0 && c.is_finite() {
+        t = t * Affine::translate(c) * Affine::scale_non_uniform(-1.0, 1.0) * Affine::translate(-c);
+    }
+    if rotation != 0.0 && rotation.is_finite() && c.is_finite() {
+        t = t * Affine::translate(c) * Affine::rotate(rotation.to_radians()) * Affine::translate(-c);
+    }
+    t
+}
+
 /// Draw an already laid-out text block.
 pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
     draw_layout_with(ctx, l, tr, m, &[]);
@@ -1053,12 +1072,7 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
 /// Draw a laid-out text block with per-paragraph animation states.
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
-    let m = if l.rotation != 0.0 {
-        let c = tr.center().to_vec2();
-        m * Affine::translate(c) * Affine::rotate(l.rotation.to_radians()) * Affine::translate(-c)
-    } else {
-        m
-    };
+    let m = text_transform(m, tr, l.rotation);
     let deco = |ctx: &mut RenderContext, d: &deckcraft_text::Deco| {
         let ps = para(d.para);
         if !ps.visible || ps.opacity <= 0.001 {
