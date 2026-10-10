@@ -3,7 +3,7 @@ Type=Application
 Name=DeckCraft
 GenericName=Presentation
 Comment=Create and present slide decks
-Exec=deckcraft %F
+Exec=env WINIT_X11_SCALE_FACTOR=1 deckcraft %F
 TryExec=deckcraft
 Icon=ai.storyteller.deckcraft
 Terminal=false
