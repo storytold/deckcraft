@@ -10,6 +10,7 @@ pub mod canvas;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod eqdialog;
 pub mod fillui;
 pub mod icons;
 pub mod media;

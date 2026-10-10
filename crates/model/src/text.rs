@@ -413,6 +413,9 @@ impl Run {
     pub fn content(&self) -> &str {
         match self.kind {
             RunKind::Break => "\u{b}",
+            // An equation always occupies at least one character, so it can be selected,
+            // snapped to and deleted even when its text is empty.
+            RunKind::Math { .. } if self.text.is_empty() => "\u{25A1}",
             _ => &self.text,
         }
     }

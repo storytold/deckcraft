@@ -395,3 +395,149 @@ fn hostile_bidi_input_never_panics() {
         }
     }
 }
+
+fn math_run(lin: &str) -> Run {
+    let m = deckcraft_math::from_linear(lin);
+    let mut r = Run::new(deckcraft_math::run_text(&m));
+    r.kind = deckcraft_model::text::RunKind::Math { omml: deckcraft_math::to_omml(&m) };
+    r
+}
+
+fn setup_runs(runs: Vec<Run>, w: f64, h: f64) -> (Presentation, Shape) {
+    let (p, mut sh) = setup("", w, h);
+    let mut body = TextBody::from_text("");
+    if let Some(para) = body.paragraphs.first_mut() {
+        para.runs = runs;
+    }
+    sh.text = Some(body);
+    let mut s = (*p.slides[0]).clone();
+    s.shapes = vec![sh.clone()];
+    let mut p = p;
+    p.slides = vec![std::sync::Arc::new(s)];
+    (p, sh)
+}
+
+#[test]
+fn equation_run_is_an_inline_atom_keeping_char_counts() {
+    let eq = math_run("a/b");
+    let n = eq.char_len();
+    let (p, sh) = setup_runs(vec![Run::new("x = "), eq, Run::new(" done")], 600.0, 100.0);
+    let l = lay(&p, &sh, 600.0, 100.0);
+    assert_eq!(l.lines.len(), 1);
+    let li = &l.lines[0];
+    assert_eq!(li.end - li.start, 4 + n + 5);
+    assert_eq!(li.caret_x.len(), li.end - li.start + 1);
+    // Caret never moves backwards, and the equation is wider than one character.
+    assert!(li.caret_x.windows(2).all(|w| w[1] >= w[0]));
+    assert!(li.caret_x[4 + 1] - li.caret_x[4] > 1.0);
+    // Inside the equation's remaining characters the caret does not advance.
+    assert!((li.caret_x[4 + n] - li.caret_x[4 + 1]).abs() < 1e-9);
+    // A fraction bar is drawn.
+    assert!(!l.decos.is_empty());
+}
+
+#[test]
+fn equation_raises_the_line_height() {
+    let (p, sh) = setup_runs(vec![Run::new("x")], 600.0, 200.0);
+    let flat = lay(&p, &sh, 600.0, 200.0).content_height;
+    let (p, sh) = setup_runs(vec![Run::new("x"), math_run("(a/b)/(c/d)")], 600.0, 200.0);
+    let tall = lay(&p, &sh, 600.0, 200.0).content_height;
+    assert!(tall > flat, "{tall} <= {flat}");
+}
+
+#[test]
+fn equation_never_splits_across_wrapped_lines() {
+    let eq = math_run("a+b+c+d+e+f+g");
+    let (p, sh) = setup_runs(vec![Run::new("some words before "), eq, Run::new(" and after")], 140.0, 400.0);
+    let l = lay(&p, &sh, 140.0, 400.0);
+    let first = l.lines.iter().filter(|li| (li.start..li.end).contains(&"some words before ".chars().count())).count();
+    assert_eq!(first, 1);
+    assert!(l.lines.len() >= 2);
+}
+
+#[test]
+fn empty_equation_still_has_a_width() {
+    let mut r = Run::new("");
+    r.kind = deckcraft_model::text::RunKind::Math { omml: String::new() };
+    let (p, sh) = setup_runs(vec![r], 200.0, 100.0);
+    let l = lay(&p, &sh, 200.0, 100.0);
+    assert_eq!(l.lines[0].caret_x.len(), 2);
+}
+
+/// The glyph x positions, in drawing order, of the runs that draw the equation covering `chars`.
+fn equation_glyph_xs(l: &TextLayout, chars: (usize, usize)) -> Vec<f64> {
+    l.runs.iter().filter(|r| r.chars == chars).flat_map(|r| r.glyphs.iter().map(|g| g.1)).collect()
+}
+
+#[test]
+fn equation_in_arabic_paragraph_follows_reading_order() {
+    if arabic_face().is_none() {
+        eprintln!("skipped: no Arabic face available");
+        return;
+    }
+    // Logical order: Arabic word, equation, Arabic word. Right to left on screen the first word
+    // is rightmost, then the equation, then the second word.
+    let eq = math_run("a+b");
+    let n = eq.char_len();
+    let lead = "سنة ".chars().count();
+    let (p, sh) = bidi_setup(vec![Run::new("سنة "), eq, Run::new(" فقط")], 600.0, true, Align::Right);
+    let l = lay(&p, &sh, 600.0, 300.0);
+    assert_eq!(l.lines.len(), 1);
+    let li = &l.lines[0];
+    let total = lead + n + " فقط".chars().count();
+    assert_eq!(li.end - li.start, total, "the equation keeps its character count");
+    assert_eq!(li.edges.len(), total);
+    let (e0, e1) = li.edges[lead];
+    assert!(e1 - e0 > 1.0, "the equation has a width");
+    // The first word is to the right of the equation, the last to its left.
+    assert!(li.edges[0].0 >= e1 - 0.01, "first word {:?} vs equation {:?}", li.edges[0], (e0, e1));
+    assert!(li.edges[total - 1].1 <= e0 + 0.01, "last word {:?} vs equation {:?}", li.edges[total - 1], (e0, e1));
+    // The padding characters take no room: the line's width is the sum of its parts.
+    assert!(li.edges[lead + 1..lead + n].iter().all(|e| (e.1 - e.0).abs() < 1e-9));
+    // The equation box is drawn whole and not mirrored: a before + before b, inside its box.
+    let xs = equation_glyph_xs(&l, (lead, lead + n));
+    assert!(xs.len() >= 3, "{xs:?}");
+    assert!(xs.windows(2).all(|w| w[1] > w[0]), "equation glyphs run left to right: {xs:?}");
+    assert!(xs.iter().all(|x| *x >= e0 - 0.5 && *x <= e1 + 0.5), "{xs:?} inside {:?}", (e0, e1));
+    // Caret: before the equation is its right edge, after it the left one (reading direction).
+    let before = l.caret_at(Pos { para: 0, ch: lead }, Affinity::Downstream).unwrap().0;
+    let after = l.caret_at(Pos { para: 0, ch: lead + n }, Affinity::Downstream).unwrap().0;
+    assert!((before - e1).abs() < 0.5, "caret before {before} vs right edge {e1}");
+    assert!((after - e0).abs() < 0.5, "caret after {after} vs left edge {e0}");
+}
+
+#[test]
+fn equation_alone_in_an_rtl_paragraph_sits_at_the_start_edge() {
+    let eq = math_run("x^2");
+    let n = eq.char_len();
+    let (p, sh) = bidi_setup(vec![eq], 400.0, true, Align::Right);
+    let l = lay(&p, &sh, 400.0, 300.0);
+    let li = &l.lines[0];
+    assert_eq!(li.end - li.start, n);
+    // Right-aligned: the equation ends at the right edge of the box and is drawn there.
+    assert!((li.extent.1 - l.inner.x1).abs() < 0.5, "{:?} vs {:?}", li.extent, l.inner);
+    let xs = equation_glyph_xs(&l, (0, n));
+    assert!(!xs.is_empty());
+    assert!(xs.iter().all(|x| *x >= li.extent.0 - 0.5 && *x <= li.extent.1 + 0.5), "{xs:?} in {:?}", li.extent);
+}
+
+#[test]
+fn equation_between_latin_and_arabic_keeps_logical_neighbours() {
+    if arabic_face().is_none() {
+        eprintln!("skipped: no Arabic face available");
+        return;
+    }
+    // A right-to-left paragraph starting and ending with an equation: the first is rightmost.
+    let a = math_run("a/b");
+    let b = math_run("c+d");
+    let (na, nb) = (a.char_len(), b.char_len());
+    let (p, sh) = bidi_setup(vec![a, Run::new(" مرحبا "), b], 600.0, true, Align::Right);
+    let l = lay(&p, &sh, 600.0, 300.0);
+    let li = &l.lines[0];
+    let mid = " مرحبا ".chars().count();
+    let (a0, a1) = li.edges[0];
+    let (b0, b1) = li.edges[na + mid];
+    assert!(a0 >= b1 - 0.01, "first equation {:?} is right of the last {:?}", (a0, a1), (b0, b1));
+    assert!((a1 - l.inner.x1).abs() < 0.5, "first equation starts at the right edge");
+    assert_eq!(li.end - li.start, na + mid + nb);
+}

@@ -12,6 +12,7 @@ workspace = true
 deckcraft-model = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
+deckcraft-math = { workspace = true }
 quick-xml = { workspace = true }
 zip = { workspace = true }
 thiserror = { workspace = true }

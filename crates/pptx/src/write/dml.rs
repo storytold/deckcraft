@@ -602,6 +602,23 @@ pub fn list_style(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, ls: &ListStyle
 
 /// Write `<tag>` text body (`p:txBody`, `a:txBody`). `math` selects the OMML form of equations.
 pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, math: bool) {
+    text_body_mode(w, x, o, tag, tb, if math { MathMode::Direct } else { MathMode::Text });
+}
+
+/// Table cells: equations sit inside a paragraph-level `mc:AlternateContent` (OMML for readers
+/// that know it, plain text otherwise), since the cell cannot be wrapped as a whole.
+pub fn text_body_cell(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody) {
+    text_body_mode(w, x, o, tag, tb, MathMode::Alternate);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MathMode {
+    Text,
+    Direct,
+    Alternate,
+}
+
+fn text_body_mode(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, math: MathMode) {
     w.open0(tag);
     body_pr(w, &tb.body);
     list_style(w, x, o, "a:lstStyle", &tb.list_style);
@@ -609,7 +626,7 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
         w.empty0("a:p");
     }
     for (pi, p) in tb.paragraphs.iter().enumerate() {
-        paragraph(w, x, o, p, math, pi);
+        paragraph_mode(w, x, o, p, math, pi);
     }
     w.close(tag);
 }
@@ -631,7 +648,7 @@ fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
     }
 }
 
-pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool, index: usize) {
+fn paragraph_mode(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: MathMode, index: usize) {
     w.open0("a:p");
     if p.level > 0 || !is_default_ppr(&p.props) {
         ppr(w, x, o, "a:pPr", Some(p.level), &p.props, None);
@@ -653,10 +670,28 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
                 w.close("a:fld");
             }
             RunKind::Math { omml } => {
-                if math && !omml.is_empty() {
+                if math != MathMode::Text && !omml.is_empty() {
+                    let alt = math == MathMode::Alternate;
+                    if alt {
+                        w.open("mc:AlternateContent", A::new().a("xmlns:mc", crate::opc::NS_MC));
+                        w.open("mc:Choice", A::new().a("xmlns:a14", crate::opc::NS_A14).a("Requires", "a14"));
+                    }
                     w.open("a14:m", A::new().a("xmlns:a14", crate::opc::NS_A14));
-                    w.raw(omml);
+                    if r.props == RunProps::default() {
+                        w.raw(omml);
+                    } else {
+                        let mut f = W::frag();
+                        rpr(&mut f, x, o, "a:rPr", &r.props);
+                        w.raw(&with_run_props(omml, &f.s));
+                    }
                     w.close("a14:m");
+                    if alt {
+                        w.close("mc:Choice");
+                        w.open0("mc:Fallback");
+                        run_text(w, x, o, &r.text, &r.props);
+                        w.close("mc:Fallback");
+                        w.close("mc:AlternateContent");
+                    }
                 } else {
                     run_text(w, x, o, &r.text, &r.props);
                 }
@@ -669,6 +704,75 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
     w.close("a:p");
 }
 
+/// Give every `m:r` of `omml` that has no `a:rPr` the run properties `rpr_xml` (PowerPoint keeps an
+/// equation's size, font and colour in an `a:rPr` inside each math run, after `m:rPr`).
+fn with_run_props(omml: &str, rpr_xml: &str) -> String {
+    let mut out = String::with_capacity(omml.len() + rpr_xml.len());
+    let mut rest = omml;
+    while let Some(i) = rest.find("<m:r") {
+        let (head, tail) = rest.split_at(i);
+        out.push_str(head);
+        let after = tail.get(4..).unwrap_or("");
+        let is_run = after.starts_with('>') || after.starts_with(' ');
+        let Some(open_end) = tail.find('>').filter(|_| is_run) else {
+            // `<m:rPr`, `<m:rad` and friends, or a truncated tag: copy the opener and go on.
+            out.push_str("<m:r");
+            rest = after;
+            continue;
+        };
+        if tail.get(..open_end).is_some_and(|t| t.ends_with('/')) {
+            out.push_str(tail.get(..=open_end).unwrap_or(""));
+            rest = tail.get(open_end + 1..).unwrap_or("");
+            continue;
+        }
+        out.push_str(tail.get(..=open_end).unwrap_or(""));
+        let mut body = tail.get(open_end + 1..).unwrap_or("");
+        let end = body.find("</m:r>").unwrap_or(body.len());
+        if body.get(..end).is_some_and(|b| b.contains("<a:rPr")) {
+            rest = body;
+            continue;
+        }
+        // Skip a leading `m:rPr` so the properties follow it.
+        if body.starts_with("<m:rPr/>") {
+            out.push_str("<m:rPr/>");
+            body = body.get(8..).unwrap_or("");
+        } else if body.starts_with("<m:rPr>")
+            && let Some(c) = body.find("</m:rPr>")
+        {
+            out.push_str(body.get(..c + 8).unwrap_or(""));
+            body = body.get(c + 8..).unwrap_or("");
+        }
+        out.push_str(rpr_xml);
+        rest = body;
+    }
+    out.push_str(rest);
+    out
+}
+
 pub fn has_math(tb: &TextBody) -> bool {
     tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty()))
+}
+
+#[cfg(test)]
+mod math_props_tests {
+    use super::with_run_props;
+
+    #[test]
+    fn props_go_after_m_rpr_and_only_where_missing() {
+        let p = "<a:rPr sz=\"2800\"/>";
+        let got = with_run_props(
+            "<m:oMath><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><m:t>x</m:t></m:r><m:r><m:t>y</m:t></m:r><m:rad><m:radPr/></m:rad></m:oMath>",
+            p,
+        );
+        assert_eq!(
+            got,
+            "<m:oMath><m:r><m:rPr><m:sty m:val=\"p\"/></m:rPr><a:rPr sz=\"2800\"/><m:t>x</m:t></m:r><m:r><a:rPr sz=\"2800\"/><m:t>y</m:t></m:r><m:rad><m:radPr/></m:rad></m:oMath>"
+        );
+        // Already has properties: untouched. Hostile / truncated input does not panic.
+        let own = "<m:r><a:rPr sz=\"100\"/><m:t>x</m:t></m:r>";
+        assert_eq!(with_run_props(own, p), own);
+        for t in ["<m:r", "<m:r ", "<m:r>", "<m:r/>", "<m:rPr>", "<m:r><m:rPr>", "", "<m:r x=\"\u{e9}"] {
+            let _ = with_run_props(t, p);
+        }
+    }
 }

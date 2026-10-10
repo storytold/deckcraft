@@ -96,6 +96,19 @@ or roughly 65–90 hours with four agents in parallel on separate crates:
 | Depth and pixel fidelity of every ribbon group, dialog and pane against PowerPoint | 50 h |
 | Performance (incremental rendering, GPU raster, streaming media decode) | 20 h |
 
+Equation known limitation: OMML that rebinds prefixes (an alias prefix bound to the OMML URI plus a
+different URI bound to `m`) is mis-namespaced on rewrite in `crates/math/src/xml.rs` `start_extras`.
+
+Equation editing: the Insert > Equation dialog edits the rendered equation directly (caret model in
+`deckcraft_math::Editor`, caret geometry from `deckcraft_text::layout_equation`, drawing in
+`crates/ui-egui/src/eqdialog.rs`); `equation.type` drives the same editor from commands. Not yet:
+copy/paste of selected sub-trees inside the canvas, undo inside the dialog, auto-paired brackets.
+
+Equation known gap: radical and stretchy-delimiter fit (radical sign weight, bracket height and
+stroke) is close to, but not at, KaTeX quality because glyphs come from the text font, not a math
+font. The real fix is a math-capable OFL font (STIX Two Math or Latin Modern Math) added through
+craft-fonts and used for variants and extensible parts in `crates/text/src/math.rs`.
+
 Basis: in this session the engine, renderer, UI, show engine, PPTX, PDF, media and release
 pipeline were built in about 30 wall-clock hours with up to three agents in parallel; recent
 catalogue rows (connectors, freeform, merge shapes, AutoRecover, gradients) took 1–2 hours each.

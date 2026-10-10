@@ -16,6 +16,7 @@ deckcraft-geom = { path = "crates/geom" }
 deckcraft-color = { path = "crates/color" }
 deckcraft-model = { path = "crates/model" }
 deckcraft-fonts = { path = "crates/fonts" }
+deckcraft-math = { path = "crates/math" }
 deckcraft-text = { path = "crates/text" }
 deckcraft-render = { path = "crates/render" }
 deckcraft-pdf = { path = "crates/pdf" }

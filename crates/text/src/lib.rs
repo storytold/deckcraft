@@ -21,6 +21,8 @@
 
 mod bidi;
 pub mod datetime;
+mod math;
+pub use math::{EqLayout, SeqGeo, layout_equation};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -74,6 +76,9 @@ pub struct Deco {
     pub behind: bool,
     /// Paragraph the decoration belongs to (by-paragraph animation).
     pub para: usize,
+    /// A filled vector shape (equation radicals, delimiters, big operators), in layout
+    /// coordinates; `rect` is its bounding box. `None` for plain boxes.
+    pub path: Option<std::sync::Arc<kurbo::BezPath>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -202,6 +207,10 @@ struct Cell {
     head: usize,
     /// A grapheme starts here: carets stand and lines break only before such cells.
     boundary: bool,
+    /// First cell of an equation: index into `ParaShaped::atoms`. The equation is one object
+    /// (U+FFFC, neutral for bidi) followed by zero-width word joiners, one per further character
+    /// of the run, so character counts and caret offsets match the run's text.
+    atom: Option<usize>,
 }
 
 impl Cell {
@@ -213,6 +222,8 @@ impl Cell {
 
 struct ParaShaped {
     cells: Vec<Cell>,
+    /// Laid-out equations referenced by `Cell::atom`.
+    atoms: Vec<Arc<math::MathBox>>,
     styles: Vec<Style>,
     faces: Vec<Arc<FontFace>>,
     props: ParaProps,
@@ -405,6 +416,7 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
         let face = db.face("Inter", "Regular");
         return ParaShaped {
             cells: vec![],
+            atoms: vec![],
             styles: vec![],
             faces: vec![],
             props: ParaProps::default(),
@@ -422,21 +434,50 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
     // The logical paragraph: its text and each character's style.
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
+    // Characters standing for an equation, and (first character, atom index) of each equation.
+    let mut atom_chars: Vec<bool> = vec![];
+    let mut atom_first: Vec<(usize, usize)> = vec![];
+    let mut atoms: Vec<Arc<math::MathBox>> = vec![];
+    // An equation alone in its paragraph is set in display style, like a displayed formula.
+    let solo = para.runs.iter().filter(|r| !r.text.is_empty() || matches!(r.kind, RunKind::Math { .. })).count() == 1;
     for run in &para.runs {
         let rp = resolve::run(ctx, shape, para, &run.props);
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
+        if let RunKind::Math { omml } = &run.kind {
+            // One object character for the equation and a word joiner per further character of
+            // the run: bidi sees a neutral object, line breaking cannot split it, and character
+            // counts match the run's text.
+            let n = run.char_len().max(1);
+            let mbox = math::layout_math_cached(omml, &st.face, st.size, rp.bold.unwrap_or(false), solo);
+            let si = styles.len();
+            styles.push(st);
+            atom_first.push((char_style.len(), atoms.len()));
+            atoms.push(mbox);
+            text.push('\u{FFFC}');
+            text.extend(std::iter::repeat_n('\u{2060}', n - 1));
+            char_style.extend(std::iter::repeat_n(si, n));
+            atom_chars.extend(std::iter::repeat_n(true, n));
+            continue;
+        }
         let t: String = match &run.kind {
             RunKind::Text => run.text.clone(),
             RunKind::Break => "\u{b}".into(),
             RunKind::Field { field } => opts.fields.field_in(field, rp.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
-            RunKind::Math { .. } => run.text.clone(),
+            RunKind::Math { .. } => String::new(),
         };
         let si = styles.len();
         styles.push(st);
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
+        atom_chars.extend(std::iter::repeat_n(false, t.chars().count()));
         text.push_str(&t);
     }
-    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl);
+    let mut cells = shape_cells(ctx, &text, &char_style, &atom_chars, &styles, &mut faces, rtl);
+    for (ci, ai) in atom_first {
+        if let (Some(c), Some(m)) = (cells.get_mut(ci), atoms.get(ai)) {
+            c.atom = Some(ai);
+            c.adv = m.w;
+        }
+    }
     let lead = para.runs.first().map(|r| resolve::run(ctx, shape, para, &r.props)).unwrap_or_else(|| resolve::run(ctx, shape, para, &para.end_props));
     let lead_style = make_style(ctx, &lead, scale, opts.prompt_color);
     let lead_size = lead_style.size;
@@ -482,12 +523,22 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
             _ => None,
         }
     };
-    ParaShaped { cells, styles, faces, props, lead_size, lead_face, bullet, level: para.level, rtl }
+    ParaShaped { cells, atoms, styles, faces, props, lead_size, lead_face, bullet, level: para.level, rtl }
 }
 
 /// Shape a logical paragraph into cells: bidi levels, per-grapheme faces, items of one level,
-/// script, face and shaping style, each shaped with the whole paragraph as context.
-fn shape_cells(ctx: &Ctx, text: &str, char_style: &[usize], styles: &[Style], faces: &mut Vec<Arc<FontFace>>, rtl: bool) -> Vec<Cell> {
+/// script, face and shaping style, each shaped with the whole paragraph as context. Characters
+/// flagged in `atom_chars` stand for an equation: they take part in bidi (as neutrals) and line
+/// breaking but are never shaped, and only the first is a place to put the caret or break.
+fn shape_cells(
+    ctx: &Ctx,
+    text: &str,
+    char_style: &[usize],
+    atom_chars: &[bool],
+    styles: &[Style],
+    faces: &mut Vec<Arc<FontFace>>,
+    rtl: bool,
+) -> Vec<Cell> {
     let db = FontDb::global();
     let chars: Vec<char> = text.chars().collect();
     let n = chars.len();
@@ -497,6 +548,9 @@ fn shape_cells(ctx: &Ctx, text: &str, char_style: &[usize], styles: &[Style], fa
     let char_at_byte: HashMap<usize, usize> = byte_of.iter().enumerate().map(|(i, b)| (*b, i)).collect();
     let levels = bidi::levels(text, &chars, rtl);
     let scripts = script::resolve(&chars);
+    let is_atom = |i: usize| atom_chars.get(i).copied().unwrap_or(false);
+    // An equation's first character starts it; its word joiners continue it.
+    let atom_start = |i: usize| is_atom(i) && (i == 0 || !is_atom(i - 1) || chars.get(i) == Some(&'\u{FFFC}'));
     let mut boundary = vec![false; n];
     let mut graphemes: Vec<(usize, usize)> = Vec::new();
     for (b, g) in text.grapheme_indices(true) {
@@ -521,6 +575,15 @@ fn shape_cells(ctx: &Ctx, text: &str, char_style: &[usize], styles: &[Style], fa
         let Some(cluster) = chars.get(a..b) else { continue };
         let si = char_style.get(a).copied().unwrap_or(0);
         let Some(st) = styles.get(si) else { continue };
+        if is_atom(a) {
+            // Never shaped: only the face index must be valid.
+            let fi = face_index(faces, &st.face);
+            for f in char_face.get_mut(a..b).into_iter().flatten() {
+                *f = fi;
+            }
+            prev = None;
+            continue;
+        }
         let (sc, slot) = scripts.get(a).copied().unwrap_or((None, FontSlot::Latin));
         // Spaces, digits and punctuation stay in the face of the text before them when it can
         // draw them, so a phrase isn't cut into items at every space.
@@ -547,7 +610,8 @@ fn shape_cells(ctx: &Ctx, text: &str, char_style: &[usize], styles: &[Style], fa
             glyphs: vec![],
             adv: 0.0,
             head: i,
-            boundary: boundary.get(i).copied().unwrap_or(true),
+            boundary: if is_atom(i) { atom_start(i) } else { boundary.get(i).copied().unwrap_or(true) },
+            atom: None,
         })
         .collect();
     // Items: maximal ranges of one level, face, script and shaping style (case mapping, language).
@@ -557,7 +621,15 @@ fn shape_cells(ctx: &Ctx, text: &str, char_style: &[usize], styles: &[Style], fa
     let mut a = 0;
     while a < n {
         let mut b = a + 1;
-        while b < n && key(b) == key(a) {
+        if is_atom(a) {
+            // An equation is its own item and is not shaped (the layout draws its box).
+            while b < n && is_atom(b) && !atom_start(b) {
+                b += 1;
+            }
+            a = b;
+            continue;
+        }
+        while b < n && !is_atom(b) && key(b) == key(a) {
             b += 1;
         }
         shape_item(&mut cells, styles, faces, text, &byte_of, &char_at_byte, a..b, scripts.get(a).and_then(|s| s.0), lang(a), upper(a));
@@ -932,6 +1004,10 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     desc = desc.max(d);
                     size = size.max(sz);
                 }
+                if let Some(m) = c.atom.and_then(|a| p.atoms.get(a)) {
+                    asc = asc.max(m.asc + 1.0);
+                    desc = desc.max(m.desc + 1.0);
+                }
             }
             if size == 0.0 {
                 let (a, d) = line_metrics(&p.lead_face, p.lead_size);
@@ -1154,6 +1230,22 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
             let Some(cell) = p.cells.get(ci) else { continue };
             let Some(st) = p.styles.get(cell.style) else { continue };
             let Some(&(cx, cx1)) = line.edges.get(k) else { continue };
+            if let Some(m) = cell.atom.and_then(|a| p.atoms.get(a)) {
+                // An equation: flush the pending glyph run and draw the atom on the baseline, in
+                // the box this cell was given in visual order (so at any bidi level). The box
+                // itself is never mirrored. Its word joiners follow it in logical order.
+                if let Some(r) = cur.take() {
+                    out.runs.push(r);
+                }
+                cur_key = (usize::MAX, usize::MAX);
+                let joiners = p.cells.iter().skip(ci + 1).take_while(|c| c.atom.is_none() && c.ch == '\u{2060}').count();
+                let base_y = line.baseline - st.baseline * st.size;
+                math::emit(m, cx, base_y, st.color, st.alpha, line.para, (ci, ci + 1 + joiners), &mut out.runs, &mut out.decos);
+                if let Some(hl) = st.highlight {
+                    out.decos.push(Deco { rect: Rect::new(cx, line.top, cx1, line.bottom), color: hl, behind: true, para: line.para, path: None });
+                }
+                continue;
+            }
             let base_y = line.baseline - st.baseline * st.size;
             let size = if st.baseline != 0.0 { st.size * 0.66 } else { st.size };
             let size = if st.caps == Caps::Small && cell.ch.is_lowercase() { size * 0.8 } else { size };
@@ -1216,20 +1308,26 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                 continue;
             }
             if let Some(hl) = st.highlight {
-                out.decos.push(Deco { rect: Rect::new(cx, line.top, cx1, line.bottom), color: hl, behind: true, para: line.para });
+                out.decos.push(Deco { rect: Rect::new(cx, line.top, cx1, line.bottom), color: hl, behind: true, para: line.para, path: None });
             }
             if !cell.ch.is_whitespace() || st.underline.is_some() {
                 if let Some(uc) = st.underline {
                     let t = (st.size * 0.06).max(0.5);
                     let uy = line.baseline + st.size * 0.12;
-                    out.decos.push(Deco { rect: Rect::new(cx, uy, cx1, uy + t), color: uc, behind: false, para: line.para });
+                    out.decos.push(Deco { rect: Rect::new(cx, uy, cx1, uy + t), color: uc, behind: false, para: line.para, path: None });
                 }
                 if let Some(sk) = st.strike {
                     let t = (st.size * 0.05).max(0.5);
                     let sy = line.baseline - st.size * 0.3;
-                    out.decos.push(Deco { rect: Rect::new(cx, sy, cx1, sy + t), color: st.color, behind: false, para: line.para });
+                    out.decos.push(Deco { rect: Rect::new(cx, sy, cx1, sy + t), color: st.color, behind: false, para: line.para, path: None });
                     if sk == Strike::Double {
-                        out.decos.push(Deco { rect: Rect::new(cx, sy - t * 2.0, cx1, sy - t), color: st.color, behind: false, para: line.para });
+                        out.decos.push(Deco {
+                            rect: Rect::new(cx, sy - t * 2.0, cx1, sy - t),
+                            color: st.color,
+                            behind: false,
+                            para: line.para,
+                            path: None,
+                        });
                     }
                 }
             }
@@ -1261,6 +1359,8 @@ fn merge_decos(v: Vec<Deco>) -> Vec<Deco> {
         if let Some(last) = out.last_mut()
             && last.color == d.color
             && last.behind == d.behind
+            && last.path.is_none()
+            && d.path.is_none()
             && (last.rect.y0 - d.rect.y0).abs() < 0.01
             && (last.rect.y1 - d.rect.y1).abs() < 0.01
             && (last.rect.x1 - d.rect.x0).abs() < 0.5

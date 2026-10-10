@@ -4,6 +4,7 @@ pub mod animation;
 pub mod arrange;
 pub mod design;
 pub mod edit;
+pub mod equation;
 pub mod file;
 pub mod format;
 pub mod insert;
@@ -128,6 +129,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(edit::specs());
         v.extend(slide::specs());
         v.extend(insert::specs());
+        v.extend(equation::specs());
         v.extend(shape::specs());
         v.extend(arrange::specs());
         v.extend(merge::specs());

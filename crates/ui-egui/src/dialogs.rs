@@ -14,11 +14,14 @@ pub struct Dialog {
     /// Field values while the dialog is open.
     #[serde(skip)]
     pub fields: std::collections::HashMap<String, String>,
+    /// The equation editor's state while the Equation dialog is open.
+    #[serde(skip)]
+    pub eq: Option<Box<crate::eqdialog::EqState>>,
 }
 
 impl Dialog {
     pub fn new(id: &str) -> Self {
-        Dialog { id: id.into(), params: Value::Null, fields: Default::default() }
+        Dialog { id: id.into(), params: Value::Null, fields: Default::default(), eq: None }
     }
     pub fn modal(&self) -> bool {
         true
@@ -68,18 +71,22 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         .id(egui::Id::new(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
+        .anchor(
+            if d.id == "equation" { Align2::CENTER_TOP } else { Align2::CENTER_CENTER },
+            if d.id == "equation" { vec2(0.0, 48.0) } else { vec2(0.0, -40.0) },
+        )
         .open(&mut open)
         .show(ctx, |ui| {
             ui.set_min_width(340.0);
             close = body(app, ui, &mut d);
         });
-    if open && !close && !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && (d.id != "equation" || crate::eqdialog::escape_closes(&mut d));
+    if open && !close && !esc {
         app.dialog = Some(d);
     }
 }
 
-fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+pub(crate) fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
     ui.add_space(8.0);
@@ -498,23 +505,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let (ok, cancel) = buttons(ui, "Close");
             ok || cancel
         }
-        "equation" => {
-            ui.label("Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).");
-            let mut v = d.get("eq", "");
-            ui.add(egui::TextEdit::singleline(&mut v).desired_width(340.0).font(theme::font(15.0)));
-            d.fields.insert("eq".into(), v.clone());
-            let (ok, cancel) = buttons(ui, "Insert");
-            if ok && !v.is_empty() {
-                let pretty = pretty_equation(&v);
-                let size = app.session.active().map(|s| s.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
-                run(app, "insert.textBox", json!({"rect": [size.width / 2.0 - 150.0, size.height / 2.0 - 25.0, 300, 50], "text": pretty}));
-                run(app, "text.exit", json!({}));
-                run(app, "format.font", json!({"family": "Liberation Serif"}));
-                run(app, "format.italic", json!({"on": true}));
-                run(app, "format.size", json!({"size": 28}));
-            }
-            ok || cancel
-        }
+        "equation" => crate::eqdialog::body(app, ui, d),
         "spelling" => {
             let v = app.session.execute("review.spelling", &json!({})).unwrap_or_default();
             let list = v.as_array().cloned().unwrap_or_default();
@@ -742,48 +733,6 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ok || cancel
         }
     }
-}
-
-fn pretty_equation(s: &str) -> String {
-    let sup = |c: char| match c {
-        '0' => '⁰',
-        '1' => '¹',
-        '2' => '²',
-        '3' => '³',
-        '4' => '⁴',
-        '5' => '⁵',
-        '6' => '⁶',
-        '7' => '⁷',
-        '8' => '⁸',
-        '9' => '⁹',
-        'n' => 'ⁿ',
-        'i' => 'ⁱ',
-        '+' => '⁺',
-        '-' => '⁻',
-        _ => c,
-    };
-    let mut out = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '^' => {
-                while let Some(&n) = chars.peek() {
-                    if n.is_ascii_alphanumeric() || n == '+' || n == '-' {
-                        out.push(sup(n));
-                        chars.next();
-                        if !n.is_ascii_digit() {
-                            break;
-                        }
-                    } else {
-                        break;
-                    }
-                }
-            }
-            '*' => out.push('·'),
-            _ => out.push(c),
-        }
-    }
-    out.replace("sqrt", "√").replace("<=", "≤").replace(">=", "≥").replace("!=", "≠").replace("pi", "π").replace("+-", "±")
 }
 
 pub fn about(_app: &mut SlideApp, ui: &mut Ui) {

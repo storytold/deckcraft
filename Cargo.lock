@@ -943,6 +943,7 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-format",
  "deckcraft-geom",
+ "deckcraft-math",
  "deckcraft-media",
  "deckcraft-model",
  "deckcraft-pdf",
@@ -1012,6 +1013,14 @@ version = "0.4.0"
 dependencies = [
  "deckcraft-bitstream",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "deckcraft-math"
+version = "0.4.0"
+dependencies = [
+ "quick-xml 0.38.4",
+ "serde",
 ]
 
 [[package]]
@@ -1087,6 +1096,7 @@ dependencies = [
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-geom",
+ "deckcraft-math",
  "deckcraft-model",
  "image",
  "log",
@@ -1120,7 +1130,9 @@ dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-geom",
+ "deckcraft-math",
  "deckcraft-model",
+ "kurbo",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-segmentation",
@@ -1135,6 +1147,7 @@ dependencies = [
  "deckcraft-engine",
  "deckcraft-fonts",
  "deckcraft-geom",
+ "deckcraft-math",
  "deckcraft-media",
  "deckcraft-model",
  "deckcraft-render",
