@@ -1154,6 +1154,17 @@ pub(crate) fn draw_glyph(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun
     }
 }
 
+/// Render an equation laid out by `deckcraft_text::layout_equation` onto a transparent canvas
+/// (the equation editor's canvas); `scale` is pixels per point.
+pub fn render_eq(l: &deckcraft_text::EqLayout, scale: f64) -> Image {
+    let scale = if scale.is_finite() { scale.clamp(0.1, 16.0) } else { 1.0 };
+    let w = (l.width * scale).ceil().clamp(1.0, MAX_SIDE as f64) as u16;
+    let h = (l.height * scale).ceil().clamp(1.0, MAX_SIDE as f64) as u16;
+    let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+    draw_layout(&mut ctx, &l.layout, Rect::new(0.0, 0.0, l.width, l.height), Affine::scale(scale));
+    RENDERER.with(|r| r.borrow_mut().finish(ctx, w, h))
+}
+
 /// Render one shape alone onto a transparent canvas (drag previews, copy as picture).
 pub fn render_shape(pres: &Presentation, slide: &Slide, id: ShapeId, scale: f64) -> Option<Image> {
     let rctx = Ctx::for_slide(pres, slide)?;

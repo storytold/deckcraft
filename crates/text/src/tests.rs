@@ -396,7 +396,6 @@ fn hostile_bidi_input_never_panics() {
     }
 }
 
-
 fn math_run(lin: &str) -> Run {
     let m = deckcraft_math::from_linear(lin);
     let mut r = Run::new(deckcraft_math::run_text(&m));

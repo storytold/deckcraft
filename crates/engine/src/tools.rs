@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use deckcraft_geom::{Affine, Point, Rect, Vec2, Xfrm};
+use deckcraft_model::text::RunKind;
 use deckcraft_model::{Shape, ShapeId, ShapeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -781,7 +782,15 @@ impl Session {
             return Ok(Value::Null);
         }
         let st = self.doc()?;
-        if st.selection.text.is_some() {
+        if let Some(t) = st.selection.text.clone() {
+            if !t.notes
+                && t.cell.is_none()
+                && let Some(sh) = st.shape(t.shape).cloned()
+                && let Some((pi, ri)) = math_run_at(st, &sh, p)
+            {
+                self.ui_requests.push(equation_dialog(sh.id, None, pi, ri));
+                return Ok(Value::Null);
+            }
             return self.execute("text.selectWord", &json!({}));
         }
         match self.hit_test(p, tol) {
@@ -794,11 +803,24 @@ impl Session {
                         let local = x.affine().inverse() * p;
                         if let ShapeKind::Table(t) = &sh.kind {
                             let cell = deckcraft_render_cell(t, &table_rows(st, t), local);
+                            // A cell holding nothing but one equation opens the equation editor.
+                            if let Some(body) = t.cell(cell.0, cell.1).map(|c| &c.text)
+                                && let [para] = body.paragraphs.as_slice()
+                                && let [run] = para.runs.as_slice()
+                                && matches!(run.kind, RunKind::Math { .. })
+                            {
+                                self.ui_requests.push(equation_dialog(id, Some(cell), 0, 0));
+                                return Ok(Value::Null);
+                            }
                             return self.execute("text.edit", &json!({"id": id, "cell": [cell.0, cell.1]}));
                         }
                         Ok(Value::Null)
                     }
                     ShapeKind::Shape | ShapeKind::Connector { .. } if !sh.is_line() => {
+                        if let Some((pi, ri)) = math_run_at(st, &sh, p) {
+                            self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                            return Ok(Value::Null);
+                        }
                         let pos = text_pos(st, &sh, p);
                         self.execute("text.edit", &json!({"id": id, "at": [pos.0, pos.1]}))?;
                         self.execute("text.selectWord", &json!({}))
@@ -1280,6 +1302,54 @@ pub fn table_rows(st: &crate::DocState, t: &deckcraft_model::Table) -> Vec<f64> 
     cmd::table_drawn_heights(&st.doc, &st.selection, t)
 }
 
+/// The equation run (paragraph, run) under slide point `p` in a non-table shape, if any. The
+/// equation is one atom whose characters all sit at its edges, so this tests the point against
+/// the atom's horizontal extent and its line instead of the nearest caret position.
+fn math_run_at(st: &crate::DocState, sh: &Shape, p: Point) -> Option<(usize, usize)> {
+    let body = sh.text.as_ref()?;
+    if !body.paragraphs.iter().any(|q| q.runs.iter().any(|r| matches!(r.kind, RunKind::Math { .. }))) {
+        return None;
+    }
+    // A box that holds nothing but one equation is that equation: any point in it opens the editor.
+    if let [q] = body.paragraphs.as_slice()
+        && let [r] = q.runs.as_slice()
+        && matches!(r.kind, RunKind::Math { .. })
+    {
+        return Some((0, 0));
+    }
+    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let local = x.affine().inverse() * p;
+    let t = TextSel { shape: sh.id, ..Default::default() };
+    let l = cmd::text::layout_for(st, &t)?;
+    for (pi, q) in body.paragraphs.iter().enumerate() {
+        let mut at = 0;
+        for (ri, r) in q.runs.iter().enumerate() {
+            let end = at + r.char_len();
+            if matches!(r.kind, RunKind::Math { .. })
+                && let Some((x0, top, bottom)) = l.caret(deckcraft_text::Pos { para: pi, ch: at })
+                && let Some((x1, _, _)) = l.caret(deckcraft_text::Pos { para: pi, ch: end })
+                && local.x >= x0.min(x1) - 2.0
+                && local.x <= x0.max(x1) + 2.0
+                && local.y >= top
+                && local.y <= bottom
+            {
+                return Some((pi, ri));
+            }
+            at = end;
+        }
+    }
+    None
+}
+
+/// The request that opens the equation editor on one equation run.
+fn equation_dialog(id: ShapeId, cell: Option<(usize, usize)>, paragraph: usize, run: usize) -> crate::UiRequest {
+    let mut params = json!({"edit": true, "id": id, "paragraph": paragraph, "run": run});
+    if let (Some((r, c)), Some(o)) = (cell, params.as_object_mut()) {
+        o.insert("cell".into(), json!([r, c]));
+    }
+    crate::UiRequest::Dialog { id: "equation".into(), params }
+}
+
 /// Which table cell contains a table-local point (`heights` from [`table_rows`]).
 fn deckcraft_render_cell(t: &deckcraft_model::Table, heights: &[f64], p: Point) -> (usize, usize) {
     let mut y = 0.0;
@@ -1329,5 +1399,41 @@ mod tests {
         let n = resize_box(&o, 4, Vec2::new(-10.0, 30.0), false, false);
         let anchor2 = n.affine() * Point::new(0.0, 0.0);
         assert!((anchor - anchor2).hypot() < 1e-6, "{anchor:?} {anchor2:?}");
+    }
+
+    fn dbl(s: &mut Session, x: f64, y: f64) {
+        let ev = PointerEvent { kind: PointerKind::DoubleClick, x, y, ..Default::default() };
+        s.pointer(ev).unwrap();
+    }
+
+    #[test]
+    fn double_click_on_equation_opens_the_dialog_and_elsewhere_does_not() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        s.ui_requests.clear();
+        // Find the equation's extent from the layout, then click on it.
+        let st = s.doc().unwrap();
+        let sh = st.shape(ShapeId(id as u32)).unwrap().clone();
+        let t = TextSel { shape: sh.id, ..Default::default() };
+        let l = cmd::text::layout_for(st, &t).unwrap();
+        let n = sh.text.as_ref().unwrap().paragraphs[0].runs[0].char_len();
+        let (x0, top, bottom) = l.caret(deckcraft_text::Pos { para: 0, ch: 0 }).unwrap();
+        let (x1, _, _) = l.caret(deckcraft_text::Pos { para: 0, ch: n }).unwrap();
+        let x = xfrm_of(&st.doc, &st.selection, &sh);
+        let hit = x.affine() * Point::new((x0 + x1) / 2.0, (top + bottom) / 2.0);
+        dbl(&mut s, hit.x, hit.y);
+        assert_eq!(
+            s.ui_requests,
+            vec![crate::UiRequest::Dialog { id: "equation".into(), params: json!({"edit": true, "id": id, "paragraph": 0, "run": 0}) }]
+        );
+        // Blank padding of a box that holds only the equation opens it too.
+        s.ui_requests.clear();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        let far = x.affine() * Point::new(x1 + 120.0, (top + bottom) / 2.0);
+        dbl(&mut s, far.x, far.y);
+        assert_eq!(s.ui_requests.len(), 1);
+        assert!(matches!(s.ui_requests[0], crate::UiRequest::Dialog { .. }));
     }
 }

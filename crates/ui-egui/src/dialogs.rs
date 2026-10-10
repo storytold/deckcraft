@@ -14,11 +14,14 @@ pub struct Dialog {
     /// Field values while the dialog is open.
     #[serde(skip)]
     pub fields: std::collections::HashMap<String, String>,
+    /// The equation editor's state while the Equation dialog is open.
+    #[serde(skip)]
+    pub eq: Option<Box<crate::eqdialog::EqState>>,
 }
 
 impl Dialog {
     pub fn new(id: &str) -> Self {
-        Dialog { id: id.into(), params: Value::Null, fields: Default::default() }
+        Dialog { id: id.into(), params: Value::Null, fields: Default::default(), eq: None }
     }
     pub fn modal(&self) -> bool {
         true
@@ -68,18 +71,22 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         .id(egui::Id::new(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
+        .anchor(
+            if d.id == "equation" { Align2::CENTER_TOP } else { Align2::CENTER_CENTER },
+            if d.id == "equation" { vec2(0.0, 48.0) } else { vec2(0.0, -40.0) },
+        )
         .open(&mut open)
         .show(ctx, |ui| {
             ui.set_min_width(340.0);
             close = body(app, ui, &mut d);
         });
-    if open && !close && !ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+    let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape)) && (d.id != "equation" || crate::eqdialog::escape_closes(&mut d));
+    if open && !close && !esc {
         app.dialog = Some(d);
     }
 }
 
-fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+pub(crate) fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
     ui.add_space(8.0);
@@ -498,17 +505,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let (ok, cancel) = buttons(ui, "Close");
             ok || cancel
         }
-        "equation" => {
-            ui.label("Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).");
-            let mut v = d.get("eq", "");
-            ui.add(egui::TextEdit::singleline(&mut v).desired_width(340.0).font(theme::font(15.0)));
-            d.fields.insert("eq".into(), v.clone());
-            let (ok, cancel) = buttons(ui, "Insert");
-            if ok && !v.trim().is_empty() {
-                run(app, "insert.equation", json!({"linear": v}));
-            }
-            ok || cancel
-        }
+        "equation" => crate::eqdialog::body(app, ui, d),
         "spelling" => {
             let v = app.session.execute("review.spelling", &json!({})).unwrap_or_default();
             let list = v.as_array().cloned().unwrap_or_default();

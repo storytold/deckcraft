@@ -47,6 +47,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(query "equation.templates", "Equation Templates", [], None, "{} → [{id, label, group, linear, omml}]", always, templates),
         cmd!(
+            query "equation.type",
+            "Type into Equation",
+            [],
+            None,
+            "{input: string | [string], linear? | omml?, display?} → {omml, linear, display, tree, caret: {path, pos}, selection}: types into an equation like the editor does (`x^2`, `a/`, `sqrt`, `alpha`); an item like `<Right>`, `<Shift+Left>`, `<Backspace>` is a key",
+            always,
+            type_input
+        ),
+        cmd!(
             query "equation.fromLinear",
             "Linear Text to Equation",
             [],
@@ -372,6 +381,49 @@ fn from_linear(_s: &mut Session, p: &Value) -> Result<Value> {
     Ok(describe(&m))
 }
 
+/// Most input items one `equation.type` call takes.
+const MAX_INPUT_ITEMS: usize = 10_000;
+
+/// Type into an equation as the editor does: characters build structure, `<Key>` items press keys.
+fn type_input(_s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "equation.type";
+    let items: Vec<&str> = match opt(p, "input") {
+        Some(Value::String(t)) => vec![t.as_str()],
+        Some(Value::Array(a)) if a.len() <= MAX_INPUT_ITEMS => {
+            a.iter().map(|x| x.as_str().ok_or_else(|| bad(CMD, "`input` items must be strings"))).collect::<Result<_>>()?
+        }
+        _ => return Err(bad(CMD, "`input` must be a string or a list of at most 10000 strings")),
+    };
+    if items.iter().map(|t| t.len()).sum::<usize>() > MAX_LINEAR {
+        return Err(bad(CMD, "`input` is too large"));
+    }
+    let mut m = if opt(p, "omml").is_some() || opt(p, "linear").is_some() { math_param(CMD, p)? } else { Math::default() };
+    if let Some(d) = opt_bool(CMD, p, "display")? {
+        m.para = d;
+    }
+    let mut ed = deckcraft_math::Editor::new(m);
+    for item in items {
+        match item.strip_prefix('<').and_then(|t| t.strip_suffix('>')) {
+            Some(name) => {
+                let (shift, key) = match name.split_once('+') {
+                    Some((m, k)) if m.eq_ignore_ascii_case("shift") => (true, k),
+                    _ => (false, name),
+                };
+                let key = deckcraft_math::Key::parse(key).ok_or_else(|| bad(CMD, format!("unknown key `{item}`")))?;
+                ed.key(key, shift);
+            }
+            None => ed.type_str(item),
+        }
+    }
+    let mut v = describe(ed.math());
+    let c = ed.caret();
+    if let Some(o) = v.as_object_mut() {
+        o.insert("caret".into(), json!({"path": c.path.iter().map(|(i, k)| json!([i, k])).collect::<Vec<_>>(), "pos": c.pos}));
+        o.insert("selection".into(), ed.selection().map_or(Value::Null, |(a, b)| json!([a, b])));
+    }
+    Ok(v)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -693,5 +745,49 @@ mod tests {
         let runs = &sh.text.unwrap().paragraphs[0].runs;
         assert!(runs.iter().all(|r| r.kind == deckcraft_model::text::RunKind::Text));
         assert_eq!(runs.iter().map(|r| r.text.as_str()).collect::<String>(), "hello");
+    }
+
+    #[test]
+    fn type_builds_structure_like_the_editor() {
+        let mut s = session();
+        let r = s.execute("equation.type", &json!({"input": "x^2"})).unwrap();
+        assert_eq!(r["linear"].as_str().unwrap().replace(' ', ""), "x^2");
+        assert_eq!(r["caret"]["path"], json!([[0, 1]]), "caret is in the exponent");
+        assert!(r["omml"].as_str().unwrap().contains("m:sSup"));
+        // Keys continue where the caret is; a list mixes text and keys.
+        let r = s.execute("equation.type", &json!({"input": ["a/", "b", "<Right>", "+", "sqrt", "x", "<Right>", "alpha"]})).unwrap();
+        let l = r["linear"].as_str().unwrap().replace(' ', "");
+        assert!(l.contains('√') && l.contains('α') && l.contains('/'), "{l}");
+        // It starts from an equation when given one, and reports the selection.
+        let r = s.execute("equation.type", &json!({"linear": "ab", "input": ["<Shift+Left>"]})).unwrap();
+        assert_eq!(r["selection"], json!([1, 2]));
+        let r = s.execute("equation.type", &json!({"linear": "a^2", "input": ["<Home>", "<Home>", "<Delete>"]})).unwrap();
+        assert_eq!(r["linear"].as_str().unwrap().replace(' ', ""), "a^2", "Delete steps into the script, not wipes it");
+        // Delete in front of a filled structure steps in; undo and Tab are keys too.
+        let r = s.execute("equation.type", &json!({"linear": "a/b", "input": ["<Home>", "<Home>", "<Delete>"]})).unwrap();
+        assert!(!r["linear"].as_str().unwrap().trim().is_empty(), "{r}");
+        let r = s.execute("equation.type", &json!({"input": ["a/b", "<Tab>", "c", "<Undo>"]})).unwrap();
+        assert_eq!(r["linear"].as_str().unwrap().replace(['(', ')', ' '], ""), "a/b", "{r}");
+        // Nothing is inserted: it is a query.
+        assert!(s.doc().unwrap().current_slide().unwrap().shapes.len() <= 2);
+    }
+
+    #[test]
+    fn type_rejects_bad_input_and_survives_hostile_keys() {
+        let mut s = session();
+        for p in [
+            json!({}),
+            json!({"input": 5}),
+            json!({"input": [1]}),
+            json!({"input": ["<Sideways>"]}),
+            json!({"input": "x", "display": "yes"}),
+            json!({"input": "x", "omml": "junk"}),
+        ] {
+            assert!(s.execute("equation.type", &p).is_err(), "{p}");
+        }
+        assert!(s.execute("equation.type", &json!({"input": "x".repeat(super::MAX_LINEAR + 1)})).is_err());
+        let many: Vec<&str> = (0..5000).map(|i| ["^", "_", "/", "sqrt", "<Left>", "<Backspace>", "<Up>", "<Right>", "<Down>"][i % 9]).collect();
+        let r = s.execute("equation.type", &json!({"input": many}));
+        assert!(r.is_ok(), "{:?}", r.err());
     }
 }

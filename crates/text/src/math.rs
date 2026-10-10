@@ -53,6 +53,20 @@ pub(crate) struct MathBox {
     pub asc: f64,
     pub desc: f64,
     pub items: Vec<Item>,
+    /// Caret geometry of every row laid out inside this box (box-local).
+    pub geo: Vec<SeqGeo>,
+}
+
+/// Where the caret positions of one row (a child sequence of the math tree) sit.
+#[derive(Clone, Debug, Default)]
+pub struct SeqGeo {
+    /// Route to the row, as in `deckcraft_math::Path`.
+    pub path: Vec<(usize, usize)>,
+    /// x of each unit boundary: `units + 1` entries.
+    pub xs: Vec<f64>,
+    /// Vertical extent of the caret in this row (y down, baseline 0).
+    pub top: f64,
+    pub bottom: f64,
 }
 
 impl MathBox {
@@ -64,6 +78,14 @@ impl MathBox {
         self.w = self.w.max(dx + o.w);
         self.asc = self.asc.max(o.asc - dy);
         self.desc = self.desc.max(o.desc + dy);
+        for mut g in o.geo {
+            for x in &mut g.xs {
+                *x += dx;
+            }
+            g.top += dy;
+            g.bottom += dy;
+            self.geo.push(g);
+        }
         for it in o.items {
             self.items.push(match it {
                 Item::Glyphs(mut g) => {
@@ -168,6 +190,9 @@ impl St {
         self >= St::Script
     }
 }
+
+/// Caret unit mark: x lies at `f` between part boundaries `a` and `b`.
+type Mark = (usize, usize, f64);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Var {
@@ -319,6 +344,10 @@ struct Lay {
     size: f64,
     bold: bool,
     budget: usize,
+    /// Route to the row being laid out (see `SeqGeo::path`).
+    path: Vec<(usize, usize)>,
+    /// Index, in its row, of the node being laid out.
+    cur: usize,
 }
 
 /// Ink box of a glyph in font units, y down: (x0, y0, x1, y1).
@@ -467,14 +496,30 @@ impl Lay {
 
     fn seq(&mut self, s: &[Node], st: St, depth: usize) -> MathBox {
         let mut parts: Vec<MathBox> = vec![];
+        let mut marks: Vec<Mark> = vec![];
         let mut prev = Class::None;
-        for n in s {
+        let path = self.path.clone();
+        for (i, n) in s.iter().enumerate() {
             if self.budget == 0 {
                 break;
             }
-            self.node(n, st, depth, &mut prev, &mut parts);
+            self.cur = i;
+            self.node(n, st, depth, &mut prev, &mut parts, &mut marks);
         }
-        MathBox::row(parts)
+        // x of every part boundary, then of every caret unit.
+        let mut pre = vec![0.0];
+        let mut x = 0.0;
+        for p in &parts {
+            x += p.w;
+            pre.push(x);
+        }
+        let at = |k: usize| pre.get(k).copied().unwrap_or(x);
+        let mut xs: Vec<f64> = marks.iter().map(|m| at(m.0) + m.2 * (at(m.1) - at(m.0))).collect();
+        xs.push(x);
+        let mut row = MathBox::row(parts);
+        let sz = self.size * st.factor();
+        row.geo.push(SeqGeo { path, xs, top: (-row.asc).min(-0.72 * sz), bottom: row.desc.max(0.22 * sz) });
+        row
     }
 
     fn push_gap(&self, parts: &mut Vec<MathBox>, prev: Class, next: Class, st: St) {
@@ -484,13 +529,16 @@ impl Lay {
         }
     }
 
-    fn node(&mut self, n: &Node, st: St, depth: usize, prev: &mut Class, parts: &mut Vec<MathBox>) {
+    fn node(&mut self, n: &Node, st: St, depth: usize, prev: &mut Class, parts: &mut Vec<MathBox>, marks: &mut Vec<Mark>) {
         self.budget = self.budget.saturating_sub(1);
+        let me = self.cur;
         let sz = self.size * st.factor();
         match n.bare() {
             Node::Text(t) => {
                 for c in t.chars() {
+                    let before = parts.len();
                     if c.is_whitespace() {
+                        marks.push((before, before, 0.0));
                         continue;
                     }
                     let mut k = classify(c);
@@ -498,6 +546,7 @@ impl Lay {
                         k = Class::Ord;
                     }
                     self.push_gap(parts, *prev, k, st);
+                    marks.push((before, parts.len(), 0.5));
                     parts.push(self.text(&c.to_string(), Var::Italic, sz));
                     *prev = k;
                 }
@@ -511,6 +560,11 @@ impl Lay {
                 };
                 let s: String = if keep_space { text.clone() } else { text.chars().filter(|c| !c.is_whitespace()).collect() };
                 self.push_gap(parts, *prev, Class::Ord, st);
+                // The characters share one box: spread their caret positions across it.
+                let n = text.chars().count().max(1);
+                for k in 0..n {
+                    marks.push((parts.len(), parts.len() + 1, k as f64 / n as f64));
+                }
                 parts.push(self.text(&s, v, sz));
                 *prev = Class::Ord;
             }
@@ -519,24 +573,28 @@ impl Lay {
                     return;
                 }
                 self.push_gap(parts, *prev, Class::Op, st);
+                marks.push((parts.len(), parts.len(), 0.0));
                 let mut b = self.text(name, Var::Upright, sz);
                 b.w += 3.0 / 18.0 * sz;
                 parts.push(b);
                 *prev = Class::Op;
-                let inner = self.seq_in(body, st, depth + 1);
+                let inner = self.child(me, 0, body, st, depth + 1);
                 if inner.w > 0.0 {
                     parts.push(inner);
                     *prev = Class::Ord;
                 }
             }
-            Node::Raw(_) => {}
+            Node::Raw(_) => marks.push((parts.len(), parts.len(), 0.0)),
             other => {
                 if depth >= MAX_DEPTH {
+                    marks.push((parts.len(), parts.len(), 0.0));
                     return;
                 }
                 let k = if matches!(other, Node::Nary { .. }) { Class::Op } else { Class::Ord };
+                let before = parts.len();
                 self.push_gap(parts, *prev, k, st);
-                let b = self.structure(other, st, depth + 1);
+                marks.push((before, parts.len(), 0.5));
+                let b = self.structure(other, st, depth + 1, me);
                 if matches!(other, Node::Delim { .. }) {
                     // Breathing room so `n(` and `)(` do not crowd.
                     parts.push(MathBox::space(0.04 * sz));
@@ -558,31 +616,39 @@ impl Lay {
         self.seq(s, st, depth)
     }
 
-    fn structure(&mut self, n: &Node, st: St, depth: usize) -> MathBox {
+    /// Lay out child row `c` of the node at index `me` of the current row.
+    fn child(&mut self, me: usize, c: usize, s: &[Node], st: St, depth: usize) -> MathBox {
+        self.path.push((me, c));
+        let b = self.seq_in(s, st, depth);
+        self.path.pop();
+        b
+    }
+
+    fn structure(&mut self, n: &Node, st: St, depth: usize, me: usize) -> MathBox {
         let sz = self.size * st.factor();
         match n {
             Node::Frac { num, den } => {
                 let ch = st.inner();
-                let nb = self.seq_in(num, ch, depth);
-                let db = self.seq_in(den, ch, depth);
+                let nb = self.child(me, 0, num, ch, depth);
+                let db = self.child(me, 1, den, ch, depth);
                 self.frac(nb, db, st, sz)
             }
             Node::Rad { deg, body } => {
-                let b = self.seq_in(body, st, depth);
-                let d = deg.as_ref().map(|d| self.seq_in(d, St::ScriptScript, depth));
+                let b = self.child(me, usize::from(deg.is_some()), body, st, depth);
+                let d = deg.as_ref().map(|d| self.child(me, 0, d, St::ScriptScript, depth));
                 self.radical(b, d, sz)
             }
             Node::Script { base, sub, sup } => {
                 let is_char = base.iter().all(|n| matches!(n.bare(), Node::Text(_) | Node::Styled { .. }));
-                let b = self.seq_in(base, st, depth);
-                let sb = sub.as_ref().map(|s| self.seq_in(s, st.script(), depth));
-                let sp = sup.as_ref().map(|s| self.seq_in(s, st.script(), depth));
+                let b = self.child(me, 0, base, st, depth);
+                let sb = sub.as_ref().map(|s| self.child(me, 1, s, st.script(), depth));
+                let sp = sup.as_ref().map(|s| self.child(me, 1 + usize::from(sub.is_some()), s, st.script(), depth));
                 self.scripts(b, sb, sp, is_char, st)
             }
             Node::PreScript { sub, sup, base } => {
-                let b = self.seq_in(base, st, depth);
-                let sb = self.seq_in(sub, st.script(), depth);
-                let sp = self.seq_in(sup, st.script(), depth);
+                let b = self.child(me, 2, base, st, depth);
+                let sb = self.child(me, 0, sub, st.script(), depth);
+                let sp = self.child(me, 1, sup, st.script(), depth);
                 let pre = self.scripts(MathBox::default(), Some(sb), Some(sp), true, st);
                 MathBox::row(vec![pre, b])
             }
@@ -598,9 +664,9 @@ impl Lay {
                         1.75
                     };
                 let ob = self.big_op(*op, display, sz).unwrap_or_else(|| self.stretch(*op, opsz * 0.85, opsz));
-                let sb = sub.as_ref().map(|s| self.seq_in(s, st.script(), depth));
-                let sp = sup.as_ref().map(|s| self.seq_in(s, st.script(), depth));
-                let body_box = self.seq_in(body, st, depth);
+                let sb = sub.as_ref().map(|s| self.child(me, 0, s, st.script(), depth));
+                let sp = sup.as_ref().map(|s| self.child(me, usize::from(sub.is_some()), s, st.script(), depth));
+                let body_box = self.child(me, usize::from(sub.is_some()) + usize::from(sup.is_some()), body, st, depth);
                 let head = if integral || !display { self.scripts(ob, sb, sp, false, st) } else { self.limits(ob, sb, sp, sz) };
                 let mut parts = vec![head];
                 if body_box.w > 0.0 {
@@ -610,29 +676,38 @@ impl Lay {
                 MathBox::row(parts)
             }
             Node::Delim { open, close, sep, items } => {
-                let boxes: Vec<MathBox> = items.iter().map(|i| self.seq_in(i, st, depth)).collect();
+                let boxes: Vec<MathBox> = items.iter().enumerate().map(|(k, i)| self.child(me, k, i, st, depth)).collect();
                 self.delimiters(open, close, sep, boxes, sz)
             }
             Node::Matrix { rows } => {
                 let cs = if st == St::Display { St::Text } else { st };
-                let cells: Vec<Vec<MathBox>> = rows.iter().map(|r| r.iter().map(|c| self.seq_in(c, cs, depth)).collect()).collect();
+                let mut k = 0usize;
+                let mut cells: Vec<Vec<MathBox>> = vec![];
+                for r in rows {
+                    let mut row = vec![];
+                    for c in r {
+                        row.push(self.child(me, k, c, cs, depth));
+                        k += 1;
+                    }
+                    cells.push(row);
+                }
                 self.matrix(cells, sz)
             }
             Node::EqArr { rows } => {
-                let cells: Vec<Vec<MathBox>> = rows.iter().map(|r| vec![self.seq_in(r, st, depth)]).collect();
+                let cells: Vec<Vec<MathBox>> = rows.iter().enumerate().map(|(k, r)| vec![self.child(me, k, r, st, depth)]).collect();
                 self.matrix(cells, sz)
             }
             Node::Accent { ch, body } => {
-                let b = self.seq_in(body, st, depth);
+                let b = self.child(me, 0, body, st, depth);
                 self.accent(*ch, b, sz)
             }
             Node::Limit { lower, base, lim } => {
-                let b = self.seq_in(base, st, depth);
-                let l = self.seq_in(lim, st.script(), depth);
+                let b = self.child(me, 0, base, st, depth);
+                let l = self.child(me, 1, lim, st.script(), depth);
                 if *lower { self.limits(b, Some(l), None, sz) } else { self.limits(b, None, Some(l), sz) }
             }
             Node::Bar { top, body } => {
-                let b = self.seq_in(body, st, depth);
+                let b = self.child(me, 0, body, st, depth);
                 let t = (0.05 * sz).max(0.4);
                 let (w, asc, desc) = (b.w, b.asc, b.desc);
                 let mut out = MathBox::default();
@@ -648,7 +723,7 @@ impl Lay {
                 out
             }
             Node::GroupChr { ch, top, body } => {
-                let b = self.seq_in(body, st, depth);
+                let b = self.child(me, 0, body, st, depth);
                 let t = (0.05 * sz).max(0.4);
                 let (w, asc, desc) = (b.w, b.asc, b.desc);
                 let mut out = MathBox::default();
@@ -669,7 +744,7 @@ impl Lay {
                 out
             }
             Node::Boxed { border, body } => {
-                let b = self.seq_in(body, st, depth);
+                let b = self.child(me, 0, body, st, depth);
                 if !border {
                     return b;
                 }
@@ -1098,9 +1173,105 @@ impl Lay {
 
 /// Lay out an equation at `size` points in the family of `base` (bold when `bold`).
 pub(crate) fn layout_math(m: &Math, base: &FontFace, size: f64, bold: bool, display: bool) -> MathBox {
-    let mut lay = Lay { faces: Faces::new(&base.family), size: size.clamp(0.5, 4000.0), bold, budget: NODE_BUDGET };
+    let mut lay = Lay { faces: Faces::new(&base.family), size: size.clamp(0.5, 4000.0), bold, budget: NODE_BUDGET, path: vec![], cur: 0 };
     let st = if display { St::Display } else { St::Text };
     lay.seq(&m.body, st, 0)
+}
+
+/// An equation laid out on its own (the equation editor's canvas), with the geometry that
+/// carets, selections and mouse clicks need. Coordinates are points from the top-left corner.
+pub struct EqLayout {
+    /// Glyphs and rules, ready for `deckcraft_render::render_eq`.
+    pub layout: crate::TextLayout,
+    pub width: f64,
+    pub height: f64,
+    geo: Vec<SeqGeo>,
+}
+
+impl EqLayout {
+    fn row(&self, path: &[(usize, usize)]) -> Option<&SeqGeo> {
+        self.geo.iter().find(|g| g.path == path)
+    }
+
+    /// The thin rectangle of the caret at `c`; `None` when the row was not laid out (too deep).
+    pub fn caret_rect(&self, c: &deckcraft_math::Caret) -> Option<Rect> {
+        let g = self.row(&c.path)?;
+        let x = g.xs.get(c.pos).or(g.xs.last()).copied()?;
+        Some(Rect::new(x, g.top, x, g.bottom))
+    }
+
+    /// The box of the whole row at `path` (the active slot's highlight); `None` when the row was
+    /// not laid out.
+    pub fn row_rect(&self, path: &[(usize, usize)]) -> Option<Rect> {
+        let g = self.row(path)?;
+        let (x0, x1) = (g.xs.first().copied()?, g.xs.last().copied()?);
+        Some(Rect::new(x0.min(x1), g.top, x0.max(x1), g.bottom))
+    }
+
+    /// The rectangle covering units `a..b` of the row at `path`.
+    pub fn span_rect(&self, path: &[(usize, usize)], a: usize, b: usize) -> Option<Rect> {
+        let g = self.row(path)?;
+        let x0 = g.xs.get(a).or(g.xs.last()).copied()?;
+        let x1 = g.xs.get(b).or(g.xs.last()).copied()?;
+        Some(Rect::new(x0.min(x1), g.top, x0.max(x1), g.bottom))
+    }
+
+    /// Number of laid-out rows (tests).
+    pub fn rows(&self) -> usize {
+        self.geo.len()
+    }
+
+    /// The caret position nearest the point (x, y).
+    pub fn hit(&self, x: f64, y: f64) -> deckcraft_math::Caret {
+        const NEAR: f64 = 1.5;
+        let dist = |g: &SeqGeo| {
+            let (x0, x1) = (g.xs.first().copied().unwrap_or(0.0), g.xs.last().copied().unwrap_or(0.0));
+            let dx = (x0 - x).max(x - x1).max(0.0);
+            let dy = (g.top - y).max(y - g.bottom).max(0.0);
+            dx.hypot(dy)
+        };
+        let mut best: Option<(&SeqGeo, f64)> = None;
+        for g in &self.geo {
+            let d = dist(g);
+            let better = match best {
+                None => true,
+                Some((b, bd)) => {
+                    let (near, bnear) = (d <= NEAR, bd <= NEAR);
+                    if near && bnear {
+                        g.path.len() > b.path.len()
+                    } else if near != bnear {
+                        near
+                    } else {
+                        d < bd
+                    }
+                }
+            };
+            if better {
+                best = Some((g, d));
+            }
+        }
+        let Some((g, _)) = best else { return deckcraft_math::Caret::default() };
+        let pos = g.xs.iter().enumerate().min_by(|a, b| (a.1 - x).abs().total_cmp(&(b.1 - x).abs())).map_or(0, |(i, _)| i);
+        deckcraft_math::Caret { path: g.path.clone(), pos }
+    }
+}
+
+/// Lay an equation out at `size` points in `family` with `pad` points around it, tall enough for
+/// a caret even when it is empty.
+pub fn layout_equation(m: &Math, family: &str, size: f64, display: bool, color: Rgba, pad: f64) -> EqLayout {
+    let base = FontDb::global().face(family, "Regular");
+    let b = layout_math(m, &base, size, false, display);
+    let sz = size.clamp(0.5, 4000.0);
+    let (asc, desc) = (b.asc.max(0.78 * sz), b.desc.max(0.25 * sz));
+    let (ox, oy) = (pad, pad + asc);
+    let mut layout = crate::TextLayout { inner: Rect::new(0.0, 0.0, b.w + 2.0 * pad, asc + desc + 2.0 * pad), ..Default::default() };
+    emit(&b, ox, oy, color, 1.0, 0, (0, 0), &mut layout.runs, &mut layout.decos);
+    let geo = b
+        .geo
+        .iter()
+        .map(|g| SeqGeo { path: g.path.clone(), xs: g.xs.iter().map(|x| x + ox).collect(), top: g.top + oy, bottom: g.bottom + oy })
+        .collect();
+    EqLayout { width: b.w + 2.0 * pad, height: asc + desc + 2.0 * pad, layout, geo }
 }
 
 type Key = (String, u32, u64, bool, bool);
@@ -1330,5 +1501,120 @@ mod tests {
         assert!(runs.iter().all(|r| r.glyphs.iter().all(|g| g.1 >= 100.0 - 1e-9)));
         assert!(!decos.is_empty());
         assert!(decos.iter().all(|d| d.rect.x0 >= 100.0 - 1e-9));
+    }
+
+    /// Every row path of a tree (the root included).
+    fn all_rows(seq: &[Node], path: &mut Vec<(usize, usize)>, out: &mut Vec<Vec<(usize, usize)>>) {
+        out.push(path.clone());
+        for (i, n) in seq.iter().enumerate() {
+            for (c, k) in deckcraft_math::children(n).into_iter().enumerate() {
+                path.push((i, c));
+                all_rows(k, path, out);
+                path.pop();
+            }
+        }
+    }
+
+    fn eq(m: &Math) -> EqLayout {
+        layout_equation(m, "Inter", 28.0, false, Rgba::rgb(0, 0, 0), 6.0)
+    }
+
+    #[test]
+    fn every_caret_position_of_every_template_has_a_rectangle() {
+        for t in deckcraft_math::templates() {
+            let mut ed = deckcraft_math::Editor::new(Math::default());
+            ed.type_str("x+");
+            ed.insert_template(&t.math);
+            ed.type_str("y");
+            let shown = ed.display_math();
+            let l = eq(&shown);
+            let mut rows = vec![];
+            all_rows(&shown.body, &mut vec![], &mut rows);
+            for path in rows {
+                let Some(seq) = deckcraft_math::seq_at(&shown.body, &path) else { continue };
+                let mut last_x = f64::MIN;
+                for pos in 0..=deckcraft_math::units(seq) {
+                    let c = deckcraft_math::Caret { path: path.clone(), pos };
+                    let r = l.caret_rect(&c).unwrap_or_else(|| panic!("{}: no rect for {c:?}", t.id));
+                    assert!(r.x0.is_finite() && r.y1 > r.y0, "{}: {r:?}", t.id);
+                    assert!(
+                        r.x0 >= -0.5 && r.x0 <= l.width + 0.5 && r.y0 >= -0.5 && r.y1 <= l.height + 0.5,
+                        "{}: {c:?} {r:?} in {}x{}",
+                        t.id,
+                        l.width,
+                        l.height
+                    );
+                    assert!(r.x0 >= last_x - 1e-6, "{}: carets run left to right in {path:?}", t.id);
+                    last_x = r.x0;
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn script_carets_sit_higher_and_fraction_rows_stack() {
+        let mut ed = deckcraft_math::Editor::new(Math::default());
+        ed.type_str("x^2");
+        let l = eq(&ed.display_math());
+        let sup = l.caret_rect(ed.caret()).unwrap_or_default();
+        let base = l.caret_rect(&deckcraft_math::Caret { path: vec![], pos: 0 }).unwrap_or_default();
+        assert!(sup.y0 < base.y0 && sup.y1 - sup.y0 < base.y1 - base.y0, "{sup:?} {base:?}");
+        let mut ed = deckcraft_math::Editor::new(Math::default());
+        ed.type_str("a/b");
+        let l = eq(&ed.display_math());
+        let den = l.caret_rect(ed.caret()).unwrap_or_default();
+        let num = l.caret_rect(&deckcraft_math::Caret { path: vec![(0, 0)], pos: 0 }).unwrap_or_default();
+        assert!(num.y1 <= den.y0 + 1.0, "numerator above denominator: {num:?} {den:?}");
+    }
+
+    #[test]
+    fn clicking_a_caret_rectangle_returns_that_caret() {
+        let mut ed = deckcraft_math::Editor::new(Math::default());
+        ed.type_str("1+x^2/sqrt");
+        ed.type_str("y");
+        let shown = ed.display_math();
+        let l = eq(&shown);
+        let mut rows = vec![];
+        all_rows(&shown.body, &mut vec![], &mut rows);
+        let mut checked = 0;
+        for path in rows {
+            let Some(seq) = deckcraft_math::seq_at(&shown.body, &path) else { continue };
+            // Not the boundary shared by two neighbours; the middle of a row is unambiguous.
+            let n = deckcraft_math::units(seq);
+            for pos in 0..=n {
+                let c = deckcraft_math::Caret { path: path.clone(), pos };
+                let Some(r) = l.caret_rect(&c) else { continue };
+                let (cx, cy) = (r.x0, (r.y0 + r.y1) / 2.0);
+                let got = l.hit(cx, cy);
+                // The same place can be reached from two rows (end of one, start of the next);
+                // it must at least be at the same x.
+                let gr = l.caret_rect(&got).unwrap_or_default();
+                assert!((gr.x0 - cx).abs() < 2.0, "{c:?} -> {got:?}");
+                checked += 1;
+            }
+        }
+        assert!(checked > 8);
+        // Far outside lands on the nearest end of the top row.
+        assert_eq!(l.hit(-500.0, 0.0), deckcraft_math::Caret { path: vec![], pos: 0 });
+        assert_eq!(l.hit(5000.0, 0.0).path, Vec::<(usize, usize)>::new());
+    }
+
+    #[test]
+    fn an_empty_equation_still_has_a_caret_row() {
+        let l = eq(&Math::default());
+        assert_eq!(l.rows(), 1);
+        assert!(l.caret_rect(&deckcraft_math::Caret::default()).is_some());
+        assert!(l.height > 10.0);
+    }
+
+    #[test]
+    fn layout_geometry_survives_deep_trees() {
+        let mut node = Node::Text("x".into());
+        for _ in 0..(MAX_DEPTH * 3) {
+            node = Node::Bar { top: true, body: vec![node] };
+        }
+        let l = eq(&Math::new(vec![node]));
+        assert!(l.rows() <= MAX_DEPTH + 2);
+        let _ = l.hit(10.0, 10.0);
     }
 }

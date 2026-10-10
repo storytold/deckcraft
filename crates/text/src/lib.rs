@@ -22,6 +22,7 @@
 mod bidi;
 pub mod datetime;
 mod math;
+pub use math::{EqLayout, SeqGeo, layout_equation};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1320,7 +1321,13 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     let sy = line.baseline - st.size * 0.3;
                     out.decos.push(Deco { rect: Rect::new(cx, sy, cx1, sy + t), color: st.color, behind: false, para: line.para, path: None });
                     if sk == Strike::Double {
-                        out.decos.push(Deco { rect: Rect::new(cx, sy - t * 2.0, cx1, sy - t), color: st.color, behind: false, para: line.para, path: None });
+                        out.decos.push(Deco {
+                            rect: Rect::new(cx, sy - t * 2.0, cx1, sy - t),
+                            color: st.color,
+                            behind: false,
+                            para: line.para,
+                            path: None,
+                        });
                     }
                 }
             }
