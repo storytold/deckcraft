@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use deckcraft_model::edit::{self as ed, Pos};
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{AutoFit, Run, RunKind, RunProps, TextBody};
+use deckcraft_model::text::{AutoFit, Hyperlink, Run, RunKind, RunProps, TextBody};
 use deckcraft_model::{Presentation, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
@@ -228,7 +228,7 @@ pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) 
     let pos = edit_text(s, |body, t| {
         let (a, b) = t.ordered();
         let at = ed::delete(body, a, b);
-        let props = props.clone().or_else(|| if a != b { Some(ed::props_at(body, at)) } else { None });
+        let props = props.clone().or_else(|| if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) });
         let c = ed::insert(body, at, &text, props);
         t.anchor = c;
         t.caret = c;
@@ -236,6 +236,20 @@ pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) 
     })?;
     autocorrect(s)?;
     Ok(json!({"caret": [pos.0, pos.1]}))
+}
+
+/// Typing right after a hyperlink doesn't extend it (as in PowerPoint): at the end of a linked
+/// run, the props to type with are the run's without the link. `None` elsewhere.
+fn unlinked_at_link_end(body: &TextBody, at: Pos) -> Option<RunProps> {
+    let mut props = ed::props_at(body, at);
+    props.link.as_ref()?;
+    let len = body.paragraphs.get(at.0).map_or(0, |p| p.text().chars().count());
+    // props_at(c + 1) is the props of the character at c.
+    if at.1 < len && ed::props_at(body, (at.0, at.1 + 1)).link == props.link {
+        return None;
+    }
+    props.link = None;
+    Some(props)
 }
 
 const AUTOCORRECT: &[(&str, &str)] = &[
@@ -535,21 +549,7 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sync)) -> Result<Value> {
     let st = s.doc()?;
     if let Some(t) = st.selection.text.clone() {
-        let body = body_of(st, &t).cloned().unwrap_or_default();
-        let (mut a, mut b) = t.ordered();
-        if a == b {
-            let (wa, wb) = ed::word_at(&body, a);
-            let inside = wa.1 < a.1 && a.1 < wb.1;
-            if inside {
-                a = wa;
-                b = wb;
-                // Don't include the trailing space.
-                let line: Vec<char> = body.paragraphs.get(b.0).map(|p| p.text().chars().collect()).unwrap_or_default();
-                while b.1 > a.1 && line.get(b.1 - 1) == Some(&' ') {
-                    b.1 -= 1;
-                }
-            }
-        }
+        let (a, b) = format_range(st, &t);
         let collapsed = a == b;
         edit_text(s, |body, _| {
             if collapsed {
@@ -589,6 +589,51 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
         fit_text_box(s, id)?;
     }
     ok()
+}
+
+/// What `format_run` formats while editing: the selection, or for a bare caret the word it's in
+/// (without its trailing space). Empty when the caret is at a word boundary.
+fn format_range(st: &DocState, t: &TextSel) -> (Pos, Pos) {
+    let body = body_of(st, t).cloned().unwrap_or_default();
+    let (mut a, mut b) = t.ordered();
+    if a == b {
+        let (wa, wb) = ed::word_at(&body, a);
+        let inside = wa.1 < a.1 && a.1 < wb.1;
+        if inside {
+            a = wa;
+            b = wb;
+            // Don't include the trailing space.
+            let line: Vec<char> = body.paragraphs.get(b.0).map(|p| p.text().chars().collect()).unwrap_or_default();
+            while b.1 > a.1 && line.get(b.1 - 1) == Some(&' ') {
+                b.1 -= 1;
+            }
+        }
+    }
+    (a, b)
+}
+
+/// Link the text being edited: the selection or the word at the caret, as `format_run` would.
+/// With nothing to link (caret at a word boundary, empty paragraph) `display` is inserted at the
+/// caret as linked text in the surrounding formatting, as PowerPoint's Insert Hyperlink does.
+pub(crate) fn link_text(s: &mut Session, link: Hyperlink, display: &str) -> Result<Value> {
+    let st = s.doc()?;
+    let Some(t) = st.selection.text.clone() else { return Err(bad("insert.hyperlink", "not editing text")) };
+    let (a, b) = format_range(st, &t);
+    if a != b {
+        return format_run(s, &move |rp| rp.link = Some(link.clone()));
+    }
+    if display.is_empty() {
+        return Err(bad("insert.hyperlink", "nothing to link: select text or give `text`"));
+    }
+    let pos = edit_text(s, |body, t| {
+        let mut props = ed::props_at(body, a);
+        props.link = Some(link);
+        let c = ed::insert(body, a, display, Some(props));
+        t.anchor = c;
+        t.caret = c;
+        c
+    })?;
+    Ok(json!({"caret": [pos.0, pos.1]}))
 }
 
 /// Apply paragraph changes to the paragraphs touched by the selection (or all paragraphs of the

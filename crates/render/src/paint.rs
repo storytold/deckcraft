@@ -65,7 +65,7 @@ pub fn fill_path(
         }
         Fill::Picture(pf) => {
             ctx.push_clip_layer(path);
-            picture(ctx, pres, pf, bounds, m);
+            picture(ctx, pres, pf, bounds, m, None);
             ctx.pop_layer();
         }
         Fill::Pattern(p) => {
@@ -120,15 +120,17 @@ fn p_rect(x: f64, y: f64, w: f64, h: f64) -> BezPath {
 }
 fn p_add(_a: &mut BezPath, _b: &mut BezPath) {}
 
-/// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes.
-pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, bounds: Rect, m: Affine) {
+/// Draw a picture fill into `bounds` (shape-local) honouring crop and stretch/tile modes; an animated
+/// GIF shows its frame at `gif_time` seconds.
+pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, bounds: Rect, m: Affine, gif_time: Option<f64>) {
     let Some(item) = pres.media(pf.media) else {
         missing(ctx, bounds);
         return;
     };
     let px_scale = crate::scale_of(m);
     let want = (bounds.width().max(bounds.height()) * px_scale).max(1.0);
-    let Some(pm) = images::decode_for(&item.data, want, &pf.adjust) else {
+    let frame = gif_time.and_then(|t| images::gif_pixmap(&item.data, &pf.adjust, t));
+    let Some(pm) = frame.or_else(|| images::decode_for(&item.data, want, &pf.adjust)) else {
         missing(ctx, bounds);
         return;
     };

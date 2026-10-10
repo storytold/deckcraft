@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use deckcraft_model::{Master, Presentation, Slide};
+use deckcraft_model::{Master, Presentation, ShapeId, Slide};
 use deckcraft_render::{Image, RenderOpts};
 use egui::{ColorImage, TextureHandle, TextureOptions};
 
@@ -60,7 +60,7 @@ fn threads() -> u16 {
 }
 
 impl Textures {
-    /// The canvas texture for slide `index` at `size` pixels.
+    /// The canvas texture for slide `index` at `size` pixels; `extra` changes with the GIF frames.
     pub fn slide(
         &mut self,
         ctx: &egui::Context,
@@ -70,6 +70,7 @@ impl Textures {
         edit: bool,
         extra: u64,
         grayscale: bool,
+        gif_times: &[(ShapeId, f64)],
     ) -> Option<TextureHandle> {
         let slide = p.slides.get(index)?.clone();
         let master = master_of(p, &slide);
@@ -87,7 +88,8 @@ impl Textures {
         }
         let t0 = crate::now_ms();
         let scale = size.0 as f64 / p.slide_size.width.max(1.0);
-        let img = deckcraft_render::render_slide(p, index, &RenderOpts { scale, edit, threads: threads(), size: Some(size), ..Default::default() });
+        let opts = RenderOpts { scale, edit, gif_times, threads: threads(), size: Some(size), ..Default::default() };
+        let img = deckcraft_render::render_slide(p, index, &opts);
         self.last_render_ms = crate::now_ms() - t0;
         let ci = to_color_image(&img, grayscale);
         let tex = match self.canvas.take() {

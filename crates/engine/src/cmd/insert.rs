@@ -49,7 +49,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("insert.slideNumber", "Slide Number", ["Insert", "Text"], None, "{}", has_slide, slide_number),
         cmd!("insert.dateTime", "Date & Time", ["Insert", "Text"], None, "{format?: datetime1..}", has_slide, date_time),
         cmd!("insert.symbol", "Symbol", ["Insert", "Symbols"], None, "{text: character(s)}", has_slide, symbol),
-        cmd!("insert.hyperlink", "Link", ["Insert", "Links"], Some("Cmd+K"), "{url? | slide?: index, tooltip?, ids?}", has_text_or_shapes, hyperlink),
+        cmd!(
+            "insert.hyperlink",
+            "Link",
+            ["Insert", "Links"],
+            Some("Cmd+K"),
+            "{url? | slide?: index, tooltip?, text?: shown when nothing is selected, ids?}",
+            has_text_or_shapes,
+            hyperlink
+        ),
         cmd!("chart.type", "Change Chart Type", ["Chart Design", "Type"], None, "{type, id?}", has_selection, chart_type_cmd),
         cmd!(
             "chart.data",
@@ -569,18 +577,20 @@ fn symbol(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
     use deckcraft_model::text::{Action, Hyperlink};
-    let action = if let Some(u) = str_param(p, "url") {
-        Action::Url { url: u.to_string() }
+    // `display`: what a caret with nothing to link inserts, the address or the slide's title.
+    let (action, display) = if let Some(u) = str_param(p, "url") {
+        (Action::Url { url: u.to_string() }, u.strip_prefix("mailto:").unwrap_or(u).to_string())
     } else if let Some(i) = usize_param(p, "slide") {
-        let id = s.doc()?.doc.slides.get(i).map(|x| x.id).ok_or_else(|| bad("insert.hyperlink", "no such slide"))?;
-        Action::Slide { slide: id }
+        let slide = s.doc()?.doc.slides.get(i).ok_or_else(|| bad("insert.hyperlink", "no such slide"))?;
+        let title = slide.title();
+        (Action::Slide { slide: slide.id }, if title.is_empty() { format!("Slide {}", i + 1) } else { title })
     } else {
         return Err(bad("insert.hyperlink", "missing `url` or `slide`"));
     };
+    let display = str_param(p, "text").map_or(display, str::to_string);
     let link = Hyperlink { action, tooltip: str_param(p, "tooltip").unwrap_or("").to_string(), highlight_click: false };
     if s.doc()?.selection.text.is_some() {
-        let l = link.clone();
-        return super::text::format_run(s, &move |rp| rp.link = Some(l.clone()));
+        return super::text::link_text(s, link, &display);
     }
     edit_shapes(s, p, "insert.hyperlink", |sh| {
         sh.click = Some(link.clone());

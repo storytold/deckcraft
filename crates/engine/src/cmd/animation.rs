@@ -332,11 +332,19 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.painterApply", "no slide"))?);
+        // As in PowerPoint, painting replaces the target's own animations (painting a shape onto
+        // itself doesn't double them). A paragraph effect keeps its paragraph only if the target
+        // has that paragraph; otherwise it animates the whole shape.
+        sl.animations.retain(|a| !ids.contains(&a.shape));
         let mut added = 0;
         for id in &ids {
+            let paras = deckcraft_model::find_shape(&sl.shapes, *id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len());
             for a in &painted {
                 let mut cloned = a.clone();
                 cloned.shape = *id;
+                if cloned.paragraph.is_some_and(|i| i as usize >= paras) {
+                    cloned.paragraph = None;
+                }
                 sl.animations.push(cloned);
                 added += 1;
             }
@@ -388,6 +396,20 @@ mod tests {
 
         // Single-click should disarm the painter
         assert!(s.anim_painter.is_none());
+
+        // Painting again replaces shape 2's animations instead of adding to them; undo restores.
+        s.execute("animation.painter", &json!({"id": id1})).unwrap();
+        s.execute("animation.painterApply", &json!({"ids": [id2]})).unwrap();
+        let count_on = |s: &mut Session, id: u64| {
+            let all = s.execute("animation.get", &json!({})).unwrap();
+            all.as_array().unwrap().iter().filter(|a| a.get("shape").unwrap().as_u64().unwrap() == id).count()
+        };
+        assert_eq!(count_on(&mut s, id2), 2);
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(count_on(&mut s, id2), 2, "undo restores the first painting");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(count_on(&mut s, id2), 0, "undo removes the painted animations");
+        s.execute("edit.redo", &json!({})).unwrap();
 
         // Verify shape 2 now has the 2 animations cloned
         let anims_after = s.execute("animation.get", &json!({})).unwrap();

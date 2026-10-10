@@ -2,6 +2,7 @@
 //! and automatic advance.
 
 use deckcraft_model::Presentation;
+use deckcraft_model::text::Action;
 
 use crate::Timeline;
 
@@ -23,6 +24,32 @@ pub enum ShowAction {
     End,
     /// Leave the show (next on the end screen).
     Exit,
+}
+
+/// Can a link from a (possibly untrusted) deck be opened outside the show? Only web pages and
+/// mail: `file:`, `javascript:`, relative paths and other schemes (OS protocol handlers) are not
+/// opened on a click.
+pub fn safe_url(url: &str) -> bool {
+    let u = url.trim();
+    let Some((scheme, rest)) = u.split_once(':') else { return false };
+    match scheme.to_ascii_lowercase().as_str() {
+        "http" | "https" => rest.starts_with("//") && rest.len() > 2,
+        "mailto" => !rest.is_empty(),
+        _ => false,
+    }
+}
+
+/// What a clicked link does in the show (`ShowState::follow`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LinkJump {
+    /// Navigation inside the show (already applied to the state).
+    Show(ShowAction),
+    /// Open this URL (`http`, `https` or `mailto`, see [`safe_url`]) outside the show.
+    Open(String),
+    /// End the show.
+    Exit,
+    /// Nothing to follow.
+    None,
 }
 
 /// Where a slide show is.
@@ -209,6 +236,27 @@ impl ShowState {
         }
         self.enter(pres, i);
         ShowAction::Slide(i)
+    }
+
+    /// Follow a clicked hyperlink or shape action. `last_viewed` is the slide shown before the
+    /// current one (Last Slide Viewed). Moves to slide targets; everything else is for the UI.
+    pub fn follow(&mut self, pres: &Presentation, action: &Action, last_viewed: Option<usize>) -> LinkJump {
+        let target = match action {
+            Action::Url { url } => return if safe_url(url) { LinkJump::Open(url.trim().to_string()) } else { LinkJump::None },
+            Action::EndShow => return LinkJump::Exit,
+            Action::Slide { slide } => pres.slides.iter().position(|s| s.id == *slide),
+            Action::NextSlide => self.next_index(pres),
+            Action::PreviousSlide => self.prev_index(pres),
+            Action::FirstSlide => show_order(pres).first().copied(),
+            Action::LastSlide => show_order(pres).last().copied(),
+            Action::LastViewed => last_viewed,
+            // Custom shows, programs and media actions aren't followed (yet).
+            Action::CustomShow { .. } | Action::Program { .. } | Action::PlayMedia => None,
+        };
+        match target {
+            Some(i) => LinkJump::Show(self.goto(pres, i)),
+            None => LinkJump::None,
+        }
     }
 
     /// Seconds after which the current slide advances by itself (Advance Slide ▸ After), when the

@@ -132,3 +132,30 @@ fn four_by_three_master_scales() {
     let x = title.xfrm.unwrap();
     assert!(x.x + x.w <= 720.0 + 1e-6);
 }
+
+#[test]
+fn hyperlinked_runs_take_the_theme_hyperlink_look() {
+    use crate::text::{Action, Hyperlink, Paragraph, RunProps};
+    let p = Presentation::default();
+    let s = &p.slides[0];
+    let ctx = Ctx::for_slide(&p, s).unwrap();
+    let title = &s.shapes[0];
+    let para = Paragraph::default();
+    let link = Some(Hyperlink { action: Action::Url { url: "https://example.org".into() }, tooltip: String::new(), highlight_click: false });
+    let hlink = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink)));
+    // The title's master style colours its text tx1; a link is hlink and underlined instead.
+    assert_eq!(resolve::run(&ctx, title, &para, &RunProps::default()).fill, Some(Fill::solid(ColorRef::scheme(SchemeSlot::Tx1))));
+    let r = resolve::run(&ctx, title, &para, &RunProps { link: link.clone(), ..Default::default() });
+    assert_eq!((r.fill, r.underline.as_deref()), (hlink.clone(), Some("sng")));
+    assert_eq!(ctx.color(&ColorRef::scheme(SchemeSlot::Hlink), None), p.masters[0].theme.colors.get(SchemeSlot::Hlink));
+    // A slide link looks the same.
+    let slide = Some(Hyperlink { action: Action::Slide { slide: s.id }, tooltip: String::new(), highlight_click: false });
+    assert_eq!(resolve::run(&ctx, title, &para, &RunProps { link: slide, ..Default::default() }).fill, hlink);
+    // The run's own colour and underline win; u="none" removes the underline.
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    let own = RunProps { link: link.clone(), fill: red.clone(), underline: Some("none".into()), ..Default::default() };
+    let r = resolve::run(&ctx, title, &para, &own);
+    assert_eq!((r.fill, r.underline.as_deref()), (red, Some("none")));
+    let dbl = resolve::run(&ctx, title, &para, &RunProps { link, underline: Some("dbl".into()), ..Default::default() });
+    assert_eq!((dbl.fill, dbl.underline.as_deref()), (hlink, Some("dbl")));
+}

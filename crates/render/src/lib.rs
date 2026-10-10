@@ -9,6 +9,7 @@
 
 mod chart;
 mod images;
+mod morph_path;
 mod morph_text;
 mod paint;
 mod placed;
@@ -29,7 +30,8 @@ use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _, Vec2};
 use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::{RenderContext, Resources, peniko};
 
-pub use images::decode as decode_image;
+pub use images::{decode as decode_image, gif_frame};
+pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use placed::{Placed, PlacedLink, PlacedText, place_slide};
 pub use table::row_heights as table_row_heights;
@@ -143,6 +145,8 @@ pub struct RenderOpts<'a> {
     pub skip: &'a [ShapeId],
     /// Hide the text of this shape (the UI draws it while editing).
     pub skip_text: Option<ShapeId>,
+    /// Animated GIF pictures and how far into their play they are (seconds); others show frame 1.
+    pub gif_times: &'a [(ShapeId, f64)],
     /// Worker threads (0 = this thread; required when effects use filters).
     pub threads: u16,
     /// Translate the slide within the output (pixels) and output size override.
@@ -162,6 +166,7 @@ impl Default for RenderOpts<'_> {
             state: None,
             skip: &[],
             skip_text: None,
+            gif_times: &[],
             threads: 0,
             offset: (0.0, 0.0),
             size: None,
@@ -194,11 +199,13 @@ impl Fields for SlideFields {
 
 pub struct Renderer {
     resources: Resources,
+    /// Outlines morphing in the frame being drawn by `blend`.
+    paths: Vec<PathMorph>,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
-        Renderer { resources: Resources::new() }
+        Renderer { resources: Resources::new(), paths: Vec::new() }
     }
 }
 
@@ -248,12 +255,22 @@ pub fn render_slide(pres: &Presentation, index: usize, opts: &RenderOpts) -> Ima
 /// backdrop (background, master and layout graphics) of `old` cross-fading into that of `new` by
 /// `mix` (0..1), then `shapes` in order, each resolved against the slide it comes from (`true`:
 /// `old`). Pairs of shapes in `text` draw their boxes as usual but their texts morph by words or
-/// characters ([`TextMorph`]), on top of the later shape of the pair. `opts.state` applies to
-/// `shapes` only.
-pub fn render_blend(pres: &Presentation, old: usize, new: usize, mix: f64, shapes: &[(Shape, bool)], text: &[TextMorph], opts: &RenderOpts) -> Image {
+/// characters ([`TextMorph`]), on top of the later shape of the pair. Shapes listed in `paths` draw
+/// an outline morphing from another geometry into their own ([`PathMorph`]). `opts.state` applies
+/// to `shapes` only.
+pub fn render_blend(
+    pres: &Presentation,
+    old: usize,
+    new: usize,
+    mix: f64,
+    shapes: &[(Shape, bool)],
+    text: &[TextMorph],
+    paths: &[PathMorph],
+    opts: &RenderOpts,
+) -> Image {
     let (Some(a), Some(b)) = (pres.slides.get(old), pres.slides.get(new)) else { return Image::default() };
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        RENDERER.with(|r| r.borrow_mut().blend(pres, (a, old), (b, new), mix, shapes, text, opts))
+        RENDERER.with(|r| r.borrow_mut().blend(pres, (a, old), (b, new), mix, shapes, text, paths, opts))
     })) {
         Ok(img) => img,
         Err(_) => {
@@ -460,6 +477,7 @@ impl Renderer {
         mix: f64,
         shapes: &[(Shape, bool)],
         text: &[TextMorph],
+        paths: &[PathMorph],
         opts: &RenderOpts,
     ) -> Image {
         let mix = if mix.is_finite() { mix.clamp(0.0, 1.0) } else { 1.0 };
@@ -485,6 +503,8 @@ impl Renderer {
         let fo = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
         let fnew = Frame { pres, opts, fields: Self::fields(pres, new.1, opts) };
         let mut drawn: Vec<ShapeId> = Vec::new();
+        // Set only now: the backdrop's ids may clash with the frame's.
+        self.paths = paths.to_vec();
         for (s, from_old) in shapes {
             let (f, c) = if *from_old { (&fo, &co) } else { (&fnew, &cn) };
             let Some(tm) = text.iter().find(|m| m.old == s.id || m.new == s.id) else {
@@ -502,6 +522,7 @@ impl Renderer {
                 morph_text::draw(&mut ctx, (&co, a, &fo.fields), (&cn, b, &fnew.fields), tm, now, view);
             }
         }
+        self.paths.clear();
         self.finish(ctx, w, h)
     }
 
@@ -616,7 +637,11 @@ impl Renderer {
     }
 
     fn geometry_shape(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, m: Affine, w: f64, h: f64, st: &ShapeState) {
-        let geo = shape_geometry(s, w, h);
+        let (geo, fades) = match self.paths.iter().find(|p| p.id == s.id) {
+            Some(pm) => morph_path::geometry(pm, s, w, h),
+            None => (shape_geometry(s, w, h), Vec::new()),
+        };
+        let fade = |i: usize| fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 });
         let (fill, fill_ph) = resolve::fill(rctx, s);
         let (line, line_ph) = resolve::line(rctx, s);
         let (effects, fx_ph) = resolve::effects(rctx, s);
@@ -641,7 +666,8 @@ impl Renderer {
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 ctx.push_clip_layer(&outline);
-                paint::picture(ctx, f.pres, pf, bounds, m);
+                let t = f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1);
+                paint::picture(ctx, f.pres, pf, bounds, m, t);
                 ctx.pop_layer();
             }
             ShapeKind::Media(mc) => {
@@ -649,7 +675,7 @@ impl Renderer {
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 if let Some(p) = mc.poster {
                     let pf = deckcraft_model::style::PictureFill { media: p, ..Default::default() };
-                    paint::picture(ctx, f.pres, &pf, bounds, m);
+                    paint::picture(ctx, f.pres, &pf, bounds, m, None);
                 } else if mc.video {
                     ctx.set_paint(peniko::Color::from_rgba8(20, 20, 24, 255));
                     ctx.fill_rect(&bounds);
@@ -662,13 +688,13 @@ impl Renderer {
                 if let Some(fl) = &fill
                     && !(empty_ph && f.opts.edit && s.fill.is_none())
                 {
-                    for sp in &geo.paths {
-                        if sp.fill == FillMode::None {
+                    for (i, sp) in geo.paths.iter().enumerate() {
+                        if sp.fill == FillMode::None || fade(i).fill <= 0.0 {
                             continue;
                         }
                         ctx.set_transform(m);
                         ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
-                        paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, 1.0, f.pres);
+                        paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres);
                         ctx.set_fill_rule(peniko::Fill::NonZero);
                     }
                 }
@@ -677,8 +703,8 @@ impl Renderer {
         // Outline.
         if line.fill.as_ref().is_some_and(|f| !f.is_none()) {
             let lw = line.width.unwrap_or(0.75).max(0.0);
-            for sp in geo.paths.iter().filter(|p| p.stroke) {
-                stroke(ctx, rctx, &line, line_ph, &sp.path, m, lw);
+            for (i, sp) in geo.paths.iter().enumerate().filter(|(i, p)| p.stroke && fade(*i).stroke > 0.0) {
+                stroke(ctx, rctx, &line, line_ph, &sp.path, m, lw, fade(i).stroke);
             }
             if s.is_line() || geo.is_open() {
                 arrowheads(ctx, rctx, &line, line_ph, &geo, m, lw);
@@ -833,7 +859,7 @@ fn blur(sigma: f64) -> Filter {
     Filter::from_primitive(FilterPrimitive::GaussianBlur { std_deviation: sigma.clamp(0.0, 500.0) as f32, edge_mode: EdgeMode::None })
 }
 
-fn stroke(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, path: &BezPath, m: Affine, lw: f64) {
+fn stroke(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, path: &BezPath, m: Affine, lw: f64, alpha: f64) {
     use deckcraft_model::style::{LineCap, LineJoin};
     let cap = match line.cap.unwrap_or_default() {
         LineCap::Flat => kurbo::Cap::Butt,
@@ -857,13 +883,13 @@ fn stroke(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, pa
     ctx.set_transform(m);
     match &line.fill {
         Some(Fill::Solid { color: c }) => {
-            ctx.set_paint(color(rctx.color(c, ph), 1.0));
+            ctx.set_paint(color(rctx.color(c, ph), alpha));
         }
         Some(Fill::Gradient(g)) => {
             let c = g.stops.first().map(|s| rctx.color(&s.color, ph)).unwrap_or(Rgba::BLACK);
-            ctx.set_paint(color(c, 1.0));
+            ctx.set_paint(color(c, alpha));
         }
-        _ => ctx.set_paint(peniko::Color::from_rgba8(0, 0, 0, 255)),
+        _ => ctx.set_paint(color(Rgba::BLACK, alpha)),
     }
     ctx.set_stroke(sk);
     ctx.stroke_path(path);
@@ -1023,6 +1049,25 @@ pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody
     draw_layout(ctx, &l, tr, m);
 }
 
+/// Where text laid out in text rect `tr` is drawn, for a shape drawn with `m` (shape-local →
+/// output): `m`, without mirroring, then the layout's `rotation` about the rect's centre.
+///
+/// Flips mirror a shape's geometry, never its text. When `m` reflects (flipH or flipV, the shape's
+/// own or a group's) the text rect keeps its mirrored place and the text is mirrored back about
+/// the rect's centre: a flipH shape's text stays readable and a flipV shape's text is turned 180°
+/// (both flips: 180°), as in PowerPoint. Rendering, hit testing and the caret all use this.
+pub fn text_transform(m: Affine, tr: Rect, rotation: f64) -> Affine {
+    let c = tr.center().to_vec2();
+    let mut t = m;
+    if m.determinant() < 0.0 && c.is_finite() {
+        t = t * Affine::translate(c) * Affine::scale_non_uniform(-1.0, 1.0) * Affine::translate(-c);
+    }
+    if rotation != 0.0 && rotation.is_finite() && c.is_finite() {
+        t = t * Affine::translate(c) * Affine::rotate(rotation.to_radians()) * Affine::translate(-c);
+    }
+    t
+}
+
 /// Draw an already laid-out text block.
 pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
     draw_layout_with(ctx, l, tr, m, &[]);
@@ -1031,12 +1076,7 @@ pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: 
 /// Draw a laid-out text block with per-paragraph animation states.
 pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
-    let m = if l.rotation != 0.0 {
-        let c = tr.center().to_vec2();
-        m * Affine::translate(c) * Affine::rotate(l.rotation.to_radians()) * Affine::translate(-c)
-    } else {
-        m
-    };
+    let m = text_transform(m, tr, l.rotation);
     let deco = |ctx: &mut RenderContext, d: &deckcraft_text::Deco| {
         let ps = para(d.para);
         if !ps.visible || ps.opacity <= 0.001 {

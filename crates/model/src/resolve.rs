@@ -266,6 +266,17 @@ pub fn run(ctx: &Ctx, shape: &Shape, para: &crate::text::Paragraph, run: &RunPro
     let mut r = run.clone();
     let lvl = level_style(ctx, shape, para.level);
     r.inherit(&lvl.run);
+    // Hyperlinked text is drawn in the theme's hyperlink colour and underlined, as in PowerPoint,
+    // unless the run itself sets a colour (honoured since PowerPoint 2019) or an underline
+    // (`u="none"` removes it). Colours and underlines from list styles don't count.
+    if r.link.is_some() {
+        if run.fill.is_none() {
+            r.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink)));
+        }
+        if run.underline.is_none() {
+            r.underline = Some("sng".into());
+        }
+    }
     r
 }
 
