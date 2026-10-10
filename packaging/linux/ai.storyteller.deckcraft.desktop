@@ -3,7 +3,9 @@ Type=Application
 Name=DeckCraft
 GenericName=Presentation
 Comment=Create and present slide decks
-Exec=deckcraft %F
+# XRandR reports the panel's physical DPI while XFCE renders at 96, so winit scales
+# every window up and the app looks zoomed. Pin the X11 scale to 1 to match the desktop.
+Exec=env WINIT_X11_SCALE_FACTOR=1 deckcraft %F
 TryExec=deckcraft
 Icon=ai.storyteller.deckcraft
 Terminal=false
