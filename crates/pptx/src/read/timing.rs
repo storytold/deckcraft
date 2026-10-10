@@ -137,6 +137,8 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, _shapes:
             preset_id: Some(preset),
             preset_subtype: Some(sub),
             auto_reverse: c.bool("autoRev").unwrap_or(false),
+            // PowerPoint's "Rewind when done playing" is `fill="remove"` on the effect node.
+            rewind: c.attr("fill") == Some("remove"),
             smooth_start: c.f64("accel").map(|v| v / 100_000.0).unwrap_or(0.0),
             smooth_end: c.f64("decel").map(|v| v / 100_000.0).unwrap_or(0.0),
             ..Default::default()

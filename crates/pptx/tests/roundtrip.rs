@@ -633,6 +633,23 @@ fn every_animation_effect_survives() {
     }
 }
 
+#[test]
+fn animation_rewind_survives() {
+    let mut p = defaults::new_presentation(None);
+    let mut s = p.slides[0].as_ref().clone();
+    let sh = shape(&mut p, "Target", 100.0, 100.0, 100.0, 100.0);
+    let id = sh.id;
+    s.shapes.push(sh);
+    s.animations.push(Animation { shape: id, rewind: true, ..Default::default() });
+    s.animations.push(Animation { shape: id, effect: "fly".into(), option: "l".into(), start: AnimStart::WithPrevious, ..Default::default() });
+    p.slides[0] = Arc::new(s);
+    let q = round(&p);
+    let b = &q.slides[0].animations;
+    assert_eq!(b.len(), 2);
+    assert!(b[0].rewind);
+    assert!(!b[1].rewind);
+}
+
 /// Writes bisection variants of the rich deck to `DECKCRAFT_PPTX_BISECT` (manual checks).
 #[test]
 fn bisect_variants() {
