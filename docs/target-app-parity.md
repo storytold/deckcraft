@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (core-workflow alpha gate added; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; replaces the parity sections of ROADMAP.md) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (mainstream and essentials numbers added; ready recomputed from written weights, 56% → 55%; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; replaces the parity sections of ROADMAP.md) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -13,8 +13,10 @@ number.
 |---|---|---|
 | **Feature breadth** (weighted checklist) | **79%** over 191 features (P0 92%, P1 75%, P2 36%) | **measured**: `cargo xtask parity` formula over [parity-checklist.md](parity-checklist.md), rows re-scored 2026-10-10 |
 | Menu-bar coverage | **59%** (128 of 217 app-specific PowerPoint menu items have a DeckCraft command or UI label of the same name) | **measured** (heuristic lower bound): script matching the 2026-10-07 PowerPoint menu dump against the 226 engine command labels and the UI's strings; excludes the app, Window and Help menus and the subtitle language lists |
-| **Ready for real work** | **~56%** | **estimated**: weighted dimension table below |
-| Stage | **alpha** (beta is ~19 points and ~120–210 h away) | judgement against craftrules `standards/progress-docs.md`: ~56% is in the alpha band and all six core workflows pass the [alpha gate](roadmap.md#alpha-gate-powerpoints-core-workflows) |
+| **Ready for real work** | **~55%** | **estimated**: weighted dimension table below (was ~56% until the features row was recomputed from written area weights) |
+| **Mainstream practitioner** | **~53%** | **estimated**: [method below](#mainstream-practitioner-and-essentials-user) |
+| **Essentials user** | **~62%** | **estimated**: [method below](#mainstream-practitioner-and-essentials-user) |
+| Stage | **alpha** (beta is ~20 points and ~120–210 h away) | judgement against craftrules `standards/progress-docs.md`: ~55% is in the alpha band and all six core workflows pass the [alpha gate](roadmap.md#alpha-gate-powerpoints-core-workflows) |
 | Remaining effort to beta | **~120–210 Opus 5.5 agent hours** | estimated, itemized in [roadmap.md](roadmap.md) |
 | Remaining effort to full parity | **~365–650 Opus 5.5 agent hours** | estimated, by dimension below |
 
@@ -52,7 +54,7 @@ The weights are what those users actually depend on, written down so the total c
 
 | Dimension | Weight | Ready | Hours to full | Doc | Evidence |
 |---|---:|---:|---|---|---|
-| Features (breadth × depth) | 30% | ~66% | 140–240 | [parity-checklist.md](parity-checklist.md), [animation-parity.md](animation-parity.md), [slideshow-parity.md](slideshow-parity.md) | Breadth 79% measured. Depth lags: 37 of 191 rows are partial, and users found depth bugs in rows scored done within two days (#53, #60, #69, #70, #74, #77, #78) |
+| Features (breadth × depth) | 30% | ~62% | 140–240 | [parity-checklist.md](parity-checklist.md), [animation-parity.md](animation-parity.md), [slideshow-parity.md](slideshow-parity.md) | Breadth 79% measured. Depth lags: 37 of 191 rows are partial, and users found depth bugs in rows scored done within two days (#53, #60, #69, #70, #74, #77, #78) |
 | File formats | 20% | ~58% | 60–110 | [file-format-parity.md](file-format-parity.md) | PPTX reads and writes every main part and keeps unknown objects; files open in PowerPoint without repair. But it has never met a corpus of real decks, EMF/WMF/SVG pictures don't decode, comments/media/rewind settings are lost on round trip, and there is no `.ppt`, `.pptm`, `.odp`, video or GIF export |
 | UI/UX fidelity | 15% | ~60% | 30–50 | [ui-parity.md](ui-parity.md) | All 10 ribbon tabs and the contextual tabs exist; Format Shape pane, Animation Pane, dialogs and menus are thinner than PowerPoint's; no native macOS menu bar; user reports #17, #71, #73, #76 |
 | Stability | 10% | ~60% | 10–20 | [gaps.md](gaps.md) | Never-crash rules, a panic guard round every command, PPTX fuzz/malformed tests. But startup crashes on some Windows GPUs (#40, #59) and Close discards edits without asking (#60) |
@@ -62,7 +64,7 @@ The weights are what those users actually depend on, written down so the total c
 | Localization | 5% | ~8% | 55–90 + native review | [localization-parity.md](localization-parity.md) | English only; no string catalog. PowerPoint for Mac ships 26 languages. Bidi and Arabic shaping in slide text exist |
 | Ecosystem (templates, add-ins) | 3% | ~25% | 10–20 | [gaps.md](gaps.md) | 8 original themes vs PowerPoint's large template gallery; no add-ins or VBA (out of scope by policy) |
 | AI features | 2% | ~10% | 20–40 (owner decision on models) | [gaps.md](gaps.md) | No Designer, Copilot, Speaker Coach, live subtitles or Translate (all Microsoft cloud services). Agents drive every command over MCP instead |
-| **Total** | 100% | **~56%** | **~365–650** | | |
+| **Total** | 100% | **~55%** (Σ weight × ready = 55.3) | **~365–650** | | |
 | Automation (✱, not weighted) | | ahead | 0 | [mcp.md](mcp.md), [control-protocol.md](control-protocol.md) | Every command is scriptable from the CLI, a JSON control channel and MCP, headless or against the running app; PowerPoint for Mac has AppleScript and VBA only |
 
 About 60% of the hours parallelize across crates (formats, render, text, UI, media, localization
@@ -71,36 +73,125 @@ models and on legacy `.ppt` import, running PowerPoint to make reference renders
 round-tripped files open cleanly, and hardware we don't have (Windows GPUs from #40/#59, pens,
 multi-display rigs).
 
+## Mainstream practitioner and essentials user
+
+Two narrower readings of "ready", computed the same way in every Craft app (craftrules
+`standards/progress-docs.md`). The stage still follows the full number above and the alpha gate.
+
+### Mainstream practitioner: ~53%
+
+The typical professional who builds and presents decks every week: a consultant, teacher, sales or
+product person. Left out: add-ins, Copilot/Designer and other cloud AI, co-authoring and admin
+features, pens and recording hardware, and languages other than the user's own. Depth here is the
+depth of the parts of each area this user touches (common chart types, the effects people use,
+presenting rather than recording), so it's higher than the full-area numbers; exchange with
+PowerPoint is taken out of the areas and charged once, as a discount.
+
+| Area (weekly use) | Weight | Depth | Evidence |
+|---|---:|---:|---|
+| Text: typing, fonts, paragraphs, bullets | 18 | 70 | Every Home-tab control; font weights (#69), Tab in text boxes (#78) |
+| Slides, layouts, sections, views | 10 | 82 | Checklist 90% breadth in both areas |
+| Masters, themes, backgrounds | 8 | 75 | Slide Master view, 8 themes; Notes/Handout masters rarely used |
+| Shapes, format, arrange | 14 | 75 | Presets, connectors, smart guides; Format Shape pane thinner |
+| Pictures: insert, crop, styles | 8 | 62 | Works from file; paste fails on Windows/Linux (#53); crop partial |
+| Tables | 5 | 78 | Styles, merge/split, grow-to-fit |
+| Charts: column, bar, line, pie with data | 6 | 58 | Chart Data dialog; elements partial |
+| Transitions and common animations | 8 | 76 | 48/48 transitions; effects cover ~85% of use; pane has no timeline |
+| Presenting: show, presenter view | 10 | 70 | Works; not auto-placed on the second display; no laser |
+| Audio and video on slides | 3 | 62 | Plays; slow video in the show on Linux (#91) |
+| Comments | 3 | 60 | Threads, resolve |
+| Undo and clipboard | 4 | 75 | Unlimited undo; Paste Special partial |
+| Open, save, PDF export | 3 | 65 | No print; raster PDF artwork |
+| **Weighted depth** | 100 | **71.3** | |
+
+| Discount | Factor | Evidence |
+|---|---:|---|
+| Interaction fidelity | ×0.92 | No native macOS menu bar, thinner Format Shape pane, Tab ends text entry (#78), font faces (#69), window chrome (#71) |
+| Stability on real machines | ×0.92 | Startup crashes on some Windows GPUs (#40, #59); Close discards edits (#60, fix in PR #75); video stalls in the editor on Ubuntu (#91); arrows reported dead in the show on Linux Mint (#17) |
+| File exchange with PowerPoint users | ×0.88 | Harsher than VectorCraft's ×0.92 because swapping `.pptx` is daily work for this user: never tested on real decks, EMF pictures blank, icons from PowerPoint don't come through (#56), comment threads, media options and rewind lost on save (#70, #74, #77) |
+
+71.3 × 0.92 × 0.92 × 0.88 = **53.1 → ~53%**. This is about the same as the full number, unlike
+apps where mainstream comes out well above it. The dimensions mainstream leaves out
+(localization, ecosystem, AI) weigh only 10% of DeckCraft's full number, and the biggest penalty,
+`.pptx` exchange, hits every mainstream user.
+
+### Essentials user: ~62%
+
+Someone who makes a few simple decks: open or start a deck, type, add pictures, present, export
+a PDF. Leaves out advanced options, pro workflows and exchange edge cases, plus everything the
+mainstream number leaves out.
+
+| Core feature | Weight | Depth | Evidence |
+|---|---:|---:|---|
+| Start a deck from a theme (start screen) | 8 | 70 | Works; layout problems on the start screen (#17, #76) |
+| Type titles and bullets, basic formatting | 20 | 78 | Works; #69, #78 |
+| New slide, layout, reorder, duplicate | 12 | 88 | Works |
+| Insert a picture | 10 | 65 | From file yes; paste fails on Windows/Linux (#53) |
+| Basic shapes and text boxes | 8 | 85 | Works |
+| Theme colours and background | 6 | 80 | Works |
+| Transitions | 6 | 85 | Works |
+| Simple animations | 5 | 80 | Works |
+| Present full screen and move through slides | 10 | 85 | Works; #17 on Linux Mint |
+| Undo / redo | 5 | 95 | Works |
+| Save and reopen | 6 | 85 | Works; Close doesn't ask to save (#60) |
+| Export PDF / print | 4 | 70 | PDF yes, print no |
+| **Weighted depth** | 100 | **80.1** | |
+
+| Discount | Factor | Evidence |
+|---|---:|---|
+| Launch and stability | ×0.90 | Some Windows PCs can't start the app (#40, #59), and the workaround is an environment variable; Close loses work (#60) |
+| Discoverability and UI clarity | ×0.95 | Familiar ribbon and tabs; no native menu bar, start-screen glitches, a command palette whose default entry fails (#79) |
+| Opening files people send them | ×0.90 | `.pptx` opens, but real decks are untested and EMF pictures and PowerPoint icons can come in blank (#56) |
+
+80.1 × 0.90 × 0.95 × 0.90 = **61.6 → ~62%**.
+
+### User evidence (GitHub, 2026-10-10, maintainers excluded)
+
+- **38 issues** from 22 reporters and **48 PRs** by people other than the owner (bidi/Arabic,
+  Morph, tables, logging, packaging, a Gentoo overlay; open fix PRs for #53, #64, #70, #72, #74,
+  #77). **Praise threads or "switched from PowerPoint" reports: 0**
+  so far; the only comment threads are "same here" confirmations (#17, #33).
+- **Open issues (27):** 13 on the core path (#91 video playback, #60 Close, #59 and #40 startup
+  crashes, #53 image paste, #78 Tab in text, #69 font faces, #70/#74/#77 `.pptx` round trip, #56
+  icons from PowerPoint, #17 show navigation and file menu, #76 start screen), 14 polish or niche
+  (#81 and #64 browser exports, #79 palette, #72 browser comment timestamps, #73 icon consistency,
+  #71 and #26 window chrome, #41 system theme, #32 text transparency, #18 desktop shortcut, #15 and
+  #30 languages, #58 README link, #50 DMG signature).
+- Reading: people try DeckCraft for real decks and hit the core path. Nobody has reported
+  replacing PowerPoint yet, which fits ~53–55%.
+
 ## By feature area
 
 Breadth is measured from the checklist; "ready" adds depth and is estimated. Hours are to
-PowerPoint parity for that area.
+PowerPoint parity for that area. **Weight** is how much a PowerPoint user relies on the area
+(points out of 110); the total "ready" is the weighted mean of the rows (6,865 / 110 = 62.4%), and
+it is the Features row of the dimension table. Automation and Platforms are scored elsewhere.
 
-| Area | Breadth (measured) | Ready (est.) | Hours | Main shortfalls | Doc |
-|---|---:|---:|---|---|---|
-| Application shell | 71% | ~55% | 8–14 | No native macOS menu bar, thin start screen (templates, recent), one window per presentation missing | [ui-parity.md](ui-parity.md) |
-| Files (commands) | 69% | ~50% | see file formats | Print, reuse slides, passwords, legacy and macro formats | [file-format-parity.md](file-format-parity.md) |
-| Slides and sections | 90% | ~85% | 3–5 | Zoom (summary/section/slide), copying slides between decks keeps formatting only partly | [parity-checklist.md](parity-checklist.md) |
-| Views | 90% | ~80% | 3–6 | Snap to grid and grid options, New Window | [ui-parity.md](ui-parity.md) |
-| Masters and themes | 85% | ~70% | 8–14 | Notes and Handout masters, theme variants, `.thmx`, effect schemes | [parity-checklist.md](parity-checklist.md) |
-| Shapes | 86% | ~75% | 8–14 | Edit points, text warp, WordArt depth | [ui-parity.md](ui-parity.md) |
-| Format (fill, line, effects) | 81% | ~65% | 8–14 | Format Shape pane depth, bevel and 3-D, picture/texture fill options | [ui-parity.md](ui-parity.md) |
-| Arrange | 100% | ~90% | 1–2 | Align to slide vs selected as a menu choice, More Rotation Options | [ui-parity.md](ui-parity.md) |
-| Text | 80% | ~62% | 18–30 | Font weights beyond Regular/Bold/Italic (#69), Tab in text boxes (#78), IME, true vertical CJK, dictionaries, AutoCorrect, thesaurus, equations (PR #55 open) | [localization-parity.md](localization-parity.md) |
-| Tables | 89% | ~75% | 3–6 | Draw table, borders and cell effects depth | [parity-checklist.md](parity-checklist.md) |
-| Charts | 65% | ~45% | 12–20 | Data grid editing, chart elements, the `chartex` types (waterfall, funnel, treemap, sunburst, histogram, box) | [parity-checklist.md](parity-checklist.md) |
-| SmartArt | 33% | ~25% | 10–16 | Text pane, layout switching, the diagram data model on save | [parity-checklist.md](parity-checklist.md) |
-| Pictures | 48% | ~45% | 12–20 | SVG/EMF/WMF, clipboard paste on Windows/Linux (#53), artistic effects, remove background, compress | [file-format-parity.md](file-format-parity.md) |
-| Media | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, icons and 3-D models, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
-| Transitions | 92% | ~80% | 4–8 | Transition sounds, 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
-| Animations | 79% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, Animation Pane timeline, preview, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
-| Slide show and presenter view | 66% | ~60% | 10–16 | Second-display placement, laser pointer, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
-| Review | 60% | ~45% | 8–14 | Modern comment threads on round trip (#70), compare, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
-| Draw (ink) | 33% | ~30% | 5–9 | Pen pressure, ink to shape/text/math, lasso | [hardware-parity.md](hardware-parity.md) |
-| Undo and clipboard | 88% | ~75% | 3–5 | Paste Special, image paste (#53) | [ui-parity.md](ui-parity.md) |
-| Automation ✱ | 100% | ahead | 0 | | [mcp.md](mcp.md) |
-| Platforms ✱ | 67% | ~80% | see platforms | | [ROADMAP.md](../ROADMAP.md) |
-| **Total (feature areas)** | **79%** | **~66%** | **~140–240** | | |
+| Area | Weight | Breadth (measured) | Ready (est.) | Hours | Main shortfalls | Doc |
+|---|---:|---:|---:|---|---|---|
+| Application shell | 5 | 71% | ~55% | 8–14 | No native macOS menu bar, thin start screen (templates, recent), one window per presentation missing | [ui-parity.md](ui-parity.md) |
+| Files (commands) | 4 | 69% | ~50% | see file formats | Print, reuse slides, passwords, legacy and macro formats | [file-format-parity.md](file-format-parity.md) |
+| Slides and sections | 6 | 90% | ~85% | 3–5 | Zoom (summary/section/slide), copying slides between decks keeps formatting only partly | [parity-checklist.md](parity-checklist.md) |
+| Views | 4 | 90% | ~80% | 3–6 | Snap to grid and grid options, New Window | [ui-parity.md](ui-parity.md) |
+| Masters and themes | 7 | 85% | ~70% | 8–14 | Notes and Handout masters, theme variants, `.thmx`, effect schemes | [parity-checklist.md](parity-checklist.md) |
+| Shapes | 7 | 86% | ~75% | 8–14 | Edit points, text warp, WordArt depth | [ui-parity.md](ui-parity.md) |
+| Format (fill, line, effects) | 6 | 81% | ~65% | 8–14 | Format Shape pane depth, bevel and 3-D, picture/texture fill options | [ui-parity.md](ui-parity.md) |
+| Arrange | 3 | 100% | ~90% | 1–2 | Align to slide vs selected as a menu choice, More Rotation Options | [ui-parity.md](ui-parity.md) |
+| Text | 15 | 80% | ~62% | 18–30 | Font weights beyond Regular/Bold/Italic (#69), Tab in text boxes (#78), IME, true vertical CJK, dictionaries, AutoCorrect, thesaurus, equations (PR #55 open) | [localization-parity.md](localization-parity.md) |
+| Tables | 5 | 89% | ~75% | 3–6 | Draw table, borders and cell effects depth | [parity-checklist.md](parity-checklist.md) |
+| Charts | 7 | 65% | ~45% | 12–20 | Data grid editing, chart elements, the `chartex` types (waterfall, funnel, treemap, sunburst, histogram, box) | [parity-checklist.md](parity-checklist.md) |
+| SmartArt | 4 | 33% | ~25% | 10–16 | Text pane, layout switching, the diagram data model on save | [parity-checklist.md](parity-checklist.md) |
+| Pictures | 7 | 48% | ~45% | 12–20 | SVG/EMF/WMF, clipboard paste on Windows/Linux (#53), artistic effects, remove background, compress | [file-format-parity.md](file-format-parity.md) |
+| Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, icons and 3-D models, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
+| Transitions | 4 | 92% | ~80% | 4–8 | Transition sounds, 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
+| Animations | 6 | 79% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, Animation Pane timeline, preview, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
+| Slide show and presenter view | 8 | 66% | ~60% | 10–16 | Second-display placement, laser pointer, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
+| Review | 3 | 60% | ~45% | 8–14 | Modern comment threads on round trip (#70), compare, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
+| Draw (ink) | 2 | 33% | ~30% | 5–9 | Pen pressure, ink to shape/text/math, lasso | [hardware-parity.md](hardware-parity.md) |
+| Undo and clipboard | 3 | 88% | ~75% | 3–5 | Paste Special, image paste (#53) | [ui-parity.md](ui-parity.md) |
+| Automation ✱ | — | 100% | ahead | 0 | | [mcp.md](mcp.md) |
+| Platforms ✱ | — | 67% | ~80% | see platforms | | [ROADMAP.md](../ROADMAP.md) |
+| **Total (feature areas)** | 110 | **79%** | **~62%** | **~140–240** | | |
 
 ## What works today (evidence)
 
@@ -150,7 +241,7 @@ From this repo's own history (`git log`, `gh pr list`, the 2026-10-07 ROADMAP):
 - **The bulk build:** engine, model, renderer, text, UI, show engine, PPTX, PDF, media and the
   release pipeline (today 117k lines of Rust, 59k of them media codecs and containers ported from FilmCraft) took about
   **30 wall-clock hours with up to three agents**, i.e. roughly 60–90 agent hours, landing publicly
-  between 2026-10-05 22:13 and 10-06 02:28. That is ~100 agent hours for today's 79% breadth / ~56%
+  between 2026-10-05 22:13 and 10-06 02:28. That is ~100 agent hours for today's 79% breadth / ~55%
   ready, with community PRs.
 - **Catalogue rows** (connectors with glue, freeform tools, merge shapes, AutoRecover, the gradient
   editor) took **1–2 agent hours each** to reach "done" (commits 10-06 00:49–01:34, parallel agents).
@@ -175,5 +266,6 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Added the mainstream practitioner (~53%) and essentials user (~62%) numbers with written weights, discounts and user evidence. Features dimension recomputed from written area weights (66% judgement → 62.4% weighted mean), which moves ready for real work from ~56% to ~55%; stage unchanged |
 | 2026-10-10 | minor | Stage checked against the core-workflow gate (all six pass); stays alpha |
 | 2026-10-10 | major | Created from ROADMAP.md's "How far from full parity" and "Status" sections; full re-measure against PowerPoint for Mac 16.113.4 (Info.plist, lproj, menu dump), 226 commands, 191-row checklist (79%), weighted dimension table (~56% ready), hours recalibrated from git history |

@@ -50,7 +50,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 10 | Presenter view on the right display, timer controls | 3–5 | Hardware, Slide show |
 | 11 | Native macOS menu bar, Format Shape pane depth, start screen and window chrome fixes | 13–22 | UI/UX 60 → 75% |
 | 12 | Performance baseline and the obvious fixes | 4–8 | Performance |
-| **Total** | | **~120–210** | Ready ~56% → ~75% |
+| **Total** | | **~120–210** | Ready ~55% → ~75% |
 
 Parallelizes well: 1 (engine/app), 2–5 (pptx, render, pdf), 6 (ui-egui catalogs), 8–11 (UI)
 touch different crates. Needs a human: the owner opening PPTX outputs in PowerPoint and making
@@ -102,7 +102,7 @@ on common paths. On 2026-10-07 it was ~80% there with these blockers:
 | UI fidelity pass on the most-used ribbon groups and dialogs; first run | Partly (start-screen fixes #20, #49); beta item 11 |
 | Mascot app icon, README screenshots, user docs | App icon (with a scalable SVG, #29) and README screenshots in place; user docs open |
 
-By the standard's definitions DeckCraft is **alpha** (~56% ready); these blockers now feed the beta
+By the standard's definitions DeckCraft is **alpha** (~55% ready); these blockers now feed the beta
 plan above.
 
 ## Revision history

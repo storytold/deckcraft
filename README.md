@@ -155,7 +155,7 @@ deckcraft-cli mcp --connect 7990        # drive the running app (deckcraft --con
 ## Roadmap
 
 DeckCraft is in **alpha**. It covers **79% of PowerPoint's features by breadth** (92% of the core
-ones, measured) and is about **56% of the way to replacing PowerPoint for real work** (estimated).
+ones, measured) and is about **55% of the way to replacing PowerPoint for real work** (estimated).
 See [ROADMAP.md](ROADMAP.md) for the stage, numbers by dimension and what's next,
 [docs/target-app-parity.md](docs/target-app-parity.md) for the full assessment,
 [docs/gaps.md](docs/gaps.md) for every known shortfall and
