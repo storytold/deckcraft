@@ -209,6 +209,8 @@ pub struct SlideApp {
     pub(crate) notes_buf: (u64, usize, String),
     /// Thumbnail pane drag (slide index, current drop index).
     pub(crate) thumb_drag: Option<(usize, usize)>,
+    /// A V key press or a Paste event arrived since the last V release (see `keyboard`).
+    v_seen: bool,
 }
 
 impl SlideApp {
@@ -244,6 +246,7 @@ impl SlideApp {
             quit_confirmed: false,
             notes_buf: (0, usize::MAX, String::new()),
             thumb_drag: None,
+            v_seen: false,
         }
     }
 
@@ -607,10 +610,21 @@ impl SlideApp {
 
     /// Keyboard and clipboard for the slide (when no text field has focus).
     fn keyboard(&mut self, ctx: &egui::Context) {
+        let events = ctx.input(|i| i.events.clone());
+        // Ctrl+V with only an image on the clipboard: egui-winit sends no Paste event and swallows the
+        // key press, so the release of a V press never seen is the paste. Tracked even while a text
+        // field has focus, so that a V typed there is not taken for one.
+        let mut image_paste = false;
+        for e in &events {
+            match e {
+                egui::Event::Paste(_) | egui::Event::Key { key: egui::Key::V, pressed: true, .. } => self.v_seen = true,
+                egui::Event::Key { key: egui::Key::V, pressed: false, .. } => image_paste = !std::mem::take(&mut self.v_seen),
+                _ => {}
+            }
+        }
         if ctx.memory(|m| m.focused().is_some()) || self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some() {
             return;
         }
-        let events = ctx.input(|i| i.events.clone());
         if self.home_open() {
             // Only app shortcuts (Open, Command Palette…) and Escape, which goes back to the
             // presentation: typing, pasting or deleting would edit the hidden presentation.
@@ -626,6 +640,13 @@ impl SlideApp {
             }
             self.drain_requests();
             return;
+        }
+        let img = if image_paste { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+        if let Some(png) = img {
+            let data = deckcraft_engine::cmd::base64_encode(&png);
+            if let Err(e) = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})) {
+                self.set_status(e.to_string());
+            }
         }
         for e in events {
             match e {
@@ -930,6 +951,42 @@ mod tests {
         harness.run_steps(2);
         assert!(!harness.state().home_open(), "a new presentation leaves Home");
         assert_eq!(harness.state().session.documents().len(), 2);
+    }
+
+    /// #53: Ctrl+V did nothing for an image-only clipboard: egui-winit sends no Paste event for it and
+    /// swallows the key press, so only the V release reaches the app.
+    #[test]
+    fn ctrl_v_pastes_an_image_when_no_paste_event_arrives() {
+        let session = Session::with_new();
+        let png = {
+            let d = session.active().unwrap();
+            deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+        };
+        assert!(!png.is_empty());
+        let services = Services { clipboard_image: Some(Box::new(move || Some(png.clone()))), ..Default::default() };
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, services),
+        );
+        harness.run_steps(2);
+        let pictures = |app: &SlideApp| {
+            let d = app.session.active().unwrap();
+            d.doc.slides[0].shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count()
+        };
+        let v = |pressed| egui::Event::Key { key: egui::Key::V, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::COMMAND };
+        // A text paste (Paste event on the press) does not also paste the image on release.
+        harness.event(egui::Event::Paste("hello".into()));
+        harness.run_steps(2);
+        harness.event(v(false));
+        harness.run_steps(2);
+        assert_eq!(pictures(harness.state()), 0);
+        // What egui-winit sends for Ctrl+V with only an image on the clipboard: the release alone.
+        harness.event(v(false));
+        harness.run_steps(2);
+        assert_eq!(pictures(harness.state()), 1);
     }
 
     #[test]
