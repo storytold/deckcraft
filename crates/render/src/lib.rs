@@ -221,11 +221,13 @@ pub struct Renderer {
     resources: Resources,
     /// Outlines morphing in the frame being drawn by `blend`.
     paths: Vec<PathMorph>,
+    /// Their aligned outlines, kept from frame to frame.
+    morphs: morph_path::Cache,
 }
 
 impl Default for Renderer {
     fn default() -> Self {
-        Renderer { resources: Resources::new(), paths: Vec::new() }
+        Renderer { resources: Resources::new(), paths: Vec::new(), morphs: morph_path::Cache::default() }
     }
 }
 
@@ -539,6 +541,7 @@ impl Renderer {
             }
         }
         self.paths.clear();
+        self.morphs.sweep();
         self.finish(ctx, w, h)
     }
 
@@ -654,7 +657,7 @@ impl Renderer {
 
     fn geometry_shape(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, m: Affine, w: f64, h: f64, st: &ShapeState) {
         let (geo, fades) = match self.paths.iter().find(|p| p.id == s.id) {
-            Some(pm) => morph_path::geometry(pm, s, w, h),
+            Some(pm) => self.morphs.geometry(pm, s, w, h),
             None => (shape_geometry(s, w, h), Vec::new()),
         };
         let fade = |i: usize| fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 });
