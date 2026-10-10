@@ -342,7 +342,7 @@ pub fn rich_deck() -> Presentation {
                 text: "x=1".into(),
                 props: RunProps::default(),
                 kind: RunKind::Math {
-                    omml: r#"<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:r><m:t>x=1</m:t></m:r></m:oMath></m:oMathPara>"#.into(),
+                    omml: r#"<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:f><m:num><m:r><a:rPr xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" lang="en-US" sz="2800" b="1"/><m:t>x</m:t></m:r></m:num><m:den><m:r><m:t>2</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara>"#.into(),
                 },
             }],
             ..Default::default()
@@ -442,7 +442,9 @@ fn text_and_formatting_round_trip() {
     let eq = by_name(&q.slides[5], "Equation");
     let run = &eq.text.as_ref().expect("text").paragraphs[0].runs[0];
     assert!(matches!(&run.kind, RunKind::Math { omml } if omml.contains("oMath")), "{run:?}");
-    assert_eq!(run.text, "x=1");
+    assert_eq!(run.text, "x/2", "text is the linear form, not the raw m:t concatenation");
+    assert_eq!(run.props.size, Some(28.0));
+    assert_eq!(run.props.bold, Some(true));
 }
 
 #[test]
@@ -729,4 +731,35 @@ fn date_fields_keep_their_type_and_saved_text() {
     for name in ["Auto date", "Fixed date"] {
         assert_eq!(by_name(&q.slides[0], name).text, by_name(&p.slides[0], name).text, "{name}");
     }
+}
+
+#[test]
+fn equation_in_table_cell_survives_round_trip() {
+    let mut p = rich_deck();
+    let omml = r#"<m:oMathPara xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math"><m:oMath><m:f><m:num><m:r><m:t>a</m:t></m:r></m:num><m:den><m:r><m:t>b</m:t></m:r></m:den></m:f></m:oMath></m:oMathPara>"#;
+    let mut idx = None;
+    for (i, sh) in p.slides[3].shapes.iter().enumerate() {
+        if matches!(sh.kind, ShapeKind::Table(_)) {
+            idx = Some(i);
+        }
+    }
+    let i = idx.expect("table");
+    let mut s = (*p.slides[3]).clone();
+    if let ShapeKind::Table(t) = &mut s.shapes[i].kind
+        && let Some(cell) = t.cell_mut(0, 0)
+    {
+        cell.text = TextBody {
+            paragraphs: vec![Paragraph {
+                runs: vec![Run { text: "a/b".into(), props: RunProps::default(), kind: RunKind::Math { omml: omml.into() } }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+    }
+    p.slides[3] = Arc::new(s);
+    let q = round(&p);
+    let ShapeKind::Table(t) = &q.slides[3].shapes[i].kind else { panic!("table") };
+    let run = &t.rows[0].cells[0].text.paragraphs[0].runs[0];
+    assert!(matches!(&run.kind, RunKind::Math { omml } if omml.contains("<m:f>")), "{run:?}");
+    assert_eq!(run.text, "a/b");
 }

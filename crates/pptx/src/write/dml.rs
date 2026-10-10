@@ -602,6 +602,23 @@ pub fn list_style(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, ls: &ListStyle
 
 /// Write `<tag>` text body (`p:txBody`, `a:txBody`). `math` selects the OMML form of equations.
 pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, math: bool) {
+    text_body_mode(w, x, o, tag, tb, if math { MathMode::Direct } else { MathMode::Text });
+}
+
+/// Table cells: equations sit inside a paragraph-level `mc:AlternateContent` (OMML for readers
+/// that know it, plain text otherwise), since the cell cannot be wrapped as a whole.
+pub fn text_body_cell(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody) {
+    text_body_mode(w, x, o, tag, tb, MathMode::Alternate);
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MathMode {
+    Text,
+    Direct,
+    Alternate,
+}
+
+fn text_body_mode(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, math: MathMode) {
     w.open0(tag);
     body_pr(w, &tb.body);
     list_style(w, x, o, "a:lstStyle", &tb.list_style);
@@ -609,7 +626,7 @@ pub fn text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, tb: &TextBody, 
         w.empty0("a:p");
     }
     for (pi, p) in tb.paragraphs.iter().enumerate() {
-        paragraph(w, x, o, p, math, pi);
+        paragraph_mode(w, x, o, p, math, pi);
     }
     w.close(tag);
 }
@@ -631,7 +648,7 @@ fn run_text(w: &mut W, x: &mut Exp, o: &mut Out, text: &str, props: &RunProps) {
     }
 }
 
-pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool, index: usize) {
+fn paragraph_mode(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: MathMode, index: usize) {
     w.open0("a:p");
     if p.level > 0 || !is_default_ppr(&p.props) {
         ppr(w, x, o, "a:pPr", Some(p.level), &p.props, None);
@@ -653,10 +670,22 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
                 w.close("a:fld");
             }
             RunKind::Math { omml } => {
-                if math && !omml.is_empty() {
+                if math != MathMode::Text && !omml.is_empty() {
+                    let alt = math == MathMode::Alternate;
+                    if alt {
+                        w.open("mc:AlternateContent", A::new().a("xmlns:mc", crate::opc::NS_MC));
+                        w.open("mc:Choice", A::new().a("xmlns:a14", crate::opc::NS_A14).a("Requires", "a14"));
+                    }
                     w.open("a14:m", A::new().a("xmlns:a14", crate::opc::NS_A14));
                     w.raw(omml);
                     w.close("a14:m");
+                    if alt {
+                        w.close("mc:Choice");
+                        w.open0("mc:Fallback");
+                        run_text(w, x, o, &r.text, &r.props);
+                        w.close("mc:Fallback");
+                        w.close("mc:AlternateContent");
+                    }
                 } else {
                     run_text(w, x, o, &r.text, &r.props);
                 }

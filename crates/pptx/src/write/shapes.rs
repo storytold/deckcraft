@@ -512,7 +512,7 @@ fn table(w: &mut W, x: &mut Exp, o: &mut Out, t: &Table) {
                     .t("hMerge", c.h_merge)
                     .t("vMerge", c.v_merge),
             );
-            dml::text_body(w, x, o, "a:txBody", &c.text, false);
+            dml::text_body_cell(w, x, o, "a:txBody", &c.text);
             let mut a = A::new();
             if let Some(m) = c.margins {
                 a = a.a("marL", emu(m[0])).a("marR", emu(m[1])).a("marT", emu(m[2])).a("marB", emu(m[3]));

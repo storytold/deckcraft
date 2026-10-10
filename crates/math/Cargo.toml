@@ -1,0 +1,13 @@
+[package]
+name = "deckcraft-math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft equations: math tree, OMML import/export, linear (typed) format, templates"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+quick-xml = { workspace = true }

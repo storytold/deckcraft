@@ -1015,6 +1015,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckcraft-math"
+version = "0.3.0"
+dependencies = [
+ "quick-xml 0.38.4",
+ "serde",
+]
+
+[[package]]
 name = "deckcraft-matroska"
 version = "0.4.0"
 
@@ -1087,6 +1095,7 @@ dependencies = [
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-geom",
+ "deckcraft-math",
  "deckcraft-model",
  "image",
  "log",

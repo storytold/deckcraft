@@ -489,6 +489,68 @@ pub fn text_body(imp: &mut Imp, part: &Part, tx: &El) -> TextBody {
     TextBody { body, list_style, paragraphs }
 }
 
+/// Serialise the children of an `a14:m` element, adding `xmlns` declarations for prefixes the
+/// children use but that were bound on the `a14:m` element itself or on the part root, so the
+/// stored OMML is self-contained. Bounded: only prefixes actually used, at most 64.
+fn math_xml(part: &Part, e: &El) -> String {
+    use std::collections::{BTreeSet, HashMap};
+    fn walk(el: &El, declared: &mut HashMap<String, usize>, unbound: &mut BTreeSet<String>, depth: usize) {
+        if depth > 256 {
+            return;
+        }
+        let own: Vec<&String> = el.attrs.iter().filter(|(k, _)| k == "xmlns" || k.starts_with("xmlns:")).map(|(k, _)| k).collect();
+        for k in &own {
+            *declared.entry((*k).clone()).or_default() += 1;
+        }
+        let mut note = |key: String| {
+            if declared.get(&key).copied().unwrap_or(0) == 0 && (unbound.len() < 64 || unbound.contains(&key)) {
+                unbound.insert(key);
+            }
+        };
+        match el.name.split_once(':') {
+            Some((p, _)) => note(format!("xmlns:{p}")),
+            None => note("xmlns".to_string()),
+        }
+        for (k, _) in &el.attrs {
+            if let Some((p, _)) = k.split_once(':')
+                && p != "xmlns"
+                && p != "xml"
+            {
+                note(format!("xmlns:{p}"));
+            }
+        }
+        for c in el.elements() {
+            walk(c, declared, unbound, depth + 1);
+        }
+        for k in own {
+            if let Some(n) = declared.get_mut(k) {
+                *n -= 1;
+            }
+        }
+    }
+    let lookup = |key: &str| -> Option<String> {
+        e.attrs
+            .iter()
+            .find(|(k, _)| k == key)
+            .or_else(|| part.ns.iter().find(|(k, _)| k == key))
+            .map(|(_, v)| v.clone())
+            .or_else(|| (key == "xmlns:m").then(|| "http://schemas.openxmlformats.org/officeDocument/2006/math".to_string()))
+    };
+    let mut out = String::new();
+    for c in e.elements() {
+        let mut unbound = BTreeSet::new();
+        walk(c, &mut HashMap::new(), &mut unbound, 0);
+        let mut c = c.clone();
+        for k in unbound {
+            if let Some(v) = lookup(&k) {
+                c.attrs.insert(0, (k, v));
+            }
+        }
+        out.push_str(&c.to_xml());
+    }
+    out
+}
+
 pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
     let mut para = Paragraph::default();
     for e in p.elements() {
@@ -521,15 +583,14 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
                 para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
             }
             "m" => {
-                // Office Math (a14:m) — keep the OMML and its plain text.
-                let mut text = String::new();
-                let mut ts = vec![];
-                e.find_all("t", &mut ts);
-                for t in ts {
-                    text.push_str(&t.text());
-                }
-                let omml = e.elements().map(|c| c.to_xml()).collect::<String>();
-                para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
+                // Office Math (a14:m): keep the OMML verbatim; `text` is its linear form and the
+                // run props come from the first `a:rPr` inside an `m:r`.
+                let omml = math_xml(part, e);
+                let text = deckcraft_math::to_linear(&deckcraft_math::from_omml(&omml));
+                let mut rprs = vec![];
+                e.find_all("rPr", &mut rprs);
+                let props = rprs.into_iter().find(|r| r.prefix() == "a").map(|r| rpr(imp, part, r)).unwrap_or_default();
+                para.runs.push(Run { text, props, kind: RunKind::Math { omml } });
             }
             "endParaRPr" => para.end_props = rpr(imp, part, e),
             _ => {}
@@ -568,5 +629,19 @@ mod tests {
         assert_eq!(b.vert, Some(TextDir::Vertical270));
         assert_eq!(b.columns, Some(2));
         assert_eq!(b.autofit, Some(AutoFit::Shrink { font_scale: 0.625, line_reduction: 0.2 }));
+    }
+
+    #[test]
+    fn math_keeps_inherited_prefixes() {
+        let part = Part { name: "x".into(), rels: Default::default(), ns: vec![("xmlns:m".into(), "MNS".into())] };
+        let d = parse(br#"<a14:m xmlns:a14="q" xmlns:z="ZNS"><m:oMathPara><m:oMath><m:r><m:t>x</m:t></m:r><z:foo/></m:oMath></m:oMathPara></a14:m>"#)
+            .unwrap();
+        let x = math_xml(&part, &d.root);
+        assert!(x.contains(r#"xmlns:m="MNS""#) && x.contains(r#"xmlns:z="ZNS""#), "{x}");
+        assert!(parse(x.as_bytes()).is_ok());
+        // Already self-contained input is unchanged.
+        let own = r#"<m:oMath xmlns:m="K"><m:r><m:t>x</m:t></m:r></m:oMath>"#;
+        let d = parse(format!("<a14:m>{own}</a14:m>").as_bytes()).unwrap();
+        assert_eq!(math_xml(&part, &d.root), own);
     }
 }
