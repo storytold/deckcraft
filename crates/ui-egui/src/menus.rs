@@ -30,6 +30,7 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
         }
         (S, true, true, false) => "app.saveAsDialog",
         (O, true, false, false) => "app.openDialog",
+        (W, true, false, false) => "app.close",
         (P, true, true, false) => "app.palette",
         (Comma, true, false, false) => "app.preferences",
         (Equals | Plus, true, false, false) => "view.zoomIn",
@@ -70,7 +71,8 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
                 .session
                 .commands()
                 .into_iter()
-                .filter(|c| c.enabled)
+                // `app.close` (below) is Close for people: it asks about unsaved changes.
+                .filter(|c| c.enabled && c.id != "file.close")
                 .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
                 .chain(crate::UI_COMMANDS.iter().map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
                 .filter(|(id, label, _)| q.is_empty() || label.to_lowercase().contains(&q) || id.to_lowercase().contains(&q))
@@ -133,7 +135,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("New Presentation", "file.new"),
                 ("Open…", "app.openDialog"),
                 ("-", ""),
-                ("Close", "file.close"),
+                ("Close", "app.close"),
                 ("Save", "file.save"),
                 ("Save As…", "app.saveAsDialog"),
                 ("Export…", "app.exportDialog"),
