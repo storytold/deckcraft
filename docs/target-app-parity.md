@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (full re-measure against PowerPoint for Mac 16.113.4; replaces the parity sections of ROADMAP.md) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (core-workflow alpha gate added; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; replaces the parity sections of ROADMAP.md) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -14,7 +14,7 @@ number.
 | **Feature breadth** (weighted checklist) | **79%** over 191 features (P0 92%, P1 75%, P2 36%) | **measured**: `cargo xtask parity` formula over [parity-checklist.md](parity-checklist.md), rows re-scored 2026-10-10 |
 | Menu-bar coverage | **59%** (128 of 217 app-specific PowerPoint menu items have a DeckCraft command or UI label of the same name) | **measured** (heuristic lower bound): script matching the 2026-10-07 PowerPoint menu dump against the 226 engine command labels and the UI's strings; excludes the app, Window and Help menus and the subtitle language lists |
 | **Ready for real work** | **~56%** | **estimated**: weighted dimension table below |
-| Stage | **alpha** (beta is ~19 points and ~120–210 h away) | judgement against craftrules `standards/progress-docs.md` |
+| Stage | **alpha** (beta is ~19 points and ~120–210 h away) | judgement against craftrules `standards/progress-docs.md`: ~56% is in the alpha band and all six core workflows pass the [alpha gate](roadmap.md#alpha-gate-powerpoints-core-workflows) |
 | Remaining effort to beta | **~120–210 Opus 5.5 agent hours** | estimated, itemized in [roadmap.md](roadmap.md) |
 | Remaining effort to full parity | **~365–650 Opus 5.5 agent hours** | estimated, by dimension below |
 
@@ -175,4 +175,5 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Stage checked against the core-workflow gate (all six pass); stays alpha |
 | 2026-10-10 | major | Created from ROADMAP.md's "How far from full parity" and "Status" sections; full re-measure against PowerPoint for Mac 16.113.4 (Info.plist, lproj, menu dump), 226 commands, 191-row checklist (79%), weighted dimension table (~56% ready), hours recalibrated from git history |

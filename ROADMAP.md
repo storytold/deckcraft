@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~19 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (core-workflow alpha gate added; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -20,7 +20,9 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 | Hours to beta | **~120–210** Opus 5.5 agent hours (~40–70 h with 3–4 agents) | estimated, [docs/roadmap.md](docs/roadmap.md) |
 | Hours to full parity | **~365–650** Opus 5.5 agent hours | estimated, [docs/target-app-parity.md](docs/target-app-parity.md) |
 
-**Why alpha:** core workflows work end to end (build a deck, open and save `.pptx`, present with
+**Why alpha:** all six of PowerPoint's core workflows pass the alpha gate
+([docs/roadmap.md](docs/roadmap.md#alpha-gate-powerpoints-core-workflows)): build, open and save
+`.pptx`, present, add tables and charts, share as PDF, review. Core workflows work end to end (build a deck, open and save `.pptx`, present with
 transitions, animations, media and presenter view, export PDF), but depth, fidelity and polish
 have known gaps, and PPTX has never been tested on a corpus of real decks. Beta needs ~75% ready
 and no blocking gap in `.pptx`: the real-deck corpus, the round-trip losses (#70, #74, #77),
@@ -125,5 +127,6 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Stage checked against the new core-workflow gate: passes, stays alpha |
 | 2026-10-10 | major | Restructured to craftrules `standards/progress-docs.md`: stage, two numbers, dimensions, features, languages; parity estimate moved to docs/target-app-parity.md, "Working today" to its evidence section, the alpha checklist to docs/roadmap.md |
 | 2026-10-07 | major | Alpha checklist (~80% to a self-defined alpha), breadth ~80%, overall ~62%, ~190 h to full parity |

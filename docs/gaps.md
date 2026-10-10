@@ -1,13 +1,14 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** major (first itemized gap list; full re-measure against PowerPoint for Mac 16.113.4 and the open GitHub issues) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (core-workflow alpha gate added; stage stays alpha; previous: major, first itemized gap list; full re-measure against PowerPoint for Mac 16.113.4 and the open GitHub issues) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
 [target-app-parity.md](target-app-parity.md); the feature-by-feature scores are in
 [parity-checklist.md](parity-checklist.md). Hours are Opus 5.5 agent wall-clock hours including
 tests (calibration in [target-app-parity.md](target-app-parity.md#calibration-how-the-hours-were-derived)).
-`B` marks a gap that blocks **beta**.
+`B` marks a gap that blocks **beta**. None blocks **alpha**: all six core workflows pass the
+[alpha gate](roadmap.md#alpha-gate-powerpoints-core-workflows).
 
 When a gap closes, delete its entry, update the parity doc it points to, and add a line to the
 revision history.
@@ -246,4 +247,5 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-10 | minor | Noted that no gap blocks alpha (core-workflow gate passes) |
 | 2026-10-10 | major | Created: every gap from the 2026-10-10 re-measure and the 16 open GitHub issues, ranked, with beta blockers marked |
