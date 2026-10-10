@@ -11,6 +11,24 @@ pub enum Brightness {
     Dark,
 }
 
+/// The saved user choice, independent of the brightness currently displayed. `None` is "Use
+/// system setting": no `brightness` key at all, so a file that saved `brightness: "dark"` keeps
+/// drawing dark and a fresh install follows the desktop.
+pub type BrightnessPreference = Option<Brightness>;
+
+/// The colours to draw. `system` is what the operating system says, `None` when it says nothing;
+/// `fallback` is then what was on screen, so an unanswering desktop leaves the choice alone.
+pub fn resolve_brightness(preference: BrightnessPreference, system: Option<bool>, fallback: Brightness) -> Brightness {
+    match preference {
+        Some(b) => b,
+        None => match system {
+            Some(true) => Brightness::Dark,
+            Some(false) => Brightness::Light,
+            None => fallback,
+        },
+    }
+}
+
 /// Every colour the chrome uses.
 #[derive(Clone, Copy, Debug)]
 pub struct Tokens {
