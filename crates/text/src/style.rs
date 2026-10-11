@@ -83,6 +83,10 @@ pub(crate) struct Cell {
     pub(crate) boundary: bool,
     /// Drawn upright in East Asian vertical text.
     pub(crate) upright: bool,
+    /// First cell of an equation: index into `ParaShaped::atoms`. The equation is one object
+    /// (U+FFFC, neutral for bidi) followed by zero-width word joiners, one per further character
+    /// of the run, so character counts and caret offsets match the run's text.
+    pub(crate) atom: Option<usize>,
 }
 
 impl Cell {
@@ -94,6 +98,8 @@ impl Cell {
 
 pub(crate) struct ParaShaped {
     pub(crate) cells: Vec<Cell>,
+    /// Laid-out equations referenced by `Cell::atom`.
+    pub(crate) atoms: Vec<Arc<crate::math::MathBox>>,
     pub(crate) styles: Vec<Style>,
     pub(crate) faces: Vec<Arc<FontFace>>,
     pub(crate) props: ParaProps,

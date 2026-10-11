@@ -37,6 +37,7 @@ use unicode_segmentation::UnicodeSegmentation;
 mod autonum;
 mod breaking;
 mod layout;
+mod math;
 mod run;
 mod shape;
 mod style;

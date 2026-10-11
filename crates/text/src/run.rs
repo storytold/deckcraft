@@ -81,6 +81,9 @@ pub struct Deco {
     pub para: usize,
     /// How the line fills `rect`.
     pub line: DecoLine,
+    /// A filled vector shape (equation radicals, delimiters, big operators), in layout
+    /// coordinates; `rect` is its bounding box. `None` for plain boxes.
+    pub path: Option<std::sync::Arc<kurbo::BezPath>>,
 }
 
 /// How an underline fills its box.
