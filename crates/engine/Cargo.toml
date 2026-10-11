@@ -19,6 +19,8 @@ deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
 deckcraft-media = { workspace = true }
+# Equation commands, MathML and LaTeX paste, and the OMML bridge to the equation editor's tree.
+equashion-math = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 i_overlay = { workspace = true }
