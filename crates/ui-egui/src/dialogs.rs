@@ -207,7 +207,6 @@ mod alt_text;
 mod body;
 mod columns;
 mod date_time;
-mod equation;
 mod export;
 mod find;
 mod font;
