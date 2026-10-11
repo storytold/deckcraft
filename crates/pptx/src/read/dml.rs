@@ -624,17 +624,16 @@ fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
     }
 }
 
-/// Appends an Office Math (a14:m) run: its plain text and its OMML.
-fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
+/// Appends an Office Math (a14:m) run: its OMML, kept self-contained; `text` is the equation's
+/// linear form and the run props come from the first `a:rPr` inside an `m:r`.
+fn push_math_run(imp: &mut Imp, para: &mut Paragraph, part: &Part, e: &El) {
     if para.runs.len() < MAX_PARAGRAPH_RUNS {
-        let mut text = String::new();
-        let mut ts = vec![];
-        e.find_all("t", &mut ts);
-        for t in ts {
-            text.push_str(&t.text());
-        }
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
-        para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
+        let text = equashion_math::run_text(&equashion_math::from_omml(&omml));
+        let mut rprs = vec![];
+        e.find_all("rPr", &mut rprs);
+        let props = rprs.into_iter().find(|r| r.prefix() == "a").map(|r| rpr(imp, part, r)).unwrap_or_default();
+        para.runs.push(Run { text, props, kind: RunKind::Math { omml } });
     }
 }
 
@@ -664,7 +663,7 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
                 let text = e.child("t").map(|t| t.text()).unwrap_or_default();
                 para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
             }
-            "m" => push_math_run(&mut para, part, e),
+            "m" => push_math_run(imp, &mut para, part, e),
             "endParaRPr" => para.end_props = rpr(imp, part, e),
             _ => {}
         }
@@ -729,5 +728,19 @@ mod tests {
         assert_eq!(b.vert.map(|v| v.xml()), Some("mongolianVert"));
         let d = parse(br#"<a:bodyPr vert="wordArtVertRtl"/>"#).unwrap();
         assert_eq!(body_pr(&d.root).vert.map(|v| v.xml()), Some("wordArtVertRtl"));
+    }
+
+    #[test]
+    fn math_keeps_inherited_prefixes() {
+        let part = Part { name: "x".into(), rels: Default::default(), ns: vec![("xmlns:m".into(), "MNS".into())] };
+        let d = parse(br#"<a14:m xmlns:a14="q" xmlns:z="ZNS"><m:oMathPara><m:oMath><m:r><m:t>x</m:t></m:r><z:foo/></m:oMath></m:oMathPara></a14:m>"#)
+            .unwrap();
+        let x = math_xml(&part, &d.root);
+        assert!(x.contains(r#"xmlns:m="MNS""#) && x.contains(r#"xmlns:z="ZNS""#), "{x}");
+        assert!(parse(x.as_bytes()).is_ok());
+        // Already self-contained input is unchanged.
+        let own = r#"<m:oMath xmlns:m="K"><m:r><m:t>x</m:t></m:r></m:oMath>"#;
+        let d = parse(format!("<a14:m>{own}</a14:m>").as_bytes()).unwrap();
+        assert_eq!(math_xml(&part, &d.root), own);
     }
 }
