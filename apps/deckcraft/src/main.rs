@@ -20,6 +20,8 @@ mod audio;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod display;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod displays;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
@@ -256,6 +258,11 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             let mut app = SlideApp::new(Session::new(), services());
+            // Presenter View asks the display server the window is on how many displays there are.
+            #[cfg(all(unix, not(target_os = "macos")))]
+            {
+                app.services.displays = Some(Box::new(move || displays::count(x11)));
+            }
             load_prefs(&mut app);
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
             if std::env::var_os("DECKCRAFT_NO_RECOVERY").is_none() {

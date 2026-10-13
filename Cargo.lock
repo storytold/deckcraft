@@ -906,8 +906,10 @@ dependencies = [
  "log",
  "rfd",
  "serde_json",
+ "wayland-client",
  "winit",
  "winresource",
+ "x11rb",
 ]
 
 [[package]]
