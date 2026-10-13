@@ -15,6 +15,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -46,6 +47,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub use control::{ControlRequest, ControlResponse};
+pub use i18n::UiLanguage;
 
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
@@ -274,6 +276,7 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    pub language: UiLanguage,
 }
 
 impl Default for UiState {
@@ -305,6 +308,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: UiLanguage::English,
         }
     }
 }
@@ -2939,7 +2943,7 @@ mod tests {
         harness.state_mut().run("app.dialog", json!({"id": "language"})).unwrap();
         // The anchored window settles over its first frames; click once it stays put.
         harness.run_steps(4);
-        harness.get_by_label("Français (France)").click();
+        harness.get_by_label_contains("Français (France)").click();
         harness.run_steps(2);
         harness.get_by_label("OK").click();
         harness.run_steps(2);

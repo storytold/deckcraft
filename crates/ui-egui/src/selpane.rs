@@ -125,18 +125,19 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let selected: Vec<u32> = st.selection.shapes.iter().map(|i| i.0).collect();
     let has_sel = !selected.is_empty();
 
+    let lang = app.ui.language;
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(lang.t("show_all")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.showAll", json!({}));
         }
-        if ui.add(egui::Button::new("Hide All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(lang.t("hide_all")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.hideAll", json!({}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if small_icon_button(ui, Icon::ChevronDown, "Send Backward", has_sel).clicked() {
+            if small_icon_button(ui, Icon::ChevronDown, lang.t("send_backward"), has_sel).clicked() {
                 run(app, "arrange.sendBackward", json!({}));
             }
-            if small_icon_button(ui, Icon::ChevronUp, "Bring Forward", has_sel).clicked() {
+            if small_icon_button(ui, Icon::ChevronUp, lang.t("bring_forward"), has_sel).clicked() {
                 run(app, "arrange.bringForward", json!({}));
             }
         });
