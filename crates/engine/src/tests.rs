@@ -2,7 +2,8 @@ use serde_json::json;
 
 use crate::tools::{Mods, PointerEvent, PointerKind};
 use crate::{
-    DocState, History, Presentation, Session, Target, TextSel, ToolKind, Value, cmd, command_specs, connect, find_command, model, sample, tools,
+    DocState, EngineError, History, Presentation, Session, Target, TextSel, ToolKind, UiRequest, Value, cmd, command_specs, connect, find_command,
+    model, sample, tools,
 };
 use deckcraft_model::ShapeId;
 
@@ -5107,8 +5108,13 @@ fn background_loads_are_adopted_through_a_command() {
     replay.execute(&id, &params).unwrap();
     assert_eq!(replay.doc().unwrap().doc.slides.len(), 2);
     // A token staged for another path is not taken for this one.
-    let other =
-        s.stage_loaded(cmd::file::LoadedFile { path: "/elsewhere.pptx".into(), doc: Default::default(), native: true, damaged: Default::default() });
+    let other = s.stage_loaded(cmd::file::LoadedFile {
+        path: "/elsewhere.pptx".into(),
+        doc: Default::default(),
+        native: true,
+        damaged: Default::default(),
+        encrypted: false,
+    });
     s.execute("file.adopt", &json!({"path": path, "token": other})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
     assert!(s.execute("file.adopt", &json!({})).is_err());
@@ -6457,4 +6463,70 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     s.execute("format.shrink", &json!({})).unwrap();
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
+}
+
+/// An encrypted package from `crates/pptx/tests/fixtures` (see its `make.py`).
+const ENCRYPTED_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../pptx/tests/fixtures/standard-aes128-sha1.pptx");
+/// The password that fixture was encrypted with.
+const PASSWORD: &str = "DeckCraft-Test-Passw0rd!";
+
+fn encrypted_bytes() -> Vec<u8> {
+    std::fs::read(ENCRYPTED_FIXTURE).expect("the encrypted fixture")
+}
+
+#[test]
+fn opening_an_encrypted_file_asks_for_a_password() {
+    let mut s = session();
+    let data = cmd::base64_encode(&encrypted_bytes());
+    let err = s.execute("file.openBytes", &json!({"name": "secret.pptx", "data": data})).unwrap_err();
+    assert!(matches!(err, EngineError::PasswordRequired(_)), "{err}");
+    assert_eq!(s.ui_requests, vec![UiRequest::Dialog { id: "password".into(), params: json!({"name": "secret.pptx", "data": data}) }]);
+
+    // And the same by path, so the File ▸ Open route prompts too.
+    let mut s = session();
+    let err = s.execute("file.open", &json!({"path": ENCRYPTED_FIXTURE})).unwrap_err();
+    assert!(matches!(err, EngineError::PasswordRequired(_)), "{err}");
+    assert_eq!(
+        s.ui_requests,
+        vec![UiRequest::Dialog { id: "password".into(), params: json!({"name": ENCRYPTED_FIXTURE, "path": ENCRYPTED_FIXTURE}) }]
+    );
+}
+
+#[test]
+fn a_rejected_password_is_reported_without_replacing_the_open_dialog() {
+    let mut s = session();
+    let data = cmd::base64_encode(&encrypted_bytes());
+    let err = s.execute("file.openBytes", &json!({"name": "secret.pptx", "data": data, "password": "wrong"})).unwrap_err();
+    assert!(matches!(err, EngineError::WrongPassword(_)), "{err}");
+    // The open dialog holds the text the user typed: it must not be pushed aside by a new prompt.
+    assert!(s.ui_requests.is_empty(), "{:?}", s.ui_requests);
+}
+
+#[test]
+fn the_right_password_opens_the_presentation() {
+    let mut s = session();
+    let before = s.documents().len();
+    let data = cmd::base64_encode(&encrypted_bytes());
+    let v = s.execute("file.openBytes", &json!({"name": "secret.pptx", "data": data, "password": PASSWORD})).unwrap();
+    assert_eq!(s.documents().len(), before + 1, "the deck is opened as a new document");
+    assert_eq!(s.doc().unwrap().doc.slides.len(), 3);
+    assert_eq!(s.doc().unwrap().doc.slides[0].title(), "Encrypted fixture");
+    // DeckCraft cannot write an encrypted package back: the UI says so from this flag, before saving.
+    assert_eq!(v["encrypted"], json!(true));
+    assert!(!s.ui_requests.iter().any(|r| matches!(r, UiRequest::Dialog { .. })), "no further prompt is needed");
+}
+
+#[test]
+fn a_legacy_compound_file_is_unsupported_and_not_a_password_prompt() {
+    // A legacy binary `.ppt` is an OLE compound file too, but carries no encryption streams.
+    let mut bytes = vec![0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
+    bytes.resize(4096, 0);
+    let res = cmd::file::open_presentation("legacy.ppt", &bytes);
+    assert!(matches!(res, Err(EngineError::Other(_))), "{res:?}");
+
+    let mut s = session();
+    let data = cmd::base64_encode(&bytes);
+    let err = s.execute("file.openBytes", &json!({"name": "legacy.ppt", "data": data})).unwrap_err();
+    assert!(matches!(err, EngineError::Other(_)), "{err}");
+    assert!(s.ui_requests.is_empty(), "a legacy file must not ask for a password");
 }

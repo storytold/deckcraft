@@ -3,7 +3,7 @@
 //! Escape) gives the window back at once; the abandoned read finishes on its thread and is dropped.
 
 use crate::SlideApp;
-use deckcraft_engine::cmd::file::LoadedFile;
+use deckcraft_engine::{EngineError, cmd::file::LoadedFile};
 use std::sync::mpsc::{Receiver, TryRecvError};
 
 /// A presentation being read on a background thread.
@@ -13,7 +13,7 @@ pub struct Opening {
     /// Monotonic identity of this attempt. Cancelling and reopening the same path must not match
     /// a click queued for the previous progress window's Cancel button.
     pub(crate) generation: u64,
-    rx: Receiver<Result<LoadedFile, String>>,
+    rx: Receiver<Result<LoadedFile, EngineError>>,
 }
 
 impl Opening {
@@ -50,7 +50,7 @@ impl SlideApp {
             let (tx, rx) = std::sync::mpsc::channel();
             let p = path.to_string();
             let spawned = std::thread::Builder::new().name("deckcraft-open".into()).spawn(move || {
-                let r = deckcraft_engine::cmd::file::read_presentation_file(&p).map_err(|e| e.to_string());
+                let r = deckcraft_engine::cmd::file::read_presentation_file(&p);
                 let _ = tx.send(r);
             });
             match spawned {
@@ -80,20 +80,27 @@ impl SlideApp {
         let r = match o.rx.try_recv() {
             Ok(r) => r,
             Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err(format!("{}: reading the file stopped unexpectedly", o.path)),
+            Err(TryRecvError::Disconnected) => Err(EngineError::Other(format!("{}: reading the file stopped unexpectedly", o.path))),
         };
         let Some(o) = self.opening.take() else { return };
         match r {
             Ok(f) => {
                 // Into the session through the command path, like file.open: journaled and guarded.
                 let token = self.session.stage_loaded(f);
-                match self.session.execute("file.adopt", &serde_json::json!({"path": o.path, "token": token})) {
-                    Ok(_) => self.note_recent(&o.path),
-                    Err(e) => self.notify(e.to_string()),
+                // `run` reports a failure itself (and `report_error` keeps it out of the bar when
+                // the prompt asked): nothing to do with an Err here.
+                if self.run("file.adopt", serde_json::json!({"path": o.path, "token": token})).is_ok() {
+                    self.note_recent(&o.path);
                 }
             }
+            // A locked file hands the prompt back instead of a status-bar error.
+            Err(EngineError::PasswordRequired(name)) => {
+                let mut d = crate::dialogs::Dialog::new("password");
+                d.params = serde_json::json!({"name": name, "path": o.path});
+                self.dialog = Some(d);
+            }
             // Over the start screen too, like a failed file.open (#346).
-            Err(e) => self.notify(e),
+            Err(e) => self.notify(e.to_string()),
         }
     }
 

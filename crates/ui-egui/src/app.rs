@@ -129,6 +129,27 @@ impl SlideApp {
         self.status = Some((msg.into(), now_ms()));
     }
 
+    /// Show a failed command in the status bar, except while the password prompt is up: an unlock
+    /// request is not an error to report, and a rejected password belongs under that dialog's field.
+    fn report_error(&mut self, e: String) {
+        if self.dialog.as_ref().is_some_and(|d| d.id == "password") {
+            let name = self.dialog.as_ref().and_then(|d| d.params.get("name")).and_then(Value::as_str).map(str::to_string);
+            if e.ends_with(": this file is password-protected") {
+                return;
+            }
+            if let Some(name) = name
+                && e.ends_with(": incorrect password")
+            {
+                if let Some(d) = self.dialog.as_mut() {
+                    d.fields.insert("error".into(), dialogs::rejected_password(&name, &e));
+                    d.fields.remove("focused");
+                }
+                return;
+            }
+        }
+        self.set_status(e);
+    }
+
     /// Turn on the automatic check for a newer release at start-up (desktop shell only; tests and
     /// the web build never touch the network on their own).
     #[cfg(not(target_arch = "wasm32"))]

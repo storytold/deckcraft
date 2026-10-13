@@ -23,6 +23,9 @@ impl SlideApp {
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
         };
+        // Drain first: a command that opened a dialog pushed a request, and the dialog decides
+        // whether its failure deserves the status bar (see `report_error`).
+        self.drain_requests();
         match &r {
             // Copy and Cut from the ribbon, menus, the slide's context menu or the control channel
             // put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431).
@@ -31,10 +34,22 @@ impl SlideApp {
                     self.pending_copy = Some(t.to_string());
                 }
             }
-            Ok(_) => {}
-            Err(e) => self.set_status(e.clone()),
+            Ok(v) => {
+                // A successful open has answered the password prompt: dismiss it rather than
+                // leaving the user looking at a dialog for a deck that is now open.
+                if matches!(id, "file.open" | "file.openBytes") && self.dialog.as_ref().is_some_and(|d| d.id == "password") {
+                    self.dialog = None;
+                }
+                // A deck read with a password cannot be written back encrypted: say so once it is
+                // open, whatever opened it (File ▸ Open, the dialog, the background read).
+                if v.get("encrypted").and_then(Value::as_bool) == Some(true)
+                    && let Some(name) = params.get("path").or_else(|| params.get("name")).and_then(Value::as_str)
+                {
+                    self.notify(dialogs::drops_password_note(name));
+                }
+            }
+            Err(e) => self.report_error(e.clone()),
         }
-        self.drain_requests();
         r
     }
 

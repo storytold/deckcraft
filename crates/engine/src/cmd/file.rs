@@ -22,7 +22,7 @@ pub fn specs() -> Vec<CommandSpec> {
             new
         ),
         cmd!(query "file.templates", "Starter Templates", [], None, "{} → [{name, summary, theme, slides}]", always, templates),
-        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path}", always, open),
+        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path, password?}", always, open),
         cmd!(
             noundo "file.adopt",
             "Open",
@@ -32,7 +32,7 @@ pub fn specs() -> Vec<CommandSpec> {
             always,
             adopt
         ),
-        cmd!(noundo "file.openBytes", "Open Data", [], None, "{name, data: base64}", always, open_bytes),
+        cmd!(noundo "file.openBytes", "Open Data", [], None, "{name, data: base64, password?}", always, open_bytes),
         cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx}", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
@@ -127,9 +127,15 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
-/// Recognise and read presentation bytes (native, PPTX).
+/// Recognise and read presentation bytes (native, PPTX), optionally with a password.
+pub fn open_presentation_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<Presentation> {
+    open_checked_with_password(name, bytes, password).map(|(p, _)| p)
+}
+
+/// [`open_presentation_with_password`] without a password (callers: `design.rs`, `reuse.rs`,
+/// `review.rs`, tests, CLI).
 pub fn open_presentation(name: &str, bytes: &[u8]) -> Result<Presentation> {
-    open_checked(name, bytes).map(|(p, _)| p)
+    open_presentation_with_password(name, bytes, None)
 }
 
 /// What a file lost on opening.
@@ -149,22 +155,33 @@ impl Damage {
 
 /// [`open_presentation`], plus what the file had lost or damaged.
 pub fn open_checked(name: &str, bytes: &[u8]) -> Result<(Presentation, Damage)> {
+    open_checked_with_password(name, bytes, None)
+}
+
+/// [`open_checked`], decrypting a password-protected package with `password`.
+pub fn open_checked_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Presentation, Damage)> {
     if deckcraft_format::sniff(bytes) {
         let (p, media) = deckcraft_format::load_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
         return Ok((p, Damage { media, slides: vec![] }));
     }
-    open_other(name, bytes).map(|(p, slides)| (p, Damage { media: vec![], slides }))
+    open_other_with_password(name, bytes, password).map(|(p, slides)| (p, Damage { media: vec![], slides }))
 }
 
-fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
-    if deckcraft_pptx::sniff(bytes) {
-        let (mut p, lost_slides) = deckcraft_pptx::import_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+fn open_other_with_password(name: &str, bytes: &[u8], password: Option<&str>) -> Result<(Presentation, Vec<String>)> {
+    if deckcraft_pptx::sniff(bytes) || deckcraft_pptx::is_encrypted(bytes) {
+        let (mut p, lost) = deckcraft_pptx::import_checked_with_password(bytes, password).map_err(|e| match e {
+            deckcraft_pptx::PptxError::PasswordRequired => EngineError::PasswordRequired(name.to_string()),
+            deckcraft_pptx::PptxError::WrongPassword => EngineError::WrongPassword(name.to_string()),
+            e => EngineError::Other(e.to_string()),
+        })?;
         deckcraft_format::repair(&mut p);
         probe_clips(&mut p);
-        return Ok((p, lost_slides));
+        return Ok((p, lost));
     }
-    if deckcraft_pptx::is_encrypted(bytes) {
-        return Err(EngineError::Other(format!("{name} is password-protected. DeckCraft can't open password-protected presentations yet.")));
+    if is_cfb(bytes) {
+        return Err(EngineError::Other(format!(
+            "{name}: legacy binary PowerPoint (.ppt) files and other OLE compound documents are not supported — save as .pptx"
+        )));
     }
     let lower = name.to_ascii_lowercase();
     let rtf = deckcraft_format::rtf::sniff_rtf(bytes);
@@ -183,6 +200,19 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
         return Ok((p, vec![]));
     }
     Err(EngineError::Other(format!("{name}: not a presentation DeckCraft can read")))
+}
+
+/// Does this look like an OLE/CFB Compound File? An encrypted Office document and a legacy `.ppt`
+/// share this container, so the eight magic bytes alone say nothing about encryption.
+pub fn is_cfb(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1])
+}
+
+/// Ask the UI to prompt for a password. Only raised when none was supplied: a rejected password is
+/// reported to the caller, which already holds the text the user typed.
+fn password_prompt(s: &mut Session, name: &str, params: Value) -> Result<Value> {
+    s.ui_requests.push(crate::UiRequest::Dialog { id: "password".into(), params });
+    Err(EngineError::PasswordRequired(name.to_string()))
 }
 
 /// Fill in each audio and video clip's length and picture size from its bytes: a `.pptx` doesn't
@@ -247,36 +277,49 @@ pub struct LoadedFile {
     pub native: bool,
     /// What the file had lost or damaged.
     pub damaged: Damage,
+    /// Read with a password: saving the copy writes an unencrypted package.
+    pub encrypted: bool,
+}
+
+/// Read and parse the presentation at `path`, decrypting it with `password` when it is protected.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn read_presentation_file_with_password(path: &str, password: Option<&str>) -> Result<LoadedFile> {
+    let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
+    let encrypted = deckcraft_pptx::is_encrypted(&bytes);
+    let (doc, damaged) = open_checked_with_password(path, &bytes, password)?;
+    let native = deckcraft_format::sniff(&bytes) || deckcraft_pptx::sniff(&bytes) || encrypted;
+    Ok(LoadedFile { path: path.to_string(), doc, native, damaged, encrypted })
 }
 
 /// Read and parse the presentation at `path`.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
-    let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
-    let (doc, damaged) = open_checked(path, &bytes)?;
-    let native = deckcraft_format::sniff(&bytes) || deckcraft_pptx::sniff(&bytes);
-    Ok(LoadedFile { path: path.to_string(), doc, native, damaged })
+    read_presentation_file_with_password(path, None)
 }
 
 /// Add a loaded presentation as the active document: the shared end of `file.open` and
 /// `file.adopt`. A damaged file opens as an untitled repaired copy, so Save can't overwrite the
 /// original with the empty media.
 fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
-    let LoadedFile { path, doc, native, damaged } = f;
+    let LoadedFile { path, doc, native, damaged, encrypted } = f;
     let keep_path = native && damaged.is_empty();
     let i = add_opened(s, &path, keep_path.then(|| path.clone()), doc);
     report_damage(s, &damaged)?;
     let st = s.doc()?;
     Ok(json!({
         "document": i, "slides": st.doc.slides.len(), "missingFonts": st.missing_fonts,
-        "damagedMedia": damaged.media, "lostSlides": damaged.slides,
+        "encrypted": encrypted, "damagedMedia": damaged.media, "lostSlides": damaged.slides,
     }))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
-    adopt_loaded(s, read_presentation_file(path)?)
+    match read_presentation_file_with_password(path, str_param(p, "password")) {
+        Ok(f) => adopt_loaded(s, f),
+        Err(EngineError::PasswordRequired(name)) => password_prompt(s, &name, json!({"name": name, "path": path})),
+        Err(e) => Err(e),
+    }
 }
 
 /// `file.adopt {path, token?}`: add the presentation a host read in the background and staged
@@ -300,11 +343,19 @@ fn open(_s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").unwrap_or("Presentation");
-    let data = str_param(p, "data").and_then(base64_decode).ok_or_else(|| bad("file.openBytes", "missing or invalid base64 `data`"))?;
-    let (doc, damaged) = open_checked(name, &data)?;
+    let raw = str_param(p, "data");
+    let data = raw.and_then(base64_decode).ok_or_else(|| bad("file.openBytes", "missing or invalid base64 `data`"))?;
+    let (doc, damaged) = match open_checked_with_password(name, &data, str_param(p, "password")) {
+        Ok(r) => r,
+        Err(EngineError::PasswordRequired(n)) => return password_prompt(s, &n, json!({"name": n, "data": raw.unwrap_or_default()})),
+        Err(e) => return Err(e),
+    };
+    let encrypted = deckcraft_pptx::is_encrypted(&data);
     let i = add_opened(s, name, None, doc);
     report_damage(s, &damaged)?;
-    Ok(json!({"document": i, "missingFonts": s.doc()?.missing_fonts, "damagedMedia": damaged.media, "lostSlides": damaged.slides}))
+    Ok(
+        json!({"document": i, "encrypted": encrypted, "missingFonts": s.doc()?.missing_fonts, "damagedMedia": damaged.media, "lostSlides": damaged.slides}),
+    )
 }
 
 /// Tell the user which pictures, media and slides a damaged file lost, and mark the copy repaired.
