@@ -14,6 +14,17 @@ workspace = true
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 deckcraft-media = { workspace = true }
+# How this app reaches CollabCraft. No provider credential, no provider URL and no provider
+# protocol live in here.
+craft-cloud-client = { git = "https://github.com/wdunn001/collabcraft", rev = "c4cddcd" }
+# The share dialog's backend. The dialog is drawn by deckcraft-ui-egui, which opens no socket;
+# this feature is the half that reaches CollabCraft, and it lives here because the session this
+# application collects lives here too. One revision of craft-ui in the graph, always: two are
+# two different backend traits and they do not meet.
+craft-ui = { git = "https://github.com/wdunn001/craft-libs", rev = "effb5ca", features = ["cloud"] }
+# The half that opens a socket. craft-ui states the work and nothing in craft-libs answers it, so
+# the backend comes from beside the client.
+collabcraft-share = { git = "https://github.com/wdunn001/collabcraft", rev = "c4cddcd" }
 eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "links", "wayland", "x11"] }
 egui = { workspace = true }
 serde_json = { workspace = true }

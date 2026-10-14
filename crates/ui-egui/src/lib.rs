@@ -9,6 +9,7 @@
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
+pub mod cloud;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -412,7 +413,22 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
     ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
+    // Cloud storage (File › Open, File › Save As). Every one of these answers with the whole
+    // cloud state, so an agent reads what it changed without a second call.
+    ("cloud.status", "Cloud Status", None, "{}"),
+    ("cloud.open", "Open from the Cloud", None, "{}"),
+    ("cloud.browse", "Browse a Cloud Folder", None, "{path}"),
+    ("cloud.shared", "Shared with Me", None, "{}"),
+    ("cloud.link", "Link a Cloud Account", None, "{}"),
+    ("cloud.openFile", "Open a Cloud Presentation", None, "{id? | name?}"),
+    ("cloud.save", "Save to the Cloud", None, "{}"),
+    ("cloud.saveAs", "Save to the Cloud As…", None, "{folder?, name?}"),
+    ("cloud.reload", "Reload from the Cloud", None, "{}"),
 ];
+
+/// How many of [`SlideApp::opened_urls`] to keep. Enough to see what a gesture opened, and
+/// bounded so a long session does not grow a list nobody reads.
+const OPENED_URLS_KEPT: usize = 16;
 
 pub struct Perf {
     pub frame_ms: f64,
@@ -455,6 +471,19 @@ pub struct SlideApp {
     pub opening: Option<opening::Opening>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).
     pub toast: Option<toast::Toast>,
+    /// Open and Save against cloud storage: the account, the folder being browsed, transfers in
+    /// flight, and where each open presentation came from. The pages are `craft_ui`'s, so every
+    /// Craft app offers the same ones. Inert until the host connects a backend (see [`cloud`]).
+    pub cloud: cloud::CloudFiles,
+    /// The presentation snapshot each cloud save in flight encoded. Only DeckCraft knows what a
+    /// version of a presentation is, so the pages do not hold these.
+    pub(crate) cloud_sent: cloud::Sent,
+    /// Giving other people access to this presentation. The dialog is `craft_ui`'s, so every
+    /// Craft app offers the same one. Inert until the host connects a backend, and unavailable
+    /// until that service says sharing exists.
+    pub share: craft_ui::share::ShareDialog,
+    /// Who else is in this presentation. Draws nothing when nobody is.
+    pub presence: craft_ui::presence::PresenceBar,
     /// Documents (by uid) whose missing fonts have been mentioned.
     fonts_noted: std::collections::HashSet<u64>,
     pub perf: Perf,
@@ -475,7 +504,12 @@ pub struct SlideApp {
     /// slides and status bar until Esc or Back; with nothing open it is the start screen. Opening,
     /// creating or closing a presentation leaves it.
     pub backstage: Option<backstage::Backstage>,
-    pending_urls: Vec<String>,
+    /// URLs to hand the browser at the end of the frame. Behind a cell because a cloud page asks
+    /// for one while it is being drawn, which is a shared borrow of the window.
+    pending_urls: std::cell::RefCell<Vec<String>>,
+    /// URLs this window has handed the browser, most recent last and capped. A press that opens
+    /// something leaves no other trace, so this is how a test and an agent see what it opened.
+    pub opened_urls: Vec<String>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
     shot_token: u64,
@@ -548,6 +582,10 @@ impl SlideApp {
             status: None,
             opening: None,
             toast: None,
+            cloud: cloud::CloudFiles::new(),
+            cloud_sent: cloud::Sent::new(),
+            share: craft_ui::share::ShareDialog::new(),
+            presence: craft_ui::presence::PresenceBar::new().badges_only(),
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],
@@ -559,7 +597,8 @@ impl SlideApp {
             palette: None,
             integrated_titlebar: false,
             backstage: None,
-            pending_urls: vec![],
+            pending_urls: Default::default(),
+            opened_urls: vec![],
             pending_copy: None,
             shot_token: 0,
             queued_shots: vec![],
@@ -654,7 +693,12 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
+        // `file.save` is intercepted only for a presentation that came from the cloud and has no
+        // file of its own, so saving a local presentation behaves exactly as it always did.
+        let to_cloud = id == "file.save" && params.get("path").is_none() && self.session.active().is_some_and(|d| d.path.is_none());
+        let r = if to_cloud && cloud::has_target(self) {
+            cloud::save(self)
+        } else if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
@@ -1056,6 +1100,74 @@ impl SlideApp {
                 use deckcraft_engine::links::*;
                 return Ok(json!({"discord": DISCORD, "website": WEBSITE, "apps": APPS, "appPage": APP_PAGE, "github": GITHUB}));
             }
+            // ---- cloud storage (File › Open, File › Save As)
+            "cloud.status" => return Ok(cloud::status(self)),
+            "cloud.open" => {
+                if !cloud::available(self) {
+                    return Err(cloud::UNAVAILABLE.to_owned());
+                }
+                self.open_backstage(backstage::Page::Open);
+                cloud::start(self);
+                return Ok(cloud::status(self));
+            }
+            "cloud.browse" => {
+                if !cloud::available(self) {
+                    return Err(cloud::UNAVAILABLE.to_owned());
+                }
+                let path = p.get("path").and_then(Value::as_str).unwrap_or("");
+                cloud::browse(self, path);
+                return Ok(json!({"folder": path}));
+            }
+            "cloud.shared" => {
+                if !cloud::available(self) {
+                    return Err(cloud::UNAVAILABLE.to_owned());
+                }
+                cloud::load_shared(self);
+            }
+            "cloud.link" => {
+                if !cloud::available(self) {
+                    return Err(cloud::UNAVAILABLE.to_owned());
+                }
+                cloud::link(self);
+                return Ok(cloud::status(self));
+            }
+            // Opens something already listed, by id or by name. The listing is what the user can
+            // see, which keeps a scripted open and a clicked one on the same footing.
+            "cloud.openFile" => {
+                let id = p.get("id").and_then(Value::as_str);
+                let name = p.get("name").and_then(Value::as_str).unwrap_or("");
+                let found = self
+                    .cloud
+                    .mine
+                    .entries
+                    .iter()
+                    .chain(self.cloud.shared.entries.iter())
+                    .find(|e| id.is_some_and(|id| e.id == id) || (!name.is_empty() && e.name == name))
+                    .cloned();
+                match found {
+                    Some(entry) if cloud::opens(&entry) => {
+                        cloud::open_entry(self, entry, None);
+                        return Ok(cloud::status(self));
+                    }
+                    Some(entry) => return Err(format!("DeckCraft cannot open {}", entry.name)),
+                    None => return Err("no such file in the cloud listing".to_owned()),
+                }
+            }
+            "cloud.save" => return cloud::save(self),
+            "cloud.saveAs" => match (p.get("folder").and_then(Value::as_str), p.get("name").and_then(Value::as_str)) {
+                (Some(folder), Some(name)) => return cloud::save_as(self, folder, name),
+                _ => {
+                    if !cloud::available(self) {
+                        return Err(cloud::UNAVAILABLE.to_owned());
+                    }
+                    self.open_backstage(backstage::Page::SaveAs);
+                    if let Some(backstage) = &mut self.backstage {
+                        backstage.save_to_cloud = Some(true);
+                    }
+                    return Ok(cloud::status(self));
+                }
+            },
+            "cloud.reload" => return cloud::reload_active(self),
             _ => return Err(format!("unknown UI command `{id}`")),
         }
         Ok(Value::Null)
@@ -1323,6 +1435,12 @@ impl SlideApp {
                 Ok(_) => self.set_status("Saved"),
                 Err(e) => self.set_status(e.to_string()),
             }
+        } else if cloud::has_target(self) {
+            // It came from the cloud and has no file on this computer, so it goes back where it
+            // came from. The progress line and the outcome are the cloud pages' own.
+            if let Err(e) = cloud::save(self) {
+                self.set_status(e);
+            }
         } else {
             self.save_as_dialog("deckcraft");
         }
@@ -1561,6 +1679,8 @@ impl SlideApp {
         self.last_time = now;
         self.drain_control(ctx);
         self.poll_opening();
+        // Answers from the cloud worker, and anything still in flight.
+        cloud::pump(self, ctx);
         if self.fonts_ready {
             self.drain_inbox();
         }
@@ -1855,12 +1975,26 @@ impl SlideApp {
                 }
             }
         });
+        // Unconditional, because this is also where the share service's answers are collected,
+        // which has to keep happening while the dialog is shut.
+        self.share.show(&ctx);
+        // A share of a presentation that has never been saved. The dialog asked; only this side
+        // can serialise a deck, so it answers.
+        share_save(self);
+        // Above the notice and the dialogs: a refused save has to be answered, and the answer
+        // decides what happens to the user's edits.
+        cloud::conflict_modal(self, &ctx);
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);
         menus::palette(self, &ctx);
-        for url in std::mem::take(&mut self.pending_urls) {
-            ctx.open_url(egui::OpenUrl::new_tab(url));
+        for url in self.pending_urls.take() {
+            ctx.open_url(egui::OpenUrl::new_tab(url.clone()));
+            self.opened_urls.push(url);
+        }
+        let over = self.opened_urls.len().saturating_sub(OPENED_URLS_KEPT);
+        if over > 0 {
+            self.opened_urls.drain(..over);
         }
         if let Some(t) = self.pending_copy.take() {
             ctx.copy_text(t);
@@ -1896,8 +2030,8 @@ impl SlideApp {
         self.media.tick(ctx, &mut self.session);
     }
 
-    pub fn open_url(&mut self, url: &str) {
-        self.pending_urls.push(url.to_string());
+    pub fn open_url(&self, url: &str) {
+        self.pending_urls.borrow_mut().push(url.to_string());
     }
 
     fn drain_control(&mut self, ctx: &egui::Context) {
@@ -1995,6 +2129,37 @@ pub fn key_name(key: egui::Key) -> &'static str {
         F5 => "F5",
         F7 => "F7",
         other => other.name(),
+    }
+}
+
+/// Carry out a save the share dialog asked for, and report the outcome back.
+///
+/// Split into asking and answering because the save is asynchronous. The dialog waits, showing
+/// its own progress, until one of these arrives.
+fn share_save(app: &mut SlideApp) {
+    if let Some(request) = app.share.take_save_request() {
+        // One destination today. `request.destination` names which, and is carried through so a
+        // second provider needs no change here.
+        let _ = request.destination;
+        match cloud::save_as(app, "", &request.name) {
+            Ok(_) => app.cloud.sharing_save = true,
+            Err(reason) => app.share.save_failed(reason),
+        }
+    }
+
+    // The worker reports by clearing `busy`. A new origin means it landed.
+    if app.cloud.sharing_save && app.cloud.busy.is_none() {
+        app.cloud.sharing_save = false;
+        match cloud::origin(app) {
+            Some(origin) => {
+                let (id, name) = (origin.entry.id.clone(), origin.entry.name.clone());
+                app.share.saved(id, name);
+            }
+            None => {
+                let reason = app.cloud.status.clone().unwrap_or_else(|| "the presentation was not saved".to_owned());
+                app.share.save_failed(reason);
+            }
+        }
     }
 }
 
