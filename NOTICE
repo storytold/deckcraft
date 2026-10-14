@@ -19,51 +19,6 @@ list (author, source, license) is in ATTRIBUTION.md.
   ATTRIBUTION.md (Inter, Carlito, Caladea, Liberation, Montserrat, Lato, Open Sans, Roboto,
   Merriweather, Playfair Display, Poppins, Nunito Sans, BIZ UD, Shippori Mincho, Noto Sans
   Arabic) under the SIL Open Font License 1.1; their licence texts ship with release packages.
-- Lucide icon paths embedded in crates/engine/src/icon_data.rs (Insert › Icons), release 1.56.0,
-  commit 440a1e1dfb1e712505308da46bead3c28b1f1398, https://github.com/lucide-icons/lucide.
-  ISC License, Copyright (c) 2026 Lucide Icons and Contributors. Icons Lucide derives from Feather
-  are MIT, Copyright (c) 2013-present Cole Bemis; which names those are is the list in Lucide's
-  LICENSE at that commit. Among the paths embedded here, the Feather-derived names are arrow-down,
-  arrow-left, arrow-right, arrow-up, at-sign, calendar, check, chevron-right, clipboard, clock,
-  compass, download, info, key, link, lock, minus, moon, move, music, plus, search, target and x.
-
-  ISC License
-
-  Copyright (c) 2026 Lucide Icons and Contributors
-
-  Permission to use, copy, modify, and/or distribute this software for any
-  purpose with or without fee is hereby granted, provided that the above
-  copyright notice and this permission notice appear in all copies.
-
-  THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
-  WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
-  MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
-  ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
-  WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-  ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
-  OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
-
-  The MIT License (MIT) (for the Feather-derived icons)
-
-  Copyright (c) 2013-present Cole Bemis
-
-  Permission is hereby granted, free of charge, to any person obtaining a copy
-  of this software and associated documentation files (the "Software"), to deal
-  in the Software without restriction, including without limitation the rights
-  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-  copies of the Software, and to permit persons to whom the Software is
-  furnished to do so, subject to the following conditions:
-
-  The above copyright notice and this permission notice shall be included in all
-  copies or substantial portions of the Software.
-
-  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-  IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-  FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-  AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-  LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-  SOFTWARE.
 
 Code dependencies
 
@@ -72,11 +27,11 @@ Code dependencies
   https://github.com/pdeljanov/Symphonia.
 - The H.264, HEVC, VP9, AV1, Opus, MP4, Matroska and Ogg crates under crates/ are ported from
   FilmCraft (same owner, MIT OR Apache-2.0).
-
-- Krilla 0.8.2 (https://github.com/LaurenzV/krilla) is used through craft-pdf under
-  MIT OR Apache-2.0. craft-libs vendors that version with page/surface unwind recovery
-  and rejection of serialization after failed cleanup. Its upstream licence files are
-  retained in craft-libs/licenses/pdf-writer. Its bundled Compact ICC Profiles by Clinton Ingram
-  (https://github.com/saucecontrol/Compact-ICC-Profiles) are CC0-1.0; the profile
-  licence is retained in licenses/pdf-writer/LICENSE-ICC.txt and exact files, sources
-  and hashes are in ATTRIBUTION.md.
+- The shared Craft interface crates craft-ui and craft-cloud (the share dialog, the account
+  badge, the presence row and the cloud Open and Save pages) are built from source, pinned by git
+  revision, from https://github.com/wdunn001/craft-libs under MIT OR Apache-2.0.
+- The CollabCraft client crates craft-cloud-client and collabcraft-share (how the desktop app
+  reaches the cloud service) are built from source, pinned by git revision, from
+  https://github.com/wdunn001/collabcraft. That repository ships LICENSE-MIT and LICENSE-APACHE
+  while its Cargo metadata declares AGPL-3.0-or-later. The contradiction is upstream's to
+  settle.
