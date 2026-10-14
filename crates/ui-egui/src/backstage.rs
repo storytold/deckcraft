@@ -778,6 +778,10 @@ fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
 /// right, and the cloud's own file lists under both.
 fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
+    // What is left of the page beside the places column and the rule between them. A column
+    // inside a horizontal row is offered the window's width rather than the page's, so the cloud
+    // lists would otherwise run off the right edge.
+    let rest = (ui.available_width() - 270.0).max(420.0);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(230.0);
@@ -802,6 +806,7 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
         ui.add_space(24.0);
         ui.vertical(|ui| {
+            ui.set_max_width(rest);
             search(ui, &mut bs.query, "Search for a file", 380.0);
             ui.add_space(12.0);
             heading(ui, "Presentations");

@@ -280,10 +280,14 @@ fn rendering(state: State) -> (Harness, Fake) {
 
 fn build(state: State, rendering: bool) -> (Harness, Fake) {
     let store = Arc::new(Mutex::new(state));
-    let builder = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0));
-    // Two device pixels per point. A render is then legible when somebody looks at it. The
-    // behaviour tests keep one, where a click lands on the point it was aimed at.
-    let builder = if rendering { builder.with_pixels_per_point(2.0).wgpu() } else { builder };
+    // A render is drawn at the window size the desktop application opens with, because the File
+    // tab's page is 1180 points wide and a narrower window clips it. It is drawn at 1.4 device
+    // pixels per point, which is as legible as a software renderer allows: that renderer caps a
+    // texture side at 2048, and the window is one texture. The behaviour tests keep one device
+    // pixel per point, where a click lands on the point it was aimed at.
+    let size = if rendering { egui::vec2(1440.0, 900.0) } else { egui::vec2(1400.0, 900.0) };
+    let builder = egui_kittest::Harness::builder().with_size(size);
+    let builder = if rendering { builder.with_pixels_per_point(1.4).wgpu() } else { builder };
     let mut h = builder.build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
