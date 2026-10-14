@@ -24,7 +24,8 @@ use std::sync::Arc;
 // the crates they come from. A test needs them for the same reason.
 pub use craft_cloud::{Capability, Entry, EntryKind};
 pub use craft_ui::cloud::{
-    Account, Busy, CloudApp, CloudBackend, CloudFiles, Conflict, CopyFormat, DocumentKind, Event, Fault, Folder, Job, Link, Origin, Post, Source,
+    Account, Busy, CloudApp, CloudBackend, CloudFiles, Conflict, CopyFormat, Destination, DocumentKind, Event, Fault, Folder, Job, Link, Origin,
+    Post, Source,
     UNAVAILABLE, available, browse, can_converse, conflict_modal, destination_name, has_target, link, load_shared, open_entry, open_page, origin,
     parent_of, prefers_cloud, progress, pump, reload_active, save, save_as, save_page, share_button, shares, sign_in, sign_out, start, who,
     work_together,
@@ -121,6 +122,37 @@ fn service_host() -> String {
         .unwrap_or_default()
 }
 
+/// The format a save should be written in, from where it is going.
+///
+/// `save_bytes` writes DeckCraft's own format for anything it does not
+/// recognise. A `.md` from the cloud would come back as a presentation file
+/// under that name, and nothing would say so. The formats it can actually
+/// write are named here instead, and anything else is refused.
+///
+/// A provider that issued no extension still says what the thing is, so a bare
+/// name falls back to the content type.
+fn writes_as(into: Destination<'_>) -> Result<&'static str, String> {
+    const WRITES: [&str; 6] = ["deckcraft", "pptx", "potx", "ppsx", "txt", "pdf"];
+    let extension = into.extension();
+    let asked = if extension.is_empty() {
+        match into.mime.map(|m| m.split(';').next().unwrap_or(m).trim()) {
+            Some("application/vnd.openxmlformats-officedocument.presentationml.presentation") => "pptx".to_owned(),
+            Some("application/pdf") => "pdf".to_owned(),
+            Some("text/plain") => "txt".to_owned(),
+            // Nothing readable either way. The application's own format is the
+            // only honest answer for a document it alone has ever held.
+            _ => SAVES_AS.to_owned(),
+        }
+    } else {
+        extension
+    };
+    WRITES
+        .iter()
+        .find(|writes| **writes == asked)
+        .copied()
+        .ok_or_else(|| format!("DeckCraft cannot write a .{asked}. It writes {}.", WRITES.join(", ")))
+}
+
 impl CloudApp for SlideApp {
     fn cloud(&self) -> &CloudFiles {
         &self.cloud
@@ -150,11 +182,12 @@ impl CloudApp for SlideApp {
         Ok(self.session.active().map(|d| d.uid))
     }
 
-    fn encode(&mut self, uid: u64) -> Result<Vec<u8>, String> {
+    fn encode(&mut self, uid: u64, into: Destination<'_>) -> Result<Vec<u8>, String> {
         let noun = PRESENTATION.noun;
         let doc = self.session.documents().iter().find(|d| d.uid == uid).ok_or(format!("no {noun} open"))?;
         let snapshot = doc.doc.clone();
-        let bytes = deckcraft_engine::cmd::file::save_bytes(&snapshot, SAVES_AS).map_err(|e| e.to_string())?;
+        let format = writes_as(into)?;
+        let bytes = deckcraft_engine::cmd::file::save_bytes(&snapshot, format).map_err(|e| e.to_string())?;
         self.cloud_sent.insert(uid, snapshot);
         Ok(bytes)
     }
