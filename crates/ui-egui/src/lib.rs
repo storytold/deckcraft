@@ -460,6 +460,11 @@ pub struct SlideApp {
     pub perf: Perf,
     /// Synthetic input events (control channel `ui.click` etc.), injected one per frame.
     pub synthetic: Vec<egui::Event>,
+    /// The preedit the system input method is composing on the slide, as last shown (#101).
+    pub ime_preedit: Option<String>,
+    /// A composition the app settled while the input method was still composing it (a click,
+    /// a command): the input method may still commit that text, which is already in place.
+    pub ime_settled: Option<String>,
     /// Canvas screen rect and points-per-slide-point scale (for control & tests).
     pub canvas_rect: Option<egui::Rect>,
     /// The Eyedropper is waiting for a click on the slide.
@@ -549,6 +554,8 @@ impl SlideApp {
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],
+            ime_preedit: None,
+            ime_settled: None,
             canvas_rect: None,
             eyedropper: None,
             canvas_scale: 1.0,
@@ -1607,11 +1614,23 @@ impl SlideApp {
     /// An input method's event for the slide's text (#101): the preedit is shown in the text and
     /// replaced on each update; the commit replaces it as one undo step.
     fn ime_event(&mut self, e: &egui::ImeEvent) {
+        // After the app settled a composition (see `canvas::ime_output`), the input method's
+        // commit of that same text comes late: it is already in the slide, so it is dropped
+        // rather than typed again at the new insertion point. Anything else ends the wait.
+        match e {
+            egui::ImeEvent::Preedit { text, .. } if text.is_empty() && self.ime_settled.is_some() => return,
+            egui::ImeEvent::Commit(text) if self.ime_settled.take().is_some_and(|s| s == *text) => return,
+            _ => self.ime_settled = None,
+        }
         let r = match e {
             egui::ImeEvent::Preedit { text, active_range_chars } => {
+                self.ime_preedit = Some(text.clone()).filter(|t| !t.is_empty());
                 self.session.compose_text(text, active_range_chars.as_ref().map(|r| (r.start, r.end)))
             }
-            egui::ImeEvent::Commit(text) => self.session.commit_text(text),
+            egui::ImeEvent::Commit(text) => {
+                self.ime_preedit = None;
+                self.session.commit_text(text)
+            }
             #[allow(deprecated)]
             egui::ImeEvent::Disabled => {
                 self.session.end_composition();

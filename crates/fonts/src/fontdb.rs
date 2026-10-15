@@ -303,6 +303,10 @@ pub struct FontDb {
     outlines: Mutex<HashMap<(u32, u32), Arc<BezPath>>>,
     #[cfg(not(target_arch = "wasm32"))]
     catalog: RwLock<Vec<CatalogEntry>>,
+    /// Installed families by their names in other languages (lower case): "맑은 고딕" →
+    /// "Malgun Gothic".
+    #[cfg(not(target_arch = "wasm32"))]
+    aliases: RwLock<HashMap<String, String>>,
     /// The folders the system font scan reads (the platform's font folders for [`FontDb::global`]).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     font_dirs: Vec<std::path::PathBuf>,
@@ -376,6 +380,22 @@ fn name(font: &skrifa::FontRef<'_>, ids: &[StringId]) -> Option<String> {
     ids.iter().find_map(|id| font.localized_strings(*id).english_or_first().map(|s| s.to_string()).filter(|s| !s.is_empty()))
 }
 
+/// The face's family names in other languages ("맑은 고딕" for Malgun Gothic, "游ゴシック" for Yu
+/// Gothic): documents written on a Korean or Japanese system name fonts this way.
+#[cfg(not(target_arch = "wasm32"))]
+fn localized_families(f: &skrifa::FontRef<'_>, family: &str) -> Vec<String> {
+    let mut out: Vec<String> = vec![];
+    for id in [StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME] {
+        for s in f.localized_strings(id) {
+            let s = s.to_string();
+            if !s.is_empty() && !s.eq_ignore_ascii_case(family) && !out.iter().any(|o| o.eq_ignore_ascii_case(&s)) {
+                out.push(s);
+            }
+        }
+    }
+    out
+}
+
 /// A face's family and style names (the default instance's style for a variable font).
 fn face_names(f: &skrifa::FontRef<'_>) -> Option<(String, String)> {
     let family = name(f, &[StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME])?;
@@ -399,12 +419,13 @@ fn legacy_names(f: &skrifa::FontRef<'_>, family: &str) -> Option<(String, String
 #[cfg(not(target_arch = "wasm32"))]
 const OUTLINE_TABLES: [&[u8; 4]; 4] = [b"glyf", b"CFF ", b"CFF2", b"VARC"];
 
-/// (family, style) of every face in the font file at `path`, reading only its table directories
+/// (family, style, family names in other languages) of every face in the font file at `path`,
+/// reading only its table directories
 /// and `name` tables: a scan opens hundreds of font files, many of them megabytes long. A
 /// variable font is cataloged under its default style; its named instances appear once it loads.
 /// Faces with none of the [`OUTLINE_TABLES`] are left out.
 #[cfg(not(target_arch = "wasm32"))]
-fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
+fn file_face_names(path: &std::path::Path) -> Vec<(String, String, Vec<String>)> {
     use std::io::{Read, Seek, SeekFrom};
     /// Caps on what a (possibly damaged) file can make the scan read.
     const MAX_FACES: u32 = 256;
@@ -452,8 +473,9 @@ fn file_face_names(path: &std::path::Path) -> Vec<(String, String)> {
             let f = skrifa::FontRef::new(&font).ok()?;
             let (family, style) = face_names(&f)?;
             // Cataloged under its Windows family too, so "Segoe UI Semibold" finds the file.
-            let legacy = legacy_names(&f, &family);
-            Some(std::iter::once((family, style)).chain(legacy))
+            let legacy = legacy_names(&f, &family).map(|(lf, ls)| (lf, ls, vec![]));
+            let local = localized_families(&f, &family);
+            Some(std::iter::once((family, style, local)).chain(legacy))
         })
         .flatten()
         .collect()
@@ -790,6 +812,8 @@ impl FontDb {
             outlines: Mutex::new(HashMap::new()),
             #[cfg(not(target_arch = "wasm32"))]
             catalog: RwLock::new(Vec::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            aliases: RwLock::new(HashMap::new()),
             font_dirs,
             #[cfg(not(target_arch = "wasm32"))]
             cataloged: std::sync::OnceLock::new(),
@@ -933,6 +957,7 @@ impl FontDb {
     #[cfg(not(target_arch = "wasm32"))]
     fn scan_font_dirs(&self) -> usize {
         let mut found = Vec::new();
+        let mut aliases = HashMap::new();
         let mut stack: Vec<(std::path::PathBuf, usize)> = self.font_dirs.iter().map(|d| (d.clone(), 0)).collect();
         // Each folder once, however links lead back to it.
         let mut visited = std::collections::HashSet::new();
@@ -968,7 +993,10 @@ impl FontDb {
                 if !font_file_ok(&meta) {
                     continue;
                 }
-                for (family, style) in file_face_names(&p) {
+                for (family, style, local) in file_face_names(&p) {
+                    for l in local {
+                        aliases.entry(l.to_lowercase()).or_insert_with(|| family.clone());
+                    }
                     found.push(CatalogEntry { family, style, path: p.clone() });
                 }
             }
@@ -976,6 +1004,7 @@ impl FontDb {
         let n = found.len();
         log::debug!("cataloged {n} system font faces");
         *self.catalog.write().unwrap_or_else(|e| e.into_inner()) = found;
+        *self.aliases.write().unwrap_or_else(|e| e.into_inner()) = aliases;
         n
     }
 
@@ -1042,6 +1071,7 @@ impl FontDb {
     }
 
     fn try_family(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+        let family = &*self.canonical(family);
         // Every installed file of the family first, so the best style is among the candidates. The
         // lock is held while the files load, so another thread looking up the family waits for
         // them rather than finding none and falling back to another family.
@@ -1057,8 +1087,22 @@ impl FontDb {
         self.find(family, style)
     }
 
+    /// The family an installed font's name in another language stands for ("맑은 고딕" →
+    /// "Malgun Gothic"); any other name as it is.
+    pub fn canonical<'a>(&self, family: &'a str) -> std::borrow::Cow<'a, str> {
+        #[cfg(not(target_arch = "wasm32"))]
+        if !self.is_loaded(family) && !self.read_catalog().iter().any(|c| c.family.eq_ignore_ascii_case(family)) {
+            let aliases = self.aliases.read().unwrap_or_else(|e| e.into_inner());
+            if let Some(f) = aliases.get(&family.to_lowercase()) {
+                return std::borrow::Cow::Owned(f.clone());
+            }
+        }
+        std::borrow::Cow::Borrowed(family)
+    }
+
     /// Is `family` available (loaded, or installed on the system)?
     pub fn has_family(&self, family: &str) -> bool {
+        let family = &*self.canonical(family);
         if self.is_loaded(family) {
             return true;
         }
@@ -1433,6 +1477,23 @@ mod font_dir_tests {
     use std::path::{Path, PathBuf};
 
     use super::*;
+
+    /// A deck made on a Korean system names its fonts in Korean ("나눔고딕", "맑은 고딕"): the
+    /// installed family is found by that name, as by its English one.
+    #[test]
+    fn installed_fonts_are_found_by_their_korean_names() {
+        let Some(dir) =
+            option_env!("CRAFT_FONTS_DIR").map(|d| Path::new(env!("CARGO_MANIFEST_DIR")).join(d).join("fonts/nanum-gothic")).filter(|d| d.is_dir())
+        else {
+            eprintln!("skipped: built without craft-fonts (set CRAFT_FONTS_DIR)");
+            return;
+        };
+        let db = FontDb::with_font_dirs(vec![dir]);
+        assert!(db.has_family("나눔고딕"), "the Korean name of NanumGothic");
+        assert_eq!(db.canonical("나눔고딕"), "NanumGothic");
+        assert_eq!(db.canonical("Not A Font"), "Not A Font");
+        assert_eq!(db.face("나눔고딕", "Bold").family, "NanumGothic");
+    }
 
     #[test]
     fn xdg_data_dirs_contribute_their_fonts_folders() {

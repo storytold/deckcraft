@@ -318,8 +318,15 @@ pub fn ime_area(app: &SlideApp, xf: Xf) -> Option<Rect> {
 /// Turn the input method on for the slide while it takes typing, with its candidate window at
 /// the insertion point (#101). Without this egui leaves it off, and a Korean keyboard types
 /// separate jamo (ㅇ ㅏ ㄴ) instead of syllables. A focused text field sets its own.
-fn ime_output(app: &SlideApp, ui: &Ui, xf: Xf) {
+fn ime_output(app: &mut SlideApp, ui: &Ui, xf: Xf) {
     let ctx = ui.ctx();
+    // The composition was settled here (a click, a command, undo) while the input method still
+    // composes it: tell the input method to stop, or its next keystroke would grow the syllable
+    // already settled (하 + ㄴ → 한) at the new insertion point.
+    let settled = app.ime_preedit.is_some() && app.session.active().is_none_or(|d| d.composition.is_none());
+    if settled {
+        app.ime_settled = app.ime_preedit.take();
+    }
     if ctx.memory(|m| m.focused().is_some()) || app.dialog.as_ref().is_some_and(|d| d.modal()) || app.palette.is_some() || app.backstage_open() {
         return;
     }
@@ -327,7 +334,7 @@ fn ime_output(app: &SlideApp, ui: &Ui, xf: Xf) {
     let to_global = ctx.layer_transform_to_global(ui.layer_id()).unwrap_or_default();
     let r = to_global * r;
     ctx.output_mut(|o| {
-        o.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect: r, cursor_rect: r, should_interrupt_composition: false });
+        o.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect: r, cursor_rect: r, should_interrupt_composition: settled });
     });
 }
 
