@@ -49,7 +49,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | UI/UX fidelity | ~60% | 30–50 | [docs/ui-parity.md](docs/ui-parity.md) |
 | File formats (PPTX, PDF, legacy, export) | ~58% | 60–110 | [docs/file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (GPU raster, video decode, displays, pens) | ~40% | 25–45 | [docs/hardware-parity.md](docs/hardware-parity.md) |
-| Localization | ~8% | 55–90 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
+| Localization | ~15% | 45–80 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
 | Performance (unmeasured) | ~55% | 10–20 | [docs/hardware-parity.md](docs/hardware-parity.md#performance) |
 | Stability | ~60% | 10–20 | [docs/gaps.md](docs/gaps.md#stability) |
 | Platforms | ~80% | 5–10 | [Downloads in README](README.md#downloads) |
@@ -84,7 +84,8 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+English and Korean. The interface follows the system language or the choice in Preferences;
+strings are looked up in a catalog keyed by their English (`crates/ui-egui/src/i18n`). Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
@@ -99,11 +100,10 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | Indonesian | id | 0% | none | 3–5 |
 | Japanese | ja | 0% | none | 4–7 |
 | German | de | 0% | none | 3–5 |
-| Korean | ko | 0% | none | 4–7 |
+| Korean | ko | ~95% | full (native review pending) | 0.5–1 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
-ships 26.
+The catalog infrastructure is in. Other languages shipped: none. PowerPoint for Mac ships 26.
 
 ## Upcoming
 
@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-15 | Korean interface: a string catalog keyed by the English text, the language follows the system (#15) or Preferences › Language (`app.language`), ~1,460 Korean strings over the ribbon, menus, palette, dialogs, panes, File tab, slide show and placeholder prompts |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
@@ -227,6 +228,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Korean interface and the string catalog; Localization ~8% → ~15% |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |

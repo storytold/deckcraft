@@ -3,6 +3,7 @@
 //! Escape) gives the window back at once; the abandoned read finishes on its thread and is dropped.
 
 use crate::SlideApp;
+use crate::i18n::tr;
 use deckcraft_engine::cmd::file::LoadedFile;
 use std::sync::mpsc::{Receiver, TryRecvError};
 
@@ -100,7 +101,7 @@ impl SlideApp {
             ui.weak(format!("Reading the file: {secs:.0} s"));
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                cancel = ui.button("Cancel").clicked();
+                cancel = ui.button(tr("Cancel")).clicked();
             });
         });
         if cancel || ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
