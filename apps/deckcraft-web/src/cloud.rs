@@ -42,11 +42,8 @@ impl Service {
         };
         match job {
             Job::Account => {
-                let answer = self.me().await.map(|me| Account {
-                    display: me.display,
-                    capabilities: me.capabilities,
-                    provider_linked: me.provider_linked,
-                });
+                let answer =
+                    self.me().await.map(|me| Account { display: me.display, capabilities: me.capabilities, provider_linked: me.provider_linked });
                 if matches!(&answer, Err(Fault::Unauthenticated)) {
                     offer_login();
                 }
@@ -106,9 +103,7 @@ fn fault(e: Error) -> Fault {
         Error::Unreachable(detail) => Fault::Unreachable(detail),
         Error::Refused { code, .. } if code == "conflict" || code == "409" || code == "412" => Fault::Conflict,
         Error::Refused { code, detail } => Fault::Refused(if detail.trim().is_empty() { code } else { detail }),
-        Error::Malformed(detail) => {
-            Fault::Refused(format!("the cloud service gave an answer DeckCraft could not read: {detail}"))
-        }
+        Error::Malformed(detail) => Fault::Refused(format!("the cloud service gave an answer DeckCraft could not read: {detail}")),
         Error::Unsendable(detail) => {
             log::error!("cloud request could not be encoded: {detail}");
             Fault::Refused("DeckCraft could not build that request".to_owned())
