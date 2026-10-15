@@ -172,7 +172,13 @@ pub struct PictureAdjust {
     pub duotone: Option<(ColorRef, ColorRef)>,
     /// Make a colour transparent (Set Transparent Color).
     pub clear_color: Option<Rgba>,
+    /// Sharpen/Soften, -1..1 (`a14:sharpenSoften@amount`): above 0 sharpens, below 0 softens.
     pub sharpen: f64,
+    /// Set when the picture's pixels already carry `sharpen`, as PowerPoint saves them: the
+    /// processed picture is the fill's media and this is the original it keeps in
+    /// `a14:imgLayer`. The effect is then not applied a second time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sharpen_original: Option<MediaId>,
     /// `a:biLevel`: black and white, split at this luminance (0–1).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bilevel: Option<f64>,

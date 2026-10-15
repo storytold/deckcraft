@@ -151,6 +151,13 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
     let mut work: Vec<(ShapeId, MediaId, Option<(Vec<u8>, String)>)> = Vec::new();
     for id in ids {
         let Some(ShapeKind::Picture { fill }) = st.shape(id).map(|sh| &sh.kind) else { continue };
+        // The effect would be drawn over sharpened pixels that PowerPoint redoes from the original.
+        if fill.adjust.sharpen_original.is_some() {
+            return Err(bad("picture.artisticEffect", "this picture was already processed in PowerPoint"));
+        }
+        if fill.adjust.sharpen != 0.0 {
+            return Err(bad("picture.artisticEffect", "set Sharpen/Soften to 0% first"));
+        }
         let original = fill.artistic.as_ref().map_or(fill.media, |a| a.original);
         let item = st.doc.media(original).map(|m| (m.data.to_vec(), m.name.clone()));
         work.push((id, original, item));

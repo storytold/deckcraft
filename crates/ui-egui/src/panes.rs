@@ -427,6 +427,13 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
                 run(app, "picture.adjust", json!({"contrast": c}));
             }
+            let locked = if let ShapeKind::Picture { fill } = &sh.kind { deckcraft_engine::cmd::shape::sharpen_locked(fill) } else { None };
+            let mut sharp = adj.sharpen as f32;
+            let r = ui.add_enabled(locked.is_none(), egui::Slider::new(&mut sharp, -1.0..=1.0).text("Sharpness"));
+            let r = if let Some(why) = locked { r.on_disabled_hover_text(why) } else { r };
+            if r.drag_stopped() {
+                run(app, "picture.adjust", json!({"sharpen": sharp}));
+            }
             let mut s = adj.saturation.unwrap_or(1.0) as f32;
             if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
                 run(app, "picture.adjust", json!({"saturation": s}));

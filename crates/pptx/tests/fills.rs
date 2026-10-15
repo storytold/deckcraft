@@ -249,3 +249,108 @@ fn textured_fill(bytes: &[u8]) -> Option<Fill> {
     let q = deckcraft_pptx::import(bytes).expect("import");
     q.slides[0].shapes.iter().find(|s| s.name == "Textured").and_then(|s| s.fill.clone())
 }
+
+/// The first slide's XML.
+fn slide1_xml(bytes: &[u8]) -> String {
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+    let mut f = z.by_name("ppt/slides/slide1.xml").expect("slide1");
+    let mut s = String::new();
+    f.read_to_string(&mut s).expect("read");
+    s
+}
+
+fn picture_fill(bytes: &[u8], name: &str) -> PictureFill {
+    let q = deckcraft_pptx::import(bytes).expect("import");
+    let s = q.slides[0].shapes.iter().find(|s| s.name == name).expect("shape");
+    match &s.fill {
+        Some(Fill::Picture(pf)) => pf.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn sharpen_and_soften_round_trip_with_their_exact_amount() {
+    for (amount, xml) in [(0.25, "amount=\"25000\""), (-0.5, "amount=\"-50000\""), (0.33333, "amount=\"33333\""), (-1.0, "amount=\"-100000\"")] {
+        let mut p = defaults::new_presentation(None);
+        let media = p.add_media("tile.png", "image/png", png()).expect("media");
+        let id = ShapeId(p.alloc_id().expect("ids"));
+        let first = p.slides[0].id;
+        let mut pf = PictureFill { media, ..Default::default() };
+        pf.adjust.sharpen = amount;
+        p.slide_mut(first).expect("slide").shapes.push(Shape {
+            id,
+            name: "Sharp".into(),
+            xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 100.0)),
+            fill: Some(Fill::Picture(pf)),
+            ..Default::default()
+        });
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let x = slide1_xml(&bytes);
+        assert!(x.contains(&format!("<a14:sharpenSoften {xml}/>")), "{x}");
+        // The layer is the picture itself: DeckCraft applies the effect when it draws.
+        let rid = |tag: &str| x.split(tag).nth(1).and_then(|r| r.split('"').nth(1)).map(str::to_string);
+        assert_eq!(rid("<a14:imgLayer r:embed="), rid("<a:blip r:embed="));
+        let back = picture_fill(&bytes, "Sharp");
+        assert_eq!((back.adjust.sharpen, back.adjust.sharpen_original), (amount, None), "{amount}");
+        assert_eq!(
+            picture_fill(&deckcraft_pptx::export(&deckcraft_pptx::import(&bytes).expect("import")).expect("export"), "Sharp").adjust.sharpen,
+            amount
+        );
+    }
+    // No sharpening, no layer.
+    assert!(!slide1_xml(&deck()).contains("imgLayer"));
+}
+
+#[test]
+fn a_powerpoint_picture_already_sharpened_keeps_its_original_and_amount() {
+    // PowerPoint saves the sharpened picture as the blip and the original in the layer, also
+    // when the layer carries an artistic effect too.
+    for artistic in [false, true] {
+        let mut p = defaults::new_presentation(None);
+        let shown = p.add_media("shown.png", "image/png", png()).expect("media");
+        let mut other = png();
+        other.extend_from_slice(b"original");
+        let original = p.add_media("original.png", "image/png", other.clone()).expect("media");
+        let first = p.slides[0].id;
+        for (name, media) in [("Sharp", shown), ("Holder", original)] {
+            let id = ShapeId(p.alloc_id().expect("ids"));
+            p.slide_mut(first).expect("slide").shapes.push(Shape {
+                id,
+                name: name.into(),
+                xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 100.0)),
+                fill: Some(Fill::Picture(PictureFill { media, ..Default::default() })),
+                ..Default::default()
+            });
+        }
+        let bytes = deckcraft_pptx::export(&p).expect("export");
+        let effect = if artistic { "<a14:imgEffect><a14:artisticBlur/></a14:imgEffect>" } else { "" };
+        let edited = edit_slides(&bytes, |x| {
+            let rids: Vec<String> = x.split("<a:blip r:embed=\"").skip(1).filter_map(|r| r.split('"').next().map(str::to_string)).collect();
+            let [a, b] = rids.as_slice() else { panic!("{rids:?}") };
+            x.replacen(
+                &format!("<a:blip r:embed=\"{a}\"/>"),
+                &format!(
+                    "<a:blip r:embed=\"{a}\"><a:extLst><a:ext uri=\"{{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}}\"><a14:imgProps xmlns:a14=\"http://schemas.microsoft.com/office/drawing/2010/main\"><a14:imgLayer r:embed=\"{b}\">{effect}<a14:imgEffect><a14:sharpenSoften amount=\"-25000\"/></a14:imgEffect></a14:imgLayer></a14:imgProps></a:ext></a:extLst></a:blip>"
+                ),
+                1,
+            )
+        });
+        let q = deckcraft_pptx::import(&edited).expect("import");
+        let pf = picture_fill(&edited, "Sharp");
+        assert_eq!(pf.adjust.sharpen, -0.25);
+        assert_eq!(pf.artistic.is_some(), artistic);
+        let orig = pf.adjust.sharpen_original.expect("the original is kept: the blip is already processed");
+        assert_ne!(orig, pf.media);
+        assert_eq!(q.media(orig).map(|m| m.data.to_vec()), Some(other.clone()));
+        // Saved again, the layer is the same: the original, the effects and the amount.
+        let again = deckcraft_pptx::export(&q).expect("export");
+        let back = picture_fill(&again, "Sharp");
+        assert_eq!((back.adjust.sharpen, back.artistic.is_some()), (-0.25, artistic));
+        let r = deckcraft_pptx::import(&again).expect("import");
+        assert_eq!(back.adjust.sharpen_original.and_then(|o| r.media(o)).map(|m| m.data.to_vec()), Some(other.clone()));
+        assert_eq!(r.media(back.media).map(|m| m.data.to_vec()), Some(png()), "the blip stays the processed picture");
+        let x = slide1_xml(&again);
+        assert_eq!(x.contains("<a14:artisticBlur/>"), artistic, "{x}");
+        assert!(x.contains("<a14:sharpenSoften amount=\"-25000\"/>"), "{x}");
+    }
+}

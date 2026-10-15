@@ -109,6 +109,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         || adj.clear_color.is_some()
         || adj.bilevel.is_some()
         || adj.alpha_inv
+        || adj.sharpen != 0.0
         || pf.artistic.is_some();
     let a = if linked { A::new().a("r:link", &rid) } else { A::new().a("r:embed", &rid) };
     if has_kids {
@@ -144,20 +145,32 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         if adj.brightness != 0.0 || adj.contrast != 0.0 {
             w.empty("a:lum", A::new().a("bright", pct(adj.brightness.clamp(-1.0, 1.0))).a("contrast", pct(adj.contrast.clamp(-1.0, 1.0))));
         }
-        // Artistic effect: the blip is the processed picture; the original rides in an
-        // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
-        if let Some(art) = &pf.artistic
-            && art.effect.starts_with("artistic")
-            && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
-            && let Some(orig) = x.media_rel(o, art.original, "image")
+        // Artistic effect and Sharpen/Soften: the original rides in an `a14:imgLayer` with the
+        // effects' names, as PowerPoint writes it. With an artistic effect the blip is the
+        // processed picture; a sharpened one is the original unless it came processed from
+        // PowerPoint (`sharpen_original`).
+        let art = pf.artistic.as_ref().filter(|a| a.effect.starts_with("artistic") && a.effect.chars().all(|c| c.is_ascii_alphanumeric()));
+        let sharpen = (adj.sharpen.is_finite() && adj.sharpen != 0.0).then(|| pct(adj.sharpen.clamp(-1.0, 1.0)));
+        let original = art.map(|a| a.original).or(adj.sharpen_original).unwrap_or(pf.media);
+        let linked_original = x.p.media(original).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+        if (art.is_some() || sharpen.is_some())
+            && !linked_original
+            && let Some(orig) = x.media_rel(o, original, "image")
         {
             w.open0("a:extLst");
             w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
             w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
             w.open("a14:imgLayer", A::new().a("r:embed", &orig));
-            w.open0("a14:imgEffect");
-            w.empty0(&format!("a14:{}", art.effect));
-            w.close("a14:imgEffect");
+            if let Some(art) = art {
+                w.open0("a14:imgEffect");
+                w.empty0(&format!("a14:{}", art.effect));
+                w.close("a14:imgEffect");
+            }
+            if let Some(amount) = sharpen {
+                w.open0("a14:imgEffect");
+                w.empty("a14:sharpenSoften", A::new().a("amount", amount));
+                w.close("a14:imgEffect");
+            }
             w.close("a14:imgLayer");
             w.close("a14:imgProps");
             w.close("a:ext");

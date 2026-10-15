@@ -2587,6 +2587,20 @@ fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "picture.adjust", json!({"contrast": c}));
                 }
             }
+            ui.separator();
+            let locked = app.session.active().and_then(|d| {
+                d.selected_shapes().into_iter().find_map(|sh| match &sh.kind {
+                    ShapeKind::Picture { fill } => deckcraft_engine::cmd::shape::sharpen_locked(fill),
+                    _ => None,
+                })
+            });
+            for (label, v) in [("Soften 50%", -0.5), ("Soften 25%", -0.25), ("Sharpen/Soften 0%", 0.0), ("Sharpen 25%", 0.25), ("Sharpen 50%", 0.5)] {
+                let r = ui.add_enabled(locked.is_none(), egui::Button::new(label));
+                let r = if let Some(why) = locked { r.on_disabled_hover_text(why) } else { r };
+                if r.clicked() {
+                    run(app, "picture.adjust", json!({"sharpen": v}));
+                }
+            }
         });
         let r = big_button(ui, Icon::ColorAdjust, "Color", true);
         egui::Popup::menu(&r).show(|ui| {
@@ -3449,6 +3463,10 @@ mod tests {
 #[cfg(test)]
 #[path = "effects_tests.rs"]
 mod effects_tests;
+
+#[cfg(test)]
+#[path = "sharpen_tests.rs"]
+mod sharpen_tests;
 
 #[cfg(test)]
 #[path = "master_layout_tests.rs"]

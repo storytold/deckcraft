@@ -2687,6 +2687,108 @@ fn artistic_effects_apply_change_remove_and_round_trip() {
     assert_eq!((fill(&s).media, fill(&s).artistic), (original, None));
 }
 
+/// Corrections ▸ Sharpen/Soften: `picture.adjust {sharpen}` sets the amount as one undo step.
+#[test]
+fn picture_adjust_sharpens_and_softens_with_undo() {
+    use deckcraft_model::ShapeKind;
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(8, 8, image::Rgba([90, 120, 150, 255])))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.picture", &json!({"name": "a.png", "data": cmd::base64_encode(&png)})).unwrap();
+    let adjust = |s: &Session| match &s.doc().unwrap().selected_shapes()[0].kind {
+        ShapeKind::Picture { fill } => fill.adjust.clone(),
+        k => panic!("{k:?}"),
+    };
+    s.execute("picture.adjust", &json!({"sharpen": 0.25})).unwrap();
+    assert_eq!(adjust(&s).sharpen, 0.25);
+    s.execute("picture.adjust", &json!({"sharpen": -3})).unwrap();
+    assert_eq!(adjust(&s).sharpen, -1.0, "soften stops at 100%");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(adjust(&s).sharpen, 0.25);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(adjust(&s).sharpen, 0.0);
+    // Other corrections leave it alone; Reset Picture clears it.
+    s.execute("picture.adjust", &json!({"sharpen": -0.5})).unwrap();
+    s.execute("picture.adjust", &json!({"brightness": 0.2})).unwrap();
+    assert_eq!(adjust(&s).sharpen, -0.5);
+    s.execute("picture.reset", &json!({})).unwrap();
+    assert_eq!(adjust(&s).sharpen, 0.0);
+}
+
+/// A picture PowerPoint saved already sharpened, or one with an artistic effect: Sharpen/Soften
+/// can't change, and nothing (reset, change of effect) loses the processed picture's original.
+#[test]
+fn sharpen_is_locked_on_processed_and_artistic_pictures_and_keeps_the_original() {
+    use deckcraft_model::ShapeKind;
+    use deckcraft_model::style::PictureFill;
+    let png = |v: u8| {
+        let mut out = Vec::new();
+        image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(8, 8, image::Rgba([v, 120, 150, 255])))
+            .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+            .unwrap();
+        out
+    };
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let original = s.execute("insert.picture", &json!({"name": "o.png", "data": cmd::base64_encode(&png(10))})).unwrap()["id"].as_u64().unwrap();
+    let shown = s.execute("insert.picture", &json!({"name": "s.png", "data": cmd::base64_encode(&png(20))})).unwrap()["id"].as_u64().unwrap();
+    let fill_of = |s: &Session, id: u64| -> PictureFill {
+        let st = s.doc().unwrap();
+        match &st.doc.slides[st.selection.slide].shapes.iter().find(|sh| sh.id.0 as u64 == id).unwrap().kind {
+            ShapeKind::Picture { fill } => fill.clone(),
+            k => panic!("{k:?}"),
+        }
+    };
+    let orig_media = fill_of(&s, original).media;
+    let shown_media = fill_of(&s, shown).media;
+    // As the PPTX reader leaves it: the blip already sharpened, the original kept beside it.
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        if let Some(sh) = deckcraft_model::find_shape_mut(list, deckcraft_model::ShapeId(shown as _))
+            && let ShapeKind::Picture { fill } = &mut sh.kind
+        {
+            fill.adjust.sharpen = -0.25;
+            fill.adjust.sharpen_original = Some(orig_media);
+        }
+        Ok(())
+    })
+    .unwrap();
+    let processed = fill_of(&s, shown);
+    let undo = s.doc().unwrap().history.undo.len();
+    for p in [json!({"ids": [shown], "sharpen": 0.5}), json!({"ids": [shown], "sharpen": 0})] {
+        let e = s.execute("picture.adjust", &p).unwrap_err();
+        assert!(e.to_string().contains("already processed in PowerPoint"), "{e}");
+    }
+    assert!(s.execute("picture.artisticEffect", &json!({"ids": [shown], "effect": "artisticBlur"})).is_err());
+    assert_eq!(fill_of(&s, shown), processed);
+    assert_eq!(s.doc().unwrap().history.undo.len(), undo, "a refused edit is not an undo step");
+    // Resets clear the other corrections but keep the amount, the original and the pixels.
+    s.execute("picture.adjust", &json!({"ids": [shown], "brightness": 0.3})).unwrap();
+    s.execute("picture.adjust", &json!({"ids": [shown], "reset": true})).unwrap();
+    assert_eq!(fill_of(&s, shown), processed);
+    s.execute("picture.adjust", &json!({"ids": [shown], "brightness": 0.3})).unwrap();
+    s.execute("picture.reset", &json!({"ids": [shown]})).unwrap();
+    assert_eq!(fill_of(&s, shown), processed);
+    assert_eq!(fill_of(&s, shown).media, shown_media);
+    // A different picture is not the processed one any more.
+    s.execute("picture.change", &json!({"ids": [shown], "name": "n.png", "data": cmd::base64_encode(&png(30))})).unwrap();
+    let f = fill_of(&s, shown);
+    assert_eq!((f.adjust.sharpen, f.adjust.sharpen_original), (0.0, None));
+
+    // An artistic effect locks Sharpen/Soften, and a sharpened picture takes no artistic effect.
+    s.execute("picture.artisticEffect", &json!({"ids": [original], "effect": "artisticBlur"})).unwrap();
+    let e = s.execute("picture.adjust", &json!({"ids": [original], "sharpen": 0.25})).unwrap_err();
+    assert!(e.to_string().contains("artistic effect"), "{e}");
+    assert_eq!(fill_of(&s, original).adjust.sharpen, 0.0);
+    s.execute("picture.artisticEffect", &json!({"ids": [original], "effect": "none"})).unwrap();
+    s.execute("picture.adjust", &json!({"ids": [original], "sharpen": 0.25})).unwrap();
+    assert!(s.execute("picture.artisticEffect", &json!({"ids": [original], "effect": "artisticBlur"})).is_err());
+    assert_eq!(fill_of(&s, original).artistic, None);
+}
+
 #[test]
 fn handout_master_view_edits_and_round_trips() {
     use deckcraft_model::PhType;

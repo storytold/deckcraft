@@ -93,6 +93,7 @@ fn adjust_key(a: &PictureAdjust) -> u64 {
     mix(a.bilevel.map_or(u64::MAX, f64::to_bits));
     mix(a.alpha_inv as u64);
     mix(a.sharpen.to_bits());
+    mix(a.sharpen_original.is_some() as u64);
     if let Some(c) = a.clear_color {
         mix(((c.r as u64) << 16) | ((c.g as u64) << 8) | c.b as u64 | 1 << 40);
     }
@@ -449,6 +450,9 @@ pub(crate) fn gif_pixmap(bytes: &Arc<Vec<u8>>, adj: &PictureAdjust, t: f64) -> O
 }
 
 fn apply_adjust(img: &mut image::RgbaImage, a: &PictureAdjust) {
+    if a.sharpen_original.is_none() {
+        sharpen_soften(img, a.sharpen);
+    }
     let sat = a.saturation.unwrap_or(1.0);
     if a.brightness == 0.0
         && a.contrast == 0.0
@@ -502,6 +506,26 @@ fn apply_adjust(img: &mut image::RgbaImage, a: &PictureAdjust) {
         }
         if a.alpha_inv {
             p[3] = 255 - p[3];
+        }
+    }
+}
+
+/// Sharpen/Soften: above 0 an unsharp mask (up to three times the detail at 100%), below 0 a
+/// blend towards the blurred picture (fully blurred at -100%). PowerPoint's kernel isn't
+/// documented; the radius grows with the decoded size (about 1 px per 500), so the picture looks
+/// the same at every zoom level. Alpha is kept.
+fn sharpen_soften(img: &mut image::RgbaImage, amount: f64) {
+    if !amount.is_finite() || amount == 0.0 {
+        return;
+    }
+    let amount = amount.clamp(-1.0, 1.0);
+    let sigma = (img.width().max(img.height()) as f32 / 500.0).clamp(1.0, 8.0);
+    let blurred = image::imageops::fast_blur(img, sigma);
+    let k = if amount > 0.0 { amount * 2.0 } else { amount };
+    for (p, b) in img.pixels_mut().zip(blurred.pixels()) {
+        for i in 0..3 {
+            let v = p[i] as f64;
+            p[i] = (v + k * (v - b[i] as f64)).round().clamp(0.0, 255.0) as u8;
         }
     }
 }
@@ -636,6 +660,42 @@ mod tests {
         assert_eq!(bw, [0, 255, 0, 0, 255, 0]);
         // Inverted alpha: 200 becomes 55.
         assert!(run(PictureAdjust { alpha_inv: true, ..Default::default() }).iter().all(|p| p[3] == 55));
+    }
+
+    #[test]
+    fn sharpen_raises_and_soften_lowers_the_contrast_between_neighbours() {
+        // Stripes with a short ramp at each edge, so there is detail to sharpen and to soften.
+        let src = image::RgbaImage::from_fn(600, 40, |x, _| {
+            let v = match x % 16 {
+                0..=6 => 80,
+                7 => 110,
+                8 => 140,
+                _ => 170,
+            };
+            image::Rgba([v, v, v, 200])
+        });
+        let detail = |img: &image::RgbaImage| -> u64 {
+            img.enumerate_pixels().filter(|(x, _, _)| *x + 1 < img.width()).map(|(x, y, p)| p[0].abs_diff(img.get_pixel(x + 1, y)[0]) as u64).sum()
+        };
+        let run = |sharpen: f64, baked: bool| {
+            let mut img = src.clone();
+            let sharpen_original = baked.then_some(deckcraft_model::MediaId(7));
+            apply_adjust(&mut img, &PictureAdjust { sharpen, sharpen_original, ..Default::default() });
+            img
+        };
+        let base = detail(&src);
+        let (sharp, sharper) = (detail(&run(0.25, false)), detail(&run(1.0, false)));
+        let (soft, softer) = (detail(&run(-0.25, false)), detail(&run(-1.0, false)));
+        assert!(base < sharp && sharp < sharper, "sharpen adds detail: {base} {sharp} {sharper}");
+        assert!(base > soft && soft > softer, "soften takes it away: {base} {soft} {softer}");
+        assert_eq!(run(0.0, false), src);
+        assert!(run(1.0, false).pixels().chain(run(-1.0, false).pixels()).all(|p| p[3] == 200), "alpha is kept");
+        // Pixels that already carry the effect (PowerPoint's processed picture) are left alone.
+        assert_eq!(run(0.5, true), src);
+        assert_ne!(
+            adjust_key(&PictureAdjust { sharpen: 0.5, ..Default::default() }),
+            adjust_key(&PictureAdjust { sharpen: 0.5, sharpen_original: Some(deckcraft_model::MediaId(7)), ..Default::default() })
+        );
     }
 
     #[test]

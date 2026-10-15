@@ -137,6 +137,24 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     {
         pf.artistic = Some(deckcraft_model::style::Artistic { effect, original });
     }
+    // Sharpen/Soften: PowerPoint saves the processed picture as the blip and the original as
+    // the layer, so a layer that is another picture means the effect is already in the pixels.
+    if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
+        && let Some(amount) = layer
+            .elements()
+            .filter(|e| e.local() == "imgEffect")
+            .flat_map(|e| e.elements())
+            .find(|e| e.local() == "sharpenSoften")
+            .and_then(|e| pct(e, "amount"))
+            .filter(|v| v.is_finite() && *v != 0.0)
+    {
+        pf.adjust.sharpen = amount.clamp(-1.0, 1.0);
+        if let Some(original) = media_ref(imp, part, layer)
+            && original != pf.media
+        {
+            pf.adjust.sharpen_original = Some(original);
+        }
+    }
     if let Some(b) = blip {
         for e in b.elements() {
             match e.local() {
