@@ -270,7 +270,7 @@ pub fn in_place(app: &mut SlideApp, ctx: &egui::Context, d: &mut Dialog) -> bool
 
 /// The equation run `target` names, as (shape id, table cell, paragraph, run, char offset of its
 /// start, its length in characters).
-fn locate(app: &SlideApp, target: &Value) -> Option<(u64, Option<(usize, usize)>, usize, usize, usize, usize)> {
+fn locate(app: &SlideApp, target: &Value) -> Option<(u64, Option<(usize, usize)>, usize, usize, usize, usize, bool)> {
     let id = target.get("id")?.as_u64()?;
     let para = target.get("paragraph").and_then(Value::as_u64).unwrap_or(0) as usize;
     let run = target.get("run").and_then(Value::as_u64).unwrap_or(0) as usize;
@@ -283,14 +283,19 @@ fn locate(app: &SlideApp, target: &Value) -> Option<(u64, Option<(usize, usize)>
     };
     let runs = &body.paragraphs.get(para)?.runs;
     let start: usize = runs.iter().take(run).map(|r| r.char_len()).sum();
-    Some((id, cell, para, run, start, runs.get(run)?.char_len()))
+    // The same rule the arrow keys use, so "right" means what the screen shows.
+    let sel = deckcraft_engine::TextSel { shape: deckcraft_model::ShapeId(id as u32), cell, ..Default::default() };
+    let rtl = deckcraft_engine::cmd::text::paragraph_is_rtl(d, &sel, para);
+    Some((id, cell, para, run, start, runs.get(run)?.char_len(), rtl))
 }
 
 /// Put the text caret next to the equation `target` (after it for Edge::Right, before it for
 /// Edge::Left), so typing carries on in the text.
 fn caret_beside(app: &mut SlideApp, target: Option<&Value>, edge: Edge) {
-    let Some((id, cell, para, _, start, len)) = target.and_then(|t| locate(app, t)) else { return };
-    let ch = if edge == Edge::Right { start + len } else { start };
+    let Some((id, cell, para, _, start, len, rtl)) = target.and_then(|t| locate(app, t)) else { return };
+    // Edge is on screen: the right side of a right-to-left paragraph's equation is its start.
+    let forward = (edge == Edge::Right) != rtl;
+    let ch = if forward { start + len } else { start };
     let mut p = json!({"id": id, "at": [para, ch]});
     if let (Some((r, c)), Some(o)) = (cell, p.as_object_mut()) {
         o.insert("cell".into(), json!([r, c]));
@@ -299,8 +304,8 @@ fn caret_beside(app: &mut SlideApp, target: Option<&Value>, edge: Edge) {
 }
 
 /// Left or Right with the text caret directly after or before an equation (nothing selected) goes
-/// into the equation, at that end, instead of stepping over it. Left-to-right paragraphs only:
-/// in right-to-left text the arrows' directions flip.
+/// into the equation, at that end, instead of stepping over it; in right-to-left text the
+/// arrows' directions flip, as they do for the caret.
 pub(crate) fn enter_by_arrow(app: &mut SlideApp, params: &Value) -> Option<Result<Value, String>> {
     if app.equation.is_open() || params.get("extend").and_then(Value::as_bool).unwrap_or(false) {
         return None;
@@ -321,15 +326,14 @@ pub(crate) fn enter_by_arrow(app: &mut SlideApp, params: &Value) -> Option<Resul
         _ => sh.text.as_ref()?,
     };
     let para = body.paragraphs.get(t.caret.0)?;
-    let rtl = para.runs.iter().any(|r| r.text.chars().any(|c| ('\u{590}'..='\u{8FF}').contains(&c)));
-    if rtl {
-        return None;
-    }
+    let rtl = deckcraft_engine::cmd::text::paragraph_is_rtl(d, &t, t.caret.0);
+    // Left and right are on screen: in a right-to-left paragraph Left goes forward in the text.
+    let forward = left == rtl;
     let mut at = 0;
     for (ri, r) in para.runs.iter().enumerate() {
         let end = at + r.char_len();
         let is_math = matches!(r.kind, deckcraft_model::text::RunKind::Math { .. });
-        if is_math && r.char_len() > 0 && ((left && end == t.caret.1) || (!left && at == t.caret.1)) {
+        if is_math && r.char_len() > 0 && ((!forward && end == t.caret.1) || (forward && at == t.caret.1)) {
             let mut p = json!({"edit": true, "id": t.shape.0, "paragraph": t.caret.0, "run": ri});
             if let (Some((cr, cc)), Some(o)) = (t.cell, p.as_object_mut()) {
                 o.insert("cell".into(), json!([cr, cc]));
@@ -539,6 +543,118 @@ mod tests {
         steps(&mut h, 4);
         assert!(!h.state().equation.is_open(), "Left at the start leaves the equation");
         assert_eq!(text_caret(h.state()), Some((0, 3)), "caret right before the equation");
+    }
+
+    /// Text typed after leaving an equation by the arrow keeps the formatting of the text around
+    /// it, not the equation's own (its size, font and italics).
+    #[test]
+    fn text_after_the_equation_has_the_surrounding_formatting() {
+        let mut h = harness();
+        let r = h.state_mut().run("insert.equation", json!({"linear": "x/y", "rect": [100, 100, 300, 60]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        h.state_mut().run("text.edit", json!({"id": id, "at": [0, 0]})).unwrap();
+        h.state_mut().run("text.insert", json!({"text": "hi "})).unwrap();
+        h.state_mut().run("text.edit", json!({"id": id, "end": true})).unwrap();
+        h.state_mut().run("text.move", json!({"to": "left"})).unwrap();
+        steps(&mut h, 4);
+        h.key_press(egui::Key::ArrowRight);
+        steps(&mut h, 4);
+        assert!(!h.state().equation.is_open());
+        h.state_mut().run("text.insert", json!({"text": "after"})).unwrap();
+        let runs: Vec<(String, Option<f64>, Option<String>, Option<bool>, bool)> = h
+            .state()
+            .session
+            .active()
+            .and_then(|d| d.shape(deckcraft_model::ShapeId(id as u32)).and_then(|s| s.text.clone()))
+            .map(|b| {
+                b.paragraphs[0]
+                    .runs
+                    .iter()
+                    .map(|r| (r.text.clone(), r.props.size, r.props.font.clone(), r.props.italic, matches!(r.kind, RunKind::Math { .. })))
+                    .collect()
+            })
+            .unwrap_or_default();
+        eprintln!("RUNS {runs:?}");
+        let before = runs.iter().find(|r| r.0.starts_with("hi")).cloned().expect("the text before");
+        let after = runs.iter().find(|r| r.0.contains("after")).cloned().expect("the typed text");
+        assert_eq!((after.1, after.2.clone(), after.3), (before.1, before.2.clone(), before.3), "typed text takes the surrounding text's formatting: {runs:?}");
+    }
+
+    /// An equation pasted into formatted text, then left by the arrow: what is typed next looks
+    /// like the text it sits in (here 18 pt bold), not like the equation run.
+    #[test]
+    fn text_typed_after_a_pasted_equation_matches_its_neighbours() {
+        let mut h = harness();
+        let r = h.state_mut().run("insert.textBox", json!({"rect": [100, 100, 400, 60], "text": "hello world"})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        h.state_mut().run("text.edit", json!({"id": id, "at": [0, 0]})).unwrap();
+        h.state_mut().run("text.selectAll", json!({})).unwrap();
+        h.state_mut().run("format.size", json!({"size": 18})).unwrap();
+        h.state_mut().run("format.bold", json!({"on": true})).unwrap();
+        h.state_mut().run("text.edit", json!({"id": id, "at": [0, 6]})).unwrap();
+        h.state_mut().run("edit.paste", json!({"text": "$x^2$"})).unwrap();
+        steps(&mut h, 2);
+        let dump = |h: &Harness<'static, SlideApp>| -> Vec<(String, Option<f64>, Option<bool>, bool)> {
+            h.state()
+                .session
+                .active()
+                .and_then(|d| d.shape(deckcraft_model::ShapeId(id as u32)).and_then(|s| s.text.clone()))
+                .map(|b| b.paragraphs[0].runs.iter().map(|r| (r.text.clone(), r.props.size, r.props.bold, matches!(r.kind, RunKind::Math { .. }))).collect())
+                .unwrap_or_default()
+        };
+        eprintln!("PASTED {:?}", dump(&h));
+        let caret = text_caret(h.state());
+        eprintln!("CARET {caret:?}");
+        // Into the equation from the right, and out again with Right.
+        h.state_mut().run("text.move", json!({"to": "left"})).unwrap();
+        steps(&mut h, 4);
+        assert!(h.state().equation.is_open(), "Left next to the pasted equation goes into it");
+        h.key_press(egui::Key::ArrowRight);
+        steps(&mut h, 4);
+        h.state_mut().run("text.insert", json!({"text": "ZZ"})).unwrap();
+        let runs = dump(&h);
+        eprintln!("AFTER {runs:?}");
+        let hello = runs.iter().find(|r| r.0.starts_with("hello")).cloned().expect("hello");
+        let zz = runs.iter().find(|r| r.0.contains("ZZ")).cloned().expect("typed");
+        assert_eq!((zz.1, zz.2), (hello.1, hello.2), "{runs:?}");
+    }
+
+    /// In a right-to-left paragraph the arrows are on screen: Right at the equation's right end
+    /// (its logical start) goes on in the text on that side, and Left from the text enters it.
+    #[test]
+    fn arrows_follow_the_screen_in_a_right_to_left_paragraph() {
+        let mut h = harness();
+        let r = h.state_mut().run("insert.equation", json!({"linear": "x/y", "rect": [100, 100, 300, 60]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        h.state_mut().run("text.edit", json!({"id": id, "at": [0, 0]})).unwrap();
+        h.state_mut().run("text.insert", json!({"text": "hi "})).unwrap();
+        h.state_mut().run("format.rtl", json!({"on": true})).unwrap();
+        steps(&mut h, 2);
+        let len = |h: &Harness<'static, SlideApp>| {
+            h.state().session.active().and_then(|d| d.shape(deckcraft_model::ShapeId(id as u32)).and_then(|s| s.text.as_ref().map(|b| b.paragraphs[0].char_len()))).unwrap()
+        };
+        let end = len(&h);
+        // The caret just before the equation (logical): in right-to-left text the equation is
+        // to the caret's left on screen, so Left goes into it.
+        h.state_mut().run("text.edit", json!({"id": id, "at": [0, 3]})).unwrap();
+        h.state_mut().run("text.move", json!({"to": "left"})).unwrap();
+        steps(&mut h, 4);
+        assert!(h.state().equation.is_open(), "Left (on screen) next to the equation goes into it");
+        // Entered at its right end on screen; Right there leaves on the same side, which in
+        // right-to-left text is back to where the caret was (before the equation, logically).
+        h.key_press(egui::Key::ArrowRight);
+        steps(&mut h, 4);
+        assert!(!h.state().equation.is_open());
+        assert_eq!(text_caret(h.state()), Some((0, 3)), "Right on screen leaves on the right, the logical start");
+        // And through its left end on screen: the caret goes after it, logically.
+        h.state_mut().run("text.edit", json!({"id": id, "at": [0, end]})).unwrap();
+        h.state_mut().run("text.move", json!({"to": "right"})).unwrap();
+        steps(&mut h, 4);
+        assert!(h.state().equation.is_open(), "Right (on screen) next to the equation's logical end goes into it");
+        h.key_press(egui::Key::ArrowLeft);
+        steps(&mut h, 4);
+        assert!(!h.state().equation.is_open());
+        assert_eq!(text_caret(h.state()), Some((0, end)), "Left on screen leaves on the left, the logical end");
     }
 
     #[test]
