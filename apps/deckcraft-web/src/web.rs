@@ -40,7 +40,7 @@ pub fn start() {
                     let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
                     app.cloud.connect(crate::cloud::Service::new(cc.egui_ctx.clone()));
                     if let Some(share) = collabcraft_share::CollabCraft::from_env() {
-                        app.share.connect(share);
+                        app.share.connect(share.for_app("deckcraft"));
                     }
                     cloud::start(&mut app);
                     let q = query();

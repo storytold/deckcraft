@@ -258,7 +258,7 @@ fn main() -> eframe::Result {
             if let Some(backend) = cloud::service(cc.egui_ctx.clone()) {
                 app.cloud.connect(backend);
             }
-            app.share.connect(collabcraft_share::CollabCraft::from_fn(cloud::client));
+            app.share.connect(collabcraft_share::CollabCraft::from_fn(cloud::client).for_app("deckcraft"));
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
