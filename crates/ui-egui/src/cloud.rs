@@ -218,8 +218,8 @@ impl CloudApp for SlideApp {
             return true;
         }
         let stored = self.session.active().and_then(|d| d.doc.slides.get(index)).map(|s| s.notes_text());
-        if stored.is_some_and(|stored| stored != typed) {
-            let _ = self.run("slide.notes", json!({"text": typed, "index": index}));
+        if stored.is_some_and(|stored| stored != typed.text) {
+            let _ = self.run("slide.notes", json!({"body": typed.body, "index": index}));
         }
         true
     }
