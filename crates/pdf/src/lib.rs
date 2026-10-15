@@ -79,6 +79,9 @@ pub struct PdfOptions {
     pub title: Option<String>,
     /// Handout/notes page size in points (default US Letter portrait; see [`paper_size`]).
     pub paper: (f64, f64),
+    /// Grayscale output: every slide's artwork is converted to gray (the same weights as the Print
+    /// page's grayscale preview), so a printer that ignores a monochrome request still prints gray.
+    pub grayscale: bool,
 }
 
 impl Default for PdfOptions {
@@ -92,6 +95,7 @@ impl Default for PdfOptions {
             frame_slides: true,
             title: None,
             paper: (612.0, 792.0),
+            grayscale: false,
         }
     }
 }
@@ -427,6 +431,9 @@ impl Exporter<'_> {
                     *c = (*c as u32 + (255 - a)).min(255) as u8;
                 }
                 px[3] = 255;
+            }
+            if self.opts.grayscale {
+                deckcraft_render::gray_rgba_in_place(&mut rgba);
             }
             let image = Image::from_rgba8(rgba, w, h);
             if let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32) {

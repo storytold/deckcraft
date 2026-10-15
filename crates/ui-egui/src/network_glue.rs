@@ -481,7 +481,7 @@ pub(crate) fn labels() -> Labels<'static> {
         photo: "Photo",
         color: "Color:",
         color_color: "Colour",
-        color_monochrome: "Black and white",
+        color_monochrome: "Grayscale",
         resolution: "Resolution:",
         resolution_dpi: "{dpi} dpi",
         resolution_dpi_xy: "{x} x {y} dpi",
@@ -490,7 +490,7 @@ pub(crate) fn labels() -> Labels<'static> {
         unsupported_sides: "This printer only prints one-sided.",
         unsupported_orientation: "This printer does not take an orientation setting.",
         unsupported_quality: "This printer does not take a quality setting.",
-        unsupported_color: "This printer only prints in black and white.",
+        unsupported_color: "This printer only prints in grayscale.",
         unsupported_resolution: "This printer does not take a resolution setting.",
         unconfirmed_note: "Not confirmed by the printer",
         confirm: "I confirm sending this document to this printer",
@@ -530,6 +530,11 @@ impl SlideApp {
     /// Use `transport` for network printing instead of the built-in HTTP one (tests; embedding).
     pub fn set_wsd_transport(&mut self, transport: Transport) {
         self.net_print.set_transport(transport);
+    }
+
+    /// Whether the network printer's Color setting is Grayscale (as it will be sent).
+    pub(crate) fn network_grayscale(&self) -> bool {
+        self.net_print.state.draft.request(None).color == Some(net::ColorMode::Monochrome)
     }
 
     /// Send the print-ready `pdf` (of `page_count` sheets, the job's page count) to the

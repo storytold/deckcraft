@@ -1173,9 +1173,11 @@ fn preview(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, doc: &deckcraft_
     p.rect_filled(page, 0.0, Color32::WHITE);
     let aspect = (doc.slide_size.height / doc.slide_size.width.max(1.0)) as f32;
     let mut budget = 4u32;
+    // Grayscale shows gray here too, from the very first frame (a separate cache entry per mode).
+    let gray = crate::print_dest::print_grayscale(app, bs);
     let mut draw_slide = |ui: &mut Ui, i: usize, r: Rect| {
         let px = (r.width() * ui.ctx().pixels_per_point()).round().clamp(16.0, 1600.0) as u32;
-        match app.textures.thumb(ui.ctx(), doc, i, px, &mut budget) {
+        match app.textures.thumb_in(ui.ctx(), doc, i, px, &mut budget, gray) {
             Some(tex) => {
                 ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }

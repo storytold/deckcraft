@@ -63,6 +63,37 @@ fn local_scaling(bs: &Backstage) -> crate::localprint::Scaling {
     if bs.print_layout == "slides" { crate::localprint::Scaling::ShrinkToFit } else { crate::localprint::Scaling::Exact }
 }
 
+/// Whether the pages should come out gray: the destination's Grayscale choice (a local queue's box,
+/// a network printer's Color setting). The preview and the PDF that is sent both follow it, so the
+/// person sees gray exactly when gray is what prints. The PDF viewer destination has no such choice.
+pub fn print_grayscale(app: &SlideApp, bs: &Backstage) -> bool {
+    match &bs.print_dest {
+        PrintDest::Viewer => false,
+        PrintDest::Local(_) => {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                app.local_print.settings.grayscale
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                let _ = app;
+                false
+            }
+        }
+        PrintDest::Network => {
+            #[cfg(network_print)]
+            {
+                app.network_grayscale()
+            }
+            #[cfg(not(network_print))]
+            {
+                let _ = app;
+                false
+            }
+        }
+    }
+}
+
 /// Draw the destination list and the settings of the chosen destination. Returns whether the
 /// destination can take a job now (the Print button is enabled only then).
 pub fn destination(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, sheets_ok: bool) -> bool {
@@ -129,7 +160,7 @@ pub fn destination(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, sheets_o
                             }
                         }
                     });
-                    ui.checkbox(&mut local.settings.grayscale, "Black and white");
+                    ui.checkbox(&mut local.settings.grayscale, "Grayscale");
                 });
                 if busy {
                     let text = match local.progress {
@@ -164,8 +195,13 @@ pub fn destination(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, sheets_o
 
 /// Print (the Print button): build the PDF for `params` and send it to the chosen destination.
 /// `slides` is how many slides the settings select (the network job's page count comes from it).
-pub fn send(app: &mut SlideApp, bs: &Backstage, params: Value, slides: usize) -> bool {
+pub fn send(app: &mut SlideApp, bs: &Backstage, mut params: Value, slides: usize) -> bool {
     let _ = slides;
+    // A printer may ignore a monochrome request (a driver that prints colour anyway), so the PDF
+    // itself is gray when Grayscale is chosen.
+    if let Value::Object(map) = &mut params {
+        map.insert("grayscale".into(), Value::Bool(print_grayscale(app, bs)));
+    }
     match bs.print_dest.clone() {
         PrintDest::Viewer => app.print_pdf(params),
         PrintDest::Local(printer) => {
@@ -248,5 +284,88 @@ mod tests {
         assert_eq!(crate::network_glue::media_for_paper(media_paper(&bs)), None);
         bs.print_layout = "notes";
         assert_eq!(crate::network_glue::media_for_paper(media_paper(&bs)), Some("iso_a4_210x297mm"));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod grayscale {
+        use std::sync::Mutex;
+
+        use super::*;
+        use deckcraft_engine::Session;
+
+        /// What the fake spooler was handed: the PDF and whether the job asked for gray.
+        static GOT: Mutex<Option<(Vec<u8>, bool)>> = Mutex::new(None);
+
+        fn list() -> Vec<String> {
+            vec!["Office".into()]
+        }
+
+        fn submit(pdf: &[u8], job: &craft_print::Job, _: &mut dyn FnMut(usize, usize)) -> Result<String, String> {
+            *GOT.lock().unwrap() = Some((pdf.to_vec(), job.grayscale));
+            Ok(String::new())
+        }
+
+        fn red_app() -> SlideApp {
+            let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
+            let st = app.session.doc_mut().unwrap();
+            let slide = std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[0]);
+            slide.background = Some(deckcraft_model::Background::Fill {
+                fill: deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(220, 30, 40))),
+            });
+            app.local_print = crate::localprint::Local::with(list, submit);
+            app
+        }
+
+        fn bs() -> Backstage {
+            let mut bs = Backstage::new(crate::backstage::Page::Print, (1, Some(0)));
+            bs.print_dest = PrintDest::Local("Office".into());
+            bs
+        }
+
+        fn run(app: &mut SlideApp, bs: &Backstage) -> (Vec<u8>, bool) {
+            *GOT.lock().unwrap() = None;
+            let params = crate::backstage::print_params(bs, &[0]);
+            assert!(send(app, bs, params, 1));
+            for _ in 0..400 {
+                if app.local_print.poll().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            GOT.lock().unwrap().take().expect("the fake spooler was handed a job")
+        }
+
+        #[test]
+        fn grayscale_makes_a_gray_pdf_and_asks_the_driver_for_mono_too() {
+            // One test: the fake spooler's capture is shared.
+            let mut app = red_app();
+            let bs = bs();
+            let doc = app.session.active().unwrap().doc.clone();
+            let params = |gray: bool| {
+                let mut p = crate::backstage::print_params(&bs, &[0]);
+                p["grayscale"] = gray.into();
+                p
+            };
+            let (colour_expected, gray_expected) = (
+                deckcraft_engine::cmd::file::pdf_bytes(&doc, &params(false)).unwrap(),
+                deckcraft_engine::cmd::file::pdf_bytes(&doc, &params(true)).unwrap(),
+            );
+            assert_ne!(colour_expected, gray_expected, "the grayscale option changes the PDF");
+
+            assert!(!print_grayscale(&app, &bs));
+            let (pdf, mono) = run(&mut app, &bs);
+            assert!(!mono);
+            assert_eq!(pdf, colour_expected, "colour is the default");
+
+            app.local_print.settings.grayscale = true;
+            assert!(print_grayscale(&app, &bs));
+            let (pdf, mono) = run(&mut app, &bs);
+            assert!(mono, "the queue is asked for monochrome as well (Job::grayscale, which craft-print sends as the colour hint)");
+            assert_eq!(pdf, gray_expected, "and the PDF handed over is gray itself, for a driver that ignores the hint");
+
+            let mut viewer = bs.clone();
+            viewer.print_dest = PrintDest::Viewer;
+            assert!(!print_grayscale(&app, &viewer), "the PDF viewer destination has no grayscale choice");
+        }
     }
 }

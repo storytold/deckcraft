@@ -414,3 +414,9 @@ fn an_ipp_printer_without_pdf_is_refused_before_a_job_exists() {
     assert!(!send(&mut app));
     assert!(fake.document.lock().unwrap().is_none());
 }
+
+#[test]
+fn the_colour_choice_is_called_grayscale() {
+    assert_eq!(labels().color_monochrome, "Grayscale");
+    assert!(!labels().unsupported_color.contains("black and white"));
+}

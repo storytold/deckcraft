@@ -504,6 +504,37 @@ fn print_previews_pages_and_prints_a_pdf() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The Print page's colour box says Grayscale, and ticking it turns the preview gray at once: the
+/// gray page is its own raster, requested on the toggle, and unticking brings the colour one back.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn print_grayscale_box_is_named_and_greys_the_preview() {
+    fn list() -> Vec<String> {
+        vec!["Office".into()]
+    }
+    fn submit(_: &[u8], _: &craft_print::Job, _: &mut dyn FnMut(usize, usize)) -> Result<String, String> {
+        Ok(String::new())
+    }
+    let mut app = new_app();
+    app.local_print = crate::localprint::Local::with(list, submit);
+    let mut h = harness(app);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+    h.run_steps(3);
+    h.state_mut().backstage.as_mut().unwrap().print_dest = crate::print_dest::PrintDest::Local("Office".into());
+    h.run_steps(4);
+    assert!(h.query_by_label("Black and white").is_none(), "the old wording is gone");
+    let colour_thumbs = h.state().textures.thumb_count();
+    h.get_by_label("Grayscale").click();
+    h.run_steps(6);
+    assert!(h.state().local_print.settings.grayscale);
+    assert!(crate::print_dest::print_grayscale(h.state(), h.state().backstage.as_ref().unwrap()));
+    assert!(h.state().textures.thumb_count() > colour_thumbs, "a gray raster of the page was requested, beside the colour one");
+    h.get_by_label("Grayscale").click();
+    h.run_steps(4);
+    assert!(!h.state().local_print.settings.grayscale);
+    assert!(!crate::print_dest::print_grayscale(h.state(), h.state().backstage.as_ref().unwrap()));
+}
+
 #[test]
 fn print_slides_follow_the_settings() {
     let mut s = Session::with_new();

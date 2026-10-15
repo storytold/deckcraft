@@ -130,6 +130,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "includeHidden": boolean("PDF and GIF: include hidden slides (default false)"),
                     "textLayer": boolean("PDF: invisible text layer for search, select and copy (default true)"),
                     "frame": boolean("PDF notes/handouts: thin frame around each slide (default true)"),
+                    "grayscale": boolean("PDF: convert the pages to gray (default false)"),
                     "paper": {"type": "string", "enum": ["letter", "a4", "legal", "a3"], "description": "PDF notes/handouts: paper size (default letter)"},
                     "orientation": {"type": "string", "enum": ["portrait", "landscape"], "description": "PDF notes/handouts: page orientation (default portrait)"},
                     "width": {
