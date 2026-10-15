@@ -231,13 +231,25 @@ pub fn send(app: &mut SlideApp, bs: &Backstage, mut params: Value, slides: usize
     }
 }
 
+/// The PDF parameters of a print job: no link annotations. They are clickable, not printed, and the
+/// spooler's shrink-to-fit refuses a page that has any; the links' styling is page content and stays.
+/// Saving or exporting a PDF keeps its links.
+#[cfg(any(network_print, not(target_arch = "wasm32")))]
+pub(crate) fn print_job_params(params: &Value) -> Value {
+    let mut p = params.clone();
+    if let Value::Object(map) = &mut p {
+        map.insert("annotations".into(), Value::Bool(false));
+    }
+    p
+}
+
 impl SlideApp {
     /// The print-ready PDF for the Print page's settings, and the presentation's title; the failure
     /// is shown as a notice.
     #[cfg(any(network_print, not(target_arch = "wasm32")))]
     pub(crate) fn print_bytes(&mut self, params: &Value) -> Option<(String, Vec<u8>)> {
         let (title, doc) = self.session.active().map(|d| (d.title(), d.doc.clone()))?;
-        match deckcraft_engine::cmd::file::pdf_bytes(&doc, params) {
+        match deckcraft_engine::cmd::file::pdf_bytes(&doc, &print_job_params(params)) {
             Ok(bytes) => Some((title, bytes)),
             Err(e) => {
                 self.notify(format!("Couldn't prepare the presentation for printing: {e}"));
@@ -284,6 +296,89 @@ mod tests {
         assert_eq!(crate::network_glue::media_for_paper(media_paper(&bs)), None);
         bs.print_layout = "notes";
         assert_eq!(crate::network_glue::media_for_paper(media_paper(&bs)), Some("iso_a4_210x297mm"));
+    }
+
+    fn linked_app() -> SlideApp {
+        use deckcraft_model::text::{Action, Hyperlink};
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        let st = app.session.doc_mut().unwrap();
+        let slide = std::sync::Arc::make_mut(&mut std::sync::Arc::make_mut(&mut st.doc).slides[0]);
+        let link = |url: &str| Hyperlink {
+            action: Action::Url { url: url.into() },
+            tooltip: "Link".into(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        };
+        let shape = slide.shapes.first_mut().expect("title shape");
+        shape.text = Some(deckcraft_model::text::TextBody::from_text("A linked title"));
+        shape.click = Some(link("https://example.com/shape"));
+        shape.text.as_mut().unwrap().paragraphs[0].runs[0].props.link = Some(link("https://example.com/text"));
+        app
+    }
+
+    fn link_markup(bytes: &[u8]) -> bool {
+        [b"/Annots".as_slice(), b"/Link", b"/URI"].iter().any(|n| bytes.windows(n.len()).any(|w| w == *n))
+    }
+
+    /// Every print job (the local queue, and the network printer, which prints the same bytes) is a
+    /// PDF without link annotations; exporting the same deck keeps them, and the pages are the same.
+    #[cfg(any(network_print, not(target_arch = "wasm32")))]
+    #[test]
+    fn a_print_job_has_no_link_annotations_but_an_export_keeps_them() {
+        let mut app = linked_app();
+        let bs = Backstage::new(crate::backstage::Page::Print, (1, Some(0)));
+        for layout in ["slides", "notes", "h6"] {
+            let mut bs = bs.clone();
+            bs.print_layout = layout;
+            let params = crate::backstage::print_params(&bs, &[0]);
+            let (_, printed) = app.print_bytes(&params).expect("the print PDF");
+            let exported = deckcraft_engine::cmd::file::pdf_bytes(&app.session.active().unwrap().doc, &params).unwrap();
+            assert!(!link_markup(&printed), "{layout}: the print PDF has no /Annots, /Link or /URI");
+            assert!(link_markup(&exported), "{layout}: Save/Export PDF keeps the links");
+        }
+        let mut gray = crate::backstage::print_params(&bs, &[0]);
+        gray["grayscale"] = true.into();
+        let (_, printed) = app.print_bytes(&gray).unwrap();
+        assert!(!link_markup(&printed), "the grayscale print PDF has none either");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    mod linked {
+        use std::sync::Mutex;
+
+        use super::*;
+
+        static GOT: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+        fn list() -> Vec<String> {
+            vec!["Office".into()]
+        }
+
+        fn submit(pdf: &[u8], _: &craft_print::Job, _: &mut dyn FnMut(usize, usize)) -> Result<String, String> {
+            *GOT.lock().unwrap() = Some(pdf.to_vec());
+            Ok(String::new())
+        }
+
+        #[test]
+        fn the_pdf_the_local_spooler_is_handed_has_no_links() {
+            let mut app = linked_app();
+            app.local_print = crate::localprint::Local::with(list, submit);
+            let mut bs = Backstage::new(crate::backstage::Page::Print, (1, Some(0)));
+            bs.print_dest = PrintDest::Local("Office".into());
+            let params = crate::backstage::print_params(&bs, &[0]);
+            assert!(send(&mut app, &bs, params, 1));
+            for _ in 0..400 {
+                if app.local_print.poll().is_some() {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let pdf = GOT.lock().unwrap().take().expect("the fake spooler was handed a job");
+            assert!(pdf.starts_with(b"%PDF"));
+            assert!(!link_markup(&pdf), "no /Annots, /Link or /URI reach the spooler");
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

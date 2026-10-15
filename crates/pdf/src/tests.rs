@@ -493,3 +493,41 @@ fn a_grayscale_export_has_only_gray_artwork() {
         assert!(!imgs.is_empty() && imgs.iter().all(|(_, _, px)| px.as_chunks::<3>().0.iter().all(|c| c[0] == c[1] && c[1] == c[2])), "{layout:?}");
     }
 }
+
+/// A one-slide deck whose title text and whose shape both link out.
+fn linked_deck() -> Presentation {
+    use deckcraft_model::text::{Action, Hyperlink};
+    let mut p = red_slide();
+    let link = |action| Hyperlink { action, tooltip: "Link".into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None };
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    let shape = slide.shapes.first_mut().expect("title shape");
+    shape.click = Some(link(Action::Url { url: "https://example.com/deck".into() }));
+    if let Some(run) = shape.text.as_mut().and_then(|t| t.paragraphs.first_mut()).and_then(|para| para.runs.first_mut()) {
+        run.props.link = Some(link(Action::Url { url: "https://example.com/text".into() }));
+    }
+    p
+}
+
+fn has_link_markup(bytes: &[u8]) -> bool {
+    [b"/Annots".as_slice(), b"/Link", b"/URI"].iter().any(|n| bytes.windows(n.len()).any(|w| w == *n))
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_pdf_without_annotations_has_no_links_but_the_same_pages() {
+    use hayro_syntax::object::Array;
+    let p = linked_deck();
+    let with = export(&p, &opts(PageLayout::Slides)).unwrap();
+    let without = export(&p, &PdfOptions { annotations: false, ..opts(PageLayout::Slides) }).unwrap();
+    assert!(has_link_markup(&with), "links are on by default");
+    assert!(!has_link_markup(&without), "no /Annots, /Link or /URI without annotations");
+    let pdf = hayro_syntax::Pdf::new(without.clone()).unwrap();
+    assert!(pdf.pages().iter().all(|page| page.raw().get::<Array<'_>>(b"Annots").is_none()));
+    // The page content (the artwork, with the links' own styling in it) is the same either way.
+    assert_eq!(rgb_images(&with), rgb_images(&without));
+    assert!(!rgb_images(&without).is_empty());
+    for layout in [PageLayout::Notes, PageLayout::Handouts { per_page: 6 }] {
+        let bytes = export(&p, &PdfOptions { annotations: false, ..opts(layout) }).unwrap();
+        assert!(!has_link_markup(&bytes));
+    }
+}

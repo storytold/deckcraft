@@ -82,6 +82,10 @@ pub struct PdfOptions {
     /// Grayscale output: every slide's artwork is converted to gray (the same weights as the Print
     /// page's grayscale preview), so a printer that ignores a monochrome request still prints gray.
     pub grayscale: bool,
+    /// Link annotations for hyperlinks and shape actions (default on). A print job turns them off:
+    /// they are clickable, not printed, and the Windows spooler's shrink-to-fit (and any exact fit
+    /// with a non-printing annotation) refuses a page that has any. Link styling is page content and stays.
+    pub annotations: bool,
 }
 
 impl Default for PdfOptions {
@@ -96,6 +100,7 @@ impl Default for PdfOptions {
             title: None,
             paper: (612.0, 792.0),
             grayscale: false,
+            annotations: true,
         }
     }
 }
@@ -193,7 +198,9 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
             let mut s = page.surface();
             for (i, b) in v {
                 ex.slide(&mut s, *i, *b)?;
-                annots.extend(ex.links(*i, *b, &page_of));
+                if opts.annotations {
+                    annots.extend(ex.links(*i, *b, &page_of));
+                }
             }
             match opts.layout {
                 PageLayout::Notes => {
