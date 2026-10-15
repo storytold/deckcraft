@@ -535,3 +535,63 @@ fn print_slides_follow_the_settings() {
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
 }
+
+/// Print > Network printer through the real page: nothing is sent until the printer is queried and
+/// the box is ticked, then Print sends DeckCraft's own PDF for the page's settings, and the finished
+/// job's words name the printer.
+#[cfg(network_print)]
+#[test]
+fn print_to_a_network_printer_sends_the_pdf_after_query_and_confirmation() {
+    use craft_print::wsd::testing::{FakeConfig, FakePrinter, MemTransport};
+    use craft_ui::printing::network as net;
+
+    let printer = FakePrinter::new(FakeConfig::default());
+    let mut app = new_app();
+    for _ in 0..2 {
+        app.run("slide.new", json!({})).unwrap();
+    }
+    app.set_wsd_transport(std::sync::Arc::new(MemTransport(printer.clone())));
+    let mut h = harness(app);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::Print));
+    h.state_mut().backstage.as_mut().unwrap().print_dest = crate::print_dest::PrintDest::Network;
+    h.state_mut().net_print.state.draft = net::Draft::for_address("127.0.0.1:5357/printer");
+    h.run_steps(3);
+    // Not queried, not confirmed: Print does nothing.
+    click_on_page(&h, "Print");
+    h.run_steps(3);
+    assert_eq!(printer.jobs(), 0);
+    click_on_page(&h, "Query printer");
+    for _ in 0..2000 {
+        h.run_steps(1);
+        if matches!(h.state().net_print.state.draft.query, net::Query::Done(_)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(matches!(h.state().net_print.state.draft.query, net::Query::Done(_)), "{:?}", h.state().net_print.state.draft.query);
+    click_on_page(&h, "Print");
+    h.run_steps(3);
+    assert_eq!(printer.jobs(), 0, "queried but not confirmed");
+    h.get_by_label("I confirm sending this document to this printer").click();
+    h.run_steps(3);
+    click_on_page(&h, "Print");
+    for _ in 0..2000 {
+        h.run_steps(1);
+        if matches!(h.state().net_print.state.draft.job, net::JobView::Finished(_) | net::JobView::Failed(_)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        matches!(&h.state().net_print.state.draft.job, net::JobView::Finished(r) if r.outcome == net::Outcome::Completed),
+        "{:?}",
+        h.state().net_print.state.draft.job
+    );
+    assert_eq!(printer.jobs(), 1);
+    let sent = printer.job(1).unwrap().document.unwrap();
+    assert!(sent.starts_with(b"%PDF"), "DeckCraft's own PDF went to the printer");
+    // Three slides (the new deck's one and two added) on full-page slide sheets: the job's page total is the sheet count.
+    assert_eq!(h.state().net_print.state.draft.expected_pages, Some(3));
+}
