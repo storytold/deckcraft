@@ -659,6 +659,12 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // An arrow key next to an equation goes into it (instead of stepping over it).
+        if id == "text.move"
+            && let Some(r) = equation_editor::enter_by_arrow(self, &params)
+        {
+            return r;
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -1331,6 +1337,11 @@ impl SlideApp {
         } else {
             self.save_as_dialog("deckcraft");
         }
+    }
+
+    /// [`Self::drain_requests`] for the equation editor's arrow-key entry.
+    pub(crate) fn drain_requests_pub(&mut self) {
+        self.drain_requests();
     }
 
     /// Act on requests commands left for the UI.
