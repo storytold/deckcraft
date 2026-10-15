@@ -43,6 +43,7 @@ artwork. The ribbon and menu icons stay original drawings.
 |---|---|---|---|---|
 | Ubuntu Light (`Ubuntu-Light.ttf`, via the `epaint_default_fonts` crate 0.36) | Dalton Maag Ltd for Canonical | https://crates.io/crates/epaint_default_fonts | Ubuntu Font Licence 1.0 | Last-resort text face when no other font is available; UI fallback |
 | Hack Regular, Noto Emoji, emoji-icon-font (via `epaint_default_fonts` / egui) | Source Foundry; Google; Jakub Steiner et al. | https://crates.io/crates/epaint_default_fonts | MIT / Bitstream-Vera, OFL-1.1, MIT | egui UI fallback glyphs |
+| Source Serif 4 (Regular, It, Bold, BoldIt), Inter Regular, STIX Two Math Regular (via the `equashion-egui` crate, equaSHion rev `9746092`; per-file sources in its [ATTRIBUTION.md](https://github.com/shuff57/equaSHion/blob/97460920379aee268f49ad0919e450142643ae26/ATTRIBUTION.md)) | Frank Grießhammer, Adobe; Rasmus Andersson / The Inter Project Authors; The STIX Fonts Project Authors | https://github.com/shuff57/equaSHion | OFL-1.1 | The equation editor's canvas and palette (never installed into the egui context) |
 
 ## Embedded at build time from craft-fonts (`CRAFT_FONTS_DIR`)
 

@@ -38,6 +38,17 @@ deckcraft-matroska = { path = "crates/matroska" }
 deckcraft-ogg = { path = "crates/ogg" }
 deckcraft-opus = { path = "crates/opus" }
 
+# equations: the equaSHion editor (math tree, OMML/MathML/LaTeX, the egui EquationEditor widget).
+# Same licence (MIT OR Apache-2.0). Pinned to a commit of its `main`; bump `rev` on purpose.
+# To develop against a local checkout, add this to the root Cargo.toml (do not commit it):
+#   [patch."https://github.com/shuff57/equaSHion"]
+#   equashion-math = { path = "../equaSHion/crates/math" }
+#   equashion-egui = { path = "../equaSHion/crates/egui" }
+equashion-math = { git = "https://github.com/shuff57/equaSHion", rev = "386b16cff9fddb69db2f1759aea384e8887e3970" }
+equashion-egui = { git = "https://github.com/shuff57/equaSHion", rev = "386b16cff9fddb69db2f1759aea384e8887e3970" }
+# The equation layout (the editor's own), for slides.
+equashion-layout = { git = "https://github.com/shuff57/equaSHion", rev = "386b16cff9fddb69db2f1759aea384e8887e3970", features = ["extra-fonts"] }
+
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
 thiserror = "2"
