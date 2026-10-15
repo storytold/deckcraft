@@ -7,7 +7,7 @@
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
-pub use craft_print::Duplex;
+pub use craft_print::{Duplex, Scaling};
 
 use crate::SlideApp;
 
@@ -117,7 +117,10 @@ impl Local {
     }
 
     /// Send `pdf` to `printer`, off the UI thread. `false` when a job is already running.
-    pub fn send(&mut self, printer: &str, title: &str, pdf: Vec<u8>) -> bool {
+    /// `scaling` is [`Scaling::Exact`] when the person chose the paper (the PDF is on it, and a
+    /// queue that lacks it is refused), [`Scaling::ShrinkToFit`] when the pages are slide-shaped:
+    /// no paper was asked for, so the job goes on the queue's own paper and the slide is fitted.
+    pub fn send(&mut self, printer: &str, title: &str, pdf: Vec<u8>, scaling: Scaling) -> bool {
         if self.job_rx.is_some() {
             return false;
         }
@@ -126,6 +129,7 @@ impl Local {
             copies: self.settings.copies.clamp(1, 999),
             duplex: self.settings.duplex,
             grayscale: self.settings.grayscale,
+            scaling,
             title: title.chars().filter(|c| !c.is_control()).take(100).collect(),
             ..craft_print::Job::default()
         };
@@ -252,12 +256,32 @@ mod tests {
     fn a_job_names_the_printer_when_it_works_and_when_it_does_not() {
         let mut local = Local::with(fake_list, fake_submit);
         local.settings.copies = 3;
-        assert!(local.send("Office Laser", "Quarterly\nreview", b"%PDF-1.7 fake".to_vec()));
+        assert!(local.send("Office Laser", "Quarterly\nreview", b"%PDF-1.7 fake".to_vec(), Scaling::Exact));
         assert!(local.running());
-        assert!(!local.send("Front Desk", "x", b"%PDF".to_vec()), "one job at a time");
+        assert!(!local.send("Front Desk", "x", b"%PDF".to_vec(), Scaling::Exact), "one job at a time");
         assert_eq!(wait(&mut local), "Sent to Office Laser: spooled 2 sheet(s), 3 copies");
         assert!(!local.running());
-        assert!(local.send("Front Desk", "x", b"%PDF".to_vec()));
+        assert!(local.send("Front Desk", "x", b"%PDF".to_vec(), Scaling::Exact));
         assert_eq!(wait(&mut local), "Couldn't print to Front Desk: no such queue Front Desk");
+    }
+
+    /// Says what scaling the job asked for, so a test can tell which one reached the spooler.
+    fn scaling_submit(_: &[u8], job: &craft_print::Job, _: &mut dyn FnMut(usize, usize)) -> Result<String, String> {
+        assert!(job.options.is_empty(), "no paper or other driver option is sent for the job");
+        Ok(format!("{:?}", job.scaling))
+    }
+
+    #[test]
+    fn a_slide_sized_job_is_fitted_to_the_queues_own_paper() {
+        let mut local = Local::with(fake_list, scaling_submit);
+        assert!(local.send("Office Laser", "Deck", b"%PDF".to_vec(), Scaling::ShrinkToFit));
+        assert_eq!(wait(&mut local), "Sent to Office Laser: ShrinkToFit");
+    }
+
+    #[test]
+    fn a_chosen_paper_is_still_demanded_exactly() {
+        let mut local = Local::with(fake_list, scaling_submit);
+        assert!(local.send("Office Laser", "Notes", b"%PDF".to_vec(), Scaling::Exact));
+        assert_eq!(wait(&mut local), "Sent to Office Laser: Exact");
     }
 }

@@ -54,6 +54,15 @@ fn media_paper(bs: &Backstage) -> &'static str {
     }
 }
 
+/// How a job to a local queue treats the page size. Full-page slides are slide-shaped (13.33 x 7.5 in
+/// for 16:9), a size no paper tray lists and nobody chose: they go on the queue's own paper, shrunk
+/// to fit and centred. Notes pages and handouts are laid out on the paper the person chose, which the
+/// queue must have: it is demanded exactly, so a driver that lacks it is refused, not guessed at.
+#[cfg(not(target_arch = "wasm32"))]
+fn local_scaling(bs: &Backstage) -> crate::localprint::Scaling {
+    if bs.print_layout == "slides" { crate::localprint::Scaling::ShrinkToFit } else { crate::localprint::Scaling::Exact }
+}
+
 /// Draw the destination list and the settings of the chosen destination. Returns whether the
 /// destination can take a job now (the Print button is enabled only then).
 pub fn destination(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, sheets_ok: bool) -> bool {
@@ -163,7 +172,7 @@ pub fn send(app: &mut SlideApp, bs: &Backstage, params: Value, slides: usize) ->
             #[cfg(not(target_arch = "wasm32"))]
             {
                 let Some((title, bytes)) = app.print_bytes(&params) else { return false };
-                app.local_print.send(&printer, &title, bytes)
+                app.local_print.send(&printer, &title, bytes, local_scaling(bs))
             }
             #[cfg(target_arch = "wasm32")]
             {
@@ -214,5 +223,30 @@ mod tests {
         assert_eq!(sheet_count("h9", 9), 1);
         assert_eq!(sheet_count("h6", 0), 0);
         assert_eq!(sheet_count("h5", 4), 4, "an unknown handout layout is one slide a page");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn slides_are_fitted_and_a_chosen_paper_is_exact() {
+        use crate::localprint::Scaling;
+        let mut bs = Backstage::new(crate::backstage::Page::Print, (1, Some(0)));
+        bs.print_layout = "slides";
+        assert_eq!(local_scaling(&bs), Scaling::ShrinkToFit);
+        for layout in ["notes", "h1", "h6"] {
+            bs.print_layout = layout;
+            assert_eq!(local_scaling(&bs), Scaling::Exact, "{layout} is on the paper the person chose");
+        }
+    }
+
+    #[cfg(network_print)]
+    #[test]
+    fn a_network_job_names_no_paper_for_slides() {
+        let mut bs = Backstage::new(crate::backstage::Page::Print, (1, Some(0)));
+        bs.print_layout = "slides";
+        bs.print_paper = "a4";
+        assert_eq!(media_paper(&bs), "", "the slide size is never sent as media");
+        assert_eq!(crate::network_glue::media_for_paper(media_paper(&bs)), None);
+        bs.print_layout = "notes";
+        assert_eq!(crate::network_glue::media_for_paper(media_paper(&bs)), Some("iso_a4_210x297mm"));
     }
 }
