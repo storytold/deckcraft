@@ -11,9 +11,6 @@
 //! * **Two phases.** [`Printer::submit`] returns when the printer has *accepted* the document
 //!   ([`Sent`]); it never waits for the paper. Following the job is a separate, caller-driven step.
 //! * **No retry of an unknown outcome.** Nothing here sends a document twice.
-//! * **The deny list.** `CRAFT_PRINT_DENY` (and craft-print's legacy name for it) is checked when a printer is opened and again against the name the printer
-//!   reports; a denied printer is [`ErrorKind::Denied`], and nothing is sent to it. The registry
-//!   enforces the same list a third time, below this code.
 //! * **Formats are the registry's.** The document is the print-ready PDF. A printer that lists PDF
 //!   gets it as it is; with no way to get to a format the printer lists the print is
 //!   [`ErrorKind::UnsupportedFormat`] before a job exists (no converter is registered: see
@@ -134,22 +131,6 @@ pub struct Printer {
     wire: Wire,
     registry: Registry,
     known: Mutex<Option<Known>>,
-    /// The deny list as it was when the printer was opened.
-    denied: Vec<String>,
-}
-
-/// The refusal for a printer on the deny list: [`ErrorKind::Denied`], naming the variable and never
-/// the printer.
-fn denied_error() -> PrintError {
-    PrintError::new(
-        ErrorKind::Denied,
-        format!("the printer is on the deny list ({}); it was not opened and nothing was sent to it", craft_print::DENY_ENV),
-    )
-}
-
-/// Refuse when any of `texts` (an address, a name the printer reported) names a printer on `denied`.
-fn check_denied(denied: &[String], texts: &[&str]) -> Result<(), PrintError> {
-    if craft_print::any_denied(texts, denied) { Err(denied_error()) } else { Ok(()) }
 }
 
 /// What a read of the printer left: the details the registry takes, the formats as the printer
@@ -171,22 +152,15 @@ impl Printer {
 
     /// [`Self::open`] with the backend's own [`Settings`].
     pub fn open_with(address: &str, transport: Option<Transport>, settings: Settings) -> Result<Self, PrintError> {
-        Self::open_denying(address, transport, settings, craft_print::deny_list())
-    }
-
-    /// [`Self::open_with`] with the deny list given instead of read from the environment (tests).
-    pub(crate) fn open_denying(address: &str, transport: Option<Transport>, settings: Settings, denied: Vec<String>) -> Result<Self, PrintError> {
         let transport = transport.unwrap_or_else(wsd::adapter::default_transport);
         let proto = Proto::of(address);
         let registry = Registry::new();
-        registry.set_deny_list(Some(denied.clone()));
         let (wire, id) = match proto {
             Proto::Wsd => {
                 let backend = WsdBackend::new().with_transport(Arc::clone(&transport)).with_strict(settings.strict);
                 let added = backend.add(address)?;
                 let url = PrinterUrl::parse(&added).map_err(PrintError::from)?;
                 let id = url.as_url();
-                check_denied(&denied, &[address, &added, &id])?;
                 registry.register(Box::new(backend.clone())).map_err(|e| PrintError::new(ErrorKind::Failed, e.to_string()))?;
                 (Wire::Wsd { client: Client::new(Arc::clone(&transport), url) }, id)
             }
@@ -194,7 +168,6 @@ impl Printer {
                 let backend = IppBackend::new().with_transport(Arc::clone(&transport)).with_strict(settings.strict);
                 let id = backend.add(address)?;
                 let uri = PrinterUri::parse(&id).map_err(PrintError::from)?;
-                check_denied(&denied, &[address, &id])?;
                 registry.register(Box::new(backend)).map_err(|e| PrintError::new(ErrorKind::Failed, e.to_string()))?;
                 (Wire::Ipp { client: ipp::Client::new(Arc::clone(&transport), uri) }, id)
             }
@@ -202,7 +175,7 @@ impl Printer {
         if let Some(converter) = registered_converter() {
             registry.set_converter(converter);
         }
-        Ok(Self { proto, id, wire, registry, known: Mutex::new(None), denied })
+        Ok(Self { proto, id, wire, registry, known: Mutex::new(None) })
     }
 
     /// Which protocol this printer speaks.
@@ -218,21 +191,16 @@ impl Printer {
     /// What the printer is and what it accepts. Sends no job. The answer is kept: [`Self::submit`]
     /// uses it instead of reading the printer again.
     pub fn info(&self) -> Result<Elements, PrintError> {
-        check_denied(&self.denied, &[&self.id])?;
-        let (elements, reported) = match &self.wire {
+        let elements = match &self.wire {
             Wire::Wsd { client } => {
                 let e = wsd::printer_info(client).map_err(|e| e.print_error(Op::Query))?;
-                let name = e.description.as_ref().map(|d| d.name.clone()).unwrap_or_default();
-                (Elements::Wsd(e), name)
+                Elements::Wsd(e)
             }
             Wire::Ipp { client } => {
                 let a = client.get_printer_attributes(&[]).map_err(|e| e.print_error(ipp::Op::Query))?;
-                let name = format!("{} {}", a.name.clone().unwrap_or_default(), a.make_and_model.clone().unwrap_or_default());
-                (Elements::Ipp(Box::new(a)), name)
+                Elements::Ipp(Box::new(a))
             }
         };
-        // The name the printer reports is checked too; the answer is dropped.
-        check_denied(&self.denied, &[reported.as_str()])?;
         self.remember(&elements);
         Ok(elements)
     }
@@ -368,10 +336,6 @@ fn known_from(proto: Proto, id: &str, elements: &Elements) -> Known {
 mod tests {
     use super::*;
 
-    fn deny(entries: &str) -> Vec<String> {
-        craft_print::parse_deny_list(entries)
-    }
-
     #[test]
     fn the_protocol_follows_the_address() {
         for (address, want) in [
@@ -388,24 +352,11 @@ mod tests {
     }
 
     #[test]
-    fn a_denied_address_is_refused_at_open_and_nothing_is_sent() {
-        for address in ["http://127.0.0.1:9/0f1e2d3c-1111-4222-8333-444455556666", "ipp://127.0.0.1:9/0f1e2d3c-1111-4222-8333-444455556666"] {
-            // The default transport would connect: a refusal that came after it would hang or fail differently.
-            let error = Printer::open_denying(address, None, Settings::default(), deny("0F1E2D3C11114222")).err().expect("denied");
-            assert_eq!(error.kind(), ErrorKind::Denied, "{address}");
-            assert!(error.message().contains("CRAFT_PRINT_DENY") && !error.message().contains("0f1e"), "{error}");
-        }
-    }
-
-    #[test]
-    fn an_allowed_address_opens_and_the_reported_name_is_checked() {
-        let printer = Printer::open_denying("http://127.0.0.1:9/other", None, Settings::default(), deny("brother;0f1e")).expect("allowed");
+    fn an_address_opens_with_the_protocol_it_selects() {
+        let printer = Printer::open("http://127.0.0.1:9/other", None).expect("allowed");
         assert_eq!(printer.address(), "http://127.0.0.1:9/other");
         assert!(!printer.wire_is_ipp());
-        assert!(check_denied(&printer.denied, &["Brother MFC-9330CDW"]).is_err(), "a reported name on the list is dropped");
-        assert!(check_denied(&printer.denied, &["Office Laser", ""]).is_ok());
-        assert!(check_denied(&[], &["Brother MFC-9330CDW"]).is_ok());
-        let ipp = Printer::open_denying("ipp://127.0.0.1:9/ipp/print", None, Settings::default(), deny("brother")).expect("allowed");
+        let ipp = Printer::open("ipp://127.0.0.1:9/ipp/print", None).expect("allowed");
         assert!(ipp.wire_is_ipp());
     }
 }

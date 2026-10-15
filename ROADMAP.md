@@ -132,7 +132,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | Date | What landed |
 |---|---|
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
-| 2026-10-15 | File › Print gains a destination list: the PDF viewer (as before), a printer of this computer through the system spooler, or a network printer over WS-Print or IPP (craft-print and craft-ui, desktop only); a network job needs the printer queried and the confirmation ticked, and names the printer in its progress and result; `CRAFT_PRINT_DENY` keeps listed printers out |
+| 2026-10-15 | File › Print gains a destination list: the PDF viewer (as before), a printer of this computer through the system spooler, or a network printer over WS-Print or IPP (craft-print and craft-ui, desktop only); a network job needs the printer queried and the confirmation ticked, and names the printer in its progress and result |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
 | 2026-10-14 | Empty bulleted and numbered paragraphs show gray markers while editing, including on first click and after Enter. Markers use the list style and stay out of slide shows and exports. |

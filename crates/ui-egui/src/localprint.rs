@@ -4,8 +4,6 @@
 //! them and drains their channels.
 //!
 //! The printer list is read when the person first opens the destination list (not at start-up).
-//! craft-print drops a queue on the deny list (`CRAFT_PRINT_DENY`) before it asks its driver
-//! anything, and refuses a job for one, so a denied queue is neither listed nor printed to.
 
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
