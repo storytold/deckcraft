@@ -5,7 +5,7 @@
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
 [animation-parity.md](animation-parity.md); display hardware in
-[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **68%** (measured), **~60%
+[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **71%** (measured), **~60%
 ready** (estimated), **10–16 h** to parity.
 
 ## Running the show
@@ -31,10 +31,10 @@ ready** (estimated), **10–16 h** to parity.
 | See All Slides grid during the show | yes | yes: G, or All on the show bar and in presenter view; click a thumbnail, Esc closes the grid | Hidden slides are labelled; the first 48 slides are shown |
 | Zoom into part of a slide during the show | yes | yes: Z, then click the slide (or the presenter slide); 2×, Esc or another click leaves it | The presenter keeps the whole slide and draws a frame on the zoomed part |
 | Pen and highlighter ink | yes | pen only (Cmd+P pen, Cmd+A arrow, E erases all ink) | No highlighter, per-stroke eraser, ink colours, or keep/discard annotations prompt |
-| Laser pointer | yes | yes in the show | Cmd/Ctrl+L and the on-screen button draw the show's laser colour and leave no ink. The presenter window does not move that dot |
+| Laser pointer | yes | yes in the show | Cmd/Ctrl+L, holding Ctrl, or the on-screen button draw the show's laser colour (red, green or blue in Set Up Slide Show) and leave no ink. A recorded trace still replays. The presenter window does not move that dot |
 | Subtitles and live captions | yes (cloud speech) | no | AI dimension |
 | Custom shows | yes | yes: Show plays that list in order and does not change Set Up; Set Up Slide Show can keep one for Play from Start | Hidden slides in the list are skipped |
-| Set Up Show: loop until Esc, kiosk (browsed at a kiosk), show without animation/narration, pen colour, slides range | yes | yes, most options | |
+| Set Up Show: loop until Esc, kiosk (browsed at a kiosk), show without animation/narration, pen colour, laser colour, slides range | yes | yes, most options | Laser colour is red, green or blue |
 | Use rehearsed timings | yes | yes | |
 
 ## Presenter view
@@ -58,8 +58,8 @@ ready** (estimated), **10–16 h** to parity.
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
 | Rehearse Timings, keep timings | yes | yes |
-| Record Slide Show (narration, ink, laser, camera; Cameo) | yes | no |
-| Clear timing / narration | yes | timings only |
+| Record Slide Show (narration, ink, laser, camera; Cameo) | yes | timings, per-slide narration audio, pen ink and a recorded laser trace; no camera or screen capture |
+| Clear timing / narration | yes | current slide or all slides |
 | Export the recorded show to video | yes | no (see [file-format-parity.md](file-format-parity.md)) |
 
 ## Reading View
@@ -72,8 +72,8 @@ Reading View in a window with navigation: present (checklist row done).
 |---|---|
 | Highlighter, eraser, keep-annotations prompt, laser from presenter view | 2–4 |
 | Presenter view on the right display and a swap-displays command | 2–4 |
-| Record slide show with narration (no camera) | 5–8 |
-| **Total** | **~9–16** (the slide-show row of the feature table carries 10–16 h; recording overlaps the Media row) |
+| Record slide show screen capture (narration, timings, ink and laser are kept) | 4–8 |
+| **Total** | **~8–16** (the slide-show row of the feature table carries 10–16 h; recording overlaps the Media row) |
 
 ## Revision history
 
@@ -90,4 +90,7 @@ Reading View in a window with navigation: present (checklist row done).
 | 2026-10-14 | minor | A custom show plays only its slides, from the Custom Shows dialog, from Set Up Slide Show, or from a click action. Checklist breadth stays 66% |
 | 2026-10-14 | minor | Presenter view pauses and resets its timer (T, R) and changes notes size (A-/A+, brackets). The clock shows local time. Second-display placement and swap stay with #433. Checklist breadth stays 66% |
 | 2026-10-14 | minor | See All Slides (G) and click-to-zoom (Z) during the show. Presenter view opens that grid and sets black, white and zoom. Checklist breadth stays 66% |
+| 2026-10-14 | minor | Ordinary show: hold Ctrl for the laser pointer, colour in Set Up Slide Show. Clear Timing and Clear Narration on the current slide or all slides. Checklist breadth 71% |
+| 2026-10-14 | minor | Record Slide Show keeps per-slide narration (played in the show, written to PPTX) and a laser trace. Camera and screen capture stay open |
+| 2026-10-14 | minor | Record Slide Show keeps timings and pen ink. Narration audio, laser and camera stay open |
 | 2026-10-10 | major | Created: show, presenter view, rehearse and record, compared with PowerPoint 16.113's Slide Show tab and menu |
