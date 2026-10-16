@@ -5,6 +5,7 @@
 #![forbid(unsafe_code)]
 
 mod finite;
+pub mod rtf;
 
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;

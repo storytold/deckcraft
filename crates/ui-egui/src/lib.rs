@@ -154,7 +154,7 @@ fn open_command(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     if is_presentation_name(&lower) {
         Some("file.openBytes")
-    } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".rtf") {
         Some("slide.fromOutline")
     } else {
         None
@@ -175,7 +175,7 @@ fn infer_command(name: &str, bytes: &[u8]) -> Option<&'static str> {
         Some("insert.audio")
     } else if ct.starts_with("video/") {
         Some("insert.video")
-    } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".rtf") {
         Some("slide.fromOutline")
     } else {
         None
@@ -741,6 +741,7 @@ impl SlideApp {
             "jpeg" | "jpg" => ("jpg", "jpeg", false),
             "pptx" => ("pptx", "pptx", false),
             "outline" | "txt" => ("txt", "outline", false),
+            "rtf" => ("rtf", "rtf", false),
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
@@ -1418,7 +1419,7 @@ impl SlideApp {
             }
         };
         let params = if cmd == "slide.fromOutline" {
-            json!({"text": String::from_utf8_lossy(bytes), "markdown": name.to_ascii_lowercase().ends_with(".md")})
+            json!({"text": deckcraft_engine::cmd::file::outline_text(bytes), "markdown": name.to_ascii_lowercase().ends_with(".md")})
         } else {
             json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes)})
         };

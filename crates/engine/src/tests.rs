@@ -1457,6 +1457,24 @@ fn slide_ranges_parse_like_powerpoints_print_box() {
     assert_eq!(opts.slides, Some(vec![0, 1]), "indices past the end are dropped");
 }
 
+#[test]
+fn outline_rtf_exports_and_opens_back() {
+    let mut s = session();
+    s.execute("slide.fromOutline", &json!({"text": "Roadmap\n\tShip 1.0\n\t\tLinux first\n"})).unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-rtf-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.rtf");
+    s.execute("file.export", &json!({"path": path.to_string_lossy()})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(bytes.starts_with(b"{\\rtf1"));
+    let text = crate::cmd::file::outline_text(&bytes);
+    assert!(text.contains("Roadmap\n\tShip 1.0\n\t\tLinux first\n"), "{text}");
+    s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
+    let d = s.doc().unwrap();
+    assert!(d.doc.slides.iter().any(|sl| sl.title() == "Roadmap"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #725: a layout with a small body placeholder ahead of its content placeholder (as Keynote
 /// exports "Title & Bullets") still gets the body in the content placeholder (`idx="1"`).
 #[test]

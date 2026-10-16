@@ -9,12 +9,12 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 17 | 25 | 12 | 55% |
+| P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
 |---|---|
 | Application shell | 81% |
-| Files | 75% |
+| Files | 76% |
 | Slides | 92% |
 | Views | 98% |
 | Masters & themes | 92% |
@@ -64,7 +64,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Document properties | P2 | D |
 | Files | Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending) | P0 | P |
 | Files | Export slides as PNG/JPEG | P0 | D |
-| Files | Export outline / RTF | P2 | P |
+| Files | Export outline / RTF | P2 | D |
 | Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
 | Files | Print (slides, handouts, notes, outline) | P1 | M |
 | Files | Password protection | P2 | M |

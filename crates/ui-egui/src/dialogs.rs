@@ -1550,6 +1550,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ("PowerPoint Presentation (.pptx)", "pptx"),
                 ("Outline (.txt)", "outline"),
                 ("Animated GIF (.gif)", "gif"),
+                ("Outline/RTF (.rtf)", "rtf"),
             ] {
                 if ui.radio(fmt == f, l).clicked() {
                     d.fields.insert("fmt".into(), f.into());

@@ -119,7 +119,7 @@ pub fn tool_definitions() -> Vec<Value> {
             obj(
                 json!({
                     "path": string("Output path"),
-                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
+                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
                     "slide": int("Slide index for images"),
                     "all": boolean("All slides (images)"),
                     "scale": num("Pixels per point for images (default 2)"),
