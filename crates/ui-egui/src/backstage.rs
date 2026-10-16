@@ -104,14 +104,6 @@ pub enum Nav {
 }
 
 impl Nav {
-    fn label(self) -> &'static str {
-        match self {
-            Nav::Page(p) => p.label(),
-            Nav::Save => "Save",
-            Nav::Close => "Close",
-            Nav::Options => "Options",
-        }
-    }
     fn icon(self) -> Icon {
         match self {
             Nav::Page(p) => p.icon(),
@@ -333,7 +325,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Back"));
+            let back = crate::i18n::text(app.lang(), "nav.back");
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, back));
             let hovered = resp.hovered();
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
@@ -345,7 +338,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text,
                 false,
             );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            if resp.on_hover_text(crate::i18n::with_shortcut(app.lang(), "nav.back", "Esc")).clicked() {
                 out.close = true;
             }
         } else {
@@ -356,7 +349,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             if k == 3 {
                 separator(ui, &t);
             }
-            if nav_item(ui, *nav, &bs, index, &t).clicked() {
+            if nav_item(ui, *nav, &bs, index, &t, nav_text(app.lang(), *nav)).clicked() {
                 bs.focus = None;
                 commit_props(app, &bs);
                 match act(app, *nav, bs.page) {
@@ -371,7 +364,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(8.0);
             // Bottom-up: draw the last entry first.
             for (k, nav) in bottom.iter().enumerate().rev() {
-                if nav_item(ui, *nav, &bs, first_bottom + k, &t).clicked() {
+                if nav_item(ui, *nav, &bs, first_bottom + k, &t, nav_text(app.lang(), *nav)).clicked() {
                     bs.focus = None;
                     commit_props(app, &bs);
                     match act(app, *nav, bs.page) {
@@ -395,7 +388,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
                 ui.set_max_width(CONTENT_W);
                 if bs.page != Page::Home {
-                    ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
+                    ui.label(RichText::new(nav_text(app.lang(), Nav::Page(bs.page))).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);
                 }
                 // Errors raised on a backstage page (a missing recent file, a failed open) would
@@ -432,10 +425,26 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 
 // ---------------------------------------------------------------- side menu
 
-fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
+fn nav_text(lang: crate::i18n::Resolved, nav: Nav) -> &'static str {
+    let id = match nav {
+        Nav::Page(Page::Home) => "nav.home",
+        Nav::Page(Page::New) => "nav.new",
+        Nav::Page(Page::Open) => "nav.open",
+        Nav::Page(Page::Info) => "nav.info",
+        Nav::Page(Page::SaveAs) => "nav.save_as",
+        Nav::Page(Page::Print) => "nav.print",
+        Nav::Page(Page::Export) => "nav.export",
+        Nav::Page(Page::Account) => "nav.account",
+        Nav::Save => "nav.save",
+        Nav::Close => "nav.close",
+        Nav::Options => "nav.options",
+    };
+    crate::i18n::text(lang, id)
+}
+
+fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens, label: &'static str) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
     let selected = nav == Nav::Page(bs.page);
-    let label = nav.label();
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));
