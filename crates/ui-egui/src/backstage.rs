@@ -145,6 +145,7 @@ pub enum PrintScope {
 pub enum ExportTask {
     Pdf,
     Handouts,
+    Video,
     FileType,
 }
 
@@ -175,6 +176,14 @@ pub struct Backstage {
     pub file_type: &'static str,
     pub handouts_per_page: u8,
     pub pdf_hidden: bool,
+    /// Export › Create a Video: frame height, frames a second, seconds a slide and before each
+    /// click, the sound (`aac`, `pcm`, `none`), and hidden slides.
+    pub video_height: u32,
+    pub video_fps: u32,
+    pub video_slide_s: f64,
+    pub video_click_s: f64,
+    pub video_audio: &'static str,
+    pub video_hidden: bool,
 }
 
 impl Backstage {
@@ -197,6 +206,12 @@ impl Backstage {
             file_type: "pptx",
             handouts_per_page: 3,
             pdf_hidden: false,
+            video_height: 1080,
+            video_fps: 30,
+            video_slide_s: 5.0,
+            video_click_s: 1.0,
+            video_audio: "aac",
+            video_hidden: false,
         }
     }
 
@@ -1247,6 +1262,7 @@ fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             for (task, icon, label) in [
                 (ExportTask::Pdf, Icon::File, "Create PDF Document"),
                 (ExportTask::Handouts, Icon::Notes, "Create Handouts"),
+                (ExportTask::Video, Icon::Video, "Create a Video"),
                 (ExportTask::FileType, Icon::Export, "Change File Type"),
             ] {
                 if place_row(ui, icon, label, bs.export == task, 244.0).clicked() {
@@ -1290,6 +1306,7 @@ fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                         app.export_as("pdf", json!({"layout": "handouts", "perPage": bs.handouts_per_page}));
                     }
                 }
+                ExportTask::Video => video_page(app, ui, bs),
                 ExportTask::FileType => {
                     ui.label(RichText::new("Change File Type").font(theme::font(16.0)).color(t.text));
                     ui.add_space(8.0);
@@ -1317,6 +1334,116 @@ fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             }
         });
     });
+}
+
+/// Video resolutions as PowerPoint names them: (frame height, label).
+pub const VIDEO_SIZES: &[(u32, &str)] = &[
+    (2160, "Ultra HD (4K)  ·  3840 × 2160"),
+    (1080, "Full HD (1080p)  ·  1920 × 1080"),
+    (720, "HD (720p)  ·  1280 × 720"),
+    (480, "Standard (480p)  ·  852 × 480"),
+];
+/// The sound choices: (`audio` param, label).
+pub const VIDEO_AUDIO: &[(&str, &str)] = &[("aac", "AAC sound (MP4)"), ("pcm", "Uncompressed sound (MOV)"), ("none", "No sound")];
+
+/// Export › Create a Video: the options, then the export with its progress and Cancel.
+fn video_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    let t = Tokens::get(ui.ctx());
+    ui.label(RichText::new("Create a Video").font(theme::font(16.0)).color(t.text));
+    bullets(
+        ui,
+        &[
+            "Plays the transitions, animations, narration and media",
+            "MP4 plays almost anywhere; MOV can keep the sound uncompressed",
+            "The presentation keeps its own file",
+        ],
+    );
+    let running = app.video_job.is_some();
+    ui.add_enabled_ui(!running, |ui| {
+        let label = |ui: &mut Ui, s: &str| {
+            ui.label(RichText::new(s).font(theme::font(12.5)).color(t.text_dim));
+        };
+        label(ui, "Resolution");
+        let size = VIDEO_SIZES.iter().find(|v| v.0 == bs.video_height).map(|v| v.1).unwrap_or("Custom");
+        egui::ComboBox::from_id_salt("backstage_video_size").width(300.0).selected_text(size).show_ui(ui, |ui| {
+            for (h, l) in VIDEO_SIZES {
+                if ui.selectable_label(bs.video_height == *h, *l).clicked() {
+                    bs.video_height = *h;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        label(ui, "Frames per second");
+        egui::ComboBox::from_id_salt("backstage_video_fps").width(300.0).selected_text(format!("{} fps", bs.video_fps)).show_ui(ui, |ui| {
+            for f in [24u32, 25, 30, 60] {
+                if ui.selectable_label(bs.video_fps == f, format!("{f} fps")).clicked() {
+                    bs.video_fps = f;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut bs.video_slide_s).range(0.1..=3600.0).speed(0.1).max_decimals(2).suffix(" s"));
+            ui.label("on each slide without a timing");
+        });
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut bs.video_click_s).range(0.0..=3600.0).speed(0.1).max_decimals(2).suffix(" s"));
+            ui.label("before each animation click");
+        });
+        ui.add_space(6.0);
+        label(ui, "Sound");
+        let audio = VIDEO_AUDIO.iter().find(|a| a.0 == bs.video_audio).map(|a| a.1).unwrap_or("AAC sound (MP4)");
+        egui::ComboBox::from_id_salt("backstage_video_audio").width(300.0).selected_text(audio).show_ui(ui, |ui| {
+            for (id, l) in VIDEO_AUDIO {
+                if ui.selectable_label(bs.video_audio == *id, *l).clicked() {
+                    bs.video_audio = id;
+                }
+            }
+        });
+        ui.checkbox(&mut bs.video_hidden, "Include hidden slides");
+    });
+    ui.add_space(10.0);
+    match app.video_job.as_ref().map(|j| (j.progress(), j.cancelling())) {
+        None => {
+            if square_button(ui, Icon::Video, "Create Video", true).clicked() {
+                let params = json!({
+                    "height": bs.video_height,
+                    "fps": bs.video_fps,
+                    "secondsPerSlide": bs.video_slide_s,
+                    "secondsPerClick": bs.video_click_s,
+                    "audio": bs.video_audio,
+                    "includeHidden": bs.video_hidden,
+                });
+                if let Err(e) = app.run("app.exportVideo", params) {
+                    app.set_status(e);
+                }
+            }
+        }
+        Some(((done, total), cancelling)) => {
+            let frac = if total > 0 { done as f32 / total as f32 } else { 0.0 };
+            let text = if cancelling {
+                "Cancelling…".to_string()
+            } else if total > 0 {
+                format!("Frame {done} of {total}")
+            } else {
+                "Starting…".into()
+            };
+            // A flat bar in the accent colour, the frame count beside it.
+            ui.horizontal(|ui| {
+                let (r, resp) = ui.allocate_exact_size(vec2(300.0, 8.0), Sense::hover());
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ProgressIndicator, true, &text));
+                let p = ui.painter();
+                p.rect_filled(r, CornerRadius::same(4), t.border);
+                let fill = egui::Rect::from_min_size(r.min, vec2((r.width() * frac.clamp(0.0, 1.0)).max(8.0), r.height()));
+                p.rect_filled(fill, CornerRadius::same(4), t.accent);
+                ui.label(RichText::new(&text).font(theme::font(12.0)).color(t.text_dim));
+            });
+            ui.add_space(6.0);
+            if ui.add_enabled(!cancelling, egui::Button::new("Cancel")).clicked() {
+                let _ = app.run("app.cancelVideoExport", json!({}));
+            }
+        }
+    }
 }
 
 fn bullets(ui: &mut Ui, items: &[&str]) {
