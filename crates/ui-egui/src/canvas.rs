@@ -753,34 +753,40 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
     if let Err(e) = r {
         app.set_status(e.to_string());
     }
-    // Cursor.
-    let cursor = match (&app.session.tool.kind, &app.session.tool.hover) {
-        (ToolKind::Shape { .. }, _) => egui::CursorIcon::Crosshair,
-        (ToolKind::TextBox, _) => egui::CursorIcon::Text,
-        (ToolKind::Ink { .. }, _) => egui::CursorIcon::Crosshair,
-        (_, Some(Hit::Resize { handle, .. })) => match handle {
-            0 | 4 => egui::CursorIcon::ResizeNwSe,
-            2 | 6 => egui::CursorIcon::ResizeNeSw,
-            1 | 5 => egui::CursorIcon::ResizeVertical,
-            _ => egui::CursorIcon::ResizeHorizontal,
-        },
-        (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
-        (_, Some(Hit::TableColumn { .. })) => egui::CursorIcon::ResizeColumn,
-        (_, Some(Hit::TableRow { .. })) => egui::CursorIcon::ResizeRow,
-        (_, Some(Hit::Adjust { .. } | Hit::Warp { .. } | Hit::LineEnd { .. })) => egui::CursorIcon::PointingHand,
-        (_, Some(Hit::Shape { text: true, .. })) => {
-            if app.session.active().is_some_and(|d| d.selection.text.is_some()) {
-                egui::CursorIcon::Text
-            } else {
-                egui::CursorIcon::Move
+    // Cursor. The Format and Animation Painters override everything: their whole point is to
+    // tell the user the tool is armed and waiting for a click (#830).
+    let painter_armed = app.session.painter.is_some() || app.session.anim_painter.is_some();
+    let cursor = if painter_armed {
+        egui::CursorIcon::Copy
+    } else {
+        match (&app.session.tool.kind, &app.session.tool.hover) {
+            (ToolKind::Shape { .. }, _) => egui::CursorIcon::Crosshair,
+            (ToolKind::TextBox, _) => egui::CursorIcon::Text,
+            (ToolKind::Ink { .. }, _) => egui::CursorIcon::Crosshair,
+            (_, Some(Hit::Resize { handle, .. })) => match handle {
+                0 | 4 => egui::CursorIcon::ResizeNwSe,
+                2 | 6 => egui::CursorIcon::ResizeNeSw,
+                1 | 5 => egui::CursorIcon::ResizeVertical,
+                _ => egui::CursorIcon::ResizeHorizontal,
+            },
+            (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
+            (_, Some(Hit::TableColumn { .. })) => egui::CursorIcon::ResizeColumn,
+            (_, Some(Hit::TableRow { .. })) => egui::CursorIcon::ResizeRow,
+            (_, Some(Hit::Adjust { .. } | Hit::Warp { .. } | Hit::LineEnd { .. })) => egui::CursorIcon::PointingHand,
+            (_, Some(Hit::Shape { text: true, .. })) => {
+                if app.session.active().is_some_and(|d| d.selection.text.is_some()) {
+                    egui::CursorIcon::Text
+                } else {
+                    egui::CursorIcon::Move
+                }
             }
+            (_, Some(Hit::Shape { .. } | Hit::Frame { .. })) => egui::CursorIcon::Move,
+            _ => match app.session.tool.guide_drag.map(|g| g.0).or(app.session.tool.guide_hover) {
+                Some(i) if app.session.active().and_then(|d| d.doc.guides.get(i)).is_some_and(|g| g.vertical) => egui::CursorIcon::ResizeHorizontal,
+                Some(_) => egui::CursorIcon::ResizeVertical,
+                None => egui::CursorIcon::Default,
+            },
         }
-        (_, Some(Hit::Shape { .. } | Hit::Frame { .. })) => egui::CursorIcon::Move,
-        _ => match app.session.tool.guide_drag.map(|g| g.0).or(app.session.tool.guide_hover) {
-            Some(i) if app.session.active().and_then(|d| d.doc.guides.get(i)).is_some_and(|g| g.vertical) => egui::CursorIcon::ResizeHorizontal,
-            Some(_) => egui::CursorIcon::ResizeVertical,
-            None => egui::CursorIcon::Default,
-        },
     };
     if resp.hovered() {
         ui.ctx().set_cursor_icon(cursor);
@@ -1593,6 +1599,21 @@ mod tests {
         assert!(super::grid_line_step(1_000.0, 1.0).is_none());
         assert!(super::grid_line_step(6.0, 0.0).is_none());
         assert!(super::grid_line_step(6.0, 0.1).is_none(), "a 6 pt grid at 10% zoom is finer than one screen point");
+    }
+
+    /// #830: when the Format or Animation Painter is armed, the cursor shows the copy icon so the
+    /// user can see the tool is waiting for a click.
+    #[test]
+    fn format_painter_sets_the_cursor() {
+        let mut h = harness();
+        // Hover over the canvas so the pointer function runs and sets the cursor.
+        h.hover_at(egui::pos2(600.0, 400.0));
+        h.run_steps(2);
+        // Arming the format painter overrides the cursor to Copy (#830).
+        h.state_mut().session.painter = Some((Default::default(), false));
+        h.run_steps(3);
+        let after = h.output().platform_output.cursor_icon;
+        assert_eq!(after, egui::CursorIcon::Copy, "the format painter arms the Copy cursor");
     }
 }
 
