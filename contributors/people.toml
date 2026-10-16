@@ -54,3 +54,8 @@ real_name = "Nikita Rakitin"
 
 [people.RCShoemaker]
 real_name = "Ryan C. Shoemaker"
+
+[people.GhostMitra]
+real_name = "Debarghaya Mitra"
+sync_github_name = true
+

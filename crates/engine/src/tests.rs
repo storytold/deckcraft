@@ -1774,6 +1774,7 @@ fn font_add_refuses_non_fonts_and_rescan_reports_the_catalog() {
     let mut s = session();
     let not_font = crate::cmd::base64_encode(b"definitely not a font file");
     assert!(s.execute("font.add", &json!({"data": not_font})).is_err());
+    assert!(s.execute("font.add", &json!({"path": "does/not/exist.ttf"})).is_err());
     assert!(s.execute("font.add", &json!({})).is_err());
     let r = s.execute("font.rescan", &json!({})).unwrap();
     assert!(r["families"].as_u64().unwrap() >= 1, "{r}");

@@ -13,7 +13,7 @@ use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "font.add", "Add Font", [], None, "{data: base64 TTF/OTF/TTC} → {faces} added for this session", always, font_add),
+        cmd!(noundo "font.add", "Add Font", ["Home", "Font"], None, "{data?: base64 TTF/OTF/TTC, path?: file path} → {faces} added for this session", always, font_add),
         cmd!(noundo "font.rescan", "Rescan Installed Fonts", ["Home", "Font"], None, "{} → {faces, families} (fonts installed since start-up)", always, font_rescan),
         cmd!("format.bold", "Bold", ["Home", "Font"], Some("Cmd+B"), "{on?: bool}", has_text_or_shapes, bold),
         cmd!("format.italic", "Italic", ["Home", "Font"], Some("Cmd+I"), "{on?: bool}", has_text_or_shapes, italic),
@@ -1204,9 +1204,15 @@ fn state(s: &mut Session, _p: &Value) -> Result<Value> {
     }))
 }
 
-/// Add a font from its bytes for this session (it then shows in the font menu and draws).
+/// Add a font from its bytes or file path for this session (it then shows in the font menu and draws).
 fn font_add(_s: &mut Session, p: &Value) -> Result<Value> {
-    let data = str_param(p, "data").and_then(base64_decode).ok_or_else(|| bad("font.add", "missing or invalid base64 `data`"))?;
+    let data = if let Some(path) = str_param(p, "path") {
+        crate::io::read_file(path).map_err(|e| bad("font.add", &e))?
+    } else if let Some(b64) = str_param(p, "data") {
+        base64_decode(b64).ok_or_else(|| bad("font.add", "missing or invalid base64 `data`"))?
+    } else {
+        return Err(bad("font.add", "missing `path` or base64 `data`"));
+    };
     if data.len() > 64 << 20 {
         return Err(bad("font.add", "font file larger than 64 MB"));
     }

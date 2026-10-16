@@ -86,6 +86,7 @@ enum FilePurpose {
     Picture,
     Audio,
     Video,
+    Font,
     /// Change Picture: the picture replaces the selected one (`picture.change`).
     ChangePicture,
     /// A drop, or any other purpose: decide from the name and bytes.
@@ -137,6 +138,7 @@ fn purpose_of(purpose: &str) -> FilePurpose {
         "picture" => FilePurpose::Picture,
         "audio" => FilePurpose::Audio,
         "video" => FilePurpose::Video,
+        "font" => FilePurpose::Font,
         _ => FilePurpose::Infer,
     }
 }
@@ -147,6 +149,10 @@ fn is_presentation_name(lower: &str) -> bool {
         || lower.ends_with(".pptx")
         || lower.ends_with(".potx")
         || lower.ends_with(".ppsx")
+}
+
+fn is_font_name(lower: &str) -> bool {
+    lower.ends_with(".ttf") || lower.ends_with(".otf") || lower.ends_with(".ttc") || lower.ends_with(".woff") || lower.ends_with(".woff2")
 }
 
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.
@@ -162,11 +168,14 @@ fn open_command(name: &str) -> Option<&'static str> {
 }
 
 /// A drop has no requested operation, so the name and bytes decide: a presentation opens,
-/// then a recognised picture, sound or video is inserted, then an outline becomes slides.
+/// then a recognised font, picture, sound or video is inserted, then an outline becomes slides.
 fn infer_command(name: &str, bytes: &[u8]) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     if is_presentation_name(&lower) {
         return Some("file.openBytes");
+    }
+    if is_font_name(&lower) {
+        return Some("font.add");
     }
     let ct = deckcraft_engine::cmd::insert::content_type(name, bytes);
     if ct.starts_with("image/") {
@@ -187,6 +196,7 @@ fn command_for(purpose: FilePurpose, name: &str, bytes: &[u8]) -> Result<&'stati
         FilePurpose::Picture => Some("insert.picture"),
         FilePurpose::Audio => Some("insert.audio"),
         FilePurpose::Video => Some("insert.video"),
+        FilePurpose::Font => Some("font.add"),
         FilePurpose::ChangePicture => deckcraft_engine::cmd::insert::content_type(name, bytes).starts_with("image/").then_some("picture.change"),
         FilePurpose::Open => open_command(name),
         FilePurpose::Infer => infer_command(name, bytes),
@@ -1201,6 +1211,34 @@ impl SlideApp {
         }
     }
 
+    /// Home › Font dropdown › Add Font from File…: pick a font file and register it with the session.
+    pub(crate) fn pick_and_add_font(&mut self) {
+        if let Some(pick) = self.services.pick_open.as_mut() {
+            if let Some(path) = pick("font") {
+                let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| path.clone());
+                let r = match self.services.read.as_ref().map(|r| r(&path)) {
+                    Some(Ok(bytes)) => {
+                        let b64 = deckcraft_engine::cmd::base64_encode(&bytes);
+                        self.session.execute("font.add", &json!({"name": name, "data": b64}))
+                    }
+                    _ => self.session.execute("font.add", &json!({"path": path})),
+                };
+                match r {
+                    Ok(res) => {
+                        let faces = res.get("faces").and_then(Value::as_u64).unwrap_or(0);
+                        self.set_status(format!("Added {faces} font {} from {name}", if faces == 1 { "face" } else { "faces" }));
+                    }
+                    Err(e) => self.set_status(e.to_string()),
+                }
+            }
+        } else if self.services.open_async.is_some() {
+            let id = self.begin_external_file("font");
+            if let Some(f) = self.services.open_async.as_mut() {
+                f("font", id);
+            }
+        }
+    }
+
     /// Home › New Slide › Reuse Slides…: pick a presentation and insert all its slides after the
     /// current one (desktop only: the browser picker opens what it picks as a document).
     fn pick_and_reuse(&mut self, keep: bool) {
@@ -1422,8 +1460,16 @@ impl SlideApp {
         } else {
             json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes)})
         };
-        let result = if cmd == "file.openBytes" || self.viewing_target(&req.target) {
-            self.session.execute(cmd, &params).map(|_| ()).map_err(|e| e.to_string())
+        let result = if cmd == "file.openBytes" || cmd == "font.add" || self.viewing_target(&req.target) {
+            self.session
+                .execute(cmd, &params)
+                .map(|res| {
+                    if cmd == "font.add" {
+                        let faces = res.get("faces").and_then(Value::as_u64).unwrap_or(0);
+                        self.set_status(format!("Added {faces} font {} from {name}", if faces == 1 { "face" } else { "faces" }));
+                    }
+                })
+                .map_err(|e| e.to_string())
         } else {
             self.execute_on_target(&req.target, name, cmd, &params)
         };
@@ -3355,5 +3401,39 @@ mod tests {
         let after = harness.state().ui.ui_scale;
         assert!(after > before + 0.3, "letting go applies the size dragged to: {before} -> {after}");
         assert!(harness.state().dialog.is_some(), "Preferences stays open");
+    }
+
+    #[test]
+    fn infer_command_identifies_font_extensions() {
+        assert_eq!(infer_command("myfont.ttf", b""), Some("font.add"));
+        assert_eq!(infer_command("myfont.otf", b""), Some("font.add"));
+        assert_eq!(infer_command("myfont.ttc", b""), Some("font.add"));
+        assert_eq!(infer_command("myfont.woff", b""), Some("font.add"));
+        assert_eq!(infer_command("myfont.woff2", b""), Some("font.add"));
+        assert_eq!(infer_command("myfont.xyz", b""), None);
+    }
+
+    #[test]
+    fn pick_and_add_font_calls_font_add_and_updates_status() {
+        let picked = "/tmp/CustomFont.ttf".to_string();
+        let services = Services {
+            pick_open: Some(Box::new(move |purpose: &str| {
+                assert_eq!(purpose, "font");
+                Some(picked.clone())
+            })),
+            read: Some(Box::new(|_| Ok(b"not a valid font".to_vec()))),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        app.pick_and_add_font();
+        assert!(app.status.is_some(), "expected status message after font.add attempt");
+    }
+
+    #[test]
+    fn apply_external_file_with_font_purpose_executes_font_add() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let id = app.begin_external_file("font");
+        app.apply_external_file(id, "test.ttf", b"invalid font bytes");
+        assert!(app.status.is_some(), "expected error status for invalid font bytes");
     }
 }

@@ -502,6 +502,13 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         }
                     }
                     ui.separator();
+                    let can_pick = app.services.pick_open.is_some() || app.services.open_async.is_some();
+                    let r = ui.add_enabled(can_pick, egui::Button::new("Add Font from File…"));
+                    if r.clicked() {
+                        app.pick_and_add_font();
+                        ui.close();
+                    }
+                    r.on_disabled_hover_text("Adding font files is not available in this environment");
                     // Fonts installed while DeckCraft runs (e.g. into ~/.local/share/fonts).
                     if ui.button("Rescan Installed Fonts").clicked() {
                         run(app, "font.rescan", json!({}));
