@@ -16,8 +16,8 @@ path = "src/main.rs"
 [dependencies]
 deckcraft-engine = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
-craft-cloud-client = { git = "https://github.com/wdunn001/collab-craft", rev = "80bfaec" }
-collabcraft-share = { git = "https://github.com/wdunn001/collab-craft", rev = "80bfaec" }
+craft-cloud-client = { git = "https://github.com/wdunn001/collab-craft", rev = "3c77c3e" }
+collabcraft-share = { git = "https://github.com/wdunn001/collab-craft", rev = "3c77c3e" }
 egui = { workspace = true }
 log = { workspace = true }
 serde_json = { workspace = true }
