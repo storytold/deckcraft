@@ -2357,6 +2357,83 @@ pub fn render_shape(pres: &Presentation, slide: &Slide, id: ShapeId, scale: f64)
     })
 }
 
+/// Renders a single line of text with `face` in a `w` × `h` box, scaled by `scale` pixels per point.
+/// If `text` exceeds `w - 2.0 * margin`, it is truncated and "..." is appended.
+pub fn render_text_line(face: &deckcraft_fonts::FontFace, text: &str, size: f32, w: f32, h: f32, margin: f32, scale: f32) -> Image {
+    let fin = |v: f32, d: f32| if v.is_finite() && v >= 0.0 { v } else { d };
+    let size = (fin(size, 12.0) as f64).clamp(1.0, 1000.0);
+    let w = fin(w, 1.0);
+    let h = fin(h, 1.0);
+    let margin = (fin(margin, 0.0) as f64).clamp(0.0, 1000.0);
+    let scale = if scale.is_finite() && scale > 0.0 { scale.clamp(0.1, 16.0) } else { 1.0 };
+    let w16 = ((w * scale).ceil() as u32).clamp(1, MAX_SIDE) as u16;
+    let h16 = ((h * scale).ceil() as u32).clamp(1, MAX_SIDE) as u16;
+
+    let mut ctx = RenderContext::new_with(w16, h16, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+    ctx.set_transform(Affine::IDENTITY);
+    ctx.set_paint(color(Rgba::WHITE, 1.0));
+    ctx.fill_rect(&kurbo::Rect::new(0.0, 0.0, w16 as f64, h16 as f64));
+    ctx.set_paint(color(Rgba::BLACK, 1.0));
+
+    let upem = if face.upem.is_finite() && face.upem > 0.0 { face.upem } else { 1000.0 };
+    let k = size / upem;
+    let view = Affine::scale(scale as f64);
+    let ascent = if face.ascent.is_finite() { face.ascent.clamp(0.0, upem * 4.0) } else { upem * 0.8 };
+    let baseline = margin + ascent * k;
+
+    let max_text_w = (w as f64 - 2.0 * margin).max(0.0);
+    let text_to_render = truncate_to_fit(face, text, k, max_text_w);
+
+    let mut x = margin;
+    let db = FontDb::global();
+    for g in deckcraft_fonts::shape(face, &text_to_render, &[], |c| c) {
+        let o = db.outline(face, g.gid);
+        ctx.set_transform(view * Affine::translate((x + g.x_offset as f64 * k, baseline - g.y_offset as f64 * k)) * Affine::scale(k));
+        ctx.fill_path(&o);
+        x += g.x_advance as f64 * k;
+        if x > w as f64 {
+            break;
+        }
+    }
+
+    ctx.flush();
+    let mut pixels = vec![0u8; w16 as usize * h16 as usize * 4];
+    let mut res = Resources::new();
+    if let Some(pm) = vello_cpu::PixmapMut::new(w16, h16, &mut pixels) {
+        ctx.render(pm, &mut res);
+    }
+    Image { width: w16 as u32, height: h16 as u32, pixels }
+}
+
+fn advance_of(face: &deckcraft_fonts::FontFace, text: &str, k: f64) -> f64 {
+    deckcraft_fonts::shape(face, text, &[], |c| c).iter().map(|g| g.x_advance as f64 * k).sum()
+}
+
+fn truncate_to_fit(face: &deckcraft_fonts::FontFace, text: &str, k: f64, max_w: f64) -> String {
+    let full_adv = advance_of(face, text, k);
+    if full_adv <= max_w {
+        return text.to_string();
+    }
+    let ellipsis = "...";
+    let ell_adv = advance_of(face, ellipsis, k);
+    if ell_adv >= max_w {
+        return ellipsis.to_string();
+    }
+    let target_w = max_w - ell_adv;
+    let mut best_prefix = "";
+    for (idx, _) in text.char_indices() {
+        if let Some(prefix) = text.get(..idx) {
+            let adv = advance_of(face, prefix, k);
+            if adv <= target_w {
+                best_prefix = prefix;
+            } else {
+                break;
+            }
+        }
+    }
+    format!("{best_prefix}{ellipsis}")
+}
+
 #[cfg(test)]
 mod tests;
 

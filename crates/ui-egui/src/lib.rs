@@ -2358,6 +2358,32 @@ mod tests {
         assert!(size(&mut harness).unwrap_or(f64::MAX) < after, "Ctrl+[ shrinks");
     }
 
+    #[test]
+    fn font_dropdown_on_ribbon_opens_and_selects_font() {
+        let mut session = Session::with_new();
+        let res = session.execute("shape.insert", &json!({"preset": "rect", "rect": [50, 50, 200, 100], "text": "Testing Font"})).unwrap();
+        let id = res["id"].as_u64().unwrap();
+        session.execute("edit.select", &json!({"ids": [id]})).unwrap();
+
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, Services::default()),
+        );
+        harness.run_steps(2);
+
+        harness.get_by_role_and_label(egui::accesskit::Role::ComboBox, "Inter").click();
+        harness.run_steps(2);
+
+        harness.get_by_label("Inter (Headings)").click();
+        harness.run_steps(2);
+
+        let cur_font = harness.state_mut().session.execute("format.state", &json!({})).unwrap()["font"].as_str().unwrap().to_string();
+        assert_eq!(cur_font, "Inter");
+    }
+
     /// Export… had no visible control: only the command palette reached it.
     #[test]
     fn title_bar_export_opens_the_export_dialog() {

@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 use crate::SlideApp;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
-use crate::widgets::{self, RIBBON_H, big_button, big_button_ex, color_split, dropdown, group, icon_toggle, rows, small_button, small_button_ex};
+use crate::widgets::{
+    self, RIBBON_H, big_button, big_button_ex, color_split, dropdown, dropdown_ex, group, icon_toggle, rows, small_button, small_button_ex,
+};
 
 pub const TITLE_H: f32 = 38.0;
 
@@ -484,7 +486,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let size = st.get("size").and_then(Value::as_f64);
                 let fams = font_families(app);
                 let theme_fonts: Vec<String> = fams.iter().take(2).cloned().collect();
-                dropdown(ui, "font", &font, 150.0, en, |ui| {
+                dropdown_ex(ui, "font", &font, 160.0, 280.0, en, |ui| {
                     for (k, f) in fams.iter().enumerate() {
                         let label = if k == 0 && theme_fonts.len() == 2 {
                             format!("{f} (Headings)")
@@ -493,7 +495,8 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         } else {
                             f.clone()
                         };
-                        if ui.button(egui::RichText::new(label)).clicked() {
+                        let is_sel = &font == f;
+                        if widgets::font_menu_item(ui, f, &label, is_sel, 260.0).clicked() {
                             run(app, "format.font", json!({"family": f}));
                             ui.close();
                         }

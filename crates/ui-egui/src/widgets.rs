@@ -221,6 +221,119 @@ pub fn rows<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 
 /// A text dropdown field (font name, size): shows `current`, opens a popup with `add_items`.
 pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool, add_items: impl FnOnce(&mut Ui)) -> Response {
+    dropdown_ex(ui, id, current, width, width.max(140.0), enabled, add_items)
+}
+
+/// Truncates `text` so it fits within `max_w` using `font`, appending "..." if truncated.
+pub fn truncate_text_with_ellipsis(ui: &mut Ui, text: &str, font: egui::FontId, max_w: f32) -> String {
+    let full_w = ui.fonts_mut(|f| f.layout_no_wrap(text.to_string(), font.clone(), Color32::WHITE).size().x);
+    if full_w <= max_w {
+        return text.to_string();
+    }
+    let ellipsis = "...";
+    let ell_w = ui.fonts_mut(|f| f.layout_no_wrap(ellipsis.to_string(), font.clone(), Color32::WHITE).size().x);
+    if ell_w >= max_w {
+        return ellipsis.to_string();
+    }
+    let target_w = max_w - ell_w;
+    let mut best_prefix = "";
+    for (idx, _) in text.char_indices() {
+        if let Some(prefix) = text.get(..idx) {
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(prefix.to_string(), font.clone(), Color32::WHITE).size().x);
+            if w <= target_w {
+                best_prefix = prefix;
+            } else {
+                break;
+            }
+        }
+    }
+    format!("{best_prefix}{ellipsis}")
+}
+
+/// Turns black ink on white paper into a white-with-alpha mask for tinting with theme text color.
+pub fn ink_mask(img: &mut egui::ColorImage) {
+    for p in &mut img.pixels {
+        let (r, g, b, a) = (p.r(), p.g(), p.b(), p.a());
+        let lum = (u32::from(r) * 299 + u32::from(g) * 587 + u32::from(b) * 114) / 1000;
+        let ink = 255u32.saturating_sub(lum.min(255)) * u32::from(a) / 255;
+        *p = egui::Color32::from_white_alpha(u8::try_from(ink).unwrap_or(u8::MAX));
+    }
+}
+
+/// An entry in the font dropdown list showing `label` in `family`'s face.
+pub fn font_menu_item(ui: &mut Ui, family: &str, label: &str, selected: bool, width: f32) -> Response {
+    let (r, resp) = ui.allocate_exact_size(vec2(width, 24.0), Sense::click());
+    let t = Tokens::get(ui.ctx());
+
+    if selected {
+        ui.painter().rect_filled(r, CornerRadius::same(3), t.selected);
+    } else if resp.hovered() {
+        ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
+    }
+
+    if !ui.is_rect_visible(r) {
+        let l = label.to_string();
+        resp.widget_info(move || egui::WidgetInfo::labeled(egui::WidgetType::Button, true, l.clone()));
+        return resp;
+    }
+
+    let key = format!("font_preview:{label}");
+    let tex: Option<egui::TextureHandle> = ui.ctx().data(|d| d.get_temp::<egui::TextureHandle>(egui::Id::new(&key)));
+
+    let tex = tex.or_else(|| {
+        let now = ui.input(|i| i.time);
+        let n = ui.ctx().data_mut(|d| {
+            let c = d.get_temp_mut_or_default::<(f64, u32)>(egui::Id::new("font_preview_budget"));
+            if (c.0 - now).abs() > 0.001 {
+                *c = (now, 0);
+            }
+            c.1 = c.1.saturating_add(1);
+            c.1
+        });
+        if n > 12 {
+            ui.ctx().request_repaint();
+            return None;
+        }
+        let ppp = ui.ctx().pixels_per_point();
+        let db = deckcraft_fonts::FontDb::global();
+        let face = db.face(family, "Regular");
+        let face = if label.chars().filter(|c| !c.is_whitespace()).all(|c| face.covers(c)) {
+            face
+        } else {
+            db.face(deckcraft_fonts::FALLBACK_FAMILY, "Regular")
+        };
+        let img = deckcraft_render::render_text_line(&face, label, 13.0, width - 12.0, 22.0, 2.0, ppp);
+        let mut color_img = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.to_straight());
+        ink_mask(&mut color_img);
+        let h = ui.ctx().load_texture(&key, color_img, egui::TextureOptions::LINEAR);
+        ui.ctx().data_mut(|d| d.insert_temp(egui::Id::new(&key), h.clone()));
+        Some(h)
+    });
+
+    match tex {
+        Some(h) => {
+            let sz = h.size_vec2() / ui.ctx().pixels_per_point();
+            ui.painter().image(
+                h.id(),
+                Rect::from_min_size(pos2(r.min.x + 6.0, r.center().y - sz.y / 2.0), sz),
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                t.text,
+            );
+        }
+        None => {
+            let max_w = (width - 16.0).max(0.0);
+            let truncated = truncate_text_with_ellipsis(ui, label, theme::font(12.0), max_w);
+            ui.painter().text(pos2(r.min.x + 6.0, r.center().y), Align2::LEFT_CENTER, truncated, theme::font(12.0), t.text);
+        }
+    }
+
+    let l = label.to_string();
+    resp.widget_info(move || egui::WidgetInfo::labeled(egui::WidgetType::Button, true, l.clone()));
+    resp
+}
+
+/// Like [`dropdown`], but with a custom popup menu width.
+pub fn dropdown_ex(ui: &mut Ui, id: &str, current: &str, width: f32, menu_width: f32, enabled: bool, add_items: impl FnOnce(&mut Ui)) -> Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     let painter = ui.painter_at(rect);
@@ -232,16 +345,19 @@ pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool,
         egui::StrokeKind::Inside,
     );
     let clip = rect.shrink2(vec2(6.0, 0.0));
+    let max_text_w = (clip.width() - 12.0).max(0.0);
+    let text_to_draw = truncate_text_with_ellipsis(ui, current, theme::font(12.0), max_text_w);
     painter.with_clip_rect(Rect::from_min_max(clip.min, pos2(clip.max.x - 12.0, clip.max.y))).text(
         pos2(rect.min.x + 6.0, rect.center().y),
         Align2::LEFT_CENTER,
-        current,
+        text_to_draw,
         theme::font(12.0),
         if enabled { t.text } else { t.text_faint },
     );
     chevron(&painter, pos2(rect.max.x - 9.0, rect.center().y), 3.0, t.text_dim);
-    let _ = id;
-    egui::Popup::menu(&resp).width(width.max(140.0)).show(|ui| {
+    let shown_label = if current.is_empty() { id.to_string() } else { current.to_string() };
+    resp.widget_info(move || egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, shown_label.clone()));
+    egui::Popup::menu(&resp).width(menu_width.max(width.max(140.0))).show(|ui| {
         egui::ScrollArea::vertical().max_height(360.0).show(ui, add_items);
     });
     resp
@@ -565,5 +681,45 @@ mod tests {
         let stored = Some(("old".to_string(), "old plus typing".to_string()));
         assert_eq!(text_draft(stored, "undone"), "undone");
         assert_eq!(text_draft(None, "fresh"), "fresh");
+    }
+
+    #[test]
+    fn ink_mask_converts_paper_to_transparent_and_ink_to_opaque() {
+        let mut img = egui::ColorImage::new([3, 1], vec![egui::Color32::WHITE, egui::Color32::BLACK, egui::Color32::from_gray(128)]);
+        ink_mask(&mut img);
+        assert_eq!(img.pixels[0].a(), 0, "white paper becomes transparent");
+        assert_eq!(img.pixels[1], egui::Color32::from_white_alpha(255), "full ink stays opaque white");
+        assert_eq!(img.pixels[2].a(), 127, "antialiased ink keeps its coverage");
+    }
+
+    #[test]
+    fn truncate_text_with_ellipsis_short_and_long() {
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 500.0)).build_ui(|ui| {
+            theme::install_fonts(ui.ctx());
+            let font = theme::font(12.0);
+            let s = truncate_text_with_ellipsis(ui, "Hi", font.clone(), 100.0);
+            assert_eq!(s, "Hi");
+
+            let long = "Very Long Font Name That Will Definitely Exceed Small Maximum Width";
+            let s_trunc = truncate_text_with_ellipsis(ui, long, font, 40.0);
+            assert!(s_trunc.ends_with("..."), "expected ellipsis at end of {s_trunc}");
+            assert!(s_trunc.len() < long.len());
+        });
+        harness.run();
+    }
+
+    #[test]
+    fn font_menu_item_draws_and_clicks() {
+        let clicked = RefCell::new(false);
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 500.0)).build_ui(|ui| {
+            theme::install_fonts(ui.ctx());
+            if font_menu_item(ui, "Inter", "Inter (Headings)", false, 260.0).clicked() {
+                *clicked.borrow_mut() = true;
+            }
+        });
+        harness.run();
+        harness.get_by_label("Inter (Headings)").click();
+        harness.run();
+        assert!(*clicked.borrow());
     }
 }

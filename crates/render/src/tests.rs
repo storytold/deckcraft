@@ -2568,3 +2568,25 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(changed.iter().any(|(px, _)| px[0] == 179 && px[1] == 179 && px[2] == 179));
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
 }
+
+#[test]
+fn render_text_line_draws_text_and_truncates_long_names() {
+    let db = FontDb::global();
+    let face = db.face("Inter", "Regular");
+
+    // Standard short line draws black ink on white background.
+    let img = render_text_line(&face, "Inter", 13.0, 240.0, 22.0, 2.0, 1.0);
+    assert_eq!(img.width, 240);
+    assert_eq!(img.height, 22);
+    assert!(img.pixels.as_chunks::<4>().0.iter().any(|px| px[0] < 200), "ink should be drawn");
+
+    // Overly long text should be truncated cleanly without panic.
+    let long_name = "Very Long Font Name That Definitely Exceeds The Maximum Allowed Width Of The Target Box";
+    let img_long = render_text_line(&face, long_name, 13.0, 100.0, 22.0, 2.0, 1.0);
+    assert_eq!(img_long.width, 100);
+    assert_eq!(img_long.height, 22);
+    assert!(img_long.pixels.as_chunks::<4>().0.iter().any(|px| px[0] < 200));
+
+    // Zero or hostile inputs must not panic.
+    let _ = render_text_line(&face, "", 0.0, -10.0, 0.0, -1.0, 0.0);
+}
