@@ -199,7 +199,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_title("DeckCraft")
             .with_inner_size([1440.0, 900.0])
-            .with_min_inner_size([900.0, 560.0])
+            .with_min_inner_size([900.0, 560.0]) // Arrange All uses this floor (`doc_window::MAIN_MIN`)
             .with_drag_and_drop(true)
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)

@@ -5,7 +5,7 @@
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
 direct manipulation, keyboard and precision. Observations of PowerPoint are kept locally in
 `plan/powerpoint/01-observed-ui.md` and `menu-tree.txt` (gitignored, clean-room rules in
-AGENTS.md §2). Dimension score: **~60% ready** (estimated), **30–50 h** to parity.
+AGENTS.md §2). Dimension score: **~60% ready** (estimated), **28–49 h** to parity.
 
 ## Empty list paragraphs
 
@@ -29,7 +29,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 | Status bar: slide counter, language, notes, comments, views, zoom slider | yes | yes | |
 | Command search (Tell Me) | yes | command palette | |
 | Light / dark appearance | follows the system | light or dark; doesn't follow the system (#41) | 1–2 h |
-| One window per presentation, New Window, Arrange All | yes | New Window opens one more window on the same presentation (its own slide, live with edits); tabs stay in the first window; no Arrange All | Arrange All |
+| One window per presentation, New Window, Arrange All | yes | New Window opens one more window on the same presentation (its own slide). Arrange All tiles the two windows once. That window moves and resizes shapes; the text caret stays in the first window | text caret in the second window |
 | Quick Access Toolbar customization | yes | yes: Customize menu (common commands, reset), right-click any ribbon button to add, right-click a toolbar button to remove; saved with the UI state | done |
 
 ## File tab (Backstage)
@@ -155,11 +155,10 @@ consistency is open (#73, #56).
 | Format Shape pane depth | 6–10 |
 | Missing dialogs (Print, Insert Object and the rest of PowerPoint's ~60) | 4–8 |
 | Window chrome and system appearance (#41, #71) | 3–5 |
-| Arrange All (New Window is one extra window) | 2–3 |
 | Edit points UI, crop depth | 3–6 |
 | Multiple windows | 3–5 |
 | A screenshot comparison pass on the most-used tabs | 2–4 |
-| **Total** | **~26–46** |
+| **Total** | **~24–43** |
 
 ## Revision history
 
@@ -174,6 +173,7 @@ consistency is open (#73, #56).
 | 2026-10-14 | minor | Insert › Icons is a searchable gallery of Lucide stroke icons inserted as shapes. Ribbon chrome stays original drawings |
 | 2026-10-14 | minor | Size and Position dialog on Shape Format › Size and the shape context menu. Breadth stays 79%; UI ready stays ~60% |
 | 2026-10-14 | trivial | Comments pane lists every slide; Review ▸ Previous and Next walk the deck |
+| 2026-10-13 | minor | View › Arrange All tiles the two windows; the second window moves and resizes shapes on its own slide. The text caret stays in the first window |
 | 2026-10-13 | minor | View › New Window: a second window on the same presentation, with its own slide; Arrange All is still missing |
 | 2026-10-14 | minor | File › Home and New show six original starter decks; online templates are still absent |
 | 2026-10-14 | minor | Slide Sorter draws a bar per section: Add Section, rename in place, collapse, and drag the bar to move the section and its slides |

@@ -730,11 +730,15 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
     let pressure = reported_pressure(ui);
     let ev = |kind| PointerEvent { kind, x: p.x, y: p.y, mods: m, tol, pressure };
     let primary = ui.input(|i| i.pointer.primary_pressed());
+    // A drag that started in the second window belongs to that window.
+    let foreign = app.doc_window.as_ref().is_some_and(|w| w.owns_drag());
     if resp.hovered() && !app.session.tool.dragging() {
         let _ = app.session.pointer(ev(PointerKind::Move));
     }
     let secondary = resp.hovered() && ui.input(|i| i.pointer.button_pressed(egui::PointerButton::Secondary));
-    let r = if secondary && !app.session.tool.dragging() {
+    let r = if foreign {
+        Ok(serde_json::Value::Null)
+    } else if secondary && !app.session.tool.dragging() {
         // Select what's under the pointer before the context menu opens (on release).
         app.session.pointer(ev(PointerKind::ContextClick))
     } else if resp.triple_clicked() {
