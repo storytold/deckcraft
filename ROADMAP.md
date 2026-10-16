@@ -72,7 +72,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Tables | 97% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
 | SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
-| Pictures | 60% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
+| Pictures | 64% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
 | Media | 67% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
 | Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
 | Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-13 | SVG pictures draw, and a PowerPoint icon's SVG is what round-trips, with a PNG fallback beside it (#297) |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
@@ -227,6 +228,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | trivial | Progress log: SVG pictures (#297) |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |

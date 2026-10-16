@@ -46,7 +46,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 1 | Stability: #60, #40/#59, soak and fuzz the editor | 10–20 | Stability 60 → 85% |
 | 2 | PPTX real-deck corpus and fixes | 20–35 | File formats 58 → 75% |
 | 3 | PPTX round-trip losses (#70, #74, #77), `.potx`/`.ppsx`/`.pptm` content types, MicroType embedded-font subsets | 8–15 | File formats → 80% |
-| 4 | EMF/WMF and SVG pictures | 8–14 | File formats, Pictures |
+| 4 | Text inside SVG pictures | 2–4 | File formats, Pictures |
 | 5 | Vector PDF, printing | 10–16 | File formats, Files |
 | 6 | Localization infrastructure + zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
 | 7 | Font weights (#69), image paste (#53), Tab in text (#78) | 6–11 | Features |
@@ -81,7 +81,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M2 | PPTX import/export | done for generated decks | real-deck corpus, round-trip losses |
 | M3 | Shapes complete | mostly | edit points, Format Shape pane depth, bevel/3-D |
 | M4 | Design | mostly | Notes/Handout masters, variants, Designer |
-| M5 | Pictures and media | mostly | SVG/EMF, remove background, compress, icons, WMA/WMV |
+| M5 | Pictures and media | mostly | EMF clip regions, remove background, compress, icons, WMA/WMV |
 | M6 | Transitions and animations | mostly | Animation Pane timeline, remaining effects, transition sounds |
 | M7 | Slide show | mostly | second-display placement, laser, record |
 | M8 | Tables and charts | partly | chart data grid, elements, chartex types, draw table |
@@ -115,6 +115,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | trivial | SVG pictures left the beta picture row; SVG text remains |
 | 2026-10-14 | trivial | M13 reliability: remote MCP validates IDs and envelopes, caps replies and rejects incomplete frames; #718 |
 | 2026-10-14 | minor | Community PR wave folded: one Review gate row, one Current focus item 2, one beta row each for items 9 and 10 (timeline and timer controls are in), one after-beta paragraph, one M9 and M10 row, one corpus row in the 2026-10-07 history |
 | 2026-10-13 | trivial | Beta item 3: embedded fonts are in, except MicroType Express subsets |

@@ -53,6 +53,8 @@ pub struct Exp<'a> {
     pub p: &'a Presentation,
     pub pkg: PackageOut,
     media_parts: HashMap<MediaId, String>,
+    /// PNG raster of an SVG, keyed by the SVG's media id.
+    svg_png: HashMap<MediaId, String>,
     n_image: u32,
     n_media: u32,
     n_chart: u32,
@@ -134,6 +136,15 @@ impl Exp<'_> {
         } else {
             m.content_type.clone()
         };
+        // `.svgz` is gzip. PowerPoint's svgBlip part is SVG markup, so store the inflated document.
+        let bytes = if ct == "image/svg+xml" || deckcraft_svg::is_svg(&m.data) || deckcraft_svg::is_svgz(&m.data) {
+            match deckcraft_svg::svg_xml(&m.data) {
+                Some(xml) => xml.into_owned(),
+                None => m.data.as_ref().clone(),
+            }
+        } else {
+            m.data.as_ref().clone()
+        };
         let name = if ct.starts_with("image/") {
             self.n_image += 1;
             format!("ppt/media/image{}.{ext}", self.n_image)
@@ -141,7 +152,7 @@ impl Exp<'_> {
             self.n_media += 1;
             format!("ppt/media/media{}.{ext}", self.n_media)
         };
-        self.pkg.binary(&name, &ct, m.data.as_ref().clone());
+        self.pkg.binary(&name, &ct, bytes);
         self.media_parts.insert(id, name.clone());
         Some(name)
     }
@@ -162,6 +173,21 @@ impl Exp<'_> {
         }
         let part = self.media_part(id)?;
         Some(o.rels.add(kind, &opc::relative(&o.name, &part), false))
+    }
+    /// A PNG raster of an SVG picture, so a reader that ignores `svgBlip` still has an image.
+    pub fn svg_png_rel(&mut self, o: &mut Out, id: MediaId) -> Option<String> {
+        let part = if let Some(p) = self.svg_png.get(&id) {
+            p.clone()
+        } else {
+            let m = self.p.media(id)?;
+            let png = deckcraft_svg::rasterize_png(&m.data, 512)?;
+            self.n_image += 1;
+            let name = format!("ppt/media/image{}.png", self.n_image);
+            self.pkg.binary(&name, "image/png", png);
+            self.svg_png.insert(id, name.clone());
+            name
+        };
+        Some(o.rels.add("image", &opc::relative(&o.name, &part), false))
     }
     /// A tiny transparent PNG for pictures whose image is missing.
     pub fn placeholder_rel(&mut self, o: &mut Out) -> String {
@@ -532,6 +558,7 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         p,
         pkg: PackageOut::default(),
         media_parts: HashMap::new(),
+        svg_png: HashMap::new(),
         n_image: 0,
         n_media: 0,
         n_chart: 0,

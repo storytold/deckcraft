@@ -49,6 +49,7 @@ use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::{RenderContext, Resources, peniko};
 
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
+pub use deckcraft_svg::{is_svg, is_svgz, pixel_size as svg_pixel_size};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
 pub use images::{decode as decode_image, gif_frame};
 pub use morph_path::PathMorph;

@@ -37,7 +37,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | Kind | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
 | PNG, JPEG, GIF (animated), BMP, TIFF, WebP | yes | yes | `image` 0.25; animated GIFs play since #39 |
-| SVG | yes (with PNG fallback) | **no** | The PNG fallback shows; SVG files can't be inserted |
+| SVG | yes (with PNG fallback) | yes | Rasterized (`resvg`). An icon's `asvg:svgBlip` is kept, and a PNG fallback is written beside it. Text is not drawn (no fonts are loaded). A `.svgz` is stored inflated |
 | EMF / WMF | yes | partial | Drawn as vectors (paths, pens, pattern and hatch brushes, bitmaps, text in the document's fonts with the file's character advances). Rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ only pictures play every EMF+ drawing record (brushes incl. gradients and textures, pens, paths, curves, images, strings, transforms, clipping; see `crates/metafile/src/emfplus.rs` for the few exceptions). Legacy OLE objects (VML preview) and ActiveX controls show their pictures |
 | HEIC | yes (macOS) | no | |
 | Audio: MP3, AAC/M4A, ALAC, WAV, AIFF, CAF, FLAC, Ogg Vorbis, Opus | yes (Ogg/Opus partly) | yes | Pure-Rust decoders in `crates/media`, `crates/opus` |
@@ -97,12 +97,13 @@ the round trip even though DeckCraft doesn't model it.
    tables, charts, animations, media, sections and masters/layouts among them. Still needed:
    render checks and a PowerPoint reference render for each (owner runs PowerPoint).
 2. The round-trip losses above (#70, #74, #77).
-3. SVG rendering. EMF+ records inside EMF/WMF are still not drawn.
+3. Text inside SVG pictures (no fonts are loaded).
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | SVG pictures rasterize; an icon's svgBlip round-trips with a PNG fallback (#297) |
 | 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |

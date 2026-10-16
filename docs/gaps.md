@@ -20,7 +20,7 @@ revision history.
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media options and rewind (#74, #77) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
-| 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
+| 4 | SVG pictures draw without their text | File format | | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
@@ -98,14 +98,13 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** a deck opened and saved silently loses show behaviour.
 - **Estimate:** 2–4 h. **Beta blocker.**
 
-### SVG pictures don't render
-- **Evidence:** `crates/render/src/images.rs` decodes through `image` 0.25 (PNG, JPEG, WebP, GIF,
-  TIFF, BMP), and EMF/WMF through `deckcraft-metafile` (ported from WordCraft: paths, fills, pens,
-  pattern and hatch brushes, bitmaps and text; rectangle clip regions are applied, EMF+ only
-  pictures play their EMF+ records).
-  Nothing reads SVG; PowerPoint's Insert Icons stores SVG with a PNG fallback.
-- **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
-- **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
+### SVG text isn't drawn
+- **Evidence:** SVG pictures rasterize (`crates/svg`, `resvg`): an inserted `.svg` draws, and a
+  PowerPoint icon's `asvg:svgBlip` is the picture that round-trips, with a PNG fallback written
+  beside it. Text in an SVG is not drawn: no fonts are loaded. A `.svgz` is stored as SVG markup.
+  EMF/WMF draw through `deckcraft-metafile`, with rectangle clip regions applied.
+- **Impact:** an SVG with text draws without it.
+- **Estimate:** 2–4 h.
 
 ### Template, slide-show and macro variants are saved as plain `.pptx`
 - **Evidence:** `crates/pptx/src/write/mod.rs` always writes the
@@ -355,6 +354,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | SVG pictures rasterize and round-trip (`#297`); the picture gap left here is SVG text |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |

@@ -123,7 +123,7 @@ pub fn gradient(f: &El) -> Gradient {
 /// `blipFill` (either `a:` or `p:`) → picture fill, registering the image as media.
 pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
     let blip = bf.child("blip");
-    let media = blip.and_then(|b| media_ref(imp, part, b));
+    let media = blip.and_then(|b| picture_media(imp, part, b));
     let media = media?;
     let mut pf = PictureFill { media, upright: !bf.bool("rotWithShape").unwrap_or(true), ..Default::default() };
     if let Some(layer) = blip.and_then(|b| b.child("extLst")).and_then(|x| x.find("imgLayer"))
@@ -182,6 +182,17 @@ pub fn blip_fill(imp: &mut Imp, part: &Part, bf: &El) -> Option<PictureFill> {
         pf.mode = PictureMode::Stretch { fill_rect: [g("l"), g("t"), g("r"), g("b")] };
     }
     Some(pf)
+}
+
+/// The picture's bytes: the SVG icon when `asvg:svgBlip` points at one, otherwise the blip.
+fn picture_media(imp: &mut Imp, part: &Part, blip: &El) -> Option<deckcraft_model::MediaId> {
+    if let Some(svg) = blip.find("svgBlip")
+        && let Some(id) = media_ref(imp, part, svg)
+        && imp.media.iter().any(|m| m.id == id && deckcraft_svg::svg_xml(&m.data).is_some())
+    {
+        return Some(id);
+    }
+    media_ref(imp, part, blip)
 }
 
 /// Media for an element with `r:embed` (or `r:link`).

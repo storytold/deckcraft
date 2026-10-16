@@ -93,15 +93,26 @@ pub fn fill(w: &mut W, x: &mut Exp, o: &mut Out, f: &Fill) {
     }
 }
 
+/// PowerPoint's SVG icon extension (`asvg:svgBlip`).
+const SVG_EXT_URI: &str = "{96DAC541-7B7A-43D3-8B79-37D633B846F1}";
+const NS_ASVG: &str = "http://schemas.microsoft.com/office/drawing/2016/SVG/main";
+
 /// `a:blipFill` / `p:blipFill`.
 pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFill) {
+    let svg = x.p.media(pf.media).is_some_and(|m| deckcraft_svg::svg_xml(&m.data).is_some());
     // An image that lives outside the package is a linked picture: `a:blip` names it through
     // `r:link`; `r:embed` may only reference a part inside the package.
     let linked = x.p.media(pf.media).is_some_and(|m| m.data.is_empty() && m.link.is_some());
-    let rid = x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o));
+    let rid = if svg {
+        x.svg_png_rel(o, pf.media).unwrap_or_else(|| x.placeholder_rel(o))
+    } else {
+        x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o))
+    };
+    let svg_rid = svg.then(|| x.media_rel(o, pf.media, "image")).flatten();
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
     let adj = &pf.adjust;
-    let has_kids = pf.alpha.is_some()
+    let has_kids = svg_rid.is_some()
+        || pf.alpha.is_some()
         || adj.brightness != 0.0
         || adj.contrast != 0.0
         || adj.grayscale
@@ -146,21 +157,29 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
         }
         // Artistic effect: the blip is the processed picture; the original rides in an
         // `a14:imgLayer` with the effect's name, as PowerPoint writes it.
-        if let Some(art) = &pf.artistic
-            && art.effect.starts_with("artistic")
-            && art.effect.chars().all(|c| c.is_ascii_alphanumeric())
-            && let Some(orig) = x.media_rel(o, art.original, "image")
-        {
+        let art = pf
+            .artistic
+            .as_ref()
+            .filter(|art| art.effect.starts_with("artistic") && art.effect.chars().all(|c| c.is_ascii_alphanumeric()))
+            .and_then(|art| x.media_rel(o, art.original, "image").map(|orig| (art, orig)));
+        if art.is_some() || svg_rid.is_some() {
             w.open0("a:extLst");
-            w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
-            w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
-            w.open("a14:imgLayer", A::new().a("r:embed", &orig));
-            w.open0("a14:imgEffect");
-            w.empty0(&format!("a14:{}", art.effect));
-            w.close("a14:imgEffect");
-            w.close("a14:imgLayer");
-            w.close("a14:imgProps");
-            w.close("a:ext");
+            if let Some((art, orig)) = &art {
+                w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
+                w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
+                w.open("a14:imgLayer", A::new().a("r:embed", orig));
+                w.open0("a14:imgEffect");
+                w.empty0(&format!("a14:{}", art.effect));
+                w.close("a14:imgEffect");
+                w.close("a14:imgLayer");
+                w.close("a14:imgProps");
+                w.close("a:ext");
+            }
+            if let Some(sid) = &svg_rid {
+                w.open("a:ext", A::new().a("uri", SVG_EXT_URI));
+                w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", NS_ASVG).a("r:embed", sid));
+                w.close("a:ext");
+            }
             w.close("a:extLst");
         }
         w.close("a:blip");

@@ -15,6 +15,7 @@ repository = "https://github.com/storytold/deckcraft"
 deckcraft-geom = { path = "crates/geom" }
 deckcraft-color = { path = "crates/color" }
 deckcraft-metafile = { path = "crates/metafile" }
+deckcraft-svg = { path = "crates/svg" }
 deckcraft-model = { path = "crates/model" }
 deckcraft-fonts = { path = "crates/fonts" }
 deckcraft-text = { path = "crates/text" }
