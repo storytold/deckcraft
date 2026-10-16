@@ -4,6 +4,9 @@ use deckcraft_model::defaults;
 use deckcraft_model::text::{Paragraph, Run};
 use deckcraft_model::{LayoutType, Presentation, Xfrm};
 
+#[path = "../../fonts/tests/support/font_fixture.rs"]
+mod test_font;
+
 fn setup(text: &str, w: f64, h: f64) -> (Presentation, Shape) {
     let mut p = Presentation::default();
     let lay = defaults::layout_of_kind(&p, LayoutType::TitleAndContent).unwrap();
@@ -34,6 +37,35 @@ fn wraps_long_text_into_lines() {
     // Lines cover the text without gaps (spaces at wraps are skipped).
     assert_eq!(l.lines[0].start, 0);
     assert!(!l.runs.is_empty());
+}
+
+#[test]
+fn localized_east_asian_family_keeps_the_requested_faces_line_metrics() {
+    let db = FontDb::global();
+    db.add_font(test_font::localized("Regular", 400));
+    db.add_font(test_font::font("DeckCraft Metrics Latin", "Regular", 400, &[], (600, 400), false));
+    assert!(db.face("DeckCraft Localized", "Regular").covers('字'));
+    assert!((db.face("DeckCraft Localized", "Regular").line_split - db.face("DeckCraft Metrics Latin", "Regular").line_split).abs() > 0.2);
+    let draw = |family: &str| {
+        let (p, mut sh) = setup("字字", 400.0, 160.0);
+        sh.ph = None;
+        let body = sh.text.as_mut().unwrap();
+        body.body.anchor = Some(Anchor::Middle);
+        body.paragraphs[0].props.bullet = Some(Bullet::None);
+        let props = &mut body.paragraphs[0].runs[0].props;
+        props.font = Some("DeckCraft Metrics Latin".into());
+        props.font_ea = Some(family.into());
+        props.size = Some(60.0);
+        lay(&p, &sh, 400.0, 160.0)
+    };
+    let canonical = draw("DeckCraft Localized");
+    let localized = draw("DeckCraft 测试字体");
+    assert_eq!(canonical.runs[0].face.family, "DeckCraft Localized");
+    assert_eq!(localized.runs[0].face.family, "DeckCraft Localized");
+    let latin = draw("DeckCraft Metrics Latin");
+    assert!((canonical.lines[0].baseline - latin.lines[0].baseline).abs() > 1.0, "the fixture has distinct line metrics");
+    assert!((canonical.lines[0].baseline - localized.lines[0].baseline).abs() < 1e-6);
+    assert!((canonical.content_height - localized.content_height).abs() < 1e-6);
 }
 
 #[test]
