@@ -3121,6 +3121,37 @@ fn autocorrect_options_as_you_type() {
 }
 
 #[test]
+fn autocorrect_superscripts_ordinals_as_you_type() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    // The typed text with each superscript run in ^(…).
+    let typed = |s: &mut Session, text: &str| -> String {
+        s.execute("text.edit", &json!({"id": title})).unwrap();
+        s.execute("text.selectAll", &json!({})).ok();
+        s.execute("text.delete", &json!({"dir": "backward"})).ok();
+        for c in text.chars() {
+            s.execute("text.insert", &json!({"text": c.to_string()})).unwrap();
+        }
+        let st = s.doc().unwrap();
+        let sh = st.current_slide().unwrap().shapes.iter().find(|sh| sh.id.0 == title).unwrap();
+        sh.text.as_ref().unwrap().paragraphs[0]
+            .runs
+            .iter()
+            .map(|r| if r.props.baseline.unwrap_or(0.0) > 0.0 { format!("^({})", r.text) } else { r.text.clone() })
+            .collect()
+    };
+    assert_eq!(typed(&mut s, "1st, 22nd and 103rd. 4th 11th x"), "1^(st), 22^(nd) and 103^(rd). 4^(th) 11^(th) x");
+    // Not a word, a number without a suffix it takes, or a suffix not yet followed by a space.
+    assert_eq!(typed(&mut s, "first x1st 1th 2st 21st"), "First x1st 1th 2st 21st");
+    assert_eq!(s.execute("text.autocorrect", &json!({})).unwrap()["ordinals"], true);
+    s.execute("text.autocorrect", &json!({"ordinals": false})).unwrap();
+    assert_eq!(typed(&mut s, "2nd "), "2nd ");
+    // AutoCorrect off turns it off too.
+    s.execute("text.autocorrect", &json!({"ordinals": true, "on": false})).unwrap();
+    assert_eq!(typed(&mut s, "2nd "), "2nd ");
+}
+
+#[test]
 fn theme_variants_apply_and_report_the_current_one() {
     let mut s = session();
     let name = deckcraft_model::theme::builtin_themes()[1].name.clone();
