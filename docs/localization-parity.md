@@ -2,10 +2,13 @@
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+DeckCraft's interface is English, with one catalog so far: the application shell (ribbon tabs,
+File menu, title bar, status bar and Preferences) can follow the system locale or an explicit
+choice (`system`, `en`, `ja`). Japanese covers that shell. Ribbon groups, the other dialogs and
+command ids stay English. Requests: #15 (follow the system language; the shell does, the rest of
+the UI does not yet), #30 and PR #34 (Ukrainian, open). Dimension score: **~8% ready** (estimated:
+English complete, a Japanese shell, slide-text script support partly there), **55–90 h** to parity
+plus native-speaker review.
 
 ## How the numbers are measured
 
@@ -32,14 +35,17 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | French | fr | 0 (0%) | no | full (Latin) | no | none | yes (fr, fr-CA) | 3–5 |
 | Portuguese | pt | 0 (0%) | no | full (Latin) | no | none | yes (pt-BR, pt-PT) | 3–5 |
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
-| Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
+| Japanese | ja | shell only: tabs, File menu, title bar, status bar, Preferences (67 / ~1,050) | Preferences only / those tooltips / no help | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | partial | yes | 4–7 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
 
-Other languages shipped: **0** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
-than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
-Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
+Other languages shipped: **none beyond that shell** (Ukrainian is in review as PR #34; Spanish,
+French and German are in review as PR #110; Simplified Chinese is not in this branch). A `ja` or
+`ja-JP` system locale selects Japanese. The web build has no system tag, so System stays English
+there until the user chooses a language. PowerPoint for Mac ships 16 more than the twelve above:
+Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian, Polish, Russian,
+Slovak, Swedish, Thai, Turkish and Traditional Chinese.
 
 Per-language hours assume the infrastructure exists: **8–14 h** once for a string catalog (copy a
 sibling app's approach, e.g. EffectCraft's menu and panel catalogs), a language setting that follows
@@ -59,5 +65,6 @@ common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#p
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
+| 2026-10-13 | minor | Shell catalog: ribbon tabs, File menu, title bar, status bar and Preferences follow the system locale or `ja` |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
 | 2026-10-10 | major | Created: twelve-language table, ~1,050 UI strings measured, PowerPoint for Mac's 26 languages from its bundle |
