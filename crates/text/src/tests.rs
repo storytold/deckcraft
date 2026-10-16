@@ -37,6 +37,30 @@ fn wraps_long_text_into_lines() {
 }
 
 #[test]
+fn localized_east_asian_family_keeps_the_requested_faces_line_metrics() {
+    let db = FontDb::global();
+    db.add_font(include_bytes!("../../fonts/tests/fixtures/localized-regular.ttf").to_vec());
+    let draw = |family: &str| {
+        let (p, mut sh) = setup("字字", 400.0, 160.0);
+        sh.ph = None;
+        let body = sh.text.as_mut().unwrap();
+        body.body.anchor = Some(Anchor::Middle);
+        body.paragraphs[0].props.bullet = Some(Bullet::None);
+        let props = &mut body.paragraphs[0].runs[0].props;
+        props.font = Some("Inter".into());
+        props.font_ea = Some(family.into());
+        props.size = Some(60.0);
+        let result = lay(&p, &sh, 400.0, 160.0);
+        assert_eq!(result.runs[0].face.family, "DeckCraft Localized");
+        result
+    };
+    let canonical = draw("DeckCraft Localized");
+    let localized = draw("DeckCraft 测试字体");
+    assert!((canonical.lines[0].baseline - localized.lines[0].baseline).abs() < 1e-6);
+    assert!((canonical.content_height - localized.content_height).abs() < 1e-6);
+}
+
+#[test]
 fn bullets_are_drawn_for_body_text() {
     let (p, sh) = setup("One\nTwo", 600.0, 300.0);
     let l = lay(&p, &sh, 600.0, 300.0);
