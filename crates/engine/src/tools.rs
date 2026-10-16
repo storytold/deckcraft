@@ -654,7 +654,10 @@ impl Session {
                 // placeholders take the caret straight away like PowerPoint. A click in a selected
                 // table puts the caret in the clicked cell.
                 let table = st.shape(id).is_some_and(|s| matches!(s.kind, ShapeKind::Table(_)));
-                let enter_text = (!toggle && ((text && (selected || is_text_first(st, id))) || (table && selected))).then_some((id, p));
+                // A click on the frame band of a text box selects the box whole, as PowerPoint
+                // does, so it can be moved, duplicated or deleted; only the inside takes the caret.
+                let on_frame = text && st.shape(id).is_some_and(|s| edit_zone(&xfrm_of(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
+                let enter_text = (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected))).then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;

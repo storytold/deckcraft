@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-15 · **Change:** major (community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
 direct manipulation, keyboard and precision. Observations of PowerPoint are kept locally in
@@ -92,6 +92,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Text caret, selection, double/triple click, drag-select | yes | yes |
 | Exact size/position, lock aspect | yes | yes — Size and Position dialog (height, width, rotation, scale %, lock aspect, position from the top-left), one undo step; ribbon spinners still resize one side at a time |
 | Drag the frame of a text box being edited to move it | yes | yes |
+| Click the frame of a text box or placeholder to select it whole (then move, duplicate or delete it) | yes | yes; a click inside takes the caret |
 | Table cells: caret and selection in the cell, click into another cell, drag row and column borders | yes | yes; no cell-range selection by dragging across cells |
 | Context menus on shapes, slides, text, thumbnails | yes | yes, shorter; a right click selects the shape under the pointer first |
 | WordArt transform | Transform gallery | Shape Format ▸ Text Effects ▸ Transform (`format.textWarp`): No Transform, Follow Path and the other 36 presets. Adjust handles: see WordArt adjust handles |
@@ -192,6 +193,7 @@ consistency is open (#73, #56).
 | 2026-10-12 | minor | Dragging the frame of a text box being edited moves it, as in PowerPoint |
 | 2026-10-12 | minor | Table cells: caret and selection shown in the edited cell, clicks place the caret in the clicked cell, row and column borders drag to resize |
 | 2026-10-14 | minor | Format Background pane: solid transparency, picture transparency, tile, offset, scale, alignment, mirror, and Apply to All copying a picture. Not a new dialog; the dialog count stays 27 |
+| 2026-10-15 | minor | Clicking the frame of a text box or placeholder selects the box whole instead of starting text entry (#787) |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | minor | Copy and paste rich text (HTML: bold, italic, underline) with other apps |
 | 2026-10-13 | minor | Animations ▸ Preview and Animation Pane ▸ Play All play the current slide on the editor canvas |
