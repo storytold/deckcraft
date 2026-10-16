@@ -692,7 +692,8 @@ fn case(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let m = if mode == "cycle" { ed::next_case(&ed::text_range(&body, a, b)).to_string() } else { mode.clone() };
         super::text::edit_text(s, move |body, t| {
-            for pi in a.0..=b.0 {
+            let last = body.paragraphs.len().saturating_sub(1);
+            for pi in a.0..=b.0.min(last) {
                 let Some(para) = body.paragraphs.get_mut(pi) else { continue };
                 let n = para.char_len();
                 let from = if pi == a.0 { a.1 } else { 0 };

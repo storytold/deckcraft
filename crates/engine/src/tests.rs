@@ -3592,3 +3592,17 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+#[test]
+fn paragraph_commands_clamp_a_hostile_text_selection() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [u64::MAX, 0]})).unwrap();
+    s.execute("text.selectParagraph", &json!({"at": [u64::MAX, 0]})).unwrap();
+    s.execute("format.alignCenter", &json!({})).unwrap();
+    s.execute("format.case", &json!({"mode": "upper"})).unwrap();
+    s.execute("text.insert", &json!({"text": "A"})).unwrap();
+    let t = s.doc().unwrap().selection.text.clone().unwrap();
+    assert!(t.caret.0 < 1_000, "the caret stayed inside the body: {t:?}");
+}

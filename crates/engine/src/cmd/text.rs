@@ -417,7 +417,8 @@ pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) 
         let c = ed::insert(body, at, &text, props);
         t.anchor = c;
         t.caret = c;
-        for pi in at.0..=c.0 {
+        let last = body.paragraphs.len().saturating_sub(1);
+        for pi in at.0..=c.0.min(last) {
             if let Some(para) = body.paragraphs.get_mut(pi) {
                 promote_rtl_if_needed(para, &inherited);
             }
@@ -741,7 +742,8 @@ pub(crate) fn paste_body(s: &mut Session, src: &TextBody) -> Result<Value> {
         let c = ed::insert_body(body, at, src);
         t.anchor = c;
         t.caret = c;
-        for pi in at.0..=c.0 {
+        let last = body.paragraphs.len().saturating_sub(1);
+        for pi in at.0..=c.0.min(last) {
             if let Some(para) = body.paragraphs.get_mut(pi) {
                 promote_rtl_if_needed(para, &inherited);
             }
@@ -1081,7 +1083,7 @@ fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
             }
             None => match to.as_str() {
                 "up" => (caret.0.saturating_sub(1), caret.1),
-                "down" => ((caret.0 + 1).min(body.paragraphs.len().saturating_sub(1)), caret.1),
+                "down" => (caret.0.saturating_add(1).min(body.paragraphs.len().saturating_sub(1)), caret.1),
                 "lineStart" => (caret.0, 0),
                 _ => (caret.0, body.paragraphs.get(caret.0).map(|x| x.char_len()).unwrap_or(0)),
             },
@@ -1148,7 +1150,7 @@ fn select_para(s: &mut Session, p: &Value) -> Result<Value> {
     let body = body_of(st, &t);
     let n = body.and_then(|b| b.paragraphs.get(at.0)).map(|x| x.char_len()).unwrap_or(0);
     // The paragraph mark is part of the paragraph (PowerPoint's triple-click selects it too).
-    let end = if body.is_some_and(|b| at.0 + 1 < b.paragraphs.len()) { (at.0 + 1, 0) } else { (at.0, n) };
+    let end = if body.is_some_and(|b| at.0.saturating_add(1) < b.paragraphs.len()) { (at.0.saturating_add(1), 0) } else { (at.0, n) };
     s.select(|_, sel| {
         if let Some(t) = sel.text.as_mut() {
             t.anchor = (at.0, 0);
@@ -1328,7 +1330,8 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
             if body.paragraphs.is_empty() {
                 body.paragraphs.push(Default::default());
             }
-            for pi in a.0..=b.0 {
+            let last = body.paragraphs.len().saturating_sub(1);
+            for pi in a.0..=b.0.min(last) {
                 if let Some(p) = body.paragraphs.get_mut(pi) {
                     f(p);
                 }
