@@ -7,8 +7,8 @@ fails if a file under `assets/`, `docs/images/` or `docs/brand/` is missing from
 DeckCraft contains **no Microsoft, Adobe, Avid or Autodesk iconography, images, fonts, themes,
 templates or other assets**. Its themes, colour schemes, layouts, preset-shape geometry, sample
 deck and UI icons are original work of the DeckCraft contributors (drawn or generated in code).
-Icons placed from Insert › Icons are Lucide paths (ISC; Feather-derived icons MIT), not Microsoft
-artwork. The ribbon and menu icons stay original drawings.
+Icons placed from Insert › Icons are the Lucide 1.56.0 set (ISC; Feather-derived icons MIT), not
+Microsoft artwork. The ribbon and menu icons stay original drawings.
 
 ## In this repository
 
@@ -35,7 +35,7 @@ artwork. The ribbon and menu icons stay original drawings.
 | `crates/fonts/tests/fixtures/legacy-semibold.ttf` | DeckCraft contributors | a one-glyph Semibold face named like Segoe UI Semibold (its Windows family differs from the typographic one), built by `make_legacy_font.py` (fontTools as the builder only) | CC0-1.0 | Font lookup by Windows family name tests |
 | `crates/fonts/tests/fixtures/legacy-regular.ttf` | DeckCraft contributors | the same family's one-glyph Regular face, built by `make_legacy_font.py` (fontTools as the builder only) | CC0-1.0 | Font lookup by Windows family name tests |
 | `crates/render/tests/fixtures/make_colr_font.py` | DeckCraft contributors | this repository | MIT OR Apache-2.0 | Regenerates the COLR test font |
-| Lucide icon paths in `crates/engine/src/icon_data.rs` (Insert › Icons) | Lucide Contributors; Feather icons by Cole Bemis | https://github.com/lucide-icons/lucide/tree/440a1e1dfb1e712505308da46bead3c28b1f1398/icons (release 1.56.0, 2026-10-13) | ISC; MIT for the Feather-derived icons named in that commit's LICENSE | Stroke icons inserted as shapes |
+| Lucide icon paths in `crates/engine/src/icon_data.rs` (Insert › Icons) | Lucide Contributors; Feather icons by Cole Bemis | https://github.com/lucide-icons/lucide/tree/440a1e1dfb1e712505308da46bead3c28b1f1398/icons (release 1.56.0, 2026-10-13) | ISC; MIT for the Feather-derived icons named in that commit's LICENSE | The full Lucide 1.56.0 set, inserted as shapes |
 
 ## Bundled through dependencies
 

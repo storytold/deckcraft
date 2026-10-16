@@ -141,11 +141,11 @@ Alt+Shift+arrows in text are handled elsewhere (#78, #93).
 
 Colours, spacing, ribbon card and tab geometry follow the observations in
 `plan/powerpoint/01-observed-ui.md`; the ribbon and menu icons are original (~240, drawn in code)
-and must not imitate Microsoft's. Insert › Icons places Lucide stroke icons (ISC, release 1.56.0)
-on the slide as shapes. The editing canvas, thumbnails and layout previews are drawn on the
-physical pixel grid, so a Retina display does not blur them between pixels (#184). No pixel
-comparison against PowerPoint screenshots has been run since 2026-10-07. Cross-app icon
-consistency is open (#73, #56).
+and must not imitate Microsoft's. Insert › Icons places the Lucide 1.56.0 set (ISC) on the slide
+as shapes, with a colour, an optional fill and convert to a shape group. The editing canvas,
+thumbnails and layout previews are drawn on the physical pixel grid, so a Retina display does not
+blur them between pixels (#184). No pixel comparison against PowerPoint screenshots has been run
+since 2026-10-07. Cross-app icon consistency is open (#73, #56).
 
 ## Estimates
 
@@ -171,6 +171,7 @@ consistency is open (#73, #56).
 | 2026-10-12 | minor | Title bar: an Export button next to Save opens the Export dialog, a quick-access shortcut beside File › Export |
 | 2026-10-12 | minor | A right click selects the shape under the pointer before its context menu opens, as in PowerPoint; edited text keeps its selection and gets text items |
 | 2026-10-13 | minor | WordArt Transform gallery on Shape Format ▸ Text Effects; `format.textWarp` applies a preset or clears it. Adjust handles remain open |
+| 2026-10-14 | minor | Insert › Icons grows to the full Lucide 1.56.0 set, with colour, fill and convert to shapes. Ribbon chrome stays original drawings |
 | 2026-10-14 | minor | Insert › Icons is a searchable gallery of Lucide stroke icons inserted as shapes. Ribbon chrome stays original drawings |
 | 2026-10-14 | minor | Size and Position dialog on Shape Format › Size and the shape context menu. Breadth stays 79%; UI ready stays ~60% |
 | 2026-10-14 | trivial | Comments pane lists every slide; Review ▸ Previous and Next walk the deck |
