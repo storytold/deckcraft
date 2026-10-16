@@ -608,11 +608,12 @@ fn typeface(w: &mut W, tag: &str, f: &Option<String>) {
 
 /// `a:rPr`, `a:defRPr`, `a:endParaRPr`.
 pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
+    let named = r.font_style.as_deref().is_some_and(crate::typeface::is_named_style);
     let a = A::new()
         .o("lang", r.lang.as_deref().filter(|l| !l.is_empty()))
         .o("sz", r.size.map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
-        .b("b", r.bold)
-        .b("i", r.italic)
+        .b("b", if named { Some(false) } else { r.bold })
+        .b("i", if named { Some(false) } else { r.italic })
         .o("u", r.underline.as_deref().filter(|u| !u.is_empty() && u.chars().all(|c| c.is_ascii_alphanumeric())))
         .o(
             "strike",
@@ -684,7 +685,8 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
         solid(w, c);
         w.close("a:uFill");
     }
-    typeface(w, "a:latin", &r.font);
+    let latin = r.font.as_ref().map(|f| crate::typeface::join_face(f, r.font_style.as_deref()));
+    typeface(w, "a:latin", &latin);
     typeface(w, "a:ea", &r.font_ea);
     typeface(w, "a:cs", &r.font_cs);
     typeface(w, "a:sym", &r.font_sym);

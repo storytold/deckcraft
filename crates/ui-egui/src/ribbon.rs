@@ -481,6 +481,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 3.0;
                 let font = st.get("font").and_then(Value::as_str).unwrap_or("").to_string();
+                let font_style = st.get("fontStyle").and_then(Value::as_str).unwrap_or("Regular").to_string();
                 let size = st.get("size").and_then(Value::as_f64);
                 let fams = font_families(app);
                 let theme_fonts: Vec<String> = fams.iter().take(2).cloned().collect();
@@ -506,6 +507,22 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     if ui.button("Rescan Installed Fonts").clicked() {
                         run(app, "font.rescan", json!({}));
                         ui.close();
+                    }
+                });
+                let styles = deckcraft_fonts::FontDb::global().styles(&font);
+                dropdown(ui, "font-style", &font_style, 108.0, en, |ui| {
+                    let mut shown = styles.clone();
+                    if !font_style.is_empty() && !shown.iter().any(|s| s.eq_ignore_ascii_case(&font_style)) {
+                        shown.insert(0, font_style.clone());
+                    }
+                    if shown.is_empty() {
+                        shown.push(font_style.clone());
+                    }
+                    for style in shown {
+                        if ui.button(&style).clicked() {
+                            run(app, "format.fontStyle", json!({"style": style}));
+                            ui.close();
+                        }
                     }
                 });
                 let size_text = size.map(|s| widgets::fmt_num(s, "")).unwrap_or_default();

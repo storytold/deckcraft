@@ -1059,6 +1059,37 @@ fn transition_defaults_read_like_powerpoint() {
 }
 
 #[test]
+fn a_named_font_style_round_trips_in_the_typeface() {
+    let mut p = defaults::new_presentation(None);
+    let first = p.slides[0].id;
+    p.slide_mut(first).expect("slide").shapes[0].text = Some(TextBody {
+        paragraphs: vec![Paragraph {
+            runs: vec![Run::with(
+                "Light",
+                RunProps { font: Some("Inter".into()), font_style: Some("Light".into()), bold: Some(true), ..Default::default() },
+            )],
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes.as_slice())).expect("zip");
+    let mut xml = String::new();
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).expect("entry");
+        if f.name().ends_with("slide1.xml") {
+            std::io::Read::read_to_string(&mut f, &mut xml).expect("read");
+        }
+    }
+    assert!(xml.contains("typeface=\"Inter Light\""), "{xml}");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    let run = &q.slides[0].shapes[0].text.as_ref().expect("text").paragraphs[0].runs[0];
+    assert_eq!(run.props.font.as_deref(), Some("Inter"));
+    assert_eq!(run.props.font_style.as_deref(), Some("Light"));
+    assert_eq!(run.props.bold, Some(false));
+}
+
+#[test]
 fn linked_pictures_are_written_with_r_link() {
     // A picture whose bytes live outside the package must be referenced with `r:link`; `r:embed`
     // may only name a part inside the package (PowerPoint won't load the linked image otherwise).

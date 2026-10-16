@@ -364,6 +364,8 @@ pub struct RunProps {
     pub font_ea: Option<String>,
     pub font_cs: Option<String>,
     pub font_sym: Option<String>,
+    /// Face within [`Self::font`] (`Light`, `Semibold`). Empty means Regular, Bold or Italic from the flags.
+    pub font_style: Option<String>,
     /// Size in points.
     pub size: Option<f64>,
     pub bold: Option<bool>,
@@ -407,6 +409,7 @@ impl RunProps {
             font_ea,
             font_cs,
             font_sym,
+            font_style,
             size,
             bold,
             italic,

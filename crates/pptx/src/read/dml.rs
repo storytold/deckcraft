@@ -530,7 +530,15 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
             }
             "highlight" => p.highlight = color(e),
             "uFill" => p.underline_color = e.child("solidFill").and_then(color),
-            "latin" => p.font = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
+            "latin" => {
+                if let Some(t) = e.attr("typeface").filter(|t| !t.is_empty()) {
+                    let (family, style) = crate::typeface::split_face(t);
+                    p.font = Some(family);
+                    if let Some(style) = style {
+                        p.font_style = Some(style);
+                    }
+                }
+            }
             "ea" => p.font_ea = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
             "cs" => p.font_cs = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
             "sym" => p.font_sym = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),

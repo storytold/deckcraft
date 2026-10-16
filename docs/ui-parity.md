@@ -99,7 +99,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Drag and drop of files and between thumbnails | yes | yes |
 | Slide Sorter sections: a bar per section, add, rename in place, collapse, drag the whole section (its slides move with it) | yes | yes |
 | Image paste from the clipboard | yes | macOS pastes a picture when the paste carries no text (TIFF), and rich text copies and pastes as HTML (bold, italic, underline). Windows and Linux image paste stays #53 |
-| Font menu: every installed family with its faces | yes | families yes; only Regular/Bold/Italic faces (#69) |
+| Font menu: every installed family with its faces | yes | families and each family's own faces (Light, Semibold, …) |
 
 ## Keyboard shortcuts
 
@@ -200,6 +200,7 @@ consistency is open (#73, #56).
 | 2026-10-14 | minor | Font dialog from Home › Font, the shape menu and Cmd+T |
 | 2026-10-13 | minor | Grid Options dialog: spacing, snap, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
 | 2026-10-13 | minor | WordArt adjust handles on a selected text warp; dragging one sets that `prstTxWarp` adjust |
+| 2026-10-13 | minor | The font menu lists each family's own faces, not only Regular, Bold and Italic (#69) |
 | 2026-10-12 | minor | File tab (Backstage) observed in PowerPoint for Windows and matched (#76); the start screen is File › Home |
 | 2026-10-12 | minor | Off-slide objects drawn and editable around the slide in Normal view (#270) |
 | 2026-10-12 | minor | Selection Pane matched to PowerPoint (#133): drag and drop, arrows, groups, eye, Lock |

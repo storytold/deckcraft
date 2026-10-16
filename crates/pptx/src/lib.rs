@@ -15,6 +15,7 @@ mod opc;
 mod png;
 pub(crate) mod read;
 mod tables;
+mod typeface;
 mod write;
 mod xml;
 
