@@ -320,6 +320,42 @@ mod tests {
     }
 
     #[test]
+    fn localized_family_names_resolve_loaded_and_cataloged_faces() {
+        let check = |db: &FontDb| {
+            for alias in ["DeckCraft 测试字体", "DeckCraft Police locale"] {
+                assert!(db.has_family(alias), "{alias}");
+                assert_eq!(db.styles(alias), ["Regular", "Semibold", "Bold"]);
+                for style in ["Regular", "Bold", "Semibold"] {
+                    let face = db.document_face(alias, style);
+                    assert_eq!((face.family.as_str(), face.style.as_str()), ("DeckCraft Localized", style), "{alias}");
+                    assert!(face.has_family_name(alias));
+                    assert!(std::sync::Arc::ptr_eq(&face, &db.face("DeckCraft Localized", style)));
+                }
+            }
+            for alias in ["DeckCraft 测试字体 半粗", "DeckCraft Police locale demi-gras"] {
+                assert!(db.has_family(alias), "{alias}");
+                for style in ["Regular", "Bold"] {
+                    assert_eq!(db.document_face(alias, style).style, "Semibold", "{alias}");
+                }
+            }
+            assert!(!db.families().iter().any(|f| f == "DeckCraft 测试字体"), "aliases do not duplicate the font menu");
+        };
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/localized-regular.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/localized-bold.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/localized-semibold.ttf").to_vec()), 1);
+        check(&db);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+            let db = FontDb::with_font_dirs(vec![dir]);
+            db.set_system_fallback(false);
+            check(&db);
+        }
+    }
+
+    #[test]
     fn faces_without_outlines_are_not_cataloged() {
         // Rename the Semibold's `glyf` table, as in fonts whose glyphs are bitmaps or are stored in
         // Apple's `hvgl` table. The face still maps "A", but its outline is empty. The new tag
