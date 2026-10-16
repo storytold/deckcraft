@@ -3258,6 +3258,74 @@ mod tests {
         assert_eq!(crate::canvas::page_flick(egui::vec2(4.0, 10.0)), None);
     }
 
+    fn mouse_wheel(harness: &mut egui_kittest::Harness<'static, SlideApp>, notches: &[f32]) {
+        let centre = harness.state().canvas_rect.unwrap().center();
+        let input = harness.input_mut();
+        input.events.push(egui::Event::PointerMoved(centre));
+        for &y in notches {
+            input.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, y),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run_steps(1);
+    }
+
+    #[test]
+    fn mouse_wheel_keeps_fast_notches_in_both_directions_without_a_smoothed_tail() {
+        let mut h = flick_harness();
+        for _ in 0..8 {
+            h.state_mut().run("slide.new", json!({})).unwrap();
+        }
+        h.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+        h.run_steps(1);
+
+        mouse_wheel(&mut h, &[-1.0]);
+        assert_eq!(slide_at(h.state()), 1, "one notch responds immediately");
+        mouse_wheel(&mut h, &[-1.0]);
+        assert_eq!(slide_at(h.state()), 2, "the next frame does not lose a notch to the cooldown");
+        mouse_wheel(&mut h, &[-1.0, -1.0]);
+        assert_eq!(slide_at(h.state()), 4, "notches batched into a frame are retained");
+        mouse_wheel(&mut h, &[-3.0]);
+        assert_eq!(slide_at(h.state()), 7, "an accelerated wheel event keeps its steps");
+        h.run_steps(30);
+        assert_eq!(slide_at(h.state()), 7, "smoothing must not turn more pages");
+        mouse_wheel(&mut h, &[2.0]);
+        assert_eq!(slide_at(h.state()), 5, "reversing direction responds immediately");
+        mouse_wheel(&mut h, &[100.0]);
+        assert_eq!(slide_at(h.state()), 0, "stop at the first slide");
+        mouse_wheel(&mut h, &[-100.0]);
+        assert_eq!(slide_at(h.state()), 8, "stop at the last slide");
+    }
+
+    #[test]
+    fn mouse_wheel_over_a_zoomed_canvas_pans_and_outside_the_canvas_does_not_navigate() {
+        let mut h = flick_harness();
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+        h.state_mut().ui.zoom = Some(3.0);
+        h.run_steps(2);
+        let before = h.state().slide_rect.unwrap();
+        mouse_wheel(&mut h, &[-3.0]);
+        h.run_steps(30);
+        assert_eq!(slide_at(h.state()), 0);
+        assert!(h.state().slide_rect.unwrap().min.y < before.min.y, "the enlarged canvas scrolls");
+
+        h.state_mut().ui.zoom = Some(0.4);
+        h.run_steps(2);
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(-10.0, -10.0)));
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -3.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(30);
+        assert_eq!(slide_at(h.state()), 0, "wheel input outside the canvas is ignored");
+    }
+
     /// A sideways swipe on a fitted slide turns the page, like PowerPoint on a Mac trackpad.
     /// The frames of one gesture do not skip ahead.
     #[test]
