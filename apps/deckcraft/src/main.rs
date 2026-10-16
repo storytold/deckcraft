@@ -1,6 +1,7 @@
 //! DeckCraft desktop app.
 //!
 //! Usage: `deckcraft [--control <port>] [--sample] [--show] [files…]`
+//! A PowerPoint Show (`.ppsx`) given last starts its slide show, as a double-click does in PowerPoint.
 //! `deckcraft --help` prints the flags and exits. `deckcraft --version` prints the version and exits.
 //!
 //! `--control <port>` (or `DECKCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
@@ -134,6 +135,8 @@ Usage: deckcraft [--control PORT] [--sample] [--show] [FILE...]
   --show          start the slide show
   --help, -h      print this help and exit
   --version, -V   print the version and exit
+
+A PowerPoint Show (.ppsx) given last starts its slide show.
 ";
 
 enum Startup {
@@ -254,10 +257,9 @@ fn main() -> eframe::Result {
             if sample && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                 log::error!("sample: {e}");
             }
-            for f in files {
-                if let Err(e) = app.open_path(&f) {
-                    log::error!("{f}: {e}");
-                }
+            // A .ppsx opened last starts its slide show (#862).
+            for (f, e) in app.open_from_system(&files) {
+                log::error!("{f}: {e}");
             }
             if show {
                 app.start_show(0, false);

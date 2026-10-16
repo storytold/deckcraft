@@ -1184,6 +1184,26 @@ impl SlideApp {
         Ok(())
     }
 
+    /// Files the system hands over (the command line, a double-click through the file
+    /// association), opened in order. When the last one is a PowerPoint Show (`.ppsx`), its slide
+    /// show starts at once from where Play from Start begins, as PowerPoint does; anything else
+    /// opens for editing, and File › Open opens a `.ppsx` for editing too. Returns the files that
+    /// couldn't be opened, with the reason.
+    pub fn open_from_system(&mut self, paths: &[String]) -> Vec<(String, String)> {
+        let mut failed = Vec::new();
+        let mut last = None;
+        for p in paths {
+            match self.open_path(p) {
+                Ok(()) => last = Some(p),
+                Err(e) => failed.push((p.clone(), e)),
+            }
+        }
+        if last.is_some_and(|p| p.to_ascii_lowercase().ends_with(".ppsx")) {
+            self.start_show(self.show_start_index(), false);
+        }
+        failed
+    }
+
     /// A presentation was opened from `path`: first in the recent list, shown in Normal view.
     pub(crate) fn note_recent(&mut self, path: &str) {
         self.status = None; // an older error (a missing file just before this one) must not linger
