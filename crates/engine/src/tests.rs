@@ -326,7 +326,8 @@ fn writable_format_for_path_rejects_formats_deckcraft_does_not_write() {
     assert_eq!(f("a.jpg"), Some("jpeg"));
     assert_eq!(f("a.txt"), Some("outline"));
     assert_eq!(f("a.gif"), Some("gif"));
-    for path in ["a.odp", "a.bmp", "a.svg", "a.outline", "a", "dir.v2/a"] {
+    assert_eq!(f("a.odp"), Some("odp"));
+    for path in ["a.bmp", "a.svg", "a.outline", "a", "dir.v2/a"] {
         assert_eq!(f(path), None, "{path}");
     }
 }
@@ -3591,4 +3592,26 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     let t = table_of(&s, id);
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
+}
+
+#[test]
+fn exports_odp_with_text_shapes_pictures_and_notes() {
+    let mut s = session();
+    s.execute("slide.fromOutline", &json!({"text": "Quarterly review\n\tRevenue up 12%\n\t\tEurope led\n\tHiring on track\n"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rightArrow", "rect": [500, 300, 200, 80], "text": "Next"})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#2e6fd8"})).unwrap();
+    s.execute("arrange.rotate", &json!({"angle": 30})).ok();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 380, 120, 80]})).unwrap();
+    let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+    s.execute("insert.picture", &json!({"data": png, "name": "dot.png", "rect": [700, 40, 100, 100]})).unwrap();
+    s.execute("slide.notes", &json!({"text": "Mention the Berlin office"})).unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-odp-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = std::env::var("ODP_OUT").map(std::path::PathBuf::from).unwrap_or_else(|_| dir.join("deck.odp"));
+    s.execute("file.export", &json!({"path": path.to_string_lossy()})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert_eq!(&bytes[30..38], b"mimetype");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("application/vnd.oasis.opendocument.presentation"));
+    let _ = std::fs::remove_dir_all(&dir);
 }

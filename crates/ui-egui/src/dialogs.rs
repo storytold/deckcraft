@@ -1548,6 +1548,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ("PNG images (all slides)", "pngAll"),
                 ("JPEG image (current slide)", "jpeg"),
                 ("PowerPoint Presentation (.pptx)", "pptx"),
+                ("OpenDocument Presentation (.odp)", "odp"),
                 ("Outline (.txt)", "outline"),
                 ("Animated GIF (.gif)", "gif"),
             ] {
