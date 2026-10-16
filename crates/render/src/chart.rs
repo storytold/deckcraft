@@ -7,8 +7,8 @@ use deckcraft_model::resolve::Ctx;
 use deckcraft_model::style::{ColorRef, Fill};
 use deckcraft_model::text::{Align, Anchor, Bullet, TextBody};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
-use vello_cpu::RenderContext;
 
+use crate::canvas::Canvas;
 use crate::color;
 
 const SLOTS: [SchemeSlot; 6] =
@@ -109,7 +109,7 @@ fn split_label(name: &str) -> String {
 }
 
 pub(crate) fn label(
-    ctx: &mut RenderContext,
+    ctx: &mut dyn Canvas,
     rctx: &Ctx,
     m: Affine,
     text: &str,
@@ -193,7 +193,7 @@ fn legend_layout(pos: &str, size: (f64, f64), area: Rect, base: f64, overlay: bo
     (origin, if overlay { area } else { plot })
 }
 
-pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
+pub fn draw(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
     match c.kind {
         // Histograms and Pareto charts are drawn as the column (and line) chart of their bins.
         ChartType::Histogram | ChartType::Pareto => draw_inner(ctx, rctx, &c.histogram_view(), m, w, h, None),
@@ -206,7 +206,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64, boxes: Option<&crate::chartex::Boxes>) {
+fn draw_inner(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64, boxes: Option<&crate::chartex::Boxes>) {
     let text_col = c.text_color.as_ref().map(|t| rctx.color(t, None)).unwrap_or(Rgba::rgb(0x59, 0x59, 0x59));
     let grid_col = Rgba::rgb(0xD9, 0xD9, 0xD9);
     if let Some(f) = &c.chart_fill {
@@ -927,7 +927,7 @@ fn clip_seg(a: Point, b: Point, r: Rect) -> Option<(Point, Point)> {
 }
 
 fn draw_trendlines(
-    ctx: &mut RenderContext,
+    ctx: &mut dyn Canvas,
     rctx: &Ctx,
     c: &Chart,
     m: Affine,

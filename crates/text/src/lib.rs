@@ -314,6 +314,9 @@ pub struct TextLayout {
     /// Per paragraph: whether a caret may stand at each character offset 0..=len (grapheme
     /// boundaries), for logical caret movement.
     pub boundaries: Vec<Vec<bool>>,
+    /// Per paragraph: its characters as laid out (fields filled in), indexed like
+    /// [`GlyphRun::cells`] and [`GlyphRun::chars`] (text extraction of exports with real text).
+    pub texts: Vec<String>,
 }
 
 /// Values for fields (`slidenum`, `datetime…`, `footer`). `None` keeps the field's saved text.
@@ -2110,6 +2113,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
             b
         })
         .collect();
+    out.texts = shaped_paras.iter().map(|p| p.cells.iter().map(|c| c.ch).collect()).collect();
     out.lines = all_lines.into_iter().map(|(l, ..)| l).collect();
     // Merge adjacent decorations of the same colour on the same line.
     out.decos = merge_decos(std::mem::take(&mut out.decos));

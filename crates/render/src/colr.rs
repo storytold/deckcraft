@@ -12,6 +12,11 @@ use vello_cpu::{RenderContext, peniko};
 /// Nesting depth of clips and layers past which a glyph opens no more (hostile fonts).
 const MAX_DEPTH: usize = 64;
 
+/// Does `gid` of `face` have a colour version?
+pub fn has_color(face: &FontFace, gid: u32) -> bool {
+    face.skrifa().is_some_and(|font| font.color_glyphs().get(GlyphId::new(gid)).is_some())
+}
+
 /// Paint `gid` of `face` as a colour glyph, its origin mapped by `at` (y down, points) at `scale`
 /// points per font unit. `fg` is the text colour (palette index 0xFFFF) and `alpha` fades it all.
 /// False when the glyph has no colour version, so the caller draws the plain outline.

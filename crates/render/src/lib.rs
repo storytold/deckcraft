@@ -9,6 +9,7 @@
 
 mod bevel;
 mod camera;
+pub mod canvas;
 mod chart;
 mod chartex;
 mod colr;
@@ -48,6 +49,7 @@ use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _, Vec2};
 use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::{RenderContext, Resources, peniko};
 
+pub use canvas::{Canvas, CanvasImage, Fallback, Paint};
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
 pub use images::{decode as decode_image, gif_frame};
@@ -448,6 +450,20 @@ pub fn render_slide_part(pres: &Presentation, index: usize, part: SlidePart, opt
     }
 }
 
+/// Draw slide `index` onto any [`Canvas`] (the PDF export's vector pages), `view` mapping slide
+/// points to canvas units: what [`render_slide`] draws. A panic inside the renderer stops the
+/// drawing (logged), never crashes.
+pub fn draw_slide(canvas: &mut dyn Canvas, pres: &Presentation, index: usize, opts: &RenderOpts, view: Affine) {
+    let Some(slide) = pres.slides.get(index) else { return };
+    let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        RENDERER.with(|r| r.borrow_mut().slide_on(canvas, pres, slide, index, opts, view));
+    }));
+    if drawn.is_err() {
+        log::error!("drawing slide {index} panicked; the page stops there");
+        RENDERER.with(|r| *r.borrow_mut() = Renderer::default());
+    }
+}
+
 /// Render a frame between slides `old` and `new` (indices into `pres.slides`), e.g. of Morph: the
 /// backdrop (background, master and layout graphics) of `old` cross-fading into that of `new` by
 /// `mix` (0..1), then `shapes` in order, each resolved against the slide it comes from (`true`:
@@ -640,7 +656,7 @@ impl Renderer {
     }
 
     /// Background plus the master and layout graphics the slide shows.
-    fn backdrop(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: &Slide, view: Affine) {
+    fn backdrop(&mut self, ctx: &mut dyn Canvas, f: &Frame, rctx: &Ctx, slide: &Slide, view: Affine) {
         self.background(ctx, f, rctx, Some(slide), view);
         let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
         if show_master {
@@ -663,14 +679,18 @@ impl Renderer {
 
     fn slide(&mut self, pres: &Presentation, slide: &Slide, index: usize, opts: &RenderOpts) -> Image {
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
+        self.slide_on(&mut ctx, pres, slide, index, opts, view);
+        self.finish(ctx, w, h)
+    }
+
+    fn slide_on(&mut self, ctx: &mut dyn Canvas, pres: &Presentation, slide: &Slide, index: usize, opts: &RenderOpts, view: Affine) {
         let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
         if let Some(rctx) = Ctx::for_slide(pres, slide) {
-            self.backdrop(&mut ctx, &f, &rctx, slide, view);
+            self.backdrop(ctx, &f, &rctx, slide, view);
             for s in &slide.shapes {
-                self.shape(&mut ctx, &f, &rctx, s, view, 0);
+                self.shape(ctx, &f, &rctx, s, view, 0);
             }
         }
-        self.finish(ctx, w, h)
     }
 
     fn slide_part(&mut self, pres: &Presentation, slide: &Slide, index: usize, part: SlidePart, opts: &RenderOpts) -> Image {
@@ -792,7 +812,7 @@ impl Renderer {
         Image { width: w as u32, height: h as u32, pixels }
     }
 
-    fn background(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: Option<&Slide>, view: Affine) {
+    fn background(&mut self, ctx: &mut dyn Canvas, f: &Frame, rctx: &Ctx, slide: Option<&Slide>, view: Affine) {
         let (fill, ph) = resolve::background(rctx, slide);
         let r = Rect::new(0.0, 0.0, f.pres.slide_size.width, f.pres.slide_size.height);
         ctx.set_transform(view);
@@ -805,7 +825,7 @@ impl Renderer {
         self.bg = Some((fill, ph, view));
     }
 
-    fn shape(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
+    fn shape(&mut self, ctx: &mut dyn Canvas, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
         if depth == 0 {
             let outer = std::mem::replace(&mut self.view, parent);
             self.shape_at(ctx, f, rctx, s, parent, depth);
@@ -842,7 +862,7 @@ impl Renderer {
         (tw, th, m * Affine::scale_non_uniform(1.0 / sx, 1.0 / sy))
     }
 
-    fn shape_at(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
+    fn shape_at(&mut self, ctx: &mut dyn Canvas, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
         if depth > 32 || (s.hidden && !f.opts.show_hidden) || f.opts.skip.contains(&s.id) {
             return;
         }
@@ -879,7 +899,7 @@ impl Renderer {
         if layered {
             ctx.set_transform(m);
             let clip = st.clip.map(|[l, t, r, b]| Rect::new(l * x.w, t * x.h, r * x.w, b * x.h).to_path(0.1));
-            ctx.push_layer(clip.as_ref(), None, Some(st.opacity.clamp(0.0, 1.0) as f32), None, None);
+            ctx.push_layer(clip.as_ref(), Some(st.opacity.clamp(0.0, 1.0) as f32));
         }
         match &s.kind {
             ShapeKind::Group { children, child } => {
@@ -904,18 +924,40 @@ impl Renderer {
                     let det = m.determinant();
                     if det.is_finite() && det.abs() > 1e-12 {
                         let shift = pre * m * own * m.inverse();
-                        ctx.set_transform(Affine::IDENTITY);
-                        ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, Some(blur(sh.blur / 3.0 * k)));
-                        for ch in children {
-                            self.shape(ctx, f, rctx, ch, shift * gm, depth + 1);
-                        }
-                        ctx.set_transform(Affine::IDENTITY);
-                        ctx.push_layer(None, Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::SrcIn)), None, None, None);
-                        ctx.set_paint(color(c.with_alpha(255), 1.0));
-                        let (w, h) = (f.opts.scale * f.pres.slide_size.width, f.opts.scale * f.pres.slide_size.height);
-                        ctx.fill_rect(&Rect::new(-w, -h, 3.0 * w, 3.0 * h).inflate(1e4, 1e4));
-                        ctx.pop_layer();
-                        ctx.pop_layer();
+                        // Pixels (a blurred, recoloured layer); vector canvases get the shadow
+                        // rasterized over the area it can reach.
+                        let reach = sh.blur.max(0.0) * 2.0 + 2.0;
+                        let area = (shift * m).transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h)).inflate(reach * k, reach * k);
+                        let area = area.union(m.transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h)));
+                        canvas::pixels(ctx, area, &mut |v, vpre| {
+                            // A local raster: what is placed through the slide-level view moves
+                            // with it, and the editor's drawn extent stays as it was.
+                            let saved = (self.view, self.bg.clone(), self.group_fill.clone(), self.drawn);
+                            self.view = vpre * self.view;
+                            if let Some(bg) = self.bg.as_mut() {
+                                bg.2 = vpre * bg.2;
+                            }
+                            if let Some(gf) = self.group_fill.as_mut() {
+                                gf.1 = vpre * gf.1;
+                            }
+                            v.set_transform(Affine::IDENTITY);
+                            v.push_layer(None, None, Some((c.a as f32) / 255.0), None, Some(blur(sh.blur / 3.0 * k * scale_of(vpre))));
+                            for ch in children {
+                                self.shape(v, f, rctx, ch, vpre * shift * gm, depth + 1);
+                            }
+                            v.set_transform(Affine::IDENTITY);
+                            v.push_layer(None, Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::SrcIn)), None, None, None);
+                            v.set_paint(color(c.with_alpha(255), 1.0));
+                            let (w, h) = (f.opts.scale * f.pres.slide_size.width, f.opts.scale * f.pres.slide_size.height);
+                            v.fill_rect(&Rect::new(-w, -h, 3.0 * w, 3.0 * h).inflate(1e4, 1e4));
+                            v.pop_layer();
+                            v.pop_layer();
+                            let drawn = self.drawn;
+                            (self.view, self.bg, self.group_fill, self.drawn) = saved;
+                            if vpre == Affine::IDENTITY {
+                                self.drawn = drawn;
+                            }
+                        });
                     }
                 }
                 for c in children {
@@ -984,9 +1026,47 @@ impl Renderer {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn geometry_shape(
+    fn geometry_shape(&mut self, ctx: &mut dyn Canvas, f: &Frame, rctx: &Ctx, s: &Shape, m: Affine, w: f64, h: f64, st: &ShapeState, depth: usize) {
+        let (geo, fades) = match self.paths.iter().find(|p| p.id == s.id) {
+            Some(pm) => self.morphs.geometry(pm, s, w, h),
+            None => (shape_geometry(s, w, h), Vec::new()),
+        };
+        let (line, _) = resolve::line(rctx, s);
+        let (effects, _) = resolve::effects(rctx, s);
+        let reach = extent::spill(Some(&line), effects.as_ref(), w, h);
+        let area = Rect::new(0.0, 0.0, w, h).inflate(reach, reach);
+        self.track(m, area);
+        // Vector canvases get the art of a shape with blur-based effects or a blended fill overlay
+        // as pixels covering it and its effects; its text stays vector (effects follow the
+        // geometry only).
+        let pixel_only = effects.as_ref().is_some_and(|e| draws_effects(e) || e.fill_overlay.is_some());
+        match ctx.fallback().filter(|_| pixel_only) {
+            Some(fb) => {
+                canvas::rasterize(ctx, fb, m.transform_rect_bbox(area), &mut |v, pre| {
+                    // Lines and `useBgFill` backgrounds are placed through the slide-level view.
+                    let saved = (self.view, self.bg.clone(), self.group_fill.clone());
+                    self.view = pre * self.view;
+                    if let Some(bg) = self.bg.as_mut() {
+                        bg.2 = pre * bg.2;
+                    }
+                    // `grpFill`: the group's fill is laid out through the same view.
+                    if let Some(gf) = self.group_fill.as_mut() {
+                        gf.1 = pre * gf.1;
+                    }
+                    self.geometry_art(v, f, rctx, s, pre * m, w, h, st, depth, &geo, &fades);
+                    (self.view, self.bg, self.group_fill) = saved;
+                });
+            }
+            None => self.geometry_art(ctx, f, rctx, s, m, w, h, st, depth, &geo, &fades),
+        }
+        self.geometry_text(ctx, f, rctx, s, m, w, h, st, depth, &geo);
+    }
+
+    /// A shape's effects, fill and outline.
+    #[allow(clippy::too_many_arguments)]
+    fn geometry_art(
         &mut self,
-        ctx: &mut RenderContext,
+        ctx: &mut dyn Canvas,
         f: &Frame,
         rctx: &Ctx,
         s: &Shape,
@@ -995,24 +1075,22 @@ impl Renderer {
         h: f64,
         st: &ShapeState,
         depth: usize,
+        geo: &Geometry,
+        fades: &[deckcraft_geom::morph::Fade],
     ) {
-        let (geo, fades) = match self.paths.iter().find(|p| p.id == s.id) {
-            Some(pm) => self.morphs.geometry(pm, s, w, h),
-            None => (shape_geometry(s, w, h), Vec::new()),
-        };
         let fade = |i: usize| fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 });
         let (fill, fill_ph) = resolve::fill(rctx, s);
         let (line, line_ph) = resolve::line(rctx, s);
         let (effects, fx_ph) = resolve::effects(rctx, s);
-        let reach = extent::spill(Some(&line), effects.as_ref(), w, h);
-        self.track(m, Rect::new(0.0, 0.0, w, h).inflate(reach, reach));
         let is_pic = matches!(s.kind, ShapeKind::Picture { .. });
         let outline = geo.outline();
         // Placeholders in the editor: dashed outline and prompt, nothing else when empty.
         let empty_ph = s.ph.is_some() && s.text.as_ref().is_none_or(TextBody::is_empty) && !is_pic && !matches!(s.kind, ShapeKind::Media(_));
         let fill = if let Some(t) = st.tint { Some(Fill::solid(deckcraft_model::ColorRef::rgb(t))) } else { fill };
-        // Effects below the shape.
-        if let Some(e) = &effects {
+        // Effects below the shape (pixels only: vector canvases draw such shapes as pixels).
+        if let Some(e) = &effects
+            && let Some(px) = ctx.raster()
+        {
             // A picture (or picture fill) casts its shadow from its pixels, not its frame.
             let content = match (&s.kind, &fill) {
                 (ShapeKind::Picture { fill: pf }, _) | (_, Some(Fill::Picture(pf))) => Some(paint::resolved(rctx, pf, None).into_owned()),
@@ -1030,13 +1108,15 @@ impl Renderer {
                 let outside = if border_outside(is_pic, effects.as_ref()) { outside_line(&line, lw) } else { None };
                 Caster { line: outside.map_or(std::borrow::Cow::Borrowed(&line), std::borrow::Cow::Owned), ph: line_ph, alpha: a, base, rel }
             });
-            self.effects_below(ctx, rctx, e, fx_ph, &geo, &fill, fill_alpha, outline, content.as_ref(), m, w, h);
+            self.effects_below(px, rctx, e, fx_ph, geo, &fill, fill_alpha, outline, content.as_ref(), m, w, h);
         }
         let soft = effects.as_ref().and_then(|e| e.soft_edge).filter(|r| *r > 0.0);
-        if let Some(r) = soft {
-            ctx.set_transform(Affine::IDENTITY);
-            ctx.push_layer(None, None, None, None, None);
-            let _ = r;
+        let soft = soft.filter(|_| ctx.raster().is_some());
+        if soft.is_some()
+            && let Some(px) = ctx.raster()
+        {
+            px.set_transform(Affine::IDENTITY);
+            px.push_layer(None, None, None, None, None);
         }
         // A 3-D extrusion under a turned camera: the sides, swept behind the face.
         if let Some(raw) = effects.as_ref().and_then(|e| e.raw3d.as_deref())
@@ -1133,6 +1213,7 @@ impl Renderer {
         // a gradient over a tiled picture), inside the filled outline, under the line.
         if let Some(ov) = effects.as_ref().and_then(|e| e.fill_overlay.as_ref())
             && fill.as_ref().is_some_and(|f| !f.is_none())
+            && let Some(px) = ctx.raster()
         {
             let mix = match ov.blend.as_str() {
                 "mult" => peniko::Mix::Multiply,
@@ -1142,10 +1223,10 @@ impl Renderer {
                 _ => peniko::Mix::Normal,
             };
             for (i, sp) in geo.paths.iter().enumerate().filter(|(i, sp)| sp.fill != FillMode::None && fade(*i).fill > 0.0) {
-                ctx.set_transform(m);
-                ctx.push_layer(Some(&sp.path), Some(peniko::BlendMode::new(mix, peniko::Compose::SrcOver)), None, None, None);
-                paint::fill_path(ctx, rctx, &ov.fill, fx_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, FillMode::Norm, fade(i).fill, f.pres);
-                ctx.pop_layer();
+                px.set_transform(m);
+                px.push_layer(Some(&sp.path), Some(peniko::BlendMode::new(mix, peniko::Compose::SrcOver)), None, None, None);
+                paint::fill_path(px, rctx, &ov.fill, fx_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, FillMode::Norm, fade(i).fill, f.pres);
+                px.pop_layer();
             }
         }
         // Some presets' outlines default to sharp corners (PowerPoint's own per-shape default).
@@ -1170,7 +1251,10 @@ impl Renderer {
                 if is_pic || area.elements().is_empty() {
                     area = outline.clone();
                 }
-                bevel::draw(ctx, &bv, if is_pic { None } else { solid }, &area, Rect::new(0.0, 0.0, w, h), m, 1.0);
+                // Pixels (a lit image); vector canvases get them rasterized over the shape.
+                let bounds = Rect::new(0.0, 0.0, w, h);
+                let fill = if is_pic { None } else { solid };
+                canvas::pixels(ctx, m.transform_rect_bbox(bounds), &mut |v, pre| bevel::draw(v, &bv, fill, &area, bounds, pre * m, 1.0));
             }
         }
         // Outline.
@@ -1194,7 +1278,7 @@ impl Renderer {
             let line = match see_through {
                 Some(c) => {
                     ctx.set_transform(Affine::IDENTITY);
-                    ctx.push_layer(None, None, Some(c.a as f32 / 255.0), None, None);
+                    ctx.push_layer(None, Some(c.a as f32 / 255.0));
                     std::borrow::Cow::Owned(Line {
                         fill: Some(Fill::solid(deckcraft_model::style::ColorRef::rgb(c.with_alpha(255)))),
                         ..line.clone()
@@ -1235,7 +1319,7 @@ impl Renderer {
                 stroke(ctx, rctx, &line, line_ph, &path, Some(&whole), base, lw, fade(i).stroke);
             }
             if ends {
-                arrowheads(ctx, rctx, &line, line_ph, &geo, rel, base, lw);
+                arrowheads(ctx, rctx, &line, line_ph, geo, rel, base, lw);
             }
             if clipped {
                 ctx.pop_layer();
@@ -1244,30 +1328,33 @@ impl Renderer {
                 ctx.pop_layer();
             }
         }
-        if let Some(r) = soft {
+        if let Some(r) = soft
+            && let Some(px) = ctx.raster()
+        {
             // Feather: the shape (fill and line) fades to nothing at its outline. Measured on
             // PowerPoint's export: the mask is the outline shrunk by 0.85 r, blurred by a third of
             // r, so it's half opaque 0.85 r inside the edge and transparent at the edge itself.
-            ctx.set_transform(m);
-            ctx.push_layer(
+            px.set_transform(m);
+            px.push_layer(
                 None,
                 Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestIn)),
                 None,
                 None,
                 Some(blur(r / 3.0 * scale_of(m))),
             );
-            ctx.set_paint(peniko::Color::from_rgba8(0, 0, 0, 255));
-            ctx.fill_path(&outline);
-            ctx.push_blend_layer(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestOut));
-            ctx.set_stroke(kurbo::Stroke::new(r * 1.7).with_join(kurbo::Join::Round));
-            ctx.stroke_path(&outline);
-            ctx.pop_layer();
-            ctx.pop_layer();
-            ctx.pop_layer();
+            px.set_paint(peniko::Color::from_rgba8(0, 0, 0, 255));
+            px.fill_path(&outline);
+            px.push_blend_layer(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestOut));
+            px.set_stroke(kurbo::Stroke::new(r * 1.7).with_join(kurbo::Join::Round));
+            px.stroke_path(&outline);
+            px.pop_layer();
+            px.pop_layer();
+            px.pop_layer();
         }
         // Inner shadow.
         if let Some(e) = &effects
             && let Some(sh) = &e.inner_shadow
+            && let Some(ctx) = ctx.raster()
         {
             ctx.set_transform(m);
             ctx.push_clip_layer(&outline);
@@ -1288,7 +1375,25 @@ impl Renderer {
             ctx.pop_layer();
             ctx.pop_layer();
         }
-        // Text (or the placeholder prompt in the editor).
+    }
+
+    /// A shape's text (or the placeholder prompt in the editor) and the editor's placeholder outline.
+    #[allow(clippy::too_many_arguments)]
+    fn geometry_text(
+        &mut self,
+        ctx: &mut dyn Canvas,
+        f: &Frame,
+        rctx: &Ctx,
+        s: &Shape,
+        m: Affine,
+        w: f64,
+        h: f64,
+        st: &ShapeState,
+        depth: usize,
+        geo: &Geometry,
+    ) {
+        let is_pic = matches!(s.kind, ShapeKind::Picture { .. });
+        let empty_ph = s.ph.is_some() && s.text.as_ref().is_none_or(TextBody::is_empty) && !is_pic && !matches!(s.kind, ShapeKind::Media(_));
         let skip_text = f.opts.skip_text == Some(s.id);
         if let Some(body) = &s.text
             && !skip_text
@@ -1298,7 +1403,7 @@ impl Renderer {
             let (tw, th, m) = self.text_space(m, depth, w, h);
             let text_geo;
             let geo = if (tw, th) == (w, h) {
-                &geo
+                geo
             } else {
                 text_geo = shape_geometry(s, tw, th);
                 &text_geo
@@ -1548,6 +1653,12 @@ fn shadow_local(sh: &deckcraft_model::style::Shadow, w: f64, h: f64) -> Affine {
     Affine::translate(a) * k * Affine::translate(-a)
 }
 
+/// Does this shape show blur-based effects (shadows, glow, soft edges, reflection)? Bevels and
+/// 3-D face lighting are drawn on their own (local pixels on vector canvases).
+fn draws_effects(e: &Effects) -> bool {
+    e.outer_shadow.is_some() || e.inner_shadow.is_some() || e.glow.is_some() || e.soft_edge.is_some_and(|r| r > 0.0) || e.reflection.is_some()
+}
+
 fn pre_translate(m: Affine, d: Vec2) -> Affine {
     Affine::translate(d) * m
 }
@@ -1564,7 +1675,7 @@ fn blur(sigma: f64) -> Filter {
 /// line belongs to; `path` itself when `None`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stroke(
-    ctx: &mut RenderContext,
+    ctx: &mut dyn Canvas,
     rctx: &Ctx,
     line: &Line,
     ph: Option<Rgba>,
@@ -1714,7 +1825,7 @@ fn square_dash_ends(path: &BezPath, pattern: &[f64], width: f64) -> BezPath {
 /// A gradient line's paint: laid out, as PowerPoint lays it, over the box the stroke covers (the
 /// path's bounds grown by half the line width), so a horizontal line's vertical gradient runs
 /// across its width.
-fn line_gradient(rctx: &Ctx, g: &deckcraft_model::style::Gradient, ph: Option<Rgba>, path: &BezPath, lw: f64, alpha: f64) -> peniko::Gradient {
+fn line_gradient(rctx: &Ctx, g: &deckcraft_model::style::Gradient, ph: Option<Rgba>, path: &BezPath, lw: f64, alpha: f64) -> Paint {
     let bounds = path.bounding_box().inflate(lw / 2.0, lw / 2.0);
     let bounds = paint::tile_box(bounds, g.tile);
     let stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos, rctx.color(&s.color, ph))).collect();
@@ -1912,7 +2023,7 @@ fn trim_ends(path: &BezPath, start: f64, end: f64) -> BezPath {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, geo: &Geometry, rel: Affine, m: Affine, lw: f64) {
+fn arrowheads(ctx: &mut dyn Canvas, rctx: &Ctx, line: &Line, ph: Option<Rgba>, geo: &Geometry, rel: Affine, m: Affine, lw: f64) {
     let Some(sp) = geo.paths.iter().find(|p| p.stroke) else { return };
     let Some(((a, a2), (b, b2))) = end_points(&sp.path) else { return };
     // The outline's ends in the space the arrowheads are sized and drawn in.
@@ -1930,7 +2041,7 @@ fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>
         }
         _ => None,
     };
-    let set_paint = |ctx: &mut RenderContext| match &grad {
+    let set_paint = |ctx: &mut dyn Canvas| match &grad {
         Some(g) => ctx.set_paint(g.clone()),
         None => ctx.set_paint(color(col, 1.0)),
     };
@@ -2046,7 +2157,7 @@ pub(crate) fn glyph(face: &deckcraft_fonts::FontFace, gid: u32) -> Arc<BezPath> 
 }
 
 /// Draw a text body into shape space `m` within the text rect.
-pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody, tr: Rect, m: Affine, fields: &dyn Fields, prompt: Option<Rgba>) {
+pub fn draw_text(ctx: &mut dyn Canvas, rctx: &Ctx, s: &Shape, body: &TextBody, tr: Rect, m: Affine, fields: &dyn Fields, prompt: Option<Rgba>) {
     let l = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: prompt, no_shrink: false });
     draw_layout(ctx, &l, tr, m);
 }
@@ -2087,15 +2198,15 @@ pub fn text_warp(rctx: &Ctx, s: &Shape, tr: Rect) -> Option<deckcraft_geom::warp
 }
 
 /// Draw an already laid-out text block.
-pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
+pub fn draw_layout(ctx: &mut dyn Canvas, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
     draw_layout_with(ctx, l, tr, m, &[]);
 }
 
 /// Draw a laid-out text block with per-paragraph animation states.
-pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
+pub fn draw_layout_with(ctx: &mut dyn Canvas, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
-    let deco = |ctx: &mut RenderContext, d: &deckcraft_text::Deco| {
+    let deco = |ctx: &mut dyn Canvas, d: &deckcraft_text::Deco| {
         let ps = para(d.para);
         if !ps.visible || ps.opacity <= 0.001 {
             return;
@@ -2125,9 +2236,14 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             continue;
         }
         let m = m * Affine::translate(ps.offset);
+        // Vector canvases draw plain runs as real text; gradient fills and colour glyphs (emoji)
+        // are drawn below, glyph by glyph.
+        if run.gradient.is_none() && !run.face.is_color() && ctx.glyph_run(run, l.texts.get(run.para).map_or("", String::as_str), m, ps.opacity) {
+            continue;
+        }
         // A gradient fill starts over on every line and spans that line's text (from its top to
         // its bottom, from its first to its last character), as in PowerPoint.
-        let mut grads: Vec<(usize, peniko::Gradient)> = Vec::new();
+        let mut grads: Vec<(usize, Paint)> = Vec::new();
         for (gid, x, y) in &run.glyphs {
             let at = m * glyph_place(run, *gid, *x, *y);
             let Some(g) = run.gradient.as_ref().filter(|g| !g.stops.is_empty()) else {
@@ -2162,7 +2278,7 @@ pub(crate) fn glyph_place(run: &deckcraft_text::GlyphRun, gid: u32, x: f64, y: f
 
 /// Fill an underline, strikethrough or highlight with the current paint and transform: its box,
 /// its dashes, or its zigzag stroked.
-pub(crate) fn fill_deco(ctx: &mut RenderContext, d: &deckcraft_text::Deco) {
+pub(crate) fn fill_deco(ctx: &mut dyn Canvas, d: &deckcraft_text::Deco) {
     if let Some((pts, w)) = d.wave() {
         let mut path = BezPath::new();
         for (i, p) in pts.iter().enumerate() {
@@ -2205,8 +2321,36 @@ enum TextEffect {
     Glow,
 }
 
-/// Draw `run`'s shadow or glow (if it has one) under its glyphs, placed by `m`.
-fn text_effect(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, which: TextEffect, m: Affine, opacity: f64) {
+/// Draw `run`'s shadow or glow (if it has one) under its glyphs, placed by `m`. Blurs need pixels:
+/// vector canvases get the effect rasterized over the run's area.
+fn text_effect(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, which: TextEffect, m: Affine, opacity: f64) {
+    let Some(fx) = run.effects else { return };
+    let reach = match (which, fx.shadow, fx.glow) {
+        (TextEffect::Shadow, Some(s), _) => s.dx.abs() + s.dy.abs() + s.blur * 1.5,
+        (TextEffect::Glow, _, Some((_, r))) => r * 1.5,
+        _ => return,
+    };
+    if let Some(px) = ctx.raster() {
+        text_effect_px(px, run, which, m, opacity);
+        return;
+    }
+    let Some(fb) = ctx.fallback() else { return };
+    let k = run.size / run.face.upem.max(1.0);
+    let skew = if run.fake_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
+    let mut area: Option<Rect> = None;
+    for (gid, x, y) in &run.glyphs {
+        let b = (m * Affine::translate((*x, *y)) * skew * Affine::scale(k)).transform_rect_bbox(glyph(&run.face, *gid).bounding_box());
+        if b.is_finite() {
+            area = Some(area.map_or(b, |a| a.union(b)));
+        }
+    }
+    let Some(area) = area else { return };
+    let pad = (if reach.is_finite() { reach.clamp(0.0, 1.0e4) } else { 0.0 } + 2.0) * scale_of(m);
+    canvas::rasterize(ctx, fb, area.inflate(pad, pad), &mut |v, pre| text_effect_px(v, run, which, pre * m, opacity));
+}
+
+/// [`text_effect`] on the pixel context.
+fn text_effect_px(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, which: TextEffect, m: Affine, opacity: f64) {
     let Some(fx) = run.effects else { return };
     let k = run.size / run.face.upem.max(1.0);
     let skew = if run.fake_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
@@ -2243,20 +2387,13 @@ fn text_effect(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, which: T
 }
 
 /// Draw glyph `gid` of `run` with its origin (on the baseline) mapped by `at`, faded by `opacity`.
-pub(crate) fn draw_glyph(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64) {
+pub(crate) fn draw_glyph(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64) {
     draw_glyph_with(ctx, run, gid, at, opacity, None);
 }
 
 /// [`draw_glyph`], filled with `fill` (a gradient laid out in the text's space, and the map from
 /// the glyph's origin to that space) instead of the run's colour.
-fn draw_glyph_with(
-    ctx: &mut RenderContext,
-    run: &deckcraft_text::GlyphRun,
-    gid: u32,
-    at: Affine,
-    opacity: f64,
-    fill: Option<(&peniko::Gradient, Affine)>,
-) {
+fn draw_glyph_with(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64, fill: Option<(&Paint, Affine)>) {
     let alpha = run.alpha * opacity;
     if (alpha <= 0.0 || run.color.a == 0) && run.outline.is_none() {
         return;
@@ -2264,7 +2401,7 @@ fn draw_glyph_with(
     let k = run.size / run.face.upem.max(1.0);
     // Colour glyphs (emoji) paint their own colours; an outline (text outline effect) still
     // strokes the plain glyph below.
-    if alpha > 0.0 && run.outline.is_none() && run.face.is_color() && colr::paint(ctx, &run.face, gid, at, k, run.color, alpha) {
+    if alpha > 0.0 && run.outline.is_none() && run.face.is_color() && color_glyph(ctx, run, gid, at, k, alpha) {
         return;
     }
     let path = glyph(&run.face, gid);
@@ -2276,10 +2413,14 @@ fn draw_glyph_with(
     if let Some((g, to_text)) = fill
         && alpha > 0.0
     {
+        // The glyph moved into the text's space, where the gradient is laid out (no paint
+        // transform: vector canvases have none).
+        let mut in_text = (*path).clone();
+        in_text.apply_affine(to_text.inverse() * skew * Affine::scale(k));
+        ctx.set_transform(at * to_text);
         ctx.set_paint(g.clone());
-        ctx.set_paint_transform((skew * Affine::scale(k)).inverse() * to_text);
-        ctx.fill_path(&path);
-        ctx.reset_paint_transform();
+        ctx.fill_path(&in_text);
+        ctx.set_transform(at * skew * Affine::scale(k));
     } else if alpha > 0.0 && run.color.a > 0 {
         ctx.set_paint(color(run.color, alpha));
         ctx.fill_path(&path);
@@ -2338,6 +2479,25 @@ pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale:
     })
 }
 
+/// A colour glyph (emoji): painted on the pixel context; on vector canvases rasterized over the
+/// glyph's em box. False when the glyph has no colour version.
+fn color_glyph(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, k: f64, alpha: f64) -> bool {
+    if let Some(px) = ctx.raster() {
+        return colr::paint(px, &run.face, gid, at, k, run.color, alpha);
+    }
+    let Some(fb) = ctx.fallback() else { return false };
+    if !colr::has_color(&run.face, gid) {
+        return false;
+    }
+    let em = run.size.abs();
+    let adv = run.face.advance(gid).abs() * k;
+    let adv = if adv.is_finite() { adv.min(em * 4.0) } else { em };
+    let area = at.transform_rect_bbox(Rect::new(-0.25 * em, -1.3 * em, adv + 0.25 * em, 0.5 * em));
+    let mut drawn = false;
+    canvas::rasterize(ctx, fb, area, &mut |v, pre| drawn = colr::paint(v, &run.face, gid, pre * at, k, run.color, alpha));
+    drawn
+}
+
 /// Render one shape alone onto a transparent canvas (drag previews, copy as picture).
 pub fn render_shape(pres: &Presentation, slide: &Slide, id: ShapeId, scale: f64) -> Option<Image> {
     let rctx = Ctx::for_slide(pres, slide)?;
@@ -2362,6 +2522,9 @@ mod tests;
 
 #[cfg(test)]
 mod tests_wild;
+
+#[cfg(test)]
+mod tests_vector;
 
 #[cfg(test)]
 mod mt_tests {

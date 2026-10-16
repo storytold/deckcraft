@@ -1,12 +1,12 @@
 //! Radar charts: one spoke per category, the value axis running up the first spoke, a polygon
 //! of gridlines per major unit and each series a closed polygon (filled for a filled radar).
 
+use crate::canvas::Canvas;
 use deckcraft_color::Rgba;
 use deckcraft_model::chart::{Chart, ChartType};
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::text::{Align, Anchor};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
-use vello_cpu::RenderContext;
 
 use crate::chart::{label, series_fill, series_line};
 use crate::color;
@@ -17,7 +17,7 @@ fn spoke(cen: Point, r: f64, i: usize, n: usize, frac: f64) -> Point {
     Point::new(cen.x + r * frac * a.cos(), cen.y + r * frac * a.sin())
 }
 
-pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {
+pub fn draw(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {
     let n = c.categories.len().max(c.series.iter().map(|s| s.values.len()).max().unwrap_or(0));
     if n < 3 {
         // Fewer than three spokes make no polygon; PowerPoint draws a line, we draw nothing.
@@ -145,7 +145,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
 /// A stock chart's marks at one category: the high-low line, then the up/down bar between the
 /// first (open) and last (close) series, else a dash at the close.
 #[allow(clippy::too_many_arguments)]
-pub fn stock_marks(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, x: f64, band: f64, i: usize, to_y: &dyn Fn(f64) -> f64) {
+pub fn stock_marks(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, x: f64, band: f64, i: usize, to_y: &dyn Fn(f64) -> f64) {
     let vals: Vec<f64> = c.series.iter().filter_map(|s| s.values.get(i).copied().flatten()).collect();
     if vals.len() < 2 {
         return;

@@ -7,7 +7,9 @@
 use deckcraft_geom::warp::{Warp, WarpLine};
 use deckcraft_text::{GlyphRun, TextLayout};
 use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _};
-use vello_cpu::{RenderContext, peniko};
+use vello_cpu::peniko;
+
+use crate::canvas::Canvas;
 
 use crate::{ParaState, color, glyph, scale_of, text_transform};
 
@@ -89,7 +91,7 @@ struct Item<'a> {
 }
 
 /// Draw `l` (laid out in text rect `tr`, shape transform `m`) through `warp`.
-pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)], warp: &Warp) {
+pub(crate) fn draw(ctx: &mut dyn Canvas, l: &TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)], warp: &Warp) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
     let n = l.lines.len();
@@ -133,7 +135,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
     let px = scale_of(m).max(1e-6) * mapper.zoom();
     let tol = (0.1 / px).clamp(1e-4, 2.0);
     let seg = (2.0 / px).clamp(1e-3, 50.0);
-    let deco = |ctx: &mut RenderContext, d: &deckcraft_text::Deco| {
+    let deco = |ctx: &mut dyn Canvas, d: &deckcraft_text::Deco| {
         let ps = para(d.para);
         if !ps.visible || ps.opacity <= 0.001 {
             return;

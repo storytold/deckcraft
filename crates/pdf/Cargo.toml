@@ -3,12 +3,13 @@ name = "deckcraft-pdf"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "DeckCraft PDF export (craft-pdf/Krilla): slides, notes pages and handouts with a selectable text layer, links and bookmarks"
+description = "DeckCraft PDF export (craft-pdf/Krilla): vector slides, notes pages and handouts with real text, links and bookmarks"
 
 [lints]
 workspace = true
 
 [dependencies]
+deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }
 deckcraft-fonts = { workspace = true }
 deckcraft-text = { workspace = true }

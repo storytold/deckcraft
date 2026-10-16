@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-15 · **Change:** minor (renderer canvas, vector PDF; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -56,8 +56,13 @@ textures stay straight; soft edges are per-corner opacities. The show renders th
 transition and only composites cached textures each frame; `render::composite_transition` is the
 CPU twin used by `deckcraft-cli render-transition` and the tests. The show window and the presenter view are egui viewports; animation state per shape
 comes from `anim::timeline` each frame. Animations ▸ Preview plays that same state on the editor
-canvas for the current slide, then draws the slide at rest. PDF export renders each slide at print resolution and
-overlays an invisible real-text layer with embedded font subsets.
+canvas for the current slide, then draws the slide at rest. The renderer draws through a small `Canvas` trait
+(`crates/render/src/canvas.rs`): `vello_cpu` for pixels, and a krilla canvas in `crates/pdf` that
+writes PDF paths, paints, pictures and real text. What the renderer only draws in pixels (shapes
+with blur-based effects or a fill overlay, pattern fills, rectangle and shape path gradients, text
+shadows and glows, colour emoji, WMF/EMF pictures) reaches a vector canvas as a pixmap of that
+element alone (`canvas::pixels`); `vector: false` keeps the older whole-slide raster with an
+invisible text layer.
 
 ## File I/O
 
@@ -93,6 +98,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 | 2026-10-14 | minor | Paragraph and Tabs dialogs; command registry 229; 29 dialogs |
 | 2026-10-14 | minor | Font dialog; command registry 227; 28 dialogs |
 | 2026-10-13 | minor | Transitions: perspective meshes, background/content parts, CPU compositor |
+| 2026-10-12 | minor | Renderer draws through a `Canvas` trait; the PDF export is a vector canvas |
 | 2026-10-10 | major | Created from the code on main (d556ff9) and AGENTS.md §4 |
 
 The PDF writer dependency enables only `write`. Krilla handles serialization and simple-text

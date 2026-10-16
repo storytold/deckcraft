@@ -6,11 +6,11 @@
 //! rig and material, and the sides are drawn farthest first. Without a turned camera an extrusion
 //! points at the viewer and nothing of it shows.
 
+use crate::canvas::Canvas;
 use deckcraft_color::{Rgba, SchemeSlot};
 use deckcraft_model::ColorRef;
 use deckcraft_model::resolve::Ctx;
 use kurbo::{Affine, BezPath, Vec2};
-use vello_cpu::RenderContext;
 
 use crate::camera::{self, Camera};
 use crate::light::Lighting;
@@ -86,7 +86,7 @@ pub fn contour_from_raw(raw: &str) -> Option<Contour> {
 }
 
 /// Draw `c` around `outline` (shape space, mapped by `m`), lit as a surface facing the viewer.
-pub fn draw_contour(ctx: &mut RenderContext, outline: &BezPath, m: Affine, width: f64, color: Rgba, lit: &Lighting) {
+pub fn draw_contour(ctx: &mut dyn Canvas, outline: &BezPath, m: Affine, width: f64, color: Rgba, lit: &Lighting) {
     ctx.set_transform(m);
     ctx.set_paint(crate::color(lit.shade(color, [0.0, 0.0, 1.0]), 1.0));
     ctx.set_stroke(kurbo::Stroke::new(2.0 * width).with_join(kurbo::Join::Round));
@@ -110,7 +110,7 @@ pub fn side_color(rctx: &Ctx, e: &Extrusion, face: Option<Rgba>) -> Rgba {
 /// `pre` maps the turned shape's space to the output and `turn` is the camera's turn.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
-    ctx: &mut RenderContext,
+    ctx: &mut dyn Canvas,
     outline: &BezPath,
     w: f64,
     h: f64,
