@@ -24,7 +24,7 @@ jobs:
     with:
       app-name: deckcraft
       app-title: DeckCraft
-      craft-fonts-ref: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
+      craft-fonts-ref: 1f9887d8e7ad80f7165a87d85ee712d076abf55f
       version: ${{ inputs.version }}
     secrets:
       APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

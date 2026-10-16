@@ -310,7 +310,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             ctx.set_paint(color(Rgba::WHITE, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(1.0));
             ctx.stroke_path(&p);
-            if c.data_labels {
+            if s.data_labels.unwrap_or(c.data_labels) {
                 let mid = a0 + sweep / 2.0;
                 let lp = Point::new(cen.x + r * 0.65 * mid.cos(), cen.y + r * 0.65 * mid.sin());
                 label(
@@ -656,7 +656,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                         err_marks.push((mid, p0, p1, bar.min(base * 0.8) * 0.5, e.end_cap));
                     }
                 }
-                if c.data_labels {
+                if s.data_labels.unwrap_or(c.data_labels) {
                     let t = c.data_label(s, s.values.get(i).copied().flatten().unwrap_or(0.0));
                     let lr = if horiz {
                         Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1)
@@ -697,8 +697,10 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         let area_kind = matches!(kind, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let mut pts = vec![];
+        let mut point_labels = vec![];
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
+            let value = v;
             let v = if stacked {
                 let base_v = acc.get(i).copied().unwrap_or(0.0);
                 if let Some(a) = acc.get_mut(i) {
@@ -722,7 +724,11 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| e.range(&s.values, i, v)) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
-            pts.push(Point::new(x, to_axis(sec, v)));
+            let point = Point::new(x, to_axis(sec, v));
+            pts.push(point);
+            if s.data_labels.unwrap_or(c.data_labels) {
+                point_labels.push((point, value));
+            }
         }
         if pts.is_empty() {
             continue;
@@ -749,6 +755,20 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             for q in &pts {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
             }
+        }
+        for (point, value) in point_labels {
+            label(
+                ctx,
+                rctx,
+                m,
+                &c.data_label(s, value),
+                Rect::new(point.x - 30.0, point.y - base * 1.5 - 2.0, point.x + 30.0, point.y - 2.0),
+                base * 0.9,
+                Align::Center,
+                Anchor::Bottom,
+                text_col,
+                false,
+            );
         }
     }
     // A category position (0-based, fractional) as a slot, the way `slot` places the bars.
@@ -1053,6 +1073,45 @@ mod tests {
     use super::*;
 
     const AREA: Rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+
+    fn labeled_chart_pixels(kind: ChartType, chart_labels: bool, series_labels: Option<bool>) -> Vec<u8> {
+        let mut chart = Chart::sample(kind);
+        chart.series.truncate(1);
+        chart.title = None;
+        chart.legend = None;
+        chart.data_labels = chart_labels;
+        chart.series[0].data_labels = series_labels;
+        let mut pres = deckcraft_model::Presentation::default();
+        std::sync::Arc::make_mut(&mut pres.slides[0]).shapes = vec![Shape {
+            id: deckcraft_model::ShapeId(800),
+            xfrm: Some(deckcraft_model::Xfrm::new(20.0, 20.0, 400.0, 300.0)),
+            kind: deckcraft_model::ShapeKind::Chart(Box::new(chart)),
+            ..Default::default()
+        }];
+        crate::render_slide(&pres, 0, &crate::RenderOpts { scale: 1.0, ..Default::default() }).pixels
+    }
+
+    #[test]
+    fn series_data_labels_override_chart_visibility() {
+        for kind in [ChartType::Column, ChartType::Bar, ChartType::Pie, ChartType::Doughnut] {
+            let hidden = labeled_chart_pixels(kind, false, None);
+            let shown = labeled_chart_pixels(kind, true, None);
+            assert!(hidden != shown, "labels must draw for {kind:?}");
+            assert!(labeled_chart_pixels(kind, false, Some(true)) == shown, "series enables {kind:?} labels");
+            assert!(labeled_chart_pixels(kind, true, Some(false)) == hidden, "series disables {kind:?} labels");
+        }
+    }
+
+    #[test]
+    fn line_area_scatter_and_bubble_draw_data_labels() {
+        for kind in [ChartType::Line, ChartType::Area, ChartType::Scatter, ChartType::Bubble] {
+            let hidden = labeled_chart_pixels(kind, false, None);
+            let shown = labeled_chart_pixels(kind, true, None);
+            assert!(hidden != shown, "labels must draw for {kind:?}");
+            assert!(labeled_chart_pixels(kind, false, Some(true)) == shown, "series enables {kind:?} labels");
+            assert!(labeled_chart_pixels(kind, true, Some(false)) == hidden, "series disables {kind:?} labels");
+        }
+    }
 
     #[test]
     fn scatter_x_is_a_value_scale_over_all_series() {
