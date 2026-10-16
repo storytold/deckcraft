@@ -2038,6 +2038,40 @@ fn east_asian_vertical_text_stands_ideographs_upright() {
 }
 
 #[test]
+fn kumimoji_stands_digits_upright_in_east_asian_vertical_text() {
+    // "1" is tall and narrow. In eaVert text it lies on its side (wide and short) unless the run
+    // sets `a:rPr/@kumimoji` (組み文字), which stands it up. The two inks are each other's
+    // transpose: the same glyph, turned a quarter turn.
+    let ink = |kumimoji: Option<bool>| {
+        let mut sh = Shape { id: ShapeId(771), xfrm: Some(Xfrm::new(100.0, 50.0, 200.0, 400.0)), text_box: true, ..Default::default() };
+        let mut t = TextBody::from_text("1");
+        t.body.vert = Some(deckcraft_model::text::TextDir::EaVertical);
+        let props = &mut t.paragraphs[0].runs[0].props;
+        props.size = Some(80.0);
+        props.kumimoji = kumimoji;
+        props.fill = Some(deckcraft_model::style::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 0))));
+        sh.text = Some(t);
+        let p = deck_with(vec![sh]);
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+        for y in 0..540 {
+            for x in 0..960 {
+                if img.pixel(x, y)[0] < 128 {
+                    (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+                }
+            }
+        }
+        assert!(x1 >= x0 && y1 >= y0, "no ink for kumimoji {kumimoji:?}");
+        (x1 - x0, y1 - y0)
+    };
+    let (side_w, side_h) = ink(None);
+    assert!(side_w > side_h * 2, "eaVert without kumimoji: the digit lies on its side {side_w}x{side_h}");
+    let (up_w, up_h) = ink(Some(true));
+    assert!(up_h > up_w * 2, "eaVert with kumimoji: the digit stands upright {up_w}x{up_h}");
+    assert!(side_w.abs_diff(up_h) <= 2 && side_h.abs_diff(up_w) <= 2, "turned: {side_w}x{side_h} vs {up_w}x{up_h}");
+}
+
+#[test]
 fn placed_shapes_give_the_click_boxes_of_a_slide_in_drawing_order() {
     use deckcraft_model::text::{Action, Hyperlink};
     let link =

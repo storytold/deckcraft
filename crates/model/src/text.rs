@@ -379,6 +379,13 @@ pub struct RunProps {
     pub spacing: Option<f64>,
     /// Kern at and above this size (points); 0 = off.
     pub kern: Option<f64>,
+    /// `a:rPr/@kumimoji` (組み文字): numbers in vertical text stand upright (数字を縦書きの中で立てる)
+    /// instead of lying on their side. ISO/IEC 29500-1: "specifies whether the numbers contained
+    /// within vertical text continue vertically with the text or whether they are to be displayed
+    /// horizontally while the surrounding characters continue in a vertical fashion. If this
+    /// attribute is omitted, a value of 0, or false, is assumed." Only East Asian vertical text
+    /// (`a:bodyPr/@vert="eaVert"`) is affected.
+    pub kumimoji: Option<bool>,
     pub fill: Option<Fill>,
     pub outline: Option<Line>,
     pub highlight: Option<ColorRef>,
@@ -417,6 +424,7 @@ impl RunProps {
             caps,
             spacing,
             kern,
+            kumimoji,
             fill,
             outline,
             highlight,

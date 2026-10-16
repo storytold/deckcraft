@@ -850,6 +850,38 @@ fn line_break_options_round_trip() {
 }
 
 #[test]
+fn kumimoji_round_trips() {
+    // `a:rPr/@kumimoji`: 1, 0 and absent are all kept as they were.
+    let mut p = defaults::new_presentation(None);
+    let cases: [(&str, Option<bool>); 3] = [("Upright digits", Some(true)), ("Sideways digits", Some(false)), ("Unset digits", None)];
+    let mut shapes = vec![];
+    for (i, (name, kumimoji)) in cases.iter().enumerate() {
+        let mut s = shape(&mut p, name, 10.0, 10.0 + 40.0 * i as f64, 200.0, 36.0);
+        let mut body = TextBody::from_text("第1章");
+        body.body.vert = Some(deckcraft_model::text::TextDir::EaVertical);
+        if let Some(r) = body.paragraphs[0].runs.first_mut() {
+            r.props.kumimoji = *kumimoji;
+        }
+        s.text = Some(body);
+        shapes.push(s);
+    }
+    Arc::make_mut(&mut p.slides[0]).shapes = shapes;
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut zip.by_name("ppt/slides/slide1.xml").expect("slide"), &mut xml).expect("read");
+    assert!(xml.contains(r#"kumimoji="1""#), "{xml}");
+    assert!(xml.contains(r#"kumimoji="0""#), "{xml}");
+    assert_eq!(xml.matches("kumimoji=").count(), 2, "{xml}");
+    let q = round(&p);
+    for (name, kumimoji) in cases {
+        let body = by_name(&q.slides[0], name).text.as_ref().expect("text");
+        assert_eq!(body.body.vert, Some(deckcraft_model::text::TextDir::EaVertical), "{name}");
+        assert_eq!(body.paragraphs[0].runs[0].props.kumimoji, kumimoji, "{name}");
+    }
+}
+
+#[test]
 fn a_table_fill_round_trips() {
     let mut p = defaults::new_presentation(None);
     let mut t = Table::new(2, 2, 200.0, 40.0);
