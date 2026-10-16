@@ -1112,11 +1112,51 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
     }
     if let Some(t) = root.child("timing") {
         s.animations = timing::animations(imp, part, &ctx, t, &s.shapes);
+        for cue in timing::media_cues(&ctx, t) {
+            if cue.interactive {
+                continue;
+            }
+            let Some(sh) = deckcraft_model::find_shape_mut(&mut s.shapes, cue.shape) else { continue };
+            let narration = !cue.video && sh.name.eq_ignore_ascii_case("Narration");
+            if let deckcraft_model::ShapeKind::Media(clip) = &mut sh.kind {
+                clip.autoplay = true;
+                clip.volume = if cue.volume.is_finite() { cue.volume.clamp(0.0, 1.0) } else { 1.0 };
+                if narration {
+                    clip.narration = true;
+                }
+            }
+        }
     }
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
-        s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
+        s.laser = laser_trace(ext);
+        let kept: String = ext.elements().filter(|e| e.attr("uri") != Some(crate::LASER_EXT_URI)).map(|e| part.keep(e)).collect();
+        if !kept.trim().is_empty() {
+            s.raw_ext = Some(kept);
+        }
     }
     s
+}
+
+fn laser_trace(ext: &El) -> Option<deckcraft_model::LaserTrace> {
+    let e = ext.elements().find(|e| e.attr("uri") == Some(crate::LASER_EXT_URI))?;
+    let laser = e.child("laser")?;
+    let byte = |name: &str, default: u8| laser.u32(name).map(|v| v.min(255) as u8).unwrap_or(default);
+    let color = deckcraft_model::Rgba::rgb(byte("r", 255), byte("g", 0), byte("b", 0));
+    let mut points = Vec::new();
+    for pt in laser.children_named("pt").take(4096) {
+        let Some(x) = pt.f64("x") else { continue };
+        let Some(y) = pt.f64("y") else { continue };
+        if !x.is_finite() || !y.is_finite() || x.abs() > 1.0e7 || y.abs() > 1.0e7 {
+            continue;
+        }
+        let t_ms = pt.u32("t").unwrap_or(0).min(3_600_000);
+        points.push(deckcraft_model::LaserSample { x, y, t_ms });
+    }
+    if points.is_empty() {
+        return None;
+    }
+    points.sort_by_key(|p| p.t_ms);
+    Some(deckcraft_model::LaserTrace { color, points })
 }
 
 fn read_notes(imp: &mut Imp, part: &Part, root: &El) -> TextBody {
@@ -1207,6 +1247,15 @@ fn read_show(sp: &El, shows: &HashMap<String, String>) -> ShowSettings {
         && let deckcraft_model::ColorBase::Rgb { rgb } = c.base
     {
         s.pen_color = rgb;
+    }
+    if let Some(c) = sp
+        .child("extLst")
+        .and_then(|e| e.children_named("ext").find(|x| x.attr("uri") == Some(crate::LASER_CLR_URI)))
+        .and_then(|e| e.child("laserClr"))
+        .and_then(dml::color)
+        && let deckcraft_model::ColorBase::Rgb { rgb } = c.base
+    {
+        s.laser_color = rgb;
     }
     s
 }

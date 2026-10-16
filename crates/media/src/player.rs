@@ -31,6 +31,20 @@ pub trait AudioOut {
     }
 }
 
+/// A microphone. The host (cpal on desktop) fills a mono buffer the recording show drains per
+/// slide. Without one, Record Slide Show still keeps timings and ink.
+pub trait MicIn {
+    fn start(&mut self) -> Result<(), String>;
+    /// Mono samples captured since the last take, and their sample rate. `(0, empty)` when the
+    /// microphone is not running.
+    fn take(&mut self) -> (u32, Vec<f32>);
+    /// Samples waiting to be taken. The recording badge uses this to show the microphone is live.
+    fn captured(&self) -> usize {
+        0
+    }
+    fn stop(&mut self);
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayState {
     /// Waiting for the audio to decode.
