@@ -89,6 +89,12 @@ fn numbers(e: &El, budget: &mut usize) -> Vec<Option<f64>> {
     strings(e, budget).into_iter().map(|s| s.trim().parse::<f64>().ok().filter(|v| v.is_finite())).collect()
 }
 
+fn show_values(e: &El) -> Option<bool> {
+    let show = e.path(&["dLbls", "showVal"])?;
+    // CT_Boolean defaults val to true only when the attribute is omitted.
+    show.bool("val").or_else(|| show.attr("val").is_none().then_some(true))
+}
+
 /// Parse a chart part. Returns `None` for something that isn't a chart we can read.
 pub fn read_chart_xml(bytes: &[u8]) -> Option<Chart> {
     let doc = crate::xml::parse(bytes).ok()?;
@@ -213,8 +219,9 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         if let Some(v) = g.child_val("holeSize").and_then(|v| v.parse::<f64>().ok()) {
             c.hole_size = (v / 100.0).clamp(0.0, 0.9);
         }
-        if g.path(&["dLbls", "showVal"]).and_then(|v| v.bool("val")) == Some(true) {
-            c.data_labels = true;
+        let group_labels = show_values(g).unwrap_or(false);
+        if kinds.is_empty() {
+            c.data_labels = group_labels;
         }
         kinds.push(kind);
         let val_axis = group_val_axis(g);
@@ -230,9 +237,7 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
                 secondary_axis: secondary,
                 ..Default::default()
             };
-            if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).and_then(|v| v.bool("val")) {
-                ser.data_labels = Some(d);
-            }
+            ser.data_labels = show_values(s).or_else(|| (group_labels != c.data_labels).then_some(group_labels));
             for t in s.children_named("trendline").take(16) {
                 if let Some(t) = trendline(t) {
                     ser.trendlines.push(t);
@@ -515,6 +520,32 @@ fn text_size(e: Option<&El>) -> Option<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn data_label_boolean_defaults_and_series_overrides_are_read() {
+        for (group, series, chart_labels, series_labels) in [
+            ("<c:showVal/>", "", true, None),
+            ("", "<c:showVal/>", false, Some(true)),
+            ("<c:showVal val=\"1\"/>", "<c:showVal val=\"0\"/>", true, Some(false)),
+            ("<c:showVal val=\"0\"/>", "<c:showVal val=\"true\"/>", false, Some(true)),
+            ("", "", false, None),
+        ] {
+            let xml = format!(
+                r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:dLbls>{series}</c:dLbls><c:val><c:numLit><c:pt idx="0"><c:v>42</c:v></c:pt></c:numLit></c:val></c:ser><c:dLbls>{group}</c:dLbls></c:barChart></c:plotArea></c:chart></c:chartSpace>"#
+            );
+            let chart = read_chart_xml(xml.as_bytes()).unwrap();
+            assert_eq!(chart.data_labels, chart_labels, "group: {group}");
+            assert_eq!(chart.series[0].data_labels, series_labels, "series: {series}");
+        }
+    }
+
+    #[test]
+    fn combo_data_labels_stay_with_their_plot_group() {
+        let xml = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser/><c:dLbls><c:showVal val="1"/></c:dLbls></c:barChart><c:lineChart><c:ser/></c:lineChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let chart = read_chart_xml(xml).unwrap();
+        assert!(chart.series[0].data_labels.unwrap_or(chart.data_labels));
+        assert!(!chart.series[1].data_labels.unwrap_or(chart.data_labels));
+    }
 
     #[test]
     fn sparse_caches_share_one_chart_wide_budget() {

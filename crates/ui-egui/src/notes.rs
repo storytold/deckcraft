@@ -261,6 +261,42 @@ mod tests {
     }
 
     #[test]
+    fn korean_notes_round_trip_and_draw_without_installed_fonts() {
+        let text = "한국어 발표자 노트입니다\n한글과 UTF-8 문자를 보존합니다";
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.notes", &serde_json::json!({"text": text})).unwrap();
+        let bytes = deckcraft_engine::cmd::file::save_bytes(&session.doc().unwrap().doc, "pptx").unwrap();
+        let imported = deckcraft_engine::cmd::file::open_presentation("korean-notes.pptx", &bytes).unwrap();
+        assert_eq!(imported.slides[0].notes_text(), text, "PPTX preserves Korean UTF-8 notes");
+
+        if deckcraft_fonts::CRAFT_FONTS.is_empty() {
+            return;
+        }
+        let db = deckcraft_fonts::FontDb::with_font_dirs(vec![]);
+        db.set_system_fallback(false);
+        let faces = crate::uifonts::faces_for_text(text, &[], &mut std::collections::HashSet::new(), |_| false, |c| db.fallback_for(c, u32::MAX));
+        for c in text.chars().filter(|c| !c.is_ascii() && !c.is_whitespace()) {
+            assert!(faces.iter().any(|f| f.covers(c)), "embedded fonts lack {c:?}");
+        }
+        let ctx = egui::Context::default();
+        theme::install_fonts_with(&ctx, &faces);
+        let glyphs: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let mut laid = None;
+        let mut output = ctx.run_ui(Default::default(), |ui| {
+            for font in [theme::font(12.0), theme::bold(12.0)] {
+                assert!(ui.fonts_mut(|f| f.has_glyphs(&font, &glyphs)), "notes require real Korean glyphs");
+            }
+            laid = Some(galley(ui, &imported.slides[0].notes, 12.0, Color32::BLACK, 300.0));
+        });
+        output.textures_delta.clear();
+        let laid = laid.unwrap();
+        assert_eq!(laid.job.text, text);
+        assert!(
+            laid.rows.iter().flat_map(|r| &r.glyphs).filter(|g| !g.chr.is_whitespace()).all(|g| g.uv_rect.size.x > 0.0 && g.uv_rect.size.y > 0.0)
+        );
+    }
+
+    #[test]
     fn bullets_follow_the_paragraphs() {
         let b = bullets(&notes());
         assert_eq!(b, vec![None, None, Some("▪".into()), Some("▪".into()), Some("1.".into()), Some("2.".into()), None, None]);

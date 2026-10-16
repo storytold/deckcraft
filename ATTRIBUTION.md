@@ -60,7 +60,11 @@ families excluded by `crates/fonts/build.rs`:
 | Montserrat, Lato, Open Sans, Roboto, Merriweather, Playfair Display, Poppins, Nunito Sans | OFL-1.1 | Theme fonts |
 | BIZ UDPGothic, BIZ UDMincho, Shippori Mincho, Noto Sans Arabic | OFL-1.1 | Japanese and Arabic text |
 
-Web (wasm32) builds embed only Inter Regular/Bold and BIZ UDPGothic Regular.
+Web (wasm32) builds embed only Inter Regular/Bold, BIZ UDPGothic Regular and NanumGothic Regular.
+NanumGothic is designed by Sandoll Communications for NHN Corporation (2010), OFL-1.1;
+its source, licence and checksum are recorded in the pinned craft-fonts manifest.
+The font revision combines the existing Latin and Korean proposals (craft-fonts PRs #8 and #30);
+no font files are copied into DeckCraft.
 
 ## PDF writer colour profiles
 

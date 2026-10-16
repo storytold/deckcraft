@@ -14,8 +14,8 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # Same craft-fonts commit as release.yml (Latin presentation fonts).
-  CRAFT_FONTS_REF: 43913056ce82a3fdad0ef69f6b88d1dc922a8104
+  # Same verified merge of craft-fonts PRs #8 and #30 as release.yml (Latin + Korean).
+  CRAFT_FONTS_REF: 1f9887d8e7ad80f7165a87d85ee712d076abf55f
 
 jobs:
   gates:
