@@ -14,6 +14,8 @@
 //! - `ui.resize {width, height}`, `ui.focus`
 //! - `show.start {from?}`, `show.key {key}`, `show.end`
 //! - `app.open {path}` / `app.save {path?}` / `app.export {path, …}` / `app.quit`
+//! - `agent.listen` / `agent.reply` (Ask Agent) are answered by the host's control server on the
+//!   connection's own thread, from [`crate::AgentHub`]; they never come here.
 
 use std::sync::mpsc::Sender;
 
@@ -28,6 +30,8 @@ pub struct ControlRequest {
     pub method: String,
     pub params: Value,
     pub reply: Sender<ControlResponse>,
+    /// Stamped by the authenticated host, never read from client JSON.
+    pub agent_connection: Option<u64>,
     /// Who has the request: [`PENDING`], [`TAKEN`] (the app runs it) or [`ABANDONED`] (the
     /// sender gave up on it, so the app must not run it late: issue #719).
     pub state: std::sync::Arc<std::sync::atomic::AtomicU8>,
@@ -43,7 +47,7 @@ pub const ABANDONED: u8 = 2;
 impl ControlRequest {
     pub fn new(method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<ControlResponse>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        (Self { method: method.into(), params, reply: tx, state: Default::default() }, rx)
+        (Self { method: method.into(), params, reply: tx, state: Default::default(), agent_connection: None }, rx)
     }
 
     /// Claim the request for running; false when its sender already gave up on it.
@@ -109,6 +113,7 @@ pub fn inspect(app: &SlideApp, ctx: &egui::Context) -> Value {
         "documents": app.session.documents().iter().map(|d| json!({"title": d.title(), "dirty": d.is_dirty(), "path": d.path})).collect::<Vec<_>>(),
         "status": app.status.as_ref().map(|s| s.0.clone()),
         "perf": {"frameMs": app.perf.frame_ms, "renderMs": app.perf.render_ms, "fps": app.perf.fps},
+        "askAgent": app.ask_agent.inspect(),
     })
 }
 
@@ -139,7 +144,18 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "engine.execute" | "ui.menu.invoke" | "command" => {
             let Some(id) = s("command").or(s("id")) else { return err("missing `command`") };
             let params = p.get("params").cloned().filter(|v| !v.is_null()).unwrap_or(json!({}));
-            wrap(app.run(id, params))
+            if let Some(request) = p.get("request") {
+                let Some(request) = request.as_u64() else { return err("request must be an Ask Agent id") };
+                if let Some(conn) = req.agent_connection
+                    && let Some(hub) = &app.ask_agent.hub
+                    && let Err(e) = hub.may_edit(conn, Some(request))
+                {
+                    return err(&e.message);
+                }
+                wrap(crate::ask_agent::run_for(app, request, id, params))
+            } else {
+                wrap(app.run(id, params))
+            }
         }
         "engine.commands" => ok(all_commands(app)),
         "document.inspect" => wrap(app.run("document.inspect", json!({}))),

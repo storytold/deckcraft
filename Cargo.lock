@@ -897,6 +897,7 @@ dependencies = [
  "arboard",
  "cpal",
  "deckcraft-engine",
+ "deckcraft-mcp",
  "deckcraft-media",
  "deckcraft-ui-egui",
  "eframe",
@@ -1042,6 +1043,7 @@ version = "0.7.0"
 dependencies = [
  "deckcraft-engine",
  "deckcraft-render",
+ "getrandom 0.3.4",
  "log",
  "serde_json",
 ]

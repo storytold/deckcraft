@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (AI features: Ask Agent, bring your own agent over MCP, noted; previously major: community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -349,12 +349,16 @@ Detail in [localization-parity.md](localization-parity.md).
 
 - **No Designer, Copilot, Speaker Coach, live subtitles or Translate.** All are Microsoft cloud
   services; an offline rule-based Designer is in the catalogue (P2). Local models (speech-to-text
-  for subtitles, translation) need an owner decision on licensed models. 20–40 h.
+  for subtitles, translation) need an owner decision on licensed models. 20–40 h. Ask Agent hands
+  a selection and an instruction to an agent the person already runs (over MCP), which edits the
+  presentation; Keep, Undo and follow-ups stay in the window, with no model or key in DeckCraft
+  ([control-protocol.md](control-protocol.md#ask-agent)).
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-13 | minor | AI features: Ask Agent (bring your own agent over MCP) noted |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |
