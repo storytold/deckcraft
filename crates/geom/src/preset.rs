@@ -1805,7 +1805,10 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             let l = Pb::new().m(0.0, 0.0).c(x / 2.0, 0.0, x, h / 4.0, x, h / 2.0).c(x, h * 0.75, (x + w) / 2.0, h, w, h).take();
             Geometry { paths: vec![stroke_only(l)], text_rect: full, handles: vec![], sites: vec![Point::ZERO, Point::new(w, h)] }
         }
-        _ => return extra::build(name, w, h, &a),
+        _ => {
+            let name = extra::Name::from_str(name)?;
+            return Some(extra::build(name, w, h, &a));
+        }
     };
     Some(g)
 }
