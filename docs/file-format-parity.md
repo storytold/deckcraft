@@ -21,7 +21,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | `.ppsx` slide show | Editor | yes (as a presentation) | no: written as `.pptx` content | Doesn't start in show mode | none |
 | `.pptm` / `.potm` / `.ppsm` macro-enabled | Editor | no | no | Should open and keep `vbaProject.bin` without running it | none |
 | `.ppt` / `.pot` / `.pps` 97–2003 binary | Editor | no | no | Owner decision; import only would be enough | none |
-| `.odp` OpenDocument | Editor | no | no | | none |
+| `.odp` OpenDocument | Editor | partial: shapes, text, pictures, tables, master pages as layouts, backgrounds, rotation, notes (no charts, gradients, animations) | no | Opened through `file.open`; Save writes `.pptx` | `crates/pptx/tests/odp.rs` |
 | `.thmx` Office theme | Viewer | no | no | Browse for themes is a P2 row | none |
 | `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible | `crates/format` tests |
 | PDF | export | no | yes | Slides, notes pages, handouts (1–9); real-text layer with embedded subsets, links, bookmarks. Slide artwork is a raster image at print resolution, not vector | `crates/pdf` tests |
