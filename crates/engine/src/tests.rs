@@ -3592,3 +3592,39 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+/// #786: format.font accepts optional eastAsia and complexScript faces, and a Latin-only call
+/// leaves the existing script faces untouched.
+#[test]
+fn format_font_east_asian_and_complex_script() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let id =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [50.0, 50.0, 200.0, 60.0], "text": "CJK test"})).unwrap()["id"].as_u64().unwrap();
+    let shape_id = deckcraft_model::ShapeId(id as u32);
+    s.execute("text.edit", &json!({"id": shape_id})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    // Explicit ea/cs: all three faces are set.
+    s.execute("format.font", &json!({"family": "Noto Sans CJK SC", "eastAsia": "Noto Sans CJK SC", "complexScript": "Noto Sans CJK SC"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0];
+    assert_eq!(run.props.font.as_deref(), Some("Noto Sans CJK SC"));
+    assert_eq!(run.props.font_ea.as_deref(), Some("Noto Sans CJK SC"));
+    assert_eq!(run.props.font_cs.as_deref(), Some("Noto Sans CJK SC"));
+    // Latin-only: the existing ea/cs faces are kept.
+    s.execute("format.font", &json!({"family": "Arial"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0];
+    assert_eq!(run.props.font.as_deref(), Some("Arial"));
+    assert_eq!(run.props.font_ea.as_deref(), Some("Noto Sans CJK SC"), "ea kept");
+    assert_eq!(run.props.font_cs.as_deref(), Some("Noto Sans CJK SC"), "cs kept");
+    // Selectively setting one script face: the other is untouched.
+    s.execute("format.font", &json!({"family": "Arial", "eastAsia": "Yu Gothic"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0];
+    assert_eq!(run.props.font_ea.as_deref(), Some("Yu Gothic"));
+    assert_eq!(run.props.font_cs.as_deref(), Some("Noto Sans CJK SC"), "cs untouched");
+}
