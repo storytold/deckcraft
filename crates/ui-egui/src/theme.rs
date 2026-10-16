@@ -41,6 +41,12 @@ pub struct Tokens {
     pub caret: Color32,
     pub text_selection: Color32,
     pub field_bg: Color32,
+    /// Unchecked checkbox and radio boxes and slider rails, drawn without an outline, so they
+    /// must stand apart from the card and the chrome.
+    pub control: Color32,
+    /// [`Tokens::control`] under the pointer and pressed: a step darker each in light mode.
+    pub control_hover: Color32,
+    pub control_pressed: Color32,
     pub shadow: Color32,
 }
 
@@ -70,6 +76,9 @@ impl Tokens {
             caret: Color32::BLACK,
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
             field_bg: Color32::WHITE,
+            control: Color32::from_rgb(0xD6, 0xD6, 0xD6),
+            control_hover: Color32::from_rgb(0xC8, 0xC8, 0xC8),
+            control_pressed: Color32::from_rgb(0xBC, 0xBC, 0xBC),
             shadow: Color32::from_black_alpha(28),
         }
     }
@@ -98,6 +107,9 @@ impl Tokens {
             caret: Color32::BLACK,
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
             field_bg: Color32::from_rgb(0x2A, 0x2A, 0x2A),
+            control: Color32::from_rgb(0x2A, 0x2A, 0x2A),
+            control_hover: Color32::from_rgb(0x40, 0x40, 0x40),
+            control_pressed: Color32::from_rgb(0x4C, 0x4C, 0x4C),
             shadow: Color32::from_black_alpha(90),
         }
     }
@@ -131,13 +143,13 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
     }
     v.widgets.noninteractive.bg_stroke = Stroke::new(1.0, t.separator);
     v.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
-    v.widgets.inactive.bg_fill = t.field_bg;
+    v.widgets.inactive.bg_fill = t.control;
     v.widgets.inactive.bg_stroke = Stroke::NONE;
     v.widgets.hovered.weak_bg_fill = t.hover;
-    v.widgets.hovered.bg_fill = t.hover;
+    v.widgets.hovered.bg_fill = t.control_hover;
     v.widgets.hovered.bg_stroke = Stroke::NONE;
     v.widgets.active.weak_bg_fill = t.pressed;
-    v.widgets.active.bg_fill = t.pressed;
+    v.widgets.active.bg_fill = t.control_pressed;
     v.widgets.open.weak_bg_fill = t.pressed;
     v.window_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 18, spread: 0, color: t.shadow };
     v.popup_shadow = egui::epaint::Shadow { offset: [0, 3], blur: 12, spread: 0, color: t.shadow };
@@ -255,6 +267,24 @@ mod tests {
         let mut o = ctx.run_ui(Default::default(), |_| {});
         o.textures_delta.clear();
         out
+    }
+
+    #[test]
+    fn light_checkboxes_and_slider_rails_stand_out_from_their_background() {
+        // An unchecked checkbox and a slider rail are filled with the inactive widget fill and
+        // have no outline, so in light mode they vanished into the white dialog (#766).
+        let ctx = egui::Context::default();
+        super::apply(&ctx, &super::Tokens::light());
+        let v = ctx.global_style().visuals.clone();
+        assert_eq!(v.widgets.inactive.bg_stroke, egui::Stroke::NONE, "the test assumes no outline");
+        let fill = v.widgets.inactive.bg_fill;
+        for (name, bg) in [("dialog", v.window_fill), ("panel", v.panel_fill)] {
+            let diff = [fill.r().abs_diff(bg.r()), fill.g().abs_diff(bg.g()), fill.b().abs_diff(bg.b())];
+            assert!(diff.iter().all(|d| *d >= 24), "control fill {fill:?} is too close to the {name} background {bg:?}");
+        }
+        // Hovering and pressing darken the control a step each, as they do buttons.
+        let (hovered, active) = (v.widgets.hovered.bg_fill, v.widgets.active.bg_fill);
+        assert!(fill.r() > hovered.r() && hovered.r() > active.r(), "idle {fill:?}, hovered {hovered:?}, active {active:?} don't darken in turn");
     }
 
     #[test]
