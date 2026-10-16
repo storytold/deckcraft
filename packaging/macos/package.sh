@@ -111,6 +111,10 @@ sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
 plutil -lint "$APP/Contents/Info.plist"
 printf 'APPL????' >"$APP/Contents/PkgInfo"
 
+# Drop extended attributes picked up during the build (quarantine, FinderInfo) before signing:
+# `codesign --verify --strict` rejects them, and nothing after signing may touch the bundle.
+xattr -cr "$APP"
+
 # Sign inside-out: nested code first, then the bundle itself (no --deep on the final signature).
 # Today the only nested code is the main executable; frameworks/helpers would be signed here too.
 sign --options runtime --entitlements "$HERE/entitlements.plist" "$APP/Contents/MacOS/DeckCraft"
@@ -135,15 +139,52 @@ ln -s /Applications "$STAGE/Applications"
 mkdir -p "$STAGE/.background"
 cp "$HERE/dmg/background.tiff" "$STAGE/.background/background.tiff"
 cp "$HERE/dmg/dmg-layout.DS_Store" "$STAGE/.DS_Store"
-rm -f "$DMG" "$WORK/raw.dmg"
-# makehybrid + convert builds the image without attaching a device, unlike `create -srcfolder`,
-# which is flaky on CI runners ("Resource busy") and hangs in sandboxed sessions.
-# The volume name has no version: .DS_Store finds the background through an alias that includes it.
-hdiutil makehybrid -hfs -hfs-volume-name "DeckCraft" -hfs-openfolder "$STAGE" -o "$WORK/raw.dmg" "$STAGE"
-hdiutil convert "$WORK/raw.dmg" -format UDZO -imagekey zlib-level=9 -o "$DMG"
-rm -f "$WORK/raw.dmg"
+rm -f "$DMG"
+# `hdiutil create -srcfolder` writes the files as they are. `makehybrid -hfs` gave every file a
+# com.apple.FinderInfo, which `codesign --verify --strict` rejects as "Finder information, or
+# similar detritus" on the app in the image and on a copy installed from it (#50). `create`
+# attaches a device while it copies, which fails now and then on CI runners ("Resource busy"), so
+# it gets a few tries. The volume name has no version: .DS_Store finds the background through an
+# alias that includes it.
+# Usage: hdiutil_retry <what> <hdiutil args…>; tries five times with growing pauses.
+hdiutil_retry() {
+  local what="$1" attempt
+  shift
+  for attempt in 1 2 3 4 5; do
+    if hdiutil "$@"; then
+      return 0
+    fi
+    [ "$attempt" = 5 ] && { echo "hdiutil $what failed 5 times" >&2; return 1; }
+    warn "hdiutil $what failed (attempt $attempt of 5); retrying in $((attempt * 10))s"
+    sleep $((attempt * 10))
+  done
+}
+hdiutil_retry create create -srcfolder "$STAGE" -volname "DeckCraft" -fs HFS+ -format UDZO -imagekey zlib-level=9 -ov "$DMG"
 sign "$DMG"
 codesign --verify --strict --verbose=2 "$DMG"
+# The app users get must still pass --strict: inside the finished image and after a ditto copy out
+# of it, so a valid container signature can't hide a damaged app (or a makehybrid-style regression).
+MOUNT="$WORK/dmg-check"
+COPY="$WORK/dmg-copy"
+rm -rf "$MOUNT" "$COPY"
+mkdir -p "$MOUNT" "$COPY"
+hdiutil_retry attach attach -nobrowse -readonly -noautoopen -mountpoint "$MOUNT" "$DMG" >/dev/null
+dmg_ok=1
+codesign --verify --strict --deep --verbose=2 "$MOUNT/DeckCraft.app" || dmg_ok=0
+if [ "$dmg_ok" = 1 ]; then
+  { ditto "$MOUNT/DeckCraft.app" "$COPY/DeckCraft.app" &&
+    codesign --verify --strict --deep --verbose=2 "$COPY/DeckCraft.app"; } || dmg_ok=0
+fi
+if [ "$dmg_ok" = 1 ] && [ "$NOTARIZE" = 1 ]; then
+  spctl --assess --type execute -vvv "$COPY/DeckCraft.app" || dmg_ok=0
+fi
+[ "$dmg_ok" = 1 ] || xattr -lr "$MOUNT/DeckCraft.app" >&2 || true
+hdiutil_retry detach detach "$MOUNT" >/dev/null || dmg_ok=0
+rm -rf "$COPY"
+if [ "$dmg_ok" != 1 ]; then
+  echo "error: DeckCraft.app in $(basename "$DMG") fails strict verification" >&2
+  exit 1
+fi
 if [ "$NOTARIZE" = 1 ]; then
   notarize "$DMG"
   xcrun stapler staple "$DMG"
