@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-16 · **Change:** trivial (PPTX paragraph builds edited in PowerPoint keep their clicks, #844; previous: minor, community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -66,7 +66,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 | Start On Click / With Previous / After Previous, duration, delay | yes | yes |
 | Effect Options (direction, sequence by paragraph) | yes | yes |
 | Effect dialog: sound, after-animation dim/hide, animate text by word/letter, smooth start/end, bounce end, repeat, rewind | yes | partly; repeat and bounce end round-trip; rewind lost on PPTX save (#77) |
-| By-paragraph text builds, sub-bullets follow parents | yes | yes |
+| By-paragraph text builds, sub-bullets follow parents | yes | yes; builds edited in PowerPoint (own start per paragraph, other effects in between, by 2nd-level paragraphs) import as one effect per paragraph and keep their clicks (#844) |
 | Triggers (on click of a shape) | yes | yes; played in the show: a step per click, the sequence starts over after its last step, a click completes a playing step |
 | Triggers on a media bookmark | yes | no |
 | Animation Painter | yes | yes (#54) |
@@ -94,6 +94,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | trivial | PPTX paragraph builds edited in PowerPoint keep their clicks; sub-points save With Previous of their parent (#844) |
 | 2026-10-14 | trivial | Community PR wave folded: the Animation Pane timeline row says yes (it landed), preview split into canvas (yes) and from the selected effect (no); estimates drop the timeline and transition sounds (~15–27 h) |
 | 2026-10-14 | trivial | Repeat and bounce end round-trip through PPTX; rewind is still lost (#77) |
 | 2026-10-13 | minor | Animations ▸ Preview and Animation Pane ▸ Play All play the current slide's animations on the editor canvas; preview from the selected effect is still open |

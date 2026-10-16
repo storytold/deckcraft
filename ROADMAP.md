@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-16 | PPTX import: a paragraph build edited in PowerPoint (paragraphs with their own start, other shapes' effects in between, builds by 2nd-level paragraphs) takes PowerPoint's clicks in the show; it used to be rebuilt as one build, 34 clicks instead of 10 on the reporter's slide. Paragraph builds with sub-points save as PowerPoint writes them (#844) |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
@@ -227,6 +228,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | trivial | Progress log: PPTX paragraph builds edited in PowerPoint keep their clicks (#844) |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |

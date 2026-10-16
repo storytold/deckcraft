@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use deckcraft_model::anim::TextBuild;
+use deckcraft_model::anim::{BuildRole, TextBuild, paragraph_build_roles};
 use deckcraft_model::style::Fill;
 use deckcraft_model::{AnimClass, AnimStart, Animation, ColorScheme, Rgba, SchemeSlot, ShapeId, Slide, Xfrm};
 
@@ -12,7 +12,6 @@ use crate::effects::{EffectSpec, exit_base, motion_path};
 /// Delay between paragraphs of a by-paragraph build that isn't on click (seconds).
 pub const PARAGRAPH_STAGGER: f64 = 0.5;
 const MAX_EFFECTS: usize = 100_000;
-const MAX_PARAGRAPHS: usize = 1_000;
 const MAX_ITERATIONS: f64 = 1.0e6;
 
 /// Which sequence an effect belongs to.
@@ -198,17 +197,15 @@ impl Timeline {
                     (None, TextBuild::ByParagraph) => {
                         let mut v: Vec<Option<usize>> = vec![];
                         if let Some(t) = shape.and_then(|s| s.text.as_ref()) {
-                            let filled = |p: &deckcraft_model::text::Paragraph| p.runs.iter().any(|r| !r.text.trim().is_empty());
-                            let top = t.paragraphs.iter().filter(|p| filled(p)).map(|p| p.level).min().unwrap_or(0);
-                            let mut owner: Option<usize> = None;
-                            for (i, p) in t.paragraphs.iter().enumerate() {
-                                if p.level <= top && filled(p) && v.len() < MAX_PARAGRAPHS {
-                                    owner = Some(i);
-                                    v.push(Some(i));
-                                } else if let Some(o) = owner
-                                    && grouped.insert((a.shape, i, o))
-                                {
-                                    tl.groups.push((a.shape, i, o));
+                            for (i, role) in paragraph_build_roles(t).into_iter().enumerate() {
+                                match role {
+                                    BuildRole::Top => v.push(Some(i)),
+                                    BuildRole::Member(o) => {
+                                        if grouped.insert((a.shape, i, o)) {
+                                            tl.groups.push((a.shape, i, o));
+                                        }
+                                    }
+                                    BuildRole::Unowned => {}
                                 }
                             }
                         }
