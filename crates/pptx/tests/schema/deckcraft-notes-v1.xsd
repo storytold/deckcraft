@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Contributor-original bounded flat typed-value ledger. Rust additionally checks
+     contiguous forward ids, single ownership, decoded depth and closed domain fields. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns:dc="urn:deckcraft:pptx:notes:1"
+ targetNamespace="urn:deckcraft:pptx:notes:1" elementFormDefault="qualified" attributeFormDefault="unqualified">
+ <xs:complexType name="graph">
+  <xs:sequence><xs:element name="node" minOccurs="1" maxOccurs="unbounded">
+   <xs:complexType mixed="true">
+    <xs:choice minOccurs="0" maxOccurs="unbounded">
+     <xs:element name="member"><xs:complexType><xs:attribute name="name" type="xs:string" use="required"/><xs:attribute name="ref" type="xs:unsignedInt" use="required"/></xs:complexType></xs:element>
+     <xs:element name="item"><xs:complexType><xs:attribute name="ref" type="xs:unsignedInt" use="required"/></xs:complexType></xs:element>
+    </xs:choice>
+    <xs:attribute name="id" type="xs:unsignedInt" use="required"/>
+    <xs:attribute name="kind" use="required"><xs:simpleType><xs:restriction base="xs:string"><xs:enumeration value="null"/><xs:enumeration value="boolean"/><xs:enumeration value="number"/><xs:enumeration value="string"/><xs:enumeration value="array"/><xs:enumeration value="object"/></xs:restriction></xs:simpleType></xs:attribute>
+   </xs:complexType>
+  </xs:element></xs:sequence>
+  <xs:attribute name="root" type="xs:unsignedInt" use="required" fixed="0"/>
+ </xs:complexType>
+ <xs:element name="notes"><xs:complexType>
+  <xs:sequence><xs:element name="graph" type="dc:graph"/></xs:sequence>
+  <xs:attribute name="profile" type="xs:string" use="required" fixed="1"/>
+  <xs:attribute name="record" use="required"><xs:simpleType><xs:restriction base="xs:string"><xs:enumeration value="master"/><xs:enumeration value="page"/><xs:enumeration value="handout-layouts"/></xs:restriction></xs:simpleType></xs:attribute>
+ </xs:complexType></xs:element>
+</xs:schema>

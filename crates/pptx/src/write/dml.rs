@@ -389,6 +389,19 @@ pub fn xfrm(w: &mut W, tag: &str, x: &Xfrm, child: Option<&Xfrm>) {
 // Text
 
 pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) {
+    if h.sound_name.is_some() && h.sound.is_none() {
+        x.error.get_or_insert_with(|| crate::PptxError::Unsupported("hyperlink sound label has no sound resource".into()));
+        return;
+    }
+    if h.sound_name.as_ref().is_some_and(|name| {
+        name.len() > 4096
+            || name
+                .chars()
+                .any(|ch| !matches!(ch, '\u{9}' | '\u{a}' | '\u{d}' | '\u{20}'..='\u{d7ff}' | '\u{e000}'..='\u{fffd}' | '\u{10000}'..='\u{10ffff}'))
+    }) {
+        x.error.get_or_insert_with(|| crate::PptxError::Unsupported("hyperlink sound label exceeds the bounded XML profile".into()));
+        return;
+    }
     let (rid, action) = match &h.action {
         Action::Url { url } => {
             if url.is_empty() {
@@ -428,22 +441,18 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         .o("tooltip", (!h.tooltip.is_empty()).then_some(h.tooltip.as_str()))
         .t("highlightClick", h.highlight_click)
         .t("endSnd", h.stop_sound);
-    let sound = h.sound.and_then(|id| x.media_rel(o, id, "audio").map(|rid| (rid, id)));
-    let Some((sound_rid, sound_id)) = sound else {
+    let sound = h.sound.and_then(|id| x.media_rel(o, id, "audio"));
+    let Some(sound_rid) = sound else {
+        if h.sound.is_some() {
+            x.error.get_or_insert_with(|| crate::PptxError::Unsupported("hyperlink sound resource cannot be exported".into()));
+            return;
+        }
         w.empty(tag, attrs);
         return;
     };
     w.open(tag, attrs);
-    let name = x.p.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
-    w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
+    w.empty("a:snd", A::new().a("r:embed", sound_rid).o("name", h.sound_name.as_deref()));
     w.close(tag);
-}
-
-/// Display name PowerPoint stores on `a:snd`.
-fn sound_label(name: &str) -> String {
-    let file = name.rsplit(['/', '\\']).next().unwrap_or(name);
-    let label: String = file.chars().filter(|c| c.is_ascii() && !c.is_control() && *c != '"' && *c != '<' && *c != '>').take(80).collect();
-    if label.is_empty() { "sound.wav".into() } else { label }
 }
 
 pub fn body_pr(w: &mut W, b: &BodyProps) {
@@ -566,7 +575,8 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         Some(Bullet::Char { char }) => w.empty("a:buChar", A::new().a("char", if char.is_empty() { "•" } else { char })),
         Some(Bullet::AutoNum { scheme, start_at }) => {
             let s = if scheme.is_empty() || !scheme.chars().all(|c| c.is_ascii_alphanumeric()) { "arabicPeriod" } else { scheme };
-            w.empty("a:buAutoNum", A::new().a("type", s).o("startAt", (*start_at != 1).then_some((*start_at).clamp(1, 32767))));
+            // The core numbering preflight rejects values outside the schema range.
+            w.empty("a:buAutoNum", A::new().a("type", s).o("startAt", (*start_at != 1).then_some(*start_at)));
         }
         Some(Bullet::Picture { media }) => match x.media_rel(o, *media, "image") {
             Some(rid) => {

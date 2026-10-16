@@ -200,16 +200,26 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     s.edit(|doc, sel| {
+        deckcraft_model::comments::normalize(doc).map_err(|e| bad("slide.duplicate", e.to_string()))?;
         let last = *indices.last().unwrap_or(&0);
-        let mut new_ids = vec![];
-        for (k, i) in indices.iter().enumerate() {
-            let Some(src) = doc.slides.get(*i).map(|x| x.as_ref().clone()) else { continue };
-            let mut copy = src;
+        let mut copies = indices.iter().filter_map(|i| doc.slides.get(*i).map(|slide| slide.as_ref().clone())).collect::<Vec<_>>();
+        crate::comment_transfer::capture(doc, &mut copies)?;
+        let mut comment_slides = crate::comment_transfer::identity_slides(doc);
+        let mut sections = Vec::new();
+        for copy in &mut copies {
+            sections.push(doc.section_of(copy.id));
+            let old = copy.id;
             copy.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.duplicate", NO_ID_SPACE))?);
-            // Animations follow the new shape ids, triggers included.
+            comment_slides.insert(old, copy.id);
+        }
+        let mut context = crate::comment_transfer::Context::default();
+        let mut new_ids = vec![];
+        for (k, (mut copy, section)) in copies.into_iter().zip(sections).enumerate() {
             let map = super::edit::reid("slide.duplicate", doc, &mut copy.shapes)?;
+            let comment_shapes = map.iter().map(|(a, b)| (*a, *b)).collect();
+            let comment_media = crate::comment_transfer::identity_media(&copy.comments, &std::collections::HashMap::new());
+            crate::comment_transfer::remap(doc, &mut copy.comments, &comment_shapes, &comment_media, &comment_slides, &mut context)?;
             super::edit::remap_animations(&mut copy.animations, &map);
-            let section = doc.section_of(src_id(doc, *i));
             let at = (last + 1 + k).min(doc.slides.len());
             new_ids.push(copy.id);
             let nid = copy.id;
@@ -226,10 +236,6 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         sel.text = None;
         Ok(json!({"ids": new_ids}))
     })
-}
-
-fn src_id(doc: &Presentation, i: usize) -> SlideId {
-    doc.slides.get(i).map(|s| s.id).unwrap_or_default()
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
@@ -503,6 +509,7 @@ fn notes(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let text = str_param(p, "text").unwrap_or("").to_string();
     s.edit(|doc, _| {
+        doc.ensure_notes_body(i)?;
         if let Some(sl) = doc.slides.get_mut(i) {
             let notes = &mut Arc::make_mut(sl).notes;
             match body {

@@ -290,6 +290,7 @@ impl Session {
         let Some(t) = st.selection.text.clone() else { return Ok(Value::Null) };
         let Some((r, c)) = t.cell else { return Ok(Value::Null) };
         let Some(deckcraft_model::ShapeKind::Table(tb)) = st.shape(t.shape).map(|s| s.kind.clone()) else { return Ok(Value::Null) };
+        let tb = tb.at_path(&st.selection.table_path)?;
         let (nr, nc) = (tb.n_rows(), tb.n_cols().max(1));
         let idx = r * nc + c;
         // Cells hidden under a merged cell are skipped.
@@ -301,11 +302,11 @@ impl Session {
                 // Tab in the last cell adds a row.
                 let last = nr.saturating_sub(1);
                 self.execute("table.insertRowBelow", &json!({"id": t.shape, "row": last}))?;
-                return self.execute("text.edit", &json!({"id": t.shape, "cell": [last + 1, 0]}));
+                return self.execute("text.edit", &json!({"id": t.shape, "cell": [last + 1, 0], "block": 0}));
             }
             None => idx,
         };
-        self.execute("text.edit", &json!({"id": t.shape, "cell": [ni / nc, ni % nc]}))?;
+        self.execute("text.edit", &json!({"id": t.shape, "cell": [ni / nc, ni % nc], "block": 0}))?;
         self.execute("text.selectAll", &json!({}))
     }
 }

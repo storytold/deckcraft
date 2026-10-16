@@ -21,6 +21,7 @@ mod images;
 mod metafile;
 mod morph_path;
 mod morph_text;
+mod notes;
 mod paint;
 mod pattern;
 
@@ -28,7 +29,8 @@ mod pathgrad;
 mod placed;
 mod radar;
 mod ramp;
-mod table;
+pub mod table;
+pub mod table_content;
 mod transition;
 mod warp;
 
@@ -53,11 +55,18 @@ pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
 pub use images::{decode as decode_image, gif_frame};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
+pub use notes::{notes_page_document, render_notes_page};
 pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts, place_slide, text_outline};
 pub use table::cell_body as table_cell_body;
 pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;
 pub use transition::{SlideParts, composite_transition, render_transition};
+
+/// Resolve model gradient stops to the sRGB samples used by the native renderer.
+/// Interchange writers can emit these samples to preserve the displayed colour ramp.
+pub fn gradient_stops(stops: &[(f64, Rgba)]) -> Vec<(f64, Rgba)> {
+    ramp::expand(stops)
+}
 
 /// Largest pixmap side we render (vello_cpu uses u16 sizes).
 pub const MAX_SIDE: u32 = 16_000;
@@ -1305,7 +1314,7 @@ impl Renderer {
             };
             let tr = geo.text_rect;
             let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
-            if !body.is_empty() || editing {
+            if !body.is_empty() || editing || has_paragraph_background(rctx, s, body) {
                 // Imported placeholders can have no paragraph until the first keystroke.
                 let mut empty;
                 let body = if editing && body.paragraphs.is_empty() {
@@ -1320,6 +1329,9 @@ impl Renderer {
                     preview_empty_bullets(&mut l);
                 }
                 let tm = text_transform(m, tr, l.rotation);
+                for d in &l.backgrounds {
+                    self.track(tm, d.rect);
+                }
                 for b in l.lines.iter().filter_map(line_bounds) {
                     // Glyphs reach a little past their carets and line box (italics, swashes).
                     let pad = b.height() * 0.3;
@@ -2068,15 +2080,7 @@ fn preview_empty_bullets(l: &mut deckcraft_text::TextLayout) {
 /// the rect's centre: a flipH shape's text stays readable and a flipV shape's text is turned 180°
 /// (both flips: 180°), as in PowerPoint. Rendering, hit testing and the caret all use this.
 pub fn text_transform(m: Affine, tr: Rect, rotation: f64) -> Affine {
-    let c = tr.center().to_vec2();
-    let mut t = m;
-    if m.determinant() < 0.0 && c.is_finite() {
-        t = t * Affine::translate(c) * Affine::scale_non_uniform(-1.0, 1.0) * Affine::translate(-c);
-    }
-    if rotation != 0.0 && rotation.is_finite() && c.is_finite() {
-        t = t * Affine::translate(c) * Affine::rotate(rotation.to_radians()) * Affine::translate(-c);
-    }
-    t
+    deckcraft_text::text_transform(m, tr, rotation)
 }
 
 /// The WordArt warp of `s`'s text over its text rectangle `tr`, if it has one DeckCraft draws.
@@ -2084,6 +2088,11 @@ pub fn text_warp(rctx: &Ctx, s: &Shape, tr: Rect) -> Option<deckcraft_geom::warp
     let bp = resolve::body(rctx, s);
     let name = bp.warp.as_deref()?;
     deckcraft_geom::warp::warp(name, &bp.warp_adj, tr)
+}
+
+/// Whether even an empty text body has a resolved paragraph area to paint.
+pub(crate) fn has_paragraph_background(rctx: &Ctx, s: &Shape, body: &TextBody) -> bool {
+    body.paragraphs.iter().any(|p| matches!(resolve::para(rctx, s, p).background, Some(Fill::Solid { .. })))
 }
 
 /// Draw an already laid-out text block.
@@ -2104,6 +2113,9 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
         ctx.set_paint(color(d.color, ps.opacity));
         fill_deco(ctx, d);
     };
+    for d in &l.backgrounds {
+        deco(ctx, d);
+    }
     for d in l.decos.iter().filter(|d| d.behind) {
         deco(ctx, d);
     }

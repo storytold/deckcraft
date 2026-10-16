@@ -21,6 +21,151 @@ fn lay(p: &Presentation, sh: &Shape, w: f64, h: f64) -> TextLayout {
     layout(&ctx, sh, sh.text.as_ref().unwrap(), &Opts { rect: Rect::new(0.0, 0.0, w, h), fields: &NoFields, prompt_color: None, no_shrink: false })
 }
 
+fn paragraph_area_shape(text: &str) -> (Presentation, Shape) {
+    let p = Presentation::default();
+    let mut body = TextBody::from_text(text);
+    body.body = BodyProps {
+        inset_l: Some(0.0),
+        inset_r: Some(0.0),
+        inset_t: Some(0.0),
+        inset_b: Some(0.0),
+        anchor: Some(Anchor::Top),
+        autofit: Some(AutoFit::None),
+        ..Default::default()
+    };
+    for para in &mut body.paragraphs {
+        para.props.background = Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(20, 100, 180))));
+        para.props.line_spacing = Some(Spacing::Pts(24.0));
+        para.def_props.size = Some(20.0);
+        para.end_props.size = Some(20.0);
+    }
+    (p, Shape { text: Some(body), text_box: true, ..Default::default() })
+}
+
+#[test]
+fn paragraph_background_empty_and_absent_paragraphs_are_distinct() {
+    let (p, mut sh) = paragraph_area_shape("");
+    let l = lay(&p, &sh, 200.0, 100.0);
+    assert_eq!(l.backgrounds.len(), 1);
+    assert_eq!(l.backgrounds[0].rect, Rect::new(0.0, 0.0, 200.0, 24.0));
+    assert!(l.runs.is_empty());
+    sh.text.as_mut().unwrap().paragraphs.clear();
+    assert!(lay(&p, &sh, 200.0, 100.0).backgrounds.is_empty());
+}
+
+#[test]
+fn paragraph_background_uses_margins_not_indent_alignment_or_ink() {
+    for rtl in [false, true] {
+        for align in [Align::Left, Align::Right, Align::Center] {
+            let (p, mut sh) = paragraph_area_shape("short");
+            let pp = &mut sh.text.as_mut().unwrap().paragraphs[0].props;
+            pp.margin_left = Some(20.0);
+            pp.margin_right = Some(35.0);
+            pp.indent = Some(12.0);
+            pp.align = Some(align);
+            pp.rtl = Some(rtl);
+            let l = lay(&p, &sh, 240.0, 100.0);
+            assert_eq!(l.backgrounds.len(), 1);
+            assert_eq!(l.backgrounds[0].rect, if rtl { Rect::new(35.0, 0.0, 220.0, 24.0) } else { Rect::new(20.0, 0.0, 205.0, 24.0) });
+        }
+    }
+}
+
+#[test]
+fn paragraph_background_column_does_not_move_with_anchorctr_ink() {
+    let (p, mut sh) = paragraph_area_shape("short");
+    let t = sh.text.as_mut().unwrap();
+    t.body.anchor_ctr = Some(true);
+    let pp = &mut t.paragraphs[0].props;
+    pp.margin_left = Some(20.0);
+    pp.margin_right = Some(35.0);
+    pp.align = Some(Align::Right);
+    let l = lay(&p, &sh, 240.0, 100.0);
+    assert_eq!(l.backgrounds[0].rect, Rect::new(20.0, 0.0, 205.0, 24.0));
+    assert!((l.lines[0].extent.0 + l.lines[0].extent.1 - 240.0).abs() < 1e-6);
+}
+
+#[test]
+fn paragraph_background_wraps_merge_but_paragraph_spacing_stays_unpainted() {
+    let (p, mut sh) = paragraph_area_shape("one two three four five six seven eight nine\n ");
+    let t = sh.text.as_mut().unwrap();
+    t.paragraphs[0].props.space_after = Some(Spacing::Pts(12.0));
+    t.paragraphs[1].props.space_before = Some(Spacing::Pts(7.0));
+    let l = lay(&p, &sh, 120.0, 400.0);
+    assert!(l.para_lines[0].1 > 1);
+    assert_eq!(l.backgrounds.len(), 2);
+    let a = &l.backgrounds[0];
+    let b = &l.backgrounds[1];
+    assert_eq!((a.rect.x0, a.rect.x1), (0.0, 120.0));
+    assert_eq!(a.rect.height(), l.para_lines[0].1 as f64 * 24.0);
+    assert!((b.rect.y0 - a.rect.y1 - 19.0).abs() < 1e-6);
+    assert_eq!(b.rect.height(), 24.0);
+    // Paint-only paragraph props cannot change line wrapping or caret positions.
+    for para in &mut sh.text.as_mut().unwrap().paragraphs {
+        para.props.background = None;
+    }
+    let plain = lay(&p, &sh, 120.0, 400.0);
+    assert!(plain.backgrounds.is_empty());
+    assert_eq!(l.lines.iter().map(|li| &li.caret_x).collect::<Vec<_>>(), plain.lines.iter().map(|li| &li.caret_x).collect::<Vec<_>>());
+}
+
+#[test]
+fn paragraph_background_columns_do_not_bridge_the_gap_even_in_rtl_order() {
+    for rtl in [false, true] {
+        let (p, mut sh) = paragraph_area_shape("a");
+        let t = sh.text.as_mut().unwrap();
+        t.body.columns = Some(2);
+        t.body.col_spacing = Some(20.0);
+        t.body.rtl_col = Some(rtl);
+        for _ in 0..3 {
+            t.paragraphs[0].runs.push(Run { text: String::new(), props: Default::default(), kind: RunKind::Break });
+            t.paragraphs[0].runs.push(Run::new("a"));
+        }
+        let l = lay(&p, &sh, 220.0, 48.0);
+        assert_eq!(l.backgrounds.len(), 2);
+        let (first, second) = if rtl { (120.0, 0.0) } else { (0.0, 120.0) };
+        assert_eq!(l.backgrounds[0].rect, Rect::new(first, 0.0, first + 100.0, 48.0));
+        assert_eq!(l.backgrounds[1].rect, Rect::new(second, 0.0, second + 100.0, 48.0));
+    }
+}
+
+#[test]
+fn paragraph_background_tracks_anchor_vertical_and_explicit_no_fill() {
+    let (p, mut sh) = paragraph_area_shape("one\ntwo");
+    let top = lay(&p, &sh, 200.0, 100.0);
+    for anchor in [Anchor::Middle, Anchor::Bottom] {
+        sh.text.as_mut().unwrap().body.anchor = Some(anchor);
+        let l = lay(&p, &sh, 200.0, 100.0);
+        let shift = (100.0 - top.content_height) * if anchor == Anchor::Middle { 0.5 } else { 1.0 };
+        for (a, b) in top.backgrounds.iter().zip(&l.backgrounds) {
+            assert_eq!(b.rect, a.rect + deckcraft_geom::Vec2::new(0.0, shift));
+        }
+    }
+    let t = sh.text.as_mut().unwrap();
+    t.body.anchor = Some(Anchor::Top);
+    t.body.vert = Some(TextDir::MongolianVertical);
+    let l = lay(&p, &sh, 200.0, 100.0);
+    assert_eq!(l.rotation, 90.0);
+    assert!(l.backgrounds[0].rect.y0 > l.backgrounds[1].rect.y0);
+    for d in &l.backgrounds {
+        let line = &l.lines[l.para_lines[d.para].0];
+        assert_eq!((d.rect.y0, d.rect.y1), (line.top, line.bottom));
+    }
+    let t = sh.text.as_mut().unwrap();
+    t.list_style.set(
+        0,
+        deckcraft_model::text::LevelStyle {
+            para: ParaProps { background: t.paragraphs[0].props.background.clone(), ..Default::default() },
+            ..Default::default()
+        },
+    );
+    t.paragraphs[0].props.background = Some(Fill::None);
+    t.paragraphs[1].props.background = None;
+    let l = lay(&p, &sh, 200.0, 100.0);
+    assert_eq!(l.backgrounds.len(), 1);
+    assert_eq!(l.backgrounds[0].para, 1);
+}
+
 #[test]
 fn wraps_long_text_into_lines() {
     let text = "The quick brown fox jumps over the lazy dog and keeps on running far away";
@@ -1457,6 +1602,39 @@ fn empty_numbered_paragraph_previews_the_next_number_without_consuming_it() {
 }
 
 #[test]
+fn explicit_numbered_list_restarts_control_rendered_labels() {
+    let (p, mut sh) = setup("First\nSecond\nNew list\nFourth\nRestart seven\nLast", 600.0, 600.0);
+    let body = sh.text.as_mut().unwrap();
+    for para in &mut body.paragraphs {
+        para.props.bullet = Some(Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 1 });
+    }
+    body.paragraphs[2].props.number_restart = Some(1);
+    body.paragraphs[4].props.number_restart = Some(7);
+    let l = lay(&p, &sh, 600.0, 600.0);
+    for (para, label) in ["1.", "2.", "1.", "2.", "7.", "8."].into_iter().enumerate() {
+        let run = l.runs.iter().find(|r| r.para == para && r.cells.is_empty()).unwrap();
+        let expected = measure_str(&run.face, run.size, label).1;
+        assert_eq!(run.glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected.iter().map(|g| g.0).collect::<Vec<_>>(), "paragraph {para}");
+    }
+}
+
+#[test]
+fn an_empty_numbered_restart_previews_without_consuming_its_number() {
+    let (p, mut sh) = setup("First\n\nNext", 600.0, 300.0);
+    let body = sh.text.as_mut().unwrap();
+    for para in &mut body.paragraphs {
+        para.props.bullet = Some(Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 4 });
+    }
+    body.paragraphs[1].props.number_restart = Some(1);
+    let l = lay(&p, &sh, 600.0, 300.0);
+    let preview = &l.empty_bullets[0];
+    let next = l.runs.iter().find(|r| r.para == 2 && r.cells.is_empty()).unwrap();
+    let expected = measure_str(&preview.face, preview.size, "1.").1;
+    assert_eq!(preview.glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), expected.iter().map(|g| g.0).collect::<Vec<_>>());
+    assert_eq!(preview.glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), next.glyphs.iter().map(|g| g.0).collect::<Vec<_>>());
+}
+
+#[test]
 fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     let (p, mut sh) = setup("", 600.0, 300.0);
     sh.text.as_mut().unwrap().paragraphs[0].props.bullet = Some(Bullet::None);
@@ -1466,4 +1644,182 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     let l = lay(&p, &sh, 600.0, 300.0);
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
+}
+
+// Script overrides are contributor-original mixed-script typography, with no external assets.
+#[test]
+fn script_styles_choose_size_face_style_and_logical_ranges_per_grapheme() {
+    let (p, mut sh) = setup("A漢 ب\u{064e}ت12 Z", 900.0, 200.0);
+    let props = &mut sh.text.as_mut().unwrap().paragraphs[0].runs[0].props;
+    *props = RunProps {
+        font: Some("BIZ UDPGothic".into()),
+        font_ea: Some("BIZ UDPGothic".into()),
+        font_cs: Some("Noto Sans Arabic".into()),
+        size: Some(18.0),
+        bold: Some(false),
+        italic: Some(false),
+        size_ea: Some(30.0),
+        size_cs: Some(24.0),
+        bold_ea: Some(true),
+        bold_cs: Some(false),
+        italic_ea: Some(false),
+        italic_cs: Some(true),
+        lang: Some("en-US".into()),
+        lang_ea: Some("ja-JP".into()),
+        lang_cs: Some("ar-SA".into()),
+        ..Default::default()
+    };
+    sh.text.as_mut().unwrap().body.autofit = Some(AutoFit::None);
+    let l = lay(&p, &sh, 900.0, 200.0);
+    for (ch, size, bold, italic) in [
+        (0, 18.0, false, false),
+        (1, 30.0, true, false),
+        (2, 30.0, true, false),
+        (3, 24.0, false, true),
+        (4, 24.0, false, true),
+        (5, 24.0, false, true),
+        (6, 24.0, false, true),
+        (9, 18.0, false, false),
+    ] {
+        let r = l.runs.iter().find(|r| r.chars.0 <= ch && ch < r.chars.1).unwrap();
+        eprintln!(
+            "script-style ch={ch} chars={:?} size={} family={} face_style={} weight={} italic={} faux_bold={} faux_italic={}",
+            r.chars, r.size, r.face.family, r.face.style, r.face.weight, r.face.italic, r.fake_bold, r.fake_italic
+        );
+        assert_eq!(r.size, size, "logical character {ch} selected wrong script height");
+        assert_eq!(r.face.weight >= 550.0 || r.fake_bold, bold, "logical character {ch}: {} {}", r.face.family, r.face.style);
+        assert_eq!(r.face.italic || r.fake_italic, italic, "logical character {ch}");
+    }
+    assert!(!l.lines[0].graphemes().into_iter().any(|(a, _)| a == 4), "the Arabic combining mark is not a new caret stop");
+}
+
+#[test]
+fn script_styles_inherit_independently_then_fall_back_and_clear_language() {
+    let (p, mut sh) = setup("A漢ب", 900.0, 200.0);
+    let body = sh.text.as_mut().unwrap();
+    body.body.autofit = Some(AutoFit::None);
+    body.paragraphs[0].def_props = RunProps {
+        size: Some(19.0),
+        size_ea: Some(27.0),
+        bold: Some(true),
+        italic: Some(true),
+        lang: Some("en-US".into()),
+        lang_cs: Some("ar-SA".into()),
+        ..Default::default()
+    };
+    body.paragraphs[0].runs[0].props = RunProps { bold_ea: Some(false), italic_cs: Some(false), lang_ea: Some(String::new()), ..Default::default() };
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let opts = Opts { rect: Rect::new(0.0, 0.0, 900.0, 200.0), fields: &NoFields, prompt_color: None, no_shrink: false };
+    let body = sh.text.as_ref().unwrap();
+    let shaped = shape_para(&ctx, &sh, body, 0, 1.0, &opts, None, Upright::None);
+    let style = |i: usize| &shaped.styles[shaped.cells[i].style];
+    assert_eq!((style(0).size, style(1).size, style(2).size), (19.0, 27.0, 19.0));
+    assert_eq!((style(0).style_name, style(1).style_name, style(2).style_name), ("Bold Italic", "Italic", "Bold"));
+    assert_eq!(style(0).lang.as_deref(), Some("en-US"));
+    assert_eq!(style(1).lang, None, "empty language clears ordinary-language fallback");
+    assert_eq!(style(2).lang.as_deref(), Some("ar-SA"));
+}
+
+#[test]
+fn script_styles_keep_superscript_vertical_and_number_bullet_semantics() {
+    for direction in [TextDir::Horizontal, TextDir::EaVertical] {
+        let (p, mut sh) = setup("A漢ب", 500.0, 500.0);
+        let body = sh.text.as_mut().unwrap();
+        body.body.autofit = Some(AutoFit::None);
+        body.body.vert = Some(direction);
+        let para = &mut body.paragraphs[0];
+        para.props.bullet = Some(Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 1 });
+        para.runs[0].props = RunProps { size: Some(18.0), size_ea: Some(30.0), size_cs: Some(24.0), baseline: Some(0.3), ..Default::default() };
+        let l = lay(&p, &sh, 500.0, 500.0);
+        assert!(l.runs.iter().any(|r| r.chars == (0, 0)), "number bullet is retained");
+        let cjk = l.runs.iter().find(|r| r.chars.0 <= 1 && 1 < r.chars.1).unwrap();
+        assert!((cjk.size - 19.8).abs() < 1e-8, "script size applies before the existing 66% superscript scale");
+        assert_eq!(cjk.upright, direction == TextDir::EaVertical);
+    }
+}
+
+#[test]
+fn script_styles_do_not_change_latin_glyph_positions_or_neutral_emoji_clusters() {
+    let (p, mut sh) = setup("Latin AV 123", 900.0, 200.0);
+    sh.text.as_mut().unwrap().body.autofit = Some(AutoFit::None);
+    let old = lay(&p, &sh, 900.0, 200.0);
+    sh.text.as_mut().unwrap().paragraphs[0].runs[0].props =
+        RunProps { size_ea: Some(32.0), size_cs: Some(11.0), bold_ea: Some(true), lang_cs: Some("ar-SA".into()), ..Default::default() };
+    let new = lay(&p, &sh, 900.0, 200.0);
+    assert_eq!(old.runs.len(), new.runs.len());
+    for (a, b) in old.runs.iter().zip(&new.runs) {
+        assert_eq!((a.size, a.chars, &a.glyphs), (b.size, b.chars, &b.glyphs));
+    }
+    let (p, mut sh) = setup("漢👩\u{200d}💻", 900.0, 200.0);
+    sh.text.as_mut().unwrap().body.autofit = Some(AutoFit::None);
+    sh.text.as_mut().unwrap().paragraphs[0].runs[0].props = RunProps { size_ea: Some(32.0), ..Default::default() };
+    let l = lay(&p, &sh, 900.0, 200.0);
+    assert!(!l.lines[0].graphemes().into_iter().any(|(a, _)| a == 2 || a == 3), "emoji ZWJ grapheme remains whole");
+}
+
+#[test]
+fn minimum_line_height_uses_full_relative_pitches_and_preserves_paragraph_gaps() {
+    use deckcraft_model::text::LineHeight;
+    for content in ["", "One\nTwo", "Mixed 漢 العربية text wraps onto several lines in a narrow frame"] {
+        let (p, mut sh) = paragraph_area_shape(content);
+        for para in &mut sh.text.as_mut().unwrap().paragraphs {
+            para.props.line_spacing = None;
+            para.props.line_height = Some(LineHeight::Normal);
+        }
+        let natural = lay(&p, &sh, 110.0, 1000.0);
+        for minimum in [0.0, 12.0, 60.0] {
+            for para in &mut sh.text.as_mut().unwrap().paragraphs {
+                para.props.line_height = Some(LineHeight::Minimum { points: minimum });
+            }
+            let result = lay(&p, &sh, 110.0, 1000.0);
+            assert_eq!(result.lines.len(), natural.lines.len());
+            let mut expected_height = 0.0;
+            for (line, original) in result.lines.iter().zip(&natural.lines) {
+                let pitch = (original.bottom - original.top).max(minimum);
+                assert!((line.bottom - line.top - pitch).abs() < 1e-6);
+                let fraction = (original.baseline - original.top) / (original.bottom - original.top);
+                assert!((line.baseline - line.top - pitch * fraction).abs() < 1e-6);
+                assert!(line.caret_x.iter().all(|v| v.is_finite()));
+                expected_height += pitch;
+            }
+            assert!((result.content_height - expected_height).abs() < 1e-6);
+            assert!(result.backgrounds.iter().all(|area| area.rect.height() >= minimum));
+        }
+    }
+}
+
+#[test]
+fn minimum_line_height_is_absolute_under_font_and_line_reduction() {
+    use deckcraft_model::text::LineHeight;
+    let (p, mut sh) = paragraph_area_shape("A large first run followed by smaller text that wraps");
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.runs.push(Run::with(" LARGE", deckcraft_model::text::RunProps { size: Some(48.0), ..Default::default() }));
+    para.props.line_spacing = None;
+    para.props.line_height = Some(LineHeight::Minimum { points: 50.0 });
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let body = sh.text.as_ref().unwrap();
+    let bp = resolve::body(&ctx, &sh);
+    let opts = Opts { rect: Rect::new(0.0, 0.0, 130.0, 2000.0), fields: &NoFields, prompt_color: None, no_shrink: false };
+    for scale in [0.1, 0.5, 1.0] {
+        for reduce in [0.0, 0.2] {
+            let l = layout_scaled(&ctx, &sh, body, &bp, &opts, scale, reduce);
+            assert!(!l.lines.is_empty());
+            assert!(l.lines.iter().all(|line| line.bottom - line.top >= 50.0 - 1e-6));
+            assert!((l.content_height - l.lines.iter().map(|line| line.bottom - line.top).sum::<f64>()).abs() < 1e-6);
+        }
+    }
+}
+
+#[test]
+fn invalid_minimum_policies_keep_direct_layout_finite() {
+    use deckcraft_model::text::LineHeight;
+    for points in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0, 1e300] {
+        let (p, mut sh) = paragraph_area_shape("Direct caller input");
+        let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        para.props.line_spacing = None;
+        para.props.line_height = Some(LineHeight::Minimum { points });
+        let l = lay(&p, &sh, 120.0, 300.0);
+        assert!(l.content_height.is_finite());
+        assert!(l.lines.iter().all(|line| line.top.is_finite() && line.bottom.is_finite() && line.baseline.is_finite()));
+    }
 }

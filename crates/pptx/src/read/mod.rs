@@ -2,7 +2,9 @@
 
 pub(crate) mod chart;
 mod chartex;
+pub(crate) mod comments;
 pub(crate) mod dml;
+mod notes;
 mod shapes;
 mod theme;
 mod timing;
@@ -14,9 +16,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use deckcraft_geom::{Size, emu_to_pt};
-use deckcraft_model::text::TextBody;
 use deckcraft_model::{
-    Background, Comment, CustomShow, EmbeddedFont, Geom, HeaderFooter, Layout, LayoutId, LayoutType, Master, MasterId, MediaId, MediaItem, PhType,
+    Background, CustomShow, EmbeddedFont, Geom, HeaderFooter, Layout, LayoutId, LayoutType, Master, MasterId, MediaId, MediaItem, PhType,
     Presentation, Properties, Section, ShowSettings, Slide, SlideId, defaults,
 };
 
@@ -36,6 +37,10 @@ pub struct Imp<'a> {
     pub table_style_ids: Vec<String>,
     /// Per legacy VML drawing part: shape id → preview picture part (see `shapes::vml_preview`).
     pub vml_previews: HashMap<String, HashMap<String, String>>,
+    pub(crate) error: Option<PptxError>,
+    pub(crate) table_pending: Vec<crate::write::table_projection::Pending>,
+    pub(crate) table_bytes: usize,
+    pub(crate) table_hashes: HashMap<MediaId, String>,
 }
 
 impl Imp<'_> {
@@ -380,6 +385,10 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         custom_show_names: HashMap::new(),
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
+        error: None,
+        table_pending: Vec::new(),
+        table_bytes: 0,
+        table_hashes: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -441,6 +450,10 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
         custom_show_names: HashMap::new(),
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
+        error: None,
+        table_pending: Vec::new(),
+        table_bytes: 0,
+        table_hashes: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let mut slide_ids: Vec<(u32, String, SlideId)> = vec![];
@@ -507,37 +520,16 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     let fallback_layout = p.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
 
     // Slides.
+    let mut comment_state = comments::State::new(&mut imp, &pres_part)?;
     let mut file_slide_ids: HashMap<u32, SlideId> = HashMap::new();
     for (file_id, path, id) in &slide_ids {
         let Some(doc) = docs.get(&opc::norm(path)) else { continue };
         let part = Part::new(&pkg, path, doc);
         let layout = part.rels.first_of("slideLayout").and_then(|r| layout_by_part.get(&opc::norm(&r.target)).copied()).unwrap_or(fallback_layout);
-        let mut slide = read_slide(&mut imp, &part, doc, *id, layout);
-        // Notes.
-        if let Some(n) = part.rels.first_of("notesSlide")
-            && let Some(nd) = load(&pkg, &n.target)
-        {
-            let np = Part::new(&pkg, &n.target, &nd);
-            slide.notes = read_notes(&mut imp, &np, &nd.root);
-        }
-        // Comments. A modern part and the legacy part can describe the same threads (PowerPoint
-        // writes both): the modern one wins, its flattened legacy copy is skipped.
-        let mut parts: Vec<(Doc, bool)> = vec![];
-        for c in part.rels.all_of("comments") {
-            if let Some(cd) = pkg.xml(&c.target) {
-                // The content type names the modern part; a package that types it only through a
-                // Default entry instead of an Override is still modern when its root is p188.
-                let modern = pkg.content_type(&c.target).as_deref() == Some(crate::write::CT_COMMENTS_MODERN) || cd.root.prefix() == "p188";
-                parts.push((cd, modern));
-            }
-        }
-        let has_modern = parts.iter().any(|(_, m)| *m);
-        for (cd, modern) in parts {
-            if has_modern && !modern {
-                continue;
-            }
-            slide.comments.extend(read_comments(&pkg, &pres_part, &cd.root, modern));
-        }
+        let mut comment_shapes = HashMap::new();
+        let mut slide = read_slide(&mut imp, &part, doc, *id, layout, &mut comment_shapes);
+        let page_index = p.slides.len();
+        comment_state.page(&mut imp, &p, &mut slide, &part, *file_id, page_index, &comment_shapes)?;
         file_slide_ids.insert(*file_id, *id);
         p.slides.push(Arc::new(slide));
     }
@@ -599,34 +591,6 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     {
         p.show = read_show(sp, &imp.custom_show_names);
     }
-    // Notes master.
-    if let Some(r) = pres_part.rels.first_of("notesMaster")
-        && let Some(d) = load(&pkg, &r.target)
-    {
-        let part = Part::new(&pkg, &r.target, &d);
-        let mut ctx = shapes::IdCtx::default();
-        let mut m = Master { id: MasterId(imp.alloc()), name: "Notes Master".into(), ..Default::default() };
-        if let Some(t) = part.rels.first_of("theme")
-            && let Some(td) = pkg.xml(&t.target)
-        {
-            let tp = Part::new(&pkg, &t.target, &td);
-            m.theme = theme::read_theme(&mut imp, &tp, &td.root);
-        }
-        if let Some(csld) = d.root.child("cSld") {
-            m.background = background(&mut imp, &part, csld);
-            if let Some(tree) = csld.child("spTree") {
-                m.shapes = shapes::sp_tree(&mut imp, &part, &mut ctx, tree, 0);
-            }
-        }
-        if let Some(cm) = d.root.child("clrMap") {
-            m.color_map = color_map(cm);
-        }
-        // Notes text styles are the body's list style; slide masters use title/body/other instead.
-        if let Some(ns) = d.root.child("notesStyle") {
-            m.body_style = dml::list_style(&mut imp, &part, ns);
-        }
-        p.notes_master = Some(Arc::new(m));
-    }
     // Handout master (header, footer, date and slide number for printed handouts).
     if let Some(r) = pres_part.rels.first_of("handoutMaster")
         && let Some(d) = load(&pkg, &r.target)
@@ -654,6 +618,7 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
         if let Some(cm) = d.root.child("clrMap") {
             m.color_map = color_map(cm);
         }
+        crate::write::handout_resources::restore(&mut imp, &mut m, &part, &d.root)?;
         p.handout_master = Some(Arc::new(m));
     }
     // Document properties.
@@ -673,7 +638,17 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     inherit_placeholder_geometry(&mut p);
     default_text_anchor(&mut p);
     p.header_footer = header_footer(&p);
+    crate::write::table_projection::restore_all(&mut imp, &mut p)?;
+    notes::read_all(&mut imp, &mut p, &pres_part, &slide_ids)?;
+    if let Some(error) = imp.error.take() {
+        return Err(error);
+    }
+    if !imp.table_pending.is_empty() {
+        return Err(PptxError::Unsupported("unbound table semantic projection".into()));
+    }
     p.embedded_fonts = read_embedded_fonts(&mut imp, &pres_part, pres_el);
+    p.media = imp.media.clone();
+    comment_state.finish(&mut imp, &mut p, &pres_part, bytes)?;
     p.media = std::mem::take(&mut imp.media);
     p.next_id = imp.next;
     p.fix_next_id();
@@ -1084,7 +1059,14 @@ fn color_map_override(root: &El) -> Option<Vec<(String, String)>> {
     root.child("clrMapOvr")?.child("overrideClrMapping").map(color_map)
 }
 
-fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: LayoutId) -> Slide {
+fn read_slide(
+    imp: &mut Imp,
+    part: &Part,
+    doc: &Doc,
+    id: SlideId,
+    layout: LayoutId,
+    comment_shapes: &mut HashMap<u32, deckcraft_model::ShapeId>,
+) -> Slide {
     let root = &doc.root;
     let mut s = Slide {
         id,
@@ -1116,71 +1098,8 @@ fn read_slide(imp: &mut Imp, part: &Part, doc: &Doc, id: SlideId, layout: Layout
     if let Some(ext) = root.child("extLst").filter(|e| !has_rel_refs(e)) {
         s.raw_ext = Some(ext.elements().map(|e| part.keep(e)).collect());
     }
+    *comment_shapes = ctx.map;
     s
-}
-
-fn read_notes(imp: &mut Imp, part: &Part, root: &El) -> TextBody {
-    let Some(tree) = root.path(&["cSld", "spTree"]) else { return TextBody::default() };
-    for sp in tree.children_named("sp") {
-        let ph = sp.path(&["nvSpPr", "nvPr", "ph"]);
-        let is_body = ph.is_some_and(|ph| matches!(ph.attr("type"), Some("body") | None) && ph.attr("type") != Some("sldImg"));
-        if is_body && let Some(tx) = sp.child("txBody") {
-            let mut t = dml::text_body(imp, part, tx);
-            // Notes keep only content: drop body formatting from the notes master placeholder.
-            t.list_style = Default::default();
-            if t.is_empty() {
-                return TextBody::default();
-            }
-            return t;
-        }
-    }
-    TextBody::default()
-}
-
-fn read_comments(pkg: &Package, pres: &Part, root: &El, modern: bool) -> Vec<Comment> {
-    // Authors: legacy commentAuthors.xml (numeric ids) and modern authors.xml (GUIDs).
-    let mut authors: HashMap<String, (String, String)> = HashMap::new();
-    for kind in ["commentAuthors", "authors"] {
-        if let Some(r) = pres.rels.first_of(kind)
-            && let Some(d) = pkg.xml(&r.target)
-        {
-            for a in d.root.elements() {
-                if let Some(id) = a.attr("id") {
-                    authors.insert(id.to_string(), (a.attr("name").unwrap_or("").to_string(), a.attr("initials").unwrap_or("").to_string()));
-                }
-            }
-        }
-    }
-    // Legacy positions are 1/8 pt; the modern part's p188:pos is an a:CT_Point2D in EMU.
-    let scale = if modern { 12_700.0 } else { 8.0 };
-    fn one(e: &El, authors: &HashMap<String, (String, String)>, depth: usize, scale: f64) -> Comment {
-        let (author, initials) = e.attr("authorId").and_then(|a| authors.get(a).cloned()).unwrap_or_default();
-        let text = if let Some(t) = e.child("text") {
-            t.text()
-        } else if let Some(tb) = e.child("txBody") {
-            tb.children_named("p").map(|p| p.text()).collect::<Vec<_>>().join("\n")
-        } else {
-            String::new()
-        };
-        let pos = e.child("pos");
-        let replies = if depth < 4 {
-            e.child("replyLst").map(|l| l.children_named("reply").take(1000).map(|r| one(r, authors, depth + 1, scale)).collect()).unwrap_or_default()
-        } else {
-            vec![]
-        };
-        Comment {
-            author,
-            initials,
-            text,
-            date: e.attr("dt").or(e.attr("created")).unwrap_or("").to_string(),
-            x: pos.and_then(|p| p.f64("x")).unwrap_or(0.0) / scale,
-            y: pos.and_then(|p| p.f64("y")).unwrap_or(0.0) / scale,
-            resolved: e.attr("status") == Some("resolved"),
-            replies,
-            shape: None,
-        }
-    }
-    root.children_named("cm").take(10_000).map(|c| one(c, &authors, 0, scale)).collect()
 }
 
 fn read_show(sp: &El, shows: &HashMap<String, String>) -> ShowSettings {

@@ -32,6 +32,10 @@ impl Dialog {
 fn title(id: &str) -> &'static str {
     match id {
         "table" => "Insert Table",
+        "cellFormula" => "Cell Formula",
+        "cellValue" => "Cell Value",
+        "cellNumberFormat" => "Number Format",
+        "nestedTable" => "Insert Nested Table",
         "slideSize" => "Slide Size",
         "sizePosition" => "Size and Position",
         "headerFooter" => "Header and Footer",
@@ -1023,6 +1027,9 @@ fn trim_seed(st: Option<&deckcraft_engine::DocState>) -> TrimSeed {
 
 /// Returns true when the dialog should close.
 fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
+    if matches!(d.id.as_str(), "cellFormula" | "cellValue" | "cellNumberFormat" | "nestedTable") {
+        return crate::table_data_dialog::show(app, ui, d);
+    }
     let run = |app: &mut SlideApp, id: &str, p: Value| {
         let _ = app.run(id, p);
     };
@@ -1548,6 +1555,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ("PNG images (all slides)", "pngAll"),
                 ("JPEG image (current slide)", "jpeg"),
                 ("PowerPoint Presentation (.pptx)", "pptx"),
+                ("OpenDocument Presentation (.odp)", "odp"),
                 ("Outline (.txt)", "outline"),
                 ("Animated GIF (.gif)", "gif"),
             ] {
@@ -2905,7 +2913,9 @@ fn seed_paragraph_fields(d: &mut Dialog) {
     seed_once(d, "spaceAfter", pt_text(d.params.get("spaceAfter"), 0.0));
     seed_once(d, "spaceAfterSeed", pt_text(d.params.get("spaceAfter"), 0.0));
     seed_once(d, "lineKind", json_text(d.params.get("lineKind"), "multiple"));
-    seed_once(d, "lineValue", pt_text(d.params.get("lineValue"), 1.0));
+    seed_once(d, "lineValue", json_text(d.params.get("lineValueText"), &pt_text(d.params.get("lineValue"), 1.0)));
+    seed_once(d, "lineKindSeed", json_text(d.params.get("lineKindSeed").or_else(|| d.params.get("lineKind")), "multiple"));
+    seed_once(d, "lineValueSeed", json_text(d.params.get("lineValueSeed"), &pt_text(d.params.get("lineValue"), 1.0)));
 }
 
 fn paragraph_return_params(d: &mut Dialog) -> Value {
@@ -2915,6 +2925,7 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
     let space_before = finite_pt(&d.get("spaceBefore", "0")).unwrap_or(0.0);
     let space_after = finite_pt(&d.get("spaceAfter", "0")).unwrap_or(0.0);
     let line_value = finite_pt(&d.get("lineValue", "1")).unwrap_or(1.0);
+    let original_line_value = d.params.get("lineValueOriginal").or_else(|| d.params.get("lineValue")).cloned().unwrap_or_else(|| json!(line_value));
     let before_same = d.get("spaceBefore", "") == d.get("spaceBeforeSeed", "");
     let after_same = d.get("spaceAfter", "") == d.get("spaceAfterSeed", "");
     let v = json!({
@@ -2928,15 +2939,39 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
         "spaceAfter": space_after,
         "spaceAfterKind": if after_same { d.params.get("spaceAfterKind").and_then(Value::as_str).unwrap_or("pts") } else { "pts" },
         "lineKind": d.get("lineKind", "multiple"),
-        "lineValue": line_value,
+        "lineKindSeed": d.get("lineKindSeed", "multiple"),
+        "lineValueSeed": d.get("lineValueSeed", "1"),
+        "lineValueOriginal": original_line_value,
+        "lineValueText": d.get("lineValue", "1"),
+        "lineValue": if d.get("lineValue", "") == d.get("lineValueSeed", "") { original_line_value.clone() } else { json!(line_value) },
         "tabs": d.params.get("tabs").cloned().unwrap_or_else(|| json!([])),
         "defaultTab": d.params.get("defaultTab").cloned().unwrap_or_else(|| json!(72.0)),
     });
     v
 }
 
+fn paragraph_line_params(d: &Dialog, line_value: f64, params: &mut Value) {
+    let kind = d.fields.get("lineKind").map(String::as_str).unwrap_or("multiple");
+    if Some(kind) == d.fields.get("lineKindSeed").map(String::as_str) && d.fields.get("lineValue") == d.fields.get("lineValueSeed") {
+        return;
+    }
+    match kind {
+        "normal" => params["lineHeight"] = json!("normal"),
+        "minimum" => {
+            params["lineHeight"] = json!("minimum");
+            params["lineHeightPt"] = json!(line_value);
+        }
+        "exactly" => params["lineSpacingPt"] = json!(line_value),
+        _ => params["lineSpacing"] = json!(line_value),
+    }
+}
+
 fn line_preset_label(kind: &str, value: &str) -> &'static str {
-    if kind == "exactly" {
+    if kind == "normal" {
+        "Normal"
+    } else if kind == "minimum" {
+        "At least"
+    } else if kind == "exactly" {
         "Exactly"
     } else {
         match value {
@@ -3004,6 +3039,8 @@ fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ("Double", "multiple", Some("2")),
                 ("Multiple", "multiple", None),
                 ("Exactly", "exactly", None),
+                ("Normal", "normal", Some("1")),
+                ("At least", "minimum", None),
             ] {
                 if ui.selectable_label(line_preset_label(&kind, &value) == label, label).clicked() {
                     picked = Some((k, v));
@@ -3011,13 +3048,15 @@ fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
         });
         ui.add_space(8.0);
-        let _ = labeled_text(ui, d, "At", "lineValue", 64.0);
+        ui.add_enabled_ui(kind != "normal", |ui| {
+            let _ = labeled_text(ui, d, "At", "lineValue", 64.0);
+        });
     });
     if let Some((kind, value)) = picked {
         d.fields.insert("lineKind".into(), kind.into());
         if let Some(v) = value {
             d.fields.insert("lineValue".into(), v.into());
-        } else if kind == "exactly" && finite_pt(&d.get("lineValue", "1")).is_some_and(|n| n <= 9.99) {
+        } else if matches!(kind, "exactly" | "minimum") && finite_pt(&d.get("lineValue", "1")).is_some_and(|n| n <= 9.99) {
             d.fields.insert("lineValue".into(), "18".into());
         } else if kind == "multiple" && finite_pt(&d.get("lineValue", "1")).is_some_and(|n| n > 9.99) {
             d.fields.insert("lineValue".into(), "1".into());
@@ -3077,11 +3116,7 @@ fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             "spaceBeforeKind": if d.get("spaceBefore", "") == d.get("spaceBeforeSeed", "") { d.params.get("spaceBeforeKind").and_then(Value::as_str).unwrap_or("pts") } else { "pts" },
             "spaceAfterKind": if d.get("spaceAfter", "") == d.get("spaceAfterSeed", "") { d.params.get("spaceAfterKind").and_then(Value::as_str).unwrap_or("pts") } else { "pts" },
         });
-        if d.get("lineKind", "multiple") == "exactly" {
-            params["lineSpacingPt"] = json!(line_value);
-        } else {
-            params["lineSpacing"] = json!(line_value);
-        }
+        paragraph_line_params(d, line_value, &mut params);
         if app.run("format.paragraphDialog", params).is_err() {
             return false;
         }
@@ -3361,7 +3396,7 @@ mod tests {
     };
 
     fn link(action: Action, tip: &str) -> Hyperlink {
-        Hyperlink { action, tooltip: tip.into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
+        Hyperlink { action, tooltip: tip.into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None, sound_name: None }
     }
 
     fn url(address: &str, tip: &str) -> Hyperlink {

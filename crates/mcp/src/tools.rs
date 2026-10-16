@@ -101,25 +101,25 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "open_presentation",
             "Open presentation",
-            "Open a .deckcraft or .pptx file by path.",
+            "Open a .deckcraft, .pptx or .odp file by path.",
             obj(json!({"path": string("File path")}), &["path"]),
             false,
         ),
         tool(
             "save_presentation",
             "Save presentation",
-            "Save the active presentation (.deckcraft or .pptx by extension).",
+            "Save the active presentation (.deckcraft, .pptx or .odp by extension).",
             obj(json!({"path": string("File path (optional when it was opened from a file)")}), &[]),
             false,
         ),
         tool(
             "export",
             "Export",
-            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
+            "Export slides: png/jpeg (one slide, or all with all:true), pptx, odp (basic editable support), deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
             obj(
                 json!({
                     "path": string("Output path"),
-                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
+                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "odp", "deckcraft", "outline", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
                     "slide": int("Slide index for images"),
                     "all": boolean("All slides (images)"),
                     "scale": num("Pixels per point for images (default 2)"),

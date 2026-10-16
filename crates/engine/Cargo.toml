@@ -9,6 +9,7 @@ description = "DeckCraft engine: sessions, undo history, selection, the command 
 workspace = true
 
 [dependencies]
+getrandom = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }
@@ -18,6 +19,7 @@ deckcraft-render = { workspace = true }
 deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
+deckcraft-odp = { workspace = true }
 deckcraft-media = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

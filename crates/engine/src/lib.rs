@@ -8,6 +8,10 @@
 #![forbid(unsafe_code)]
 
 pub mod cmd;
+mod comment_identity;
+mod comment_lifecycle;
+mod comment_ops;
+mod comment_transfer;
 pub mod compare;
 pub mod connect;
 pub mod drawtable;
@@ -21,13 +25,17 @@ pub mod io;
 pub mod keys;
 pub mod links;
 pub mod media_refs;
+mod notes_transfer;
 pub mod recovery;
 pub mod sample;
 pub mod sounds;
 pub mod spell;
+mod table_calc;
+mod template_transfer;
 pub mod templates;
 pub mod thesaurus;
 pub mod tools;
+mod transfer_policy;
 
 use std::sync::Arc;
 
@@ -117,12 +125,16 @@ pub enum Target {
     Handout,
     /// The notes master (View ▸ Notes Master), a page at the notes size.
     NotesMaster,
+    /// An imported notes master, retaining its native page size.
+    ImportedNotesMaster {
+        master: usize,
+    },
 }
 
 impl Target {
     /// A notes-size master page (Handout or Notes Master view).
     pub fn is_page_master(self) -> bool {
-        matches!(self, Target::Handout | Target::NotesMaster)
+        matches!(self, Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. })
     }
 }
 
@@ -131,6 +143,7 @@ pub fn page_master(doc: &Presentation, t: Target) -> Option<&Arc<deckcraft_model
     match t {
         Target::Handout => doc.handout_master.as_ref(),
         Target::NotesMaster => doc.notes_master.as_ref(),
+        Target::ImportedNotesMaster { master } => doc.notes_masters.get(master).map(|m| &m.master),
         _ => None,
     }
 }
@@ -139,6 +152,7 @@ pub fn page_master_mut(doc: &mut Presentation, t: Target) -> Option<&mut Arc<dec
     match t {
         Target::Handout => doc.handout_master.as_mut(),
         Target::NotesMaster => doc.notes_master.as_mut(),
+        Target::ImportedNotesMaster { master } => doc.notes_masters.get_mut(master).map(|m| &mut m.master),
         _ => None,
     }
 }
@@ -155,6 +169,14 @@ pub struct Selection {
     pub text: Option<TextSel>,
     /// Selected table cells: (table, (r0, c0), (r1, c1)).
     pub cells: Option<(ShapeId, (usize, usize), (usize, usize))>,
+    /// Nested table owner under the selected top-level shape.
+    #[serde(default, skip_serializing_if = "deckcraft_model::table::TablePath::is_empty")]
+    pub table_path: deckcraft_model::table::TablePath,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub table_owner: Option<ShapeId>,
+    /// Additional text block in the active cell; absent means its first text body.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cell_block: Option<u32>,
     pub target: Target,
 }
 
@@ -269,7 +291,9 @@ impl DocState {
         match self.selection.target {
             Target::Slides => self.current_slide().map(|s| s.shapes.as_slice()).unwrap_or(&[]),
             Target::Master { master } => self.doc.masters.get(master).map(|m| m.shapes.as_slice()).unwrap_or(&[]),
-            Target::Handout | Target::NotesMaster => page_master(&self.doc, self.selection.target).map(|m| m.shapes.as_slice()).unwrap_or(&[]),
+            Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. } => {
+                page_master(&self.doc, self.selection.target).map(|m| m.shapes.as_slice()).unwrap_or(&[])
+            }
             Target::Layout { master, layout } => {
                 self.doc.masters.get(master).and_then(|m| m.layouts.get(layout)).map(|l| l.shapes.as_slice()).unwrap_or(&[])
             }
@@ -285,7 +309,16 @@ impl DocState {
 
 /// The page being edited: the slide size, or the notes size in Handout Master view.
 pub fn page_size(st: &DocState) -> deckcraft_geom::Size {
-    if st.selection.target.is_page_master() { st.doc.notes_size } else { st.doc.slide_size }
+    page_master_size(&st.doc, st.selection.target).unwrap_or(st.doc.slide_size)
+}
+
+/// Native dimensions of the selected page master.
+pub fn page_master_size(doc: &Presentation, target: Target) -> Option<deckcraft_geom::Size> {
+    match target {
+        Target::ImportedNotesMaster { master } => doc.notes_masters.get(master).map(|m| m.size),
+        Target::Handout | Target::NotesMaster => Some(doc.notes_size),
+        _ => None,
+    }
 }
 
 /// The handout or notes master as a one-master presentation at the notes page size, for drawing
@@ -293,7 +326,7 @@ pub fn page_size(st: &DocState) -> deckcraft_geom::Size {
 pub fn master_page(doc: &Presentation, t: Target) -> Option<Presentation> {
     let m = page_master(doc, t)?.clone();
     let mut p = doc.clone();
-    p.slide_size = doc.notes_size;
+    p.slide_size = page_master_size(doc, t)?;
     p.masters = vec![m];
     p.slides.clear();
     Some(p)
@@ -304,7 +337,9 @@ pub fn shapes_mut<'a>(doc: &'a mut Presentation, sel: &Selection) -> Option<&'a 
     match sel.target {
         Target::Slides => doc.slides.get_mut(sel.slide).map(|s| &mut Arc::make_mut(s).shapes),
         Target::Master { master } => doc.masters.get_mut(master).map(|m| &mut Arc::make_mut(m).shapes),
-        t @ (Target::Handout | Target::NotesMaster) => page_master_mut(doc, t).map(|m| &mut Arc::make_mut(m).shapes),
+        t @ (Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. }) => {
+            page_master_mut(doc, t).map(|m| &mut Arc::make_mut(m).shapes)
+        }
         Target::Layout { master, layout } => {
             doc.masters.get_mut(master).and_then(|m| Arc::make_mut(m).layouts.get_mut(layout)).map(|l| &mut l.shapes)
         }
@@ -432,6 +467,10 @@ pub struct MediaStatus {
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
     pub slides: Vec<Slide>,
+    /// Exact selected source owners, retained even if the originating document is closed.
+    pub(crate) templates: template_transfer::TemplateClosure,
+    pub(crate) notes: Option<notes_transfer::NotesClosure>,
+    pub(crate) origin: transfer_policy::ClipboardOrigin,
     /// Media the copied shapes/slides reference.
     pub media: Vec<deckcraft_model::MediaItem>,
     pub text: Option<deckcraft_model::TextBody>,
@@ -461,6 +500,7 @@ pub struct Session {
     /// Nesting of commands run by commands: only the outermost one is an undo step and a journal
     /// entry.
     depth: u32,
+    formula_budget: deckcraft_model::table::FormulaBudget,
     /// Crash-recovery folder (the app sets it; saving or closing a presentation removes its entry).
     pub recovery_dir: Option<std::path::PathBuf>,
     /// Media playback state, written by the UI host every frame (empty without a host).
@@ -500,6 +540,7 @@ impl Session {
             painter: None,
             anim_painter: None,
             depth: 0,
+            formula_budget: Default::default(),
             recovery_dir: None,
             media_status: Default::default(),
             gif_paused: Default::default(),
@@ -581,6 +622,9 @@ impl Session {
     }
 
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
+        if self.depth == 0 {
+            self.formula_budget = Default::default();
+        }
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
@@ -641,22 +685,111 @@ impl Session {
 
     /// Mutate the active presentation (copy-on-write) and bump the revision.
     pub fn edit<T>(&mut self, f: impl FnOnce(&mut Presentation, &mut Selection) -> Result<T>) -> Result<T> {
-        let st = self.doc_mut()?;
-        let mut doc = (*st.doc).clone();
-        let mut sel = st.selection.clone();
-        let r = f(&mut doc, &mut sel)?;
-        connect::reroute(&mut doc, &sel);
-        st.doc = Arc::new(doc);
-        st.selection = sel;
-        st.revision += 1;
-        Ok(r)
+        self.edit_transaction(true, true, f)
+    }
+
+    /// Edit document resources without changing connector geometry or detaching slide owners.
+    pub(crate) fn edit_resources<T>(&mut self, f: impl FnOnce(&mut Presentation, &mut Selection) -> Result<T>) -> Result<T> {
+        self.edit_transaction(false, true, f)
+    }
+
+    /// IME preedit is provisional, including its first event before Composition exists.
+    pub(crate) fn edit_preedit<T>(&mut self, f: impl FnOnce(&mut Presentation, &mut Selection) -> Result<T>) -> Result<T> {
+        self.edit_transaction(true, false, f)
+    }
+
+    pub(crate) fn edit_calculated<T>(
+        &mut self,
+        f: impl FnOnce(&mut Presentation, &mut Selection, &mut deckcraft_model::table::FormulaBudget) -> Result<T>,
+    ) -> Result<T> {
+        self.edit_calculated_transaction(true, true, f)
+    }
+
+    fn edit_transaction<T>(&mut self, reroute: bool, settle: bool, f: impl FnOnce(&mut Presentation, &mut Selection) -> Result<T>) -> Result<T> {
+        self.edit_calculated_transaction(reroute, settle, |doc, sel, _| f(doc, sel))
+    }
+
+    fn edit_calculated_transaction<T>(
+        &mut self,
+        reroute: bool,
+        settle: bool,
+        f: impl FnOnce(&mut Presentation, &mut Selection, &mut deckcraft_model::table::FormulaBudget) -> Result<T>,
+    ) -> Result<T> {
+        let mut budget = if self.depth == 0 { Default::default() } else { std::mem::take(&mut self.formula_budget) };
+        let result = (|| {
+            let st = self.doc_mut()?;
+            deckcraft_model::comments::validate(&st.doc, true).map_err(|error| EngineError::Other(error.to_string()))?;
+            let mut doc = (*st.doc).clone();
+            if doc.slides.iter().any(|slide| !slide.comments.is_empty()) {
+                deckcraft_model::comments::normalize(&mut doc).map_err(|error| EngineError::Other(error.to_string()))?;
+            }
+            let comment_before = comment_lifecycle::Snapshot::capture(&doc)?;
+            let mut sel = st.selection.clone();
+            let imported = match sel.target {
+                Target::ImportedNotesMaster { master } => st.doc.notes_masters.get(master).map(|m| m.master.id),
+                _ => None,
+            };
+            let r = f(&mut doc, &mut sel, &mut budget)?;
+            comment_before.reconcile(&mut doc)?;
+            if settle && st.composition.is_none() {
+                table_calc::reconcile_document_with_budget(&mut doc, &mut budget)?;
+            }
+            budget.check_limits()?;
+            // A collection edit must not redirect an existing master selection to its neighbour.
+            if sel.target == st.selection.target && matches!(sel.target, Target::ImportedNotesMaster { .. }) {
+                sel.target = imported
+                    .and_then(|id| doc.notes_masters.iter().position(|m| m.master.id == id))
+                    .map_or(Target::Slides, |master| Target::ImportedNotesMaster { master });
+                if sel.target == Target::Slides {
+                    sel.shapes.clear();
+                    sel.text = None;
+                    sel.cells = None;
+                }
+            }
+            if reroute {
+                connect::reroute(&mut doc, &sel);
+            }
+            st.doc = Arc::new(doc);
+            st.selection = sel;
+            st.revision += 1;
+            Ok(r)
+        })();
+        self.formula_budget = budget;
+        result
     }
 
     /// Keep an input method's composition as it stands (#101): its text stays and the whole
     /// composition becomes one undo step. Nothing happens without one.
     pub fn end_composition(&mut self) {
+        let mut budget = if self.depth == 0 { Default::default() } else { std::mem::take(&mut self.formula_budget) };
+        self.settle_composition(&mut budget);
+        self.formula_budget = budget;
+    }
+
+    fn settle_composition(&mut self, budget: &mut deckcraft_model::table::FormulaBudget) {
         let Some(st) = self.active_mut() else { return };
         let Some(c) = st.composition.take() else { return };
+        let mut doc = (*st.doc).clone();
+        let settlement = (|| -> Result<()> {
+            if c.before_selection.text.as_ref().is_some_and(|text| !text.notes && text.cell.is_some()) {
+                cmd::text::reconcile_composed_cell(&mut doc, &c.before_selection)?;
+            }
+            table_calc::reconcile_document_with_budget(&mut doc, budget)?;
+            budget.check_limits()?;
+            Ok(())
+        })();
+        if let Err(error) = settlement {
+            log::warn!("cannot settle composed table calculation; composition restored: {error}");
+            st.doc = c.before;
+            st.selection = c.before_selection;
+            st.revision += 1;
+            return;
+        }
+        // Avoid replacing an unchanged document merely because the staged settlement
+        // inspected it. This also keeps cancelled/equal composition history unchanged.
+        if *st.doc != doc {
+            st.doc = Arc::new(doc);
+        }
         if !Arc::ptr_eq(&c.before, &st.doc) {
             push_undo(st, HistoryEntry { label: "Type Text".into(), doc: c.before, selection: c.before_selection });
         }
@@ -670,7 +803,9 @@ impl Session {
         if let Some(t) = st.selection.text.as_mut() {
             t.line_end = None;
         }
-        let owner = |sel: &Selection| sel.text.as_ref().map(|t| (sel.slide, sel.target, t.shape, t.cell, t.notes));
+        let owner = |sel: &Selection| {
+            sel.text.as_ref().map(|t| (sel.slide, sel.target, t.shape, t.cell, t.notes, sel.table_owner, sel.table_path.clone(), sel.cell_block))
+        };
         let before = owner(&st.selection);
         f(&doc, &mut st.selection);
         clamp_selection(st);
@@ -701,47 +836,140 @@ fn clamp_selection(st: &mut DocState) {
     }
     let slides: Vec<SlideId> = st.selection.slides.iter().copied().filter(|id| st.doc.slide(*id).is_some()).collect();
     st.selection.slides = slides;
+    let before = st.selection.target;
     match st.selection.target {
         Target::Master { master } if master >= st.doc.masters.len() => st.selection.target = Target::Slides,
-        t @ (Target::Handout | Target::NotesMaster) if page_master(&st.doc, t).is_none() => st.selection.target = Target::Slides,
+        t @ (Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. }) if page_master(&st.doc, t).is_none() => {
+            st.selection.target = Target::Slides
+        }
         Target::Layout { master, layout } if st.doc.masters.get(master).is_none_or(|m| layout >= m.layouts.len()) => {
             st.selection.target = Target::Slides
         }
         _ => {}
+    }
+    if before != st.selection.target {
+        st.selection.shapes.clear();
+        st.selection.text = None;
+        st.selection.cells = None;
+    }
+    let valid_table_owner = st.selection.table_owner.is_some_and(|id| {
+        st.selection.shapes.contains(&id)
+            && st.shape(id).is_some_and(|shape| match &shape.kind {
+                deckcraft_model::ShapeKind::Table(table) => table.at_path(&st.selection.table_path).is_ok_and(|leaf| {
+                    st.selection.text.as_ref().is_none_or(|text| {
+                        text.shape == id
+                            && !text.notes
+                            && text.cell.is_some_and(|(r, c)| leaf.cell(r, c).and_then(|cell| cell.text_block(st.selection.cell_block)).is_some())
+                    })
+                }),
+                _ => false,
+            })
+    });
+    if !valid_table_owner {
+        if !st.selection.table_path.is_empty() || st.selection.cell_block.is_some() {
+            st.selection.text = None;
+            st.selection.cells = None;
+        }
+        st.selection.table_path = Default::default();
+        st.selection.table_owner = None;
+        st.selection.cell_block = None;
     }
 }
 
 /// Default for [`History::byte_limit`].
 pub const UNDO_BYTE_BUDGET: usize = 256 << 20;
 
+fn text_cost(body: &deckcraft_model::text::TextBody) -> usize {
+    body.paragraphs.iter().fold(0usize, |n, p| p.runs.iter().fold(n.saturating_add(96), |n, r| n.saturating_add(128).saturating_add(r.text.len())))
+}
+
 /// A rough size of a shape in memory: the struct, its text and kept XML, its children.
 fn shape_cost(sh: &deckcraft_model::Shape, depth: usize) -> usize {
-    let text: usize =
-        sh.text.as_ref().map_or(0, |t| t.paragraphs.iter().map(|p| 96 + p.runs.iter().map(|r| 128 + r.text.len()).sum::<usize>()).sum());
-    let kids: usize = if depth < 64 { sh.children().iter().map(|c| shape_cost(c, depth + 1)).sum() } else { 0 };
-    768 + text + sh.raw_ext.as_ref().map_or(0, String::len) + kids
+    let kids = if depth < 64 { sh.children().iter().fold(0usize, |n, c| n.saturating_add(shape_cost(c, depth + 1))) } else { 0 };
+    let table = if let deckcraft_model::ShapeKind::Table(table) = &sh.kind {
+        table.rows.iter().fold(table.cols.len().saturating_mul(std::mem::size_of::<f64>()), |total, row| {
+            row.cells.iter().fold(total.saturating_add(std::mem::size_of::<deckcraft_model::table::Row>()), |total, cell| {
+                total
+                    .saturating_add(std::mem::size_of::<deckcraft_model::Cell>())
+                    .saturating_add(text_cost(&cell.text))
+                    .saturating_add(cell.data.as_ref().map_or(0, |data| data.metadata_bytes()))
+            })
+        })
+    } else {
+        0
+    };
+    768usize
+        .saturating_add(sh.text.as_ref().map_or(0, text_cost))
+        .saturating_add(sh.raw_ext.as_ref().map_or(0, String::len))
+        .saturating_add(kids)
+        .saturating_add(table)
 }
 
 fn shapes_cost(shapes: &[deckcraft_model::Shape]) -> usize {
-    shapes.iter().map(|s| shape_cost(s, 0)).sum()
+    shapes.iter().fold(0usize, |n, s| n.saturating_add(shape_cost(s, 0)))
 }
 
-/// Estimated bytes `doc` keeps alive that `newer` doesn't share: its slides, masters and media
-/// that aren't the same allocations (undo steps share everything an edit didn't touch).
+fn notes_fields_cost(fields: &deckcraft_model::notes::NotesFields) -> usize {
+    use deckcraft_model::notes::NotesDateTime;
+    let date = match &fields.date_time {
+        Some(NotesDateTime::Fixed { text }) => text.len(),
+        Some(NotesDateTime::Current { format, lang }) => format.len().saturating_add(lang.as_ref().map_or(0, String::len)),
+        None => 0,
+    };
+    64usize
+        .saturating_add(fields.header.as_ref().map_or(0, String::len))
+        .saturating_add(fields.footer.as_ref().map_or(0, String::len))
+        .saturating_add(date)
+}
+
+fn document_masters(doc: &Presentation) -> impl Iterator<Item = &Arc<deckcraft_model::Master>> {
+    doc.masters.iter().chain(doc.handout_master.iter()).chain(doc.notes_master.iter()).chain(doc.notes_masters.iter().map(|m| &m.master))
+}
+
+/// Estimated bytes `doc` keeps alive that `newer` doesn't share. This intentionally stays a
+/// coarse estimate; notes-page artwork and canonical text obey the same budget as slides.
 pub fn undo_cost(doc: &Presentation, newer: &Presentation) -> usize {
     use std::collections::HashSet;
     let slides: HashSet<*const deckcraft_model::Slide> = newer.slides.iter().map(Arc::as_ptr).collect();
-    let masters: HashSet<*const deckcraft_model::Master> = newer.masters.iter().map(Arc::as_ptr).collect();
+    let masters: HashSet<*const deckcraft_model::Master> = document_masters(newer).map(Arc::as_ptr).collect();
     let media: HashSet<*const Vec<u8>> = newer.media.iter().map(|m| Arc::as_ptr(&m.data)).collect();
-    let mut n = 64 * doc.slides.len();
-    for s in doc.slides.iter().filter(|s| !slides.contains(&Arc::as_ptr(s))) {
-        n += 512 + shapes_cost(&s.shapes);
+    let templates: HashSet<_> = newer.presentation_templates.iter().map(Arc::as_ptr).collect();
+    let mut n = 64usize.saturating_mul(doc.slides.len());
+    n = n.saturating_add(doc.presentation_templates.capacity().saturating_mul(std::mem::size_of::<Arc<deckcraft_model::PresentationTemplate>>()));
+    for template in doc.presentation_templates.iter().filter(|template| !templates.contains(&Arc::as_ptr(template))) {
+        n = n
+            .saturating_add(std::mem::size_of::<deckcraft_model::PresentationTemplate>())
+            .saturating_add(2 * std::mem::size_of::<usize>())
+            .saturating_add(template.name.capacity())
+            .saturating_add(template.display_name.as_ref().map_or(0, String::capacity))
+            .saturating_add(template.slots.capacity().saturating_mul(std::mem::size_of::<deckcraft_model::PresentationTemplateSlot>()));
     }
-    for m in doc.masters.iter().filter(|m| !masters.contains(&Arc::as_ptr(m))) {
-        n += 4096 + shapes_cost(&m.shapes) + m.layouts.iter().map(|l| 512 + shapes_cost(&l.shapes)).sum::<usize>();
+    for s in doc.slides.iter().filter(|s| !slides.contains(&Arc::as_ptr(s))) {
+        n = n.saturating_add(512).saturating_add(shapes_cost(&s.shapes)).saturating_add(text_cost(&s.notes));
+        if let Some(page) = &s.notes_page {
+            n = n
+                .saturating_add(256)
+                .saturating_add(shapes_cost(&page.shapes))
+                .saturating_add(notes_fields_cost(&page.fields))
+                .saturating_add(if page.background.is_some() { 256 } else { 0 });
+        }
+    }
+    let mut charged = HashSet::new();
+    for m in document_masters(doc).filter(|m| !masters.contains(&Arc::as_ptr(m))) {
+        if !charged.insert(Arc::as_ptr(m)) {
+            continue;
+        }
+        n = n.saturating_add(4096).saturating_add(shapes_cost(&m.shapes));
+        for l in &m.layouts {
+            n = n.saturating_add(512).saturating_add(shapes_cost(&l.shapes));
+        }
+    }
+    // Wrapper fields are owned values, copied even when the inner Master Arc is shared.
+    for m in &doc.notes_masters {
+        n = n.saturating_add(64).saturating_add(notes_fields_cost(&m.fields));
     }
     for m in doc.media.iter().filter(|m| !media.contains(&Arc::as_ptr(&m.data))) {
-        n += m.data.len();
+        n = n.saturating_add(m.data.len());
     }
     n
 }
@@ -759,10 +987,10 @@ pub(crate) fn push_undo(st: &mut DocState, e: HistoryEntry) {
     // deck could hold hundreds of copies.
     let budget = if h.byte_limit == 0 { UNDO_BYTE_BUDGET } else { h.byte_limit };
     let cost = |h: &History, e: &HistoryEntry| h.costs.get(&(Arc::as_ptr(&e.doc) as usize)).copied().unwrap_or(0);
-    let mut total: usize = h.undo.iter().map(|e| cost(h, e)).sum();
+    let mut total: usize = h.undo.iter().fold(0usize, |n, e| n.saturating_add(cost(h, e)));
     let mut drop = 0;
     while total > budget && drop + 1 < h.undo.len() {
-        total -= cost(h, &h.undo[drop]);
+        total = total.saturating_sub(cost(h, &h.undo[drop]));
         drop += 1;
     }
     if drop > 0 {
@@ -781,3 +1009,41 @@ mod soak_tests;
 mod tests;
 #[cfg(test)]
 mod tests_keys;
+
+#[cfg(test)]
+mod notes_layout_tests;
+#[cfg(test)]
+mod script_styles_tests;
+
+#[cfg(test)]
+mod notes_duplicate_tests;
+#[cfg(test)]
+mod notes_transfer_independent_tests;
+#[cfg(test)]
+mod notes_transfer_review_boundary_tests;
+#[cfg(test)]
+mod notes_transfer_tests;
+#[cfg(test)]
+mod presentation_template_boundary_tests;
+#[cfg(test)]
+mod presentation_template_compare_tests;
+#[cfg(test)]
+mod presentation_template_review_tests;
+#[cfg(test)]
+mod presentation_template_tests;
+#[cfg(test)]
+mod presentation_template_transfer_review_tests;
+#[cfg(test)]
+mod table_content_tests;
+#[cfg(test)]
+mod table_formula_edit_tests;
+#[cfg(test)]
+mod table_value_edit_tests;
+#[cfg(test)]
+mod table_value_review_tests;
+#[cfg(test)]
+mod template_transfer_tests;
+#[cfg(test)]
+mod transfer_policy_review_tests;
+#[cfg(test)]
+mod transfer_policy_tests;

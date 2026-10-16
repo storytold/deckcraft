@@ -426,6 +426,64 @@ impl Squiggles {
             .collect()
     }
 
+    /// Resolve an explicit notes-menu request without waiting for background underlines.
+    /// A newly typed paragraph or user-dictionary change can leave that cache pending.
+    pub fn notes_word_at(&self, text: &str, lang: &str, at: usize) -> Option<MenuWord> {
+        if self.disabled {
+            return None;
+        }
+        // Only tokenize bounded local context, then check the clicked word and its
+        // predecessor. Checking a complete long paragraph here would block the UI.
+        let byte_at = text.char_indices().map(|(byte, _)| byte).chain(std::iter::once(text.len())).nth(at)?;
+        let mut byte_start = byte_at;
+        let mut left = 0usize;
+        for (byte, ch) in text.get(..byte_at)?.char_indices().rev().take(1024) {
+            if ch == '\n' {
+                break;
+            }
+            byte_start = byte;
+            left += 1;
+        }
+        let mut byte_end = byte_at;
+        for (byte, ch) in text.get(byte_at..)?.char_indices().take(1024) {
+            if ch == '\n' {
+                break;
+            }
+            byte_end = byte_at + byte + ch.len_utf8();
+        }
+        let window = text.get(byte_start..byte_end)?;
+        let chars: Vec<_> = window.chars().collect();
+        let inside = |ch: char| ch.is_alphanumeric() || matches!(ch, '\'' | '’' | '-');
+        let before = text.get(..byte_start)?.chars().next_back();
+        let after = text.get(byte_end..)?.chars().next();
+        let clipped_left = before.is_some_and(|ch| ch != '\n');
+        let incomplete_left = if before.is_some_and(inside) && chars.first().copied().is_some_and(inside) {
+            chars.iter().take_while(|ch| inside(**ch)).count()
+        } else {
+            0
+        };
+        let incomplete_right = if after.is_some_and(inside) && chars.last().copied().is_some_and(inside) {
+            chars.len().saturating_sub(chars.iter().rev().take_while(|ch| inside(**ch)).count())
+        } else {
+            chars.len()
+        };
+        let words = deckcraft_engine::spell::paragraph_words(&Paragraph::new(window), lang);
+        let index = words.iter().position(|word| left >= word.start && left <= word.end)?;
+        let word = words.get(index)?;
+        let previous = index.checked_sub(1).and_then(|i| words.get(i));
+        if clipped_left && previous.is_none() {
+            return None;
+        }
+        let first = previous.unwrap_or(word);
+        if first.start < incomplete_left || word.end > incomplete_right || word.text.chars().count() > 64 || first.text.chars().count() > 64 {
+            return None;
+        }
+        let context: String = chars.get(first.start..word.end)?.iter().collect();
+        let start = at.checked_sub(left)?.checked_add(first.start)?;
+        let found = menu_word(&Paragraph::new(&context), lang, Tag::Notes { start }, word.start.checked_sub(first.start)?)?;
+        (!self.is_ignored(&found.word)).then_some(found)
+    }
+
     /// Skip `word` everywhere for the rest of the session.
     pub fn ignore(&mut self, word: &str) {
         self.ignored.push(word.to_lowercase());

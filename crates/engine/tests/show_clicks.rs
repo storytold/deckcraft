@@ -27,6 +27,7 @@ fn link_to(slide: SlideId) -> Option<Hyperlink> {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     })
 }
 

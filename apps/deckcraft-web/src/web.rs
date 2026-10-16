@@ -4,7 +4,7 @@ use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
 
-const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
+const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "odp", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
@@ -117,10 +117,12 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         open_async: Some(Box::new(move |purpose: &str, request: u64| {
             let inbox = open_inbox.clone();
             let ctx = ctx.clone();
+            let attachment = purpose == "commentAttachment";
             let dialog = match purpose {
                 "picture" => rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS),
                 "audio" => rfd::AsyncFileDialog::new().add_filter("Audio", AUDIO_EXTS),
                 "video" => rfd::AsyncFileDialog::new().add_filter("Video", VIDEO_EXTS),
+                "commentAttachment" => rfd::AsyncFileDialog::new(),
                 _ => rfd::AsyncFileDialog::new().add_filter("Presentations", PRESENTATION_EXTS),
             };
             wasm_bindgen_futures::spawn_local(async move {
@@ -129,8 +131,15 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
                     ctx.request_repaint();
                     return;
                 };
-                let bytes = file.read().await;
-                push_inbox(&inbox, InboxEvent::File(InboxFile { id: request, name: file.file_name(), bytes }));
+                if attachment {
+                    match read_attachment(&file).await {
+                        Ok(bytes) => push_inbox(&inbox, InboxEvent::File(InboxFile { id: request, name: file.file_name(), bytes })),
+                        Err(error) => push_inbox(&inbox, InboxEvent::Failed { id: request, error }),
+                    }
+                } else {
+                    let bytes = file.read().await;
+                    push_inbox(&inbox, InboxEvent::File(InboxFile { id: request, name: file.file_name(), bytes }));
+                }
                 ctx.request_repaint();
             });
         })),
@@ -143,6 +152,28 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         inbox: Some(inbox),
         ..Default::default()
     }
+}
+
+async fn read_attachment(file: &rfd::FileHandle) -> Result<Vec<u8>, String> {
+    let limit = deckcraft_ui_egui::MAX_ATTACHMENT_BYTES;
+    let size = file.inner().size();
+    // Browser File/Blob contents are immutable. Check before array_buffer creates
+    // any complete copy, and recheck the returned view before allocating Rust bytes.
+    if !crate::attachment_size_allowed(size) {
+        return Err("Attachment exceeds 32 MiB limit".into());
+    }
+    let buffer =
+        wasm_bindgen_futures::JsFuture::from(file.inner().array_buffer()).await.map_err(|error| format!("Couldn't read attachment: {error:?}"))?;
+    let view = js_sys::Uint8Array::new(&buffer);
+    let length = usize::try_from(view.length()).map_err(|_| "Attachment exceeds byte limit".to_string())?;
+    if length > limit || length as f64 != size {
+        return Err("Attachment size changed while reading".into());
+    }
+    let mut bytes = Vec::new();
+    bytes.try_reserve_exact(length).map_err(|_| "Cannot allocate attachment bytes".to_string())?;
+    bytes.resize(length, 0);
+    view.copy_to(&mut bytes);
+    Ok(bytes)
 }
 
 fn push_inbox(inbox: &Inbox, event: InboxEvent) {
@@ -183,6 +214,7 @@ fn mime_for(name: &str) -> &'static str {
         Some("pdf") => "application/pdf",
         Some("gif") => "image/gif",
         Some("txt") => "text/plain",
+        Some("odp") => "application/vnd.oasis.opendocument.presentation",
         Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
         Some("deckcraft") => "application/zip",
         _ => "application/octet-stream",

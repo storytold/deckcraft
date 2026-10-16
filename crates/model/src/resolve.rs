@@ -39,6 +39,10 @@ impl<'a> Ctx<'a> {
     pub fn for_master(pres: &'a Presentation, master: &'a Master) -> Ctx<'a> {
         Ctx { pres, master, layout: None, owner: Owner::Master, scheme: master.scheme(), color_map: master.color_map.clone() }
     }
+    pub fn for_notes(pres: &'a Presentation, slide: &Slide) -> Option<Ctx<'a>> {
+        let master = pres.notes_master_for(slide).or_else(|| pres.first_master())?;
+        Some(Ctx { pres, master, layout: None, owner: Owner::Slide, scheme: master.scheme(), color_map: master.color_map.clone() })
+    }
     pub fn color(&self, c: &ColorRef, ph: Option<Rgba>) -> Rgba {
         let c = match &c.base {
             crate::ColorBase::Scheme { slot } if matches!(slot, SchemeSlot::Bg1 | SchemeSlot::Tx1 | SchemeSlot::Bg2 | SchemeSlot::Tx2) => {
@@ -80,7 +84,7 @@ fn find_ph<'s>(shapes: &'s [Shape], shape: &Shape, by_idx: bool) -> Option<&'s S
 fn master_ph(master: &Master, kind: PhType) -> Option<&Shape> {
     let want = match kind {
         PhType::Title | PhType::CtrTitle => PhType::Title,
-        PhType::Date | PhType::Footer | PhType::SlideNum | PhType::Header => kind,
+        PhType::Date | PhType::Footer | PhType::SlideNum | PhType::Header | PhType::SlideImage => kind,
         _ => PhType::Body,
     };
     master.shapes.iter().find(|s| s.ph_type() == Some(want))

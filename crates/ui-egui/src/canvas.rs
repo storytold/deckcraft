@@ -191,7 +191,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px, visible, typing_into),
         Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px, visible, typing_into),
-        Some((t @ (Target::Handout | Target::NotesMaster), d)) => {
+        Some((t @ (Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. }), d)) => {
             deckcraft_engine::master_page(&d.doc, t).and_then(|p| master_tex(ui.ctx(), &p, 0, None, px, visible, typing_into))
         }
         None => None,
@@ -207,10 +207,15 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     app.perf.render_ms = app.textures.last_render_ms;
     media_frames(app, &painter, xf);
     // Notes Master view: the current slide inside the slide-image placeholder, as in PowerPoint.
-    let notes_preview = app.session.active().filter(|d| d.selection.target == Target::NotesMaster).and_then(|d| {
-        let frame = d.doc.notes_master.as_ref()?.shapes.iter().find(|s| s.ph_type() == Some(deckcraft_model::PhType::SlideImage))?.xfrm?;
-        Some((d.doc.clone(), d.selection.slide.min(d.doc.slides.len().saturating_sub(1)), frame))
-    });
+    let notes_preview =
+        app.session.active().filter(|d| matches!(d.selection.target, Target::NotesMaster | Target::ImportedNotesMaster { .. })).and_then(|d| {
+            let frame = deckcraft_engine::page_master(&d.doc, d.selection.target)?
+                .shapes
+                .iter()
+                .find(|s| s.ph_type() == Some(deckcraft_model::PhType::SlideImage))?
+                .xfrm?;
+            Some((d.doc.clone(), d.selection.slide.min(d.doc.slides.len().saturating_sub(1)), frame))
+        });
     if let Some((doc, idx, f)) = notes_preview
         && f.w > 1.0
         && f.h > 1.0

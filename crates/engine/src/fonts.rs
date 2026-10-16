@@ -51,9 +51,35 @@ pub fn used_fonts(p: &Presentation) -> Vec<String> {
                 body_fonts(&ctx, s, body, &mut add);
             }
             if let ShapeKind::Table(t) = &s.kind {
-                for cell in t.rows.iter().flat_map(|r| &r.cells) {
-                    body_fonts(&ctx, s, &cell.text, &mut add);
-                }
+                let _ = t.visit_texts(&mut |body| {
+                    body_fonts(&ctx, s, body, &mut add);
+                    Ok(())
+                });
+            }
+        });
+        if let Some(notes_ctx) = Ctx::for_notes(p, slide) {
+            let fallback =
+                Shape { ph: Some(deckcraft_model::Placeholder { kind: deckcraft_model::PhType::Body, ..Default::default() }), ..Default::default() };
+            let frame = slide
+                .notes_page
+                .as_ref()
+                .and_then(|page| page.body_shape.and_then(|id| deckcraft_model::find_shape(&page.shapes, id)))
+                .unwrap_or(&fallback);
+            body_fonts(&notes_ctx, frame, &slide.notes, &mut add);
+            if let Some(page) = &slide.notes_page {
+                deckcraft_model::walk(&page.shapes, &mut |shape, _| {
+                    if let Some(body) = &shape.text {
+                        body_fonts(&notes_ctx, shape, body, &mut add);
+                    }
+                });
+            }
+        }
+    }
+    for notes in &p.notes_masters {
+        let ctx = Ctx::for_master(p, &notes.master);
+        deckcraft_model::walk(&notes.master.shapes, &mut |shape, _| {
+            if let Some(body) = &shape.text {
+                body_fonts(&ctx, shape, body, &mut add);
             }
         });
     }
@@ -103,9 +129,17 @@ pub fn replace_font(p: &mut Presentation, from: &str, to: &str) -> usize {
         let sl = Arc::make_mut(slide);
         replace_shapes(&mut sl.shapes, &mut fix);
         replace_body(&mut sl.notes, &mut fix);
+        if let Some(page) = &mut sl.notes_page {
+            replace_shapes(&mut page.shapes, &mut fix);
+        }
     }
     let mut theme_hits = 0usize;
-    let masters = p.masters.iter_mut().chain(p.notes_master.iter_mut()).chain(p.handout_master.iter_mut());
+    let masters = p
+        .masters
+        .iter_mut()
+        .chain(p.notes_master.iter_mut())
+        .chain(p.handout_master.iter_mut())
+        .chain(p.notes_masters.iter_mut().map(|notes| &mut notes.master));
     for m in masters {
         let m = Arc::make_mut(m);
         replace_shapes(&mut m.shapes, &mut fix);
@@ -133,9 +167,10 @@ fn replace_shapes(shapes: &mut [Shape], fix: &mut dyn FnMut(&mut Option<String>)
             replace_body(body, fix);
         }
         if let ShapeKind::Table(t) = &mut s.kind {
-            for cell in t.rows.iter_mut().flat_map(|r| &mut r.cells) {
-                replace_body(&mut cell.text, fix);
-            }
+            let _ = t.visit_texts_mut(&mut |body| {
+                replace_body(body, fix);
+                Ok(())
+            });
         }
         if let Some(children) = s.children_mut() {
             replace_shapes(children, fix);

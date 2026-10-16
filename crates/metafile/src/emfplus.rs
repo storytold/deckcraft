@@ -93,7 +93,7 @@ impl Fill {
                 if w == 0.0 || h == 0.0 {
                     return [0, 0, 0, 0];
                 }
-                if *wrap == 4 && !(0.0..w).contains(&p.0) || *wrap == 4 && !(0.0..h).contains(&p.1) {
+                if *wrap == 4 && (!(0.0..w).contains(&p.0) || !(0.0..h).contains(&p.1)) {
                     return [0, 0, 0, 0];
                 }
                 let x = (p.0.rem_euclid(w) as usize).min(img.w - 1);

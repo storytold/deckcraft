@@ -12,6 +12,396 @@ fn deck_with(shapes: Vec<Shape>) -> Presentation {
 }
 
 #[test]
+fn bubble_chart_areas_scale_with_sizes_and_missing_values_keep_point_identity() {
+    use deckcraft_model::chart::Series;
+    let mut c = Chart {
+        kind: ChartType::Bubble,
+        title: None,
+        legend: None,
+        gridlines: false,
+        y_min: Some(0.),
+        y_max: Some(10.),
+        series: vec![Series {
+            values: vec![Some(5.), None, Some(5.)],
+            x_values: vec![Some(2.), Some(5.), Some(8.)],
+            sizes: vec![Some(1.), Some(10000.), Some(4.)],
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 20, 40)))),
+            line: Some(Line::none()),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let image = |c: Chart| {
+        render_slide(
+            &deck_with(vec![Shape { xfrm: Some(Xfrm::new(0., 0., 600., 400.)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }]),
+            0,
+            &Default::default(),
+        )
+    };
+    let a = image(c.clone());
+    let red = |p: [u8; 4]| p[0] > 180 && p[1] < 60 && p[2] < 80;
+    let count = |lo: u32, hi: u32| (0..380).flat_map(|y| (lo..hi).map(move |x| (x, y))).filter(|&(x, y)| red(a.pixel(x, y))).count();
+    let small = count(0, 300);
+    let large = count(300, 600);
+    assert!(small > 200, "missing huge-size point must not shrink real bubbles ({small})");
+    assert!((large as f64 / small as f64 - 4.0).abs() < 0.3, "bubble areas represent 1:4, got {small}:{large}");
+    assert_eq!(count(290, 310), 0, "bubbles never get a spurious connecting segment");
+    c.series[0].point_fills = vec![(2, Fill::solid(ColorRef::rgb(Rgba::rgb(20, 180, 40))))];
+    let b = image(c);
+    let greens = b.pixels.as_chunks::<4>().0.iter().filter(|p| p[1] > 140 && p[0] < 60 && p[2] < 80).count();
+    assert!(greens > 700, "sparse point 2 retains its own fill ({greens})");
+}
+
+#[test]
+fn chart_secondary_axis_marks_use_their_own_numeric_scale() {
+    use deckcraft_model::chart::Series;
+    let mut c = Chart {
+        kind: ChartType::Combo,
+        title: None,
+        legend: None,
+        gridlines: false,
+        categories: vec!["A".into(), "B".into()],
+        y_min: Some(0.),
+        y_max: Some(100.),
+        y2_min: Some(0.),
+        y2_max: Some(1.),
+        ..Default::default()
+    };
+    c.series = vec![
+        Series {
+            kind: Some(ChartType::Line),
+            values: vec![Some(50.), None],
+            marker: Some("square".into()),
+            line: Some(Line::none()),
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 20, 40)))),
+            ..Default::default()
+        },
+        Series {
+            kind: Some(ChartType::Line),
+            values: vec![None, Some(0.5)],
+            secondary_axis: true,
+            marker: Some("square".into()),
+            line: Some(Line::none()),
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(20, 180, 40)))),
+            ..Default::default()
+        },
+    ];
+    let image = render_slide(
+        &deck_with(vec![Shape { xfrm: Some(Xfrm::new(0., 0., 600., 400.)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }]),
+        0,
+        &Default::default(),
+    );
+    let y_center = |green: bool| {
+        let ys = (0..400)
+            .flat_map(|y| (40..580).map(move |x| (x, y)))
+            .filter_map(|(x, y)| {
+                let p = image.pixel(x, y);
+                if if green { p[1] > 140 && p[0] < 60 && p[2] < 80 } else { p[0] > 180 && p[1] < 60 && p[2] < 80 } { Some(y) } else { None }
+            })
+            .collect::<Vec<_>>();
+        assert!(ys.len() > 20);
+        ys.iter().map(|y| f64::from(*y)).sum::<f64>() / ys.len() as f64
+    };
+    assert!((y_center(false) - y_center(true)).abs() < 1.0, "50/100 and .5/1 must land at the same height on their respective axes");
+}
+
+#[test]
+fn chart_named_square_markers_have_square_corners_and_no_forced_connecting_line() {
+    use deckcraft_model::chart::Series;
+    let c = Chart {
+        kind: ChartType::Scatter,
+        title: None,
+        legend: None,
+        gridlines: false,
+        y_min: Some(0.),
+        y_max: Some(10.),
+        series: vec![Series {
+            values: vec![Some(5.), Some(5.)],
+            x_values: vec![Some(2.), Some(8.)],
+            marker: Some("square".into()),
+            line: Some(Line::none()),
+            fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 20, 40)))),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let image = render_slide(
+        &deck_with(vec![Shape { xfrm: Some(Xfrm::new(0., 0., 600., 400.)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }]),
+        0,
+        &Default::default(),
+    );
+    let mut red = Vec::new();
+    for y in 0..380 {
+        for x in 40..300 {
+            let p = image.pixel(x, y);
+            if p[0] > 180 && p[1] < 60 && p[2] < 80 {
+                red.push((x, y));
+            }
+        }
+    }
+    let x0 = red.iter().map(|p| p.0).min().unwrap();
+    let x1 = red.iter().map(|p| p.0).max().unwrap();
+    let y0 = red.iter().map(|p| p.1).min().unwrap();
+    let y1 = red.iter().map(|p| p.1).max().unwrap();
+    assert!((x1 - x0 + 1) >= 6 && (y1 - y0 + 1) >= 6);
+    assert!(red.contains(&(x0, y0)) && red.contains(&(x1, y1)), "named square has filled corners");
+    for y in y0..=y1 {
+        assert_eq!(image.pixel(300, y), [255; 4], "explicit no-line keeps markers disconnected");
+    }
+}
+
+#[test]
+fn chart_primary_logarithmic_marks_are_spaced_by_decades() {
+    use deckcraft_model::chart::Series;
+    let fills = [Rgba::rgb(220, 20, 40), Rgba::rgb(20, 180, 40), Rgba::rgb(20, 40, 220)];
+    let c = Chart {
+        kind: ChartType::Scatter,
+        title: None,
+        legend: None,
+        gridlines: false,
+        y_min: Some(1.),
+        y_max: Some(1000.),
+        y_log_base: Some(10.),
+        series: vec![Series {
+            values: vec![Some(1.), Some(10.), Some(1000.)],
+            x_values: vec![Some(2.), Some(5.), Some(8.)],
+            marker: Some("square".into()),
+            line: Some(Line::none()),
+            point_fills: fills.into_iter().enumerate().map(|(i, c)| (i, Fill::solid(ColorRef::rgb(c)))).collect(),
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let image = render_slide(
+        &deck_with(vec![Shape { xfrm: Some(Xfrm::new(0., 0., 600., 400.)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }]),
+        0,
+        &Default::default(),
+    );
+    let centers = fills.map(|color| {
+        let mut ys = Vec::new();
+        for y in 0..400 {
+            for x in 40..580 {
+                if image.pixel(x, y) == [color.r, color.g, color.b, 255] {
+                    ys.push(y);
+                }
+            }
+        }
+        assert!(ys.len() > 10);
+        ys.iter().map(|v| f64::from(*v)).sum::<f64>() / ys.len() as f64
+    });
+    assert!(((centers[0] - centers[1]) / (centers[1] - centers[2]) - 0.5).abs() < 0.02, "one decade then two decades: {centers:?}");
+}
+
+// The synthetic preview must use provably bundled OFL glyphs, even when Inter is absent.
+fn paragraph_background_deck(shapes: Vec<Shape>) -> Presentation {
+    let mut doc = deck_with(shapes);
+    for master in &mut doc.masters {
+        let master = std::sync::Arc::make_mut(master);
+        for set in [&mut master.theme.fonts.major, &mut master.theme.fonts.minor] {
+            set.latin = "BIZ UDPGothic".into();
+            set.ea = "BIZ UDPGothic".into();
+            set.cs = "BIZ UDPGothic".into();
+            set.scripts.clear();
+        }
+    }
+    doc
+}
+
+fn paragraph_background_shape(text: &str) -> Shape {
+    use deckcraft_model::text::{Anchor, AutoFit, BodyProps, Spacing};
+    let mut body = TextBody::from_text(text);
+    body.body = BodyProps {
+        inset_l: Some(0.0),
+        inset_r: Some(0.0),
+        inset_t: Some(0.0),
+        inset_b: Some(0.0),
+        anchor: Some(Anchor::Top),
+        autofit: Some(AutoFit::None),
+        ..Default::default()
+    };
+    for para in &mut body.paragraphs {
+        para.props.background = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(20, 100, 180))));
+        para.props.margin_left = Some(20.0);
+        para.props.margin_right = Some(30.0);
+        para.props.line_spacing = Some(Spacing::Pts(24.0));
+        para.def_props.size = Some(20.0);
+        para.end_props.size = Some(20.0);
+        for props in [&mut para.def_props, &mut para.end_props].into_iter().chain(para.runs.iter_mut().map(|run| &mut run.props)) {
+            props.font = Some("BIZ UDPGothic".into());
+            props.font_ea = Some("BIZ UDPGothic".into());
+            props.font_cs = Some("BIZ UDPGothic".into());
+        }
+    }
+    Shape {
+        id: ShapeId(701),
+        xfrm: Some(Xfrm::new(40.0, 40.0, 240.0, 160.0)),
+        fill: Some(Fill::None),
+        line: Some(Line::none()),
+        text: Some(body),
+        text_box: true,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn paragraph_background_pixels_cover_whitespace_empty_lines_and_leave_spacing_clear() {
+    use deckcraft_model::text::Spacing;
+    let mut sh = paragraph_background_shape("Hi\n");
+    let t = sh.text.as_mut().unwrap();
+    t.paragraphs[0].props.space_after = Some(Spacing::Pts(12.0));
+    t.paragraphs[1].props.space_before = Some(Spacing::Pts(7.0));
+    let p = paragraph_background_deck(vec![sh]);
+    let image = render_slide(&p, 0, &Default::default());
+    assert_eq!(image.pixel(230, 50), [20, 100, 180, 255]);
+    assert_eq!(image.pixel(50, 50), [255; 4]);
+    assert_eq!(image.pixel(260, 50), [255; 4]);
+    assert_eq!(image.pixel(230, 72), [255; 4]);
+    assert_eq!(image.pixel(230, 90), [20, 100, 180, 255]);
+    if let Ok(path) = std::env::var("DECKCRAFT_PARAGRAPH_BACKGROUND_PNG") {
+        let face = FontDb::global().document_face("BIZ UDPGothic", "Regular");
+        assert_eq!(face.family, "BIZ UDPGothic", "the preview may not substitute an unlicensed system font");
+        std::fs::write(path, image.to_png()).unwrap();
+    }
+    let empty = render_slide(&paragraph_background_deck(vec![paragraph_background_shape("")]), 0, &Default::default());
+    assert_eq!(empty.pixel(230, 50), [20, 100, 180, 255], "an entirely empty text body still paints its paragraph area");
+}
+
+#[test]
+fn paragraph_background_pixels_are_below_character_highlights() {
+    let mut sh = paragraph_background_shape("    ");
+    let t = sh.text.as_mut().unwrap();
+    t.paragraphs[0].runs[0].props.highlight = Some(ColorRef::rgb(Rgba::rgb(240, 200, 20)));
+    let image = render_slide(&paragraph_background_deck(vec![sh]), 0, &Default::default());
+    assert_eq!(image.pixel(62, 45), [240, 200, 20, 255]);
+    assert_eq!(image.pixel(230, 45), [20, 100, 180, 255]);
+}
+
+#[test]
+fn paragraph_background_empty_table_cell_is_drawn_and_available_to_exports() {
+    let mut t = Table::new(1, 1, 240.0, 100.0);
+    let cell = &mut t.rows[0].cells[0];
+    cell.text = paragraph_background_shape("").text.unwrap();
+    cell.margins = Some([0.0; 4]);
+    let sh = Shape { id: ShapeId(701), kind: ShapeKind::Table(t), xfrm: Some(Xfrm::new(40.0, 40.0, 240.0, 100.0)), ..Default::default() };
+    let p = paragraph_background_deck(vec![sh]);
+    let image = render_slide(&p, 0, &Default::default());
+    assert_eq!(image.pixel(230, 50), [20, 100, 180, 255]);
+    let placed = place_slide(&p, 0);
+    assert_eq!(placed.texts.len(), 1);
+    assert_eq!(placed.texts[0].layout.backgrounds.len(), 1);
+    assert!(placed.texts[0].layout.runs.is_empty());
+    let p = paragraph_background_deck(vec![paragraph_background_shape("")]);
+    assert_eq!(place_slide(&p, 0).texts[0].layout.backgrounds.len(), 1);
+}
+
+#[test]
+fn paragraph_background_pixels_follow_shape_and_text_rotation() {
+    let mut sh = paragraph_background_shape("");
+    sh.xfrm.as_mut().unwrap().rot = 90.0;
+    let image = render_slide(&paragraph_background_deck(vec![sh]), 0, &Default::default());
+    // Local point (180,10) about the shape centre (120,80), then origin (40,40).
+    assert_eq!(image.pixel(230, 180), [20, 100, 180, 255]);
+    assert_eq!(image.pixel(100, 50), [255; 4]);
+    let mut sh = paragraph_background_shape("");
+    sh.text.as_mut().unwrap().body.rot = Some(30.0);
+    let image = render_slide(&paragraph_background_deck(vec![sh]), 0, &Default::default());
+    // Same local point, rotated 30 degrees: (246.96,89.38) on the slide.
+    assert_eq!(image.pixel(247, 89), [20, 100, 180, 255]);
+    assert_eq!(image.pixel(100, 50), [255; 4]);
+}
+
+#[test]
+fn paragraph_background_pixels_follow_paragraph_visibility_opacity_and_offset() {
+    let p = paragraph_background_deck(vec![paragraph_background_shape("")]);
+    let hidden = |_| ShapeState { paras: vec![(0, ParaState { visible: false, ..Default::default() })], ..Default::default() };
+    let image = render_slide(&p, 0, &RenderOpts { state: Some(&hidden), ..Default::default() });
+    assert_eq!(image.pixel(230, 50), [255; 4]);
+    let fade =
+        |_| ShapeState { paras: vec![(0, ParaState { opacity: 0.5, offset: Vec2::new(40.0, 10.0), ..Default::default() })], ..Default::default() };
+    let image = render_slide(&p, 0, &RenderOpts { state: Some(&fade), ..Default::default() });
+    assert_eq!(image.pixel(70, 55), [255; 4]);
+    let pixel = image.pixel(230, 60);
+    for (actual, expected) in pixel.iter().zip([137u8, 177, 217, 255]) {
+        assert!(actual.abs_diff(expected) <= 2, "half-opacity paragraph: {pixel:?}");
+    }
+}
+
+#[test]
+fn paragraph_background_stays_flat_under_wordart_and_morphs_below_glyphs() {
+    let mut sh = paragraph_background_shape("Hi");
+    sh.text.as_mut().unwrap().body.warp = Some("textArchUp".into());
+    let image = render_slide(&paragraph_background_deck(vec![sh]), 0, &Default::default());
+    // The paragraph area remains a text-box rectangle; only glyphs follow the guide.
+    assert_eq!(image.pixel(230, 50), [20, 100, 180, 255]);
+    let from = Xfrm::new(40.0, 40.0, 240.0, 160.0);
+    let to = Xfrm::new(80.0, 80.0, 240.0, 160.0);
+    let mut a = paragraph_background_shape("same");
+    a.id = ShapeId(11);
+    a.text.as_mut().unwrap().paragraphs[0].runs[0].props.highlight = Some(ColorRef::rgb(Rgba::rgb(240, 200, 20)));
+    let mut b = paragraph_background_shape("same");
+    b.id = ShapeId(10);
+    b.xfrm = Some(to);
+    b.text.as_mut().unwrap().paragraphs[0].runs[0].props.highlight = Some(ColorRef::rgb(Rgba::rgb(240, 200, 20)));
+    let mut p = paragraph_background_deck(vec![a.clone()]);
+    let mut slide = (*p.slides[0]).clone();
+    slide.shapes = vec![b.clone()];
+    p.slides.push(std::sync::Arc::new(slide));
+    let ca = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let cb = Ctx::for_slide(&p, &p.slides[1]).unwrap();
+    for t in [0.0, 0.5, 1.0] {
+        let mut ctx = vello_cpu::RenderContext::new(400, 300);
+        let tm = TextMorph { old: a.id, new: b.id, from, to, chars: false, t };
+        let now = Xfrm::new(40.0 + 40.0 * t, 40.0 + 40.0 * t, 240.0, 160.0);
+        morph_text::draw(&mut ctx, (&ca, &a, &deckcraft_text::NoFields), (&cb, &b, &deckcraft_text::NoFields), &tm, now, Affine::IDENTITY);
+        let image = Renderer::default().finish(ctx, 400, 300);
+        let shift = (40.0 * t) as u32;
+        assert_eq!(image.pixel(230 + shift, 50 + shift), [20, 100, 180, 255], "unchanged area remains opaque at morph {t}");
+        // Shared glyphs must survive both background and run highlight passes.
+        let ink = (42..63)
+            .flat_map(|y| (60..110).map(move |x| (x + shift, y + shift)))
+            .filter(|&(x, y)| {
+                let p = image.pixel(x, y);
+                p[0] < 10 && p[1] < 10 && p[2] < 10 && p[3] > 200
+            })
+            .count();
+        assert!(ink > 10, "paragraph paint must stay beneath travelling glyphs ({ink} black pixels at morph {t})");
+    }
+}
+
+#[test]
+fn paragraph_background_morph_partial_overlap_uses_premultiplied_crossfade() {
+    use deckcraft_model::text::Spacing;
+    for rotation in [0.0, 30.0] {
+        let mut a = paragraph_background_shape("");
+        a.text.as_mut().unwrap().body.rot = Some(rotation);
+        let mut b = a.clone();
+        b.text.as_mut().unwrap().paragraphs[0].props.line_spacing = Some(Spacing::Pts(48.0));
+        let p = paragraph_background_deck(vec![a.clone()]);
+        let rctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let x = a.xfrm.unwrap();
+        let tm = TextMorph { old: a.id, new: b.id, from: x, to: x, chars: false, t: 0.5 };
+        let mut ctx = vello_cpu::RenderContext::new(400, 300);
+        ctx.set_paint(color(Rgba::WHITE, 1.0));
+        ctx.fill_rect(&Rect::new(0.0, 0.0, 400.0, 300.0));
+        morph_text::draw(&mut ctx, (&rctx, &a, &deckcraft_text::NoFields), (&rctx, &b, &deckcraft_text::NoFields), &tm, x, Affine::IDENTITY);
+        let image = Renderer::default().finish(ctx, 400, 300);
+        let (shared, new_only, outside) = if rotation == 0.0 {
+            ((230, 50), (230, 75), (230, 95))
+        } else {
+            // Independently rotate local (180,10), (180,35), (180,65) around
+            // centre (120,80), then translate shape origin (40,40).
+            ((247, 89), (234, 111), (219, 137))
+        };
+        assert_eq!(image.pixel(shared.0, shared.1), [20, 100, 180, 255], "shared area stays opaque at rotation {rotation}");
+        let pixel = image.pixel(new_only.0, new_only.1);
+        for (actual, expected) in pixel.iter().zip([137u8, 177, 217, 255]) {
+            assert!(actual.abs_diff(expected) <= 2, "new-only area fades at rotation {rotation}: {pixel:?}");
+        }
+        assert_eq!(image.pixel(outside.0, outside.1), [255; 4]);
+    }
+}
+
+#[test]
 fn blank_slide_renders_white_background() {
     let p = Presentation::default();
     let img = render_slide(&p, 0, &RenderOpts { scale: 0.25, ..Default::default() });
@@ -864,6 +1254,7 @@ fn hyperlinks_draw_in_the_hyperlink_colour_underlined() {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     let hlink = Some(Fill::solid(ColorRef::scheme(deckcraft_color::SchemeSlot::Hlink)));
     let red = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0))));
@@ -2040,8 +2431,15 @@ fn east_asian_vertical_text_stands_ideographs_upright() {
 #[test]
 fn placed_shapes_give_the_click_boxes_of_a_slide_in_drawing_order() {
     use deckcraft_model::text::{Action, Hyperlink};
-    let link =
-        Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None };
+    let link = Hyperlink {
+        action: Action::NextSlide,
+        tooltip: String::new(),
+        highlight_click: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+        sound_name: None,
+    };
     let rect = |id: u32, x: f64, click: Option<Hyperlink>| Shape {
         id: ShapeId(id),
         xfrm: Some(Xfrm::new(x, 50.0, 100.0, 40.0)),
@@ -2088,6 +2486,7 @@ fn a_text_hyperlink_belongs_to_the_shape_that_holds_the_text() {
             sound: None,
             stop_sound: false,
             zoom_return: None,
+            sound_name: None,
         });
     }
     let sh = Shape { id: ShapeId(7), xfrm: Some(Xfrm::new(100.0, 100.0, 300.0, 60.0)), text: Some(body), ..Default::default() };
@@ -2567,4 +2966,55 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(!changed.is_empty(), "an empty bullet must be visible");
     assert!(changed.iter().any(|(px, _)| px[0] == 179 && px[1] == 179 && px[2] == 179));
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
+}
+
+#[test]
+fn nested_layout_keeps_all_blocks_in_order_and_hit_caret_and_placed_text_share_geometry() {
+    use deckcraft_model::table::{CellBlock, TablePath, TablePathStep};
+    let mut table = Table::new(1, 1, 320., 20.);
+    table.style = "grid".into();
+    let cell = table.cell_mut(0, 0).unwrap();
+    cell.text = TextBody::from_text("Before");
+    let mut child = Table::new(2, 2, 500., 28.);
+    child.style = "grid".into();
+    child.cell_mut(0, 0).unwrap().text = TextBody::from_text("Child");
+    let id = cell.append_nested_table(child).unwrap();
+    let tail = cell.append_text_block(TextBody::from_text("After")).unwrap();
+    let shape = Shape { id: ShapeId(710), xfrm: Some(Xfrm::new(40., 50., 320., 20.)), kind: ShapeKind::Table(table.clone()), ..Default::default() };
+    let doc = deck_with(vec![shape]);
+    let ctx = deckcraft_model::resolve::Ctx::for_slide(&doc, &doc.slides[0]).unwrap();
+    let plan = deckcraft_text::table_content::layout(&ctx, &table, &deckcraft_text::NoFields).unwrap();
+    let path = TablePath(vec![TablePathStep { row: 0, col: 0, child: id }]);
+    let (_, before, _) = plan.text_at(&TablePath::default(), 0, 0, None).unwrap();
+    let (_, inside, transform) = plan.text_at(&path, 0, 0, None).unwrap();
+    let child = transform.transform_rect_bbox(inside);
+    let (_, after, _) = plan.text_at(&TablePath::default(), 0, 0, Some(tail)).unwrap();
+    assert!(before.y1 <= child.y0);
+    assert!(child.y1 <= after.y0);
+    assert!(child.x1 <= 320.);
+    let hit = plan.hit_text(&ctx, &deckcraft_text::NoFields, child.center()).unwrap();
+    assert_eq!(hit.path, path);
+    assert_eq!((hit.row, hit.col), (0, 0));
+    let placed = crate::place_slide(&doc, 0);
+    let texts: Vec<_> = placed.texts.iter().map(|text| text.body.text()).collect();
+    assert!(texts.iter().position(|text| text == "Before").unwrap() < texts.iter().position(|text| text == "Child").unwrap());
+    assert!(texts.iter().position(|text| text == "Child").unwrap() < texts.iter().position(|text| text == "After").unwrap());
+    assert!(matches!(table.cell(0, 0).unwrap().blocks.first(), Some(CellBlock::Table(_))));
+}
+#[test]
+fn genuinely_absent_first_text_has_no_placeholder_height_before_nested_table() {
+    let mut table = Table::new(1, 1, 200., 0.);
+    table.cell_mut(0, 0).unwrap().text.paragraphs.clear();
+    let id = table.cell_mut(0, 0).unwrap().append_nested_table(Table::new(1, 1, 160., 30.)).unwrap();
+    let doc = deck_with(vec![]);
+    let ctx = deckcraft_model::resolve::Ctx::for_slide(&doc, &doc.slides[0]).unwrap();
+    let plan = deckcraft_text::table_content::layout(&ctx, &table, &deckcraft_text::NoFields).unwrap();
+    let block = plan.cells[0]
+        .blocks
+        .iter()
+        .find(|block| matches!(block,deckcraft_text::table_content::BlockLayout::Table{id:child,..} if *child==id))
+        .unwrap();
+    let deckcraft_text::table_content::BlockLayout::Table { transform, .. } = block else { panic!() };
+    assert_eq!((*transform * kurbo::Point::ZERO).y, 3.6);
+    assert!(plan.text_at(&Default::default(), 0, 0, None).is_none());
 }

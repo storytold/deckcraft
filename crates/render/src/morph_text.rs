@@ -7,7 +7,7 @@ use deckcraft_model::resolve::Ctx;
 use deckcraft_model::{Shape, ShapeId};
 use deckcraft_text::{Fields, GlyphRun, Opts, TextLayout};
 use kurbo::{Affine, Point, Vec2};
-use vello_cpu::RenderContext;
+use vello_cpu::{RenderContext, peniko};
 
 use crate::{color, draw_glyph, draw_layout, shape_geometry, text_transform};
 
@@ -89,7 +89,7 @@ fn matches(a: &[Token], b: &[Token]) -> Vec<Option<usize>> {
 }
 
 fn layout(ctx: &Ctx, s: &Shape, x: Xfrm, fields: &dyn Fields) -> Option<TextLayout> {
-    let body = s.text.as_ref().filter(|b| !b.is_empty())?;
+    let body = s.text.as_ref()?;
     let rect = shape_geometry(s, x.w, x.h).text_rect;
     Some(deckcraft_text::layout(ctx, s, body, &Opts { rect, fields, prompt_color: None, no_shrink: false }))
 }
@@ -125,15 +125,18 @@ pub(crate) fn draw(
     // Rotated (vertical) text: no per-word travel, the two texts cross-fade on the moving box.
     let rotated = la.as_ref().is_some_and(|l| l.rotation != 0.0) || lb.as_ref().is_some_and(|l| l.rotation != 0.0);
     if rotated || la.is_none() || lb.is_none() {
+        // Sum isolated premultiplied images, then composite once onto the slide.
+        ctx.push_layer(None, None, None, None, None);
         for (l, s, alpha, x) in [(la, a, 1.0 - t, m.from), (lb, b, t, m.to)] {
             if let Some(l) = l
                 && alpha > 0.001
             {
-                ctx.push_layer(None, None, Some(alpha as f32), None, None);
+                ctx.push_layer(None, Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::Plus)), Some(alpha as f32), None, None);
                 draw_layout(ctx, &l, shape_geometry(s, x.w, x.h).text_rect, mt);
                 ctx.pop_layer();
             }
         }
+        ctx.pop_layer();
         return;
     }
     let (Some(la), Some(lb)) = (la, lb) else { return };
@@ -144,6 +147,59 @@ pub(crate) fn draw(
     let (tra, trb) = (shape_geometry(a, m.from.w, m.from.h).text_rect, shape_geometry(b, m.to.w, m.to.h).text_rect);
     let (ma, mb) = (text_transform(view * m.from.affine(), tra, 0.0), text_transform(view * m.to.affine(), trb, 0.0));
     let (mta, mtb) = (text_transform(mt, tra, 0.0), text_transform(mt, trb, 0.0));
+    // Paragraph areas follow the moving text box and cross-fade beneath every
+    // travelling glyph and run highlight, including when a paragraph is empty.
+    if !la.backgrounds.is_empty() || !lb.backgrounds.is_empty() {
+        // Add faded source images in premultiplied space. Shared opaque regions
+        // stay opaque even for partial overlap, while other regions fade.
+        ctx.push_layer(None, None, None, None, None);
+        for (l, alpha, place) in [(&la, 1.0 - t, mta), (&lb, t, mtb)] {
+            if alpha <= 0.0 || l.backgrounds.is_empty() {
+                continue;
+            }
+            ctx.push_layer(None, Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::Plus)), Some(alpha as f32), None, None);
+            for d in &l.backgrounds {
+                ctx.set_transform(place);
+                ctx.set_paint(color(d.color, 1.0));
+                crate::fill_deco(ctx, d);
+            }
+            ctx.pop_layer();
+        }
+        ctx.pop_layer();
+    }
+    // The rest fades while following the shared tokens: they define a scale and shift from the old
+    // text to the new one (F(p) = s·p + c, in pixels), so a line grows, shrinks and rearranges as
+    // one. With nothing shared it rides the moving box.
+    let shared: Vec<(Point, Point, f64)> = pairs
+        .iter()
+        .enumerate()
+        .filter_map(|(j, i)| {
+            let (tok_a, tok_b) = (ta.get((*i)?)?, tb.get(j)?);
+            let (ra, rb) = (la.runs.get(tok_a.run)?, lb.runs.get(tok_b.run)?);
+            let ratio = if ra.size > 0.0 && rb.size > 0.0 { rb.size / ra.size } else { 1.0 };
+            Some((ma * tok_a.origin, mb * tok_b.origin, ratio))
+        })
+        .collect();
+    let n = shared.len() as f64;
+    let s = shared.iter().map(|x| x.2).sum::<f64>() / n;
+    let c = shared.iter().fold(Vec2::ZERO, |acc, (pa, pb, _)| acc + (pb.to_vec2() - pa.to_vec2() * s)) / n;
+    let (place_a, place_b) = if !shared.is_empty() && s.is_finite() && s > 0.0 && c.is_finite() {
+        // Old text: p ↦ lerp(p, F(p), t). New text: q ↦ lerp(F⁻¹(q), q, t).
+        let a = Affine::translate(c * t) * Affine::scale(lerp(1.0, s, t));
+        let b = Affine::translate(-c * ((1.0 - t) / s)) * Affine::scale((1.0 - t) / s + t);
+        (a * ma, b * mb)
+    } else {
+        (mta, mtb)
+    };
+    // Run highlighting belongs below glyphs, with the same travelling placement
+    // as foreground underlines and strikethroughs.
+    for (l, alpha, place) in [(&la, 1.0 - t, place_a), (&lb, t, place_b)] {
+        for d in l.decos.iter().filter(|d| d.behind) {
+            ctx.set_transform(place);
+            ctx.set_paint(color(d.color, alpha));
+            crate::fill_deco(ctx, d);
+        }
+    }
     let c = mta.as_coeffs();
     let linear = Affine::new([c[0], c[1], c[2], c[3], 0.0, 0.0]);
     let mut moved_a = vec![false; ta.len()];
@@ -176,30 +232,6 @@ pub(crate) fn draw(
             }
         }
     }
-    // The rest fades while following the shared tokens: they define a scale and shift from the old
-    // text to the new one (F(p) = s·p + c, in pixels), so a line grows, shrinks and rearranges as
-    // one. With nothing shared it rides the moving box.
-    let shared: Vec<(Point, Point, f64)> = pairs
-        .iter()
-        .enumerate()
-        .filter_map(|(j, i)| {
-            let (tok_a, tok_b) = (ta.get((*i)?)?, tb.get(j)?);
-            let (ra, rb) = (la.runs.get(tok_a.run)?, lb.runs.get(tok_b.run)?);
-            let ratio = if ra.size > 0.0 && rb.size > 0.0 { rb.size / ra.size } else { 1.0 };
-            Some((ma * tok_a.origin, mb * tok_b.origin, ratio))
-        })
-        .collect();
-    let n = shared.len() as f64;
-    let s = shared.iter().map(|x| x.2).sum::<f64>() / n;
-    let c = shared.iter().fold(Vec2::ZERO, |acc, (pa, pb, _)| acc + (pb.to_vec2() - pa.to_vec2() * s)) / n;
-    let (place_a, place_b) = if !shared.is_empty() && s.is_finite() && s > 0.0 && c.is_finite() {
-        // Old text: p ↦ lerp(p, F(p), t). New text: q ↦ lerp(F⁻¹(q), q, t).
-        let a = Affine::translate(c * t) * Affine::scale(lerp(1.0, s, t));
-        let b = Affine::translate(-c * ((1.0 - t) / s)) * Affine::scale((1.0 - t) / s + t);
-        (a * ma, b * mb)
-    } else {
-        (mta, mtb)
-    };
     let unmatched_a =
         ta.iter().enumerate().filter(|(i, _)| !moved_a.get(*i).copied().unwrap_or(false)).flat_map(|(_, tok)| tok.glyphs.iter().copied());
     for g in unmatched_a.chain(loose_a) {
@@ -214,9 +246,9 @@ pub(crate) fn draw(
             draw_glyph(ctx, run, gid, place_b * Affine::translate(pos.to_vec2()), t);
         }
     }
-    // Underlines, strikethroughs and highlights fade with their text.
+    // Foreground underlines and strikethroughs fade with their text.
     for (l, alpha, place) in [(&la, 1.0 - t, place_a), (&lb, t, place_b)] {
-        for d in &l.decos {
+        for d in l.decos.iter().filter(|d| !d.behind) {
             ctx.set_transform(place);
             ctx.set_paint(color(d.color, alpha));
             crate::fill_deco(ctx, d);

@@ -1,8 +1,17 @@
 //! PPTX export: [`Presentation`] → package.
 
 pub(crate) mod chart;
+pub(crate) mod comments;
 pub(crate) mod dml;
+#[path = "../handout_resources.rs"]
+pub(crate) mod handout_resources;
+pub(crate) mod notes;
+mod numbering;
+mod script_styles;
 mod shapes;
+#[path = "../table_projection.rs"]
+pub(crate) mod table_projection;
+mod text_background;
 mod theme;
 mod timing;
 
@@ -12,9 +21,7 @@ use std::sync::Arc;
 use deckcraft_geom::Xfrm;
 use deckcraft_model::text::{ListStyle, Paragraph, TextBody};
 use deckcraft_model::theme::Theme;
-use deckcraft_model::{
-    Background, Comment, Layout, LayoutId, Master, MediaId, PhType, Placeholder, Presentation, Shape, ShapeId, Slide, SlideId, defaults,
-};
+use deckcraft_model::{Background, Layout, LayoutId, Master, MediaId, PhType, Placeholder, Presentation, Shape, ShapeId, Slide, SlideId, defaults};
 
 use crate::PptxError;
 use crate::opc::{self, NS_A, NS_P, NS_P14, NS_P188, NS_R, PackageOut, RelsOut};
@@ -64,6 +71,8 @@ pub struct Exp<'a> {
     pub slide_parts: HashMap<SlideId, String>,
     pub table_styles: Vec<String>,
     placeholder: Option<String>,
+    pub(crate) error: Option<PptxError>,
+    pub(crate) table_hashes: HashMap<MediaId, String>,
 }
 
 /// A part being written: its name and relationships.
@@ -466,9 +475,8 @@ fn notes_style() -> ListStyle {
     ls
 }
 
-/// A plausible xsd:dateTime (`YYYY-MM-DD[THH:MM:SS(.frac)?(Z|±HH:MM)?]`): the ranges are
-/// checked, so a model value like `2025-13-45T99:99` falls back to the default instead of
-/// reaching a required `dt`/`created` attribute.
+/// Legacy core-property date screening. Comment creation timestamps instead use
+/// the bounded XML Schema dateTime validator during export preflight.
 fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
     let n = |r: std::ops::Range<usize>| s.get(r).and_then(|v| v.parse::<u32>().ok());
@@ -526,8 +534,37 @@ fn sanitized(p: &Presentation) -> std::borrow::Cow<'_, Presentation> {
 }
 
 pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
+    deckcraft_model::presentation_template::validate(p).map_err(|error| PptxError::Unsupported(error.to_string()))?;
+    if !p.presentation_templates.is_empty() {
+        return Err(PptxError::Unsupported("independent presentation template resources have no PPTX mapping".into()));
+    }
+    table_projection::check(p)?;
+    numbering::check(p)?;
+    script_styles::check(p)?;
+    deckcraft_model::comments::validate(p, true).map_err(|e| PptxError::Unsupported(e.to_string()))?;
+    if p.tags.iter().any(|(key, _)| key == "pptx:comment-warning")
+        || p.media.iter().any(|m| m.content_type == "application/vnd.deckcraft.pptx-source")
+    {
+        return Err(PptxError::Unsupported("unmapped comment source semantics require recovery from the retained original PPTX".into()));
+    }
+    let normalized_comments;
+    let p = if p.slides.iter().any(|s| !s.comments.is_empty()) {
+        let mut q = p.clone();
+        deckcraft_model::comments::normalize(&mut q).map_err(|e| PptxError::Unsupported(e.to_string()))?;
+        normalized_comments = q;
+        &normalized_comments
+    } else {
+        p
+    };
+    text_background::check(p)?;
     let p = sanitized(p);
+    if matches!(&p, std::borrow::Cow::Owned(_)) {
+        // Repairing missing masters can supply the inheritance context that was
+        // unavailable during raw validation. Validate the actual document we write.
+        script_styles::check(&p)?;
+    }
     let p: &Presentation = &p;
+    let notes_plan = crate::notes_projection::Plan::new(p)?;
     let mut x = Exp {
         p,
         pkg: PackageOut::default(),
@@ -542,6 +579,8 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         slide_parts: HashMap::new(),
         table_styles: vec![],
         placeholder: None,
+        error: None,
+        table_hashes: HashMap::new(),
     };
     for (i, s) in p.slides.iter().enumerate() {
         x.slide_parts.insert(s.id, format!("ppt/slides/slide{}.xml", i + 1));
@@ -590,9 +629,14 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
 
     // Notes master when a slide has notes, or the file already has one (its header and footer
     // live on the master, not on the notes slides).
-    let notes_master = "ppt/notesMasters/notesMaster1.xml";
+    let notes_master = notes::MASTER_PART;
     let mut notes_master_rid = None;
-    if let Some(nm) = notes_master_write(p) {
+    let mut prepared_notes = None;
+    if let Some(plan) = notes_plan {
+        let (prepared, rid) = notes::prepare(&mut x, &mut pres, plan)?;
+        prepared_notes = Some(prepared);
+        notes_master_rid = Some(rid);
+    } else if let Some(nm) = notes_master_write(p) {
         let tname = format!("ppt/theme/theme{}.xml", p.masters.len() + 1);
         let mut no = Out::new(notes_master);
         no.rels.add("theme", &opc::relative(notes_master, &tname), false);
@@ -630,14 +674,13 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         csld(&mut w, &mut x, &mut ho, &hm.name, hm.background.as_ref(), &hm.shapes, &[]);
         clr_map(&mut w, &hm.color_map);
         w.close("p:handoutMaster");
-        x.pkg.xml_part(handout_path, CT_HANDOUT_MASTER, w.finish());
+        let handout_xml = handout_resources::write(&mut x, &mut ho, hm, &w.finish())?;
+        x.pkg.xml_part(handout_path, CT_HANDOUT_MASTER, handout_xml);
         x.pkg.rels(handout_path, &ho.rels);
         handout_rid = Some(pres.rels.add("handoutMaster", &opc::relative("ppt/presentation.xml", handout_path), false));
     }
 
-    // Comment authors.
-    let mut authors: Vec<(String, String, u32)> = vec![];
-    let mut n_comments = 0u32;
+    let mut comment_state = comments::State::new(p)?;
 
     // Slides.
     let mut slide_rids = vec![];
@@ -647,55 +690,28 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         if let Some(lp) = layout_parts.get(&s.layout) {
             so.rels.add("slideLayout", &opc::relative(&sname, lp), false);
         }
-        if !s.notes.is_empty() {
+        let structured_page = prepared_notes.as_ref().is_some_and(|prepared| prepared.plan.pages.get(i).is_some_and(Option::is_some));
+        if structured_page || (prepared_notes.is_none() && !s.notes.is_empty()) {
             let nname = format!("ppt/notesSlides/notesSlide{}.xml", i + 1);
             so.rels.add("notesSlide", &opc::relative(&sname, &nname), false);
             let mut no = Out::new(&nname);
             no.rels.add("notesMaster", &opc::relative(&nname, notes_master), false);
             no.rels.add("slide", &opc::relative(&nname, &sname), false);
-            let xml = notes_xml(&mut x, &mut no, &s.notes);
+            let xml = if let Some(prepared) = prepared_notes.as_ref() {
+                notes::page(&mut x, &mut no, prepared, i)?
+            } else {
+                notes_xml(&mut x, &mut no, &s.notes)
+            };
             x.pkg.xml_part(&nname, CT_NOTES, xml);
             x.pkg.rels(&nname, &no.rels);
         }
-        let mut comment_rel = None;
-        if !s.comments.is_empty() {
-            n_comments += 1;
-            let cname = format!("ppt/comments/comment{n_comments}.xml");
-            so.rels.add("comments", &opc::relative(&sname, &cname), false);
-            x.pkg.xml_part(&cname, CT_COMMENTS, comments_xml(&s.comments, &mut authors));
-            // The modern threaded part next to the flattened legacy one (issue #70):
-            // PowerPoint 2021+ and DeckCraft read replies and resolved state from it,
-            // older readers keep the legacy part.
-            let mname = format!("ppt/comments/modernComment{n_comments}.xml");
-            let rid = so.rels.add(RT_COMMENTS_MODERN, &opc::relative(&sname, &mname), false);
-            x.pkg.xml_part(&mname, CT_COMMENTS_MODERN, modern_comments_xml(&s.comments, &cname, &mut authors));
-            comment_rel = Some(rid);
-        }
+        let comment_rel = comment_state.page(&mut x, s, i, &mut so)?;
         let xml = slide_xml(&mut x, &mut so, s, comment_rel.as_deref());
         x.pkg.xml_part(&sname, CT_SLIDE, xml);
         x.pkg.rels(&sname, &so.rels);
         slide_rids.push(pres.rels.add("slide", &opc::relative("ppt/presentation.xml", &sname), false));
     }
-    if !authors.is_empty() {
-        let name = "ppt/commentAuthors.xml";
-        let mut w = W::new();
-        root_open(&mut w, "p:cmAuthorLst", A::new());
-        for (i, (n, ini, last)) in authors.iter().enumerate() {
-            w.empty("p:cmAuthor", A::new().a("id", i).a("name", n).a("initials", ini).a("lastIdx", last).a("clrIdx", i % 8));
-        }
-        w.close("p:cmAuthorLst");
-        x.pkg.xml_part(name, CT_AUTHORS, w.finish());
-        pres.rels.add("commentAuthors", "commentAuthors.xml", false);
-        // The modern authors part the threaded comments' authorId GUIDs point at.
-        let mut w = W::new();
-        w.open("p188:authorLst", A::new().a("xmlns:p188", NS_P188));
-        for (n, ini, _) in authors.iter() {
-            w.empty("p188:author", A::new().a("id", author_guid(n)).a("name", n).a("initials", ini).a("userId", "").a("providerId", "None"));
-        }
-        w.close("p188:authorLst");
-        x.pkg.xml_part("ppt/authors.xml", CT_AUTHORS_MODERN, w.finish());
-        pres.rels.add(RT_AUTHORS_MODERN, "authors.xml", false);
-    }
+    comment_state.finish(&mut x, &mut pres)?;
 
     // Presentation-level parts.
     let theme1 = "theme/theme1.xml";
@@ -747,6 +763,9 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         root.add_new(&k.rel_type, &k.name, false);
     }
     x.pkg.rels("", &root);
+    if let Some(error) = x.error.take() {
+        return Err(error);
+    }
     x.pkg.finish()
 }
 
@@ -826,117 +845,6 @@ fn notes_xml(x: &mut Exp, o: &mut Out, notes: &TextBody) -> Vec<u8> {
     w.close("p:clrMapOvr");
     w.close("p:notes");
     w.finish()
-}
-
-fn comments_xml(list: &[Comment], authors: &mut Vec<(String, String, u32)>) -> Vec<u8> {
-    let mut w = W::new();
-    root_open(&mut w, "p:cmLst", A::new());
-    let mut flat: Vec<&Comment> = vec![];
-    for c in list.iter().take(10_000) {
-        flat.push(c);
-        for r in c.replies.iter().take(1000) {
-            flat.push(r);
-        }
-    }
-    for c in flat {
-        let ai = author_slot(c, authors);
-        let idx = match authors.get_mut(ai) {
-            Some(a) => {
-                a.2 += 1;
-                a.2
-            }
-            None => 1,
-        };
-        let dt = if valid_date(&c.date) { c.date.clone() } else { "2024-01-01T00:00:00.000".into() };
-        w.open("p:cm", A::new().a("authorId", ai).a("dt", dt).a("idx", idx));
-        let pos = |v: f64| if v.is_finite() { (v * 8.0).round().clamp(0.0, 1.0e9) as i64 } else { 0 };
-        w.empty("p:pos", A::new().a("x", pos(c.x)).a("y", pos(c.y)));
-        w.elt("p:text", &c.text);
-        w.close("p:cm");
-    }
-    w.close("p:cmLst");
-    w.finish()
-}
-
-/// The author's slot in the shared bucket list, adding them on first use. Legacy parts index the
-/// list by number, the modern authors part gives every slot a GUID.
-fn author_slot(c: &Comment, authors: &mut Vec<(String, String, u32)>) -> usize {
-    let author = if c.author.is_empty() { "Author".to_string() } else { c.author.clone() };
-    match authors.iter().position(|(n, _, _)| *n == author) {
-        Some(i) => i,
-        None => {
-            let ini = if c.initials.is_empty() { author.chars().filter(|ch| ch.is_alphabetic()).take(2).collect() } else { c.initials.clone() };
-            authors.push((author.clone(), ini, 0));
-            authors.len() - 1
-        }
-    }
-}
-
-/// The modern (p188) threaded-comment part: replies nest and the resolved state is kept, which
-/// the flattened legacy part cannot express (issue #70).
-fn modern_comments_xml(list: &[Comment], part: &str, authors: &mut Vec<(String, String, u32)>) -> Vec<u8> {
-    let mut w = W::new();
-    w.open("p188:cmLst", A::new().a("xmlns:p188", NS_P188));
-    for (ti, c) in list.iter().take(10_000).enumerate() {
-        modern_comment(&mut w, c, part, ti, authors, 0);
-    }
-    w.close("p188:cmLst");
-    w.finish()
-}
-
-fn modern_comment(w: &mut W, c: &Comment, part: &str, ti: usize, authors: &mut Vec<(String, String, u32)>, depth: usize) {
-    let ai = author_slot(c, authors);
-    let author = authors.get(ai).map(|(n, _, _)| n.clone()).unwrap_or_default();
-    let dt = if valid_date(&c.date) { c.date.clone() } else { "2024-01-01T00:00:00.000".into() };
-    let mut a = A::new().a("id", crate::tables::guid(&format!("deckcraft-comment:{part}:{ti}"))).a("authorId", author_guid(&author)).a("created", dt);
-    if c.resolved {
-        a = a.a("status", "resolved");
-    }
-    w.open("p188:cm", a);
-    w.empty0("p188:unknownAnchor");
-    let emu = |v: f64| if v.is_finite() { (v * 12_700.0).round().clamp(0.0, 1.0e9) as i64 } else { 0 };
-    w.empty("p188:pos", A::new().a("x", emu(c.x)).a("y", emu(c.y)));
-    if depth < 4 && !c.replies.is_empty() {
-        w.open0("p188:replyLst");
-        for (ri, r) in c.replies.iter().take(1000).enumerate() {
-            let ri_ai = author_slot(r, authors);
-            let r_author = authors.get(ri_ai).map(|(n, _, _)| n.clone()).unwrap_or_default();
-            let rdt = if valid_date(&r.date) { r.date.clone() } else { "2024-01-01T00:00:00.000".into() };
-            let mut ra = A::new()
-                .a("id", crate::tables::guid(&format!("deckcraft-comment:{part}:{ti}:{ri}")))
-                .a("authorId", author_guid(&r_author))
-                .a("created", rdt);
-            if r.resolved {
-                ra = ra.a("status", "resolved");
-            }
-            w.open("p188:reply", ra);
-            tx_body(w, &r.text);
-            w.close("p188:reply");
-        }
-        w.close("p188:replyLst");
-    }
-    tx_body(w, &c.text);
-    w.close("p188:cm");
-}
-
-/// An `a:txBody` with one paragraph per line, the shape the reader re-joins with `\n`.
-fn tx_body(w: &mut W, text: &str) {
-    w.open0("p188:txBody");
-    w.empty0("a:bodyPr");
-    for line in text.split('\n') {
-        w.open0("a:p");
-        w.open0("a:r");
-        w.empty("a:rPr", A::new().a("lang", "en-US"));
-        w.elt("a:t", line);
-        w.close("a:r");
-        w.close("a:p");
-    }
-    w.close("p188:txBody");
-}
-
-/// The modern author id for a name: the same GUID the authors part writes.
-fn author_guid(name: &str) -> String {
-    crate::tables::guid(&format!("deckcraft-comment-author:{name}"))
 }
 
 /// Sections with every slide in exactly one section, in slide order.
@@ -1111,8 +1019,9 @@ fn presentation_xml(x: &mut Exp, o: &mut Out, masters: &[(u64, String)], notes: 
         w.close("p:custShowLst");
     }
     cust_data(&mut w, x, o, &p.tags);
-    let dts = if p.default_text_style.is_empty() { defaults::default_text_style() } else { p.default_text_style.clone() };
-    dml::list_style(&mut w, x, o, "p:defaultTextStyle", &dts);
+    // Absence of inherited properties is meaningful. Inventing a populated
+    // default here changes the context used to verify materialized notes.
+    dml::list_style(&mut w, x, o, "p:defaultTextStyle", &p.default_text_style);
     let sections = section_slides(p);
     let raw = p.raw_ext.as_deref().filter(|r| !r.trim().is_empty());
     if !sections.is_empty() || raw.is_some() {
@@ -1254,7 +1163,7 @@ fn app_xml(p: &Presentation) -> Vec<u8> {
     );
     w.elt("Application", "DeckCraft");
     w.elt("Slides", &p.slides.len().to_string());
-    w.elt("Notes", &p.slides.iter().filter(|s| !s.notes.is_empty()).count().to_string());
+    w.elt("Notes", &p.slides.iter().filter(|s| !s.notes.is_empty() || s.notes_page.is_some()).count().to_string());
     w.elt("HiddenSlides", &p.slides.iter().filter(|s| s.hidden).count().to_string());
     if !p.props.company.is_empty() {
         w.elt("Company", &p.props.company);

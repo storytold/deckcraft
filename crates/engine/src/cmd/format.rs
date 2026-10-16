@@ -3,7 +3,7 @@
 
 use deckcraft_model::edit as ed;
 use deckcraft_model::resolve;
-use deckcraft_model::text::{Align, Anchor, AutoFit, Bullet, Caps, ParaProps, RunProps, Spacing, Strike, TabStop, TextDir};
+use deckcraft_model::text::{Align, Anchor, AutoFit, Bullet, Caps, LineHeight, ParaProps, RunProps, Spacing, Strike, TabStop, TextDir};
 use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot, Shape};
 use serde_json::{Value, json};
 
@@ -11,12 +11,32 @@ use super::text::{format_body, format_para, format_run};
 use super::*;
 use crate::{Result, Session};
 
+#[cfg(test)]
+#[path = "line_height_tests.rs"]
+mod line_height_tests;
+
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "font.add", "Add Font", [], None, "{data: base64 TTF/OTF/TTC} → {faces} added for this session", always, font_add),
         cmd!(noundo "font.rescan", "Rescan Installed Fonts", ["Home", "Font"], None, "{} → {faces, families} (fonts installed since start-up)", always, font_rescan),
-        cmd!("format.bold", "Bold", ["Home", "Font"], Some("Cmd+B"), "{on?: bool}", has_text_or_shapes, bold),
-        cmd!("format.italic", "Italic", ["Home", "Font"], Some("Cmd+I"), "{on?: bool}", has_text_or_shapes, italic),
+        cmd!(
+            "format.bold",
+            "Bold",
+            ["Home", "Font"],
+            Some("Cmd+B"),
+            "{on?: bool, onEa?: bool, onCs?: bool} — ordinary on/toggle applies to all scripts; script-only patches leave ordinary text unchanged",
+            has_text_or_shapes,
+            bold
+        ),
+        cmd!(
+            "format.italic",
+            "Italic",
+            ["Home", "Font"],
+            Some("Cmd+I"),
+            "{on?: bool, onEa?: bool, onCs?: bool} — ordinary on/toggle applies to all scripts; script-only patches leave ordinary text unchanged",
+            has_text_or_shapes,
+            italic
+        ),
         cmd!(
             "format.underline",
             "Underline",
@@ -38,7 +58,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
         cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
-        cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
+        cmd!(
+            "format.size",
+            "Font Size",
+            ["Home", "Font"],
+            None,
+            "{size: pt, sizeEa?: pt, sizeCs?: pt} | {sizeEa: pt, sizeCs?: pt} | {sizeCs: pt} — size applies to all scripts unless overridden",
+            has_text_or_shapes,
+            size
+        ),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
         cmd!("format.color", "Font Color", ["Home", "Font"], None, "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}}", has_text_or_shapes, color),
@@ -56,7 +84,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Language",
             ["Review", "Language"],
             None,
-            "{lang?, noProof?: bool} (proofing language of the selected text, and Do Not Check Spelling)",
+            "{lang?, langEa?, langCs?, noProof?: bool} — ordinary language applies to all scripts unless overridden; empty language clears inheritance",
             has_text_or_shapes,
             language
         ),
@@ -86,7 +114,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font…",
             ["Home", "Font"],
             Some("Cmd+T"),
-            "{family?, size?: pt, bold?: bool, italic?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
+            "{family?, size?: pt, sizeEa?: pt, sizeCs?: pt, bold?: bool, boldEa?: bool, boldCs?: bool, italic?: bool, italicEa?: bool, italicCs?: bool, underline?: none|sng|dbl|heavy|dotted|dash|wavy, color?, strike?: none|sng|dbl, baseline?: none|super|sub|<fraction>, caps?: none|small|all, spacing?: pt} — with none of these, opens the Font dialog",
             has_text_or_shapes,
             font_dialog
         ),
@@ -156,7 +184,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Line Spacing",
             ["Home", "Paragraph"],
             None,
-            "{lines?: 1.0|1.5|2.0…, pt?: exactly}",
+            "{lines?: 1.0|1.5|2.0…, pt?: exactly} or {mode: normal|minimum, pt?: minimum points}",
             has_text_or_shapes,
             line_spacing
         ),
@@ -165,7 +193,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph…",
             ["Format"],
             None,
-            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines}",
+            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines, lineHeight?: normal|minimum, lineHeightPt?: minimum points}",
             has_text_or_shapes,
             paragraph
         ),
@@ -175,7 +203,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph…",
             ["Home", "Paragraph"],
             None,
-            "{align?: left|center|right|justify|justLow|distributed, indentLeft?: pt, indentRight?: pt, special?: none|first|hanging, specialBy?: pt, indentFirst?: pt, spaceBefore?: pt, spaceAfter?: pt, spaceBeforeKind?: pts|pct, spaceAfterKind?: pts|pct, lineSpacing?: lines, lineSpacingPt?: pt} — with none of these, opens the Paragraph dialog",
+            "{align?: left|center|right|justify|justLow|distributed, indentLeft?: pt, indentRight?: pt, special?: none|first|hanging, specialBy?: pt, indentFirst?: pt, spaceBefore?: pt, spaceAfter?: pt, spaceBeforeKind?: pts|pct, spaceAfterKind?: pts|pct, lineSpacing?: lines, lineSpacingPt?: pt, lineHeight?: normal|minimum, lineHeightPt?: minimum points} — with none of these, opens the Paragraph dialog",
             has_text_or_shapes,
             paragraph_dialog
         ),
@@ -266,12 +294,36 @@ fn current_para(s: &Session) -> ParaProps {
 }
 
 fn bold(s: &mut Session, p: &Value) -> Result<Value> {
-    let v = on_param(p, current_run(s).bold);
-    format_run(s, &move |r| r.bold = Some(v))
+    let ea = script_bool(p, "onEa", "format.bold")?;
+    let cs = script_bool(p, "onCs", "format.bold")?;
+    let global = (p.get("on").is_some() || ea.is_none() && cs.is_none()).then(|| on_param(p, current_run(s).bold));
+    format_run(s, &move |r| {
+        if let Some(v) = global {
+            r.bold = Some(v);
+        }
+        if let Some(v) = ea.or(global) {
+            r.bold_ea = Some(v);
+        }
+        if let Some(v) = cs.or(global) {
+            r.bold_cs = Some(v);
+        }
+    })
 }
 fn italic(s: &mut Session, p: &Value) -> Result<Value> {
-    let v = on_param(p, current_run(s).italic);
-    format_run(s, &move |r| r.italic = Some(v))
+    let ea = script_bool(p, "onEa", "format.italic")?;
+    let cs = script_bool(p, "onCs", "format.italic")?;
+    let global = (p.get("on").is_some() || ea.is_none() && cs.is_none()).then(|| on_param(p, current_run(s).italic));
+    format_run(s, &move |r| {
+        if let Some(v) = global {
+            r.italic = Some(v);
+        }
+        if let Some(v) = ea.or(global) {
+            r.italic_ea = Some(v);
+        }
+        if let Some(v) = cs.or(global) {
+            r.italic_cs = Some(v);
+        }
+    })
 }
 fn underline(s: &mut Session, p: &Value) -> Result<Value> {
     let cur = current_run(s).underline.is_some_and(|u| u != "none");
@@ -306,8 +358,26 @@ fn font(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.font = Some(f.clone()))
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
-    let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
-    format_run(s, &move |r| r.size = Some(v))
+    let size = p
+        .get("size")
+        .map(|_| f64_param(p, "size").map(|v| v.clamp(1.0, 4000.0)).ok_or_else(|| bad("format.size", "size must be finite")))
+        .transpose()?;
+    let ea = script_size(p, "sizeEa", "format.size")?;
+    let cs = script_size(p, "sizeCs", "format.size")?;
+    if size.is_none() && ea.is_none() && cs.is_none() {
+        return Err(bad("format.size", "give size, sizeEa or sizeCs"));
+    }
+    format_run(s, &move |r| {
+        if let Some(v) = size {
+            r.size = Some(v);
+        }
+        if let Some(v) = ea.or(size) {
+            r.size_ea = Some(v);
+        }
+        if let Some(v) = cs.or(size) {
+            r.size_cs = Some(v);
+        }
+    })
 }
 
 /// PowerPoint's font size list (grow/shrink steps through it).
@@ -324,11 +394,15 @@ fn step(cur: f64, up: bool) -> f64 {
 fn grow_shrink(s: &mut Session, up: bool) -> Result<Value> {
     // Each run steps from its own size, like PowerPoint.
     let st = s.doc()?;
-    let ctx_sizes = current_run(s).size.unwrap_or(18.0);
+    let current = current_run(s);
     let _ = st;
-    let base = ctx_sizes;
+    let base = current.size.unwrap_or(18.0);
+    let base_ea = current.size_ea.unwrap_or(base);
+    let base_cs = current.size_cs.unwrap_or(base);
     format_run(s, &move |r| {
         let cur = r.size.unwrap_or(base);
+        r.size_ea = Some(step(r.size_ea.unwrap_or(base_ea), up));
+        r.size_cs = Some(step(r.size_cs.unwrap_or(base_cs), up));
         r.size = Some(step(cur, up));
     })
 }
@@ -378,23 +452,57 @@ fn text_transparency(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 fn language(s: &mut Session, p: &Value) -> Result<Value> {
-    let lang = str_param(p, "lang").map(str::to_string);
+    let lang = script_language_param(p, "lang")?;
+    let ea = script_language_param(p, "langEa")?;
+    let cs = script_language_param(p, "langCs")?;
     let no_proof = bool_param(p, "noProof");
-    if lang.is_none() && no_proof.is_none() {
-        return Err(bad("format.language", "give `lang` or `noProof`"));
-    }
-    if lang.as_deref().is_some_and(|l| l.is_empty() || l.len() > 35 || !l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')) {
-        return Err(bad("format.language", "`lang` is a language tag such as en-US"));
+    if lang.is_none() && ea.is_none() && cs.is_none() && no_proof.is_none() {
+        return Err(bad("format.language", "give lang, langEa, langCs or noProof"));
     }
     format_run(s, &move |r| {
         if let Some(l) = &lang {
             r.lang = Some(l.clone());
+        }
+        if let Some(l) = ea.as_ref().or(lang.as_ref()) {
+            r.lang_ea = Some(l.clone());
+        }
+        if let Some(l) = cs.as_ref().or(lang.as_ref()) {
+            r.lang_cs = Some(l.clone());
         }
         if let Some(n) = no_proof {
             r.no_proof = n.then_some(true);
         }
     })
 }
+
+fn script_bool(p: &Value, key: &str, command: &str) -> Result<Option<bool>> {
+    p.get(key).map(|v| v.as_bool().ok_or_else(|| bad(command, format!("`{key}` must be a bool")))).transpose()
+}
+
+fn script_size(p: &Value, key: &str, command: &str) -> Result<Option<f64>> {
+    p.get(key)
+        .map(|v| {
+            v.as_f64()
+                .filter(|v| v.is_finite() && (1.0..=4000.0).contains(v))
+                .ok_or_else(|| bad(command, format!("`{key}` must be a finite size from 1 to 4000 pt")))
+        })
+        .transpose()
+}
+
+fn script_language_param(p: &Value, key: &str) -> Result<Option<String>> {
+    p.get(key)
+        .map(|v| {
+            let language = v.as_str().ok_or_else(|| bad("format.language", format!("`{key}` must be a string")))?;
+            if !language.is_empty()
+                && (language.len() > 35 || language.split('-').any(|part| part.is_empty() || !part.bytes().all(|c| c.is_ascii_alphanumeric())))
+            {
+                return Err(bad("format.language", format!("`{key}` must be a language tag such as en-US, or empty")));
+            }
+            Ok(language.to_string())
+        })
+        .transpose()
+}
+
 fn highlight(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color");
     format_run(s, &move |r| r.highlight = c.clone())
@@ -416,8 +524,14 @@ fn spacing(s: &mut Session, p: &Value) -> Result<Value> {
 struct FontEdits {
     family: Option<String>,
     size: Option<f64>,
+    size_ea: Option<f64>,
+    size_cs: Option<f64>,
     bold: Option<bool>,
+    bold_ea: Option<bool>,
+    bold_cs: Option<bool>,
     italic: Option<bool>,
+    italic_ea: Option<bool>,
+    italic_cs: Option<bool>,
     underline: Option<String>,
     color: Option<deckcraft_model::ColorRef>,
     strike: Option<Strike>,
@@ -430,8 +544,14 @@ impl FontEdits {
     fn is_empty(&self) -> bool {
         self.family.is_none()
             && self.size.is_none()
+            && self.size_ea.is_none()
+            && self.size_cs.is_none()
             && self.bold.is_none()
+            && self.bold_ea.is_none()
+            && self.bold_cs.is_none()
             && self.italic.is_none()
+            && self.italic_ea.is_none()
+            && self.italic_cs.is_none()
             && self.underline.is_none()
             && self.color.is_none()
             && self.strike.is_none()
@@ -452,6 +572,24 @@ impl FontEdits {
         }
         if let Some(v) = self.italic {
             r.italic = Some(v);
+        }
+        if let Some(v) = self.size_ea.or(self.size) {
+            r.size_ea = Some(v);
+        }
+        if let Some(v) = self.size_cs.or(self.size) {
+            r.size_cs = Some(v);
+        }
+        if let Some(v) = self.bold_ea.or(self.bold) {
+            r.bold_ea = Some(v);
+        }
+        if let Some(v) = self.bold_cs.or(self.bold) {
+            r.bold_cs = Some(v);
+        }
+        if let Some(v) = self.italic_ea.or(self.italic) {
+            r.italic_ea = Some(v);
+        }
+        if let Some(v) = self.italic_cs.or(self.italic) {
+            r.italic_cs = Some(v);
         }
         if let Some(u) = &self.underline {
             r.underline = Some(u.clone());
@@ -554,7 +692,24 @@ fn font_edits(p: &Value) -> Result<FontEdits> {
             Some(n.clamp(-100.0, 400.0))
         }
     };
-    Ok(FontEdits { family, size, bold: font_bool(p, "bold")?, italic: font_bool(p, "italic")?, underline, color, strike, baseline, caps, spacing })
+    Ok(FontEdits {
+        family,
+        size,
+        size_ea: script_size(p, "sizeEa", "format.fontDialog")?,
+        size_cs: script_size(p, "sizeCs", "format.fontDialog")?,
+        bold: font_bool(p, "bold")?,
+        bold_ea: font_bool(p, "boldEa")?,
+        bold_cs: font_bool(p, "boldCs")?,
+        italic: font_bool(p, "italic")?,
+        italic_ea: font_bool(p, "italicEa")?,
+        italic_cs: font_bool(p, "italicCs")?,
+        underline,
+        color,
+        strike,
+        baseline,
+        caps,
+        spacing,
+    })
 }
 
 /// A colour as a `format.fontDialog` / `format.color` parameter, including transforms.
@@ -844,13 +999,61 @@ fn level(s: &mut Session, d: i32) -> Result<Value> {
     })
 }
 
+fn line_policy(p: &Value, cmd: &str, mode_key: &str, points_key: &str) -> Result<Option<LineHeight>> {
+    let Some(mode) = p.get(mode_key) else {
+        if p.get(points_key).is_some() {
+            return Err(bad(cmd, format!("`{points_key}` requires `{mode_key}`")));
+        }
+        return Ok(None);
+    };
+    let mode = mode.as_str().ok_or_else(|| bad(cmd, format!("`{mode_key}` must be normal or minimum")))?;
+    let policy = match mode {
+        "normal" if p.get(points_key).is_none() => LineHeight::Normal,
+        "minimum" => LineHeight::Minimum { points: finite_key(p, cmd, points_key)?.ok_or_else(|| bad(cmd, "minimum line height requires points"))? },
+        _ => return Err(bad(cmd, "line height must be normal without points, or minimum with points")),
+    };
+    if !policy.valid() {
+        return Err(bad(cmd, "minimum line height must be between 0 and 1000000 points"));
+    }
+    Ok(Some(policy))
+}
+
+fn paragraph_line_policy(p: &Value, cmd: &str) -> Result<Option<LineHeight>> {
+    let policy = line_policy(p, cmd, "lineHeight", "lineHeightPt")?;
+    if policy.is_some() && (p.get("lineSpacing").is_some() || p.get("lineSpacingPt").is_some()) {
+        return Err(bad(cmd, "line height and legacy line spacing cannot be combined"));
+    }
+    Ok(policy)
+}
+
 fn line_spacing(s: &mut Session, p: &Value) -> Result<Value> {
-    let sp =
-        if let Some(pt) = f64_param(p, "pt") { Spacing::Pts(pt.clamp(0.0, 1584.0)) } else { Spacing::Pct(f64_or(p, "lines", 1.0).clamp(0.0, 9.99)) };
-    format_para(s, &move |para| para.props.line_spacing = Some(sp))
+    const CMD: &str = "format.lineSpacing";
+    if p.get("mode").is_some() {
+        if p.get("lines").is_some() {
+            return Err(bad(CMD, "line height mode cannot be combined with lines"));
+        }
+        let policy = line_policy(p, CMD, "mode", "pt")?;
+        return format_para(s, &move |para| {
+            para.props.line_spacing = None;
+            para.props.line_height = policy;
+        });
+    }
+    if p.get("pt").is_some() && p.get("lines").is_some() {
+        return Err(bad(CMD, "choose points or lines"));
+    }
+    let sp = if let Some(pt) = finite_key(p, CMD, "pt")? {
+        Spacing::Pts(pt.clamp(0.0, 1584.0))
+    } else {
+        Spacing::Pct(finite_key(p, CMD, "lines")?.unwrap_or(1.0).clamp(0.0, 9.99))
+    };
+    format_para(s, &move |para| {
+        para.props.line_spacing = Some(sp);
+        para.props.line_height = None;
+    })
 }
 
 fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
+    let policy = paragraph_line_policy(p, "format.paragraph")?;
     let a = str_param(p, "align").map(|a| match a {
         "center" => Align::Center,
         "right" => Align::Right,
@@ -882,15 +1085,33 @@ fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = ls {
             para.props.line_spacing = Some(Spacing::Pct(v.clamp(0.0, 9.99)));
+            para.props.line_height = None;
         }
         if let Some(v) = lsp {
             para.props.line_spacing = Some(Spacing::Pts(v.max(0.0)));
+            para.props.line_height = None;
+        }
+        if let Some(policy) = policy {
+            para.props.line_height = Some(policy);
+            para.props.line_spacing = None;
         }
     })
 }
 
-const PARA_DIALOG_KEYS: &[&str] =
-    &["align", "indentLeft", "indentRight", "indentFirst", "special", "specialBy", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"];
+const PARA_DIALOG_KEYS: &[&str] = &[
+    "align",
+    "indentLeft",
+    "indentRight",
+    "indentFirst",
+    "special",
+    "specialBy",
+    "spaceBefore",
+    "spaceAfter",
+    "lineSpacing",
+    "lineSpacingPt",
+    "lineHeight",
+    "lineHeightPt",
+];
 
 fn para_dialog_has_fields(p: &Value) -> bool {
     PARA_DIALOG_KEYS.iter().any(|k| p.get(*k).is_some())
@@ -951,10 +1172,14 @@ fn paragraph_dialog_params(s: &Session) -> Value {
     } else {
         ("none", 0.0)
     };
-    let (line_kind, line_value) = match pp.line_spacing {
-        Some(Spacing::Pts(v)) => ("exactly", v),
-        Some(Spacing::Pct(v)) => ("multiple", v),
-        None => ("multiple", 1.0),
+    let (line_kind, line_value) = match pp.line_height {
+        Some(LineHeight::Normal) => ("normal", 1.0),
+        Some(LineHeight::Minimum { points }) => ("minimum", points),
+        None => match pp.line_spacing {
+            Some(Spacing::Pts(v)) => ("exactly", v),
+            Some(Spacing::Pct(v)) => ("multiple", v),
+            None => ("multiple", 1.0),
+        },
     };
     let (before_kind, before) = spacing_parts(pp.space_before);
     let (after_kind, after) = spacing_parts(pp.space_after);
@@ -1016,6 +1241,7 @@ fn paragraph_dialog(s: &mut Session, p: &Value) -> Result<Value> {
             return Err(bad(CMD, "spacing kind must be pts or pct"));
         }
     }
+    let policy = paragraph_line_policy(p, CMD)?;
     let line_mult = finite_key(p, CMD, "lineSpacing")?.map(|v| v.clamp(0.0, 9.99));
     let line_pt = finite_key(p, CMD, "lineSpacingPt")?.map(clamp_pt);
     format_para(s, &move |para| {
@@ -1039,9 +1265,15 @@ fn paragraph_dialog(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = line_mult {
             para.props.line_spacing = Some(Spacing::Pct(v));
+            para.props.line_height = None;
         }
         if let Some(v) = line_pt {
             para.props.line_spacing = Some(Spacing::Pts(v));
+            para.props.line_height = None;
+        }
+        if let Some(policy) = policy {
+            para.props.line_height = Some(policy);
+            para.props.line_spacing = None;
         }
     })
 }
@@ -1200,6 +1432,7 @@ fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "numbering": matches!(pp.bullet, Some(Bullet::AutoNum { .. })),
         "lang": r.lang,
         "lineSpacing": serde_json::to_value(pp.line_spacing).unwrap_or_default(),
+        "lineHeight": serde_json::to_value(pp.line_height).unwrap_or_default(),
         "painter": s.painter.is_some(),
     }))
 }

@@ -1008,6 +1008,7 @@ fn show_returns_to_the_zoom_slide() {
         tooltip: String::new(),
         highlight_click: false,
         zoom_return: last.map(|l| SlideId(1000 + l)),
+        sound_name: None,
         sound: None,
         stop_sound: false,
     };

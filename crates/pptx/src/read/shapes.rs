@@ -77,7 +77,12 @@ pub fn sp_tree(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, tree: &El, depth: us
             "AlternateContent" => read_model_alternate(imp, part, ctx, e),
             _ => None,
         };
-        if let Some(s) = s {
+        if let Some(mut s) = s {
+            if imp.error.is_none()
+                && let Err(error) = crate::write::table_projection::capture(imp, part, &ctx.map, e, &mut s)
+            {
+                imp.error = Some(error);
+            }
             ctx.count += 1;
             out.push(s);
         }

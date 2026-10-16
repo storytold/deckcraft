@@ -1,6 +1,6 @@
 //! Slide Sorter, Notes Page and the Outline pane.
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use deckcraft_model::{Presentation, SlideId};
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, WidgetInfo, WidgetType, pos2, vec2};
@@ -21,6 +21,55 @@ pub struct State {
     rename_started: bool,
     /// Whole-section drag: (section index, insertion slot among the bars).
     pub drag: Option<(usize, usize)>,
+    notes_cache: Option<NotesCache>,
+    notes_editing: Option<(u64, SlideId)>,
+    notes_draft: Option<PageDraft>,
+}
+
+struct NotesCache {
+    document: Arc<Presentation>,
+    slide: SlideId,
+    width: u32,
+    editing: bool,
+    texture: egui::TextureHandle,
+    body_rect: deckcraft_geom::Rect,
+}
+
+impl std::fmt::Debug for NotesCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NotesCache").field("slide", &self.slide).field("width", &self.width).field("editing", &self.editing).finish_non_exhaustive()
+    }
+}
+
+#[derive(Debug)]
+struct PageDraft {
+    uid: u64,
+    slide: SlideId,
+    base: deckcraft_model::text::TextBody,
+    draft: crate::notes::Draft,
+}
+
+/// Settle the canonical rich-text draft before navigation, save, undo or a ribbon action.
+/// Slide identity and the original body prevent writing a stale draft over a reorder/undo.
+pub(crate) fn finish_notes_edit(app: &mut SlideApp) -> Result<(), String> {
+    let Some(pending) = app.sorter.notes_draft.take() else {
+        app.sorter.notes_editing = None;
+        return Ok(());
+    };
+    let index = app
+        .session
+        .active()
+        .filter(|d| d.uid == pending.uid)
+        .and_then(|d| d.doc.slides.iter().position(|s| s.id == pending.slide && s.notes == pending.base));
+    if pending.draft.edited
+        && let Some(index) = index
+        && let Err(e) = app.session.execute("slide.notes", &json!({"index":index,"body":pending.draft.body}))
+    {
+        app.sorter.notes_draft = Some(pending);
+        return Err(e.to_string());
+    }
+    app.sorter.notes_editing = None;
+    Ok(())
 }
 
 /// Where a dragged section would land. `centers` are the header centre-y values, top to bottom;
@@ -354,7 +403,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
-/// Notes Page: the slide on top and its notes underneath, on a page.
+/// Notes Page uses the same native page renderer as export; editing keeps Slide::notes canonical.
 pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
@@ -362,67 +411,96 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
     let idx = st.selection.slide;
-    let page_h = avail.height() - 40.0;
-    let page_w = page_h * 8.5 / 11.0;
-    let page = Rect::from_center_size(avail.center(), vec2(page_w, page_h));
+    let uid = st.uid;
+    let Some(slide) = doc.slides.get(idx) else { return };
+    let slide_id = slide.id;
+    let size = doc.notes_page_size(slide);
+    if !size.width.is_finite() || !size.height.is_finite() || size.width <= 0.0 || size.height <= 0.0 {
+        return;
+    }
+    let k = ((avail.width() - 40.0).max(1.0) / size.width as f32).min((avail.height() - 40.0).max(1.0) / size.height as f32);
+    let page = Rect::from_center_size(avail.center(), vec2(size.width as f32 * k, size.height as f32 * k));
+    let editing = app.sorter.notes_editing == Some((uid, slide_id));
+    let ppp = ui.ctx().pixels_per_point();
+    let max = crate::textures::max_side(ui.ctx()).min(4096);
+    let scale = (k as f64 * ppp as f64).min(max as f64 / size.width.max(size.height));
+    let width = (size.width * scale).round().max(1.0) as u32;
+    let cached = app
+        .sorter
+        .notes_cache
+        .as_ref()
+        .is_some_and(|c| Arc::ptr_eq(&c.document, &doc) && c.slide == slide_id && c.width == width && c.editing == editing);
+    if !cached {
+        let opts = deckcraft_render::RenderOpts { scale, ..Default::default() };
+        let Some(native) = deckcraft_render::notes_page_document(&doc, idx, &opts) else { return };
+        let body = slide.notes_page.as_ref().and_then(|p| p.body_shape).or_else(|| {
+            fn find(shapes: &[deckcraft_model::Shape], depth: usize) -> Option<deckcraft_model::ShapeId> {
+                if depth > 64 {
+                    return None;
+                }
+                shapes
+                    .iter()
+                    .find_map(|s| if s.ph_type() == Some(deckcraft_model::PhType::Body) { Some(s.id) } else { find(s.children(), depth + 1) })
+            }
+            native.slides.first().and_then(|s| find(&s.shapes, 0))
+        });
+        let placed = deckcraft_render::place_slide(&native, 0);
+        let body_rect = placed
+            .shapes
+            .iter()
+            .find(|s| Some(s.id) == body)
+            .map(|s| s.rect)
+            .unwrap_or_else(|| deckcraft_geom::Rect::new(size.width * 0.1, size.height * 0.53, size.width * 0.9, size.height * 0.89));
+        let image = deckcraft_render::render_slide(
+            &native,
+            0,
+            &deckcraft_render::RenderOpts { scale, skip_text: editing.then_some(body).flatten(), ..Default::default() },
+        );
+        let texture = crate::textures::upload_editor(ui.ctx(), "native-notes-page", crate::textures::to_color_image(&image, false));
+        app.sorter.notes_cache = Some(NotesCache { document: doc.clone(), slide: slide_id, width, editing, texture, body_rect });
+    }
+    let Some(cache) = app.sorter.notes_cache.as_ref() else { return };
     ui.painter().rect_filled(page.translate(vec2(2.0, 2.0)), CornerRadius::ZERO, t.shadow);
-    ui.painter().rect_filled(page, CornerRadius::ZERO, Color32::WHITE);
-    // The notes master places the slide, the notes and the header and footer text (in Letter
-    // points, as the PDF notes pages do).
-    let paper = (612.0, 792.0);
-    let k = page_w / paper.0 as f32;
-    let to_screen = |(x0, y0, x1, y1): (f64, f64, f64, f64)| {
-        Rect::from_min_max(page.min + vec2(x0 as f32 * k, y0 as f32 * k), page.min + vec2(x1 as f32 * k, y1 as f32 * k))
-    };
-    let (slide_box, notes_box) = deckcraft_engine::pdf::notes_frames(&doc, paper);
-    // On the physical pixel grid, so the thumbnail is one texel per device pixel (#184).
-    let srect = crate::textures::device_pixel_rect(to_screen((slide_box.x0, slide_box.y0, slide_box.x1, slide_box.y1)), ui.ctx().pixels_per_point());
-    if let Some(m) = doc.notes_master.as_deref() {
-        // Laid out by the text engine as on the PDF page: wrapped, each run in its size and colour.
-        for piece in deckcraft_engine::pdf::master_text_pieces(&doc, m, paper, idx + 1) {
-            let size = (piece.size as f32 * k).max(4.0);
-            let at = page.min + vec2(piece.at.0 as f32 * k, piece.at.1 as f32 * k - size * 0.8);
-            let c = Color32::from_rgba_unmultiplied(piece.color.r, piece.color.g, piece.color.b, piece.color.a);
-            ui.painter().text(at, egui::Align2::LEFT_TOP, &piece.text, theme::font(size), c);
+    ui.painter().image(cache.texture.id(), page, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+    let b = cache.body_rect;
+    let notes_rect = Rect::from_min_size(page.min + vec2(b.x0 as f32 * k, b.y0 as f32 * k), vec2(b.width() as f32 * k, b.height() as f32 * k));
+    let edit_id = egui::Id::new(("native-notes-edit", uid, slide_id.0));
+    if !editing {
+        let response = ui.interact(notes_rect, edit_id.with("activate"), Sense::click());
+        response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, true, "Speaker notes"));
+        if response.clicked() {
+            app.sorter.notes_editing = Some((uid, slide_id));
+            ui.ctx().request_repaint();
+        }
+    } else {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect).id_salt(edit_id));
+        child.set_clip_rect(notes_rect.intersect(ui.clip_rect()));
+        let starting = app.sorter.notes_draft.is_none();
+        let mut draft = app
+            .sorter
+            .notes_draft
+            .take()
+            .filter(|d| d.uid == uid && d.slide == slide_id && d.base == slide.notes)
+            .map(|d| d.draft)
+            .unwrap_or_else(|| crate::notes::Draft::new(&slide.notes));
+        let look = crate::notes::Look { size: 12.0 * k, color: Some(Color32::from_gray(30)) };
+        let response = crate::notes::editor(&mut child, &mut draft, &look, |e| {
+            e.id(edit_id).hint_text("Click to add text").desired_width(notes_rect.width()).desired_rows(1).frame(egui::Frame::NONE)
+        })
+        .response
+        .response;
+        // Focus only after the widget exists in this frame's accessibility tree.
+        if starting {
+            response.request_focus();
+        }
+        let nav = ui.input(|i| i.key_pressed(egui::Key::PageDown) || i.key_pressed(egui::Key::PageUp));
+        app.sorter.notes_draft = Some(PageDraft { uid, slide: slide_id, base: slide.notes.clone(), draft });
+        if (response.lost_focus() || nav)
+            && let Err(error) = finish_notes_edit(app)
+        {
+            app.set_status(error);
         }
     }
-    let ppp = ui.ctx().pixels_per_point();
-    let mut budget = 2;
-    if let Some(tex) = app.textures.thumb(ui.ctx(), &doc, idx, (srect.width() * ppp).round() as u32, &mut budget) {
-        ui.painter().image(tex.id(), srect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-    }
-    ui.painter().rect_stroke(srect, CornerRadius::ZERO, Stroke::new(1.0, Color32::GRAY), egui::StrokeKind::Outside);
-    let notes_rect = to_screen((notes_box.x0, notes_box.y0, notes_box.x1, notes_box.y1));
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
-    // A draft belongs to this document and to the notes it started from (#413): another document,
-    // a reorder or an undo that changes them drops it.
-    let id = egui::Id::new(("notespage", st.uid, idx));
-    let edit_id = egui::Id::new(("notespage-edit", idx));
-    let focused = child.ctx().memory(|m| m.has_focus(edit_id));
-    let notes_of = |app: &SlideApp| app.session.active().and_then(|st| st.doc.slides.get(idx)).map(|s| s.notes.clone()).unwrap_or_default();
-    let notes = notes_of(app);
-    let stored: Option<(deckcraft_model::text::TextBody, crate::notes::Draft)> = child.data_mut(|d| d.get_temp(id));
-    let mut draft = stored.filter(|(base, _)| *base == notes).map(|(_, d)| d);
-    // Save an edited draft once the field has lost focus, before anything reloads it.
-    if !focused && let Some(d) = draft.as_mut().filter(|d| d.edited) {
-        d.edited = false;
-        let _ = app.run("slide.notes", json!({"body": d.body, "index": idx}));
-    }
-    let notes = notes_of(app);
-    let mut draft = draft.filter(|d| focused || d.body == notes).unwrap_or_else(|| crate::notes::Draft::new(&notes));
-    let look = crate::notes::Look { size: 14.0, color: Some(Color32::from_gray(30)) };
-    let width = notes_rect.width();
-    let r = crate::notes::editor(&mut child, &mut draft, &look, |e| {
-        e.id(edit_id).hint_text("Click to add text").desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
-    })
-    .response
-    .response;
-    if r.lost_focus() && draft.edited {
-        draft.edited = false;
-        let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
-    }
-    let base = notes_of(app);
-    child.data_mut(|d| d.insert_temp(id, (base, draft)));
     let nav = ui.input(|i| (i.key_pressed(egui::Key::PageDown), i.key_pressed(egui::Key::PageUp)));
     if nav.0 {
         let _ = app.run("slide.next", json!({}));
@@ -533,4 +611,217 @@ fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deck
         });
     }
     ui.add_space(6.0);
+}
+
+#[cfg(test)]
+mod native_notes_tests {
+    use super::*;
+    use deckcraft_engine::Session;
+    use deckcraft_geom::{Size, Xfrm};
+    use deckcraft_model::{
+        Fill, Master, MasterId, PhType, Placeholder, Shape, ShapeId,
+        notes::{NotesMaster, NotesPage},
+        text::{Paragraph, TextBody},
+    };
+    use egui_kittest::{Harness, kittest::Queryable};
+
+    fn licensed_run(props: &mut deckcraft_model::text::RunProps) {
+        props.font = Some("BIZ UDPGothic".into());
+        props.font_ea = Some("BIZ UDPGothic".into());
+        props.font_cs = Some("BIZ UDPGothic".into());
+    }
+    fn licensed_list(style: &mut deckcraft_model::text::ListStyle) {
+        for level in style.levels.iter_mut().flatten() {
+            licensed_run(&mut level.run);
+            level.para.bullet_font = Some("BIZ UDPGothic".into());
+        }
+    }
+    fn licensed_body(body: &mut TextBody) {
+        licensed_list(&mut body.list_style);
+        for para in &mut body.paragraphs {
+            licensed_run(&mut para.def_props);
+            licensed_run(&mut para.end_props);
+            para.props.bullet_font = Some("BIZ UDPGothic".into());
+            for run in &mut para.runs {
+                licensed_run(&mut run.props);
+            }
+        }
+    }
+    fn licensed_shapes(shapes: &mut [Shape]) {
+        for shape in shapes {
+            if let Some(body) = &mut shape.text {
+                licensed_body(body);
+            }
+            if let Some(children) = shape.children_mut() {
+                licensed_shapes(children);
+            }
+        }
+    }
+    fn licensed_master(master: &mut Master) {
+        for set in [&mut master.theme.fonts.major, &mut master.theme.fonts.minor] {
+            set.latin = "BIZ UDPGothic".into();
+            set.ea = "BIZ UDPGothic".into();
+            set.cs = "BIZ UDPGothic".into();
+            set.scripts.clear();
+        }
+        licensed_list(&mut master.title_style);
+        licensed_list(&mut master.body_style);
+        licensed_list(&mut master.other_style);
+        licensed_shapes(&mut master.shapes);
+        for layout in &mut master.layouts {
+            licensed_shapes(&mut layout.shapes);
+        }
+    }
+
+    fn app() -> SlideApp {
+        let mut s = Session::with_new();
+        s.execute("slide.notes", &json!({"text":"Original speaker notes"})).unwrap();
+        s.execute("shape.insert", &json!({"preset":"ellipse","rect":[120,90,280,280]})).unwrap();
+        s.execute("shape.fill", &json!({"color":"#205d87"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect":[430,170,420,100],"text":"Live slide thumbnail"})).unwrap();
+        s.edit(|doc, _| {
+            doc.notes_masters = vec![NotesMaster {
+                master: Arc::new(Master {
+                    id: MasterId(900),
+                    name: "Wide native notes".into(),
+                    shapes: vec![
+                        Shape {
+                            id: ShapeId(901),
+                            xfrm: Some(Xfrm::new(35.0, 30.0, 450.0, 60.0)),
+                            text: Some(TextBody { paragraphs: vec![Paragraph::new("Contributor-original notes artwork")], ..Default::default() }),
+                            ..Default::default()
+                        },
+                        Shape {
+                            id: ShapeId(902),
+                            xfrm: Some(Xfrm::new(40.0, 100.0, 300.0, 160.0)),
+                            ph: Some(Placeholder { kind: PhType::SlideImage, ..Default::default() }),
+                            fill: Some(Fill::None),
+                            ..Default::default()
+                        },
+                        Shape {
+                            id: ShapeId(903),
+                            xfrm: Some(Xfrm::new(360.0, 100.0, 370.0, 220.0)),
+                            ph: Some(Placeholder { kind: PhType::Body, ..Default::default() }),
+                            ..Default::default()
+                        },
+                    ],
+                    ..Default::default()
+                }),
+                size: Size::new(800.0, 400.0),
+                ..Default::default()
+            }];
+            Arc::make_mut(doc.slides.first_mut().unwrap()).notes_page = Some(NotesPage { master: Some(MasterId(900)), ..Default::default() });
+            licensed_list(&mut doc.default_text_style);
+            for master in &mut doc.masters {
+                licensed_master(Arc::make_mut(master));
+            }
+            for notes in &mut doc.notes_masters {
+                licensed_master(Arc::make_mut(&mut notes.master));
+            }
+            for slide in &mut doc.slides {
+                let slide = Arc::make_mut(slide);
+                licensed_shapes(&mut slide.shapes);
+                licensed_body(&mut slide.notes);
+                if let Some(page) = &mut slide.notes_page {
+                    licensed_shapes(&mut page.shapes);
+                }
+            }
+            doc.fix_next_id();
+            Ok(())
+        })
+        .unwrap();
+        SlideApp::new(s, crate::Services::default())
+    }
+
+    fn harness() -> Harness<'static, SlideApp> {
+        let mut h = Harness::builder().with_size(vec2(1000.0, 650.0)).build_ui_state(|ui, app: &mut SlideApp| notes_page(app, ui), app());
+        h.run_steps(3);
+        h
+    }
+
+    #[test]
+    fn native_notes_preview_is_cached_until_document_or_editor_changes() {
+        let mut h = harness();
+        let cache = h.state().sorter.notes_cache.as_ref().unwrap();
+        assert_eq!(cache.texture.size()[0], cache.texture.size()[1] * 2);
+        let texture = cache.texture.id();
+        h.run_steps(4);
+        assert_eq!(h.state().sorter.notes_cache.as_ref().unwrap().texture.id(), texture);
+        assert!(h.state().sorter.notes_draft.is_none(), "idle view paints canonical notes once, without a second editor");
+        h.get_by_label("Speaker notes").click();
+        h.run_steps(3);
+        assert!(h.state().sorter.notes_editing.is_some());
+        assert!(h.state().sorter.notes_cache.as_ref().unwrap().editing);
+        assert_ne!(h.state().sorter.notes_cache.as_ref().unwrap().texture.id(), texture);
+        let texture = h.state().sorter.notes_cache.as_ref().unwrap().texture.id();
+        h.state_mut().run("slide.notes", json!({"text":"Changed canonical notes"})).unwrap();
+        h.run_steps(2);
+        assert_ne!(h.state().sorter.notes_cache.as_ref().unwrap().texture.id(), texture);
+    }
+
+    #[test]
+    fn leaving_notes_editor_saves_rich_draft_through_engine_and_undo() {
+        let mut app = app();
+        let st = app.session.active().unwrap();
+        let slide = st.current_slide().unwrap();
+        let mut draft = crate::notes::Draft::new(&slide.notes);
+        draft.body.paragraphs[0].runs[0].text = "Edited formatted notes".into();
+        draft.body.paragraphs[0].runs[0].props.bold = Some(true);
+        draft.edited = true;
+        let original = slide.notes.clone();
+        app.sorter.notes_draft = Some(PageDraft { uid: st.uid, slide: slide.id, base: original.clone(), draft });
+        app.run("view.normal", json!({})).unwrap();
+        let st = app.session.active().unwrap();
+        assert_eq!(st.current_slide().unwrap().notes.text(), "Edited formatted notes");
+        assert_eq!(st.current_slide().unwrap().notes.paragraphs[0].runs[0].props.bold, Some(true));
+        assert!(st.current_slide().unwrap().notes_page.as_ref().unwrap().body_shape.is_some());
+        app.run("edit.undo", json!({})).unwrap();
+        assert_eq!(app.session.active().unwrap().current_slide().unwrap().notes, original);
+    }
+
+    #[test]
+    fn direct_save_download_settles_notes_before_serializing() {
+        use std::{cell::RefCell, rc::Rc};
+        let mut app = app();
+        let st = app.session.active().unwrap();
+        let slide = st.current_slide().unwrap();
+        let mut draft = crate::notes::Draft::new(&slide.notes);
+        draft.body.paragraphs[0].runs[0].text = "Direct save draft".into();
+        draft.edited = true;
+        app.sorter.notes_draft = Some(PageDraft { uid: st.uid, slide: slide.id, base: slide.notes.clone(), draft });
+        let captured = Rc::new(RefCell::new(Vec::new()));
+        let captured_by_download = captured.clone();
+        app.services.download = Some(Box::new(move |_, bytes| *captured_by_download.borrow_mut() = bytes.to_vec()));
+        app.save();
+        assert_eq!(app.session.active().unwrap().current_slide().unwrap().notes.text(), "Direct save draft");
+        assert_eq!(*captured.borrow(), deckcraft_engine::cmd::file::save_bytes(&app.session.active().unwrap().doc, "deckcraft").unwrap());
+        assert!(!captured.borrow().is_empty());
+    }
+
+    #[test]
+    fn stale_notes_draft_does_not_overwrite_a_new_canonical_body() {
+        let mut app = app();
+        let st = app.session.active().unwrap();
+        let slide = st.current_slide().unwrap();
+        let mut draft = crate::notes::Draft::new(&slide.notes);
+        draft.edited = true;
+        app.sorter.notes_draft = Some(PageDraft { uid: st.uid, slide: slide.id, base: slide.notes.clone(), draft });
+        app.session.execute("slide.notes", &json!({"text":"New external canonical value"})).unwrap();
+        app.run("view.normal", json!({})).unwrap();
+        assert_eq!(app.session.active().unwrap().current_slide().unwrap().notes.text(), "New external canonical value");
+    }
+
+    #[test]
+    #[ignore = "writes contributor-original synthetic UI screenshot for review"]
+    fn screenshot_native_notes_page() {
+        assert_eq!(
+            deckcraft_fonts::FontDb::global().document_face("BIZ UDPGothic", "Regular").family,
+            "BIZ UDPGothic",
+            "preview requires the bundled open font"
+        );
+        let mut h = harness();
+        let bytes = deckcraft_engine::cmd::file::save_bytes(&h.state().session.active().unwrap().doc, "deckcraft").unwrap();
+        std::fs::write("/private/tmp/deckcraft-r07-notes-ui.deckcraft", bytes).unwrap();
+        h.render().unwrap().save("/private/tmp/deckcraft-r07-native-notes-ui.png").unwrap();
+    }
 }

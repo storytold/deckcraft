@@ -121,7 +121,7 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     let Some(st) = app.session.active() else { return v };
     if st.selection.target == Target::Handout {
         v.push("Handout Master");
-    } else if st.selection.target == Target::NotesMaster {
+    } else if matches!(st.selection.target, Target::NotesMaster | Target::ImportedNotesMaster { .. }) {
         v.push("Notes Master");
     } else if st.selection.target != Target::Slides {
         v.push("Slide Master");
@@ -224,29 +224,33 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         cui.spacing_mut().item_spacing.x = 1.0;
         let ui = &mut cui;
         let tab = app.ui.tab.clone();
-        match tab.as_str() {
-            "Home" => home(app, ui),
-            "Insert" => insert(app, ui),
-            "Draw" => draw(app, ui),
-            "Design" => design(app, ui),
-            "Transitions" => transitions(app, ui),
-            "Animations" => animations(app, ui),
-            "Slide Show" => slide_show(app, ui),
-            "Record" => record(app, ui),
-            "Review" => review(app, ui),
-            "View" => view(app, ui),
-            "Shape Format" => shape_format(app, ui),
-            "Picture Format" => picture_format(app, ui),
-            "Table Design" => table_design(app, ui),
-            "Layout" => table_layout(app, ui),
-            "Chart Design" => chart_design(app, ui),
-            "SmartArt Design" => smartart_design(app, ui),
-            "Playback" => playback(app, ui),
-            "Slide Master" => slide_master(app, ui),
-            "Handout Master" => handout_master(app, ui),
-            "Notes Master" => notes_master(app, ui),
-            _ => {}
-        }
+        // Font metrics and smaller windows can push whole groups beyond the card.
+        // Keep every control reachable by scrolling and accessibility navigation.
+        egui::ScrollArea::horizontal().id_salt(("ribbon_controls", &tab)).auto_shrink([false, false]).show(ui, |ui| {
+            ui.horizontal_top(|ui| match tab.as_str() {
+                "Home" => home(app, ui),
+                "Insert" => insert(app, ui),
+                "Draw" => draw(app, ui),
+                "Design" => design(app, ui),
+                "Transitions" => transitions(app, ui),
+                "Animations" => animations(app, ui),
+                "Slide Show" => slide_show(app, ui),
+                "Record" => record(app, ui),
+                "Review" => review(app, ui),
+                "View" => view(app, ui),
+                "Shape Format" => shape_format(app, ui),
+                "Picture Format" => picture_format(app, ui),
+                "Table Design" => table_design(app, ui),
+                "Layout" => table_layout(app, ui),
+                "Chart Design" => chart_design(app, ui),
+                "SmartArt Design" => smartart_design(app, ui),
+                "Playback" => playback(app, ui),
+                "Slide Master" => slide_master(app, ui),
+                "Handout Master" => handout_master(app, ui),
+                "Notes Master" => notes_master(app, ui),
+                _ => {}
+            });
+        });
     });
 }
 
@@ -2123,17 +2127,13 @@ fn record(app: &mut SlideApp, ui: &mut Ui) {
 fn comment_nav(app: &mut SlideApp, ui: &mut Ui, forward: bool) {
     let (icon, label, id) = if forward { (Icon::NextComment, "Next", "comment.next") } else { (Icon::PrevComment, "Previous", "comment.prev") };
     if small_button(ui, icon, label, enabled(app, id), false).on_hover_text(tip(id, label)).clicked() {
-        let params = match app.ui.comment_focus {
-            Some((slide, index)) if app.session.active().is_some_and(|d| d.selection.slide == slide) => json!({"slide": slide, "index": index}),
-            _ => json!({}),
-        };
-        if let Ok(v) = app.run(id, params)
-            && let (Some(slide), Some(index)) = (v.get("slide").and_then(Value::as_u64), v.get("index").and_then(Value::as_u64))
-            && let (Ok(slide), Ok(index)) = (usize::try_from(slide), usize::try_from(index))
-        {
-            app.ui.comment_focus = Some((slide, index));
-            app.ui.pane = Some("comments".into());
-        }
+        let params = app
+            .ui
+            .comment_focus
+            .filter(|(uid, _)| app.session.active().is_some_and(|st| st.uid == *uid))
+            .map(|(_, id)| json!({"commentId":id}))
+            .unwrap_or_else(|| json!({}));
+        let _ = app.run(id, params);
     }
 }
 
@@ -2202,7 +2202,7 @@ fn view(app: &mut SlideApp, ui: &mut Ui) {
         if big_button_ex(ui, Icon::HandoutMaster, "Handout\nMaster", true, false, in_handout).0.clicked() {
             let _ = app.run(if in_handout { "view.closeMaster" } else { "view.handoutMaster" }, json!({}));
         }
-        let in_notes = app.session.active().is_some_and(|d| d.selection.target == Target::NotesMaster);
+        let in_notes = app.session.active().is_some_and(|d| matches!(d.selection.target, Target::NotesMaster | Target::ImportedNotesMaster { .. }));
         if big_button_ex(ui, Icon::NotesMaster, "Notes\nMaster", true, false, in_notes).0.clicked() {
             let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
         }
@@ -2988,6 +2988,28 @@ pub fn paint_table_style(p: &egui::Painter, r: Rect, id: &str, sc: &deckcraft_co
 
 fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
+        rows(ui, |ui| {
+            ui.horizontal(|ui| {
+                for (label, id) in [("Formula…", "cellFormula"), ("Value…", "cellValue"), ("Number Format…", "cellNumberFormat")] {
+                    if ui.button(label).clicked() {
+                        app.dialog = Some(crate::dialogs::Dialog::new(id));
+                    }
+                }
+            });
+            ui.horizontal(|ui| {
+                if ui.button("Nested Table…").clicked() {
+                    app.dialog = Some(crate::dialogs::Dialog::new("nestedTable"));
+                }
+                if ui.button("Parent Table").clicked() {
+                    run(app, "table.leaveNested", json!({}));
+                }
+                if ui.button("Recalculate").clicked() {
+                    run(app, "table.recalculate", json!({}));
+                }
+            });
+        });
+    });
+    group(ui, |ui| {
         let r = big_button(ui, Icon::DeleteTable, "Delete", true);
         egui::Popup::menu(&r).show(|ui| {
             menu_item(app, ui, Icon::DeleteTable, "Delete Columns", "table.deleteColumn", json!({}));
@@ -3208,7 +3230,7 @@ fn master_checks(app: &SlideApp) -> (bool, bool, bool) {
     let preserve = match st.selection.target {
         Target::Master { master } => st.doc.masters.get(master).is_some_and(|m| m.preserve),
         Target::Layout { master, layout } => st.doc.masters.get(master).and_then(|m| m.layouts.get(layout)).is_some_and(|l| l.preserve),
-        Target::Slides | Target::Handout | Target::NotesMaster => false,
+        Target::Slides | Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. } => false,
     };
     let title = st.shapes().iter().any(|sh| sh.ph_type().is_some_and(|k| k.is_title()));
     let footers = st.shapes().iter().any(|sh| sh.ph_type().is_some_and(|k| k.is_footer_kind()));
@@ -3273,10 +3295,45 @@ fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 fn notes_master(app: &mut SlideApp, ui: &mut Ui) {
+    let choices: Vec<_> = app
+        .session
+        .active()
+        .map(|d| {
+            d.doc
+                .notes_masters
+                .iter()
+                .enumerate()
+                .map(|(i, m)| (i, if m.master.name.is_empty() { format!("Notes Master {}", i + 1) } else { m.master.name.clone() }))
+                .collect()
+        })
+        .unwrap_or_default();
+    if choices.len() > 1 {
+        group(ui, |ui| {
+            let mut selected = app.session.active().and_then(|d| match d.selection.target {
+                Target::ImportedNotesMaster { master } => Some(master),
+                _ => None,
+            });
+            let current = selected;
+            let label = choices.iter().find(|(i, _)| Some(*i) == selected).map(|(_, name)| name.as_str()).unwrap_or("Notes Master");
+            egui::ComboBox::from_id_salt("imported_notes_master").selected_text(label).show_ui(ui, |ui| {
+                for (i, name) in &choices {
+                    ui.selectable_value(&mut selected, Some(*i), name);
+                }
+            });
+            if selected != current
+                && let Some(master) = selected
+            {
+                run(app, "view.notesMaster", json!({"master": master}));
+            }
+        });
+    }
     group(ui, |ui| {
         use deckcraft_model::PhType;
         let shown = |app: &SlideApp, k: PhType| {
-            app.session.active().and_then(|d| d.doc.notes_master.as_ref()).is_some_and(|m| m.shapes.iter().any(|s| s.ph_type() == Some(k)))
+            app.session
+                .active()
+                .and_then(|d| deckcraft_engine::page_master(&d.doc, d.selection.target))
+                .is_some_and(|m| m.shapes.iter().any(|s| s.ph_type() == Some(k)))
         };
         for col in [
             [("Header", "header", PhType::Header), ("Slide Image", "slideImage", PhType::SlideImage), ("Footer", "footer", PhType::Footer)],

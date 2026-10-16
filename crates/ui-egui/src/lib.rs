@@ -9,6 +9,7 @@
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
+mod comments_pane;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -30,6 +31,7 @@ pub mod show;
 pub mod sorter;
 pub mod squiggles;
 pub mod status;
+mod table_data_dialog;
 pub mod textures;
 pub mod theme;
 pub mod thumbs;
@@ -48,6 +50,9 @@ use serde_json::{Value, json};
 pub use control::{ControlRequest, ControlResponse};
 
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
+/// Read at most the supplied byte limit, rejecting larger input before allocating it.
+pub type ReadBoundedFn = Box<dyn Fn(&str, usize) -> Result<Vec<u8>, String>>;
+pub use deckcraft_model::comments::MAX_ATTACHMENT_BYTES;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 /// `(purpose, request id)`. The host shows a picker and later pushes an [`InboxEvent`]
@@ -73,6 +78,11 @@ pub enum InboxEvent {
     Cancelled {
         id: u64,
     },
+    /// A host rejected or failed to read a requested file before delivering bytes.
+    Failed {
+        id: u64,
+        error: String,
+    },
 }
 
 /// Files delivered asynchronously by the host (web file picker, dropped files).
@@ -88,6 +98,7 @@ enum FilePurpose {
     Video,
     /// Change Picture: the picture replaces the selected one (`picture.change`).
     ChangePicture,
+    CommentAttachment(u32),
     /// A drop, or any other purpose: decide from the name and bytes.
     Infer,
 }
@@ -104,6 +115,7 @@ enum FilePlace {
     },
     /// The handout or notes master (one per presentation, so no id is needed).
     NotesPage(Target),
+    ImportedNotesMaster(MasterId),
     /// The document was open but had no current slide, master or layout.
     Unspecified,
 }
@@ -144,6 +156,7 @@ fn purpose_of(purpose: &str) -> FilePurpose {
 fn is_presentation_name(lower: &str) -> bool {
     lower.ends_with(".deckcraft")
         || lower.ends_with(".slidecraft")
+        || lower.ends_with(".odp")
         || lower.ends_with(".pptx")
         || lower.ends_with(".potx")
         || lower.ends_with(".ppsx")
@@ -184,6 +197,7 @@ fn infer_command(name: &str, bytes: &[u8]) -> Option<&'static str> {
 
 fn command_for(purpose: FilePurpose, name: &str, bytes: &[u8]) -> Result<&'static str, String> {
     let cmd = match purpose {
+        FilePurpose::CommentAttachment(_) => Some("comment.attachment.import"),
         FilePurpose::Picture => Some("insert.picture"),
         FilePurpose::Audio => Some("insert.audio"),
         FilePurpose::Video => Some("insert.video"),
@@ -205,6 +219,8 @@ pub struct Services {
     /// Save dialog with a suggested name → path.
     pub pick_save: Option<PickFn>,
     pub read: Option<ReadFn>,
+    /// Required for synchronous comment attachments. No unbounded read/path fallback is used.
+    pub read_bounded: Option<ReadBoundedFn>,
     pub write: Option<WriteFn>,
     /// Asynchronous open dialog (web). The callback receives the purpose and the request id
     /// from [`SlideApp::begin_external_file`]; the chosen file arrives through `inbox`.
@@ -271,7 +287,7 @@ pub struct UiState {
     pub grayscale: bool,
     /// Comment the Review Previous/Next buttons last landed on: `(slide, index)`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub comment_focus: Option<(usize, usize)>,
+    pub comment_focus: Option<(u64, u32)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
 }
@@ -651,6 +667,12 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if id != "slide.notes"
+            && let Err(error) = sorter::finish_notes_edit(self)
+        {
+            self.set_status(error.clone());
+            return Err(error);
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -662,6 +684,14 @@ impl SlideApp {
             Ok(v) if matches!(id, "edit.copy" | "edit.cut") => {
                 if let Some(t) = v.get("text").and_then(Value::as_str) {
                     self.pending_copy = Some(t.to_string());
+                }
+            }
+            Ok(value) if matches!(id, "comment.next" | "comment.prev" | "comment.add") => {
+                if let Some(message) = value.get("commentId").and_then(Value::as_u64).and_then(|id| u32::try_from(id).ok())
+                    && let Some(st) = self.session.active()
+                {
+                    self.ui.comment_focus = Some((st.uid, message));
+                    self.ui.pane = Some("comments".into());
                 }
             }
             Ok(_) => {}
@@ -683,6 +713,10 @@ impl SlideApp {
 
     /// Opens the File tab's view on `page` (keeping its state when it is already open).
     pub fn open_backstage(&mut self, page: backstage::Page) {
+        if let Err(error) = sorter::finish_notes_edit(self) {
+            self.set_status(error);
+            return;
+        }
         let key = self.docs_key();
         match &mut self.backstage {
             Some(b) => b.go(page),
@@ -740,6 +774,7 @@ impl SlideApp {
             "pngAll" => ("png", "png", true),
             "jpeg" | "jpg" => ("jpg", "jpeg", false),
             "pptx" => ("pptx", "pptx", false),
+            "odp" => ("odp", "odp", false),
             "outline" | "txt" => ("txt", "outline", false),
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
@@ -798,6 +833,28 @@ impl SlideApp {
                 false
             }
         }
+    }
+
+    /// Recover the original package; this deliberately does not save the edited conversion.
+    fn recover_odp_source(&mut self) -> bool {
+        let suggested = self.suggested_name("original.odp");
+        if let Some(pick) = self.services.pick_save.as_mut() {
+            let Some(path) = pick(&suggested) else { return false };
+            return match self.run("file.exportSource", json!({"path": path})) {
+                Ok(_) => {
+                    self.set_status(format!("Recovered original ODP to {path}. Changes made in DeckCraft are not included."));
+                    true
+                }
+                Err(_) => false,
+            };
+        }
+        let Some(doc) = self.session.active().map(|d| d.doc.clone()) else { return false };
+        let bytes = deckcraft_engine::cmd::file::retained_odp_source(&doc).map(<[u8]>::to_vec);
+        let downloaded = self.download(&suggested, bytes);
+        if downloaded {
+            self.set_status("Recovered original ODP. Changes made in DeckCraft are not included.");
+        }
+        downloaded
     }
 
     /// File › Print: DeckCraft prints through a PDF. On the desktop the PDF (with the Print page's
@@ -1069,6 +1126,10 @@ impl SlideApp {
     }
 
     pub fn start_show(&mut self, from: usize, reading: bool) {
+        if let Err(error) = sorter::finish_notes_edit(self) {
+            self.set_status(error);
+            return;
+        }
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
         if let Some(d) = self.session.active() {
@@ -1179,6 +1240,7 @@ impl SlideApp {
     }
 
     pub fn open_path(&mut self, path: &str) -> Result<(), String> {
+        sorter::finish_notes_edit(self)?;
         self.session.execute("file.open", &json!({"path": path})).map_err(|e| e.to_string())?;
         self.note_recent(path);
         Ok(())
@@ -1224,6 +1286,32 @@ impl SlideApp {
         if let Some(pick) = self.services.pick_open.as_mut() {
             if let Some(path) = pick(purpose) {
                 let mut args = if extra.is_object() { extra.clone() } else { json!({}) };
+                if cmd == "comment.attachment.import" {
+                    let result = self
+                        .services
+                        .read_bounded
+                        .as_ref()
+                        .ok_or_else(|| "This host cannot read attachments with a byte limit.".to_string())
+                        .and_then(|read| read(&path, MAX_ATTACHMENT_BYTES));
+                    let bytes = match result {
+                        Ok(bytes) if bytes.len() <= MAX_ATTACHMENT_BYTES => bytes,
+                        Ok(_) => {
+                            self.set_status("Attachment exceeds 32 MiB limit");
+                            return;
+                        }
+                        Err(error) => {
+                            self.set_status(error);
+                            return;
+                        }
+                    };
+                    let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                    args["name"] = json!(name);
+                    args["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+                    if let Err(error) = self.run(cmd, args) {
+                        self.set_status(error);
+                    }
+                    return;
+                }
                 let r = match self.services.read.as_ref().map(|r| r(&path)) {
                     Some(Ok(bytes)) => {
                         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -1248,6 +1336,12 @@ impl SlideApp {
             {
                 r.purpose = FilePurpose::ChangePicture;
             }
+            if cmd == "comment.attachment.import"
+                && let Some(comment) = extra.get("commentId").and_then(Value::as_u64).and_then(|id| u32::try_from(id).ok())
+                && let Some(request) = self.pending_files.iter_mut().find(|request| request.id == id)
+            {
+                request.purpose = FilePurpose::CommentAttachment(comment);
+            }
             if let Some(f) = self.services.open_async.as_mut() {
                 f(purpose, id);
             }
@@ -1255,8 +1349,16 @@ impl SlideApp {
     }
 
     pub fn save_as_dialog(&mut self, format: &str) {
+        if let Err(error) = sorter::finish_notes_edit(self) {
+            self.set_status(error);
+            return;
+        }
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
+        let ext = match format {
+            "pptx" => "pptx",
+            "odp" => "odp",
+            _ => "deckcraft",
+        };
         let suggested = format!("{name}.{ext}");
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
@@ -1282,6 +1384,10 @@ impl SlideApp {
     /// Save every presentation with unsaved changes (asking for a location where needed).
     /// Returns false if one wasn't saved (cancelled or failed).
     pub fn save_all(&mut self) -> bool {
+        if let Err(error) = sorter::finish_notes_edit(self) {
+            self.set_status(error);
+            return false;
+        }
         let dirty: Vec<usize> = self.session.documents().iter().enumerate().filter(|(_, d)| d.is_dirty()).map(|(i, _)| i).collect();
         for i in dirty {
             self.session.set_active(i);
@@ -1294,6 +1400,10 @@ impl SlideApp {
     }
 
     pub fn save(&mut self) {
+        if let Err(error) = sorter::finish_notes_edit(self) {
+            self.set_status(error);
+            return;
+        }
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
                 Ok(_) => self.set_status("Saved"),
@@ -1340,6 +1450,12 @@ impl SlideApp {
         for event in events {
             match event {
                 InboxEvent::Cancelled { id } => self.pending_files.retain(|r| r.id != id),
+                InboxEvent::Failed { id, error } => {
+                    if let Some(index) = self.pending_files.iter().position(|request| request.id == id) {
+                        self.pending_files.remove(index);
+                        self.set_status(error);
+                    }
+                }
                 InboxEvent::File(file) => self.apply_external_file(file.id, &file.name, &file.bytes),
             }
         }
@@ -1381,6 +1497,9 @@ impl SlideApp {
                 },
                 None => FilePlace::Unspecified,
             },
+            Target::ImportedNotesMaster { master } => {
+                d.doc.notes_masters.get(master).map_or(FilePlace::Unspecified, |m| FilePlace::ImportedNotesMaster(m.master.id))
+            }
             t @ (Target::Handout | Target::NotesMaster) => FilePlace::NotesPage(t),
         };
         FileTarget::Document { doc: d.uid, place }
@@ -1402,12 +1521,18 @@ impl SlideApp {
                 matches!(d.selection.target, Target::Layout { master: mi, layout: li }
                     if d.doc.masters.get(mi).is_some_and(|m| m.id == *master && m.layouts.get(li).is_some_and(|l| l.id == *layout)))
             }
+            FilePlace::ImportedNotesMaster(id) => matches!(d.selection.target, Target::ImportedNotesMaster { master }
+                if d.doc.notes_masters.get(master).is_some_and(|m| m.master.id == *id)),
             FilePlace::NotesPage(t) => d.selection.target == *t,
             FilePlace::Unspecified => false,
         }
     }
 
     fn apply_external_file(&mut self, id: u64, name: &str, bytes: &[u8]) {
+        if let Err(error) = sorter::finish_notes_edit(self) {
+            self.set_status(error);
+            return;
+        }
         let Some(pos) = self.pending_files.iter().position(|r| r.id == id) else { return };
         let req = self.pending_files.remove(pos);
         let cmd = match command_for(req.purpose, name, bytes) {
@@ -1417,11 +1542,18 @@ impl SlideApp {
                 return;
             }
         };
-        let params = if cmd == "slide.fromOutline" {
+        if matches!(req.purpose, FilePurpose::CommentAttachment(_)) && bytes.len() > deckcraft_model::comments::MAX_ATTACHMENT_BYTES {
+            self.set_status("Attachment exceeds 32 MiB limit");
+            return;
+        }
+        let mut params = if cmd == "slide.fromOutline" {
             json!({"text": String::from_utf8_lossy(bytes), "markdown": name.to_ascii_lowercase().ends_with(".md")})
         } else {
             json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes)})
         };
+        if let FilePurpose::CommentAttachment(id) = req.purpose {
+            params["commentId"] = Value::from(id);
+        }
         let result = if cmd == "file.openBytes" || self.viewing_target(&req.target) {
             self.session.execute(cmd, &params).map(|_| ()).map_err(|e| e.to_string())
         } else {
@@ -1438,6 +1570,7 @@ impl SlideApp {
     /// Run `cmd` on the document and slide captured for the request, then put the view back
     /// if the user has since moved. A missing document or slide cancels the file.
     fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
+        sorter::finish_notes_edit(self)?;
         let FileTarget::Document { doc, place } = target else {
             self.session.execute("file.new", &json!({})).map_err(|e| e.to_string())?;
             return self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
@@ -1506,6 +1639,10 @@ impl SlideApp {
                     .and_then(|m| m.layouts.iter().position(|l| l.id == *layout))
                     .ok_or_else(|| "the layout it was chosen for was deleted".to_string())?;
                 Ok(LocatedPlace { target: Target::Layout { master: mi, layout: li }, slide: None })
+            }
+            FilePlace::ImportedNotesMaster(id) => {
+                let master = d.doc.notes_masters.iter().position(|m| m.master.id == *id).ok_or_else(|| "the notes master was deleted".to_string())?;
+                Ok(LocatedPlace { target: Target::ImportedNotesMaster { master }, slide: None })
             }
             FilePlace::NotesPage(t) => Ok(LocatedPlace { target: *t, slide: None }),
             FilePlace::Unspecified => Err("there was no slide to put it on".into()),
@@ -2015,6 +2152,8 @@ mod animpane_tests;
 #[cfg(test)]
 mod browsetheme_tests;
 #[cfg(test)]
+mod comments_pane_tests;
+#[cfg(test)]
 mod compare_tests;
 #[cfg(test)]
 mod eyedropper_tests;
@@ -2026,6 +2165,8 @@ mod ime_tests;
 mod replacefonts_tests;
 #[cfg(test)]
 mod slide_size_tests;
+#[cfg(test)]
+mod table_data_dialog_tests;
 #[cfg(test)]
 mod texture_limit_tests;
 #[cfg(test)]
@@ -3355,5 +3496,161 @@ mod tests {
         let after = harness.state().ui.ui_scale;
         assert!(after > before + 0.3, "letting go applies the size dragged to: {before} -> {after}");
         assert!(harness.state().dialog.is_some(), "Preferences stays open");
+    }
+}
+
+#[cfg(test)]
+mod imported_notes_target_tests {
+    use super::*;
+    use deckcraft_model::{Master, notes::NotesMaster};
+    use std::sync::Arc;
+
+    #[test]
+    fn pending_imported_master_file_target_follows_identity_and_rejects_deletion() {
+        let mut session = Session::with_new();
+        session
+            .edit(|doc, _| {
+                doc.notes_masters = [900, 901]
+                    .into_iter()
+                    .map(|id| NotesMaster { master: Arc::new(Master { id: MasterId(id), ..Default::default() }), ..Default::default() })
+                    .collect();
+                Ok(())
+            })
+            .unwrap();
+        session.execute("view.notesMaster", &json!({"master":1})).unwrap();
+        let mut app = SlideApp::new(session, Services::default());
+        let target = app.capture_file_target();
+        let FileTarget::Document { place, .. } = target else { panic!("document target") };
+        app.session
+            .edit(|doc, _| {
+                doc.notes_masters.remove(0);
+                Ok(())
+            })
+            .unwrap();
+        assert!(app.viewing_target(&target));
+        assert_eq!(app.locate_place(&place).unwrap().target, Target::ImportedNotesMaster { master: 0 });
+        app.session
+            .edit(|doc, _| {
+                doc.notes_masters.clear();
+                Ok(())
+            })
+            .unwrap();
+        assert!(!app.viewing_target(&target));
+        assert!(app.locate_place(&place).is_err());
+    }
+}
+
+#[cfg(test)]
+mod bounded_attachment_picker_tests {
+    #![allow(clippy::unwrap_used)]
+    use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn app_with(services: Services) -> (SlideApp, u32) {
+        let mut session = Session::with_new();
+        let id = session.execute("comment.add", &json!({"text":"original attachment owner","anchor":{"kind":"slide"}})).unwrap()["commentId"]
+            .as_u64()
+            .unwrap() as u32;
+        (SlideApp::new(session, services), id)
+    }
+    fn picker() -> PickFn {
+        Box::new(|_| Some("/tmp/owned.txt".into()))
+    }
+
+    #[test]
+    fn bounded_attachment_read_error_is_visible_and_never_falls_back_to_generic_read_or_path() {
+        let generic = Arc::new(AtomicUsize::new(0));
+        let calls = generic.clone();
+        let services = Services {
+            pick_open: Some(picker()),
+            read: Some(Box::new(move |_| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Ok(b"unbounded fallback".to_vec())
+            })),
+            read_bounded: Some(Box::new(|_, limit| {
+                assert_eq!(limit, MAX_ATTACHMENT_BYTES);
+                Err("bounded source read failed".into())
+            })),
+            ..Default::default()
+        };
+        let (mut app, id) = app_with(services);
+        let before = app.session.active().unwrap().doc.clone();
+        let undo = app.session.active().unwrap().history.undo.len();
+        app.pick_and_run("commentAttachment", "comment.attachment.import", &json!({"commentId":id}));
+        assert_eq!(generic.load(Ordering::Relaxed), 0);
+        assert_eq!(app.status.as_ref().unwrap().0, "bounded source read failed");
+        assert!(Arc::ptr_eq(&app.session.active().unwrap().doc, &before));
+        assert_eq!(app.session.active().unwrap().history.undo.len(), undo);
+    }
+    #[test]
+    fn attachment_host_without_bounded_reader_rejects_before_generic_read() {
+        let generic = Arc::new(AtomicUsize::new(0));
+        let calls = generic.clone();
+        let (mut app, id) = app_with(Services {
+            pick_open: Some(picker()),
+            read: Some(Box::new(move |_| {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Ok(vec![])
+            })),
+            ..Default::default()
+        });
+        let before = app.session.active().unwrap().doc.clone();
+        app.pick_and_run("commentAttachment", "comment.attachment.import", &json!({"commentId":id}));
+        assert_eq!(generic.load(Ordering::Relaxed), 0);
+        assert!(app.status.as_ref().unwrap().0.contains("byte limit"));
+        assert!(Arc::ptr_eq(&app.session.active().unwrap().doc, &before));
+    }
+    #[test]
+    fn attachment_callback_result_is_rechecked_before_base64_or_command_allocation() {
+        let (mut app, id) =
+            app_with(Services { pick_open: Some(picker()), read_bounded: Some(Box::new(|_, limit| Ok(vec![0; limit + 1]))), ..Default::default() });
+        let before = app.session.active().unwrap().doc.clone();
+        let undo = app.session.active().unwrap().history.undo.len();
+        app.pick_and_run("commentAttachment", "comment.attachment.import", &json!({"commentId":id}));
+        assert_eq!(app.status.as_ref().unwrap().0, "Attachment exceeds 32 MiB limit");
+        assert!(Arc::ptr_eq(&app.session.active().unwrap().doc, &before));
+        assert_eq!(app.session.active().unwrap().history.undo.len(), undo);
+    }
+    #[test]
+    fn bounded_attachment_success_passes_exact_bytes_and_stable_comment_identity_to_the_command() {
+        let observed = Arc::new(AtomicUsize::new(0));
+        let limit_seen = observed.clone();
+        let (mut app, id) = app_with(Services {
+            pick_open: Some(picker()),
+            read_bounded: Some(Box::new(move |_, limit| {
+                limit_seen.store(limit, Ordering::Relaxed);
+                Ok(b"contributor original".to_vec())
+            })),
+            ..Default::default()
+        });
+        app.pick_and_run("commentAttachment", "comment.attachment.import", &json!({"commentId":id}));
+        assert_eq!(observed.load(Ordering::Relaxed), MAX_ATTACHMENT_BYTES);
+        let state = app.session.active().unwrap();
+        let comment = state.doc.slides[0].comments.first().unwrap();
+        assert_eq!(comment.comment_id, Some(id));
+        assert_eq!(comment.attachments.len(), 1);
+        assert_eq!(comment.attachments[0].name, "owned.txt");
+        assert_eq!(state.doc.media(comment.attachments[0].media).unwrap().data.as_slice(), b"contributor original");
+    }
+    #[test]
+    fn failed_async_read_consumes_only_its_request_and_late_bytes_cannot_attach() {
+        let inbox = Inbox::default();
+        let (mut app, id) = app_with(Services { inbox: Some(inbox.clone()), open_async: Some(Box::new(|_, _| {})), ..Default::default() });
+        app.pick_and_run("commentAttachment", "comment.attachment.import", &json!({"commentId":id}));
+        let request = app.pending_files.last().unwrap().id;
+        inbox.lock().unwrap().push(InboxEvent::Failed { id: request + 1, error: "unrequested error".into() });
+        app.drain_inbox();
+        assert!(app.status.is_none());
+        assert_eq!(app.pending_files.len(), 1);
+        let before = app.session.active().unwrap().doc.clone();
+        inbox.lock().unwrap().push(InboxEvent::Failed { id: request, error: "Attachment exceeds 32 MiB limit".into() });
+        inbox.lock().unwrap().push(InboxEvent::File(InboxFile { id: request, name: "late.txt".into(), bytes: b"late bytes".to_vec() }));
+        app.drain_inbox();
+        assert!(app.pending_files.is_empty());
+        assert_eq!(app.status.as_ref().unwrap().0, "Attachment exceeds 32 MiB limit");
+        assert!(Arc::ptr_eq(&app.session.active().unwrap().doc, &before));
     }
 }

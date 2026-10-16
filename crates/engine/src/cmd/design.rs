@@ -90,7 +90,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Notes Master",
             ["View", "Master Views"],
             None,
-            "{} (creates the notes master with header, date, slide image, notes body, footer and page number if the deck has none)",
+            "{master?: usize} (selects an imported notes master; defaults to the current slide association, creating a legacy master only if none exist)",
             has_doc,
             notes_view
         ),
@@ -134,8 +134,7 @@ fn theme(s: &mut Session, p: &Value) -> Result<Value> {
     let t =
         builtin_themes().into_iter().find(|t| t.name.eq_ignore_ascii_case(name)).ok_or_else(|| bad("design.theme", format!("no theme `{name}`")))?;
     s.edit(|doc, sel| {
-        let mi = master_index(doc, sel);
-        let m = doc.masters.get_mut(mi).ok_or_else(|| bad("design.theme", "no master"))?;
+        let m = design_master_mut(doc, sel).ok_or_else(|| bad("design.theme", "no master"))?;
         let m = Arc::make_mut(m);
         m.theme = t.clone();
         m.name = t.name.clone();
@@ -170,8 +169,7 @@ fn browse_theme(s: &mut Session, p: &Value) -> Result<Value> {
             map.insert(m.id.0, id.0);
         }
         let theme = if map.is_empty() { theme.clone() } else { remap_media_ids(&theme, &map)? };
-        let mi = master_index(doc, sel);
-        let m = Arc::make_mut(doc.masters.get_mut(mi).ok_or_else(|| bad("design.browseTheme", "no master"))?);
+        let m = Arc::make_mut(design_master_mut(doc, sel).ok_or_else(|| bad("design.browseTheme", "no master"))?);
         m.theme = theme;
         m.color_map = vec![];
         Ok(())
@@ -210,9 +208,28 @@ fn remap_media_ids(theme: &deckcraft_model::theme::Theme, map: &std::collections
 fn master_index(doc: &Presentation, sel: &crate::Selection) -> usize {
     match sel.target {
         Target::Master { master } | Target::Layout { master, .. } => master,
-        Target::Slides | Target::Handout | Target::NotesMaster => {
+        Target::Slides | Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. } => {
             doc.slides.get(sel.slide).and_then(|s| doc.masters.iter().position(|m| m.layout(s.layout).is_some())).unwrap_or(0)
         }
+    }
+}
+
+// Design commands must edit the selected imported notes master, not a slide master
+// with the same collection index.
+fn design_master<'a>(doc: &'a Presentation, sel: &crate::Selection) -> Option<&'a Arc<deckcraft_model::Master>> {
+    if matches!(sel.target, Target::ImportedNotesMaster { .. }) {
+        crate::page_master(doc, sel.target)
+    } else {
+        doc.masters.get(master_index(doc, sel))
+    }
+}
+
+fn design_master_mut<'a>(doc: &'a mut Presentation, sel: &crate::Selection) -> Option<&'a mut Arc<deckcraft_model::Master>> {
+    if matches!(sel.target, Target::ImportedNotesMaster { .. }) {
+        crate::page_master_mut(doc, sel.target)
+    } else {
+        let mi = master_index(doc, sel);
+        doc.masters.get_mut(mi)
     }
 }
 
@@ -251,8 +268,7 @@ fn colors(s: &mut Session, p: &Value) -> Result<Value> {
         return ok();
     }
     s.edit(|doc, sel| {
-        let mi = master_index(doc, sel);
-        let m = Arc::make_mut(doc.masters.get_mut(mi).ok_or_else(|| bad("design.colors", "no master"))?);
+        let m = Arc::make_mut(design_master_mut(doc, sel).ok_or_else(|| bad("design.colors", "no master"))?);
         m.theme.colors = next;
         Ok(())
     })?;
@@ -262,8 +278,7 @@ fn colors(s: &mut Session, p: &Value) -> Result<Value> {
 fn variant(s: &mut Session, p: &Value) -> Result<Value> {
     let index = p.get("index").and_then(Value::as_u64).ok_or_else(|| bad("design.variant", "missing `index` (0..3)"))? as usize;
     s.edit(|doc, sel| {
-        let mi = master_index(doc, sel);
-        let m = Arc::make_mut(doc.masters.get_mut(mi).ok_or_else(|| bad("design.variant", "no master"))?);
+        let m = Arc::make_mut(design_master_mut(doc, sel).ok_or_else(|| bad("design.variant", "no master"))?);
         let v = deckcraft_model::theme::theme_variants(&m.theme);
         m.theme.colors =
             v.get(index).cloned().ok_or_else(|| bad("design.variant", format!("no variant {index}; 0..{}", v.len().saturating_sub(1))))?;
@@ -274,8 +289,7 @@ fn variant(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn variants(s: &mut Session, _p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let mi = master_index(&st.doc, &st.selection);
-    let th = st.doc.masters.get(mi).map(|m| m.theme.clone()).unwrap_or_default();
+    let th = design_master(&st.doc, &st.selection).map(|m| m.theme.clone()).unwrap_or_default();
     let v = deckcraft_model::theme::theme_variants(&th);
     let current = v.iter().position(|c| c.colors == th.colors.colors);
     Ok(json!({
@@ -287,8 +301,7 @@ fn variants(s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn current_colors(s: &Session) -> Result<deckcraft_color::ColorScheme> {
     let st = s.doc()?;
-    let mi = master_index(&st.doc, &st.selection);
-    st.doc.masters.get(mi).map(|m| m.theme.colors.clone()).ok_or_else(|| bad("design.colors", "no master"))
+    design_master(&st.doc, &st.selection).map(|m| m.theme.colors.clone()).ok_or_else(|| bad("design.colors", "no master"))
 }
 
 fn scheme_dialog_params(sc: &deckcraft_color::ColorScheme) -> Value {
@@ -380,8 +393,7 @@ fn fonts(s: &mut Session, p: &Value) -> Result<Value> {
         return ok();
     }
     s.edit(|doc, sel| {
-        let mi = master_index(doc, sel);
-        Arc::make_mut(doc.masters.get_mut(mi).ok_or_else(|| bad("design.fonts", "no master"))?).theme.fonts = next;
+        Arc::make_mut(design_master_mut(doc, sel).ok_or_else(|| bad("design.fonts", "no master"))?).theme.fonts = next;
         Ok(())
     })?;
     ok()
@@ -389,8 +401,7 @@ fn fonts(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn current_fonts(s: &Session) -> Result<deckcraft_model::theme::FontScheme> {
     let st = s.doc()?;
-    let mi = master_index(&st.doc, &st.selection);
-    st.doc.masters.get(mi).map(|m| m.theme.fonts.clone()).ok_or_else(|| bad("design.fonts", "no master"))
+    design_master(&st.doc, &st.selection).map(|m| m.theme.fonts.clone()).ok_or_else(|| bad("design.fonts", "no master"))
 }
 
 fn font_dialog_params(scheme: &deckcraft_model::theme::FontScheme) -> Value {
@@ -465,15 +476,13 @@ fn effects(s: &mut Session, p: &Value) -> Result<Value> {
     let stored = scheme.name.clone();
     let same = {
         let st = s.doc()?;
-        let mi = master_index(&st.doc, &st.selection);
-        st.doc.masters.get(mi).is_some_and(|m| m.theme.format == scheme)
+        design_master(&st.doc, &st.selection).is_some_and(|m| m.theme.format == scheme)
     };
     if same {
         return Ok(json!({"name": stored}));
     }
     s.edit(|doc, sel| {
-        let mi = master_index(doc, sel);
-        Arc::make_mut(doc.masters.get_mut(mi).ok_or_else(|| bad("design.effects", "no master"))?).theme.format = scheme;
+        Arc::make_mut(design_master_mut(doc, sel).ok_or_else(|| bad("design.effects", "no master"))?).theme.format = scheme;
         Ok(())
     })?;
     Ok(json!({"name": stored}))
@@ -587,7 +596,9 @@ fn background_of(doc: &Presentation, sel: &crate::Selection, index: Option<usize
     match sel.target {
         Target::Master { master } => doc.masters.get(master).and_then(|m| m.background.clone()),
         Target::Layout { master, layout } => doc.masters.get(master).and_then(|m| m.layouts.get(layout)).and_then(|l| l.background.clone()),
-        t @ (Target::Handout | Target::NotesMaster) => crate::page_master(doc, t).and_then(|m| m.background.clone()),
+        t @ (Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. }) => {
+            crate::page_master(doc, t).and_then(|m| m.background.clone())
+        }
         Target::Slides => doc.slides.get(index.unwrap_or(sel.slide)).and_then(|sl| sl.background.clone()),
     }
 }
@@ -596,7 +607,9 @@ fn backgrounds_already(doc: &Presentation, sel: &crate::Selection, index: Option
     match sel.target {
         Target::Master { master } => doc.masters.get(master).is_some_and(|m| m.background == *bg),
         Target::Layout { master, layout } => doc.masters.get(master).and_then(|m| m.layouts.get(layout)).is_some_and(|l| l.background == *bg),
-        t @ (Target::Handout | Target::NotesMaster) => crate::page_master(doc, t).is_some_and(|m| m.background == *bg),
+        t @ (Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. }) => {
+            crate::page_master(doc, t).is_some_and(|m| m.background == *bg)
+        }
         Target::Slides => {
             let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![index.unwrap_or(sel.slide)] };
             !list.is_empty() && list.iter().all(|i| doc.slides.get(*i).is_some_and(|sl| sl.background == *bg))
@@ -616,7 +629,7 @@ fn write_background(doc: &mut Presentation, sel: &crate::Selection, index: Optio
                 l.background = bg;
             }
         }
-        t @ (Target::Handout | Target::NotesMaster) => {
+        t @ (Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. }) => {
             if let Some(m) = crate::page_master_mut(doc, t) {
                 Arc::make_mut(m).background = bg;
             }
@@ -1068,7 +1081,11 @@ fn handout_placeholders(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn in_notes_master(s: &Session) -> std::result::Result<(), String> {
-    if s.active().is_some_and(|d| d.selection.target == Target::NotesMaster) { Ok(()) } else { Err("open View ▸ Notes Master first".into()) }
+    if s.active().is_some_and(|d| matches!(d.selection.target, Target::NotesMaster | Target::ImportedNotesMaster { .. })) {
+        Ok(())
+    } else {
+        Err("open View ▸ Notes Master first".into())
+    }
 }
 
 const NOTES_KINDS: [(&str, PhType); 6] = [
@@ -1120,7 +1137,33 @@ pub fn notes_placeholder(kind: PhType, size: Size, id: ShapeId) -> Shape {
     }
 }
 
-fn notes_view(s: &mut Session, _p: &Value) -> Result<Value> {
+fn notes_view(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let imported = if p.get("master").is_some() {
+        let index = usize_param(p, "master")
+            .filter(|i| *i < st.doc.notes_masters.len())
+            .ok_or_else(|| bad("view.notesMaster", "invalid notes master index"))?;
+        Some(index)
+    } else if let Some(id) = st.current_slide().and_then(|sl| sl.notes_page.as_ref()).and_then(|page| page.master) {
+        match st.doc.notes_masters.iter().position(|m| m.master.id == id) {
+            Some(index) => Some(index),
+            None if st.doc.notes_master.as_ref().is_some_and(|m| m.id == id) => None,
+            None => return Err(bad("view.notesMaster", "notes master association is missing")),
+        }
+    } else if st.doc.notes_masters.is_empty() {
+        None
+    } else {
+        Some(0)
+    };
+    if let Some(master) = imported {
+        s.select(|_, sel| {
+            sel.target = Target::ImportedNotesMaster { master };
+            sel.shapes.clear();
+            sel.text = None;
+            sel.cells = None;
+        })?;
+        return Ok(json!({"created": false, "master": master}));
+    }
     let created = s.doc()?.doc.notes_master.as_ref().is_none_or(|m| m.shapes.is_empty());
     if created {
         s.edit(|doc, _| {
@@ -1148,11 +1191,12 @@ fn notes_view(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn notes_placeholders(s: &mut Session, p: &Value) -> Result<Value> {
+    let target = s.doc()?.selection.target;
     s.edit(|doc, _| {
-        let size = doc.notes_size;
+        let size = crate::page_master_size(doc, target).ok_or_else(|| bad("notes.placeholders", "no notes master"))?;
         let ids: Vec<ShapeId> =
             NOTES_KINDS.iter().map(|_| doc.alloc_id().map(ShapeId).ok_or_else(|| bad("notes.placeholders", NO_ID_SPACE))).collect::<Result<_>>()?;
-        let m = Arc::make_mut(doc.notes_master.as_mut().ok_or_else(|| bad("notes.placeholders", "no notes master"))?);
+        let m = Arc::make_mut(crate::page_master_mut(doc, target).ok_or_else(|| bad("notes.placeholders", "no notes master"))?);
         for ((key, kind), id) in NOTES_KINDS.into_iter().zip(ids) {
             let Some(on) = p.get(key).and_then(Value::as_bool) else { continue };
             let has = m.shapes.iter().any(|x| x.ph_type() == Some(kind));
@@ -1164,7 +1208,7 @@ fn notes_placeholders(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(())
     })?;
-    let m = s.doc()?.doc.notes_master.clone();
+    let m = crate::page_master(&s.doc()?.doc, target).cloned();
     let mut out = serde_json::Map::new();
     for (key, kind) in NOTES_KINDS {
         out.insert(key.into(), json!(m.as_ref().is_some_and(|m| m.shapes.iter().any(|x| x.ph_type() == Some(kind)))));
@@ -1299,7 +1343,9 @@ fn preserve(s: &mut Session, p: &Value) -> Result<Value> {
                 .ok_or_else(|| bad("master.preserve", "no such layout"))?;
             (false, master, layout, on)
         }
-        Target::Slides | Target::Handout | Target::NotesMaster => return Err(bad("master.preserve", "open Slide Master view")),
+        Target::Slides | Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. } => {
+            return Err(bad("master.preserve", "open Slide Master view"));
+        }
     };
     let next = bool_param(p, "preserve").unwrap_or(!current);
     if next == current {
@@ -1352,7 +1398,9 @@ fn placeholders(s: &mut Session, p: &Value) -> Result<Value> {
         let prototypes = match sel.target {
             Target::Master { master } | Target::Layout { master, .. } => doc.masters.get(master).map(|m| m.shapes.clone()).unwrap_or_default(),
             Target::Slides => Vec::new(),
-            Target::Handout | Target::NotesMaster => return Err(bad("master.placeholders", "open Slide Master view")),
+            Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. } => {
+                return Err(bad("master.placeholders", "open Slide Master view"));
+            }
         };
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("master.placeholders", "open Slide Master view"))?;
         if title == Some(false) {

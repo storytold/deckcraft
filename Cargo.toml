@@ -21,6 +21,7 @@ deckcraft-text = { path = "crates/text" }
 deckcraft-render = { path = "crates/render" }
 deckcraft-pdf = { path = "crates/pdf" }
 deckcraft-pptx = { path = "crates/pptx" }
+deckcraft-odp = { path = "crates/odp" }
 deckcraft-format = { path = "crates/format" }
 deckcraft-anim = { path = "crates/anim" }
 deckcraft-engine = { path = "crates/engine" }
@@ -42,7 +43,9 @@ deckcraft-opus = { path = "crates/opus" }
 kurbo = { version = "0.13", features = ["serde"] }
 thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "unbounded_depth"] }
+sha2 = { version = "0.11.1", default-features = false }
+getrandom = { version = "0.3.4", features = ["wasm_js"] }
 log = "0.4"
 proptest = "1"
 rayon = "1"

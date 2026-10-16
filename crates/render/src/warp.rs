@@ -92,6 +92,16 @@ struct Item<'a> {
 pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)], warp: &Warp) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
+    // Paragraph areas belong to the text box, not to the glyph outlines that
+    // follow the WordArt guide. Keep the area continuous across wrapped lines.
+    for d in &l.backgrounds {
+        let ps = para(d.para);
+        if ps.visible && ps.opacity > 0.001 {
+            ctx.set_transform(m * Affine::translate(ps.offset));
+            ctx.set_paint(color(d.color, ps.opacity));
+            crate::fill_deco(ctx, d);
+        }
+    }
     let n = l.lines.len();
     let mut ink: Vec<Option<Rect>> = vec![None; n];
     let mut off: Vec<Option<f64>> = vec![None; n];

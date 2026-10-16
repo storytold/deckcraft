@@ -21,6 +21,8 @@
 
 mod bidi;
 pub mod datetime;
+pub mod table;
+pub mod table_content;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -295,6 +297,8 @@ pub struct TextLayout {
     /// Empty list markers for the editor only; ordinary rendering and export omit them.
     /// Their space is still reserved so the caret starts where the first character will.
     pub empty_bullets: Vec<GlyphRun>,
+    /// Paragraph areas, below run highlighting and glyph effects.
+    pub backgrounds: Vec<Deco>,
     pub decos: Vec<Deco>,
     pub lines: Vec<LineInfo>,
     /// Inner text box (insets applied), shape-local.
@@ -345,6 +349,9 @@ pub struct Opts<'a> {
 }
 
 struct Style {
+    /// Alternate styles for this logical run, selected once per grapheme by FontSlot.
+    variants: Option<(usize, usize)>,
+    script_variant: bool,
     face: Arc<FontFace>,
     size: f64,
     color: Rgba,
@@ -469,6 +476,8 @@ fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Styl
         _ => None,
     });
     Style {
+        variants: None,
+        script_variant: false,
         face,
         size,
         color,
@@ -493,6 +502,35 @@ fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Styl
         major,
         kern: r.kern.is_some_and(|k| k > 0.0 && size + 1e-6 >= k * scale),
     }
+}
+
+/// Inheritance has already resolved each Option independently. Only then does an absent
+/// script property fall back to the ordinary run property. Empty language explicitly clears.
+fn script_style(ctx: &Ctx, run: &RunProps, slot: FontSlot, scale: f64, prompt: Option<Rgba>) -> Style {
+    let mut props = run.clone();
+    match slot {
+        FontSlot::Latin => {}
+        FontSlot::EastAsian => {
+            props.size = run.size_ea.or(run.size);
+            props.bold = run.bold_ea.or(run.bold);
+            props.italic = run.italic_ea.or(run.italic);
+            props.lang = run.lang_ea.clone().or_else(|| run.lang.clone());
+        }
+        FontSlot::ComplexScript => {
+            props.size = run.size_cs.or(run.size);
+            props.bold = run.bold_cs.or(run.bold);
+            props.italic = run.italic_cs.or(run.italic);
+            props.lang = run.lang_cs.clone().or_else(|| run.lang.clone());
+        }
+    }
+    // Malformed native inputs must not introduce NaN geometry. Import/export and commands
+    // reject invalid overrides; layout uses the ordinary size as its safe recovery value.
+    if props.size.is_some_and(|size| !size.is_finite() || size <= 0.0) {
+        props.size = run.size.filter(|size| size.is_finite() && *size > 0.0);
+    }
+    let mut style = make_style(ctx, &props, scale, prompt);
+    style.script_variant = true;
+    style
 }
 
 /// The faces to try for a cluster of `slot`/`script` in style `st`, in order: the slot's
@@ -733,6 +771,15 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
         };
         let si = styles.len();
         styles.push(st);
+        if rp.has_script_overrides() {
+            let ea = styles.len();
+            styles.push(script_style(ctx, &rp, FontSlot::EastAsian, scale, opts.prompt_color));
+            let cs = styles.len();
+            styles.push(script_style(ctx, &rp, FontSlot::ComplexScript, scale, opts.prompt_color));
+            if let Some(base) = styles.get_mut(si) {
+                base.variants = Some((ea, cs));
+            }
+        }
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
         text.push_str(&t);
     }
@@ -783,7 +830,7 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
             rp.size = Some(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0));
             rp.underline = None;
             let mut st = make_style(ctx, &rp, scale, opts.prompt_color);
-            let label = autonum(scheme, start_at.saturating_sub(1).saturating_add(number.unwrap_or(1)));
+            let label = autonum(scheme, number.unwrap_or(*start_at).max(1));
             bullet_face(db, &mut st, &label);
             Some((label, st))
         }
@@ -830,19 +877,32 @@ fn shape_cells(
     let mut byte_of: Vec<usize> = text.char_indices().map(|(b, _)| b).collect();
     byte_of.push(text.len());
     let char_at_byte: HashMap<usize, usize> = byte_of.iter().enumerate().map(|(i, b)| (*b, i)).collect();
-    let style_rtl: Vec<bool> = styles.iter().map(|st| st.lang.as_deref().is_some_and(bidi::is_rtl_lang)).collect();
-    let rtl_lang: Vec<bool> = char_style.iter().map(|&si| style_rtl.get(si).copied().unwrap_or(false)).collect();
-    let levels = bidi::levels_lang(text, &chars, rtl, &rtl_lang);
     let scripts = script::resolve(&chars);
     let mut boundary = vec![false; n];
     let mut graphemes: Vec<(usize, usize)> = Vec::new();
+    let mut selected_styles = char_style.to_vec();
     for (b, g) in text.grapheme_indices(true) {
         let Some(&i) = char_at_byte.get(&b) else { continue };
         if let Some(x) = boundary.get_mut(i) {
             *x = true;
         }
-        graphemes.push((i, i + g.chars().count()));
+        let end = i + g.chars().count();
+        graphemes.push((i, end));
+        let Some(base) = char_style.get(i).copied() else { continue };
+        let Some((ea, cs)) = styles.get(base).and_then(|st| st.variants) else { continue };
+        let selected = match scripts.get(i).map(|(_, slot)| *slot).unwrap_or_default() {
+            FontSlot::Latin => base,
+            FontSlot::EastAsian => ea,
+            FontSlot::ComplexScript => cs,
+        };
+        for index in selected_styles.get_mut(i..end).into_iter().flatten() {
+            *index = selected;
+        }
     }
+    let char_style = selected_styles.as_slice();
+    let style_rtl: Vec<bool> = styles.iter().map(|st| st.lang.as_deref().is_some_and(bidi::is_rtl_lang)).collect();
+    let rtl_lang: Vec<bool> = char_style.iter().map(|&si| style_rtl.get(si).copied().unwrap_or(false)).collect();
+    let levels = bidi::levels_lang(text, &chars, rtl, &rtl_lang);
     let face_index = |faces: &mut Vec<Arc<FontFace>>, f: &Arc<FontFace>| -> usize {
         if let Some(i) = faces.iter().position(|x| Arc::ptr_eq(x, f)) {
             return i;
@@ -1638,7 +1698,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
 
     let mut out = TextLayout { inner, font_scale: scale, line_reduction: reduce, rotation, ..Default::default() };
     let mut y = 0.0;
-    let mut numbering: Vec<u32> = vec![0; 9];
+    let mut numbering: Vec<Option<u32>> = vec![None; 9];
     let mut all_lines: Vec<(LineInfo, LinePlace, f64, Option<(String, f64, f64)>)> = vec![];
     let mut prev_after = 0.0;
     // How far the last line's full pitch reaches past the text (exact spacing; see below).
@@ -1648,22 +1708,30 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
     for (pi, para) in body.paragraphs.iter().enumerate() {
         let lvl = para.level.min(8) as usize;
         let pp = resolve::para(ctx, shape, para);
-        let number = if matches!(pp.bullet, Some(Bullet::AutoNum { .. })) && !para.is_empty() {
-            if let Some(n) = numbering.get_mut(lvl) {
-                *n += 1;
+        let number = if let Some(Bullet::AutoNum { start_at, .. }) = pp.bullet {
+            let next = pp
+                .number_restart
+                .unwrap_or_else(|| numbering.get(lvl).copied().flatten().map(|n| n.saturating_add(1)).unwrap_or(start_at.max(1)))
+                .max(1);
+            if !para.is_empty() {
+                if let Some(n) = numbering.get_mut(lvl) {
+                    *n = Some(next);
+                }
+                for deeper in numbering.iter_mut().skip(lvl + 1) {
+                    *deeper = None;
+                }
+            } else if pp.number_restart.is_some() {
+                // Empty paragraphs preview without consuming a number, but an explicit
+                // sequence boundary still controls the next populated paragraph.
+                if let Some(n) = numbering.get_mut(lvl) {
+                    *n = Some(next.saturating_sub(1));
+                }
             }
-            for deeper in numbering.iter_mut().skip(lvl + 1) {
-                *deeper = 0;
-            }
-            numbering.get(lvl).copied()
-        } else if matches!(pp.bullet, Some(Bullet::AutoNum { .. })) {
-            // Preview the next number without consuming it: empty paragraphs do not advance
-            // numbering in the saved document or affect later populated paragraphs.
-            numbering.get(lvl).map(|n| n.saturating_add(1))
+            Some(next)
         } else {
             if !para.is_empty() {
                 for n in numbering.iter_mut().skip(lvl) {
-                    *n = 0;
+                    *n = None;
                 }
             }
             None
@@ -1718,12 +1786,17 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                 size = p.lead_size;
             }
             let natural = (asc + desc).max(size * 1.0);
-            let lh = match props.line_spacing {
-                // The reduction comes off the percentage (90 % less 20 % is 70 %), as PowerPoint
-                // applies `lnSpcReduction`.
-                Some(Spacing::Pct(f)) => natural * (f - reduce).max(f * 0.1).max(0.0),
-                Some(Spacing::Pts(v)) => v * (1.0 - reduce),
-                None => natural * (1.0 - reduce),
+            let policy = props.line_height.filter(|policy| props.line_spacing.is_none() && policy.valid());
+            let lh = match policy {
+                Some(deckcraft_model::text::LineHeight::Minimum { points }) => (natural * (1.0 - reduce)).max(points),
+                Some(deckcraft_model::text::LineHeight::Normal) => natural * (1.0 - reduce),
+                None => match props.line_spacing {
+                    // The reduction comes off the percentage (90 % less 20 % is 70 %), as PowerPoint
+                    // applies `lnSpcReduction`.
+                    Some(Spacing::Pct(f)) => natural * (f - reduce).max(f * 0.1).max(0.0),
+                    Some(Spacing::Pts(v)) => v * (1.0 - reduce),
+                    None => natural * (1.0 - reduce),
+                },
             };
             let ratio = if natural > 0.0 { lh / natural } else { 1.0 };
             let top = y;
@@ -1929,6 +2002,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
         inner.x0
     };
     let oy = inner.y0 + dy;
+    let mut background_column = None;
     // Emit runs, in visual order.
     for (line, place, _, bullet) in all_lines.iter_mut() {
         line.top += oy;
@@ -1943,6 +2017,35 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
             line.bottom += d;
         }
         let Some(p) = shaped_paras.get(line.para) else { continue };
+        if let Some(Fill::Solid { color }) = &p.props.background {
+            // Paragraph margins bound the area; alignment and first-line/hanging
+            // indents only position its text. RTL margins follow the start edge.
+            let start = p.props.margin_left.unwrap_or(0.0).max(0.0).min(col_w);
+            let end = p.props.margin_right.unwrap_or(0.0).max(0.0).min(col_w - start);
+            // anchorCtr shifts the ink, not the column's paragraph area.
+            let left = inner.x0 + col_x(line.column) + if p.rtl { end } else { start };
+            let right = inner.x0 + col_x(line.column) + col_w - if p.rtl { start } else { end };
+            let rect = Rect::new(left, line.top, right, line.bottom);
+            let color = ctx.color(color, None);
+            if rect.width() > 0.0 && rect.height() > 0.0 {
+                // One area per contiguous paragraph/column segment also avoids
+                // painting shared line edges twice when text is animated faded.
+                if let Some(last) = out.backgrounds.last_mut().filter(|last| {
+                    last.para == line.para
+                        && background_column == Some(line.column)
+                        && last.color == color
+                        && (last.rect.x0 - rect.x0).abs() < 1e-6
+                        && (last.rect.x1 - rect.x1).abs() < 1e-6
+                        && rect.y0 <= last.rect.y1 + 1e-6
+                        && rect.y1 >= last.rect.y0 - 1e-6
+                }) {
+                    last.rect = last.rect.union(rect);
+                } else {
+                    out.backgrounds.push(Deco { rect, color, behind: true, para: line.para, line: DecoLine::Solid });
+                }
+                background_column = Some(line.column);
+            }
+        }
         if let Some((s, bx, _)) = bullet.take()
             && let Some((_, st)) = p.bullet.as_ref()
         {
@@ -1994,8 +2097,8 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     color: st.color,
                     glyphs: vec![],
                     cells: vec![],
-                    fake_bold: st.fake_bold,
-                    fake_italic: st.fake_italic,
+                    fake_bold: if st.script_variant { st.style_name.contains("Bold") && face.weight < 550.0 } else { st.fake_bold },
+                    fake_italic: if st.script_variant { st.style_name.contains("Italic") && !face.italic } else { st.fake_italic },
                     outline: st.outline,
                     para: line.para,
                     chars: (ci, ci + 1),
@@ -2608,3 +2711,16 @@ pub fn fit_width(ctx: &Ctx, shape: &Shape, body: &TextBody, rect: Rect, fields: 
 
 #[cfg(test)]
 mod tests;
+
+/// Map laid-out text into an owner while preserving readable text under flips.
+pub fn text_transform(m: deckcraft_geom::Affine, tr: Rect, rotation: f64) -> deckcraft_geom::Affine {
+    let c = tr.center().to_vec2();
+    let mut t = m;
+    if m.determinant() < 0.0 && c.is_finite() {
+        t = t * deckcraft_geom::Affine::translate(c) * deckcraft_geom::Affine::scale_non_uniform(-1.0, 1.0) * deckcraft_geom::Affine::translate(-c);
+    }
+    if rotation != 0.0 && rotation.is_finite() && c.is_finite() {
+        t = t * deckcraft_geom::Affine::translate(c) * deckcraft_geom::Affine::rotate(rotation.to_radians()) * deckcraft_geom::Affine::translate(-c);
+    }
+    t
+}

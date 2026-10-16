@@ -501,6 +501,7 @@ pub fn blank_presentation(size: Size, theme: Theme, title_slide: bool) -> Presen
         slides: vec![],
         masters: vec![Arc::new(master)],
         notes_master: None,
+        notes_masters: vec![],
         handout_master: None,
         sections: vec![],
         custom_shows: vec![],
@@ -517,6 +518,7 @@ pub fn blank_presentation(size: Size, theme: Theme, title_slide: bool) -> Presen
         kept_parts: vec![],
         guides: vec![],
         raw_ext: None,
+        presentation_templates: vec![],
     };
     if title_slide {
         // A fresh deck starts at id 256 and this builds a handful of ids, so the slide always

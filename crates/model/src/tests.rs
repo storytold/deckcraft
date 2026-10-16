@@ -2,6 +2,31 @@ use super::*;
 use crate::resolve::Ctx;
 
 #[test]
+fn paragraph_background_inherits_and_explicit_none_clears_without_changing_highlight() {
+    use crate::text::{ParaProps, RunProps};
+    let background = Fill::solid(ColorRef::rgb(Rgba::rgb(80, 120, 160)));
+    let parent = ParaProps { background: Some(background.clone()), ..Default::default() };
+    let mut inherited = ParaProps::default();
+    inherited.inherit(&parent);
+    assert_eq!(inherited.background, Some(background));
+    let mut clear = ParaProps { background: Some(Fill::None), ..Default::default() };
+    clear.inherit(&parent);
+    assert_eq!(clear.background, Some(Fill::None));
+    let old: ParaProps = serde_json::from_str(r#"{"align":"left"}"#).unwrap();
+    assert_eq!(old.background, None, "old native JSON remains compatible");
+    assert!(!serde_json::to_string(&old).unwrap().contains("background"));
+    let highlight = RunProps { highlight: Some(ColorRef::rgb(Rgba::rgb(255, 230, 0))), ..Default::default() };
+    let paragraph = Paragraph { props: inherited, runs: vec![Run::with("Editable", highlight.clone())], ..Default::default() };
+    let back: Paragraph = serde_json::from_slice(&serde_json::to_vec(&paragraph).unwrap()).unwrap();
+    assert_eq!(back, paragraph);
+    assert_eq!(back.runs[0].props.highlight, highlight.highlight);
+    let mut body = TextBody { paragraphs: vec![back], ..Default::default() };
+    crate::edit::insert(&mut body, (0, 4), "\nNew ", None);
+    assert_eq!(body.paragraphs.len(), 2);
+    assert_eq!(body.paragraphs[0].props.background, body.paragraphs[1].props.background, "typing a paragraph break retains its area formatting");
+}
+
+#[test]
 fn new_presentation_is_valid() {
     let p = Presentation::default();
     assert_eq!(p.slides.len(), 1);
@@ -184,6 +209,7 @@ fn hyperlinked_runs_take_the_theme_hyperlink_look() {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     let hlink = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink)));
     // The title's master style colours its text tx1; a link is hlink and underlined instead.
@@ -199,6 +225,7 @@ fn hyperlinked_runs_take_the_theme_hyperlink_look() {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     assert_eq!(resolve::run(&ctx, title, &para, &RunProps { link: slide, ..Default::default() }).fill, hlink);
     // The run's own colour and underline win; u="none" removes the underline.
@@ -269,4 +296,31 @@ fn ink_width_follows_pressure_and_keeps_the_old_placeholder() {
     let floor = ink_sample_width(8.0, 0.0, false);
     assert!((floor - 0.64).abs() < 1e-4, "a light touch stays visible, got {floor}");
     assert!((ink_sample_width(8.0, f32::NAN, false) - 8.0).abs() < 1e-9);
+}
+#[test]
+fn script_run_overrides_inherit_independently_and_keep_explicit_normal_and_language_clear() {
+    use crate::text::RunProps;
+    let parent = RunProps {
+        size: Some(18.),
+        size_ea: Some(24.),
+        size_cs: Some(30.),
+        bold: Some(true),
+        bold_ea: Some(true),
+        italic_cs: Some(true),
+        lang_cs: Some("ar".into()),
+        ..Default::default()
+    };
+    let mut child = RunProps { bold_ea: Some(false), italic_cs: Some(false), lang_cs: Some(String::new()), ..Default::default() };
+    child.inherit(&parent);
+    assert_eq!(child.size_ea, Some(24.));
+    assert_eq!(child.size_cs, Some(30.));
+    assert_eq!(child.bold, Some(true));
+    assert_eq!(child.bold_ea, Some(false));
+    assert_eq!(child.italic_cs, Some(false));
+    assert_eq!(child.lang_cs.as_deref(), Some(""));
+    assert!(child.has_script_overrides());
+    let restored: RunProps = serde_json::from_slice(&serde_json::to_vec(&child).unwrap()).unwrap();
+    assert_eq!(restored, child);
+    let old: RunProps = serde_json::from_str("{\"size\":18,\"bold\":true}").unwrap();
+    assert!(!old.has_script_overrides());
 }

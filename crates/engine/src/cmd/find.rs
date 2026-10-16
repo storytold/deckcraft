@@ -33,38 +33,71 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 /// Where a text body lives on a slide.
-#[derive(Clone, Copy, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug)]
 struct Loc {
     shape: Option<u64>,
     cell: Option<(usize, usize)>,
+    path: deckcraft_model::table::TablePath,
+    block: Option<u32>,
 }
 
 /// Visit every text body on a slide: shapes depth-first (groups, table cells), then the notes.
-fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody)) {
-    fn rec(shapes: &mut [Shape], depth: usize, f: &mut dyn FnMut(Loc, &mut TextBody)) {
+fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody) -> Result<bool>) -> Result<()> {
+    fn rec(shapes: &mut [Shape], depth: usize, f: &mut dyn FnMut(Loc, &mut TextBody) -> Result<bool>) -> Result<()> {
         if depth > 64 {
-            return;
+            return Err(bad("text", "shape nesting exceeds text visitor limit"));
         }
         for sh in shapes {
             let id = Some(u64::from(sh.id.0));
             if let Some(t) = &mut sh.text {
-                f(Loc { shape: id, cell: None }, t);
+                f(Loc { shape: id, cell: None, path: Default::default(), block: None }, t)?;
             }
             match &mut sh.kind {
                 ShapeKind::Table(t) => {
-                    for (r, row) in t.rows.iter_mut().enumerate() {
-                        for (c, cell) in row.cells.iter_mut().enumerate() {
-                            f(Loc { shape: id, cell: Some((r, c)) }, &mut cell.text);
-                        }
-                    }
+                    t.validate_content()?;
+                    table_bodies(t, id, &Default::default(), f)?;
                 }
-                ShapeKind::Group { children, .. } => rec(children, depth + 1, f),
+                ShapeKind::Group { children, .. } => rec(children, depth + 1, f)?,
                 _ => {}
             }
         }
+        Ok(())
     }
-    rec(&mut slide.shapes, 0, f);
-    f(Loc { shape: None, cell: None }, &mut slide.notes);
+    rec(&mut slide.shapes, 0, f)?;
+    f(Loc { shape: None, cell: None, path: Default::default(), block: None }, &mut slide.notes)?;
+    Ok(())
+}
+
+fn table_bodies(
+    table: &mut deckcraft_model::Table,
+    shape: Option<u64>,
+    path: &deckcraft_model::table::TablePath,
+    f: &mut dyn FnMut(Loc, &mut TextBody) -> Result<bool>,
+) -> Result<()> {
+    path.validate()?;
+    for (row, values) in table.rows.iter_mut().enumerate() {
+        for (col, cell) in values.cells.iter_mut().enumerate() {
+            if cell.is_covered() {
+                continue;
+            }
+            if f(Loc { shape, cell: Some((row, col)), path: path.clone(), block: None }, &mut cell.text)? {
+                cell.reconcile_constant()?;
+            }
+            for block in &mut cell.blocks {
+                match block {
+                    deckcraft_model::table::CellBlock::Text(block) => {
+                        f(Loc { shape, cell: Some((row, col)), path: path.clone(), block: Some(block.id) }, &mut block.body)?;
+                    }
+                    deckcraft_model::table::CellBlock::Table(child) => {
+                        let mut path = path.clone();
+                        path.0.push(deckcraft_model::table::TablePathStep { row, col, child: child.id });
+                        table_bodies(&mut child.table, shape, &path, f)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 struct Opts {
@@ -150,10 +183,18 @@ fn find(s: &mut Session, p: &Value) -> Result<Value> {
         bodies(&mut sl, &mut |loc, t| {
             for (pi, para) in t.paragraphs.iter().enumerate() {
                 for (a, b) in para_matches(para, &o) {
-                    out.push(json!({"slide": i, "shape": loc.shape, "cell": loc.cell.map(|(r, c)| [r, c]), "para": pi, "start": a, "end": b}));
+                    let mut hit = json!({"slide": i, "shape": loc.shape, "cell": loc.cell.map(|(r, c)| [r, c]), "para": pi, "start": a, "end": b});
+                    if !loc.path.is_empty() {
+                        hit["path"] = serde_json::to_value(&loc.path).map_err(|_| bad("text.find", "invalid table path"))?;
+                    }
+                    if let Some(block) = loc.block {
+                        hit["block"] = Value::from(block);
+                    }
+                    out.push(hit);
                 }
             }
-        });
+            Ok(false)
+        })?;
     }
     Ok(Value::Array(out))
 }
@@ -164,34 +205,49 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
     let at = p.get("at").filter(|v| v.is_object()).map(|v| -> Result<(usize, Loc, usize, usize)> {
         let n = |k: &str| v.get(k).and_then(Value::as_u64).map(|x| x as usize).ok_or_else(|| bad("text.replace", format!("`at` needs `{k}`")));
         let cell = v.get("cell").and_then(Value::as_array).and_then(|c| Some((c.first()?.as_u64()? as usize, c.get(1)?.as_u64()? as usize)));
-        Ok((n("slide")?, Loc { shape: v.get("shape").and_then(Value::as_u64), cell }, n("para")?, n("start")?))
+        let path = if let Some(path) = v.get("path") {
+            let values = path.as_array().ok_or_else(|| bad("text.replace", "invalid table path"))?;
+            if values.len() > deckcraft_model::table::MAX_NESTED_TABLE_DEPTH {
+                return Err(bad("text.replace", "table path exceeds limit"));
+            }
+            serde_json::from_value(path.clone()).map_err(|_| bad("text.replace", "invalid table path"))?
+        } else {
+            Default::default()
+        };
+        let block = v
+            .get("block")
+            .map(|value| value.as_u64().and_then(|value| u32::try_from(value).ok()).ok_or_else(|| bad("text.replace", "invalid text block")))
+            .transpose()?;
+        Ok((n("slide")?, Loc { shape: v.get("shape").and_then(Value::as_u64), cell, path, block }, n("para")?, n("start")?))
     });
     let at = at.transpose()?;
     let count = s.edit(|doc, _| {
         let mut count = 0;
         for (i, slp) in doc.slides.iter_mut().enumerate() {
-            if at.is_some_and(|a| a.0 != i) {
+            if at.as_ref().is_some_and(|a| a.0 != i) {
                 continue;
             }
             let mut sl = (**slp).clone();
             let mut changed = 0;
             bodies(&mut sl, &mut |loc, t| {
-                if at.is_some_and(|a| a.1 != loc) {
-                    return;
+                if at.as_ref().is_some_and(|a| a.1 != loc) {
+                    return Ok(false);
                 }
+                let before = changed;
                 for (pi, para) in t.paragraphs.iter_mut().enumerate() {
-                    if at.is_some_and(|a| a.2 != pi) {
+                    if at.as_ref().is_some_and(|a| a.2 != pi) {
                         continue;
                     }
                     for (a, b) in para_matches(para, &o).into_iter().rev() {
-                        if at.is_some_and(|x| x.3 != a) {
+                        if at.as_ref().is_some_and(|x| x.3 != a) {
                             continue;
                         }
                         splice(para, a, b, &with);
                         changed += 1;
                     }
                 }
-            });
+                Ok(changed != before)
+            })?;
             if changed > 0 {
                 *slp = Arc::new(sl);
                 count += changed;

@@ -179,18 +179,7 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 && let Some(pos) = r.interact_pointer_pos()
             {
                 let at = out.galley.cursor_from_pos(pos - out.galley_pos).index.0;
-                let hit = app.squiggles.notes(&buf, &lang, None, None).into_iter().find(|(a, b)| at >= *a && at <= *b);
-                app.squiggles.notes_menu = hit.and_then(|(a, _)| {
-                    let before: String = buf.chars().take(a).collect();
-                    let line_start = before.rfind('\n').map_or(0, |i| before[..i].chars().count() + 1);
-                    let line = buf.chars().skip(line_start).take_while(|c| *c != '\n').collect::<String>();
-                    crate::squiggles::menu_word(
-                        &deckcraft_model::Paragraph::new(&line),
-                        &lang,
-                        crate::squiggles::Tag::Notes { start: line_start },
-                        a - line_start,
-                    )
-                });
+                app.squiggles.notes_menu = app.squiggles.notes_word_at(&buf, &lang, at);
             }
             let mut changed: Option<String> = None;
             if app.squiggles.notes_menu.is_some() {

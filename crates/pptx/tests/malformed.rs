@@ -177,7 +177,7 @@ fn fuzz_mutations() {
         (seed % n.max(1) as u64) as usize
     };
     let iters = if cfg!(debug_assertions) { 300 } else { 2000 };
-    for _ in 0..iters {
+    for iteration in 0..iters {
         let mut v = es.clone();
         let k = rnd(v.len());
         let d = &mut v[k].1;
@@ -200,7 +200,30 @@ fn fuzz_mutations() {
         }
         if let Ok(q) = deckcraft_pptx::import(&rezip(&v)) {
             assert!(q.validate().is_empty());
-            deckcraft_pptx::export(&q).expect("re-export");
+            let before = q.clone();
+            match deckcraft_pptx::export(&q) {
+                Ok(bytes) => {
+                    if let Err(error) = deckcraft_pptx::import(&bytes) {
+                        let dir = std::env::var("DECKCRAFT_PPTX_FUZZ_REPRO_DIR").unwrap_or_else(|_| "/private/tmp/deckcraft-pptx-fuzz-repro".into());
+                        std::fs::create_dir_all(&dir).unwrap();
+                        std::fs::write(std::path::Path::new(&dir).join("mutated.pptx"), rezip(&v)).unwrap();
+                        std::fs::write(std::path::Path::new(&dir).join("regenerated.pptx"), &bytes).unwrap();
+                        std::fs::write(std::path::Path::new(&dir).join("model.json"), serde_json::to_vec(&q).unwrap()).unwrap();
+                        panic!(
+                            "reopen regenerated fuzz model: iteration {iteration}, mutated part {}, fixed seed 0x5eed, artifacts {dir}: {error}",
+                            es[k].0
+                        );
+                    }
+                }
+                // A permissively imported foreign notes placeholder can have a
+                // role with no standard notes-page mapping. Refusing to publish
+                // it is safer than silently flattening or changing its role.
+                Err(deckcraft_pptx::PptxError::Unsupported(message)) => {
+                    assert_eq!(message, "notes interchange: placeholder role is not permitted on a standard notes page");
+                }
+                Err(error) => panic!("unexpected re-export failure: {error}"),
+            }
+            assert!(q == before, "fuzz export/refusal mutated the imported model");
         }
     }
     // Raw byte flips of the whole zip, too.
@@ -263,4 +286,44 @@ fn export_of_odd_models_is_valid() {
     empty.masters.clear();
     let q = deckcraft_pptx::import(&deckcraft_pptx::export(&empty).expect("export")).expect("import");
     assert!(!q.masters.is_empty());
+}
+
+#[test]
+fn empty_presentation_defaults_remain_empty_and_notes_projection_reopens() {
+    use deckcraft_model::{Master, MasterId, PhType, Placeholder, Shape, ShapeId, TextBody, Xfrm};
+    use std::sync::Arc;
+    let mut p = defaults::new_presentation(None);
+    p.default_text_style = Default::default();
+    p.notes_master = None;
+    p.notes_masters.clear();
+    let master = Arc::new(Master {
+        id: MasterId(80_000),
+        shapes: vec![Shape {
+            id: ShapeId(80_001),
+            ph: Some(Placeholder { kind: PhType::Body, ..Default::default() }),
+            xfrm: Some(Xfrm::new(20., 100., 400., 300.)),
+            text: Some(TextBody::from_text("original unused master prompt")),
+            ..Default::default()
+        }],
+        ..Default::default()
+    });
+    p.notes_masters.push(deckcraft_model::notes::NotesMaster { master, ..Default::default() });
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    slide.notes = TextBody::from_text("Current canonical body with sparse inherited properties");
+    assert!(slide.notes.paragraphs[0].runs[0].props.kern.is_none());
+    slide.notes_page = Some(deckcraft_model::notes::NotesPage {
+        master: Some(MasterId(80_000)),
+        body_shape: Some(ShapeId(80_002)),
+        shapes: vec![Shape { id: ShapeId(80_002), ph: Some(Placeholder { kind: PhType::Body, ..Default::default() }), ..Default::default() }],
+        ..Default::default()
+    });
+    p.fix_next_id();
+    let original = p.clone();
+    let mut back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+    for _ in 0..2 {
+        assert!(back.default_text_style.is_empty());
+        assert_eq!(back.slides[0].notes, p.slides[0].notes);
+        back = deckcraft_pptx::import(&deckcraft_pptx::export(&back).unwrap()).unwrap();
+    }
+    assert!(p == original, "notes export changed sparse source inheritance");
 }

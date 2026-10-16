@@ -65,6 +65,7 @@ fn talk() -> Presentation {
                                     sound: None,
                                     stop_sound: false,
                                     zoom_return: None,
+                                    sound_name: None,
                                 }),
                                 ..Default::default()
                             },
@@ -158,6 +159,11 @@ fn xml_text(parts: &BTreeMap<String, Vec<u8>>) -> BTreeMap<String, usize> {
     let mut counts = BTreeMap::new();
     for (name, bytes) in parts {
         let lower = name.to_ascii_lowercase();
+        // A materialized notes scene uses one neutral standard master. The
+        // original master text is proved through restored typed resources below.
+        if lower.starts_with("ppt/notesmasters/") && lower.ends_with(".xml") {
+            continue;
+        }
         if !(lower.ends_with(".xml") || lower.ends_with(".rels")) {
             continue;
         }
@@ -282,17 +288,65 @@ fn lost<'a>(origin: &'a BTreeMap<String, usize>, saved: &BTreeMap<String, usize>
 
 /// Open, save, reopen. Text from the original is still there, content parts are still there, and
 /// saving again does not change the package's part names or text.
+fn notes_resource_text(p: &Presentation) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for master in p.notes_master.iter().map(Arc::as_ref).chain(p.notes_masters.iter().map(|notes| notes.master.as_ref())) {
+        for shapes in std::iter::once(master.shapes.as_slice()).chain(master.layouts.iter().map(|layout| layout.shapes.as_slice())) {
+            deckcraft_model::walk(shapes, &mut |shape, _| {
+                let mut text = |body: &TextBody| {
+                    for run in body.paragraphs.iter().flat_map(|paragraph| &paragraph.runs) {
+                        if !run.text.is_empty() {
+                            *counts.entry(run.text.clone()).or_insert(0) += 1;
+                        }
+                    }
+                };
+                if let Some(body) = &shape.text {
+                    text(body);
+                }
+                if let ShapeKind::Table(table) = &shape.kind {
+                    table
+                        .visit_texts(&mut |body| {
+                            text(body);
+                            Ok(())
+                        })
+                        .expect("bounded notes table text");
+                }
+            });
+        }
+    }
+    counts
+}
+
 fn round_trip(label: &str, bytes: &[u8]) -> (Pkg, Pkg) {
     let origin = Pkg::open(bytes);
-    let once = deckcraft_pptx::export(&deckcraft_pptx::import(bytes).unwrap_or_else(|e| panic!("{label}: import: {e}")))
-        .unwrap_or_else(|e| panic!("{label}: save: {e}"));
+    let opened = deckcraft_pptx::import(bytes).unwrap_or_else(|e| panic!("{label}: import: {e}"));
+    let original = opened.clone();
+    let notes = opened.slides.iter().map(|slide| slide.notes.clone()).collect::<Vec<_>>();
+    let resources = notes_resource_text(&opened);
+    let mut raw_master = BTreeMap::new();
+    for (part, bytes) in &origin.parts {
+        if part.to_ascii_lowercase().starts_with("ppt/notesmasters/") && part.ends_with(".xml") {
+            let xml = std::str::from_utf8(bytes).expect("original notes master XML");
+            for text in element_texts(xml, "a:t").into_iter().filter(|text| !text.is_empty()) {
+                *raw_master.entry(text).or_insert(0) += 1;
+            }
+        }
+    }
+    assert!(lost(&raw_master, &resources).is_empty(), "{label}: imported original master text is absent from native resources");
+    let once = deckcraft_pptx::export(&opened).unwrap_or_else(|e| panic!("{label}: save: {e}"));
+    assert!(opened == original, "{label}: export mutated its source");
     let saved = Pkg::open(&once);
     let origin_text = xml_text(&origin.parts);
     let missing = lost(&origin_text, &xml_text(&saved.parts));
     assert!(missing.is_empty(), "{label}: text lost on save: {missing:?}");
     assert_eq!(content_counts(&origin.parts), content_counts(&saved.parts), "{label}: content parts changed");
-    let again = deckcraft_pptx::export(&deckcraft_pptx::import(&once).unwrap_or_else(|e| panic!("{label}: reopen: {e}")))
-        .unwrap_or_else(|e| panic!("{label}: second save: {e}"));
+    let reopened = deckcraft_pptx::import(&once).unwrap_or_else(|e| panic!("{label}: reopen: {e}"));
+    assert_eq!(notes_resource_text(&reopened), resources, "{label}: original notes-master text lost");
+    assert_eq!(reopened.slides.iter().map(|slide| slide.notes.clone()).collect::<Vec<_>>(), notes, "{label}: canonical notes changed");
+    let again = deckcraft_pptx::export(&reopened).unwrap_or_else(|e| panic!("{label}: second save: {e}"));
+    let twice = deckcraft_pptx::import(&again).unwrap_or_else(|e| panic!("{label}: second reopen: {e}"));
+    assert_eq!(notes_resource_text(&twice), resources, "{label}: original notes-master text lost on second save");
+    assert_eq!(twice.slides.iter().map(|slide| slide.notes.clone()).collect::<Vec<_>>(), notes, "{label}: second canonical notes changed");
     let saved2 = Pkg::open(&again);
     assert_eq!(saved.parts.keys().collect::<Vec<_>>(), saved2.parts.keys().collect::<Vec<_>>(), "{label}: part names changed on the second save");
     assert_eq!(xml_text(&saved.parts), xml_text(&saved2.parts), "{label}: text changed on the second save");
@@ -336,8 +390,10 @@ fn notes_header_deck() -> Vec<u8> {
 
 fn placeholder_text(p: &Presentation, kind: PhType) -> String {
     p.notes_master
-        .as_ref()
-        .and_then(|m| m.shapes.iter().find(|s| s.ph_type() == Some(kind)))
+        .iter()
+        .chain(p.notes_masters.iter().map(|notes| &notes.master))
+        .flat_map(|m| &m.shapes)
+        .find(|s| s.ph_type() == Some(kind))
         .and_then(|s| s.text.as_ref())
         .map(|t| t.text())
         .unwrap_or_default()

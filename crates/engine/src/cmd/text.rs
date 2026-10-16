@@ -91,46 +91,83 @@ pub fn body_of<'a>(st: &'a DocState, t: &TextSel) -> Option<&'a TextBody> {
     }
     let sh = st.shape(t.shape)?;
     if let (Some((r, c)), ShapeKind::Table(tb)) = (t.cell, &sh.kind) {
-        return tb.cell(r, c).map(|x| &x.text);
+        let path = if st.selection.table_owner == Some(t.shape) { st.selection.table_path.clone() } else { Default::default() };
+        let block = if st.selection.table_owner == Some(t.shape) { st.selection.cell_block } else { None };
+        return tb.at_path(&path).ok()?.cell(r, c)?.text_block(block);
     }
     sh.text.as_ref()
 }
 
-fn body_mut<'a>(doc: &'a mut Presentation, sel: &Selection, t: &TextSel) -> Option<&'a mut TextBody> {
+/// Keep cell ownership through a body mutation so only the touched value is reconciled.
+fn with_body_mut<T>(doc: &mut Presentation, sel: &Selection, t: &TextSel, settle: bool, f: impl FnOnce(&mut TextBody) -> T) -> Result<T> {
     if t.notes {
-        return doc.slides.get_mut(sel.slide).map(|s| &mut Arc::make_mut(s).notes);
+        doc.ensure_notes_body(sel.slide)?;
+        let slide = doc.slides.get_mut(sel.slide).ok_or_else(|| bad("text", "no slide"))?;
+        return Ok(f(&mut Arc::make_mut(slide).notes));
     }
-    let shapes = crate::shapes_mut(doc, sel)?;
-    let sh = deckcraft_model::find_shape_mut(shapes, t.shape)?;
+    let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("text", "no shape owner"))?;
+    let sh = deckcraft_model::find_shape_mut(shapes, t.shape).ok_or_else(|| bad("text", "the text being edited is gone"))?;
     if let Some((r, c)) = t.cell {
-        if let ShapeKind::Table(tb) = &mut sh.kind {
-            return tb.cell_mut(r, c).map(|x| &mut x.text);
+        let ShapeKind::Table(table) = &mut sh.kind else { return Err(bad("text", "not a table")) };
+        let path = if sel.table_owner == Some(t.shape) { sel.table_path.clone() } else { Default::default() };
+        let block = if sel.table_owner == Some(t.shape) { sel.cell_block } else { None };
+        let cell = table.at_path_mut(&path)?.cell_mut(r, c).ok_or_else(|| bad("text", "no such cell"))?;
+        if block.is_some_and(|id| id != 0) {
+            return Ok(f(cell.text_block_mut(block).ok_or_else(|| bad("text", "text block is gone"))?));
         }
-        return None;
+        return if settle { Ok(cell.edit_display(f)?) } else { Ok(f(&mut cell.text)) };
     }
-    Some(sh.text.get_or_insert_with(TextBody::default))
+    Ok(f(sh.text.get_or_insert_with(TextBody::default)))
+}
+
+/// Settle the original composition owner, even if the current selection has moved away.
+pub(crate) fn reconcile_composed_cell(doc: &mut Presentation, selection: &Selection) -> Result<()> {
+    let Some(t) = selection.text.as_ref().filter(|t| !t.notes && t.cell.is_some()) else { return Ok(()) };
+    if selection.cell_block.is_some_and(|id| id != 0) {
+        return Ok(());
+    }
+    let state = super::current_shapes(doc, selection)
+        .and_then(|shapes| deckcraft_model::find_shape(shapes, t.shape))
+        .and_then(|shape| match (&shape.kind, t.cell) {
+            (ShapeKind::Table(table), Some((r, c))) => table.at_path(&selection.table_path).ok()?.cell(r, c),
+            _ => None,
+        })
+        .ok_or_else(|| bad("text", "the composed cell is gone"))?
+        .constant_state()?;
+    if !matches!(state, deckcraft_model::table::CellConstantState::Stale) {
+        return Ok(());
+    }
+    with_body_mut(doc, selection, t, true, |_| ())
 }
 
 /// Edit the active text body and selection; refits auto-sizing text boxes afterwards.
 pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut TextSel) -> T) -> Result<T> {
+    edit_text_mode(s, true, f)
+}
+
+fn edit_text_mode<T>(s: &mut Session, settle: bool, f: impl FnOnce(&mut TextBody, &mut TextSel) -> T) -> Result<T> {
     let t0 = s.doc()?.selection.text.clone().ok_or_else(|| bad("text", NO_TEXT_POINT))?;
     // Materialise an inherited placeholder box before editing (so autofit can change it).
-    let r = s.edit(|doc, sel| {
+    let edit = |doc: &mut Presentation, sel: &mut Selection| {
         let mut t = t0.clone();
-        let body = body_mut(doc, sel, &t).ok_or_else(|| bad("text", "the text being edited is gone"))?;
-        let r = f(body, &mut t);
-        // The saved shrink-on-overflow scale was for the old text: fit the new text afresh. A
-        // body whose file carried no `fontScale` keeps none (100 %) here; `fit_shrink_scale`
-        // below fills in the computed scale when the new text overflows (#724).
-        if let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut body.body.autofit {
-            if font_scale.is_some() {
-                *font_scale = Some(1.0);
+        let owner = t.clone();
+        let r = with_body_mut(doc, sel, &owner, settle, |body| {
+            let r = f(body, &mut t);
+            // The saved shrink-on-overflow scale was for the old text: fit the new text afresh. A
+            // body whose file carried no `fontScale` keeps none (100 %) here; `fit_shrink_scale`
+            // below fills in the computed scale when the new text overflows (#724).
+            if let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut body.body.autofit {
+                if font_scale.is_some() {
+                    *font_scale = Some(1.0);
+                }
+                *line_reduction = 0.0;
             }
-            *line_reduction = 0.0;
-        }
+            r
+        })?;
         sel.text = Some(t);
         Ok(r)
-    })?;
+    };
+    let r = if settle { s.edit(edit) } else { s.edit_preedit(edit) }?;
     if !t0.notes && t0.cell.is_none() {
         fit_text_box(s, t0.shape)?;
     }
@@ -230,7 +267,9 @@ pub(crate) fn ctx_for<'a>(doc: &'a Presentation, sel: &Selection) -> Option<Ctx<
     match sel.target {
         Target::Slides => doc.slides.get(sel.slide).and_then(|s| Ctx::for_slide(doc, s)),
         Target::Master { master } => doc.masters.get(master).map(|m| Ctx::for_master(doc, m)),
-        t @ (Target::Handout | Target::NotesMaster) => crate::page_master(doc, t).map(|m| Ctx::for_master(doc, m)),
+        t @ (Target::Handout | Target::NotesMaster | Target::ImportedNotesMaster { .. }) => {
+            crate::page_master(doc, t).map(|m| Ctx::for_master(doc, m))
+        }
         Target::Layout { master, layout } => doc.masters.get(master).and_then(|m| m.layouts.get(layout).map(|l| Ctx::for_layout(doc, m, l))),
     }
 }
@@ -333,6 +372,38 @@ fn pos_param(p: &Value, key: &str) -> Option<Pos> {
     Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize))
 }
 
+pub(crate) fn table_path_param(s: &Session, p: &Value, id: ShapeId, command: &str) -> Result<deckcraft_model::table::TablePath> {
+    let path = if let Some(value) = p.get("path") {
+        let values = value.as_array().ok_or_else(|| bad(command, "path must be an array"))?;
+        if values.len() > deckcraft_model::table::MAX_NESTED_TABLE_DEPTH {
+            return Err(bad(command, "nested path exceeds depth limit"));
+        }
+        serde_json::from_value(value.clone()).map_err(|_| bad(command, "invalid table path"))?
+    } else if s.doc()?.selection.table_owner == Some(id) {
+        s.doc()?.selection.table_path.clone()
+    } else {
+        Default::default()
+    };
+    path.validate()?;
+    Ok(path)
+}
+fn block_param(s: &Session, p: &Value, id: ShapeId, command: &str) -> Result<Option<u32>> {
+    if let Some(value) = p.get("block") {
+        return value.as_u64().and_then(|v| u32::try_from(v).ok()).map(Some).ok_or_else(|| bad(command, "invalid text block ID"));
+    }
+    let selection = &s.doc()?.selection;
+    let same_cell = p.get("cell").is_none_or(|value| {
+        let cell = value
+            .as_array()
+            .and_then(|values| Some((usize::try_from(values.first()?.as_u64()?).ok()?, usize::try_from(values.get(1)?.as_u64()?).ok()?)));
+        selection.text.as_ref().is_some_and(|text| text.shape == id && text.cell == cell)
+    });
+    let same_path = p.get("path").is_none_or(|value| {
+        serde_json::from_value::<deckcraft_model::table::TablePath>(value.clone()).is_ok_and(|path| path == selection.table_path)
+    });
+    Ok(if selection.table_owner == Some(id) && same_cell && same_path { selection.cell_block } else { None })
+}
+
 fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "notes", false) {
         let end = s.doc()?.current_slide().map(|x| ed::end(&x.notes)).unwrap_or((0, 0));
@@ -348,8 +419,12 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let sh = shape_of(s, id)?;
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
+    let path = table_path_param(s, p, id, "text.edit")?;
+    let block = block_param(s, p, id, "text.edit")?;
     let body = match (&sh.kind, cell) {
-        (ShapeKind::Table(t), Some((r, c))) => t.cell(r, c).map(|x| x.text.clone()).ok_or_else(|| bad("text.edit", "no such cell"))?,
+        (ShapeKind::Table(t), Some((r, c))) => {
+            t.at_path(&path)?.cell(r, c).and_then(|x| x.text_block(block)).cloned().ok_or_else(|| bad("text.edit", "no such cell text block"))?
+        }
         (ShapeKind::Table(_), None) => return Err(bad("text.edit", "say which `cell` of the table")),
         (ShapeKind::Shape | ShapeKind::Connector { .. }, _) => sh.text.clone().unwrap_or_default(),
         _ => return Err(bad("text.edit", "this object doesn't hold text")),
@@ -369,6 +444,9 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     s.select(|_, sel| {
         sel.shapes = vec![id];
         sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, notes: false, line_end: None });
+        sel.table_owner = cell.map(|_| id);
+        sel.table_path = path;
+        sel.cell_block = block;
     })?;
     Ok(json!({"id": id, "at": [at.0, at.1]}))
 }
@@ -657,20 +735,18 @@ fn autocorrect(s: &mut Session, typing: bool) -> Result<()> {
     };
     let Some(rep) = rep else { return Ok(()) };
     let delta = rep.chars().count() as isize - word.chars().count() as isize;
-    let st = s.doc_mut()?;
-    let mut d = (*st.doc).clone();
-    let sel = st.selection.clone();
-    if let Some(b) = body_mut(&mut d, &sel, &t) {
-        ed::delete(b, (t.caret.0, start), (t.caret.0, word_end));
-        ed::insert(b, (t.caret.0, start), &rep, None);
-    }
-    st.doc = Arc::new(d);
     let c = (t.caret.0, (end as isize + delta).max(0) as usize);
-    if let Some(tt) = st.selection.text.as_mut() {
-        tt.caret = c;
-        tt.anchor = c;
-    }
-    st.revision += 1;
+    s.edit(|doc, sel| {
+        with_body_mut(doc, sel, &t, true, |body| {
+            ed::delete(body, (t.caret.0, start), (t.caret.0, word_end));
+            ed::insert(body, (t.caret.0, start), &rep, None);
+        })?;
+        if let Some(text) = sel.text.as_mut() {
+            text.caret = c;
+            text.anchor = c;
+        }
+        Ok(())
+    })?;
     Ok(())
 }
 
@@ -808,7 +884,7 @@ fn compose(s: &mut Session, p: &Value) -> Result<Value> {
         None => {
             let st = s.doc()?;
             let (before, before_selection) = (st.doc.clone(), st.selection.clone());
-            let (start, props) = edit_text(s, |body, t| {
+            let (start, props) = edit_text_mode(s, false, |body, t| {
                 let (a, b) = t.ordered();
                 let at = ed::delete(body, a, b);
                 let props = if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) };
@@ -830,7 +906,7 @@ fn compose(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Some(c) => {
             let (start, len, props) = (c.start, c.len, c.props.clone());
-            edit_text(s, |body, t| {
+            edit_text_mode(s, false, |body, t| {
                 ed::delete(body, start, (start.0, start.1 + len));
                 let e = ed::insert(body, start, &text, props);
                 t.anchor = e;
@@ -883,23 +959,9 @@ pub fn cell_range_underlines(
     col: usize,
     ranges: &[(usize, usize, usize)],
 ) -> Vec<(deckcraft_geom::Point, deckcraft_geom::Point)> {
-    let Some(sh) = st.shape(id) else { return vec![] };
-    let deckcraft_model::ShapeKind::Table(tb) = &sh.kind else { return vec![] };
-    let (Some(cell), Some(ctx)) = (tb.cell(row, col), ctx_for(&st.doc, &st.selection)) else { return vec![] };
-    let heights = crate::cmd::table_drawn_heights(&st.doc, &st.selection, tb);
-    let Some(rect) = deckcraft_render::table_cell_rects(tb, &heights).into_iter().find(|(r, c, _)| *r == row && *c == col).map(|(_, _, r)| r) else {
-        return vec![];
-    };
-    let body = deckcraft_render::table_cell_body(&ctx, tb, row, col, cell);
-    let tmp = deckcraft_model::Shape { text: Some(body.clone()), ..Default::default() };
-    let l = deckcraft_text::layout(
-        &ctx,
-        &tmp,
-        &body,
-        &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
-    );
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let m = deckcraft_render::text_transform(x.affine(), rect, l.rotation);
+    let Some(placed) = cell_on_slide(st, id, row, col) else { return vec![] };
+    let l = placed.layout;
+    let m = placed.to_slide;
     let mut out = vec![];
     for &(para, a, b) in ranges {
         for (x0, x1, y) in l.composition_underlines(deckcraft_text::Pos { para, ch: a }, deckcraft_text::Pos { para, ch: b }) {
@@ -952,11 +1014,12 @@ fn underline_segments(
 fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) -> Option<CellText> {
     let sh = st.shape(id)?;
     let ShapeKind::Table(tb) = &sh.kind else { return None };
-    let cell = tb.cell(row, col)?;
     let ctx = ctx_for(&st.doc, &st.selection)?;
-    let heights = super::table_drawn_heights(&st.doc, &st.selection, tb);
-    let rect = deckcraft_render::table_cell_rects(tb, &heights).into_iter().find(|(r, c, _)| *r == row && *c == col)?.2;
-    let mut body = deckcraft_render::table_cell_body(&ctx, tb, row, col, cell);
+    let path = if st.selection.table_owner == Some(id) { st.selection.table_path.clone() } else { Default::default() };
+    let block = if st.selection.table_owner == Some(id) { st.selection.cell_block } else { None };
+    let plan = deckcraft_render::table_content::layout(&ctx, tb, &deckcraft_text::NoFields).ok()?;
+    let (source, rect, transform) = plan.text_at(&path, row, col, block)?;
+    let mut body = source.clone();
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
     }
@@ -968,7 +1031,7 @@ fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) -> Option<C
         &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
     );
     let x = xfrm_of(&st.doc, &st.selection, sh);
-    let to_slide = deckcraft_render::text_transform(x.affine(), rect, layout.rotation);
+    let to_slide = deckcraft_render::text_transform(x.affine() * transform, rect, layout.rotation);
     Some(CellText { layout, to_slide })
 }
 
@@ -1179,10 +1242,12 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         None => s.doc()?.selection.shapes.first().copied().ok_or_else(|| bad("text.set", "missing `id` (or select a shape)"))?,
     };
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
+    let path = table_path_param(s, p, id, "text.set")?;
+    let block = block_param(s, p, id, "text.set")?;
     let inherited = inherited_aligns(s, id);
     edit_shapes(s, &json!({"id": id}), "text.set", |sh| {
         let target = match (&mut sh.kind, cell) {
-            (ShapeKind::Table(t), Some((r, c))) => t.cell_mut(r, c).map(|x| &mut x.text),
+            (ShapeKind::Table(t), Some((r, c))) => t.at_path_mut(&path)?.cell_mut(r, c).and_then(|x| x.text_block_mut(block)),
             (ShapeKind::Table(_), None) => None,
             _ => Some(sh.text.get_or_insert_with(TextBody::default)),
         };
@@ -1204,6 +1269,12 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         body.paragraphs = nb.paragraphs;
+        if let (ShapeKind::Table(table), Some((r, c))) = (&mut sh.kind, cell)
+            && let Some(cell) = table.at_path_mut(&path)?.cell_mut(r, c)
+            && block.is_none_or(|id| id == 0)
+        {
+            cell.reconcile_constant()?;
+        }
         Ok(())
     })?;
     fit_text_box(s, id)?;
@@ -1220,7 +1291,24 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
         },
     };
     let sh = st.shape(id).ok_or_else(|| bad("text.get", "no such shape"))?;
-    let t = sh.text.clone().unwrap_or_default();
+    let t = if let ShapeKind::Table(table) = &sh.kind {
+        let cell = p
+            .get("cell")
+            .and_then(Value::as_array)
+            .and_then(|a| Some((usize::try_from(a.first()?.as_u64()?).ok()?, usize::try_from(a.get(1)?.as_u64()?).ok()?)))
+            .or_else(|| st.selection.text.as_ref().filter(|t| t.shape == id).and_then(|t| t.cell))
+            .ok_or_else(|| bad("text.get", "tables need a cell"))?;
+        let path = table_path_param(s, p, id, "text.get")?;
+        let block = block_param(s, p, id, "text.get")?;
+        table
+            .at_path(&path)?
+            .cell(cell.0, cell.1)
+            .and_then(|c| c.text_block(block))
+            .cloned()
+            .ok_or_else(|| bad("text.get", "no such cell text block"))?
+    } else {
+        sh.text.clone().unwrap_or_default()
+    };
     Ok(json!({"text": t.text(), "paragraphs": t.paragraphs.iter().map(|p| json!({"level": p.level, "text": p.text()})).collect::<Vec<_>>()}))
 }
 
@@ -1253,11 +1341,10 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         match &mut sh.kind {
             ShapeKind::Table(t) => {
-                for row in &mut t.rows {
-                    for c in &mut row.cells {
-                        ed::format_all(&mut c.text, f);
-                    }
-                }
+                t.visit_texts_mut(&mut |body| {
+                    ed::format_all(body, f);
+                    Ok(())
+                })?;
             }
             _ => {
                 let body = sh.text.get_or_insert_with(TextBody::default);

@@ -191,6 +191,55 @@ pub enum Spacing {
     Pts(f64),
 }
 
+/// A line-height policy independent of exact/relative spacing and paragraph gaps.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+pub enum LineHeight {
+    Normal,
+    Minimum { points: f64 },
+}
+
+impl<'de> Deserialize<'de> for LineHeight {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        // A struct-shaped Normal variant makes deny_unknown_fields effective;
+        // serde's internally tagged unit variant otherwise ignores extra fields.
+        #[derive(Deserialize)]
+        #[serde(rename_all = "camelCase", tag = "kind", deny_unknown_fields)]
+        enum Policy {
+            Normal {},
+            Minimum {
+                #[serde(deserialize_with = "line_height_points")]
+                points: f64,
+            },
+        }
+        Ok(match Policy::deserialize(deserializer)? {
+            Policy::Normal {} => Self::Normal,
+            Policy::Minimum { points } => Self::Minimum { points },
+        })
+    }
+}
+
+fn line_height_points<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f64, D::Error> {
+    // This policy never existed in legacy files. Numeric-null repair must not turn
+    // a damaged minimum into a valid zero-height constraint.
+    let points = Option::<f64>::deserialize(deserializer)
+        .map_err(|_| serde::de::Error::custom("invalid minimum line-height points"))?
+        .ok_or_else(|| serde::de::Error::custom("minimum line-height points cannot be null"))?;
+    if !(LineHeight::Minimum { points }).valid() {
+        return Err(serde::de::Error::custom("minimum line-height points are outside the supported range"));
+    }
+    Ok(points)
+}
+
+impl LineHeight {
+    pub fn valid(self) -> bool {
+        match self {
+            Self::Normal => true,
+            Self::Minimum { points } => points.is_finite() && (0.0..=1_000_000.0).contains(&points),
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "kind")]
 pub enum Bullet {
@@ -226,6 +275,11 @@ pub struct TabStop {
 #[serde(default, rename_all = "camelCase")]
 pub struct ParaProps {
     pub align: Option<Align>,
+    /// Paragraph-area background, separate from character highlighting. `None` inherits;
+    /// `Some(Fill::None)` explicitly clears an inherited background. Currently text layout
+    /// paints solid fills; interchange rejects other fills rather than approximating them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub background: Option<Fill>,
     /// Left margin (points).
     pub margin_left: Option<f64>,
     pub margin_right: Option<f64>,
@@ -235,6 +289,10 @@ pub struct ParaProps {
     pub space_before: Option<Spacing>,
     pub space_after: Option<Spacing>,
     pub bullet: Option<Bullet>,
+    /// Explicit next number for this paragraph's list level. This is a paragraph-local
+    /// sequence boundary, not an inherited text style. `None` continues the current list.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub number_restart: Option<u32>,
     pub bullet_font: Option<String>,
     /// `None` = follow text colour.
     pub bullet_color: Option<ColorRef>,
@@ -249,15 +307,24 @@ pub struct ParaProps {
     pub latin_line_break: Option<bool>,
     /// `hangingPunct`: closing East Asian punctuation may hang past the end of a line.
     pub hanging_punct: Option<bool>,
+    /// Explicit normal reset or minimum line pitch. Mutually exclusive with `line_spacing`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_height: Option<LineHeight>,
 }
 
 impl ParaProps {
     pub fn inherit(&mut self, p: &ParaProps) {
         self.align = self.align.or(p.align);
+        if self.background.is_none() {
+            self.background.clone_from(&p.background);
+        }
         self.margin_left = self.margin_left.or(p.margin_left);
         self.margin_right = self.margin_right.or(p.margin_right);
         self.indent = self.indent.or(p.indent);
-        self.line_spacing = self.line_spacing.or(p.line_spacing);
+        if self.line_spacing.is_none() && self.line_height.is_none() {
+            self.line_spacing = p.line_spacing;
+            self.line_height = p.line_height;
+        }
         self.space_before = self.space_before.or(p.space_before);
         self.space_after = self.space_after.or(p.space_after);
         if self.bullet.is_none() {
@@ -354,6 +421,10 @@ pub struct Hyperlink {
     /// advanced past, go back to the slide with the zoom. Saved to .pptx as a plain slide link.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub zoom_return: Option<crate::SlideId>,
+    /// Exact optional display label of this hyperlink's sound (`a:snd@name`).
+    /// Labels belong to uses, so shared audio can have a different name at each link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sound_name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -368,6 +439,25 @@ pub struct RunProps {
     pub size: Option<f64>,
     pub bold: Option<bool>,
     pub italic: Option<bool>,
+    /// East Asian and complex-script overrides. Missing fields inherit independently,
+    /// then fall back to the ordinary run style when the selected script is shaped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_ea: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub size_cs: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold_ea: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bold_cs: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic_ea: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub italic_cs: Option<bool>,
+    /// An explicitly empty language disables inherited language selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lang_ea: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lang_cs: Option<String>,
     /// `none`, `sng`, `dbl`, `heavy`, `dotted`, `dash`, `wavy`…
     pub underline: Option<String>,
     pub underline_color: Option<ColorRef>,
@@ -398,6 +488,17 @@ pub struct RunProps {
 }
 
 impl RunProps {
+    pub fn has_script_overrides(&self) -> bool {
+        self.size_ea.is_some()
+            || self.size_cs.is_some()
+            || self.bold_ea.is_some()
+            || self.bold_cs.is_some()
+            || self.italic_ea.is_some()
+            || self.italic_cs.is_some()
+            || self.lang_ea.is_some()
+            || self.lang_cs.is_some()
+    }
+
     pub fn inherit(&mut self, p: &RunProps) {
         macro_rules! take {
             ($($f:ident),*) => { $( if self.$f.is_none() { self.$f.clone_from(&p.$f); } )* };
@@ -410,6 +511,14 @@ impl RunProps {
             size,
             bold,
             italic,
+            size_ea,
+            size_cs,
+            bold_ea,
+            bold_cs,
+            italic_ea,
+            italic_cs,
+            lang_ea,
+            lang_cs,
             underline,
             underline_color,
             strike,

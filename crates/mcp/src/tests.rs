@@ -181,7 +181,7 @@ fn export_tool_lists_pdf_and_its_options() {
     assert!(export["description"].as_str().unwrap().contains("pdf"), "{export}");
     let props = &export["inputSchema"]["properties"];
     let formats = props["format"]["enum"].as_array().unwrap();
-    for f in ["png", "jpeg", "pptx", "deckcraft", "outline", "pdf"] {
+    for f in ["png", "jpeg", "pptx", "odp", "deckcraft", "outline", "pdf"] {
         assert!(formats.iter().any(|x| x == f), "format {f}: {export}");
     }
     assert_eq!(props["layout"]["enum"], json!(["slides", "notes", "handouts"]));

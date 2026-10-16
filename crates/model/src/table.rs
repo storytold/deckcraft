@@ -5,6 +5,44 @@ use serde::{Deserialize, Serialize};
 use crate::style::{ColorRef, Fill, Line};
 use crate::text::{Anchor, TextBody};
 
+#[path = "table_decimal.rs"]
+mod decimal;
+#[path = "table_formula.rs"]
+mod formula;
+pub use formula::{
+    CellFormula, CellFormulaState, FORMULA_PROFILE, FORMULA_PROFILE_V1_FORMATTED, FORMULA_PROFILE_V2, FormulaError, FormulaOutcome,
+    MAX_FORMULA_DEPTH, MAX_FORMULA_NODES, MAX_FORMULA_SOURCE_BYTES, formula_date_from_serial, formula_datetime_from_serial,
+};
+#[path = "table_calc.rs"]
+mod calc;
+pub use calc::{FormulaBudget, TableCalculationPlan, validate_formula_topology};
+
+#[path = "table_data.rs"]
+mod data;
+pub use data::{CellConstant, CellConstantState, CellNumberKind, CellValue, MAX_TEMPORAL_BYTES};
+#[path = "table_walk.rs"]
+mod owner_walk;
+#[path = "table_temporal.rs"]
+mod temporal;
+pub use owner_walk::{reconcile_constants, reconcile_constants_with_budget, reject_constants, validate_constants, validate_constants_with_budget};
+#[path = "table_structure.rs"]
+mod structure;
+#[path = "table_topology.rs"]
+mod topology;
+pub use topology::{validate_constant_grid, validate_constant_growth, validate_merged_grid};
+
+#[path = "table_number_format.rs"]
+mod number_format;
+pub use number_format::{
+    DateFormatPart, FormattedCellValue, NegativeDisplay, NumberComparison, NumberFormat, NumberFormatSection, NumberLocale, NumberStyle,
+};
+#[path = "table_content.rs"]
+mod content;
+pub use content::{
+    CellBlock, CellTextBlock, MAX_CELL_BLOCKS, MAX_NESTED_TABLE_DEPTH, MAX_TABLE_CONTENT_BLOCKS, MAX_TABLE_CONTENT_CELLS, NestedTable, TablePath,
+    TablePathStep,
+};
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Cell {
@@ -23,6 +61,19 @@ pub struct Cell {
     pub h_merge: bool,
     pub v_merge: bool,
     pub vertical: Option<crate::text::TextDir>,
+    /// Authoritative stored constant, valid only while its cached display still matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<std::sync::Arc<CellConstant>>,
+    /// Executable exact-decimal formula, mutually exclusive with `data`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub formula: Option<std::sync::Arc<CellFormula>>,
+    // New fields are appended to preserve the historical positional serde wire.
+    /// Additional blocks after the canonical first text block, in document order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty", deserialize_with = "crate::serde_graph::cell_blocks")]
+    pub blocks: Vec<CellBlock>,
+    /// Value-preserving display program; no scalar is inferred from its output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_format: Option<std::sync::Arc<NumberFormat>>,
 }
 
 impl Cell {
@@ -108,6 +159,9 @@ impl Table {
     }
     /// Insert an empty row before `at`. A merge the new row falls inside grows to cover it.
     pub fn insert_row(&mut self, at: usize) {
+        if validate_formula_topology(self).is_err() || validate_constant_growth(self, 1, 0).is_err() {
+            return;
+        }
         let at = at.min(self.rows.len());
         let merges = self.merges();
         let h = self.rows.get(at.saturating_sub(1)).map(|r| r.height).unwrap_or(30.0);
@@ -116,6 +170,9 @@ impl Table {
     }
     /// Insert an empty column before `at`. A merge the new column falls inside grows to cover it.
     pub fn insert_col(&mut self, at: usize) {
+        if validate_formula_topology(self).is_err() || validate_constant_growth(self, 0, 1).is_err() {
+            return;
+        }
         let at = at.min(self.cols.len());
         let merges = self.merges();
         let w = self.cols.get(at.saturating_sub(1)).copied().unwrap_or(80.0);
@@ -129,6 +186,9 @@ impl Table {
     /// Delete row `at`. Merges through it shrink; a merge anchored on it moves its anchor (and
     /// text) to the next row it covers.
     pub fn delete_row(&mut self, at: usize) -> bool {
+        if validate_formula_topology(self).is_err() || validate_constant_grid(self).is_err() {
+            return false;
+        }
         if self.rows.len() <= 1 || at >= self.rows.len() {
             return false;
         }
@@ -145,6 +205,9 @@ impl Table {
     /// Delete column `at`. Merges through it shrink; a merge anchored on it moves its anchor (and
     /// text) to the next column it covers.
     pub fn delete_col(&mut self, at: usize) -> bool {
+        if validate_formula_topology(self).is_err() || validate_constant_grid(self).is_err() {
+            return false;
+        }
         if self.cols.len() <= 1 || at >= self.cols.len() {
             return false;
         }
@@ -222,6 +285,9 @@ impl Table {
     }
     /// Merge the rectangle (r0,c0)–(r1,c1) inclusive into its top-left cell.
     pub fn merge(&mut self, r0: usize, c0: usize, r1: usize, c1: usize) -> bool {
+        if validate_formula_topology(self).is_err() || validate_constant_grid(self).is_err() {
+            return false;
+        }
         let (r0, r1) = (r0.min(r1), r0.max(r1));
         let (c0, c1) = (c0.min(c1), c0.max(c1));
         if r1 >= self.rows.len() || c1 >= self.cols.len() || (r0 == r1 && c0 == c1) {
@@ -254,6 +320,9 @@ impl Table {
         for r in r0..=r1 {
             for c in c0..=c1 {
                 if let Some(cell) = self.cell_mut(r, c) {
+                    // A merged display is an explicit literal conversion for the entire
+                    // rectangle, including cells that become hidden by the merge.
+                    cell.data = None;
                     if !cell.text.is_empty() {
                         text.append(&mut cell.text.paragraphs);
                     }
@@ -277,6 +346,9 @@ impl Table {
     }
     /// Undo a merge at (r, c).
     pub fn split(&mut self, r: usize, c: usize) -> bool {
+        if validate_formula_topology(self).is_err() || validate_constant_grid(self).is_err() {
+            return false;
+        }
         let Some(cell) = self.cell(r, c) else { return false };
         let (gs, rs) = (cell.grid_span.max(1) as usize, cell.row_span.max(1) as usize);
         if gs == 1 && rs == 1 {
@@ -286,6 +358,9 @@ impl Table {
         for rr in r..r.saturating_add(rs).min(self.rows.len()) {
             for cc in c..c.saturating_add(gs).min(self.cols.len()) {
                 if let Some(x) = self.cell_mut(rr, cc) {
+                    if (rr, cc) != (r, c) {
+                        x.data = None;
+                    }
                     x.h_merge = false;
                     x.v_merge = false;
                     x.grid_span = 1;
@@ -297,6 +372,9 @@ impl Table {
     }
     /// Make every row have exactly `cols.len()` cells (repair after loading).
     pub fn normalize(&mut self) {
+        if validate_formula_topology(self).is_err() || validate_constant_grid(self).is_err() {
+            return;
+        }
         let n = self.cols.len();
         for r in &mut self.rows {
             r.cells.resize_with(n, || Cell::new(""));

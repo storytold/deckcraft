@@ -85,3 +85,106 @@ fn tabs_from_paragraph_applies_a_stop_and_returns() {
     assert!(h.state().dialog.is_none());
     assert_eq!(align_of(&h).as_deref(), Some("ctr"), "cancelling Paragraph leaves the alignment shape.insert wrote");
 }
+
+#[test]
+fn unchanged_minimum_survives_alignment_and_tabs_without_rounding() {
+    use deckcraft_model::text::LineHeight;
+    let mut h = harness();
+    h.state_mut().session.execute("format.lineSpacing", &json!({"mode":"minimum", "pt":29.123456789})).unwrap();
+    h.get_by_label("Paragraph…").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().unwrap().fields.get("lineKind").map(String::as_str), Some("minimum"));
+    if let Ok(path) = std::env::var("DECKCRAFT_MINIMUM_DIALOG_QA_PNG") {
+        h.render().unwrap().save(path).unwrap();
+    }
+    h.state_mut().dialog.as_mut().unwrap().fields.insert("align".into(), "right".into());
+    h.get_by_label("Tabs…").click_accesskit();
+    h.run_steps(2);
+    h.get_by_label("OK").click_accesskit();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("paragraph"));
+    h.get_by_label("OK").click_accesskit();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "{:?}", h.state().status);
+    let st = h.state().session.active().unwrap();
+    let props = &st.selected_shapes()[0].text.as_ref().unwrap().paragraphs[0].props;
+    assert_eq!(props.line_height, Some(LineHeight::Minimum { points: 29.123456789 }));
+    assert_eq!(props.line_spacing, None);
+    assert_eq!(align_of(&h).as_deref(), Some("r"));
+}
+
+#[test]
+fn paragraph_dialog_applies_minimum_and_normal_as_real_engine_settings() {
+    use deckcraft_model::text::LineHeight;
+    let mut h = harness();
+    for (kind, value, expected) in [("minimum", "37.25", LineHeight::Minimum { points: 37.25 }), ("normal", "1", LineHeight::Normal)] {
+        h.get_by_label("Paragraph…").click();
+        h.run_steps(2);
+        let dialog = h.state_mut().dialog.as_mut().unwrap();
+        dialog.fields.insert("lineKind".into(), kind.into());
+        dialog.fields.insert("lineValue".into(), value.into());
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none(), "{:?}", h.state().status);
+        let st = h.state().session.active().unwrap();
+        let props = &st.selected_shapes()[0].text.as_ref().unwrap().paragraphs[0].props;
+        assert_eq!(props.line_height, Some(expected));
+        assert_eq!(props.line_spacing, None);
+    }
+}
+
+#[test]
+fn pending_line_changes_survive_repeated_tabs_visits_until_paragraph_ok() {
+    use deckcraft_model::text::{LineHeight, Spacing};
+    for (kind, value, policy, legacy) in [
+        ("minimum", "37.25123456789", Some(LineHeight::Minimum { points: 37.25123456789 }), None),
+        ("normal", "1", Some(LineHeight::Normal), None),
+        ("exactly", "19.5", None, Some(Spacing::Pts(19.5))),
+    ] {
+        let mut h = harness();
+        h.state_mut().session.execute("format.lineSpacing", &json!({"mode":"minimum", "pt":29.123456789})).unwrap();
+        h.get_by_label("Paragraph…").click();
+        h.run_steps(2);
+        {
+            let dialog = h.state_mut().dialog.as_mut().unwrap();
+            dialog.fields.insert("lineKind".into(), kind.into());
+            dialog.fields.insert("lineValue".into(), value.into());
+        }
+        for _ in 0..2 {
+            h.get_by_label("Tabs…").click_accesskit();
+            h.run_steps(2);
+            h.get_by_label("OK").click_accesskit();
+            h.run_steps(2);
+            assert_eq!(h.state().dialog.as_ref().unwrap().fields.get("lineKind").map(String::as_str), Some(kind));
+        }
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none(), "{:?}", h.state().status);
+        let st = h.state().session.active().unwrap();
+        let props = &st.selected_shapes()[0].text.as_ref().unwrap().paragraphs[0].props;
+        assert_eq!(props.line_height, policy);
+        assert_eq!(props.line_spacing, legacy);
+    }
+}
+
+#[test]
+fn reverting_pending_line_value_after_tabs_keeps_the_original_exact_minimum() {
+    use deckcraft_model::text::LineHeight;
+    let mut h = harness();
+    h.state_mut().session.execute("format.lineSpacing", &json!({"mode":"minimum", "pt":29.123456789})).unwrap();
+    h.get_by_label("Paragraph…").click();
+    h.run_steps(2);
+    for value in ["37.25", "29.12"] {
+        h.state_mut().dialog.as_mut().unwrap().fields.insert("lineValue".into(), value.into());
+        h.get_by_label("Tabs…").click_accesskit();
+        h.run_steps(2);
+        h.get_by_label("OK").click_accesskit();
+        h.run_steps(2);
+        assert_eq!(h.state().dialog.as_ref().unwrap().fields.get("lineValue").map(String::as_str), Some(value));
+    }
+    h.get_by_label("OK").click_accesskit();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    let st = h.state().session.active().unwrap();
+    assert_eq!(st.selected_shapes()[0].text.as_ref().unwrap().paragraphs[0].props.line_height, Some(LineHeight::Minimum { points: 29.123456789 }));
+}

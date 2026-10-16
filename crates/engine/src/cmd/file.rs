@@ -29,11 +29,13 @@ pub fn specs() -> Vec<CommandSpec> {
             adopt
         ),
         cmd!(noundo "file.openBytes", "Open Data", [], None, "{name, data: base64}", always, open_bytes),
-        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx}", has_doc, save),
+        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx|odp}", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
-        cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx|odp} → {data: base64}", has_doc, save_bytes_cmd),
+        cmd!(query "file.sourceBytes", "Original ODP Data", [], None, "{} → {name, data: base64}; original imported ODP, without edits", has_doc, source_bytes),
+        cmd!(noundo "file.exportSource", "Recover Original ODP…", [], None, "{path} → {path, bytes}; original imported ODP, without edits", has_doc, export_source),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|odp|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -123,7 +125,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(out)
 }
 
-/// Recognise and read presentation bytes (native, PPTX).
+/// Recognise and read presentation bytes (native, PPTX, ODP).
 pub fn open_presentation(name: &str, bytes: &[u8]) -> Result<Presentation> {
     open_checked(name, bytes).map(|(p, _)| p)
 }
@@ -139,6 +141,11 @@ pub fn open_checked(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<Strin
 fn open_other(name: &str, bytes: &[u8]) -> Result<Presentation> {
     if deckcraft_pptx::sniff(bytes) {
         let mut p = deckcraft_pptx::import(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+        deckcraft_format::repair(&mut p);
+        return Ok(p);
+    }
+    if deckcraft_odp::sniff(bytes) {
+        let mut p = deckcraft_odp::import(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
         deckcraft_format::repair(&mut p);
         return Ok(p);
     }
@@ -164,6 +171,17 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<Presentation> {
 
 pub fn add_opened(s: &mut Session, name: &str, path: Option<String>, p: Presentation) -> usize {
     let title = std::path::Path::new(name).file_stem().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| name.to_string());
+    if name.to_ascii_lowercase().ends_with(".odp") || p.tags.iter().any(|(k, _)| k == "odp:imported") {
+        let mut warnings: Vec<&str> = p.tags.iter().filter(|(k, _)| k == "odp:warning").map(|(_, v)| v.as_str()).collect();
+        warnings.sort_unstable();
+        warnings.dedup();
+        let mut text = "Opened an ODP conversion as a copy. Review its appearance and presentation settings before saving.".to_string();
+        if !warnings.is_empty() {
+            text.push_str("\n\nImport notes:\n");
+            text.push_str(&warnings.join("\n"));
+        }
+        s.ui_requests.push(crate::UiRequest::Message { text });
+    }
     crate::fonts::install_embedded_fonts(&p);
     let missing_fonts = crate::fonts::missing_fonts(&p);
     let mut st = DocState::new(p, path, title);
@@ -198,6 +216,7 @@ pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
 /// original with the empty media.
 fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
     let LoadedFile { path, doc, native, damaged } = f;
+    deckcraft_model::presentation_template::validate(&doc).map_err(|error| bad("file.adopt", error.to_string()))?;
     let keep_path = native && damaged.is_empty();
     let i = add_opened(s, &path, keep_path.then(|| path.clone()), doc);
     report_damage(s, &damaged)?;
@@ -260,12 +279,83 @@ fn report_damage(s: &mut Session, damaged: &[String]) -> Result<()> {
 /// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
-        f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
+        f @ ("pptx" | "potx" | "ppsx") => {
+            if doc.tags.iter().any(|(key, _)| key == "odp:imported")
+                && let Some((_, warning)) = doc.tags.iter().find(|(key, _)| key == "odp:warning")
+            {
+                return Err(EngineError::Other(format!(
+                    "PPTX export would lose retained ODP content: {warning}. Save as DeckCraft to keep the source data."
+                )));
+            }
+            deckcraft_odp::validate_source_diagnostics(doc).map_err(|error| EngineError::Other(error.to_string()))?;
+            if has_number_restarts(doc) {
+                return Err(EngineError::Other(
+                    "PPTX export cannot yet preserve explicit numbered-list restarts. Save as ODP or DeckCraft to keep the numbering.".into(),
+                ));
+            }
+            deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string()))
+        }
+        "odp" => deckcraft_odp::export(doc).map_err(|e| EngineError::Other(e.to_string())),
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
         _ => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
     }
+}
+
+/// The exact imported package, kept separately from the editable conversion.
+pub fn retained_odp_source(doc: &Presentation) -> Result<&[u8]> {
+    let mut sources = doc.media.iter().filter(|m| m.content_type == "application/vnd.deckcraft.odp-source" && m.name == "source.odp");
+    let source = sources.next().ok_or_else(|| EngineError::Other("This presentation has no retained original ODP.".into()))?;
+    if sources.next().is_some() {
+        return Err(EngineError::Other("This presentation has ambiguous retained ODP sources.".into()));
+    }
+    if source.data.is_empty() || source.data.len() > 128 * 1024 * 1024 || source.link.is_some() {
+        return Err(EngineError::Other("The retained original ODP has an invalid size.".into()));
+    }
+    Ok(&source.data)
+}
+
+fn source_bytes(s: &mut Session, _p: &Value) -> Result<Value> {
+    let source = retained_odp_source(&s.doc()?.doc)?;
+    // Leave room for base64 and JSON below the control/MCP 16 MiB reply limit.
+    if source.len() > 11 * 1024 * 1024 {
+        return Err(EngineError::Other(
+            "The original ODP is too large for a data response. Use file.exportSource or File → Info → Recover ODP.".into(),
+        ));
+    }
+    Ok(json!({"name": "original.odp", "data": base64_encode(source)}))
+}
+
+fn export_source(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = str_param(p, "path").ok_or_else(|| bad("file.exportSource", "`path` is required"))?;
+    let source = retained_odp_source(&s.doc()?.doc)?;
+    write_file(path, source)?;
+    Ok(json!({"path": path, "bytes": source.len()}))
+}
+
+fn has_number_restarts(doc: &Presentation) -> bool {
+    fn text(body: &deckcraft_model::TextBody) -> bool {
+        body.paragraphs.iter().any(|p| p.props.number_restart.is_some())
+    }
+    fn shapes(shapes: &[deckcraft_model::Shape]) -> bool {
+        let mut found = false;
+        deckcraft_model::walk(shapes, &mut |shape, _| {
+            found |= shape.text.as_ref().is_some_and(text);
+            if let deckcraft_model::ShapeKind::Table(table) = &shape.kind {
+                found |= table.rows.iter().flat_map(|row| &row.cells).any(|cell| text(&cell.text));
+            }
+        });
+        found
+    }
+    doc.slides.iter().any(|slide| text(&slide.notes) || shapes(&slide.shapes) || slide.notes_page.as_ref().is_some_and(|page| shapes(&page.shapes)))
+        || doc
+            .masters
+            .iter()
+            .chain(doc.notes_master.iter())
+            .chain(doc.handout_master.iter())
+            .chain(doc.notes_masters.iter().map(|notes| &notes.master))
+            .any(|master| shapes(&master.shapes) || master.layouts.iter().any(|layout| shapes(&layout.shapes)))
 }
 
 /// Paper sizes for notes and handouts, for the UI's Print page.
@@ -337,10 +427,10 @@ pub fn pdf_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
 }
 
 /// The output extensions [`format_for_path`] maps to a writer of that format.
-pub const WRITABLE_EXTENSIONS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "pdf", "png", "jpg", "jpeg", "gif", "txt", "md"];
+pub const WRITABLE_EXTENSIONS: &[&str] = &["deckcraft", "pptx", "odp", "potx", "ppsx", "pdf", "png", "jpg", "jpeg", "gif", "txt", "md"];
 
 /// The format a file named `path` is written in, or `None` when its extension names no format
-/// DeckCraft writes (`.odp`, `.svg`, no extension …): [`format_for_path`] would save
+/// DeckCraft writes (`.svg`, `.bmp`, no extension …): [`format_for_path`] would save
 /// those as native `.deckcraft` bytes under the wrong name.
 pub fn writable_format_for_path(path: &str) -> Option<&'static str> {
     let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
@@ -356,6 +446,8 @@ pub fn format_for_path(path: &str) -> &'static str {
     let l = path.to_ascii_lowercase();
     if l.ends_with(".pptx") {
         "pptx"
+    } else if l.ends_with(".odp") {
+        "odp"
     } else if l.ends_with(".potx") {
         "potx"
     } else if l.ends_with(".ppsx") {
@@ -536,7 +628,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
                 "secondsPerSlide": f64::from(out.delay_cs) / 100.0,
             }))
         }
-        "pptx" | "potx" | "ppsx" | "deckcraft" | "outline" | "txt" => {
+        "pptx" | "potx" | "ppsx" | "odp" | "deckcraft" | "outline" | "txt" => {
             let bytes = save_bytes(&st.doc, &format)?;
             write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
@@ -562,6 +654,7 @@ fn info(s: &mut Session, _p: &Value) -> Result<Value> {
         "hiddenSlides": doc.slides.iter().filter(|sl| sl.hidden).count(),
         "sections": doc.sections.len(),
         "bytes": bytes,
+        "originalOdpBytes": retained_odp_source(doc).ok().map(<[u8]>::len),
         "properties": serde_json::to_value(&doc.props).unwrap_or_default(),
     }))
 }

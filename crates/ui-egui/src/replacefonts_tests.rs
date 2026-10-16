@@ -8,6 +8,10 @@ use serde_json::json;
 use crate::{Services, SlideApp};
 
 fn harness() -> Harness<'static, SlideApp> {
+    harness_at_width(1400.0)
+}
+
+fn harness_at_width(width: f32) -> Harness<'static, SlideApp> {
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     s.execute("insert.textBox", &json!({"rect": [40, 40, 400, 80], "text": "Hello fonts"})).unwrap();
@@ -15,7 +19,7 @@ fn harness() -> Harness<'static, SlideApp> {
     s.execute("format.font", &json!({"family": "Comic Neue"})).unwrap();
     s.execute("format.size", &json!({"size": 40})).unwrap();
     let app = SlideApp::new(s, Services::default());
-    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+    let mut h = Harness::builder().with_size(egui::vec2(width, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
         |ui, app: &mut SlideApp| {
             app.logic(ui.ctx());
             app.ui(ui);
@@ -41,6 +45,8 @@ fn run_font(h: &Harness<'_, SlideApp>) -> Option<String> {
 #[test]
 fn ribbon_button_opens_the_dialog_and_replaces() {
     let mut h = harness();
+    h.get_by_label("Replace Fonts…").scroll_to_me();
+    h.run();
     h.get_by_label("Replace Fonts…").click();
     h.run_steps(3);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("replaceFonts"));
@@ -61,11 +67,28 @@ fn ribbon_button_opens_the_dialog_and_replaces() {
 }
 
 #[test]
+fn narrow_ribbon_scrolls_offscreen_editing_controls_into_pointer_reach() {
+    let mut h = harness_at_width(900.0);
+    let before = h.get_by_label("Replace Fonts…").rect();
+    assert!(before.center().x > 900.0, "fixture must exercise ribbon overflow: {before:?}");
+    h.get_by_label("Replace Fonts…").scroll_to_me();
+    h.run();
+    let after = h.get_by_label("Replace Fonts…").rect();
+    assert!(after.min.x >= 8.0 && after.max.x <= 892.0, "button must move inside the ribbon card: {after:?}");
+    h.get_by_label("Replace Fonts…").click();
+    h.run_steps(3);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("replaceFonts"));
+}
+
+#[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {
     let mut h = harness();
     h.render().unwrap().save("/tmp/replacefonts0.png").unwrap();
-    h.state_mut().dialog = Some(crate::dialogs::Dialog::new("replaceFonts"));
+    h.get_by_label("Replace Fonts…").scroll_to_me();
+    h.run();
+    h.render().unwrap().save("/tmp/replacefonts-scroll.png").unwrap();
+    h.get_by_label("Replace Fonts…").click();
     h.run_steps(4);
     h.render().unwrap().save("/tmp/replacefonts.png").unwrap();
 }

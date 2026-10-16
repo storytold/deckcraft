@@ -988,11 +988,9 @@ impl Session {
                     self.execute("guide.move", &json!({"index": index, "pos": pos}))?
                 };
             }
+            // Plain click on text: caret at the click (in a table, in the clicked cell).
             Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. }) => {
-                // Plain click on text: caret at the click (in a table, in the clicked cell).
-                if self.edit_text_at(id, at)? {
-                    out = json!({"editing": id});
-                }
+                out = if self.edit_text_at(id, at)? { json!({"editing": id}) } else { Value::Null };
             }
             Some(Drag::Marquee { start, add }) => {
                 let r = Rect::from_points(start, p);
@@ -1245,16 +1243,31 @@ impl Session {
             return Ok(None);
         }
         let old_cell = t.cell;
+        let old_path = st.selection.table_path.clone();
+        let old_block = st.selection.cell_block;
+        let mut path = old_path.clone();
+        let mut block = old_block;
+        let mut hit_position = None;
         if old_cell.is_some()
             && let Some(f) = cmd::table::table_frame(st, sh)
+            && let ShapeKind::Table(table) = &sh.kind
+            && let Some(ctx) = cmd::text::ctx_for(&st.doc, &st.selection)
         {
-            t.cell = f.cell_at(f.local(p)).or(old_cell);
+            let plan = deckcraft_render::table_content::layout(&ctx, table, &deckcraft_text::NoFields)?;
+            if let Some(hit) = plan.hit_text(&ctx, &deckcraft_text::NoFields, f.local(p)) {
+                t.cell = Some((hit.row, hit.col));
+                path = hit.path;
+                block = hit.block;
+                hit_position = Some(hit.position);
+            }
         }
-        let pos = cmd::text::text_pos_at(st, &t, p);
-        // A selection can't span cells: a click in another cell starts afresh.
-        let extend = extend && t.cell == old_cell;
+        let pos = hit_position.unwrap_or_else(|| cmd::text::text_pos_at(st, &t, p));
+        let extend = extend && t.cell == old_cell && path == old_path && block == old_block;
         let cell = t.cell;
         self.select(|_, sel| {
+            sel.table_owner = cell.map(|_| t.shape);
+            sel.table_path = path;
+            sel.cell_block = block;
             if let Some(tt) = sel.text.as_mut() {
                 tt.cell = cell;
                 tt.caret = pos;
@@ -1273,9 +1286,11 @@ impl Session {
         let Some(sh) = st.shape(id) else { return Ok(false) };
         let params = match cmd::table::table_frame(st, sh) {
             Some(f) => {
-                let Some((r, c)) = f.cell_at(f.local(p)) else { return Ok(false) };
-                let pos = cmd::text::text_pos_at(st, &TextSel { shape: id, cell: Some((r, c)), ..Default::default() }, p);
-                json!({"id": id, "cell": [r, c], "at": [pos.0, pos.1]})
+                let ShapeKind::Table(table) = &sh.kind else { return Ok(false) };
+                let Some(ctx) = cmd::text::ctx_for(&st.doc, &st.selection) else { return Ok(false) };
+                let plan = deckcraft_render::table_content::layout(&ctx, table, &deckcraft_text::NoFields)?;
+                let Some(hit) = plan.hit_text(&ctx, &deckcraft_text::NoFields, f.local(p)) else { return Ok(false) };
+                json!({"id": id, "cell": [hit.row, hit.col], "path": hit.path, "block": hit.block.unwrap_or(0), "at": [hit.position.0, hit.position.1]})
             }
             None => {
                 let pos = text_pos(st, sh, p);
@@ -1293,7 +1308,7 @@ impl Session {
         let Some(f) = st.shape(id).and_then(|sh| cmd::table::table_frame(st, sh)) else { return Ok(()) };
         let size = if column { f.cols.get(index) } else { f.heights.get(index) }.copied().unwrap_or(0.0);
         let (start, frame) = (f.local(p), f.affine);
-        if !st.selection.text.as_ref().is_some_and(|t| t.shape == id) {
+        if st.selection.text.as_ref().is_none_or(|t| t.shape != id) {
             self.select(|_, sel| {
                 sel.shapes = vec![id];
                 sel.text = None;

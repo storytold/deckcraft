@@ -157,6 +157,7 @@ fn sections() -> Presentation {
                             sound: None,
                             stop_sound: false,
                             zoom_return: None,
+                            sound_name: None,
                         }),
                         ..Default::default()
                     },

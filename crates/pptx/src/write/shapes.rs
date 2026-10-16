@@ -273,6 +273,16 @@ pub fn shapes(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, list: &[Shape],
 }
 
 pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth: usize) {
+    if let ShapeKind::Table(table) = &s.kind
+        && super::table_projection::enhanced(table)
+    {
+        if x.error.is_none()
+            && let Err(error) = super::table_projection::write(w, x, o, cx, s, depth)
+        {
+            x.error = Some(error);
+        }
+        return;
+    }
     match &s.kind {
         ShapeKind::Shape => {
             if s.text.as_ref().is_some_and(dml::has_math) {
@@ -788,6 +798,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
             sound: None,
             stop_sound: false,
             zoom_return: None,
+            sound_name: None,
         });
     }
     cnvpr(w, x, o, id, &s2);

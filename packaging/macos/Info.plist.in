@@ -45,6 +45,32 @@
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © the DeckCraft authors. MIT OR Apache-2.0.</string>
 
+  <!-- Accepted documents need both a type declaration and an Editor role. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>DeckCraft Presentation</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key><array><string>ai.storyteller.deckcraft.presentation</string></array>
+      <key>CFBundleTypeExtensions</key><array><string>deckcraft</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>PowerPoint Presentation</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>org.openxmlformats.presentationml.presentation</string><string>org.openxmlformats.presentationml.template</string><string>org.openxmlformats.presentationml.slideshow</string></array>
+      <key>CFBundleTypeExtensions</key><array><string>pptx</string><string>potx</string><string>ppsx</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>OpenDocument Presentation</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key><array><string>org.oasis-open.opendocument.presentation</string></array>
+      <key>CFBundleTypeExtensions</key><array><string>odp</string></array>
+    </dict>
+  </array>
+
   <!-- DeckCraft's own format: a zip of a JSON manifest plus media. -->
   <key>UTExportedTypeDeclarations</key>
   <array>
@@ -87,6 +113,15 @@
       <dict>
         <key>public.filename-extension</key>
         <array><string>pptx</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key><string>org.oasis-open.opendocument.presentation</string>
+      <key>UTTypeDescription</key><string>OpenDocument Presentation</string>
+      <key>UTTypeConformsTo</key><array><string>public.data</string><string>public.presentation</string><string>public.zip-archive</string></array>
+      <key>UTTypeTagSpecification</key><dict>
+        <key>public.filename-extension</key><array><string>odp</string></array>
+        <key>public.mime-type</key><array><string>application/vnd.oasis.opendocument.presentation</string></array>
       </dict>
     </dict>
   </array>

@@ -211,8 +211,9 @@ impl Backstage {
 }
 
 /// Save As and Change File Type: (id for [`SlideApp::export_as`], label, detail).
-pub const SAVE_TYPES: [(&str, &str, &str); 6] = [
+pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
     ("pptx", "PowerPoint Presentation (*.pptx)", "Opens in PowerPoint and other presentation apps"),
+    ("odp", "OpenDocument Presentation (*.odp)", "Editable OpenDocument presentation; review conversion notes"),
     ("deckcraft", "DeckCraft Presentation (*.deckcraft)", "DeckCraft's own format: everything is kept"),
     ("pdf", "PDF (*.pdf)", "A fixed copy that keeps its layout on any device"),
     ("outline", "Outline (*.txt)", "The slide titles and bullet text as plain text"),
@@ -853,6 +854,18 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             if task(ui, Icon::ResetSlide, "Revert", "Manage Presentation", detail, can_revert) {
                 let _ = app.run("file.revert", json!({}));
             }
+            if v.get("originalOdpBytes").and_then(Value::as_u64).is_some()
+                && task(
+                    ui,
+                    Icon::OpenFolder,
+                    "Recover ODP",
+                    "Original Document",
+                    "Save a copy of the ODP as it was opened. Changes made in DeckCraft are not included.",
+                    true,
+                )
+            {
+                app.recover_odp_source();
+            }
         });
         ui.add_space(30.0);
         ui.vertical(|ui| {
@@ -943,7 +956,7 @@ fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
         if save.on_hover_text(if web { "Download the file" } else { "Choose where to save" }).clicked() {
             let fmt = bs.file_type;
-            let done = if matches!(fmt, "pptx" | "deckcraft") {
+            let done = if matches!(fmt, "pptx" | "odp" | "deckcraft") {
                 let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
                 app.save_as_dialog(fmt);
                 web || app.session.active().map(|d| (d.path.clone(), d.is_dirty())) != before

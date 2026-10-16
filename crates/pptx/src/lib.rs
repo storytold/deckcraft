@@ -8,9 +8,17 @@
 #![forbid(unsafe_code)]
 
 mod cfb;
+mod comments_codec;
+mod comments_dom;
+mod comments_extension;
 mod custgeom;
 mod dgm;
 mod maps;
+mod notes_budget;
+mod notes_codec;
+mod notes_media;
+mod notes_projection;
+mod notes_records;
 mod opc;
 mod png;
 pub(crate) mod read;

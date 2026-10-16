@@ -646,6 +646,21 @@ mod tests {
     }
 
     #[test]
+    fn converts_pptx_to_odp_and_back() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-odp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let pptx = dir.join("input.pptx").to_string_lossy().to_string();
+        let odp = dir.join("converted.odp").to_string_lossy().to_string();
+        let native = dir.join("reopened.deckcraft").to_string_lossy().to_string();
+        run(&args(&["--cmd", "file.new", "--save", &pptx])).unwrap();
+        convert(&args(&[&pptx, &odp])).unwrap();
+        convert(&args(&[&odp, &native])).unwrap();
+        let p = deckcraft_engine::cmd::file::open_presentation(&native, &std::fs::read(&native).unwrap()).unwrap();
+        assert_eq!(p.slides.len(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn render_help_prints_usage_and_writes_nothing() {
         assert!(render(&args(&["--help"])).is_ok());
         assert!(render(&args(&["-h"])).is_ok());

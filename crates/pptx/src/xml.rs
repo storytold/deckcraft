@@ -367,6 +367,9 @@ pub fn esc(s: &str) -> String {
             '&' => o.push_str("&amp;"),
             '<' => o.push_str("&lt;"),
             '>' => o.push_str("&gt;"),
+            // XML normalizes literal CR and CRLF before parsing. A character
+            // reference preserves the authored scalar in text and metadata.
+            '\r' => o.push_str("&#13;"),
             c if xml_char(c) => o.push(c),
             _ => {}
         }
@@ -530,6 +533,15 @@ mod tests {
     fn escape_drops_control_chars() {
         assert_eq!(esc("a\u{b}b<\u{0}"), "ab&lt;");
         assert_eq!(esc_attr("\"x\"\n"), "&quot;x&quot;&#10;");
+    }
+
+    #[test]
+    fn text_writer_preserves_carriage_returns_and_other_legal_whitespace() {
+        let source = "first\r\nsecond\rlast\n\tÉ🦀";
+        let mut writer = W::new();
+        writer.elt("text", source);
+        assert!(writer.s.contains("first&#13;\nsecond&#13;last"));
+        assert_eq!(parse(writer.s.as_bytes()).unwrap().root.text(), source);
     }
 
     #[test]

@@ -73,6 +73,7 @@ pub struct StepStamp {
 struct StepInfo {
     auto: bool,
     duration: f64,
+    waits_for_click: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -88,6 +89,7 @@ struct Effect {
     timing: EffectTiming,
     spec: EffectSpec,
     after: After,
+    blocked_by_repeat: bool,
 }
 
 /// A slide's animations laid out in time.
@@ -186,6 +188,7 @@ impl Timeline {
             let mut steps: Vec<StepInfo> = Vec::new();
             let mut group_begin = 0.0f64;
             let mut max_end = 0.0f64;
+            let mut group_blocked = false;
             for ai in members {
                 let Some(a) = slide.animations.get(ai) else { continue };
                 if tl.effects.len() >= MAX_EFFECTS {
@@ -222,6 +225,7 @@ impl Timeline {
                 let dur = secs(a.duration_ms);
                 let delay = secs(a.delay_ms);
                 let until_next_click = a.repeat == u32::MAX;
+                let waits_for_click = matches!(seq, Sequence::Trigger(_)) && until_next_click && dur > 0.0 && a.class != AnimClass::Media;
                 let iterations = if until_next_click || a.repeat <= 1 { 1.0 } else { (a.repeat as f64).min(MAX_ITERATIONS) };
                 let span = dur * if a.auto_reverse { 2.0 } else { 1.0 } * iterations;
                 let after = match a.after.as_deref() {
@@ -243,20 +247,24 @@ impl Timeline {
                     let mode = if first_of_seq && matches!(seq, Sequence::Trigger(_)) { AnimStart::OnClick } else { mode };
                     match mode {
                         AnimStart::OnClick => {
-                            steps.push(StepInfo { auto: false, duration: 0.0 });
+                            steps.push(StepInfo::default());
                             group_begin = 0.0;
                             max_end = 0.0;
+                            group_blocked = false;
                         }
                         AnimStart::WithPrevious => {
                             if first_of_seq {
-                                steps.push(StepInfo { auto: true, duration: 0.0 });
+                                steps.push(StepInfo { auto: true, ..Default::default() });
                             }
                         }
                         AnimStart::AfterPrevious => {
                             if first_of_seq {
-                                steps.push(StepInfo { auto: true, duration: 0.0 });
+                                steps.push(StepInfo { auto: true, ..Default::default() });
                             }
                             group_begin = max_end;
+                            // A triggered loop has no natural end. Following groups stay
+                            // pending until the user completes this entire click step.
+                            group_blocked = steps.last().is_some_and(|step| step.waits_for_click);
                         }
                     }
                     let start = if k > 0 && a.start != AnimStart::OnClick { first_start + k as f64 * PARAGRAPH_STAGGER } else { group_begin + delay };
@@ -270,6 +278,7 @@ impl Timeline {
                         // Media plays on by itself once started: it holds back an After Previous
                         // effect (`max_end`), but not the next click (#116).
                         s.duration = s.duration.max(if a.class == AnimClass::Media { start } else { end });
+                        s.waits_for_click |= waits_for_click;
                     }
                     tl.effects.push(Effect {
                         timing: EffectTiming {
@@ -289,6 +298,7 @@ impl Timeline {
                         },
                         spec: spec.clone(),
                         after: after.clone(),
+                        blocked_by_repeat: group_blocked,
                     });
                 }
             }
@@ -371,6 +381,12 @@ impl Timeline {
 
     pub fn trigger_step_duration(&self, trigger: ShapeId, i: usize) -> f64 {
         self.triggers.iter().find(|(s, _)| *s == trigger).and_then(|(_, v)| v.get(i)).map(|s| s.duration).unwrap_or(0.0)
+    }
+
+    /// Whether this trigger step contains a live visual loop that only its trigger click
+    /// completes. Its finite preview duration remains available separately.
+    pub fn trigger_step_waits_for_click(&self, trigger: ShapeId, i: usize) -> bool {
+        self.triggers.iter().find(|(s, _)| *s == trigger).and_then(|(_, steps)| steps.get(i)).is_some_and(|step| step.waits_for_click)
     }
 
     /// All effect timings in sequence order.
@@ -457,7 +473,8 @@ impl Timeline {
             };
             let cur = st.tint.unwrap_or(base_color);
             let revert = e.timing.rewind || e.timing.auto_reverse;
-            match status(&e.timing, pstep, pt) {
+            let status = if e.blocked_by_repeat && e.timing.step == pstep { Status::NotStarted } else { status(&e.timing, pstep, pt) };
+            match status {
                 Status::NotStarted => {}
                 Status::Active(p) => {
                     if e.timing.class == AnimClass::Entrance || e.timing.class == AnimClass::Exit {

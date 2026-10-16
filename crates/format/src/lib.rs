@@ -5,7 +5,9 @@
 #![forbid(unsafe_code)]
 
 mod finite;
+mod input_budget;
 
+use serde::Deserialize;
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
@@ -52,8 +54,38 @@ struct Manifest {
     presentation: Presentation,
 }
 
-/// Serialize a presentation.
+fn serialized_manifest(presentation: &Presentation) -> Result<Vec<u8>> {
+    #[derive(serde::Serialize)]
+    struct Output<'a> {
+        format: &'static str,
+        version: u32,
+        generator: String,
+        presentation: &'a Presentation,
+    }
+    let manifest = Output { format: "deckcraft", version: VERSION, generator: format!("DeckCraft {}", env!("CARGO_PKG_VERSION")), presentation };
+    input_budget::serialize(&finite::Finite(&manifest))
+}
+
+/// Serialize a presentation. Stale stored values become ordinary displayed text.
 pub fn save(p: &Presentation) -> Result<Vec<u8>> {
+    deckcraft_model::comments::validate(p, true).map_err(|error| FormatError::Write(error.to_string()))?;
+    deckcraft_model::line_height::validate(p).map_err(|error| FormatError::Write(error.into()))?;
+    deckcraft_model::presentation_template::validate(p).map_err(|error| FormatError::Write(error.to_string()))?;
+    let mut formula_budget = deckcraft_model::table::FormulaBudget::default();
+    let metadata =
+        deckcraft_model::table::validate_constants_with_budget(p, &mut formula_budget).map_err(|error| FormatError::Write(error.to_string()))?;
+    let json = if metadata == 0 {
+        serialized_manifest(p)?
+    } else {
+        // Bound the complete source owner graph before copy-on-write can duplicate an
+        // oversized stale body or unrelated shared owner payload. Drop this buffer first.
+        drop(serialized_manifest(p)?);
+        let mut presentation = p.clone();
+        formula_budget.next_pass();
+        deckcraft_model::table::reconcile_constants_with_budget(&mut presentation, &mut formula_budget)
+            .map_err(|error| FormatError::Write(error.to_string()))?;
+        serialized_manifest(&presentation)?
+    };
     let mut buf = Cursor::new(Vec::new());
     {
         let mut z = zip::ZipWriter::new(&mut buf);
@@ -62,13 +94,6 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
         let w = |e: zip::result::ZipError| FormatError::Write(e.to_string());
         z.start_file("mimetype", stored).map_err(w)?;
         z.write_all(MIMETYPE.as_bytes()).map_err(|e| FormatError::Write(e.to_string()))?;
-        let m = Manifest {
-            format: "deckcraft".into(),
-            version: VERSION,
-            generator: format!("DeckCraft {}", env!("CARGO_PKG_VERSION")),
-            presentation: p.clone(),
-        };
-        let json = serde_json::to_vec(&finite::Finite(&m)).map_err(|e| FormatError::Write(e.to_string()))?;
         z.start_file("presentation.json", deflate).map_err(w)?;
         z.write_all(&json).map_err(|e| FormatError::Write(e.to_string()))?;
         for item in &p.media {
@@ -99,6 +124,7 @@ pub fn sniff(bytes: &[u8]) -> bool {
     bytes.starts_with(b"PK") && [MIMETYPE, LEGACY_MIMETYPE].iter().any(|m| bytes.windows(m.len()).take(200).any(|w| w == m.as_bytes()))
 }
 
+#[cfg(test)]
 fn read_entry(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str) -> Result<Vec<u8>> {
     read_entry_max(z, name, MAX_ENTRY)
 }
@@ -133,13 +159,25 @@ pub fn load_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
 
 fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String>)> {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|e| FormatError::NotOurs(e.to_string()))?;
-    let json = read_entry(&mut z, "presentation.json").map_err(|_| FormatError::NotOurs("no presentation.json".into()))?;
+    let json = read_entry_max(&mut z, "presentation.json", input_budget::MAX_JSON_BYTES)?;
     let m = parse_manifest(&json)?;
     if m.format != "deckcraft" {
         return Err(FormatError::NotOurs(m.format));
     }
     let mut p = m.presentation;
+    deckcraft_model::comments::validate(&p, false).map_err(|error| FormatError::Damaged(error.to_string()))?;
+    deckcraft_model::line_height::validate(&p).map_err(|error| FormatError::Damaged(error.into()))?;
+    deckcraft_model::presentation_template::validate(&p).map_err(|error| FormatError::Damaged(error.to_string()))?;
+    // Validate raw owners before structural repair can truncate or promote table cells.
+    let mut formula_budget = deckcraft_model::table::FormulaBudget::default();
+    deckcraft_model::table::validate_constants_with_budget(&p, &mut formula_budget).map_err(|error| FormatError::Damaged(error.to_string()))?;
+    formula_budget.next_pass();
+    let constants_lowered = deckcraft_model::table::reconcile_constants_with_budget(&mut p, &mut formula_budget)
+        .map_err(|error| FormatError::Damaged(error.to_string()))?;
     let mut damaged = vec![];
+    if constants_lowered {
+        damaged.push("Stale stored table values were cleared; displayed text was retained".into());
+    }
     if p.media.len() > budget.items {
         return Err(FormatError::Damaged(format!("{} media items (at most {})", p.media.len(), budget.items)));
     }
@@ -163,7 +201,16 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
             Err(e) => damaged.push(e.to_string()),
         }
     }
+    deckcraft_model::comments::validate(&p, true).map_err(|error| FormatError::Damaged(error.to_string()))?;
+    deckcraft_model::comments::normalize(&mut p).map_err(|error| FormatError::Damaged(error.to_string()))?;
     repair(&mut p);
+    formula_budget.next_pass();
+    if deckcraft_model::table::reconcile_constants_with_budget(&mut p, &mut formula_budget)
+        .map_err(|error| FormatError::Damaged(error.to_string()))?
+        && !constants_lowered
+    {
+        damaged.push("Stale stored table values were cleared; displayed text was retained".into());
+    }
     Ok((p, damaged))
 }
 
@@ -255,7 +302,12 @@ const MAX_REPARSE_BYTES: usize = 256 * 1024 * 1024;
 
 /// Where a parse failed, comparable: later is progress.
 fn failure(src: &[u8]) -> std::result::Result<Manifest, (String, (usize, usize))> {
-    serde_json::from_slice::<Manifest>(src).map_err(|e| (e.to_string(), (e.line(), e.column())))
+    // Every call follows input_budget preflight; repair changes scalar tokens only.
+    let mut parser = serde_json::Deserializer::from_slice(src);
+    parser.disable_recursion_limit();
+    let manifest = Manifest::deserialize(&mut parser).map_err(|error| (error.to_string(), (error.line(), error.column())))?;
+    parser.end().map_err(|error| (error.to_string(), (error.line(), error.column())))?;
+    Ok(manifest)
 }
 
 /// Parse `presentation.json`. serde_json writes a NaN or infinite number as `null`, which then
@@ -268,11 +320,17 @@ fn failure(src: &[u8]) -> std::result::Result<Manifest, (String, (usize, usize))
 /// nearest first, and a patch is kept only if the parse then gets further. (Files saved since
 /// [`finite::Finite`] never contain such `null`s; this reads older ones.)
 fn parse_manifest(json: &[u8]) -> Result<Manifest> {
+    let allow_repair = input_budget::check(json)?;
     let mut src = json.to_vec();
     let mut last = match failure(&src) {
         Ok(m) => return Ok(m),
         Err(f) => f,
     };
+    if !allow_repair {
+        return Err(FormatError::Damaged(last.0));
+    }
+    // Numeric null-to-zero replacements cannot introduce keys or increase token/metadata
+    // costs. New constant-bearing inputs never enter this legacy repair path.
     let mut budget = MAX_REPARSE_BYTES;
     'fixes: for _ in 0..MAX_NULL_FIXES {
         let (msg, pos) = &last;
@@ -349,7 +407,9 @@ fn sane_xfrm(x: &mut deckcraft_model::Xfrm) {
 }
 
 fn sane_run(p: &mut deckcraft_model::text::RunProps) {
-    p.size = p.size.filter(|v| v.is_finite() && *v > 0.0).map(|v| v.clamp(1.0, 4000.0));
+    for size in [&mut p.size, &mut p.size_ea, &mut p.size_cs] {
+        *size = size.filter(|v| v.is_finite() && *v > 0.0).map(|v| v.clamp(1.0, 4000.0));
+    }
 }
 
 fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
@@ -391,6 +451,12 @@ pub fn sane_numbers(p: &mut Presentation) {
     for slide in &mut p.slides {
         let mut fixed = (**slide).clone();
         sane_shapes(&mut fixed.shapes, 0);
+        if let Some(page) = &mut fixed.notes_page {
+            sane_shapes(&mut page.shapes, 0);
+            if page.size.is_some_and(|size| !deckcraft_model::notes::valid_size(size)) {
+                page.size = None;
+            }
+        }
         if fixed != **slide {
             *slide = Arc::new(fixed);
         }
@@ -403,6 +469,16 @@ pub fn sane_numbers(p: &mut Presentation) {
         }
         if fixed != **m {
             *m = Arc::new(fixed);
+        }
+    }
+    for notes in &mut p.notes_masters {
+        if !deckcraft_model::notes::valid_size(notes.size) {
+            notes.size = p.notes_size;
+        }
+        let mut fixed = (*notes.master).clone();
+        sane_shapes(&mut fixed.shapes, 0);
+        if fixed != *notes.master {
+            notes.master = Arc::new(fixed);
         }
     }
 }
@@ -514,6 +590,26 @@ pub fn slides_to_outline(p: &Presentation) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn paragraph_background_and_highlight_survive_native_save_reopen_and_edit() {
+        use deckcraft_model::{ColorRef, Fill, Rgba};
+        let mut p = Presentation::default();
+        let mut body = TextBody::from_text("First\n\nLast");
+        body.paragraphs[0].props.background = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(70, 110, 150))));
+        body.paragraphs[0].runs[0].props.highlight = Some(ColorRef::rgb(Rgba::rgb(250, 230, 0)));
+        body.paragraphs[1].props.background = Some(Fill::None);
+        Arc::make_mut(&mut p.slides[0]).shapes[0].text = Some(body.clone());
+        let (mut back, repairs) = load_checked(&save(&p).unwrap()).unwrap();
+        assert!(repairs.is_empty(), "{repairs:?}");
+        assert_eq!(back.slides[0].shapes[0].text.as_ref(), Some(&body));
+        let edited = Arc::make_mut(&mut back.slides[0]).shapes[0].text.as_mut().unwrap();
+        edited.paragraphs[0].runs[0].text = "Edited".into();
+        edited.paragraphs[0].props.background = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(150, 110, 70))));
+        let expected = edited.clone();
+        let reopened = load(&save(&back).unwrap()).unwrap();
+        assert_eq!(reopened.slides[0].shapes[0].text.as_ref(), Some(&expected));
+    }
+
     /// The same package without the entries `drop` names.
     fn without(bytes: &[u8], drop: &str) -> Vec<u8> {
         let mut z = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -595,6 +691,49 @@ mod tests {
         assert_eq!(q.media[0].data.len(), 1000);
         // And the deck saves again.
         assert!(save(&q).is_ok());
+    }
+
+    #[test]
+    fn editable_notes_page_and_shared_master_survive_native_save_and_edit() {
+        use deckcraft_model::{
+            Master, MasterId, PhType, Placeholder, Shape, ShapeId, Size, Xfrm,
+            notes::{NotesMaster, NotesPage},
+        };
+        let mut p = Presentation::default();
+        p.notes_masters.push(NotesMaster {
+            master: Arc::new(Master {
+                id: MasterId(910),
+                shapes: vec![Shape {
+                    id: ShapeId(911),
+                    xfrm: Some(Xfrm::new(20., 200., 400., 250.)),
+                    ph: Some(Placeholder { kind: PhType::Body, ..Default::default() }),
+                    ..Default::default()
+                }],
+                ..Default::default()
+            }),
+            size: Size::new(500., 700.),
+            ..Default::default()
+        });
+        let slide = Arc::make_mut(&mut p.slides[0]);
+        slide.notes_page = Some(NotesPage { master: Some(MasterId(910)), ..Default::default() });
+        slide.notes = TextBody::from_text("Original canonical notes");
+        p.fix_next_id();
+        p.ensure_notes_body(0).unwrap();
+        let mut q = load(&save(&p).unwrap()).unwrap();
+        assert_eq!(q.notes_masters, p.notes_masters);
+        assert_eq!(q.slides[0].notes_page, p.slides[0].notes_page);
+        assert_eq!(q.slides[0].notes, p.slides[0].notes);
+        Arc::make_mut(&mut q.slides[0]).notes = TextBody::from_text("Edited canonical notes");
+        Arc::make_mut(&mut q.notes_masters[0].master).shapes[0].xfrm.as_mut().unwrap().y = 240.;
+        let restored = load(&save(&q).unwrap()).unwrap();
+        let page = restored.slides[0].notes_page.as_ref().unwrap();
+        let frame = deckcraft_model::find_shape(&page.shapes, page.body_shape.unwrap()).unwrap();
+        assert!(frame.text.is_none());
+        assert!(frame.xfrm.is_none());
+        assert_eq!(restored.slides[0].notes.text(), "Edited canonical notes");
+        let context = deckcraft_model::resolve::Ctx::for_notes(&restored, &restored.slides[0]).unwrap();
+        assert_eq!(deckcraft_model::resolve::xfrm(&context, frame).y, 240.);
+        assert_eq!(restored.notes_page_size(&restored.slides[0]), Size::new(500., 700.));
     }
 
     #[test]

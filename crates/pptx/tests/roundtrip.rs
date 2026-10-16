@@ -85,6 +85,7 @@ pub fn rich_deck() -> Presentation {
                                 sound: None,
                                 stop_sound: false,
                                 zoom_return: None,
+                                sound_name: None,
                             }),
                             ..Default::default()
                         },
@@ -163,6 +164,7 @@ pub fn rich_deck() -> Presentation {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     let mut c = shape(&mut p, "Freeform", 450.0, 120.0, 100.0, 100.0);
     c.geom = Geom::Custom {
@@ -354,6 +356,7 @@ pub fn rich_deck() -> Presentation {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     let mut eq = shape(&mut p, "Equation", 100.0, 450.0, 300.0, 40.0);
     eq.text = Some(TextBody {

@@ -27,6 +27,11 @@ pub fn bundled() -> Vec<&'static [u8]> {
     v
 }
 
+/// Provenance check for the hot lookup path without allocating a bundled-file list.
+fn bundled_bytes(bytes: &[u8]) -> bool {
+    bytes == epaint_default_fonts::UBUNTU_LIGHT || crate::CRAFT_FONTS.iter().any(|font| bytes == font.bytes)
+}
+
 /// Open substitutes for families documents often ask for but we can't ship (metric-compatible
 /// where one exists), tried in order after the family itself.
 pub fn substitutes(family: &str) -> &'static [&'static str] {
@@ -93,6 +98,51 @@ fn office_twin(family: &str) -> Option<&'static str> {
 fn is_office_cloud_font(family: &str) -> bool {
     let f = family.to_ascii_lowercase();
     f.starts_with("aptos") || ["bierstadt", "grandview", "seaford", "skeena", "tenorite"].iter().any(|c| f.starts_with(c))
+}
+
+/// Requests whose existing substitute list should prefer attributed bundled bytes before
+/// looking for an installed vendor face. This is a scoped lookup policy, not an exhaustive
+/// font licence classifier; exact user/system lookups for open families keep their precedence.
+fn prefers_bundled_substitute(family: &str) -> bool {
+    has_metric_twin(family)
+        || is_office_cloud_font(family)
+        || matches!(
+            family.to_ascii_lowercase().as_str(),
+            "helvetica neue"
+                | "arial nova"
+                | "consolas"
+                | "menlo"
+                | "segoe ui"
+                | "segoe ui light"
+                | "segoe ui semibold"
+                | "tahoma"
+                | "verdana"
+                | "georgia"
+                | "garamond"
+                | "book antiqua"
+                | "palatino"
+                | "palatino linotype"
+                | "constantia"
+                | "century gothic"
+                | "avenir"
+                | "avenir next"
+                | "futura"
+                | "gill sans"
+                | "gill sans mt"
+                | "trebuchet ms"
+                | "corbel"
+                | "candara"
+                | "franklin gothic"
+                | "franklin gothic book"
+                | "franklin gothic medium"
+                | "univers"
+                | "impact"
+                | "arial black"
+                | "source sans 3"
+                | "source sans pro"
+                | "source serif 4"
+                | "source serif pro"
+        )
 }
 
 /// The family PowerPoint draws a document's Latin text in when the font it names isn't installed,
@@ -487,12 +537,6 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
         dirs.extend(["/System/Library/Fonts", "/Library/Fonts"].map(Into::into));
         if let Some(h) = &home {
             dirs.push(h.join("Library/Fonts"));
-            // Fonts Microsoft Office downloads on demand (Aptos…), used where Office put them.
-            dirs.push(h.join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts"));
-        }
-        // Fonts Office installs inside its apps.
-        for app in ["Microsoft PowerPoint", "Microsoft Word", "Microsoft Excel"] {
-            dirs.push(std::path::PathBuf::from(format!("/Applications/{app}.app/Contents/Resources/DFonts")));
         }
         // Fonts macOS ships as assets (PingFang, Yu Mincho, …): com_apple_MobileAsset_Font<N>.
         for parent in ["/System/Library/AssetsV2", "/System/Library/AssetsV2/PreinstalledAssetsV2/InstallWithOs"] {
@@ -509,9 +553,6 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
         if let Some(l) = std::env::var_os("LOCALAPPDATA") {
             let l = std::path::PathBuf::from(l);
             dirs.push(l.join("Microsoft\\Windows\\Fonts"));
-            // Fonts Microsoft Office downloads on demand (Aptos…), used where Office put them;
-            // DeckCraft never ships or needs them.
-            dirs.push(l.join("Microsoft\\FontCache\\4\\CloudFonts"));
         }
     } else {
         dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
@@ -1003,10 +1044,20 @@ impl FontDb {
         self.is_loaded(family)
     }
 
-    /// Resolve a family + style to a face, falling back to the closest style of the family, then to
-    /// an open substitute ([`substitutes`]), then to Inter. Installed system fonts are found by name
-    /// whatever ran before.
+    /// Resolve a family + style, preferring an exact bundled face. Recognized vendor requests
+    /// next try attributed bundled substitutes before installed faces; other requested families
+    /// retain their exact user/system lookup before substitutes and the general fallback.
     pub fn face(&self, family: &str, style: &str) -> Arc<FontFace> {
+        if let Some(f) = self.bundled_face(family, style) {
+            return f;
+        }
+        if prefers_bundled_substitute(family) {
+            for sub in substitutes(family) {
+                if let Some(f) = self.bundled_face(sub, style) {
+                    return f;
+                }
+            }
+        }
         if let Some(f) = self.try_family(family, style) {
             return f;
         }
@@ -1026,13 +1077,20 @@ impl FontDb {
             .unwrap_or_else(last_resort_face)
     }
 
-    /// The face a document's text in `family` is drawn with, as PowerPoint draws it: the family
-    /// when it is installed or bundled, or a metric-compatible stand-in (Carlito for Calibri,
-    /// Liberation Sans for Arial…), or the family PowerPoint maps it to (Liberation Sans as Arial,
-    /// see `office_twin`); any other missing family is drawn in Calibri (or Carlito).
+    /// Consult loaded faces only: neither availability checks nor selection scan system files.
+    /// A family name alone is insufficient provenance; the selected face must contain exactly
+    /// bytes from the attributed compiled-in inputs (including the always-bundled last resort).
+    fn bundled_face(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+        self.find_with_source(family, style, true)
+    }
+
+    /// The face a document's text in `family` is drawn with: an attributed bundled substitute
+    /// takes precedence for recognized vendor requests. Other families keep installed/bundled
+    /// lookup and the observed missing-family mapping (`office_twin`); unknown missing families
+    /// use Calibri (or its bundled substitute Carlito).
     /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
-        if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
+        if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || prefers_bundled_substitute(family) || self.has_family(family) {
             return self.face(family, style);
         }
         if let Some(twin) = office_twin(family) {
@@ -1090,9 +1148,9 @@ impl FontDb {
     }
 
     /// `Style {wght:650,wdth:90}`: the named style's font at those axis values, made on first use.
-    fn instance(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+    fn instance(&self, family: &str, style: &str, bundled_only: bool) -> Option<Arc<FontFace>> {
         let open = style.find('{')?;
-        let base = self.find(family, style[..open].trim())?;
+        let base = self.find_with_source(family, style[..open].trim(), bundled_only)?;
         if base.skrifa().is_none_or(|f| f.axes().is_empty()) {
             return Some(base);
         }
@@ -1117,22 +1175,27 @@ impl FontDb {
     }
 
     fn find(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
+        self.find_with_source(family, style, false)
+    }
+
+    fn find_with_source(&self, family: &str, style: &str, bundled_only: bool) -> Option<Arc<FontFace>> {
+        let eligible = |face: &FontFace| !bundled_only || bundled_bytes(face.data());
         if style.contains('{') {
             {
                 let faces = self.read_faces();
-                if let Some(f) = faces.iter().find(|f| f.family.eq_ignore_ascii_case(family) && f.style == style) {
+                if let Some(f) = faces.iter().find(|f| f.family.eq_ignore_ascii_case(family) && f.style == style && eligible(f)) {
                     return Some(f.clone());
                 }
             }
-            return self.instance(family, style);
+            return self.instance(family, style, bundled_only);
         }
         let faces = self.read_faces();
-        let mut cands: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(family)).collect();
+        let mut cands: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family.eq_ignore_ascii_case(family) && eligible(f)).collect();
         let ns = norm(style);
         if cands.is_empty() {
             // A Windows family name ("Segoe UI Semibold", "Arial Black"): its faces, matched by
             // their Windows style ("Regular", "Bold"…).
-            cands = faces.iter().filter(|f| f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family))).collect();
+            cands = faces.iter().filter(|f| f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family)) && eligible(f)).collect();
             if let Some(f) = cands.iter().find(|f| f.legacy.as_ref().is_some_and(|(_, ls)| norm(ls) == ns)) {
                 return Some((*f).clone());
             }

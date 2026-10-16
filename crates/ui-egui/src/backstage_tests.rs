@@ -535,3 +535,70 @@ fn print_slides_follow_the_settings() {
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
 }
+
+#[test]
+fn odp_is_available_in_save_as_and_downloads_as_an_odp_file() {
+    let dir = temp_dir("odp");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    assert_eq!(crate::open_command("Talk.ODP"), Some("file.openBytes"));
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.state_mut().backstage.as_mut().unwrap().file_type = "odp";
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::SaveAs));
+    assert_eq!(h.state().backstage.as_ref().unwrap().file_type, "odp");
+    if let Ok(path) = std::env::var("DECKCRAFT_ODP_UI_SCREENSHOT") {
+        h.render().unwrap().save(path).unwrap();
+    }
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    let name = asked.borrow()[0].clone();
+    assert!(name.ends_with(".odp"));
+    let path = dir.join(&name);
+    let bytes = std::fs::read(&path).unwrap();
+    let p = deckcraft_engine::cmd::file::open_presentation(&name, &bytes).unwrap();
+    assert_eq!(p.slides.len(), 1);
+    assert_eq!(h.state().session.active().unwrap().path.as_deref(), path.to_str());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn info_recovers_the_original_odp_without_saving_edits() {
+    let dir = temp_dir("odp-source");
+    let (services, asked) = saving_into(&dir);
+    let mut s = Session::with_new();
+    let source = deckcraft_engine::cmd::file::save_bytes(&s.doc().unwrap().doc, "odp").unwrap();
+    s.execute("file.openBytes", &json!({"name": "Original.odp", "data": deckcraft_engine::cmd::base64_encode(&source)})).unwrap();
+    s.execute("file.properties", &json!({"title": "Edited conversion"})).unwrap();
+    let mut h = harness(SlideApp::new(s, services));
+    h.state_mut().run("app.backstage", json!({"page": "info"})).unwrap();
+    h.run_steps(3);
+    if let Ok(path) = std::env::var("DECKCRAFT_ODP_SOURCE_UI_SCREENSHOT") {
+        h.render().unwrap().save(path).unwrap();
+    }
+    click_on_page(&h, "Recover ODP");
+    h.run_steps(3);
+    let name = asked.borrow()[0].clone();
+    assert!(name.ends_with(".original.odp"));
+    assert_eq!(std::fs::read(dir.join(name)).unwrap(), source);
+    assert!(h.state().session.doc().unwrap().path.is_none());
+    assert!(h.state().session.doc().unwrap().is_dirty());
+    assert_eq!(h.state().session.doc().unwrap().doc.props.title, "Edited conversion");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn original_odp_recovery_downloads_exact_source_in_the_browser() {
+    let downloads = Rc::new(RefCell::new(Vec::new()));
+    let received = downloads.clone();
+    let services =
+        Services { download: Some(Box::new(move |name, data| received.borrow_mut().push((name.to_owned(), data.to_vec())))), ..Default::default() };
+    let mut s = Session::with_new();
+    let source = deckcraft_engine::cmd::file::save_bytes(&s.doc().unwrap().doc, "odp").unwrap();
+    s.execute("file.openBytes", &json!({"name": "Original.odp", "data": deckcraft_engine::cmd::base64_encode(&source)})).unwrap();
+    let mut app = SlideApp::new(s, services);
+    assert!(app.recover_odp_source());
+    assert_eq!(downloads.borrow().len(), 1);
+    assert_eq!(downloads.borrow()[0].1, source);
+    assert!(app.session.doc().unwrap().path.is_none());
+}

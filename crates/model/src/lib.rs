@@ -10,10 +10,16 @@
 pub mod anim;
 pub mod bidi;
 pub mod chart;
+pub mod comments;
+pub mod datetime;
 pub mod defaults;
 pub mod edit;
+pub mod line_height;
+pub mod notes;
 pub mod numfmt;
+pub mod presentation_template;
 pub mod resolve;
+mod serde_graph;
 pub mod style;
 pub mod table;
 pub mod text;
@@ -30,6 +36,7 @@ use serde::{Deserialize, Serialize};
 pub use anim::{AnimClass, AnimStart, Animation, Transition};
 pub use bidi::{first_strong_is_rtl, is_rtl_script};
 pub use chart::Chart;
+pub use presentation_template::{PresentationRole, PresentationTemplate, PresentationTemplateBox, PresentationTemplateSlot};
 pub use style::{ColorBase, ColorRef, Effects, Fill, Line, ShapeStyle};
 pub use table::{Cell, Table};
 pub use text::{Paragraph, Run, RunProps, TextBody};
@@ -56,6 +63,8 @@ id_type!(ShapeId);
 id_type!(LayoutId);
 id_type!(MasterId);
 id_type!(MediaId);
+id_type!(PresentationTemplateId);
+id_type!(PresentationTemplateSlotId);
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
@@ -331,6 +340,7 @@ pub struct Shape {
     pub name: String,
     /// `None`: placeholder inheriting its box from the layout/master.
     pub xfrm: Option<Xfrm>,
+    #[serde(deserialize_with = "serde_graph::shape_kind")]
     pub kind: ShapeKind,
     pub geom: Geom,
     pub ph: Option<Placeholder>,
@@ -589,13 +599,13 @@ pub enum Background {
     },
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Comment {
     pub author: String,
     pub initials: String,
     pub text: String,
-    /// ISO 8601.
+    /// Creation timestamp in ISO 8601.
     pub date: String,
     pub x: f64,
     pub y: f64,
@@ -603,6 +613,30 @@ pub struct Comment {
     pub replies: Vec<Comment>,
     /// The shape the comment is attached to.
     pub shape: Option<ShapeId>,
+    /// Independent, uninterpreted date label supplied by a document author.
+    /// An explicitly empty label differs from an absent label.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_date: Option<String>,
+    /// Stable application-local message identity (assigned once for legacy documents).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub comment_id: Option<u32>,
+    /// Explicit author relationship; display names are not identities.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub author_identity: Option<comments::CommentAuthorIdentity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<comments::CommentStatus>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<comments::CommentAttachment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<comments::CommentSourceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<text::TextBody>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<comments::CommentAnchor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task: Option<comments::CommentTask>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wire_guid: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -619,6 +653,9 @@ pub struct Slide {
     pub animations: Vec<Animation>,
     /// Speaker notes.
     pub notes: TextBody,
+    /// Editable notes-page geometry. The designated body frame reads its text from `notes`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub notes_page: Option<notes::NotesPage>,
     pub comments: Vec<Comment>,
     /// `clrMapOvr`: a colour map replacing the layout's or master's (`bg1`→`dk1`…); None follows
     /// the layout.
@@ -630,6 +667,9 @@ pub struct Slide {
     /// Unmodelled XML kept for round-trip (custom data).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
+    /// Selected ODF object-creation template, independent of the live layout parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub presentation_template: Option<PresentationTemplateId>,
 }
 
 impl Default for Slide {
@@ -645,10 +685,12 @@ impl Default for Slide {
             transition: None,
             animations: vec![],
             notes: TextBody::default(),
+            notes_page: None,
             comments: vec![],
             color_map: None,
             tags: vec![],
             raw_ext: None,
+            presentation_template: None,
         }
     }
 }
@@ -975,6 +1017,10 @@ pub struct Presentation {
     pub slides: Vec<Arc<Slide>>,
     pub masters: Vec<Arc<Master>>,
     pub notes_master: Option<Arc<Master>>,
+    /// Distinct imported notes masters. The legacy `notes_master` remains a fallback for
+    /// documents which do not associate a notes page with a specific master.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub notes_masters: Vec<notes::NotesMaster>,
     pub handout_master: Option<Arc<Master>>,
     pub sections: Vec<Section>,
     pub custom_shows: Vec<CustomShow>,
@@ -1005,6 +1051,9 @@ pub struct Presentation {
     /// Unmodelled presentation-level XML kept for round-trip.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw_ext: Option<String>,
+    /// Editable presentation-page templates; selection never applies their geometry.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presentation_templates: Vec<Arc<PresentationTemplate>>,
 }
 
 /// A drawing guide: a vertical line at `pos` points from the slide's left edge, or a horizontal
@@ -1037,6 +1086,9 @@ impl Presentation {
         for s in &self.slides {
             m = m.max(s.id.0);
             walk(&s.shapes, &mut |sh, _| m = m.max(sh.id.0));
+            if let Some(page) = &s.notes_page {
+                walk(&page.shapes, &mut |sh, _| m = m.max(sh.id.0));
+            }
         }
         for ma in &self.masters {
             m = m.max(ma.id.0);
@@ -1049,9 +1101,19 @@ impl Presentation {
         for md in &self.media {
             m = m.max(md.id.0);
         }
+        for template in &self.presentation_templates {
+            m = m.max(template.id.0);
+            for slot in &template.slots {
+                m = m.max(slot.id.0);
+            }
+        }
         for extra in [self.notes_master.as_deref(), self.handout_master.as_deref()].into_iter().flatten() {
             m = m.max(extra.id.0);
             walk(&extra.shapes, &mut |sh, _| m = m.max(sh.id.0));
+        }
+        for notes in &self.notes_masters {
+            m = m.max(notes.master.id.0);
+            walk(&notes.master.shapes, &mut |shape, _| m = m.max(shape.id.0));
         }
         self.next_id = m;
     }
@@ -1104,8 +1166,14 @@ impl Presentation {
     /// Basic consistency check: unique slide/shape ids, layouts exist. Returns problems found.
     pub fn validate(&self) -> Vec<String> {
         let mut out = vec![];
+        if let Err(error) = presentation_template::validate(self) {
+            out.push(error.to_string());
+        }
         let mut seen = std::collections::HashSet::new();
         for s in &self.slides {
+            if let Some(error) = self.notes_page_error(s) {
+                out.push(format!("slide {}: {error}", s.id));
+            }
             if !seen.insert(s.id) {
                 out.push(format!("duplicate slide id {}", s.id));
             }

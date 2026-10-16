@@ -14,7 +14,7 @@ use deckcraft_model::{Comment, CustomShow, Geom, LayoutType, PhType, Presentatio
 const CHIME: &[u8] = b"RIFFdeckcraft-chime-WAVEfmt ";
 
 fn link(action: Action) -> Hyperlink {
-    Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
+    Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None, sound_name: None }
 }
 
 fn box_at(p: &mut Presentation, name: &str, x: f64, y: f64) -> Shape {
@@ -73,6 +73,7 @@ fn deck() -> Presentation {
                             sound: None,
                             stop_sound: false,
                             zoom_return: None,
+                            sound_name: None,
                         }),
                         ..Default::default()
                     },
@@ -99,6 +100,7 @@ fn deck() -> Presentation {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     a.shapes.push(site);
 
@@ -125,6 +127,7 @@ fn deck() -> Presentation {
         sound: None,
         stop_sound: true,
         zoom_return: None,
+        sound_name: None,
     });
     a.shapes.push(hover);
 
@@ -137,6 +140,7 @@ fn deck() -> Presentation {
         sound: None,
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     a.shapes.push(home);
 
@@ -148,6 +152,7 @@ fn deck() -> Presentation {
         sound: Some(chime),
         stop_sound: false,
         zoom_return: None,
+        sound_name: None,
     });
     a.shapes.push(board);
 

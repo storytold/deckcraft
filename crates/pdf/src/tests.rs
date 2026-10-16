@@ -112,7 +112,15 @@ fn text_layer_links_and_bookmarks_survive_serialization() {
     let last = p.slides[1].id;
     let slide = Arc::make_mut(&mut p.slides[0]);
     for (shape, action) in slide.shapes.iter_mut().zip([Action::Url { url: "https://example.com/deck".into() }, Action::Slide { slide: last }]) {
-        shape.click = Some(Hyperlink { action, tooltip: "Link".into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None });
+        shape.click = Some(Hyperlink {
+            action,
+            tooltip: "Link".into(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+            sound_name: None,
+        });
     }
     for text_layer in [true, false] {
         let bytes = export(&p, &PdfOptions { text_layer, ..opts(PageLayout::Slides) }).unwrap();

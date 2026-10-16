@@ -98,8 +98,17 @@ Run it with: deckcraft-cli run --cmd 'shape.insert={…}'
         "format.size: Font Size, in Home ▸ Font.
 
 Parameters:
-  size  pt
+  either:
+    size              pt
+    sizeEa, optional  pt
+    sizeCs, optional  pt
+  or:
+    sizeEa            pt
+    sizeCs, optional  pt
+  or:
+    sizeCs            pt
 Acts on the selected text or shapes.
+Note: size applies to all scripts unless overridden
 
 Run it with: deckcraft-cli run --cmd 'format.size={…}'
 "
@@ -133,7 +142,10 @@ fn describe_shows_alternative_sets_of_parameters() {
 
 #[test]
 fn commands_lists_one_line_per_command() {
-    assert_eq!(stdout(&cli(&["commands", "format.size"])), "format.size — Font Size: {size: pt}\n");
+    assert_eq!(
+        stdout(&cli(&["commands", "format.size"])),
+        "format.size — Font Size: {size: pt, sizeEa?: pt, sizeCs?: pt} | {sizeEa: pt, sizeCs?: pt} | {sizeCs: pt} — size applies to all scripts unless overridden\n"
+    );
     assert_eq!(stdout(&cli(&["commands", "slide.next"])), "slide.next — Next Slide\n");
     assert_eq!(stdout(&cli(&["commands", "shape.presets"])), "shape.presets — Shape Gallery → [{name, label, category}]\n");
 }

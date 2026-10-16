@@ -9,6 +9,7 @@ description = "DeckCraft PDF export (craft-pdf/Krilla): slides, notes pages and 
 workspace = true
 
 [dependencies]
+deckcraft-geom = { workspace = true }
 deckcraft-model = { workspace = true }
 deckcraft-fonts = { workspace = true }
 deckcraft-text = { workspace = true }

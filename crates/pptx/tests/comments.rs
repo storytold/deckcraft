@@ -29,6 +29,8 @@ fn deck() -> Presentation {
                 },
             ],
             shape: None,
+            display_date: None,
+            ..Default::default()
         },
         Comment {
             author: "Bob".into(),
@@ -40,9 +42,27 @@ fn deck() -> Presentation {
             resolved: false,
             replies: vec![],
             shape: None,
+            display_date: None,
+            ..Default::default()
         },
     ];
+    prepare(&mut p);
     p
+}
+
+fn prepare(p: &mut Presentation) {
+    deckcraft_model::comments::normalize(p).unwrap();
+    fn walk(items: &mut [Comment]) {
+        for c in items {
+            c.wire_guid = Some(format!("{{01234567-89AB-CDEF-0123-{:012X}}}", c.comment_id.unwrap()));
+            let a = c.author_identity.as_mut().unwrap();
+            a.wire_guid = Some(format!("{{11234567-89AB-CDEF-0123-{:012X}}}", a.id));
+            walk(&mut c.replies);
+        }
+    }
+    for s in &mut p.slides {
+        walk(&mut Arc::make_mut(s).comments);
+    }
 }
 
 fn part(bytes: &[u8], name: &str) -> String {
@@ -132,6 +152,7 @@ fn comments_on_several_slides_round_trip() {
     }
     let s = Arc::make_mut(&mut p.slides[2]);
     s.comments = vec![Comment { author: "Cara".into(), text: "Slide three".into(), date: "2025-03-06T00:00:00Z".into(), ..Default::default() }];
+    prepare(&mut p);
     let bytes = deckcraft_pptx::export(&p).expect("export");
     assert!(part(&bytes, "ppt/comments/modernComment1.xml").contains("Top thread"));
     // The parts are numbered by comment slide: the comment-free middle slide is skipped.

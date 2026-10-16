@@ -7,7 +7,7 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use deckcraft_text::{Opts, TextLayout};
 use kurbo::{Affine, Rect};
 
-use crate::{SlideFields, shape_geometry, table};
+use crate::{SlideFields, shape_geometry};
 
 /// One shape's text as drawn on the slide.
 pub struct PlacedText {
@@ -130,19 +130,37 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
             }
         }
         ShapeKind::Table(t) => {
-            // Cell text, laid out exactly as the table draws it.
-            for (r, c, rect) in table::cell_rects(t, &table::row_heights(rctx, t, fields)) {
-                let Some(cell) = t.cell(r, c).filter(|cell| !cell.text.is_empty()) else { continue };
-                let body = table::cell_body(rctx, t, r, c, cell);
-                let tmp = Shape { text: Some(body.clone()), ..Default::default() };
-                place_text(out, rctx, fields, s.id, &tmp, &body, rect, m);
+            // Shared geometry includes all ordered nested and continuation text.
+            if let Ok(plan) = crate::table_content::layout(rctx, t, fields) {
+                place_table(out, rctx, fields, s.id, &plan, m);
             }
         }
         ShapeKind::Chart(_) | ShapeKind::Ink { .. } => {}
         _ => {
-            let Some(body) = s.text.as_ref().filter(|b| !b.is_empty()) else { return };
+            let Some(body) = s.text.as_ref() else { return };
+            if body.is_empty() && !crate::has_paragraph_background(rctx, s, body) {
+                return;
+            }
             let tr = shape_geometry(s, x.w, x.h).text_rect;
             place_text(out, rctx, fields, s.id, s, body, tr, m);
+        }
+    }
+}
+
+fn place_table(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId, plan: &crate::table_content::TableLayout, matrix: Affine) {
+    for cell in &plan.cells {
+        for block in &cell.blocks {
+            match block {
+                crate::table_content::BlockLayout::Text { body, rect, .. } => {
+                    let shape = Shape { text: Some(body.clone()), ..Default::default() };
+                    if !body.is_empty() || crate::has_paragraph_background(rctx, &shape, body) {
+                        place_text(out, rctx, fields, owner, &shape, body, *rect, matrix);
+                    }
+                }
+                crate::table_content::BlockLayout::Table { transform, layout, .. } => {
+                    place_table(out, rctx, fields, owner, layout, matrix * *transform)
+                }
+            }
         }
     }
 }

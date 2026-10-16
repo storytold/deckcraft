@@ -56,7 +56,7 @@ pub enum PageLayout {
     /// One slide per page at the slide size.
     #[default]
     Slides,
-    /// Portrait page: the slide above its notes.
+    /// Editable notes layout at its own size, or the legacy slide-above-notes page.
     Notes,
     /// Portrait page with `per_page` slides (1, 2, 3, 4, 6 or 9).
     Handouts { per_page: u8 },
@@ -77,7 +77,8 @@ pub struct PdfOptions {
     pub frame_slides: bool,
     /// Document title (defaults to the presentation title).
     pub title: Option<String>,
-    /// Handout/notes page size in points (default US Letter portrait; see [`paper_size`]).
+    /// Handout and legacy notes paper in points (default US Letter portrait).
+    /// Structured notes pages use their resolved per-page size without stretching.
     pub paper: (f64, f64),
 }
 
@@ -180,6 +181,14 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     for v in &pages {
         let (pw, ph) = match opts.layout {
             PageLayout::Slides => (sw, sh),
+            PageLayout::Notes if v.first().is_some_and(|(i, _)| pres.slides[*i].notes_page.is_some()) => {
+                let (i, _) = v.first().ok_or(PdfError::NoPages)?;
+                let size = pres.notes_page_size(&pres.slides[*i]);
+                if !deckcraft_model::notes::valid_size(size) {
+                    return Err(PdfError::Write("invalid notes page size".into()));
+                }
+                (size.width, size.height)
+            }
             _ => opts.paper,
         };
         let size = Size::from_wh(pw as f32, ph as f32).ok_or(PdfError::NoPages)?;
@@ -188,16 +197,22 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
         {
             let mut s = page.surface();
             for (i, b) in v {
-                ex.slide(&mut s, *i, *b)?;
-                annots.extend(ex.links(*i, *b, &page_of));
+                if opts.layout == PageLayout::Notes && pres.slides[*i].notes_page.is_some() {
+                    annots.extend(ex.notes(&mut s, *i, &page_of)?);
+                } else {
+                    ex.slide(&mut s, *i, *b)?;
+                    annots.extend(ex.links(*i, *b, &page_of));
+                }
             }
             match opts.layout {
                 PageLayout::Notes => {
-                    if let Some((i, _)) = v.first() {
+                    if let Some((i, _)) = v.first()
+                        && pres.slides[*i].notes_page.is_none()
+                    {
                         let notes = pres.slides[*i].notes_text();
                         ex.paragraphs(&mut s, &notes, notes_frames(pres, opts.paper).1, 12.0)?;
+                        ex.page_texts(&mut s, pres.notes_master.as_deref(), pw, ph, i + 1)?;
                     }
-                    ex.page_texts(&mut s, pres.notes_master.as_deref(), pw, ph, v.first().map(|x| x.0 + 1).unwrap_or(1))?;
                 }
                 PageLayout::Handouts { per_page } => {
                     if per_page == 3 {
@@ -410,7 +425,11 @@ impl Exporter<'_> {
 
     /// Slide `i` drawn into `b` (page points).
     fn slide(&mut self, s: &mut Surface, i: usize, b: Rect) -> Result<()> {
-        let pres = self.pres;
+        self.document(s, self.pres, i, b, self.opts.frame_slides && self.opts.layout != PageLayout::Slides)
+    }
+
+    /// The same artwork and selectable text path for slides and transient notes documents.
+    fn document(&mut self, s: &mut Surface, pres: &Presentation, i: usize, b: Rect, frame: bool) -> Result<()> {
         let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
@@ -435,7 +454,7 @@ impl Exporter<'_> {
                 s.pop();
             }
         }
-        if self.opts.frame_slides && self.opts.layout != PageLayout::Slides {
+        if frame {
             let p = kurbo::Shape::to_path(&b, 0.1);
             if let Some(path) = to_path(&p) {
                 s.set_fill(None);
@@ -513,9 +532,21 @@ impl Exporter<'_> {
         let pres = self.pres;
         let k = b.width() / pres.slide_size.width.max(1.0);
         let view = Affine::translate((b.x0, b.y0)) * Affine::scale(k);
+        self.placed_links(&deckcraft_render::place_slide(pres, i).links, i, view, b, page_of)
+    }
+
+    fn placed_links(
+        &self,
+        links: &[deckcraft_render::PlacedLink],
+        i: usize,
+        view: Affine,
+        clip: Rect,
+        page_of: &HashMap<usize, usize>,
+    ) -> Vec<Annotation> {
+        let pres = self.pres;
         let mut out = Vec::new();
-        for l in deckcraft_render::place_slide(pres, i).links {
-            let r = view.transform_rect_bbox(l.rect).intersect(b);
+        for l in links {
+            let r = view.transform_rect_bbox(l.rect).intersect(clip);
             let Some(rect) = krilla::geom::Rect::from_ltrb(r.x0 as f32, r.y0 as f32, r.x1 as f32, r.y1 as f32) else { continue };
             let goto = |slide: Option<usize>| {
                 slide.and_then(|s| page_of.get(&s)).map(|p| Target::Destination(XyzDestination::new(*p, Point::from_xy(0.0, 0.0)).into()))
@@ -535,6 +566,34 @@ impl Exporter<'_> {
             }
         }
         out
+    }
+
+    /// Structured notes preserve the resolved page, master, fields and canonical rich body.
+    fn notes(&mut self, s: &mut Surface, i: usize, page_of: &HashMap<usize, usize>) -> Result<Vec<Annotation>> {
+        let pres = self.pres;
+        let scale = self.opts.dpi.clamp(36.0, 600.0) / 72.0;
+        let document = deckcraft_render::notes_page_document(pres, i, &RenderOpts { scale, ..Default::default() })
+            .ok_or_else(|| PdfError::Write("invalid notes layout or references".into()))?;
+        let b = Rect::new(0.0, 0.0, document.slide_size.width, document.slide_size.height);
+        self.document(s, &document, 0, b, false)?;
+        let placed = deckcraft_render::place_slide(&document, 0);
+        let mut annotations = self.placed_links(&placed.links, i, Affine::IDENTITY, b, page_of);
+        // The live preview's raster has no text layer of its own. Place its owner's
+        // original glyphs and links under the exact transformed, fitted thumbnail.
+        let source = deckcraft_render::place_slide(pres, i);
+        if let Some(slide) = document.slides.first()
+            && let Some(ctx) = deckcraft_model::resolve::Ctx::for_slide(&document, slide)
+        {
+            for (view, clip) in thumbnail_views(&ctx, &slide.shapes, pres.slide_size) {
+                if self.opts.text_layer {
+                    for text in &source.texts {
+                        self.text_layer(s, text, view, false)?;
+                    }
+                }
+                annotations.extend(self.placed_links(&source.links, i, view, clip.intersect(b), page_of));
+            }
+        }
+        Ok(annotations)
     }
 
     fn ui_font(&mut self) -> Result<(Font, std::sync::Arc<deckcraft_fonts::FontFace>)> {
@@ -620,6 +679,43 @@ impl Exporter<'_> {
     }
 }
 
+/// Source-slide to notes-page transforms, retaining grouped, rotated and mirrored previews.
+fn thumbnail_views(ctx: &deckcraft_model::resolve::Ctx<'_>, shapes: &[deckcraft_model::Shape], source: deckcraft_model::Size) -> Vec<(Affine, Rect)> {
+    fn visit(
+        ctx: &deckcraft_model::resolve::Ctx<'_>,
+        shapes: &[deckcraft_model::Shape],
+        source: deckcraft_model::Size,
+        parent: Affine,
+        depth: usize,
+        out: &mut Vec<(Affine, Rect)>,
+    ) {
+        if depth >= 64 {
+            return;
+        }
+        for shape in shapes {
+            if shape.hidden {
+                continue;
+            }
+            let x = deckcraft_model::resolve::xfrm(ctx, shape);
+            if !x.is_finite() {
+                continue;
+            }
+            let transform = parent * x.affine();
+            if shape.ph_type() == Some(deckcraft_model::PhType::SlideImage) {
+                let rect = transform.transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h));
+                out.push((transform * Affine::scale_non_uniform(x.w / source.width.max(1.0), x.h / source.height.max(1.0)), rect));
+            }
+            if let deckcraft_model::ShapeKind::Group { children, child } = &shape.kind {
+                let transform = parent * deckcraft_geom::group_child_affine(&x, child.rect());
+                visit(ctx, children, source, transform, depth + 1, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(ctx, shapes, source, Affine::IDENTITY, 0, &mut out);
+    out
+}
+
 /// Byte range in `text` (the run's characters `chars`) of each of `n` glyphs, for the ToUnicode map.
 /// `cells` holds each glyph's shaping-cluster head (paragraph character index); a cluster runs to the
 /// next head in the run, so a ligature maps to all its characters and every glyph of a cluster shares
@@ -651,3 +747,6 @@ fn to_path(bp: &kurbo::BezPath) -> Option<krilla::geom::Path> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod notes_tests;

@@ -143,7 +143,7 @@ impl ShowState {
         for t in run.triggers.iter_mut() {
             let Some(e) = t.elapsed else { continue };
             let e = finite_or_zero(e) + dt;
-            if e >= tl.trigger_step_duration(t.shape, t.done) {
+            if !tl.trigger_step_waits_for_click(t.shape, t.done) && e >= tl.trigger_step_duration(t.shape, t.done) {
                 t.done += 1;
                 t.elapsed = None;
                 changed = true;
@@ -174,7 +174,7 @@ impl ShowState {
         };
         (0..shapes.len())
             .rev()
-            .find(|&i| shapes.get(i).is_some_and(|h| h.under_pointer && !(h.is_group && !self.interactive(pres, tl, h)) && shown(i)))
+            .find(|&i| shapes.get(i).is_some_and(|h| h.under_pointer && (!h.is_group || self.interactive(pres, tl, h)) && shown(i)))
     }
 
     fn interactive(&self, pres: &Presentation, tl: &Timeline, h: &HitShape) -> bool {

@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use deckcraft_model::{MediaId, Presentation, Shape, Slide};
 
 macro_rules! walkers {
-    ($($m:tt)?) => {
+    ($name:ident $(,$m:tt)?) => {
         use deckcraft_model::chart::Chart;
         use deckcraft_model::style::{Fill, Line, PictureFill};
         use deckcraft_model::table::{Table, TableBorder, TablePartStyle, TableStyleDef};
@@ -69,6 +69,7 @@ macro_rules! walkers {
         }
 
         fn para(p: &$($m)? ParaProps, f: &mut F) {
+            opt_fill(&$($m)? p.background, f);
             if let Some(Bullet::Picture { media }) = &$($m)? p.bullet {
                 f(media);
             }
@@ -93,11 +94,19 @@ macro_rules! walkers {
             }
         }
 
-        fn table(t: &$($m)? Table, f: &mut F) {
+        fn table(t: &$($m)? Table, f: &mut F) { table_depth(t, f, 0); }
+        fn table_depth(t: &$($m)? Table, f: &mut F, depth: usize) {
+            if depth > deckcraft_model::table::MAX_NESTED_TABLE_DEPTH { return; }
             opt_fill(&$($m)? t.background, f);
             for row in &$($m)? t.rows {
                 for c in &$($m)? row.cells {
                     text(&$($m)? c.text, f);
+                    for block in &$($m)? c.blocks {
+                        match block {
+                            deckcraft_model::table::CellBlock::Text(block) => text(&$($m)? block.body, f),
+                            deckcraft_model::table::CellBlock::Table(child) => table_depth(&$($m)? child.table, f, depth + 1),
+                        }
+                    }
                     opt_fill(&$($m)? c.fill, f);
                     for b in &$($m)? c.borders {
                         opt_line(b, f);
@@ -223,6 +232,11 @@ macro_rules! walkers {
                 }
             }
             text(&$($m)? s.notes, f);
+            deckcraft_model::comments::resources::$name::comments(&$($m)? s.comments, f);
+            if let Some(page) = &$($m)? s.notes_page {
+                shapes(&$($m)? page.shapes, f);
+                background(&$($m)? page.background, f);
+            }
         }
 
         pub fn layout(l: &$($m)? Layout, f: &mut F) {
@@ -265,12 +279,12 @@ macro_rules! walkers {
 
 /// Read every media id under a part of the model.
 pub mod visit {
-    walkers!();
+    walkers!(visit);
 }
 
 /// Rewrite every media id under a part of the model in place.
 pub mod visit_mut {
-    walkers!(mut);
+    walkers!(visit_mut, mut);
 }
 
 /// Every media reference in a presentation: slides, masters (with their layouts and themes),
@@ -281,6 +295,9 @@ pub fn visit_presentation(p: &Presentation, f: &mut visit::F) {
     }
     for m in p.masters.iter().chain(p.notes_master.iter()).chain(p.handout_master.iter()) {
         visit::master(m, f);
+    }
+    for notes in &p.notes_masters {
+        visit::master(&notes.master, f);
     }
     visit::list(&p.default_text_style, f);
     for t in &p.table_styles {
@@ -358,6 +375,7 @@ mod tests {
                 sound: Some(MediaId(9006)),
                 stop_sound: false,
                 zoom_return: None,
+                sound_name: None,
             }),
             text: Some(text),
             ..Default::default()

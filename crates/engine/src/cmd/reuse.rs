@@ -86,6 +86,9 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
     let n = src.slides.len();
     let picked: Vec<usize> = match p.get("slides") {
         Some(Value::Array(a)) => {
+            if a.len() > crate::transfer_policy::MAX_POLICY_PAGES {
+                return Err(bad("slide.reuse", "too many selected pages for transfer"));
+            }
             let mut v = vec![];
             for x in a {
                 let i = x.as_u64().map(|i| i as usize).filter(|i| *i < n);
@@ -97,14 +100,61 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
             v
         }
         Some(Value::String(t)) if !t.trim().is_empty() => super::file::parse_slide_range(t, n)?,
-        _ => (0..n).collect(),
+        _ => {
+            if n > crate::transfer_policy::MAX_POLICY_PAGES {
+                return Err(bad("slide.reuse", "too many selected pages for transfer"));
+            }
+            (0..n).collect()
+        }
     };
     if picked.is_empty() {
         return Err(bad("slide.reuse", format!("{name} has no slides to reuse")));
     }
     let keep = bool_or(p, "keepFormatting", false);
     let at = usize_param(p, "at");
-    s.edit(|doc, sel| {
+    if picked.len() > crate::transfer_policy::MAX_POLICY_PAGES {
+        return Err(bad("slide.reuse", "too many selected pages for transfer"));
+    }
+    let selected: Vec<_> = picked.iter().filter_map(|index| src.slides.get(*index).map(Arc::as_ref)).collect();
+    deckcraft_model::comments::validate(&src, true).map_err(|e| bad("slide.reuse", e.to_string()))?;
+    let mut prepared: Vec<Slide> = selected.iter().map(|s| (*s).clone()).collect();
+    crate::comment_transfer::capture(&src, &mut prepared)?;
+    let selected: Vec<&Slide> = prepared.iter().collect();
+    let notes_capture = crate::notes_transfer::capture(&src, &selected)?;
+    if let Some(reason) = notes_capture.same_document_only {
+        return Err(bad("slide.reuse", format!("native notes transfer refused: {reason}")));
+    }
+    let notes = notes_capture.closure;
+    if notes.is_none() {
+        crate::transfer_policy::check_external(&src, selected.iter().copied())?;
+    }
+    if let Some(notes) = &notes {
+        crate::notes_transfer::preflight(&s.doc()?.doc, notes, selected.iter().copied())?;
+    }
+    let templates = crate::template_transfer::capture(&src, picked.iter().filter_map(|index| src.slides.get(*index).map(Arc::as_ref)))?;
+    let mut slides: Vec<Slide> = prepared;
+    if let Some(notes) = &notes {
+        return s.edit_resources(|doc, sel| {
+            crate::notes_transfer::remap(doc, notes, &mut slides, keep)?;
+            crate::template_transfer::remap(doc, &templates, &mut slides)?;
+            let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
+            let mut ids = Vec::new();
+            ids.try_reserve_exact(slides.len()).map_err(|_| bad("slide.reuse", "cannot allocate inserted slide index"))?;
+            doc.slides.try_reserve(slides.len()).map_err(|_| bad("slide.reuse", "cannot allocate inserted slides"))?;
+            for (offset, slide) in slides.into_iter().enumerate() {
+                ids.push(slide.id);
+                doc.slides.insert((at + offset).min(doc.slides.len()), Arc::new(slide));
+            }
+            sel.slide = (at + ids.len()).saturating_sub(1).min(doc.slides.len().saturating_sub(1));
+            sel.slides = ids.clone();
+            sel.shapes.clear();
+            sel.text = None;
+            Ok(json!({"slides":ids.len(), "ids":ids, "from":name, "keepFormatting":keep}))
+        });
+    }
+    s.edit_resources(|doc, sel| {
+        deckcraft_model::comments::normalize(doc).map_err(|e| bad("slide.reuse", e.to_string()))?;
+        crate::template_transfer::remap(doc, &templates, &mut slides)?;
         let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
         // Media: what the slides use is copied under fresh ids.
         let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
@@ -135,13 +185,24 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         let mut new_ids = vec![];
-        for (k, &i) in picked.iter().enumerate() {
+        let mut comment_context = crate::comment_transfer::Context::default();
+        let mut comment_slides = std::collections::BTreeMap::new();
+        for slide in &mut slides {
+            let old = slide.id;
+            slide.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
+            comment_slides.insert(old, slide.id);
+        }
+        for (k, mut sl) in slides.into_iter().enumerate() {
+            let i = *picked.get(k).ok_or_else(|| bad("slide.reuse", "source slide index disappeared"))?;
             let Some(from) = src.slides.get(i) else { continue };
             copy_media(doc, &src, &media_refs::slide_media(from), &mut media_map)?;
-            let mut sl: Slide = from.as_ref().clone();
+            let mut comments = std::mem::take(&mut sl.comments);
             media_refs::visit_mut::slide(&mut sl, &mut remap(&media_map));
-            sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("slide.reuse", NO_ID_SPACE))?);
             let map = renumber(doc, &mut sl.shapes)?;
+            let comment_shapes = map.iter().map(|(a, b)| (*a, *b)).collect();
+            let comment_media = crate::comment_transfer::identity_media(&comments, &media_map);
+            crate::comment_transfer::remap(doc, &mut comments, &comment_shapes, &comment_media, &comment_slides, &mut comment_context)?;
+            sl.comments = comments;
             for a in &mut sl.animations {
                 a.shape = map.get(&a.shape).copied().unwrap_or(a.shape);
                 a.trigger = a.trigger.map(|t| map.get(&t).copied().unwrap_or(t));
@@ -239,6 +300,7 @@ mod tests {
                     sound: Some(id(5)),
                     stop_sound: false,
                     zoom_return: None,
+                    sound_name: None,
                 }),
                 text: Some(text),
                 ..Default::default()

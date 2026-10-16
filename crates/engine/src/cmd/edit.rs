@@ -1,6 +1,6 @@
 //! Edit menu: undo/redo, clipboard, duplicate, delete, select all.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 
 use deckcraft_model::text::TextBody;
@@ -91,6 +91,83 @@ pub(crate) fn media_of_shapes(shapes: &[Shape], out: &mut Vec<MediaId>) {
     });
 }
 
+fn notes_master_target(target: crate::Target) -> bool {
+    matches!(target, crate::Target::NotesMaster | crate::Target::ImportedNotesMaster { .. })
+}
+
+const MAX_NOTES_COPY_SHAPES: usize = 100_000;
+
+/// Count existing and inserted trees with shared fuel, before cloning either one.
+/// A copied notes Body cannot establish a second canonical notes owner safely.
+fn count_notes_copy_shapes(cmd: &str, shapes: &[Shape], depth: usize, count: &mut usize, limit: usize, inserted: bool) -> Result<()> {
+    if depth > 64 {
+        return Err(bad(cmd, "notes frame copy nesting exceeds limit"));
+    }
+    *count = count.checked_add(shapes.len()).filter(|count| *count <= limit).ok_or_else(|| bad(cmd, "notes frame copy shape count exceeds limit"))?;
+    for shape in shapes {
+        if inserted && shape.ph_type() == Some(deckcraft_model::PhType::Body) {
+            return Err(bad(cmd, "copying primary notes body frames is not supported; edit the existing notes body instead"));
+        }
+        if !shape.children().is_empty() {
+            count_notes_copy_shapes(cmd, shape.children(), depth + 1, count, limit, inserted)?;
+        }
+    }
+    Ok(())
+}
+
+fn preflight_notes_insertion<'a>(cmd: &str, existing: &[Shape], inserted: impl Iterator<Item = &'a Shape>, limit: usize) -> Result<()> {
+    let mut count = 0;
+    count_notes_copy_shapes(cmd, existing, 0, &mut count, limit, false)?;
+    for shape in inserted {
+        count_notes_copy_shapes(cmd, std::slice::from_ref(shape), 0, &mut count, limit, true)?;
+    }
+    Ok(())
+}
+
+fn notes_shape_index<'a>(cmd: &str, shapes: &'a [Shape]) -> Result<BTreeMap<ShapeId, &'a Shape>> {
+    fn index<'a>(cmd: &str, shapes: &'a [Shape], depth: usize, count: &mut usize, out: &mut BTreeMap<ShapeId, &'a Shape>) -> Result<()> {
+        if depth > 64 {
+            return Err(bad(cmd, "notes frame copy nesting exceeds limit"));
+        }
+        *count = count
+            .checked_add(shapes.len())
+            .filter(|count| *count <= MAX_NOTES_COPY_SHAPES)
+            .ok_or_else(|| bad(cmd, "notes frame copy shape count exceeds limit"))?;
+        for shape in shapes {
+            if out.insert(shape.id, shape).is_some() {
+                return Err(bad(cmd, "notes frame copy has ambiguous shape identities"));
+            }
+            if !shape.children().is_empty() {
+                index(cmd, shape.children(), depth + 1, count, out)?;
+            }
+        }
+        Ok(())
+    }
+    let mut by_id = BTreeMap::new();
+    let mut count = 0;
+    index(cmd, shapes, 0, &mut count, &mut by_id)?;
+    Ok(by_id)
+}
+
+/// Index a notes owner once; selection lookup retains its order and nested selections.
+fn selected_notes_shapes<'a>(cmd: &str, shapes: &'a [Shape], ids: &[ShapeId]) -> Result<Vec<&'a Shape>> {
+    if ids.len() > MAX_NOTES_COPY_SHAPES {
+        return Err(bad(cmd, "notes frame copy selection exceeds limit"));
+    }
+    let by_id = notes_shape_index(cmd, shapes)?;
+    let selected: Vec<_> = ids.iter().filter_map(|id| by_id.get(id).copied()).collect();
+    preflight_notes_insertion(cmd, &[], selected.iter().copied(), MAX_NOTES_COPY_SHAPES)?;
+    Ok(selected)
+}
+
+fn preflight_notes_shape_paste(s: &Session, cmd: &str) -> Result<()> {
+    let st = s.doc()?;
+    if notes_master_target(st.selection.target) && st.selection.text.is_none() && s.clipboard.slides.is_empty() && !s.clipboard.shapes.is_empty() {
+        preflight_notes_insertion(cmd, st.shapes(), s.clipboard.shapes.iter(), MAX_NOTES_COPY_SHAPES)?;
+    }
+    Ok(())
+}
+
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     let st = s.doc()?;
     // Text selection.
@@ -106,40 +183,71 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         return Ok(String::new());
     }
     if slides_scope(s, p) {
+        if st.selection.slides.len() > crate::transfer_policy::MAX_POLICY_PAGES {
+            return Err(bad("edit.copy", "too many pages for clipboard transfer"));
+        }
         let ids: Vec<SlideId> =
             if st.selection.slides.is_empty() { st.current_slide().map(|x| vec![x.id]).unwrap_or_default() } else { st.selection.slides.clone() };
-        let slides: Vec<Slide> = ids.iter().filter_map(|id| st.doc.slide(*id).cloned()).collect();
-        let mut mids = vec![];
-        for sl in &slides {
-            media_of_shapes(&sl.shapes, &mut mids);
-            if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &sl.background {
-                mids.push(pf.media);
+        if ids.len() > crate::transfer_policy::MAX_POLICY_PAGES
+            || st.doc.slides.len() > deckcraft_model::presentation_template::MAX_TEMPLATE_SLIDE_SCAN
+        {
+            return Err(bad("edit.copy", "too many pages for clipboard transfer"));
+        }
+        // Index only requested owners in one document pass, avoiding a whole-deck
+        // linear lookup for every selected page. Preserve the requested order.
+        let requested: BTreeSet<_> = ids.iter().copied().collect();
+        let mut owners = BTreeMap::new();
+        for slide in &st.doc.slides {
+            if requested.contains(&slide.id) {
+                owners.entry(slide.id).or_insert(slide.as_ref());
             }
         }
-        let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
+        let selected: Vec<_> = ids.iter().filter_map(|id| owners.get(id).copied()).collect();
+        deckcraft_model::comments::validate(&st.doc, true).map_err(|e| bad("edit.copy", e.to_string()))?;
+        let mut prepared: Vec<Slide> = selected.iter().map(|s| (*s).clone()).collect();
+        crate::comment_transfer::capture(&st.doc, &mut prepared)?;
+        let selected: Vec<&Slide> = prepared.iter().collect();
+        let notes_capture = crate::notes_transfer::capture(&st.doc, &selected)?;
+        let notes = notes_capture.closure;
+        let origin = if let Some(notes) = &notes {
+            crate::transfer_policy::capture_closed_notes(&st.doc, st.uid, notes)?
+        } else {
+            crate::transfer_policy::capture_same_document_only(&st.doc, st.uid, selected.iter().copied(), notes_capture.same_document_only)?
+        };
+        let templates = crate::template_transfer::capture(&st.doc, selected.iter().copied())?;
+        let slides: Vec<Slide> = selected.into_iter().cloned().collect();
+        let media = if notes.is_some() {
+            Vec::new()
+        } else {
+            let mut mids = vec![];
+            for sl in &slides {
+                mids.extend(crate::media_refs::slide_media(sl));
+            }
+            st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect()
+        };
         let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
-        s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
+        s.clipboard = crate::Clipboard { slides, templates, notes, origin, media, plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
-    let shapes: Vec<Shape> = st
-        .selection
-        .shapes
-        .iter()
-        .filter_map(|id| {
-            st.shape(*id).cloned().map(|mut sh| {
-                if sh.xfrm.is_none() {
-                    sh.xfrm = Some(xfrm_of(&st.doc, &st.selection, &sh));
-                }
-                sh
-            })
-        })
-        .collect();
+    let origin = crate::transfer_policy::capture(&st.doc, st.uid, std::iter::empty())?;
+    let clone_shape = |shape: &Shape| {
+        let mut shape = shape.clone();
+        if shape.xfrm.is_none() {
+            shape.xfrm = Some(xfrm_of(&st.doc, &st.selection, &shape));
+        }
+        shape
+    };
+    let shapes: Vec<Shape> = if notes_master_target(st.selection.target) {
+        selected_notes_shapes("edit.copy", st.shapes(), &st.selection.shapes)?.into_iter().map(clone_shape).collect()
+    } else {
+        st.selection.shapes.iter().filter_map(|id| st.shape(*id)).map(clone_shape).collect()
+    };
     let mut mids = vec![];
     media_of_shapes(&shapes, &mut mids);
     let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
     let plain = shapes.iter().filter_map(|x| x.text.as_ref().map(|t| t.text())).collect::<Vec<_>>().join("\n");
     let source_theme = st.current_slide().and_then(|sl| st.doc.master_for(sl)).map(|(m, _)| (m.scheme(), m.theme.fonts.clone()));
-    s.clipboard = crate::Clipboard { shapes, media, plain: plain.clone(), source_theme, ..Default::default() };
+    s.clipboard = crate::Clipboard { shapes, origin, media, plain: plain.clone(), source_theme, ..Default::default() };
     Ok(plain)
 }
 
@@ -174,9 +282,13 @@ fn copied_html(s: &Session) -> String {
 
 fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let caret = copying_caret(s);
+    let prior = s.clipboard.clone();
     let t = copy_inner(s, p)?;
     let html = if caret { String::new() } else { copied_html(s) };
-    delete(s, p)?;
+    if let Err(error) = delete(s, p) {
+        s.clipboard = prior;
+        return Err(error);
+    }
     Ok(json!({"text": t, "html": html}))
 }
 
@@ -278,8 +390,11 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
     let mut map = HashMap::new();
     for m in media {
         match doc.media(m.id) {
-            None => doc.media.push(m.clone()),
-            Some(x) if x.data == m.data => {}
+            None => {
+                doc.next_id = doc.next_id.max(m.id.0);
+                doc.media.push(m.clone());
+            }
+            Some(x) if x.data == m.data && x.content_type == m.content_type && x.link == m.link => {}
             Some(_) => {
                 let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
@@ -287,6 +402,21 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
         }
     }
     Ok(map)
+}
+
+fn preflight_clipboard_transfer(s: &Session) -> Result<()> {
+    let state = s.doc()?;
+    if state.selection.text.is_none() && (!s.clipboard.slides.is_empty() || !s.clipboard.shapes.is_empty()) {
+        if let Some(notes) = &s.clipboard.notes
+            && !s.clipboard.slides.is_empty()
+            && crate::transfer_policy::notes_clipboard_crosses_document(&s.clipboard.origin, state.uid)?
+        {
+            crate::notes_transfer::preflight(&state.doc, notes, &s.clipboard.slides)?;
+        } else {
+            crate::transfer_policy::check_clipboard(&s.clipboard.origin, &state.doc, state.uid, s.clipboard.slides.iter())?;
+        }
+    }
+    Ok(())
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
@@ -311,18 +441,59 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         let plain = s.clipboard.plain.clone();
         return paste_plain(s, &plain);
     }
-    let clip = s.clipboard.clone();
+    preflight_clipboard_transfer(s)?;
+    preflight_notes_shape_paste(s, "edit.paste")?;
+    let notes_cross = s.clipboard.notes.is_some()
+        && !s.clipboard.slides.is_empty()
+        && crate::transfer_policy::notes_clipboard_crosses_document(&s.clipboard.origin, s.doc()?.uid)?;
+    let comments_same_document = crate::transfer_policy::same_document(&s.clipboard.origin, s.doc()?.uid);
+    let keep_regular = bool_or(p, "keepSourceNotesTransfer", false);
+    let clip = if notes_cross {
+        crate::Clipboard {
+            slides: s.clipboard.slides.clone(),
+            notes: s.clipboard.notes.clone(),
+            templates: s.clipboard.templates.clone(),
+            ..Default::default()
+        }
+    } else {
+        s.clipboard.clone()
+    };
     if !clip.slides.is_empty() {
         let at = s.doc()?.selection.slide + 1;
-        return s.edit(|doc, sel| {
-            let media = bring_media("edit.paste", doc, &clip.media)?;
+        return s.edit_resources(|doc, sel| {
+            deckcraft_model::comments::normalize(doc).map_err(|e| bad("edit.paste", e.to_string()))?;
+            let mut slides = clip.slides.clone();
+            if notes_cross {
+                crate::notes_transfer::remap(
+                    doc,
+                    clip.notes.as_ref().ok_or_else(|| bad("edit.paste", "missing captured notes closure"))?,
+                    &mut slides,
+                    keep_regular,
+                )?;
+            }
+            crate::template_transfer::remap(doc, &clip.templates, &mut slides)?;
+            let media = if notes_cross { HashMap::new() } else { bring_media("edit.paste", doc, &clip.media)? };
             let mut new_ids = vec![];
-            for (k, sl) in clip.slides.iter().enumerate() {
-                let mut sl = sl.clone();
-                sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("edit.paste", NO_ID_SPACE))?);
-                let map = reid("edit.paste", doc, &mut sl.shapes)?;
-                remap_animations(&mut sl.animations, &map);
-                remap_media(&mut sl.shapes, &media);
+            new_ids.try_reserve_exact(slides.len()).map_err(|_| bad("edit.paste", "cannot allocate inserted slide index"))?;
+            doc.slides.try_reserve(slides.len()).map_err(|_| bad("edit.paste", "cannot allocate inserted slides"))?;
+            let mut comment_context = crate::comment_transfer::Context::default();
+            let mut comment_slides = if comments_same_document { crate::comment_transfer::identity_slides(doc) } else { Default::default() };
+            if !notes_cross {
+                for slide in &mut slides {
+                    let old = slide.id;
+                    slide.id = SlideId(doc.alloc_id().ok_or_else(|| bad("edit.paste", NO_ID_SPACE))?);
+                    comment_slides.insert(old, slide.id);
+                }
+            }
+            for (k, mut sl) in slides.into_iter().enumerate() {
+                if !notes_cross {
+                    let map = reid("edit.paste", doc, &mut sl.shapes)?;
+                    let comment_shapes = map.iter().map(|(a, b)| (*a, *b)).collect();
+                    let comment_media = crate::comment_transfer::identity_media(&sl.comments, &media);
+                    crate::comment_transfer::remap(doc, &mut sl.comments, &comment_shapes, &comment_media, &comment_slides, &mut comment_context)?;
+                    remap_animations(&mut sl.animations, &map);
+                    remap_media(&mut sl.shapes, &media);
+                }
                 if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &mut sl.background
                     && let Some(n) = media.get(&pf.media)
                 {
@@ -345,7 +516,12 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         s.clipboard.pastes += 1;
         let off = s.prefs.duplicate_offset * s.clipboard.pastes as f64;
         // Pasting on another slide keeps the position; on the same slide it offsets.
-        let same_slide = s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()));
+        let same_slide = if notes_master_target(s.doc()?.selection.target) {
+            let source = notes_shape_index("edit.paste", s.doc()?.shapes())?;
+            clip.shapes.iter().any(|shape| source.contains_key(&shape.id))
+        } else {
+            s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()))
+        };
         let off = if same_slide { off } else { 0.0 };
         return s.edit(|doc, sel| {
             let media = bring_media("edit.paste", doc, &clip.media)?;
@@ -420,11 +596,19 @@ fn paste_special(s: &mut Session, p: &Value) -> Result<Value> {
         "destinationTheme" | "useDestinationTheme" => paste(s, &json!({})),
         "text" | "keepTextOnly" => paste_text(s, &json!({})),
         "keepSource" | "keepSourceFormatting" => {
+            preflight_clipboard_transfer(s)?;
+            preflight_notes_shape_paste(s, "edit.pasteSpecial")?;
+            if s.clipboard.notes.is_some()
+                && !s.clipboard.slides.is_empty()
+                && crate::transfer_policy::notes_clipboard_crosses_document(&s.clipboard.origin, s.doc()?.uid)?
+            {
+                return paste(s, &json!({"keepSourceNotesTransfer":true}));
+            }
             let saved = s.clipboard.clone();
             if let Some((scheme, fonts)) = &saved.source_theme {
                 bake_theme(&mut s.clipboard.shapes, scheme, fonts);
             }
-            let r = paste(s, &json!({}));
+            let r = paste(s, &json!({"keepSourceNotesTransfer":true}));
             let pastes = s.clipboard.pastes;
             s.clipboard = saved;
             s.clipboard.pastes = pastes;
@@ -529,10 +713,37 @@ fn paste_text(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
+    let st = s.doc()?;
+    let checks_notes = notes_master_target(st.selection.target)
+        || (st.selection.target == crate::Target::Slides && st.current_slide().is_some_and(|slide| slide.notes_page.is_some()));
+    if checks_notes && ids.len() > MAX_NOTES_COPY_SHAPES {
+        return Err(bad("edit.duplicate", "notes frame copy selection exceeds limit"));
+    }
+    let wanted: BTreeSet<_> = ids.iter().copied().collect();
+    if notes_master_target(st.selection.target) {
+        preflight_notes_insertion(
+            "edit.duplicate",
+            st.shapes(),
+            st.shapes().iter().filter(|shape| wanted.contains(&shape.id)),
+            MAX_NOTES_COPY_SHAPES,
+        )?;
+    } else if st.selection.target == crate::Target::Slides
+        && let Some(page) = st.current_slide().and_then(|slide| slide.notes_page.as_ref())
+    {
+        // Shape identities are owner-scoped. Actual slide-owned shapes take precedence
+        // over numerically coincident notes-frame ids, including nested slide shapes.
+        let slide_shapes = notes_shape_index("edit.duplicate", st.shapes())?;
+        let unresolved: Vec<_> = ids.iter().filter(|id| !slide_shapes.contains_key(id)).copied().collect();
+        // Only requests outside the live slide tree can refer to raw out-of-line frames.
+        if page.body_shape.is_some_and(|body| unresolved.contains(&body)) {
+            return Err(bad("edit.duplicate", "copying primary notes body frames is not supported; edit the existing notes body instead"));
+        }
+        selected_notes_shapes("edit.duplicate", &page.shapes, &unresolved)?;
+    }
     let off = s.prefs.duplicate_offset;
     s.edit(|doc, sel| {
-        let list = super::current_shapes(doc, sel).cloned().unwrap_or_default();
-        let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
+        let mut copies: Vec<Shape> =
+            super::current_shapes(doc, sel).into_iter().flatten().filter(|shape| wanted.contains(&shape.id)).cloned().collect();
         let boxes: Vec<_> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
         reid("edit.duplicate", doc, &mut copies)?;
         for (c, b) in copies.iter_mut().zip(boxes) {
@@ -686,4 +897,41 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
         }
     })?;
     Ok(json!({"selected": s.doc()?.selection.shapes}))
+}
+
+#[cfg(test)]
+mod notes_copy_budget_tests {
+    use super::*;
+
+    fn group(children: Vec<Shape>) -> Shape {
+        Shape { kind: deckcraft_model::ShapeKind::Group { children, child: Xfrm::new(0., 0., 10., 10.) }, ..Default::default() }
+    }
+
+    #[test]
+    fn destination_plus_multiple_selected_trees_share_one_count_budget() {
+        let existing = vec![group(vec![Shape::default()])]; // Two recursive destination shapes.
+        let inserted = [Shape::default(), Shape::default()];
+        assert!(preflight_notes_insertion("edit.duplicate", &existing, inserted.iter(), 4).is_ok());
+        assert!(preflight_notes_insertion("edit.duplicate", &existing, inserted.iter(), 3).is_err());
+        assert_eq!(MAX_NOTES_COPY_SHAPES, 100_000);
+    }
+
+    #[test]
+    fn pasted_nested_descendants_count_against_existing_destination_before_clone() {
+        let existing = vec![Shape::default(), Shape::default()];
+        let inserted = [group(vec![group(vec![Shape::default()])])]; // Three inserted shapes.
+        assert!(preflight_notes_insertion("edit.paste", &existing, inserted.iter(), 5).is_ok());
+        let error = preflight_notes_insertion("edit.paste", &existing, inserted.iter(), 4).unwrap_err().to_string();
+        assert!(error.contains("shape count exceeds limit"));
+    }
+    #[test]
+    fn indexed_copy_retains_selection_order_nested_objects_and_bounded_overlap() {
+        let child = Shape { id: ShapeId(2), ..Default::default() };
+        let root = Shape { id: ShapeId(1), ..group(vec![child]) };
+        let owner = vec![root];
+        let selected = selected_notes_shapes("edit.copy", &owner, &[ShapeId(2), ShapeId(1)]).unwrap();
+        assert_eq!(selected.iter().map(|shape| shape.id).collect::<Vec<_>>(), vec![ShapeId(2), ShapeId(1)]);
+        assert!(preflight_notes_insertion("edit.copy", &[], selected.iter().copied(), 3).is_ok());
+        assert!(preflight_notes_insertion("edit.copy", &[], selected.iter().copied(), 2).is_err());
+    }
 }

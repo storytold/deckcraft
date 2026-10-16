@@ -42,6 +42,9 @@ pub struct Package {
 }
 
 impl Package {
+    pub(crate) fn comment_rels(part: &str, rels: Vec<u8>) -> Self {
+        Self { parts: HashMap::from([(norm(&rels_path(part)), (rels_path(part), rels))]) }
+    }
     pub fn open(bytes: &[u8]) -> Result<Self, PptxError> {
         Self::open_within(bytes, MAX_PART, MAX_TOTAL, MAX_INFLATE_WORK)
     }
@@ -327,7 +330,11 @@ pub struct RelsOut {
 impl RelsOut {
     /// Add (or reuse) a relationship; `kind` is a full type URI or a suffix of the standard base.
     pub fn add(&mut self, kind: &str, target: &str, external: bool) -> String {
-        let ty = if kind.starts_with("http") { kind.to_string() } else { format!("{RT_BASE}{kind}") };
+        let ty = if kind.starts_with("http://") || kind.starts_with("https://") || kind.starts_with("urn:") {
+            kind.to_string()
+        } else {
+            format!("{RT_BASE}{kind}")
+        };
         if let Some((id, ..)) = self.items.iter().find(|(_, t, tg, e)| *t == ty && tg == target && *e == external) {
             return id.clone();
         }
@@ -337,7 +344,11 @@ impl RelsOut {
     }
     /// Always add a new relationship even if an identical one exists.
     pub fn add_new(&mut self, kind: &str, target: &str, external: bool) -> String {
-        let ty = if kind.starts_with("http") { kind.to_string() } else { format!("{RT_BASE}{kind}") };
+        let ty = if kind.starts_with("http://") || kind.starts_with("https://") || kind.starts_with("urn:") {
+            kind.to_string()
+        } else {
+            format!("{RT_BASE}{kind}")
+        };
         let id = format!("rId{}", self.items.len() + 1);
         self.items.push((id.clone(), ty, target.to_string(), external));
         id
@@ -378,6 +389,15 @@ impl Default for PackageOut {
 }
 
 impl PackageOut {
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.files.iter().map(|(name, bytes, _)| (name.as_str(), bytes.as_slice()))
+    }
+    pub(crate) fn content_type_for(&self, part: &str) -> Option<String> {
+        self.overrides.iter().find(|(name, _)| name.strip_prefix('/') == Some(part)).map(|(_, content_type)| content_type.clone()).or_else(|| {
+            part.rsplit_once('.').and_then(|(_, ext)| self.defaults.iter().find(|(e, _)| e.eq_ignore_ascii_case(ext)).map(|(_, c)| c.clone()))
+        })
+    }
+
     /// Add an XML part with its content type override.
     pub fn xml_part(&mut self, name: &str, content_type: &str, data: Vec<u8>) {
         self.overrides.push((format!("/{name}"), content_type.to_string()));

@@ -417,7 +417,10 @@ pub fn ppr(imp: &mut Imp, part: &Part, p: &El) -> (Option<u8>, ParaProps, Option
             "buAutoNum" => {
                 pp.bullet = Some(Bullet::AutoNum {
                     scheme: e.attr("type").unwrap_or("arabicPeriod").to_string(),
-                    start_at: e.u32("startAt").unwrap_or(1).clamp(1, 32767),
+                    // Keep out-of-range numbers visible to export validation instead of
+                    // silently changing the source sequence. Zero also marks malformed
+                    // explicit values, which cannot be represented by a valid startAt.
+                    start_at: e.attr("startAt").map(|value| value.trim().parse::<u32>().unwrap_or(0)).unwrap_or(1),
                 })
             }
             "buBlip" => {
@@ -490,6 +493,7 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
         stop_sound: h.bool("endSnd").unwrap_or(false),
         sound: h.child("snd").and_then(|s| media_ref(imp, part, s)),
         zoom_return: None,
+        sound_name: h.child("snd").and_then(|snd| snd.attr("name")).map(str::to_string),
     })
 }
 

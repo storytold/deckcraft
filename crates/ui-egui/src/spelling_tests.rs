@@ -188,6 +188,51 @@ fn right_click(h: &mut Harness<'_, SlideApp>, pos: egui::Pos2) {
     h.run_steps(3);
 }
 
+#[test]
+fn notes_word_menu_works_while_the_background_check_is_pending() {
+    deckcraft_engine::spell::install("xx-NC", deckcraft_engine::spell::Dictionary::parse(b"SET UTF-8\n", b"3\nremember\nthe\nplan\n"));
+    let mut checker = crate::squiggles::Squiggles::default();
+    checker.force_inline = true;
+    let text = "Remmeber the the plan";
+    // The inline checker queues on its first frame and has no result until a later frame.
+    assert!(checker.notes(text, "xx-NC", None, None).is_empty());
+    let first = checker.notes_word_at(text, "xx-NC", 3).unwrap();
+    assert_eq!(first.word, "Remmeber");
+    assert!(first.suggestions.iter().any(|word| word == "Remember"));
+    let repeated = checker.notes_word_at(text, "xx-NC", 15).unwrap();
+    assert_eq!(repeated.word, "the");
+    assert!(repeated.delete_from.is_some());
+    checker.ignore("Remmeber");
+    assert!(checker.notes_word_at(text, "xx-NC", 3).is_none());
+    checker.disabled = true;
+    assert!(checker.notes_word_at(text, "xx-NC", 15).is_none());
+}
+
+#[test]
+fn notes_word_menu_bounds_context_and_keeps_unicode_offsets() {
+    deckcraft_engine::spell::install("xx-NB", deckcraft_engine::spell::Dictionary::parse(b"SET UTF-8\n", b"3\nremember\nthe\nplan\n"));
+    let checker = crate::squiggles::Squiggles::default();
+    let text = format!("{}\nRésumé: Remmeber the the plan", "wrong ".repeat(30_000));
+    let position = |word: &str| text[..text.rfind(word).unwrap()].chars().count();
+    let typo = position("Remmeber");
+    let found = checker.notes_word_at(&text, "xx-NB", typo + 3).unwrap();
+    let crate::squiggles::Tag::Notes { start } = found.tag else { panic!("notes offset") };
+    assert_eq!(start + found.start, typo);
+    assert_eq!(found.word, "Remmeber");
+    let second = position("the");
+    let repeated = checker.notes_word_at(&text, "xx-NB", second + 1).unwrap();
+    let crate::squiggles::Tag::Notes { start } = repeated.tag else { panic!("notes offset") };
+    assert_eq!(start + repeated.start, second);
+    assert_eq!(start + repeated.delete_from.unwrap(), second - 1);
+    let oversized = "x".repeat(3000);
+    assert!(checker.notes_word_at(&oversized, "xx-NB", 1500).is_none(), "never offer a partial long word");
+    let wide_gap = format!("the{}the", " ".repeat(3000));
+    assert!(checker.notes_word_at(&wide_gap, "xx-NB", 3004).is_none(), "never classify a repeat with its predecessor outside the bound");
+    let long_line = format!("{}Remmeber", "wrong ".repeat(30_000));
+    let at = long_line.chars().count() - 3;
+    assert_eq!(checker.notes_word_at(&long_line, "xx-NB", at).unwrap().word, "Remmeber");
+}
+
 /// The notes pane's right-click menu corrects a word and deletes a repeated one; the Language
 /// dialog marks text and Do Not Check Spelling clears its squiggles.
 #[test]

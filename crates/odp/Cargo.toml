@@ -1,0 +1,22 @@
+[package]
+name = "deckcraft-odp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Basic editable OpenDocument presentation import and export from the public ODF standard"
+
+[lints]
+workspace = true
+
+[dependencies]
+deckcraft-model = { workspace = true }
+deckcraft-geom = { workspace = true }
+deckcraft-render = { workspace = true }
+quick-xml = { workspace = true }
+zip = { workspace = true }
+thiserror = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+deckcraft-fonts = { workspace = true }
+deckcraft-format = { workspace = true }

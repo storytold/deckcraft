@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use deckcraft_model::Comment;
 use serde_json::{Value, json};
 
 use super::*;
@@ -14,6 +13,52 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("comment.reply", "Reply", ["Comments"], None, "{index, text}", has_slide, reply),
         cmd!("comment.delete", "Delete Comment", ["Review", "Comments"], None, "{index? | all?: bool}", has_slide, delete),
         cmd!("comment.resolve", "Resolve Thread", ["Comments"], None, "{index, resolved?: bool}", has_slide, resolve),
+        cmd!("comment.edit", "Edit Comment", ["Comments"], None, "{commentId | index, text}", has_slide, |s, p| crate::comment_ops::mutate(
+            s,
+            p,
+            "comment.edit",
+            ""
+        )),
+        cmd!("comment.reopen", "Reopen Thread", ["Comments"], None, "{commentId | index}", has_slide, |s, p| crate::comment_ops::mutate(
+            s,
+            p,
+            "comment.reopen",
+            ""
+        )),
+        cmd!("comment.close", "Close Thread", ["Comments"], None, "{commentId | index}", has_slide, |s, p| crate::comment_ops::mutate(
+            s,
+            p,
+            "comment.close",
+            ""
+        )),
+        cmd!("comment.attach", "Attach Comment to Shape", ["Comments"], None, "{commentId | index, shape}", has_slide, |s, p| {
+            crate::comment_ops::mutate(s, p, "comment.attach", "")
+        }),
+        cmd!("comment.detach", "Detach Comment from Shape", ["Comments"], None, "{commentId | index}", has_slide, |s, p| crate::comment_ops::mutate(
+            s,
+            p,
+            "comment.detach",
+            ""
+        )),
+        cmd!("comment.attachment.add", "Attach File", ["Comments"], None, "{commentId | index, mediaId, name?}", has_slide, |s, p| {
+            crate::comment_ops::mutate(s, p, "comment.attachment.add", "")
+        }),
+        cmd!("comment.attachment.remove", "Remove Attachment", ["Comments"], None, "{commentId | index, attachmentId}", has_slide, |s, p| {
+            crate::comment_ops::mutate(s, p, "comment.attachment.remove", "")
+        }),
+        cmd!(
+            "comment.attachment.import",
+            "Attach File Bytes",
+            ["Comments"],
+            None,
+            "{commentId, name, data: base64, contentType?}",
+            has_slide,
+            crate::comment_ops::import_attachment
+        ),
+        cmd!(query "comment.attachment.get", "Download Comment Attachment", [], None, "{commentId, attachmentId} → {name, contentType, data: base64}", has_slide, crate::comment_ops::get_attachment),
+        cmd!("comment.task.set", "Edit Comment Task", ["Comments"], None, "{commentId, task: object|null}", has_slide, |s, p| {
+            crate::comment_ops::mutate(s, p, "comment.task.set", "")
+        }),
         cmd!(query "comment.list", "Comments", [], None, "{slide?} → comments", has_slide, list),
         cmd!(
             noundo "comment.next",
@@ -110,69 +155,19 @@ fn now() -> String {
 }
 
 fn add(s: &mut Session, p: &Value) -> Result<Value> {
-    let text = str_param(p, "text").ok_or_else(|| bad("comment.add", "missing `text`"))?.to_string();
-    let author = s.prefs.author.clone();
-    let shape = id_param(p, "id", "comment.add")?.or_else(|| s.active().and_then(|d| d.selection.shapes.first().copied()));
-    let (x, y) = (f64_or(p, "x", 10.0), f64_or(p, "y", 10.0));
-    s.edit(|doc, sel| {
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.add", "no slide"))?);
-        let initials: String = author.split_whitespace().filter_map(|w| w.chars().next()).collect();
-        sl.comments.push(Comment { author: author.clone(), initials, text, date: now(), x, y, resolved: false, replies: vec![], shape });
-        Ok(json!({"index": sl.comments.len() - 1}))
-    })
+    crate::comment_ops::mutate(s, p, "comment.add", &now())
 }
-
 fn reply(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("comment.reply", "missing `index`"))?;
-    let text = str_param(p, "text").unwrap_or("").to_string();
-    let author = s.prefs.author.clone();
-    s.edit(|doc, sel| {
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.reply", "no slide"))?);
-        let c = sl.comments.get_mut(i).ok_or_else(|| bad("comment.reply", "no such comment"))?;
-        c.replies.push(Comment { author, text, date: now(), ..Default::default() });
-        Ok(())
-    })?;
-    ok()
+    crate::comment_ops::mutate(s, p, "comment.reply", &now())
 }
-
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
-    let all = bool_or(p, "all", false);
-    let i = usize_param(p, "index");
-    s.edit(|doc, sel| {
-        if all {
-            for sl in &mut doc.slides {
-                Arc::make_mut(sl).comments.clear();
-            }
-            return Ok(());
-        }
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.delete", "no slide"))?);
-        match i {
-            Some(i) if i < sl.comments.len() => {
-                sl.comments.remove(i);
-            }
-            None => sl.comments.clear(),
-            _ => return Err(bad("comment.delete", "no such comment")),
-        }
-        Ok(())
-    })?;
-    ok()
+    crate::comment_ops::mutate(s, p, "comment.delete", "")
 }
-
 fn resolve(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("comment.resolve", "missing `index`"))?;
-    let v = bool_or(p, "resolved", true);
-    s.edit(|doc, sel| {
-        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.resolve", "no slide"))?);
-        sl.comments.get_mut(i).ok_or_else(|| bad("comment.resolve", "no such comment"))?.resolved = v;
-        Ok(())
-    })?;
-    ok()
+    crate::comment_ops::mutate(s, p, "comment.resolve", "")
 }
-
 fn list(s: &mut Session, p: &Value) -> Result<Value> {
-    let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
-    Ok(serde_json::to_value(st.doc.slides.get(i).map(|x| x.comments.clone()).unwrap_or_default()).unwrap_or_default())
+    crate::comment_ops::list(s, p)
 }
 
 /// Flat `(slide, comment index)` list in deck order.
@@ -198,7 +193,26 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     if threads.is_empty() {
         return Err(bad(cmd, "no comments"));
     }
-    let pos = index.and_then(|i| threads.iter().position(|&(sl, c)| sl == slide && c == i));
+    let stable = p
+        .get("commentId")
+        .map(|value| value.as_u64().and_then(|id| u32::try_from(id).ok()).ok_or_else(|| bad(cmd, "invalid commentId")))
+        .transpose()?;
+    let pos = if let Some(id) = stable {
+        let doc = &s.doc()?.doc;
+        Some(
+            threads
+                .iter()
+                .position(|(slide, index)| {
+                    doc.slides
+                        .get(*slide)
+                        .and_then(|slide| slide.comments.get(*index))
+                        .is_some_and(|root| root.comment_id == Some(id) || deckcraft_model::comments::path(&root.replies, id).is_some())
+                })
+                .ok_or_else(|| bad(cmd, "comment is gone"))?,
+        )
+    } else {
+        index.and_then(|i| threads.iter().position(|&(sl, c)| sl == slide && c == i))
+    };
     let target = match (pos, forward) {
         (Some(i), true) => threads.get(i + 1).copied(),
         (Some(i), false) => i.checked_sub(1).and_then(|j| threads.get(j).copied()),
@@ -217,7 +231,9 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
         sel.target = Target::Slides;
     })?;
     let text = s.doc()?.doc.slides.get(slide).and_then(|sl| sl.comments.get(index)).map(|c| c.text.clone()).unwrap_or_default();
-    Ok(json!({"slide": slide, "index": index, "text": text}))
+    let comment_id = s.doc()?.doc.slides.get(slide).and_then(|sl| sl.comments.get(index)).and_then(|c| c.comment_id);
+    let slide_id = s.doc()?.doc.slides.get(slide).map(|sl| sl.id.0);
+    Ok(json!({"slide": slide, "slideId": slide_id, "index": index, "commentId": comment_id, "text": text}))
 }
 
 fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -414,7 +430,7 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
     // One exact occurrence (a squiggled word): paragraph `para`, from character `start`.
     if let (Some(id), Some(para), Some(start)) = (shape, usize_param(p, "para"), usize_param(p, "start")) {
         let id = deckcraft_model::ShapeId(u32::try_from(id).map_err(|_| bad("review.spellingChange", "bad `shape`"))?);
-        let end = start + word.chars().count();
+        let end = start.checked_add(word.chars().count()).ok_or_else(|| bad("review.spellingChange", "word range exceeds limit"))?;
         let cell = usize_param(p, "row").zip(usize_param(p, "col"));
         let slide = {
             let st = s.doc()?;
@@ -432,12 +448,17 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
         s.edit(|doc, _| {
             let sl = doc.slides.get_mut(slide).ok_or_else(|| bad("review.spellingChange", "no slide"))?;
             let sh = deckcraft_model::find_shape_mut(&mut Arc::make_mut(sl).shapes, id).ok_or_else(|| bad("review.spellingChange", "no shape"))?;
-            let pp = match (cell, &mut sh.kind) {
-                (Some((r, c)), deckcraft_model::ShapeKind::Table(tb)) => tb.cell_mut(r, c).and_then(|cl| cl.text.paragraphs.get_mut(para)),
-                (Some(_), _) => None,
-                (None, _) => sh.text.as_mut().and_then(|t| t.paragraphs.get_mut(para)),
-            };
-            if let Some(pp) = pp {
+            if let (Some((r, c)), deckcraft_model::ShapeKind::Table(tb)) = (cell, &mut sh.kind) {
+                if let Some(cl) = tb.cell_mut(r, c) {
+                    cl.edit_display(|body| {
+                        if let Some(pp) = body.paragraphs.get_mut(para) {
+                            replace_chars(pp, start, end, &to);
+                        }
+                    })?;
+                }
+            } else if cell.is_none()
+                && let Some(pp) = sh.text.as_mut().and_then(|t| t.paragraphs.get_mut(para))
+            {
                 replace_chars(pp, start, end, &to);
             }
             Ok(())
@@ -648,15 +669,18 @@ fn revised_bytes(p: &Value) -> Result<(String, Vec<u8>)> {
 fn revisions_json(st: &crate::DocState) -> Result<Value> {
     let c = st.compare.as_ref().ok_or_else(|| bad("review.revisions", "not comparing"))?;
     let name = std::path::Path::new(&c.name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| c.name.clone());
-    Ok(json!({"name": name, "changes": crate::compare::diff(&st.doc, &c.revised, c.by_position), "byPosition": c.by_position}))
+    Ok(json!({"name": name, "changes": crate::compare::diff_with(&st.doc, &c.revised, c.by_position, &c.transfers)?, "byPosition": c.by_position}))
 }
 
 fn compare(s: &mut Session, p: &Value) -> Result<Value> {
     let (name, bytes) = revised_bytes(p)?;
     let revised = super::file::open_presentation(&name, &bytes)?;
+    crate::transfer_policy::check_external(&revised, revised.slides.iter().map(Arc::as_ref))?;
     let st = s.doc_mut()?;
     let by_position = crate::compare::unrelated(&st.doc, &revised);
-    st.compare = Some(crate::compare::Compare { name, revised: Arc::new(revised), by_position });
+    let transfers = crate::compare::ReviewTransfers::default();
+    crate::compare::diff_with(&st.doc, &revised, by_position, &transfers)?;
+    st.compare = Some(crate::compare::Compare { name, revised: Arc::new(revised), by_position, transfers });
     s.ui_requests.push(UiRequest::Pane { id: "revisions".into() });
     revisions_json(s.doc()?)
 }
@@ -666,38 +690,32 @@ fn revisions(s: &mut Session, _: &Value) -> Result<Value> {
 }
 
 fn accept(s: &mut Session, p: &Value) -> Result<Value> {
-    let (rev, by_pos) = s.doc()?.compare.as_ref().map(|c| (c.revised.clone(), c.by_position)).ok_or_else(|| bad("review.accept", "not comparing"))?;
+    let compare = s.doc()?.compare.clone().ok_or_else(|| bad("review.accept", "not comparing"))?;
     let all = bool_param(p, "all").unwrap_or(false);
     let index = usize_param(p, "index");
     if !all && index.is_none() {
         return Err(bad("review.accept", "give `index` or `all`"));
     }
-    s.edit(|doc, sel| {
-        let mut accepted = 0usize;
-        // Each accept shifts indices, so the list is recomputed; bounded by the slide counts.
-        let limit = doc.slides.len().saturating_add(rev.slides.len()).saturating_add(1);
-        for _ in 0..limit {
-            let changes = crate::compare::diff(doc, &rev, by_pos);
-            let c = if all {
-                changes.into_iter().find(|c| !(c.kind == crate::compare::ChangeKind::Deleted && doc.slides.len() <= 1))
-            } else {
-                changes.into_iter().nth(index.unwrap_or(0))
-            };
-            let Some(c) = c else { break };
-            let Some(at) = crate::compare::accept(doc, &rev, &c)? else { break };
-            accepted += 1;
-            sel.slide = at;
-            sel.shapes.clear();
-            sel.text = None;
-            if !all {
-                break;
-            }
-        }
-        if accepted == 0 {
+    let mut transfers = compare.transfers;
+    let changes = crate::compare::diff_with(&s.doc()?.doc, &compare.revised, compare.by_position, &transfers)?;
+    let changes: Vec<_> = if all { changes } else { changes.into_iter().nth(index.unwrap_or(0)).into_iter().collect() };
+    if changes.is_empty() {
+        return Err(bad("review.accept", "no such revision"));
+    }
+    let answer = s.edit_resources(|doc, sel| {
+        let Some((accepted, at)) = crate::compare::accept_changes(doc, &compare.revised, &changes, &mut transfers)? else {
             return Err(bad("review.accept", "no such revision"));
-        }
+        };
+        sel.slide = at;
+        sel.shapes.clear();
+        sel.text = None;
         Ok(json!({"accepted": accepted}))
-    })
+    })?;
+    // Compare metadata is outside the document/history payload. Publish it only
+    // after the document transaction succeeds; undo/redo rechecks live snapshots.
+    let current = s.doc_mut()?.compare.as_mut().ok_or_else(|| bad("review.accept", "comparison ended"))?;
+    current.transfers = transfers;
+    Ok(answer)
 }
 
 fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {

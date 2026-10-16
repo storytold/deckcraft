@@ -26,20 +26,45 @@ mod pasteboard;
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
 
-struct App(SlideApp);
+struct App {
+    ui: SlideApp,
+    #[cfg(target_os = "macos")]
+    os_events: fmv_macos_events::Inbox,
+    #[cfg(target_os = "macos")]
+    pending_open: std::collections::VecDeque<std::path::PathBuf>,
+}
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.0.logic(ctx);
+        #[cfg(target_os = "macos")]
+        for event in self.os_events.drain() {
+            match event {
+                fmv_macos_events::Event::Open(paths) => {
+                    self.pending_open.extend(paths);
+                }
+                fmv_macos_events::Event::Quit => {
+                    if let Err(e) = self.ui.run("app.quit", serde_json::json!({})) {
+                        log::error!("quit: {e}");
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "macos")]
+        if self.ui.opening.is_none()
+            && let Some(path) = self.pending_open.pop_front()
+        {
+            self.ui.open_path_in_background(&path.to_string_lossy());
+        }
+        self.ui.logic(ctx);
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.0.raw_input_hook(raw);
+        self.ui.raw_input_hook(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.0.ui(ui);
+        self.ui.ui(ui);
     }
     fn on_exit(&mut self) {
-        save_prefs(&self.0);
+        save_prefs(&self.ui);
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -90,6 +115,65 @@ fn save_prefs(app: &SlideApp) {
     }
 }
 
+/// Read an opened regular file without trusting its size to remain unchanged.
+fn read_opened_bounded(file: std::fs::File, limit: usize) -> Result<Vec<u8>, String> {
+    let metadata = file.metadata().map_err(|error| error.to_string())?;
+    let limit_u64 = u64::try_from(limit).map_err(|_| "File byte limit is too large".to_string())?;
+    if !metadata.is_file() {
+        return Err("Choose a regular file for the attachment".into());
+    }
+    if metadata.len() > limit_u64 {
+        return Err("Attachment exceeds 32 MiB limit".into());
+    }
+    read_stream_bounded(file, limit).map_err(|error| error.to_string())
+}
+
+fn read_stream_bounded(mut reader: impl std::io::Read, limit: usize) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    loop {
+        let remaining = limit.saturating_sub(bytes.len());
+        // At the exact limit, probe one byte on the stack to detect growth or an
+        // inaccurate initial size without ever growing the result past its cap.
+        let wanted = if remaining == 0 { 1 } else { remaining.min(chunk.len()) };
+        let read = match reader.read(chunk.get_mut(..wanted).ok_or_else(|| std::io::Error::other("invalid bounded read size"))?) {
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+        if read == 0 {
+            return Ok(bytes);
+        }
+        if remaining == 0 || read > remaining {
+            return Err(std::io::Error::other("Attachment exceeds 32 MiB limit"));
+        }
+        let source = chunk.get(..read).ok_or_else(|| std::io::Error::other("invalid bounded read result"))?;
+        let length = bytes.len().checked_add(read).ok_or_else(|| std::io::Error::other("attachment size overflow"))?;
+        if length > bytes.capacity() {
+            let capacity = bytes.capacity().saturating_mul(2).max(4096).max(length).min(limit);
+            bytes.try_reserve_exact(capacity.saturating_sub(bytes.len())).map_err(|_| std::io::Error::other("cannot allocate attachment bytes"))?;
+        }
+        bytes.extend_from_slice(source);
+    }
+}
+
+fn read_attachment_bounded(path: &str, limit: usize) -> Result<Vec<u8>, String> {
+    // Keep this one handle for metadata and reading: replacing the pathname cannot
+    // redirect the read after the size check. The stream cap also handles growth.
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // A selected path can be replaced with a FIFO before open. NONBLOCK
+        // lets the opened-handle type check reject it without waiting for a writer.
+        let flags = i32::try_from(rustix::fs::OFlags::NONBLOCK.bits()).map_err(|_| "Unsupported nonblocking file flags".to_string())?;
+        options.custom_flags(flags);
+    }
+    let file = options.open(path).map_err(|error| error.to_string())?;
+    read_opened_bounded(file, limit)
+}
+
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
@@ -101,17 +185,20 @@ fn services() -> Services {
                     &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "caf", "wma", "weba", "mka"],
                 ),
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
+                "commentAttachment" => d,
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
                 _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
+                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx", "odp"])
                     .add_filter("DeckCraft", &["deckcraft"])
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
+                    .add_filter("OpenDocument", &["odp"])
                     .add_filter("Outline", &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
+        read_bounded: Some(Box::new(read_attachment_bounded)),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
         clipboard_image: Some(Box::new(pasteboard::image_png)),
         clipboard_html: Some(Box::new(pasteboard::html)),
@@ -231,6 +318,9 @@ fn main() -> eframe::Result {
     // Before eframe creates the wgpu instance: default Windows to DirectX 12 with FXC (see graphics.rs).
     #[cfg(target_os = "windows")]
     graphics::configure(&mut options, eframe::wgpu::Backends::from_env(), eframe::wgpu::Dx12Compiler::from_env());
+    // Register before the event loop starts: Finder can send open-document events during launch.
+    #[cfg(target_os = "macos")]
+    let (_open_events, os_events) = fmv_macos_events::Registration::install();
     eframe::run_native(
         "DeckCraft",
         options,
@@ -262,7 +352,18 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
-            Ok(Box::new(App(app)))
+            #[cfg(target_os = "macos")]
+            {
+                let ctx = cc.egui_ctx.clone();
+                os_events.set_wake(move || ctx.request_repaint());
+            }
+            Ok(Box::new(App {
+                ui: app,
+                #[cfg(target_os = "macos")]
+                os_events,
+                #[cfg(target_os = "macos")]
+                pending_open: Default::default(),
+            }))
         }),
     )
 }
@@ -276,7 +377,13 @@ mod tests {
     #[test]
     fn on_exit_ends_the_process_on_macos() {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
-            let mut app = App(SlideApp::new(Session::new(), Services::default()));
+            let mut app = App {
+                ui: SlideApp::new(Session::new(), Services::default()),
+                #[cfg(target_os = "macos")]
+                os_events: Default::default(),
+                #[cfg(target_os = "macos")]
+                pending_open: Default::default(),
+            };
             println!("calling on_exit");
             eframe::App::on_exit(&mut app);
             println!("on_exit returned");
@@ -307,6 +414,134 @@ mod tests {
             assert_eq!(files, ["talk.pptx".to_string()]);
             assert!(sample);
             assert!(!show);
+        }
+    }
+}
+
+#[cfg(test)]
+mod attachment_read_tests {
+    #![allow(clippy::unwrap_used, clippy::panic)]
+    use super::*;
+    use std::io::{Read, Write};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture(std::path::PathBuf);
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!("deckcraft-attachment-{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed)));
+            std::fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn path(&self) -> std::path::PathBuf {
+            self.0.join("selected.txt")
+        }
+    }
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn bounded_stream_accepts_exact_limit_and_empty_input() {
+        assert_eq!(read_stream_bounded(std::io::Cursor::new(b"abcd"), 4).unwrap(), b"abcd");
+        assert_eq!(read_stream_bounded(std::io::Cursor::new(b""), 0).unwrap(), b"");
+        assert!(read_stream_bounded(std::io::Cursor::new(b"a"), 0).is_err());
+    }
+    #[test]
+    fn overflow_reads_only_one_extra_stack_byte_and_never_grows_the_result() {
+        struct Counting {
+            input: std::io::Cursor<Vec<u8>>,
+            consumed: usize,
+        }
+        impl Read for Counting {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                let n = self.input.read(out)?;
+                self.consumed += n;
+                Ok(n)
+            }
+        }
+        let mut reader = Counting { input: std::io::Cursor::new(vec![7; 100_000]), consumed: 0 };
+        assert!(read_stream_bounded(&mut reader, 4).unwrap_err().to_string().contains("limit"));
+        assert_eq!(reader.consumed, 5);
+    }
+    #[test]
+    fn sparse_oversized_file_rejects_from_opened_metadata() {
+        let fixture = Fixture::new();
+        let path = fixture.path();
+        let file = std::fs::File::create(&path).unwrap();
+        file.set_len(deckcraft_ui_egui::MAX_ATTACHMENT_BYTES as u64 + 1).unwrap();
+        assert!(read_attachment_bounded(path.to_str().unwrap(), deckcraft_ui_egui::MAX_ATTACHMENT_BYTES).unwrap_err().contains("limit"));
+    }
+    #[test]
+    fn replacing_the_path_does_not_redirect_an_already_opened_attachment() {
+        let fixture = Fixture::new();
+        let path = fixture.path();
+        std::fs::write(&path, b"old").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        std::fs::rename(&path, fixture.0.join("original.txt")).unwrap();
+        std::fs::write(&path, b"oversized replacement").unwrap();
+        assert_eq!(read_opened_bounded(file, 4).unwrap(), b"old");
+    }
+    #[test]
+    fn growth_after_size_observation_is_still_rejected_by_the_stream_cap() {
+        let fixture = Fixture::new();
+        let path = fixture.path();
+        std::fs::write(&path, b"abcd").unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        assert_eq!(file.metadata().unwrap().len(), 4);
+        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(b"extra").unwrap();
+        assert!(read_stream_bounded(file, 4).unwrap_err().to_string().contains("limit"));
+    }
+    #[test]
+    fn interrupted_reads_retry_and_io_errors_are_returned() {
+        struct Failing {
+            calls: usize,
+        }
+        impl Read for Failing {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                self.calls += 1;
+                if self.calls == 1 { Err(std::io::ErrorKind::Interrupted.into()) } else { Err(std::io::Error::other("synthetic read error")) }
+            }
+        }
+        let mut reader = Failing { calls: 0 };
+        assert!(read_stream_bounded(&mut reader, 4).unwrap_err().to_string().contains("synthetic read error"));
+        assert_eq!(reader.calls, 2);
+    }
+    #[test]
+    fn a_directory_cannot_be_read_as_an_attachment() {
+        let fixture = Fixture::new();
+        assert!(read_attachment_bounded(fixture.0.to_str().unwrap(), 4).is_err());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn fifo_refuses_without_waiting_for_a_writer() {
+        if let Some(path) = std::env::var_os("DECKCRAFT_TEST_ATTACHMENT_FIFO") {
+            assert!(read_attachment_bounded(&path.to_string_lossy(), 4).is_err());
+            return;
+        }
+        let fixture = Fixture::new();
+        let path = fixture.path();
+        assert!(std::process::Command::new("mkfifo").arg(&path).status().unwrap().success());
+        // A regression to blocking open must fail this test, not hang the whole suite.
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "attachment_read_tests::fifo_refuses_without_waiting_for_a_writer", "--nocapture"])
+            .env("DECKCRAFT_TEST_ATTACHMENT_FIFO", &path)
+            .spawn()
+            .unwrap();
+        let started = std::time::Instant::now();
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            if started.elapsed() > std::time::Duration::from_secs(2) {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("opening the selected FIFO waited for a writer");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
     }
 }

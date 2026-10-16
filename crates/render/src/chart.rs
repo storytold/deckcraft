@@ -32,6 +32,7 @@ pub fn series_color(ctx: &Ctx, c: &Chart, i: usize) -> Rgba {
 pub(crate) fn series_fill(ctx: &Ctx, c: &Chart, i: usize, s: Option<&deckcraft_model::chart::Series>) -> Rgba {
     match s.and_then(|s| s.fill.as_ref()) {
         Some(Fill::Solid { color: cc }) => ctx.color(cc, None),
+        Some(Fill::None) => Rgba::TRANSPARENT,
         _ => series_color(ctx, c, i),
     }
 }
@@ -40,6 +41,7 @@ pub(crate) fn series_fill(ctx: &Ctx, c: &Chart, i: usize, s: Option<&deckcraft_m
 fn point_fill(ctx: &Ctx, c: &Chart, i: usize, s: &deckcraft_model::chart::Series, k: usize) -> Rgba {
     match s.point_fills.iter().find(|(p, _)| *p == k).map(|(_, f)| f) {
         Some(Fill::Solid { color: cc }) => ctx.color(cc, None),
+        Some(Fill::None) => Rgba::TRANSPARENT,
         _ => series_fill(ctx, c, i, Some(s)),
     }
 }
@@ -68,6 +70,58 @@ fn polyline(pts: &[Point]) -> BezPath {
     p
 }
 
+/// ODF names the symbol; its exact outline is implementation-defined. These
+/// contributor-original paths keep each supported name visually distinct.
+fn marker_path(p: Point, name: &str, radius: f64) -> BezPath {
+    if name == "circle" {
+        return kurbo::Circle::new(p, radius).to_path(0.1);
+    }
+    if name == "square" {
+        return Rect::new(p.x - radius, p.y - radius, p.x + radius, p.y + radius).to_path(0.1);
+    }
+    let vertices = if name == "diamond" {
+        vec![(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)]
+    } else if name == "star" {
+        (0..10)
+            .map(|i| {
+                let a = i as f64 * std::f64::consts::PI / 5.0 - std::f64::consts::FRAC_PI_2;
+                let r = if i % 2 == 0 { 1.0 } else { 0.4 };
+                (a.cos() * r, a.sin() * r)
+            })
+            .collect()
+    } else {
+        let cross = [
+            (-0.25, -1.0),
+            (0.25, -1.0),
+            (0.25, -0.25),
+            (1.0, -0.25),
+            (1.0, 0.25),
+            (0.25, 0.25),
+            (0.25, 1.0),
+            (-0.25, 1.0),
+            (-0.25, 0.25),
+            (-1.0, 0.25),
+            (-1.0, -0.25),
+            (-0.25, -0.25),
+        ];
+        cross
+            .into_iter()
+            .map(|(x, y)| if name == "x" { ((x - y) * std::f64::consts::FRAC_1_SQRT_2, (x + y) * std::f64::consts::FRAC_1_SQRT_2) } else { (x, y) })
+            .collect()
+    };
+    let mut path = BezPath::new();
+    for (i, (x, y)) in vertices.into_iter().enumerate() {
+        let q = Point::new(p.x + x * radius, p.y + y * radius);
+        if i == 0 {
+            path.move_to(q);
+        } else {
+            path.line_to(q);
+        }
+    }
+    path.close_path();
+    path
+}
+
 /// A smoothed line (`c:smooth`) through `pts`: a Catmull-Rom spline as cubic Béziers, the curve
 /// PowerPoint draws, passing through every point.
 pub(crate) fn smooth_path(pts: &[Point]) -> BezPath {
@@ -90,6 +144,7 @@ pub(crate) fn smooth_path(pts: &[Point]) -> BezPath {
 pub(crate) fn series_line(ctx: &Ctx, c: &Chart, i: usize, s: &deckcraft_model::chart::Series) -> Rgba {
     match s.line.as_ref().and_then(|l| l.fill.as_ref()) {
         Some(Fill::Solid { color: cc }) => ctx.color(cc, None),
+        Some(Fill::None) => Rgba::TRANSPARENT,
         _ => series_fill(ctx, c, i, Some(s)),
     }
 }
@@ -152,7 +207,15 @@ fn value_x_scale(c: &Chart, max_intervals: usize) -> Option<(f64, f64, f64)> {
     if c.series.is_empty() || !c.series.iter().all(|s| matches!(c.series_kind(s), ChartType::Scatter | ChartType::Bubble)) {
         return None;
     }
-    let xs = c.series.iter().flat_map(|s| s.x_values.iter().flatten().copied()).filter(|v| v.is_finite());
+    let xs = c
+        .series
+        .iter()
+        .flat_map(|s| {
+            let implicit = !s.x_values.iter().flatten().any(|v| v.is_finite());
+            (0..s.x_values.len().max(if implicit { s.values.len() } else { 0 }))
+                .filter_map(move |i| if implicit { Some(i as f64 + 1.0) } else { s.x_values.get(i).copied().flatten() })
+        })
+        .filter(|v| v.is_finite());
     let (lo, hi) = xs.fold(None, |r: Option<(f64, f64)>, v| Some(r.map_or((v, v), |(a, b)| (a.min(v), b.max(v)))))?;
     Some(axis_scale(lo.min(0.0), hi, None, None, None, max_intervals, false))
 }
@@ -303,14 +366,18 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 .point_fills
                 .iter()
                 .find(|(k, _)| *k == i)
-                .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(rctx.color(cc, None)) } else { None })
+                .and_then(|(_, f)| match f {
+                    Fill::Solid { color: cc } => Some(rctx.color(cc, None)),
+                    Fill::None => Some(Rgba::TRANSPARENT),
+                    _ => None,
+                })
                 .unwrap_or_else(|| series_color(rctx, c, i));
             ctx.set_paint(color(col, 1.0));
             ctx.fill_path(&p);
             ctx.set_paint(color(Rgba::WHITE, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(1.0));
             ctx.stroke_path(&p);
-            if c.data_labels {
+            if s.data_labels.unwrap_or(c.data_labels) {
                 let mid = a0 + sweep / 2.0;
                 let lp = Point::new(cen.x + r * 0.65 * mid.cos(), cen.y + r * 0.65 * mid.sin());
                 label(
@@ -656,7 +723,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                         err_marks.push((mid, p0, p1, bar.min(base * 0.8) * 0.5, e.end_cap));
                     }
                 }
-                if c.data_labels {
+                if s.data_labels.unwrap_or(c.data_labels) {
                     let t = c.data_label(s, s.values.get(i).copied().flatten().unwrap_or(0.0));
                     let lr = if horiz {
                         Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1)
@@ -687,6 +754,21 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
     }
     // Lines, areas, scatter: the series that aren't bars.
     let mut acc = vec![0.0; ncat];
+    let bubble_max = c
+        .series
+        .iter()
+        .filter(|s| c.series_kind(s) == ChartType::Bubble)
+        .flat_map(|s| {
+            let implicit = !s.x_values.iter().flatten().any(|v| v.is_finite());
+            s.values.iter().enumerate().filter_map(move |(i, y)| {
+                if !y.is_some_and(f64::is_finite) || !implicit && !s.x_values.get(i).copied().flatten().is_some_and(f64::is_finite) {
+                    return None;
+                }
+                s.sizes.get(i).copied().flatten().filter(|v| v.is_finite() && *v > 0.0)
+            })
+        })
+        .fold(0.0, f64::max);
+    let bubble_radius = (plot.width().min(plot.height()) * 0.08).clamp(4.0, 24.0);
     for (si, s) in c.series.iter().enumerate() {
         let kind = c.series_kind(s);
         if kind.is_bar_like() || kind == ChartType::Stock {
@@ -697,8 +779,14 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         let area_kind = matches!(kind, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let mut pts = vec![];
+        let mut point_indices = Vec::new();
+        let implicit_x = !s.x_values.iter().flatten().any(|v| v.is_finite());
+        let stats = deckcraft_model::chart::SeriesStats::of(&s.values);
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
+            if !v.is_finite() || kind == ChartType::Bubble && !s.sizes.get(i).copied().flatten().is_some_and(|v| v.is_finite() && v > 0.0) {
+                continue;
+            }
             let v = if stacked {
                 let base_v = acc.get(i).copied().unwrap_or(0.0);
                 if let Some(a) = acc.get_mut(i) {
@@ -710,19 +798,20 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             };
             let x = match kind {
                 ChartType::Scatter | ChartType::Bubble => {
-                    match (s.x_values.get(i).copied().flatten().and_then(to_x), s.x_values.iter().flatten().next()) {
+                    match (s.x_values.get(i).copied().flatten().and_then(to_x), implicit_x) {
                         (Some(x), _) => x,
                         // No x values at all: the points are numbered 1, 2, 3...
-                        (None, None) => to_x(i as f64 + 1.0).unwrap_or(plot.x0 + band * (slot(i) + 0.5)),
-                        (None, Some(_)) => continue,
+                        (None, true) => to_x(i as f64 + 1.0).unwrap_or(plot.x0 + band * (slot(i) + 0.5)),
+                        (None, false) => continue,
                     }
                 }
                 _ => plot.x0 + band * (slot(i) + 0.5),
             };
-            if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| e.range(&s.values, i, v)) {
+            if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| e.range_in(&stats, i, v)) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
             pts.push(Point::new(x, to_axis(sec, v)));
+            point_indices.push(i);
         }
         if pts.is_empty() {
             continue;
@@ -736,18 +825,51 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 a.line_to((f.x, zero));
                 a.close_path();
             }
-            ctx.set_paint(color(col, 0.85));
+            ctx.set_paint(color(col, 1.0));
             ctx.fill_path(&a);
-        } else if kind != ChartType::Scatter {
+        } else if kind != ChartType::Bubble
+            && s.line.as_ref().and_then(|l| l.fill.as_ref()).is_none_or(|f| !f.is_none())
+            && (kind != ChartType::Scatter || s.line.as_ref().is_some_and(|l| l.fill.as_ref().is_some_and(|f| !f.is_none())))
+        {
             let lw = s.line.as_ref().and_then(|l| l.width).filter(|w| w.is_finite() && *w > 0.0).unwrap_or(2.25).clamp(0.25, 20.0);
             ctx.set_paint(color(col, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(lw).with_join(kurbo::Join::Round).with_caps(kurbo::Cap::Round));
             ctx.stroke_path(&p);
         }
-        if matches!(kind, ChartType::LineMarkers | ChartType::Scatter | ChartType::Bubble) {
-            ctx.set_paint(color(col, 1.0));
-            for q in &pts {
-                ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
+        let marker = s.marker.as_deref().unwrap_or(if matches!(kind, ChartType::LineMarkers | ChartType::Scatter) { "circle" } else { "none" });
+        if marker != "none" || kind == ChartType::Bubble {
+            for (q, index) in pts.iter().zip(&point_indices) {
+                let radius = if kind == ChartType::Bubble {
+                    bubble_radius * (s.sizes.get(*index).copied().flatten().unwrap_or(0.0) / bubble_max.max(f64::MIN_POSITIVE)).sqrt()
+                } else {
+                    3.5
+                };
+                ctx.set_paint(color(point_fill(rctx, c, si, s, *index), 1.0));
+                let path = marker_path(*q, if kind == ChartType::Bubble { "circle" } else { marker }, radius);
+                ctx.fill_path(&path);
+                if kind == ChartType::Bubble && s.line.as_ref().is_none_or(|l| l.fill.as_ref().is_some_and(|f| !f.is_none())) {
+                    ctx.set_paint(color(series_line(rctx, c, si, s), 1.0));
+                    ctx.set_stroke(kurbo::Stroke::new(s.line.as_ref().and_then(|l| l.width).filter(|v| v.is_finite() && *v >= 0.0).unwrap_or(2.25)));
+                    ctx.stroke_path(&path);
+                }
+            }
+        }
+        if s.data_labels.unwrap_or(c.data_labels) {
+            for (point, index) in pts.iter().zip(&point_indices) {
+                if let Some(value) = s.values.get(*index).copied().flatten() {
+                    label(
+                        ctx,
+                        rctx,
+                        m,
+                        &c.data_label(s, value),
+                        Rect::new(point.x - 30.0, point.y - base * 1.5, point.x + 30.0, point.y - 2.0),
+                        base * 0.9,
+                        Align::Center,
+                        Anchor::Bottom,
+                        text_col,
+                        false,
+                    );
+                }
             }
         }
     }

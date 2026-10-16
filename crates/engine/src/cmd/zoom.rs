@@ -161,6 +161,7 @@ fn zoom(s: &mut Session, p: &Value) -> Result<Value> {
                     tooltip: label,
                     highlight_click: false,
                     zoom_return: back.then_some(t.last),
+                    sound_name: None,
                     sound: None,
                     stop_sound: false,
                 }),

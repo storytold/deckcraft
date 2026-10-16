@@ -326,7 +326,8 @@ fn writable_format_for_path_rejects_formats_deckcraft_does_not_write() {
     assert_eq!(f("a.jpg"), Some("jpeg"));
     assert_eq!(f("a.txt"), Some("outline"));
     assert_eq!(f("a.gif"), Some("gif"));
-    for path in ["a.odp", "a.bmp", "a.svg", "a.outline", "a", "dir.v2/a"] {
+    assert_eq!(f("dir/A.ODP"), Some("odp"));
+    for path in ["a.bmp", "a.svg", "a.outline", "a", "dir.v2/a"] {
         assert_eq!(f(path), None, "{path}");
     }
 }
@@ -340,6 +341,133 @@ fn save_and_reopen_native() {
     s.execute("file.openBytes", &json!({"name": "x.deckcraft", "data": bytes})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), n);
     assert_eq!(s.documents().len(), 2);
+}
+
+#[test]
+fn odp_opens_exports_and_converts_to_pptx_without_overwriting_the_source() {
+    use crate::cmd::file::{open_presentation, read_presentation_file, save_bytes};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 300, 100]})).unwrap();
+    s.execute("text.set", &json!({"text": "ODP interchange"})).unwrap();
+    let odp = s.execute("file.saveBytes", &json!({"format": "odp"})).unwrap()["data"].as_str().unwrap().to_string();
+    let dir = std::env::temp_dir().join(format!("deckcraft-odp-engine-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Talk.ODP");
+    s.execute("file.export", &json!({"path": path})).unwrap();
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(deckcraft_odp::sniff(&bytes));
+    let loaded = read_presentation_file(path.to_str().unwrap()).unwrap();
+    assert!(!loaded.native, "ODP import opens as a copy");
+    let imported = open_presentation("renamed.bin", &bytes).unwrap();
+    let pptx = save_bytes(&imported, "pptx").unwrap();
+    assert!(deckcraft_pptx::sniff(&pptx));
+    let reopened = open_presentation("Talk.pptx", &pptx).unwrap();
+    assert_eq!(reopened.slides.len(), 2);
+    assert!(reopened.slides[1].shapes.iter().any(|s| s.text.as_ref().is_some_and(|t| t.text() == "ODP interchange")));
+    s.execute("file.openBytes", &json!({"name": "Talk.odp", "data": odp})).unwrap();
+    assert!(s.doc().unwrap().path.is_none());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn retained_odp_content_is_not_silently_dropped_by_powerpoint_export() {
+    let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::Size::new(720.0, 405.0), Default::default(), false);
+    p.tags.push(("odp:imported".into(), "1".into()));
+    p.tags.push(("odp:warning".into(), "Embedded application content needs its original ODP package".into()));
+    for format in ["pptx", "potx", "ppsx"] {
+        let error = crate::cmd::file::save_bytes(&p, format).unwrap_err();
+        assert!(error.to_string().contains("would lose retained ODP content"), "{format}: {error}");
+    }
+    let native = crate::cmd::file::save_bytes(&p, "deckcraft").unwrap();
+    let restored = crate::cmd::file::open_presentation("saved.deckcraft", &native).unwrap();
+    assert_eq!(restored.tags, p.tags);
+}
+
+#[test]
+fn original_odp_can_be_recovered_after_edits_and_native_save() {
+    let mut s = Session::with_new();
+    let source = crate::cmd::file::save_bytes(&s.doc().unwrap().doc, "odp").unwrap();
+    s.execute("file.openBytes", &json!({"name": "Original.odp", "data": crate::cmd::base64_encode(&source)})).unwrap();
+    s.execute("file.properties", &json!({"title": "Edited conversion"})).unwrap();
+    let native = crate::cmd::file::save_bytes(&s.doc().unwrap().doc, "deckcraft").unwrap();
+    s.execute("file.openBytes", &json!({"name": "Edited.deckcraft", "data": crate::cmd::base64_encode(&native)})).unwrap();
+    let before = (s.doc().unwrap().path.clone(), s.doc().unwrap().is_dirty(), s.doc().unwrap().doc.props.title.clone());
+    let info = s.execute("file.info", &json!({})).unwrap();
+    assert_eq!(info["originalOdpBytes"], source.len());
+    let data = s.execute("file.sourceBytes", &json!({})).unwrap();
+    assert_eq!(crate::cmd::base64_decode(data["data"].as_str().unwrap()).unwrap(), source);
+    let dir = std::env::temp_dir().join(format!("deckcraft-source-recovery-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("recovered.odp");
+    s.execute("file.exportSource", &json!({"path": path})).unwrap();
+    assert_eq!(std::fs::read(path).unwrap(), source);
+    assert_eq!((s.doc().unwrap().path.clone(), s.doc().unwrap().is_dirty(), s.doc().unwrap().doc.props.title.clone()), before);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn original_odp_recovery_requires_a_retained_source() {
+    let mut s = Session::with_new();
+    assert!(s.execute("file.info", &json!({})).unwrap()["originalOdpBytes"].is_null());
+    assert!(s.execute("file.sourceBytes", &json!({})).unwrap_err().to_string().contains("no retained original"));
+    assert!(s.execute("file.exportSource", &json!({})).is_err());
+}
+
+#[test]
+fn original_odp_recovery_rejects_ambiguous_sources_and_oversized_data_responses() {
+    use deckcraft_model::{MediaId, MediaItem};
+    let mut s = Session::with_new();
+    let source = MediaItem {
+        id: MediaId(100),
+        name: "source.odp".into(),
+        content_type: "application/vnd.deckcraft.odp-source".into(),
+        data: std::sync::Arc::new(vec![1; 11 * 1024 * 1024 + 1]),
+        link: None,
+    };
+    s.edit(|doc, _| {
+        doc.media.push(source.clone());
+        Ok(())
+    })
+    .unwrap();
+    assert!(s.execute("file.sourceBytes", &json!({})).unwrap_err().to_string().contains("too large for a data response"));
+    assert!(crate::cmd::file::retained_odp_source(&s.doc().unwrap().doc).is_ok(), "raw recovery retains its larger storage budget");
+    s.edit(|doc, _| {
+        let mut other = source.clone();
+        other.id = MediaId(101);
+        doc.media.push(other);
+        Ok(())
+    })
+    .unwrap();
+    assert!(s.execute("file.sourceBytes", &json!({})).unwrap_err().to_string().contains("ambiguous"));
+    s.edit(|doc, _| {
+        doc.media.pop();
+        doc.media[0].data = std::sync::Arc::new(Vec::new());
+        Ok(())
+    })
+    .unwrap();
+    assert!(s.execute("file.sourceBytes", &json!({})).unwrap_err().to_string().contains("invalid size"));
+}
+
+#[test]
+fn explicit_numbered_restarts_cannot_silently_change_during_powerpoint_export() {
+    use crate::cmd::file::{open_presentation, save_bytes};
+    let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::Size::new(720.0, 405.0), Default::default(), false);
+    let layout = deckcraft_model::defaults::layout_of_kind(&p, deckcraft_model::LayoutType::Blank).unwrap();
+    let mut text = deckcraft_model::TextBody::from_text("Starts at seven");
+    text.paragraphs[0].props.bullet = Some(deckcraft_model::text::Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 1 });
+    text.paragraphs[0].props.number_restart = Some(7);
+    p.slides.push(std::sync::Arc::new(deckcraft_model::Slide {
+        id: deckcraft_model::SlideId(100),
+        layout,
+        shapes: vec![deckcraft_model::Shape { id: deckcraft_model::ShapeId(101), text: Some(text), ..Default::default() }],
+        ..Default::default()
+    }));
+    for format in ["pptx", "potx", "ppsx"] {
+        assert!(save_bytes(&p, format).unwrap_err().to_string().contains("numbered-list restarts"));
+    }
+    let restored = open_presentation("saved.deckcraft", &save_bytes(&p, "deckcraft").unwrap()).unwrap();
+    assert_eq!(restored.slides[0].shapes[0].text.as_ref().unwrap().paragraphs[0].props.number_restart, Some(7));
 }
 
 #[test]
@@ -1494,10 +1622,13 @@ fn new_slide_body_goes_to_the_content_placeholder() {
 
 #[test]
 fn cell_fill_walks_only_the_cells_a_huge_selection_covers() {
-    // A selection may reach far past the table; filling it touches the real cells and nothing more.
+    // The public selector refuses invalid endpoints, and a hostile internal
+    // selection still cannot make filling walk beyond the real table cells.
     let mut s = session();
     let id = s.execute("insert.table", &json!({"rows": 2, "cols": 2, "rect": [100.0, 100.0, 200.0, 40.0]})).unwrap()["id"].clone();
-    s.execute("table.selectCells", &json!({"id": id, "from": [1, 1], "to": [1_000_000_000u64, 1_000_000_000u64]})).unwrap();
+    assert!(s.execute("table.selectCells", &json!({"id": id, "from": [1, 1], "to": [1_000_000_000u64, 1_000_000_000u64]})).is_err());
+    let owner: deckcraft_model::ShapeId = serde_json::from_value(id.clone()).unwrap();
+    s.select(|_, selection| selection.cells = Some((owner, (1, 1), (1_000_000_000, 1_000_000_000)))).unwrap();
     s.execute("table.cellFill", &json!({"none": true})).unwrap();
     let st = s.doc().unwrap();
     let sh = st.shapes().iter().find(|sh| json!(sh.id) == id).unwrap();
