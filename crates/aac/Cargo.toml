@@ -1,0 +1,19 @@
+[package]
+name = "deckcraft-aac"
+description = "Clean-room AAC-LC encoder and decoder (ISO/IEC 14496-3), ported from FilmCraft"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+default = []
+rayon = ["dep:rayon"]
+
+[dependencies]
+deckcraft-bitstream = { workspace = true }
+thiserror = { workspace = true }
+rayon = { workspace = true, optional = true }
