@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Picture from File…",
             ["Insert", "Images", "Pictures"],
             None,
-            "{path? | data: base64, name?, rect?: [x,y,w,h]}",
+            "{path? | data: base64, name?, rect?: [x,y,w,h], at?: [x,y] centre in slide points}",
             has_slide,
             picture
         ),
@@ -372,6 +372,13 @@ pub fn content_type(name: &str, bytes: &[u8]) -> &'static str {
     }
 }
 
+/// `[x, y]` in slide points. A non-finite component is refused.
+fn point_param(p: &Value, key: &str) -> Option<(f64, f64)> {
+    let a = p.get(key)?.as_array()?;
+    let f = |i: usize| a.get(i).and_then(Value::as_f64).filter(|v| v.is_finite());
+    Some((f(0)?, f(1)?))
+}
+
 /// Natural size of an image in points (96 dpi), fitted inside the slide.
 fn fitted(s: &Session, bytes: &[u8]) -> (f64, f64) {
     let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes))
@@ -408,10 +415,15 @@ fn picture(s: &mut Session, p: &Value) -> Result<Value> {
     });
     let rect = rect_param(p, "rect").unwrap_or_else(|| match target_ph {
         Some((_, b)) => {
-            // Fill the placeholder, cropping the picture to its aspect.
+            // Fill the placeholder, cropping the picture to its aspect. A drop point does not
+            // override a selected placeholder.
             b
         }
-        None => default_rect(s, w, h),
+        None => match point_param(p, "at") {
+            // The centre of the picture, in slide points (a drop onto the slide).
+            Some((x, y)) => Xfrm::new(x - w / 2.0, y - h / 2.0, w, h),
+            None => default_rect(s, w, h),
+        },
     });
     let crop = match (target_ph, rect_param(p, "rect")) {
         (Some(_), None) => {
@@ -2254,5 +2266,48 @@ mod icon_and_picture_tests {
         assert_eq!(pictures(&s, 1).len(), 2);
         let mark = s.active().unwrap().doc.slides[1].raw_ext.clone().unwrap_or_default();
         assert!(mark.starts_with("deckcraft-album:"), "{mark}");
+    }
+}
+
+#[cfg(test)]
+mod drop_at_tests {
+    use super::*;
+
+    fn tiny_png() -> Vec<u8> {
+        let img = image::RgbaImage::from_pixel(4, 2, image::Rgba([200, 20, 20, 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    fn picture_box(s: &Session) -> Xfrm {
+        let st = s.active().unwrap();
+        st.doc.slides[0].shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).and_then(|sh| sh.xfrm).unwrap()
+    }
+
+    #[test]
+    fn a_picture_with_at_is_centred_on_that_point() {
+        let mut s = Session::with_new();
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        let data = base64_encode(&tiny_png());
+        s.execute("insert.picture", &json!({"name": "dot.png", "data": data, "at": [100.0, 80.0]})).unwrap();
+        let b = picture_box(&s);
+        assert!((b.x + b.w / 2.0 - 100.0).abs() < 0.01 && (b.y + b.h / 2.0 - 80.0).abs() < 0.01, "{b:?}");
+    }
+
+    #[test]
+    fn an_explicit_rect_wins_over_at_and_a_bad_at_stays_centred() {
+        let mut s = Session::with_new();
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        let data = base64_encode(&tiny_png());
+        s.execute("insert.picture", &json!({"name": "dot.png", "data": data, "at": [10.0, 10.0], "rect": [4.0, 6.0, 30.0, 20.0]})).unwrap();
+        let b = picture_box(&s);
+        assert!((b.x - 4.0).abs() < 0.01 && (b.y - 6.0).abs() < 0.01 && (b.w - 30.0).abs() < 0.01, "{b:?}");
+
+        let data = base64_encode(&tiny_png());
+        s.execute("insert.picture", &json!({"name": "dot.png", "data": data, "at": [1.0, "no"]})).unwrap();
+        let centred = picture_box(&s);
+        let size = s.active().unwrap().doc.slide_size;
+        assert!((centred.x - (size.width - centred.w) / 2.0).abs() < 0.01, "{centred:?}");
     }
 }
