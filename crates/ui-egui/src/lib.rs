@@ -35,6 +35,7 @@ pub mod theme;
 pub mod thumbs;
 pub mod toast;
 pub mod uifonts;
+pub mod video_job;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -384,7 +385,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool}"),
     ("app.home", "Home", None, "{on?}"),
-    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account, on?: bool}"),
+    (
+        "app.backstage",
+        "File",
+        Some("Alt+F"),
+        "{page?: home|new|open|info|saveAs|print|export|account, task?: pdf|handouts|video|fileType (export), on?: bool}",
+    ),
     ("app.closePresentation", "Close", Some("Cmd+W"), "{}"),
     (
         "app.print",
@@ -406,6 +412,13 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
     ("app.compareDialog", "Compare…", None, "{}"),
+    (
+        "app.exportVideo",
+        "Create a Video",
+        None,
+        "{path?, height?, fps?, secondsPerSlide?, secondsPerClick?, audio?: aac|pcm|none, includeHidden?} → {started}",
+    ),
+    ("app.cancelVideoExport", "Cancel the Video Export", None, "{} → {cancelled}"),
     ("app.dialog", "Open Dialog", None, "{id}"),
     ("app.pasteSpecial", "Paste Special…", Some("Cmd+Alt+V"), "{}"),
     ("app.qat", "Quick Access Toolbar", None, "{add: command id, params?, label?, icon?} | {remove: id, params?} | {reset: true} → [buttons]"),
@@ -453,6 +466,8 @@ pub struct SlideApp {
     pub status: Option<(String, f64)>,
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,
+    /// File › Export › Create a Video while it runs (desktop).
+    pub video_job: Option<video_job::VideoJob>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).
     pub toast: Option<toast::Toast>,
     /// Documents (by uid) whose missing fonts have been mentioned.
@@ -545,6 +560,7 @@ impl SlideApp {
             media: media::MediaHost::new(audio_out),
             status: None,
             opening: None,
+            video_job: None,
             toast: None,
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
@@ -781,6 +797,63 @@ impl SlideApp {
         self.download(&suggested, bytes)
     }
 
+    /// File › Export › Create a Video: asks where (unless `path` is given; `.mov` when the sound
+    /// is PCM) and exports in the background on the desktop, or at once as a download on the
+    /// web. `{started}` is false when the save dialog was dismissed.
+    fn export_video(&mut self, p: &Value) -> Result<Value, String> {
+        if self.video_job.is_some() {
+            return Err("a video is already being exported".into());
+        }
+        let opts = deckcraft_engine::cmd::file::video_opts(p).map_err(|e| e.to_string())?;
+        let Some(doc) = self.session.active().map(|d| d.doc.clone()) else { return Err("no presentation is open".into()) };
+        let ext = if opts.audio == deckcraft_engine::video::AudioFormat::Pcm { "mov" } else { "mp4" };
+        let suggested = self.suggested_name(ext);
+        let path = match p.get("path").and_then(Value::as_str) {
+            Some(path) => Some(path.to_string()),
+            None => match self.services.pick_save.as_mut() {
+                Some(pick) => match pick(&suggested) {
+                    Some(path) => Some(path),
+                    None => return Ok(json!({"started": false})),
+                },
+                None => None,
+            },
+        };
+        match path {
+            #[cfg(not(target_arch = "wasm32"))]
+            Some(path) => {
+                let format = if path.to_ascii_lowercase().ends_with(".mov") { "mov" } else { "mp4" };
+                self.video_job = Some(video_job::start(doc, path.clone(), format.into(), opts)?);
+                self.set_status(format!("Exporting the video to {path}…"));
+                Ok(json!({"started": true, "path": path}))
+            }
+            #[cfg(target_arch = "wasm32")]
+            Some(_) => Err("this window can't write files; the video is a download instead".into()),
+            None => {
+                // The web: no threads, so encode now and hand the file over.
+                let bytes = deckcraft_engine::video::encode(&doc, ext, &opts)
+                    .map(|v| v.bytes)
+                    .map_err(|e| deckcraft_engine::EngineError::BadParams { cmd: "app.exportVideo".into(), msg: e });
+                Ok(json!({"started": self.download(&suggested, bytes)}))
+            }
+        }
+    }
+
+    /// The background video export: its outcome in the status bar once it's done.
+    fn tick_video_job(&mut self, ctx: &egui::Context) {
+        let Some(job) = &self.video_job else { return };
+        match job.poll() {
+            Some(r) => {
+                self.video_job = None;
+                match r {
+                    Ok(msg) => self.set_status(msg),
+                    Err(e) if e == deckcraft_engine::video::CANCELLED => self.set_status("Video export cancelled"),
+                    Err(e) => self.set_status(format!("Couldn't export the video: {e}")),
+                }
+            }
+            None => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
+        }
+    }
+
     /// Hands `bytes` to the browser as a download (web); false (with the reason in the status
     /// bar) when there are no bytes or no way to download.
     fn download(&mut self, name: &str, bytes: deckcraft_engine::Result<Vec<u8>>) -> bool {
@@ -987,7 +1060,18 @@ impl SlideApp {
                 if page.needs_doc() && self.session.active().is_none() {
                     return Err(format!("File › {} needs an open presentation", page.label()));
                 }
+                // Export: which task is showing (pdf, handouts, video, fileType).
+                let task = match p.get("task").and_then(Value::as_str) {
+                    None => None,
+                    Some(t) if page == backstage::Page::Export => {
+                        Some(backstage::ExportTask::parse(t).ok_or_else(|| format!("unknown Export task `{t}`"))?)
+                    }
+                    Some(_) => return Err("`task` is for the Export page".into()),
+                };
                 self.open_backstage(page);
+                if let (Some(t), Some(b)) = (task, self.backstage.as_mut()) {
+                    b.export = t;
+                }
                 return Ok(json!({"page": page.id()}));
             }
             "app.closePresentation" => self.close_presentation(),
@@ -1043,6 +1127,11 @@ impl SlideApp {
                     // The browser's asynchronous picker would open the file as a new document.
                     self.set_status("Compare needs the desktop app for now".to_string());
                 }
+            }
+            "app.exportVideo" => return self.export_video(p),
+            "app.cancelVideoExport" => {
+                let running = self.video_job.as_ref().inspect(|j| j.cancel()).is_some();
+                return Ok(json!({"cancelled": running}));
             }
             "app.dialog" => {
                 let d = p.get("id").and_then(Value::as_str).ok_or("missing `id`")?;
@@ -1782,6 +1871,7 @@ impl SlideApp {
         self.tick_media(&ctx);
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
+        self.tick_video_job(&ctx);
         if self.show.is_some() {
             self.anim_preview = None;
             show::ui(self, ui);
