@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-15 · **Change:** minor (`.deck` folders listed under Files; previous: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -248,7 +248,7 @@ Carried from the 2026-10-07 ROADMAP status and updated with what has landed sinc
 - **Media:** MP3, AAC/M4A, ALAC, WAV, AIFF, CAF, FLAC, Ogg Vorbis and Opus audio; H.264, HEVC,
   VP9 and AV1 video in MP4/MOV/WebM/MKV with pure-Rust decoders; poster frames, trim, fades,
   volume, loop, play across slides.
-- **Files:** `.deckcraft` (zip + JSON), PPTX import/export (also opens `.potx`/`.ppsx`), PDF
+- **Files:** `.deckcraft` (zip + JSON), `.deck` folders (one JSON file per slide, for Git), PPTX import/export (also opens `.potx`/`.ppsx`), PDF
   export (slides, notes, handouts 1–9 per page, text layer, links, bookmarks), PNG/JPEG, outline
   text, AutoRecover.
 - **Automation:** 320 engine commands (`cmd!` registrations in `crates/engine/src/cmd/*`), every
@@ -289,6 +289,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | `.deck` folders (#220) listed under Files; no score change |
 | 2026-10-14 | minor | Community PR wave folded: one headline breadth row (84% over 191 features after `cargo xtask parity`; duplicate checklist rows removed), one row per feature area with the latest breadth and shortfalls, one Themes / Slide show / Views / Review / Automation bullet each (320 engine commands). SmartArt ready ~35% (Text Pane, 6e40335) moves the area mean to 62.8%; dimension and headline percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed to adjust handles: the Transform gallery applies a preset |
 | 2026-10-14 | minor | Media remainder: Insert › Icons places Lucide stroke icons. 3-D models and stock content remain. Headline percentages unchanged; the checklist row stays missing |

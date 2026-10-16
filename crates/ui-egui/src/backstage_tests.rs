@@ -535,3 +535,53 @@ fn print_slides_follow_the_settings() {
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
 }
+
+/// `.deck` folders in the File tab: Export › Change File Type writes one as a copy, Save As saves
+/// the presentation as one (it then lives there), and Open › Open Folder asks for a folder.
+#[test]
+fn deck_folders_in_export_save_as_and_open() {
+    let dir = temp_dir("deck");
+    let (mut services, asked) = saving_into(&dir);
+    let picked: Rc<RefCell<Vec<String>>> = Default::default();
+    let log = picked.clone();
+    services.pick_open = Some(Box::new(move |purpose: &str| {
+        log.borrow_mut().push(purpose.to_string());
+        None
+    }));
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    let title = h.state().session.active().unwrap().title();
+    let folder = dir.join(format!("{title}.deck"));
+
+    // Export › Change File Type › DeckCraft Folder: a copy.
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    click_on_page(&h, "DeckCraft Folder (*.deck)");
+    h.run_steps(2);
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    assert!(folder.join("deck.json").is_file(), "exported as a folder");
+    assert_eq!(h.state().session.active().unwrap().path, None, "exports are copies");
+    std::fs::remove_dir_all(&folder).unwrap();
+
+    // Save As › DeckCraft Folder: the presentation lives in the folder.
+    h.state_mut().run("app.backstage", json!({"page": "saveAs"})).unwrap();
+    h.run_steps(3);
+    h.state_mut().backstage.as_mut().unwrap().file_type = "deck";
+    h.run_steps(2);
+    click_on_page(&h, "Save");
+    h.run_steps(3);
+    assert!(folder.join("deck.json").is_file(), "saved as a folder");
+    let path = folder.to_string_lossy().to_string();
+    assert_eq!(h.state().session.active().unwrap().path.as_deref(), Some(path.as_str()));
+    assert_eq!(*asked.borrow(), vec![format!("{title}.deck"), format!("{title}.deck")]);
+
+    // Open › Open Folder picks a folder.
+    h.state_mut().run("app.backstage", json!({"page": "open"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Open Folder");
+    h.run_steps(2);
+    assert_eq!(*picked.borrow(), vec!["folder".to_string()]);
+    let _ = std::fs::remove_dir_all(&dir);
+}

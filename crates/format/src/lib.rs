@@ -1,10 +1,13 @@
 //! The native `.deckcraft` format: a zip holding `presentation.json` (the model, minus media
 //! bytes), `media/<id>` files with the embedded media, and `mimetype`. Readers ignore unknown
 //! fields, so newer files open in older builds with what those builds understand.
+//!
+//! [`folder`] holds the same document as a `.deck` folder of JSON files, for Git.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
 mod finite;
+pub mod folder;
 
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
@@ -165,6 +168,20 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     }
     repair(&mut p);
     Ok((p, damaged))
+}
+
+/// The end of a `.deck` folder load: media bytes from `data` (by media id), then [`repair`].
+fn finish(mut p: Presentation, mut data: impl FnMut(u32) -> Option<Vec<u8>>) -> Presentation {
+    // A repeated id names the same media: keep the first item.
+    let mut seen = std::collections::HashSet::new();
+    p.media.retain(|m| seen.insert(m.id));
+    for item in &mut p.media {
+        if let Some(bytes) = data(item.id.0) {
+            item.data = Arc::new(bytes);
+        }
+    }
+    repair(&mut p);
+    p
 }
 
 /// Make a loaded presentation safe to edit: a master exists, every slide's layout exists, tables

@@ -14,3 +14,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 zip = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+deckcraft-geom = { workspace = true }
+deckcraft-color = { workspace = true }

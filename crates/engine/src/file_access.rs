@@ -461,8 +461,9 @@ mod tests {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             // `io` and this module are the checked gateway; `tests*.rs` are test-only modules.
             // `recovery` and `spell` touch only the app's own folders (AutoRecover files, the
-            // system and user spelling dictionaries), never a path a command names.
-            if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "recovery.rs" | "spell.rs")
+            // system and user spelling dictionaries), never a path a command names. `folder` is the
+            // gateway for `.deck` folders and checks the roots on every path itself.
+            if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "recovery.rs" | "spell.rs" | "folder.rs")
                 || name.starts_with("tests")
             {
                 continue;

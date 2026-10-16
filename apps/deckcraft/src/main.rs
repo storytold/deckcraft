@@ -93,6 +93,9 @@ fn save_prefs(app: &SlideApp) {
 fn services() -> Services {
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
+            if purpose == "folder" {
+                return rfd::FileDialog::new().set_title("Open a .deck folder").pick_folder().map(|p| p.to_string_lossy().to_string());
+            }
             let d = rfd::FileDialog::new();
             let d = match purpose {
                 "picture" => d.add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]),
@@ -106,11 +109,12 @@ fn services() -> Services {
                     .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
                     .add_filter("DeckCraft", &["deckcraft"])
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
+                    .add_filter("DeckCraft folder (deck.json)", &["json"])
                     .add_filter("Outline", &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
-        pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
+        pick_save: Some(Box::new(|name: &str| save_dialog(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
         clipboard_image: Some(Box::new(pasteboard::image_png)),
@@ -121,6 +125,21 @@ fn services() -> Services {
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
         ..Default::default()
+    }
+}
+
+/// Save dialog for a suggested file name. Presentation formats get a type list (the suggested
+/// one first), so "DeckCraft folder (.deck)" can be picked; a `.deck` name saves a folder.
+fn save_dialog(name: &str) -> rfd::FileDialog {
+    let d = rfd::FileDialog::new().set_file_name(name);
+    let ext = name.rsplit_once('.').map(|(_, e)| e.to_ascii_lowercase()).unwrap_or_default();
+    let mut types: Vec<(&str, &[&str])> = vec![("DeckCraft", &["deckcraft"]), ("PowerPoint", &["pptx"]), ("DeckCraft folder (.deck)", &["deck"])];
+    match types.iter().position(|(_, e)| e.contains(&ext.as_str())) {
+        Some(i) => {
+            types.swap(0, i);
+            types.into_iter().fold(d, |d, (label, exts)| d.add_filter(label, exts))
+        }
+        None => d,
     }
 }
 

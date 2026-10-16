@@ -12,6 +12,7 @@ pub mod compare;
 pub mod connect;
 pub mod drawtable;
 pub mod file_access;
+pub mod folder;
 pub mod fonts;
 pub mod gif_export;
 pub mod guard;

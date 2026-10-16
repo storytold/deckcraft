@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             new
         ),
         cmd!(query "file.templates", "Starter Templates", [], None, "{} → [{name, summary, theme, slides}]", always, templates),
-        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path}", always, open),
+        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path: file or .deck folder or its deck.json}", always, open),
         cmd!(
             noundo "file.adopt",
             "Open",
@@ -29,11 +29,11 @@ pub fn specs() -> Vec<CommandSpec> {
             adopt
         ),
         cmd!(noundo "file.openBytes", "Open Data", [], None, "{name, data: base64}", always, open_bytes),
-        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx}", has_doc, save),
-        cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
+        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx|deck} → {path, bytes} or, for a .deck folder, {path, written, removed, warnings}", has_doc, save),
+        cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?: deckcraft|pptx|deck|outline}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|deck|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -187,6 +187,11 @@ pub struct LoadedFile {
 /// Read and parse the presentation at `path`.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
+    // A `.deck` folder (or its `deck.json`) opens as the folder.
+    if let Some(dir) = crate::folder::folder_to_open(path) {
+        let doc = crate::folder::open(&dir)?;
+        return Ok(LoadedFile { path: dir.to_string_lossy().to_string(), doc, native: true, damaged: vec![] });
+    }
     let bytes = crate::io::read_file(path).map_err(EngineError::Other)?;
     let (doc, damaged) = open_checked(path, &bytes)?;
     let native = deckcraft_format::sniff(&bytes) || deckcraft_pptx::sniff(&bytes);
@@ -216,7 +221,10 @@ fn open(s: &mut Session, p: &Value) -> Result<Value> {
 /// it reads `path` like `file.open`, so the journal entry stays replayable.
 fn adopt(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.adopt", "missing `path`"))?;
-    let staged = p.get("token").and_then(Value::as_u64).and_then(|t| s.take_loaded(t)).filter(|f| f.path == path);
+    let staged = p.get("token").and_then(Value::as_u64).and_then(|t| s.take_loaded(t)).filter(|f| {
+        // A `.deck` folder staged from its `deck.json` carries the folder's path.
+        f.path == path || crate::folder::folder_to_open(path).is_some_and(|d| d.to_string_lossy() == f.path)
+    });
     match staged {
         Some(f) => adopt_loaded(s, f),
         #[cfg(not(target_arch = "wasm32"))]
@@ -260,6 +268,7 @@ fn report_damage(s: &mut Session, damaged: &[String]) -> Result<()> {
 /// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
+        "deck" => Err(EngineError::Other("a .deck presentation is a folder: save it to a path (file.saveAs)".into())),
         f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
@@ -337,7 +346,7 @@ pub fn pdf_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
 }
 
 /// The output extensions [`format_for_path`] maps to a writer of that format.
-pub const WRITABLE_EXTENSIONS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "pdf", "png", "jpg", "jpeg", "gif", "txt", "md"];
+pub const WRITABLE_EXTENSIONS: &[&str] = &["deckcraft", "deck", "pptx", "potx", "ppsx", "pdf", "png", "jpg", "jpeg", "gif", "txt", "md"];
 
 /// The format a file named `path` is written in, or `None` when its extension names no format
 /// DeckCraft writes (`.odp`, `.svg`, no extension …): [`format_for_path`] would save
@@ -354,7 +363,9 @@ pub fn gif_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
 
 pub fn format_for_path(path: &str) -> &'static str {
     let l = path.to_ascii_lowercase();
-    if l.ends_with(".pptx") {
+    if crate::folder::is_folder_path(path) {
+        "deck"
+    } else if l.ends_with(".pptx") {
         "pptx"
     } else if l.ends_with(".potx") {
         "potx"
@@ -400,10 +411,29 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({"needsPath": true}));
     };
     let format = str_param(p, "format").unwrap_or(format_for_path(&path));
+    if format == "deck" {
+        let saved = save_folder(&s.doc()?.doc, &path)?;
+        mark_saved(s, Some(path.clone()))?;
+        return Ok(saved);
+    }
     let bytes = save_bytes(&s.doc()?.doc, format)?;
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
     Ok(json!({"path": path, "bytes": bytes.len()}))
+}
+
+/// Save `doc` as a `.deck` folder at `path`.
+#[cfg(not(target_arch = "wasm32"))]
+fn save_folder(doc: &Presentation, path: &str) -> Result<Value> {
+    let saved = crate::folder::save(std::path::Path::new(path), doc)?;
+    for w in &saved.warnings {
+        log::info!("{path}: {w}");
+    }
+    Ok(json!({"path": path, "written": saved.written, "removed": saved.removed, "warnings": saved.warnings}))
+}
+#[cfg(target_arch = "wasm32")]
+fn save_folder(_doc: &Presentation, _path: &str) -> Result<Value> {
+    Err(EngineError::Other("saving a .deck folder is not available in the browser: save a .deckcraft file instead".into()))
 }
 
 fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
@@ -519,6 +549,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             write_file(&path, &bytes)?;
             Ok(json!({"path": path, "bytes": bytes.len()}))
         }
+        "deck" => save_folder(&st.doc, &path),
         "gif" => {
             // `slides` may be a range, as for PDF ("1-3,5").
             let mut gp = p.clone();
@@ -550,7 +581,11 @@ fn info(s: &mut Session, _p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let doc = &st.doc;
     #[cfg(not(target_arch = "wasm32"))]
-    let bytes = st.path.as_deref().and_then(crate::io::file_len);
+    // A `.deck` folder counts every file in it.
+    let bytes = st
+        .path
+        .as_deref()
+        .and_then(|p| if std::path::Path::new(p).is_dir() { crate::folder::size_on_disk(std::path::Path::new(p)) } else { crate::io::file_len(p) });
     #[cfg(target_arch = "wasm32")]
     let bytes: Option<u64> = None;
     Ok(json!({

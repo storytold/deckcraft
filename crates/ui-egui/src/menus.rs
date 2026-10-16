@@ -165,6 +165,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
             vec![
                 ("New Presentation", "file.new"),
                 ("Open…", "app.openDialog"),
+                ("Open Folder…", "app.openFolderDialog"),
                 ("-", ""),
                 ("Close", "app.closePresentation"),
                 ("Save", "file.save"),

@@ -10,7 +10,7 @@ pub const SUBCOMMANDS: &[Subcommand] = &[
         name: "info",
         usage: "info FILE",
         summary: "print a presentation's slides, layouts and theme as JSON",
-        details: "Prints FILE (.deckcraft or .pptx) as JSON: its slides (index, id, title, layout, how many shapes,
+        details: "Prints FILE (.deckcraft, .pptx or a .deck folder) as JSON: its slides (index, id, title, layout, how many shapes,
 notes, transition), its layouts, theme fonts, sections and slide size.
 
 The shapes of one slide, with their ids, boxes and text, come from the slide.inspect command:
@@ -49,8 +49,8 @@ OUT-t0.250.png and so on. Prints each image's path, size, transition and time.
         name: "convert",
         usage: "convert IN OUT",
         summary: "save a presentation in the format OUT's extension names",
-        details: "Opens IN (.deckcraft or .pptx) and writes it to OUT, in the format OUT's extension names:
-.deckcraft, .pptx, .pdf, .txt or .md for the outline, .png or .jpg for the first slide, .gif for an
+        details: "Opens IN (.deckcraft, .pptx or a .deck folder) and writes it to OUT, in the format OUT's extension names:
+.deckcraft, .pptx, .deck (a folder), .pdf, .txt or .md for the outline, .png or .jpg for the first slide, .gif for an
 animated GIF with one frame per slide. Other extensions are refused. Prints OUT.
 
   deckcraft-cli convert deck.deckcraft deck.pptx",

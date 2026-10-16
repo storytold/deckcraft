@@ -211,9 +211,10 @@ impl Backstage {
 }
 
 /// Save As and Change File Type: (id for [`SlideApp::export_as`], label, detail).
-pub const SAVE_TYPES: [(&str, &str, &str); 6] = [
+pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
     ("pptx", "PowerPoint Presentation (*.pptx)", "Opens in PowerPoint and other presentation apps"),
     ("deckcraft", "DeckCraft Presentation (*.deckcraft)", "DeckCraft's own format: everything is kept"),
+    ("deck", "DeckCraft Folder (*.deck)", "DeckCraft's format as a folder, one JSON file per slide, for version control"),
     ("pdf", "PDF (*.pdf)", "A fixed copy that keeps its layout on any device"),
     ("outline", "Outline (*.txt)", "The slide titles and bullet text as plain text"),
     ("png", "PNG Picture (*.png)", "The current slide as a picture"),
@@ -774,6 +775,9 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             if place_row(ui, Icon::OpenFolder, "Browse", false, 220.0).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
                 let _ = app.run("app.openDialog", json!({}));
             }
+            if place_row(ui, Icon::OpenFolder, "Open Folder", false, 220.0).on_hover_text("Open a presentation saved as a .deck folder").clicked() {
+                let _ = app.run("app.openFolderDialog", json!({}));
+            }
             if app.session.recovery_dir.is_some() {
                 ui.add_space(24.0);
                 if ui.button("Recover Unsaved Presentations").clicked() {
@@ -922,7 +926,8 @@ pub fn format_bytes(b: u64) -> String {
 }
 
 /// Save As: the file type, then the system Save dialog (desktop) or a download (web). A
-/// presentation saved as .pptx or .deckcraft takes the new file; the other types are copies.
+/// presentation saved as .pptx, .deckcraft or a .deck folder takes the new file; the other types
+/// are copies.
 fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();
@@ -943,7 +948,7 @@ fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
         if save.on_hover_text(if web { "Download the file" } else { "Choose where to save" }).clicked() {
             let fmt = bs.file_type;
-            let done = if matches!(fmt, "pptx" | "deckcraft") {
+            let done = if matches!(fmt, "pptx" | "deckcraft" | "deck") {
                 let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
                 app.save_as_dialog(fmt);
                 web || app.session.active().map(|d| (d.path.clone(), d.is_dirty())) != before

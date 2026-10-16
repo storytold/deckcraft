@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-15 · **Change:** minor (`.deck` folder format added; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -24,6 +24,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | `.odp` OpenDocument | Editor | no | no | | none |
 | `.thmx` Office theme | Viewer | no | no | Browse for themes is a P2 row | none |
 | `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible | `crates/format` tests |
+| `.deck` folder (native, one JSON file per slide, for Git; [spec](deck-folder-format.md)) | n/a | yes (also folders written by `deckgit`) | yes | Lossless (same model as `.deckcraft`), byte-identical re-save, stable slide file names, unknown keys kept; not in the browser build | `crates/format/src/folder/tests.rs`, `crates/engine/src/folder/tests.rs`, `apps/deckcraft-cli/tests/deck_folder.rs`, ui-egui dialog test |
 | PDF | export | no | yes | Slides, notes pages, handouts (1–9); real-text layer with embedded subsets, links, bookmarks. Slide artwork is a raster image at print resolution, not vector | `crates/pdf` tests |
 | Outline `.rtf` / `.txt` | export (RTF), import (outline) | `.txt` outline; `.md` as Markdown (headings are slides, list items bullets) (`slide.fromOutline`) | `.txt` outline | No RTF | engine tests |
 | PNG / JPEG slide images | export | n/a | yes (`file.export`, `deckcraft-cli render`) | Matches the editor's renderer. PNG `pHYs` and JPEG JFIF density are `scale` × 72 dpi (default scale 2 is 144 dpi), so Preview shows the slide's real size | render and engine tests |
@@ -124,4 +125,5 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-11 | minor | Speaker notes: formatting shown in the notes pane and Notes Page and kept when they are edited |
 | 2026-10-11 | minor | Animated GIF of the deck: export yes (#171) |
 | 2026-10-10 | major | Created from PowerPoint 16.113.4's `CFBundleDocumentTypes`, `crates/pptx` reader/writer and tests, and the open round-trip issues |
+| 2026-10-15 | minor | `.deck` folder format (#220): read and write, with its tests; no change to the dimension score (not a PowerPoint format) |
 | 2026-10-13 | minor | Comments: the writer emits the modern threaded part (`p188`) next to the flattened legacy one; the reader prefers the modern part and scales its EMU positions (#70) |

@@ -79,7 +79,7 @@ fn late_picker_files_keep_their_document_slide_and_operation() {
     app.pick_and_insert("audio", "insert.audio");
     app.session.execute("slide.go", &json!({"id": slide0.0})).unwrap();
     app.pick_and_insert("picture", "insert.picture");
-    app.pick_and_open();
+    app.pick_and_open("open");
 
     app.session.execute("file.new", &json!({})).unwrap();
     let uid_b = app.session.active().unwrap().uid;

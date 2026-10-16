@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-15 · **Change:** minor (`.deck` folders in the File tab; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
 direct manipulation, keyboard and precision. Observations of PowerPoint are kept locally in
@@ -165,6 +165,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | File tab: `.deck` folders in Open (Open Folder), Save As and Export › Change File Type; Info gives a folder's size |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: one row each for Format Shape, Dialogs (41, listed from `dialogs.rs`), Animation Pane (timeline is in), window, Quick Access Toolbar, Format Background, rulers, image paste, context menus, exact size and edit points; estimates re-totalled (~26–46 h) |
 | 2026-10-13 | trivial | Eyedropper in the colour menus (#367) |
