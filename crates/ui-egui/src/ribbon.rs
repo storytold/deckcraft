@@ -484,7 +484,8 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let size = st.get("size").and_then(Value::as_f64);
                 let fams = font_families(app);
                 let theme_fonts: Vec<String> = fams.iter().take(2).cloned().collect();
-                dropdown(ui, "font", &font, 150.0, en, |ui| {
+                // Also with nothing selected: the pick sets up the next text box (#470).
+                dropdown(ui, "font", &font, 150.0, enabled(app, "format.font"), |ui| {
                     for (k, f) in fams.iter().enumerate() {
                         let label = if k == 0 && theme_fonts.len() == 2 {
                             format!("{f} (Headings)")
@@ -509,7 +510,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     }
                 });
                 let size_text = size.map(|s| widgets::fmt_num(s, "")).unwrap_or_default();
-                dropdown(ui, "size", &size_text, 52.0, en, |ui| {
+                dropdown(ui, "size", &size_text, 52.0, enabled(app, "format.size"), |ui| {
                     for s in deckcraft_engine::cmd::format::SIZES.iter().chain([72.0, 80.0, 88.0, 96.0].iter()) {
                         if ui.button(widgets::fmt_num(*s, "")).clicked() {
                             run(app, "format.size", json!({"size": s}));
