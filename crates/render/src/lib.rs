@@ -1097,7 +1097,7 @@ impl Renderer {
             }
             _ => {
                 if let Some(fl) = &fill
-                    && !(empty_ph && f.opts.edit && s.fill.is_none())
+                    && !(empty_ph && f.opts.edit && s.fill.is_none() && s.line.is_none() && s.style.is_none())
                 {
                     for (i, sp) in geo.paths.iter().enumerate() {
                         if sp.fill == FillMode::None || fade(i).fill <= 0.0 {
