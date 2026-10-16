@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 deckcraft-engine = { workspace = true }
+deckcraft-fonts = { workspace = true }
 deckcraft-ui-egui = { workspace = true }
 egui = { workspace = true }
 log = { workspace = true }

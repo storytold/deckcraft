@@ -220,6 +220,10 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Web: trigger browser local system fonts query via Font Access API.
+    pub load_system_fonts: Option<Box<dyn Fn()>>,
+    /// Web: request font file bytes for a family on demand.
+    pub fetch_font: Option<Box<dyn Fn(&str)>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -457,6 +461,8 @@ pub struct SlideApp {
     pub toast: Option<toast::Toast>,
     /// Documents (by uid) whose missing fonts have been mentioned.
     fonts_noted: std::collections::HashSet<u64>,
+    /// Document revision last checked for on-demand fonts: (uid, revision).
+    fonts_seen: (u64, u64),
     pub perf: Perf,
     /// Synthetic input events (control channel `ui.click` etc.), injected one per frame.
     pub synthetic: Vec<egui::Event>,
@@ -547,6 +553,7 @@ impl SlideApp {
             opening: None,
             toast: None,
             fonts_noted: Default::default(),
+            fonts_seen: (0, 0),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],
             canvas_rect: None,
@@ -1546,6 +1553,15 @@ impl SlideApp {
         if self.fonts_ready {
             self.note_ui_text(ctx);
         }
+        let seen = self.session.active().map(|d| (d.uid, d.revision)).unwrap_or((0, 0));
+        if seen != self.fonts_seen {
+            self.fonts_seen = seen;
+            if let Some(fetch) = &self.services.fetch_font {
+                for f in self.used_fonts() {
+                    fetch(&f);
+                }
+            }
+        }
         self.collect_screenshots(ctx);
         self.issue_screenshots(ctx);
         // Closing the window with unsaved changes asks first.
@@ -1602,6 +1618,11 @@ impl SlideApp {
             self.ui_fonts.note_doc(ctx, st);
         }
         self.ui_fonts.apply(ctx);
+    }
+
+    /// Fonts actively used in the active presentation's slides.
+    pub fn used_fonts(&self) -> Vec<String> {
+        self.session.active().map(|d| deckcraft_engine::fonts::used_fonts(&d.doc)).unwrap_or_default()
     }
 
     /// An input method's event for the slide's text (#101): the preedit is shown in the text and

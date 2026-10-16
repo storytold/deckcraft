@@ -318,6 +318,8 @@ pub struct FontDb {
     /// System fallback state: enabled, and characters no system font covers.
     #[cfg(not(target_arch = "wasm32"))]
     sys: Mutex<SysFallback>,
+    /// Font families registered from web (Local Font Access API).
+    web_families: RwLock<Vec<String>>,
     /// Held while installed fonts are loaded, so threads that need the same family wait for one
     /// load instead of racing it: what a lookup finds doesn't depend on which thread got there
     /// first.
@@ -797,6 +799,7 @@ impl FontDb {
             loaded_families: Mutex::new(std::collections::HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
             sys: Mutex::new(SysFallback { enabled: true, ..Default::default() }),
+            web_families: RwLock::new(Vec::new()),
             #[cfg(not(target_arch = "wasm32"))]
             loading: Mutex::new(()),
         }
@@ -832,14 +835,30 @@ impl FontDb {
         self.catalog.read().unwrap_or_else(|e| e.into_inner())
     }
 
-    /// Family names available (loaded plus cataloged system fonts), sorted and deduplicated.
+    /// Family names available (loaded plus cataloged system fonts and web-discovered fonts), sorted and deduplicated.
     pub fn families(&self) -> Vec<String> {
         let mut v: Vec<String> = self.read_faces().iter().map(|f| f.family.clone()).collect();
         #[cfg(not(target_arch = "wasm32"))]
         v.extend(self.read_catalog().iter().map(|c| c.family.clone()));
+        v.extend(self.web_families.read().unwrap_or_else(|e| e.into_inner()).iter().cloned());
         v.sort_by_key(|a| a.to_lowercase());
         v.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         v
+    }
+
+    /// Register font family names discovered on web (e.g. from Local Font Access API).
+    pub fn register_web_families(&self, families: Vec<String>) {
+        let mut wf = self.web_families.write().unwrap_or_else(|e| e.into_inner());
+        for f in families {
+            if !wf.iter().any(|existing| existing.eq_ignore_ascii_case(&f)) {
+                wf.push(f);
+            }
+        }
+    }
+
+    /// Whether web font families have been cataloged/registered.
+    pub fn web_catalog_loaded(&self) -> bool {
+        !self.web_families.read().unwrap_or_else(|e| e.into_inner()).is_empty()
     }
 
     /// Style names available for `family` (Regular first, then by weight).
@@ -1066,10 +1085,14 @@ impl FontDb {
         if self.read_catalog().iter().any(|c| c.family.eq_ignore_ascii_case(family)) {
             return true;
         }
+        if self.web_families.read().unwrap_or_else(|e| e.into_inner()).iter().any(|f| f.eq_ignore_ascii_case(family)) {
+            return true;
+        }
         false
     }
 
-    pub(crate) fn is_loaded(&self, family: &str) -> bool {
+    /// Whether font faces have been loaded into memory for `family`.
+    pub fn is_loaded(&self, family: &str) -> bool {
         self.read_faces()
             .iter()
             .any(|f| f.family.eq_ignore_ascii_case(family) || f.legacy.as_ref().is_some_and(|(lf, _)| lf.eq_ignore_ascii_case(family)))

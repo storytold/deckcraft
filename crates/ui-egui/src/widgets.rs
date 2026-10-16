@@ -482,6 +482,31 @@ pub fn drop_button(ui: &mut Ui, label: &str, size: egui::Vec2, enabled: bool) ->
     r
 }
 
+/// Truncates text with an ellipsis if it exceeds `max_width`.
+pub fn truncate_with_ellipsis(ui: &egui::Ui, text: &str, max_width: f32) -> String {
+    let font_id = egui::FontId::proportional(12.0);
+    let full_width = ui.painter().layout_no_wrap(text.to_string(), font_id.clone(), egui::Color32::BLACK).size().x;
+    if full_width <= max_width {
+        return text.to_string();
+    }
+
+    let ellipsis = "…";
+    let ellipsis_width = ui.painter().layout_no_wrap(ellipsis.to_string(), font_id.clone(), egui::Color32::BLACK).size().x;
+    let target_width = (max_width - ellipsis_width).max(0.0);
+
+    let mut truncated = String::new();
+    for ch in text.chars() {
+        truncated.push(ch);
+        let w = ui.painter().layout_no_wrap(truncated.clone(), font_id.clone(), egui::Color32::BLACK).size().x;
+        if w > target_width {
+            truncated.pop();
+            break;
+        }
+    }
+    truncated.push_str(ellipsis);
+    truncated
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -491,6 +516,21 @@ mod tests {
     use super::*;
     use egui::accesskit::Role;
     use egui_kittest::kittest::Queryable;
+
+    #[test]
+    fn test_truncate_with_ellipsis() {
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let short = "Short";
+            assert_eq!(truncate_with_ellipsis(ui, short, 100.0), "Short");
+
+            let long = "Very Long Font Family Name Extra Super Long Text That Definitely Exceeds Width";
+            let truncated = truncate_with_ellipsis(ui, long, 50.0);
+            assert!(truncated.ends_with('…'));
+            assert!(truncated.len() < long.len());
+        });
+        out.textures_delta.clear();
+    }
 
     /// #32: clicking the "More Colors" hex field closed the colour menu before anything could be
     /// typed. It stays open now; Enter picks the colour and closes it.
