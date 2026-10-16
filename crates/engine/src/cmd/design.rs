@@ -599,7 +599,13 @@ fn backgrounds_already(doc: &Presentation, sel: &crate::Selection, index: Option
         t @ (Target::Handout | Target::NotesMaster) => crate::page_master(doc, t).is_some_and(|m| m.background == *bg),
         Target::Slides => {
             let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![index.unwrap_or(sel.slide)] };
-            !list.is_empty() && list.iter().all(|i| doc.slides.get(*i).is_some_and(|sl| sl.background == *bg))
+            let slides_match = !list.is_empty() && list.iter().all(|i| doc.slides.get(*i).is_some_and(|sl| sl.background == *bg));
+            if all {
+                let masters_match = doc.masters.iter().all(|m| m.background == *bg);
+                slides_match && masters_match
+            } else {
+                slides_match
+            }
         }
     }
 }
@@ -622,6 +628,15 @@ fn write_background(doc: &mut Presentation, sel: &crate::Selection, index: Optio
             }
         }
         Target::Slides => {
+            if all {
+                for m in &mut doc.masters {
+                    let m = Arc::make_mut(m);
+                    m.background = bg.clone();
+                    for l in &mut m.layouts {
+                        l.background = None;
+                    }
+                }
+            }
             let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![index.unwrap_or(sel.slide)] };
             for i in list {
                 if let Some(sl) = doc.slides.get_mut(i) {
@@ -639,7 +654,9 @@ fn copy_slide_background(s: &mut Session) -> Result<Value> {
             return Err(bad("design.background", "copy applies to slides"));
         }
         let bg = st.doc.slides.get(st.selection.slide).and_then(|sl| sl.background.clone());
-        if st.doc.slides.iter().all(|sl| sl.background == bg) {
+        let slides_match = st.doc.slides.iter().all(|sl| sl.background == bg);
+        let masters_match = st.doc.masters.iter().all(|m| m.background == bg);
+        if slides_match && masters_match {
             return ok();
         }
         bg
@@ -1726,6 +1743,44 @@ mod tests {
         assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Format Background");
         s.execute("design.background", &json!({"copy": true})).unwrap();
         assert_eq!(undo_len(&s), n + 1, "copying an already shared background is not an undo step");
+    }
+
+    #[test]
+    fn background_all_applies_to_master_and_new_slides_inherit() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+        let s0 = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        assert_eq!(s0["background"], "#121826");
+
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"color": "#0D0D0D", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1);
+
+        // Idempotency: re-applying the same background to all is a no-op (no extra undo step)
+        s.execute("design.background", &json!({"color": "#0D0D0D", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "re-applying already applied background is not an undo step");
+
+        // Slide 0 has new background, master has new background, layouts cleared
+        let doc = &s.doc().unwrap().doc;
+        assert!(matches!(doc.slides[0].background, Some(Background::Fill { .. })));
+        assert_eq!(doc.masters[0].background, doc.slides[0].background);
+        for l in &doc.masters[0].layouts {
+            assert!(l.background.is_none());
+        }
+
+        // Newly added slides inherit the master background (fixes #891)
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "new"})).unwrap();
+        let s0_after = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        let s1_after = s.execute("slide.inspect", &json!({"index": 1})).unwrap();
+        assert_eq!(s0_after["background"], "#0D0D0D");
+        assert_eq!(s1_after["background"], "#0D0D0D");
+
+        // Undo restores previous slide and master backgrounds
+        s.execute("edit.undo", &json!({})).unwrap(); // undos slide.new
+        assert_eq!(s.doc().unwrap().doc.slides.len(), 1);
+        s.execute("edit.undo", &json!({})).unwrap(); // undos design.background
+        let s0_reverted = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        assert_eq!(s0_reverted["background"], "#121826");
     }
 }
 
