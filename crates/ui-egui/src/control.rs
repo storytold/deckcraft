@@ -341,6 +341,11 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             } else {
                 app.start_show(app.show_start_index(), reading);
             }
+            if p.get("record").and_then(Value::as_bool) == Some(true)
+                && let Some(show) = app.show.as_mut()
+            {
+                show.record = true;
+            }
             ok(Value::Null)
         }
         "show.end" => {

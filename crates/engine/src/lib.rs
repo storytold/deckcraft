@@ -399,6 +399,9 @@ pub enum UiRequest {
     },
     StartShow {
         from: usize,
+        /// Record timings and pen ink, rather than only playing the show.
+        #[serde(default)]
+        record: bool,
     },
     Message {
         text: String,
