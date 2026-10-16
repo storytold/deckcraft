@@ -22,6 +22,14 @@ egui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# The Arabic dictionary's translations are handed out in visual order (i18n/bidi.rs): a UAX #9
+# reordering pass for egui's run-by-run, left-to-right text layout.
+unicode-bidi = "0.3.18"
+
+# Craft AI's model-runtime bridge: the loopback HTTP client. Native only — the web build draws
+# the pane's note instead, and ureq's TLS stack does not build for wasm32.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "2", features = ["json"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
