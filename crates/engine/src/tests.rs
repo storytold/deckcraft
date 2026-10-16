@@ -3517,7 +3517,8 @@ fn background_loads_are_adopted_through_a_command() {
     replay.execute(&id, &params).unwrap();
     assert_eq!(replay.doc().unwrap().doc.slides.len(), 2);
     // A token staged for another path is not taken for this one.
-    let other = s.stage_loaded(cmd::file::LoadedFile { path: "/elsewhere.pptx".into(), doc: Default::default(), native: true, damaged: vec![] });
+    let other =
+        s.stage_loaded(cmd::file::LoadedFile { path: "/elsewhere.pptx".into(), doc: Default::default(), native: true, damaged: Default::default() });
     s.execute("file.adopt", &json!({"path": path, "token": other})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
     assert!(s.execute("file.adopt", &json!({})).is_err());
@@ -3591,4 +3592,39 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     let t = table_of(&s, id);
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
+}
+
+#[test]
+fn opening_a_pptx_with_an_unreadable_slide_says_so() {
+    use std::io::{Cursor, Read, Write};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
+    let good = deckcraft_pptx::export(s.doc().unwrap().doc.as_ref()).unwrap();
+    let mut zin = zip::ZipArchive::new(Cursor::new(good.clone())).unwrap();
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let o = zip::write::SimpleFileOptions::default();
+    for i in 0..zin.len() {
+        let mut f = zin.by_index(i).unwrap();
+        let mut d = vec![];
+        f.read_to_end(&mut d).unwrap();
+        if f.name() == "ppt/slides/slide2.xml" {
+            d = b"<p:sld".to_vec();
+        }
+        out.start_file(f.name(), o).unwrap();
+        out.write_all(&d).unwrap();
+    }
+    let broken = out.finish().unwrap().into_inner();
+
+    let mut t = session();
+    let r = t.execute("file.openBytes", &json!({"name": "Broken.pptx", "data": cmd::base64_encode(&broken)})).unwrap();
+    assert_eq!(r["lostSlides"], json!(["ppt/slides/slide2.xml"]), "{r}");
+    assert_eq!(t.doc().unwrap().doc.slides.len(), 1);
+    assert!(t.doc().unwrap().title.ends_with("(Repaired)"), "{}", t.doc().unwrap().title);
+    assert!(t.ui_requests.iter().any(|u| matches!(u, crate::UiRequest::Message { text } if text.contains("1 slide in this file couldn't be read"))));
+    // A good file reports nothing.
+    let mut u = session();
+    let r = u.execute("file.openBytes", &json!({"name": "Fine.pptx", "data": cmd::base64_encode(&good)})).unwrap();
+    assert_eq!(r["lostSlides"], json!([]), "{r}");
+    assert!(u.ui_requests.is_empty());
 }

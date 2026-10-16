@@ -117,8 +117,24 @@ fn open(s: &mut Session, input: Option<&str>, sample: bool) -> Result<(), String
         return deckcraft_engine::sample::open_sample(s).map_err(|e| e.to_string());
     }
     match input {
-        Some(p) => s.execute("file.open", &json!({"path": p})).map(|_| ()).map_err(|e| e.to_string()),
+        Some(p) => {
+            let opened = s.execute("file.open", &json!({"path": p})).map_err(|e| e.to_string())?;
+            warn_if_damaged(p, &opened);
+            Ok(())
+        }
         None => s.execute("file.new", &json!({})).map(|_| ()).map_err(|e| e.to_string()),
+    }
+}
+
+/// Say on stderr what a file lost on opening, so a saved copy doesn't silently miss it (#203).
+fn warn_if_damaged(path: &str, opened: &serde_json::Value) {
+    let count = |key: &str| opened.get(key).and_then(|v| v.as_array()).map_or(0, |a| a.len());
+    let (slides, media) = (count("lostSlides"), count("damagedMedia"));
+    if slides > 0 {
+        eprintln!("deckcraft-cli: warning: {path}: {slides} slide{} couldn't be read and left out", if slides == 1 { "" } else { "s" });
+    }
+    if media > 0 {
+        eprintln!("deckcraft-cli: warning: {path}: {media} picture or media file{} couldn't be read", if media == 1 { "" } else { "s" });
     }
 }
 
