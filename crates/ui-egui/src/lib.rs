@@ -2642,6 +2642,41 @@ mod tests {
         assert_ne!(s.session.prefs.snap_to_grid, before.snap_to_grid, "Done keeps snap to grid");
     }
 
+    /// About dialog: Close and Cancel each close the dialog.
+    #[test]
+    fn about_dialog_close_and_cancel_close_it() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        harness.state_mut().run("app.about", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_some());
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+            .next()
+            .unwrap_or_else(|| panic!("no Cancel button in About dialog"))
+            .click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "Cancel closes About dialog");
+
+        harness.state_mut().run("app.about", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_some());
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Close")
+            .next()
+            .unwrap_or_else(|| panic!("no Close button in About dialog"))
+            .click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "Close closes About dialog");
+    }
+
     fn canvas_harness() -> egui_kittest::Harness<'static, SlideApp> {
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SlideApp| {

@@ -2085,8 +2085,8 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
                 _ => about(app, ui),
             }
-            let (ok, _) = buttons(ui, "Close");
-            ok
+            let (ok, cancel) = buttons(ui, "Close");
+            ok || cancel
         }
         "autocorrect" => {
             let pr = &mut app.session.prefs;
