@@ -402,7 +402,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
-    ("app.saveAsDialog", "Save As…", None, "{}"),
+    ("app.saveAsDialog", "Save As…", Some("Cmd+Shift+S"), "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
     ("app.compareDialog", "Compare…", None, "{}"),
@@ -1012,7 +1012,7 @@ impl SlideApp {
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
-            "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
+            "app.saveAsDialog" => self.save_as(),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
             "app.browseThemeDialog" => {
@@ -1293,6 +1293,19 @@ impl SlideApp {
         true
     }
 
+    /// Save a copy under a new name. The file this presentation already has is left as it
+    /// was; the presentation then is the new file. One that has never been saved is written as
+    /// PowerPoint, as on File › Save As. On the web the copy is downloaded and this presentation
+    /// is left as it was.
+    pub fn save_as(&mut self) {
+        let Some(path) = self.session.active().map(|d| d.path.clone()) else { return };
+        let format = match path.as_deref().map(deckcraft_engine::cmd::file::format_for_path) {
+            Some("deckcraft") => "deckcraft",
+            _ => "pptx",
+        };
+        self.save_as_dialog(format);
+    }
+
     pub fn save(&mut self) {
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
@@ -1318,7 +1331,7 @@ impl SlideApp {
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
+                        self.save_as();
                     }
                 }
                 UiRequest::Media { action, shape, ms } => {
@@ -2039,6 +2052,10 @@ mod datetime_tests;
 mod inbox_tests;
 
 #[cfg(test)]
+#[path = "save_as_tests.rs"]
+mod save_as_tests;
+
+#[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -2123,27 +2140,33 @@ mod tests {
         );
         harness.run_steps(2);
         let ids = |app: &SlideApp| app.ui.qat.iter().map(|q| q.id.clone()).collect::<Vec<_>>();
-        assert_eq!(ids(harness.state()), ["app.home", "file.save", "app.exportDialog", "edit.undo", "edit.redo", "show.fromStart"]);
+        assert_eq!(
+            ids(harness.state()),
+            ["app.home", "file.save", "app.saveAsDialog", "app.exportDialog", "edit.undo", "edit.redo", "show.fromStart"]
+        );
         let app = harness.state_mut();
         app.run("app.qat", json!({"add": "insert.table", "label": "Table", "icon": "table"})).unwrap();
         app.run("app.qat", json!({"add": "insert.table"})).unwrap();
         app.run("app.qat", json!({"add": "view.pane", "params": {"pane": "selection"}, "label": "Selection Pane"})).unwrap();
         assert!(app.run("app.qat", json!({"add": "no.such"})).is_err());
         app.run("app.qat", json!({"remove": "edit.redo"})).unwrap();
-        assert_eq!(ids(app), ["app.home", "file.save", "app.exportDialog", "edit.undo", "show.fromStart", "insert.table", "view.pane"]);
-        assert_eq!(app.ui.qat[5].label, "Table");
+        assert_eq!(
+            ids(app),
+            ["app.home", "file.save", "app.saveAsDialog", "app.exportDialog", "edit.undo", "show.fromStart", "insert.table", "view.pane"]
+        );
+        assert_eq!(app.ui.qat[6].label, "Table");
         // Saved with the rest of the UI state and read back.
         let back: UiState = serde_json::from_value(serde_json::to_value(&app.ui).unwrap()).unwrap();
         assert_eq!(back.qat, app.ui.qat);
         harness.run_steps(2);
         let app = harness.state_mut();
         app.run("app.qat", json!({"remove": "view.pane", "params": {"pane": "selection"}})).unwrap();
-        assert_eq!(app.ui.qat.len(), 6);
+        assert_eq!(app.ui.qat.len(), 7);
         app.run("app.qat", json!({"reset": true})).unwrap();
-        assert_eq!(ids(app), ["app.home", "file.save", "app.exportDialog", "edit.undo", "edit.redo", "show.fromStart"]);
+        assert_eq!(ids(app), ["app.home", "file.save", "app.saveAsDialog", "app.exportDialog", "edit.undo", "edit.redo", "show.fromStart"]);
         // An older settings file without the toolbar gets the defaults.
         let old: UiState = serde_json::from_value(json!({"tab": "Home"})).unwrap();
-        assert_eq!(old.qat.len(), 6);
+        assert_eq!(old.qat.len(), 7);
     }
 
     #[test]
@@ -2370,8 +2393,8 @@ mod tests {
         );
         harness.run_steps(2);
         assert!(harness.state().dialog.is_none());
-        // Quick access: Home, Save, Export, each 24 points wide with 2 between, from x = 10.
-        let pos = egui::pos2(10.0 + 2.0 * 26.0 + 12.0, ribbon::TITLE_H / 2.0);
+        // Quick access: Home, Save, Save As, Export, each 24 points wide with 2 between, from x = 10.
+        let pos = egui::pos2(10.0 + 3.0 * 26.0 + 12.0, ribbon::TITLE_H / 2.0);
         harness.hover_at(pos);
         harness.run_steps(1);
         harness.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: egui::Modifiers::NONE });
