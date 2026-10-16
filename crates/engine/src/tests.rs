@@ -294,6 +294,11 @@ fn pointer_draw_move_resize() {
 fn click_into_placeholder_starts_editing() {
     let mut s = session();
     let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Mods::default(), tol: 3.0, pressure: None };
+    // The first click selects the placeholder (#787).
+    s.pointer(ev(PointerKind::Down, 480.0, 200.0)).unwrap();
+    s.pointer(ev(PointerKind::Up, 480.0, 200.0)).unwrap();
+    assert!(s.doc().unwrap().selection.text.is_none(), "the first click selects, not edits");
+    // A second click on the selected shape enters text editing.
     s.pointer(ev(PointerKind::Down, 480.0, 200.0)).unwrap();
     s.pointer(ev(PointerKind::Up, 480.0, 200.0)).unwrap();
     assert!(s.doc().unwrap().selection.text.is_some());
@@ -3591,4 +3596,34 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     let t = table_of(&s, id);
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
+}
+
+/// #811: after pressing Enter in a bullet list, the new empty paragraph must produce an
+/// `empty_bullets` entry in the layout so the bullet preview appears.
+#[test]
+fn bullet_preview_after_enter() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let shape =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [50.0, 50.0, 400.0, 200.0], "text": "Item 1"})).unwrap()["id"].as_u64().unwrap();
+    let shape_id = deckcraft_model::ShapeId(shape as u32);
+    s.execute("text.edit", &json!({"id": shape_id})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.bullets", &json!({})).unwrap();
+    // Move the caret to the end of the text.
+    s.execute("text.move", &json!({"to": "end"})).unwrap();
+    // Press Enter: the engine inserts a paragraph break.
+    s.execute(
+        "text.insert",
+        &json!({"text": "
+"}),
+    )
+    .unwrap();
+    // The new paragraph is empty; the layout should produce a bullet preview for it.
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let body = sh.text.as_ref().unwrap();
+    assert_eq!(body.paragraphs.len(), 2, "two paragraphs after Enter");
+    assert!(body.paragraphs[1].is_empty(), "the second paragraph is empty");
+    assert!(body.paragraphs[1].props.bullet.is_some(), "the empty paragraph has a bullet");
 }

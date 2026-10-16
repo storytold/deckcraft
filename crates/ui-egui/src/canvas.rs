@@ -1490,6 +1490,9 @@ mod tests {
         let id = sh.id;
         let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
         let p = screen(h.state(), x.x + 40.0, x.y + 20.0);
+        // The first click selects the shape (#787); the second enters text editing.
+        click(&mut h, p);
+        h.run_steps(3);
         click(&mut h, p);
         h.run_steps(3);
         let caret = |h: &Harness<'_, SlideApp>| {
