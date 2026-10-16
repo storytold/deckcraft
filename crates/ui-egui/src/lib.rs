@@ -1314,7 +1314,12 @@ impl SlideApp {
                     self.dialog = Some(d);
                 }
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
-                UiRequest::StartShow { from } => self.start_show(from, false),
+                UiRequest::StartShow { from, record } => {
+                    self.start_show(from, false);
+                    if let Some(show) = self.show.as_mut() {
+                        show.record = record;
+                    }
+                }
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
