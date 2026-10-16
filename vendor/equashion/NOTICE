@@ -1,0 +1,19 @@
+equaSHion
+Copyright (c) 2026 ArtCraft Team and the WordCraft contributors.
+Modified by shuff57, 2026.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+equaSHion is the equation editor extracted from WordCraft (https://github.com/storytold/wordcraft,
+commit dbfe1b1), whose NOTICE and licence files carry the copyright line above. See PROVENANCE.md
+for what was taken and what was changed. No trademarks, names, wordmarks or logos of WordCraft or
+ArtCraft are included or licensed here.
+
+DeckCraft adaptation, 2026, by @hajdukste.
+This source subset excludes every upstream font binary, the web demo and its assets.
+The host supplies approved fonts through deckcraft-fonts; see the repository root's
+ATTRIBUTION.md and NOTICE for font licences. The upstream PROVENANCE.md and DIVERGENCE.md
+are preserved as historical records; README.md describes this subset and its changes.
+
+Rust dependencies (vello_cpu, skrifa, harfrust, kurbo, quick-xml, serde, …) are permissively
+licensed (MIT/Apache-2.0/BSD/ISC/Zlib) and fetched through crates.io.

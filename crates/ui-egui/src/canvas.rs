@@ -894,6 +894,42 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
             }
         }
     }
+    if let Some(ts) = &editing
+        && let Some((l, m)) = deckcraft_engine::cmd::text::text_frame(st, ts)
+    {
+        let equation = deckcraft_engine::cmd::equation::active(st)
+            .and_then(|e| l.equations.iter().find(|q| q.para == ts.caret.0 && q.chars.0 == ts.caret.1).map(|q| (e, q)));
+        if let Some((e, q)) = equation {
+            let polygon = |r: deckcraft_geom::Rect| {
+                [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x1, r.y1), Point::new(r.x0, r.y1)].map(|p| xf.to_screen(m * p)).to_vec()
+            };
+            painter.add(egui::Shape::convex_polygon(polygon(q.rect.inflate(2.0, 1.0)), t.equation_shading, Stroke::NONE));
+            if let Some(a) = e.anchor
+                && let Some(r) = q.geometry.span_rect(&e.caret.path, a, e.caret.pos)
+            {
+                painter.add(egui::Shape::convex_polygon(polygon(r), t.text_selection, Stroke::NONE));
+            }
+            let blank = deckcraft_engine::cmd::text::body_of(st, ts)
+                .and_then(|b| b.paragraphs.get(ts.caret.0))
+                .and_then(|p| p.runs.get(e.run))
+                .is_some_and(|r| matches!(&r.kind, deckcraft_model::text::RunKind::Math { omml } if equashion_egui::equashion_math::from_omml(omml).is_empty()));
+            if blank {
+                painter.text(
+                    xf.to_screen(m * Point::new(q.rect.x0 + 2.0, (q.rect.y0 + q.rect.y1) / 2.0)),
+                    egui::Align2::LEFT_CENTER,
+                    "Type equation here",
+                    theme::font((q.rect.height() * 0.85) as f32 * xf.scale),
+                    t.text_dim,
+                );
+            }
+            ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
+            if (ui.input(|i| i.time) * 1.6).fract() < 0.6
+                && let Some(r) = q.geometry.caret_rect(&e.caret)
+            {
+                painter.line_segment([xf.to_screen(m * Point::new(r.x0, r.y0)), xf.to_screen(m * Point::new(r.x0, r.y1))], Stroke::new(1.5, t.caret));
+            }
+        }
+    }
     // Caret / text selection, in a shape or a table cell.
     if let Some(ts) = &editing {
         for quad in text_marks(st, ts).iter().flat_map(|m| &m.selection) {
@@ -903,7 +939,7 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
         for (a, b, thick) in deckcraft_engine::cmd::text::composition_underlines(st) {
             painter.line_segment([xf.to_screen(a), xf.to_screen(b)], Stroke::new(if thick { 2.0 } else { 1.0 }, t.caret));
         }
-        if !ts.is_range() {
+        if !ts.is_range() && deckcraft_engine::cmd::equation::active(st).is_none() {
             let blink = (ui.input(|i| i.time) * 1.6).fract() < 0.6;
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(300));
             // An empty placeholder shows the caret where typing begins too.

@@ -70,6 +70,9 @@ impl Session {
             let r = match k {
                 "enter" | "return" => Some(self.execute("text.insert", &json!({"text": if mods.shift { "\u{b}" } else { "\n" }}))),
                 "escape" | "esc" => Some(self.execute("text.exit", &json!({}))),
+                "tab" if self.active().is_some_and(|st| crate::cmd::equation::active(st).is_some()) => {
+                    Some(self.execute("equation.key", &json!({"key": "Tab", "extend": mods.shift})))
+                }
                 "tab" => {
                     // Tab at the start of a paragraph changes the list level; elsewhere it types a tab.
                     let at_start = self.active().and_then(|d| d.selection.text.as_ref()).is_some_and(|t| t.ordered().0.1 == 0 || t.is_range());

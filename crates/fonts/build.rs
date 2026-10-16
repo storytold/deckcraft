@@ -57,7 +57,12 @@ fn manifest(dir: &std::path::Path, manifest: &std::path::Path) -> Result<String,
         if EXCLUDED_FAMILIES.contains(family) {
             continue;
         }
-        if wasm && !matches!((*family, *style), ("BIZ UDPGothic", "Regular") | ("Inter", "Regular" | "Bold" | "Variable")) {
+        if wasm
+            && !matches!(
+                (*family, *style),
+                ("BIZ UDPGothic" | "STIX Two Math" | "Latin Modern Math", "Regular") | ("Inter", "Regular" | "Bold" | "Variable")
+            )
+        {
             continue;
         }
         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;

@@ -1,0 +1,23 @@
+[package]
+name = "equashion-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "equaSHion egui widget: the equation editor (canvas, palette, linear field) with no host types"
+
+[lints]
+workspace = true
+
+[dependencies]
+equashion-math = { workspace = true }
+equashion-layout = { workspace = true, features = ["extra-fonts"] }
+equashion-render = { workspace = true, features = ["raster", "extra-fonts"] }
+egui = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }
+# The native example only (glow keeps the build small; no wgpu).
+eframe = { workspace = true, features = ["default_fonts", "glow", "x11", "wayland"] }
+
+[[example]]
+name = "widget"

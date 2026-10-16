@@ -40,6 +40,7 @@ pub struct Tokens {
     pub guide: Color32,
     pub caret: Color32,
     pub text_selection: Color32,
+    pub equation_shading: Color32,
     pub field_bg: Color32,
     pub shadow: Color32,
 }
@@ -69,6 +70,7 @@ impl Tokens {
             guide: Color32::from_rgb(0xE8, 0x5D, 0x2A),
             caret: Color32::BLACK,
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
+            equation_shading: Color32::from_black_alpha(24),
             field_bg: Color32::WHITE,
             shadow: Color32::from_black_alpha(28),
         }
@@ -97,6 +99,7 @@ impl Tokens {
             guide: Color32::from_rgb(0xF2, 0x8A, 0x4B),
             caret: Color32::BLACK,
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
+            equation_shading: Color32::from_black_alpha(24),
             field_bg: Color32::from_rgb(0x2A, 0x2A, 0x2A),
             shadow: Color32::from_black_alpha(90),
         }

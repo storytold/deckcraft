@@ -41,7 +41,9 @@ pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split:
     let (rect, resp) = ui.allocate_exact_size(vec2(w, RIBBON_H - 2.0), if enabled { Sense::click() } else { Sense::hover() });
     // Named for screen readers and UI tests ("Ink to\nShape" reads "Ink to Shape").
     let spoken = label.replace('\n', " ");
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &spoken));
+    if !split {
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &spoken));
+    }
     let painter = ui.painter_at(rect.expand(1.0));
     let (main_rect, arrow_rect) = if split {
         (Rect::from_min_max(rect.min, pos2(rect.max.x, rect.min.y + 38.0)), Some(Rect::from_min_max(pos2(rect.min.x, rect.min.y + 38.0), rect.max)))
@@ -50,6 +52,9 @@ pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split:
     };
     let main_resp =
         if split { ui.interact(main_rect, resp.id.with("main"), if enabled { Sense::click() } else { Sense::hover() }) } else { resp.clone() };
+    if split {
+        main_resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &spoken));
+    }
     let arrow_resp = arrow_rect.map(|r| ui.interact(r, resp.id.with("arrow"), if enabled { Sense::click() } else { Sense::hover() }));
     if let Some(c) = bg(ui, &main_resp, selected, &t) {
         painter.rect_filled(if split { main_rect } else { rect }, CornerRadius::same(4), c);

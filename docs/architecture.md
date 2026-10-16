@@ -1,11 +1,15 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (native structured equations and inline editing; stage unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
 exists. 202k lines of Rust in 24 crates, 3 apps and `xtask`; 1,641 `#[test]` functions
 (`cargo xtask stats` counts them per crate).
+
+Structured equations use vendored equaSHion for OMML conversion and layout. The engine owns
+the math caret, parser state and document history; the UI draws an overlay on the paragraph's
+actual math geometry. See [equations](equations.md) for commands, font preparation and scope.
 
 ## Layers
 
@@ -79,6 +83,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Native equations and inline editing; remaining equation gaps and font requirements documented |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |
 | 2026-10-14 | trivial | Command registry: 228 (`comment.next`, `comment.prev`) |

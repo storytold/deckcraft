@@ -1,0 +1,18 @@
+[package]
+name = "equashion-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "equaSHion layout: TeX-style equation layout into a backend-neutral scene, caret geometry"
+
+[lints]
+workspace = true
+
+[features]
+default = ["extra-fonts"]
+extra-fonts = ["equashion-font/extra-fonts"]
+
+[dependencies]
+equashion-math = { workspace = true }
+equashion-font = { workspace = true }
+kurbo = { workspace = true }

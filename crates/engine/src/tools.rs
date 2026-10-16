@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use deckcraft_geom::{Affine, Point, Rect, Vec2, Xfrm};
+use deckcraft_model::text::RunKind;
 use deckcraft_model::{Shape, ShapeId, ShapeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -906,10 +907,18 @@ impl Session {
                 // The selection stays in the shape or table cell where it started.
                 let st = self.doc()?;
                 if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
+                    if let Some(sh) = st.shape(shape)
+                        && let Some(params) = math_hit(st, sh, t.cell, p, true)
+                        && cmd::equation::active(st).is_some()
+                    {
+                        self.execute("equation.edit", &params)?;
+                        return Ok(Value::Null);
+                    }
                     let pos = cmd::text::text_pos_at(st, t, p);
                     self.select(|_, sel| {
                         if let Some(t) = sel.text.as_mut() {
                             t.caret = pos;
+                            t.equation = None;
                         }
                     })?;
                 }
@@ -1126,6 +1135,9 @@ impl Session {
         }
         // In the text being edited: select the word double-clicked.
         if self.place_caret(p, tol, false)?.is_some() {
+            if cmd::equation::active(self.doc()?).is_some() {
+                return Ok(Value::Null);
+            }
             return self.execute("text.selectWord", &json!({}));
         }
         match self.hit_test(p, tol) {
@@ -1139,6 +1151,9 @@ impl Session {
                         if !self.edit_text_at(id, p)? {
                             return Ok(Value::Null);
                         }
+                        if cmd::equation::active(self.doc()?).is_some() {
+                            return Ok(Value::Null);
+                        }
                         self.execute("text.selectWord", &json!({}))
                     }
                     ShapeKind::Group { .. } => {
@@ -1148,6 +1163,9 @@ impl Session {
                             Some((mid, msh)) if !msh.is_line() => {
                                 let pos = text_pos(st, &msh, p);
                                 self.execute("text.edit", &json!({"id": mid, "at": [pos.0, pos.1]}))?;
+                                if cmd::equation::active(self.doc()?).is_some() {
+                                    return Ok(Value::Null);
+                                }
                                 self.execute("text.selectWord", &json!({}))
                             }
                             _ => Ok(Value::Null),
@@ -1250,6 +1268,11 @@ impl Session {
         {
             t.cell = f.cell_at(f.local(p)).or(old_cell);
         }
+        if let Some(params) = math_hit(st, sh, t.cell, p, extend) {
+            self.execute("equation.edit", &params)?;
+            let pos = self.doc()?.selection.text.as_ref().map_or((0, 0), |t| t.caret);
+            return Ok(Some((t.shape, pos)));
+        }
         let pos = cmd::text::text_pos_at(st, &t, p);
         // A selection can't span cells: a click in another cell starts afresh.
         let extend = extend && t.cell == old_cell;
@@ -1258,6 +1281,7 @@ impl Session {
             if let Some(tt) = sel.text.as_mut() {
                 tt.cell = cell;
                 tt.caret = pos;
+                tt.equation = None;
                 if !extend {
                     tt.anchor = pos;
                 }
@@ -1282,7 +1306,12 @@ impl Session {
                 json!({"id": id, "at": [pos.0, pos.1]})
             }
         };
-        self.execute("text.edit", &params)?;
+        let cell = params.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
+        if let Some(math) = math_hit(self.doc()?, sh, cell, p, false) {
+            self.execute("equation.edit", &math)?;
+        } else {
+            self.execute("text.edit", &params)?;
+        }
         Ok(true)
     }
 
@@ -1880,6 +1909,31 @@ pub fn table_rows(st: &crate::DocState, t: &deckcraft_model::Table) -> Vec<f64> 
     cmd::table_drawn_heights(&st.doc, &st.selection, t)
 }
 
+fn math_hit(st: &crate::DocState, sh: &Shape, cell: Option<(usize, usize)>, p: Point, extend: bool) -> Option<Value> {
+    let t = TextSel { shape: sh.id, cell, ..Default::default() };
+    let body = cmd::text::body_of(st, &t)?;
+    if !body.paragraphs.iter().any(|p| p.runs.iter().any(|r| matches!(r.kind, RunKind::Math { .. }))) {
+        return None;
+    }
+    let (layout, transform) = cmd::text::text_frame(st, &t)?;
+    let local = transform.inverse() * p;
+    let solo = !extend && body.paragraphs.len() == 1 && body.paragraphs.first().is_some_and(|p| p.runs.len() == 1);
+    let eq = layout.equations.iter().find(|e| e.rect.inflate(2.0, 2.0).contains(local) || solo)?;
+    let para = body.paragraphs.get(eq.para)?;
+    let mut start = 0;
+    for (ri, r) in para.runs.iter().enumerate() {
+        if start == eq.chars.0 && matches!(r.kind, RunKind::Math { .. }) {
+            let mut params = json!({"id": sh.id, "paragraph": eq.para, "run": ri, "caret": eq.geometry.hit(local.x, local.y), "extend": extend});
+            if let Some((r, c)) = cell {
+                params["cell"] = json!([r, c]);
+            }
+            return Some(params);
+        }
+        start += r.char_len();
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1906,5 +1960,68 @@ mod tests {
         let n = resize_box(&o, 4, Vec2::new(-10.0, 30.0), false, false);
         let anchor2 = n.affine() * Point::new(0.0, 0.0);
         assert!((anchor - anchor2).hypot() < 1e-6, "{anchor:?} {anchor2:?}");
+    }
+
+    fn dbl(s: &mut Session, x: f64, y: f64) {
+        let ev = PointerEvent { kind: PointerKind::DoubleClick, x, y, ..Default::default() };
+        s.pointer(ev).unwrap();
+    }
+
+    fn ptr(s: &mut Session, kind: PointerKind, x: f64, y: f64) {
+        s.pointer(PointerEvent { kind, x, y, ..Default::default() }).unwrap();
+    }
+
+    /// A single click on an equation edits it (as in WordCraft); a drag still moves the box.
+    #[test]
+    fn a_single_click_on_an_equation_edits_it_and_a_drag_moves_it() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        // Nothing selected: one click both selects the box and opens the editor.
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        s.ui_requests.clear();
+        ptr(&mut s, PointerKind::Down, 150.0, 125.0);
+        ptr(&mut s, PointerKind::Up, 150.0, 125.0);
+        assert!(cmd::equation::active(s.doc().unwrap()).is_some());
+        assert!(s.ui_requests.is_empty());
+        // A drag from the same place moves the box and opens nothing.
+        s.ui_requests.clear();
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        let before = s.doc().unwrap().shape(ShapeId(id as u32)).map(|sh| xfrm_of(&s.doc().unwrap().doc, &s.doc().unwrap().selection, sh).x).unwrap();
+        ptr(&mut s, PointerKind::Down, 150.0, 125.0);
+        ptr(&mut s, PointerKind::Drag, 230.0, 125.0);
+        ptr(&mut s, PointerKind::Up, 230.0, 125.0);
+        assert!(s.ui_requests.is_empty(), "{:?}", s.ui_requests);
+        let after = s.doc().unwrap().shape(ShapeId(id as u32)).map(|sh| xfrm_of(&s.doc().unwrap().doc, &s.doc().unwrap().selection, sh).x).unwrap();
+        assert!(after > before + 50.0, "{before} -> {after}");
+    }
+
+    #[test]
+    fn double_click_on_equation_enters_structured_editing() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        s.ui_requests.clear();
+        // Find the equation's extent from the layout, then click on it.
+        let st = s.doc().unwrap();
+        let sh = st.shape(ShapeId(id as u32)).unwrap().clone();
+        let t = TextSel { shape: sh.id, ..Default::default() };
+        let l = cmd::text::layout_for(st, &t).unwrap();
+        let n = sh.text.as_ref().unwrap().paragraphs[0].runs[0].char_len();
+        let (x0, top, bottom) = l.caret(deckcraft_text::Pos { para: 0, ch: 0 }).unwrap();
+        let (x1, _, _) = l.caret(deckcraft_text::Pos { para: 0, ch: n }).unwrap();
+        let x = xfrm_of(&st.doc, &st.selection, &sh);
+        let hit = x.affine() * Point::new((x0 + x1) / 2.0, (top + bottom) / 2.0);
+        dbl(&mut s, hit.x, hit.y);
+        assert!(s.ui_requests.is_empty());
+        assert!(cmd::equation::active(s.doc().unwrap()).is_some());
+        // Blank padding of a box that holds only the equation opens it too.
+        s.ui_requests.clear();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        let far = x.affine() * Point::new(x1 + 120.0, (top + bottom) / 2.0);
+        dbl(&mut s, far.x, far.y);
+        assert!(s.ui_requests.is_empty());
+        assert!(cmd::equation::active(s.doc().unwrap()).is_some());
     }
 }

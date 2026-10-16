@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (equation font selection; stage unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -263,8 +263,12 @@ of the effect gallery. Detail in [animation-parity.md](animation-parity.md). 8�
 - **Estimate:** 1–2 h (bundle openly licensed dictionaries); 2–4 h (AutoFormat as you type).
 
 ### Equations
-- **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
-- **Estimate:** 3–6 h to review, land and round-trip.
+- **Evidence:** Native OMML layout, inline editing, structure/symbol galleries, arrow exit and
+  re-entry, document undo/redo, font selection, and native/PPTX round-trips are implemented;
+  see [equations](equations.md). Latin Modern Math is available alongside STIX Two Math.
+  Equation numbering, an input-mode/conversion UI, and complete imported-math parity remain open.
+  Release packaging must include the prepared STIX Two Math and Latin Modern Math fonts.
+- **Estimate:** not re-estimated; remaining work needs a dedicated interoperability review.
 
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
@@ -355,6 +359,8 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Native equations and inline editing; remaining equation gaps and font requirements documented |
+| 2026-10-14 | minor | Equation font selection implemented; both prepared math fonts are required for release packaging |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |

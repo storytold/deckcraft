@@ -80,3 +80,13 @@ Code dependencies
   (https://github.com/saucecontrol/Compact-ICC-Profiles) are CC0-1.0; the profile
   licence is retained in licenses/pdf-writer/LICENSE-ICC.txt and exact files, sources
   and hashes are in ATTRIBUTION.md.
+
+Equation engine: equaSHion, copyright (c) 2026 ArtCraft Team and WordCraft contributors,
+modified by shuff57 and @hajdukste. MIT OR Apache-2.0; full notices and licences in
+vendor/equashion/. No upstream equaSHion font assets are included.
+STIX Two Math v2.13b171: The STIX Fonts Project Authors, SIL Open Font License 1.1.
+Installed into the external craft-fonts checkout with its OFL.txt; see ATTRIBUTION.md.
+Latin Modern Math 1.959: Copyright 2012–2014 Bogusław Jackowski, Piotr Strzelczyk and
+Piotr Pianowski, on behalf of TeX Users Groups. Used unmodified under the GUST Font License
+(LaTeX Project Public License 1.3c or later). Its licence, README and manifest are retained
+in the external craft-fonts checkout's fonts/latin-modern-math directory; see ATTRIBUTION.md.

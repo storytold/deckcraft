@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["vendor/equashion"]
 members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/deckcraft", "apps/deckcraft-cli"]
 
@@ -37,6 +38,12 @@ deckcraft-isobmff = { path = "crates/isobmff" }
 deckcraft-matroska = { path = "crates/matroska" }
 deckcraft-ogg = { path = "crates/ogg" }
 deckcraft-opus = { path = "crates/opus" }
+
+# Vendored equaSHion at 386b16c; provenance and host adaptations in vendor/equashion/README.md.
+equashion-math = { path = "vendor/equashion/crates/math" }
+equashion-egui = { path = "vendor/equashion/crates/egui" }
+# The equation layout (the editor's own), for slides.
+equashion-layout = { path = "vendor/equashion/crates/layout", features = ["extra-fonts"] }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }

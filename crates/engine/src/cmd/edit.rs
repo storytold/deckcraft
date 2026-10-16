@@ -93,6 +93,11 @@ pub(crate) fn media_of_shapes(shapes: &[Shape], out: &mut Vec<MediaId>) {
 
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     let st = s.doc()?;
+    if let Some(ed) = super::equation::editor(st) {
+        let plain = ed.selected_linear().unwrap_or_default();
+        s.clipboard = crate::Clipboard { plain: plain.clone(), ..Default::default() };
+        return Ok(plain);
+    }
     // Text selection.
     if let Some(t) = &st.selection.text {
         if t.is_range() {
@@ -290,11 +295,33 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
+    if super::equation::active(s.doc()?).is_some() {
+        let text = str_param(p, "text").unwrap_or(&s.clipboard.plain).to_string();
+        return super::equation::paste(s, &text);
+    }
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
     if let Some(t) = str_param(p, "text")
         && t != s.clipboard.plain
     {
+        // Text that is exactly one equation (OMML, MathML or delimited LaTeX) pastes as an
+        // equation; one that cannot be read pastes as the text it is, with a note why.
+        // Paste and Match Formatting (`edit.pasteText`) always pastes the text.
+        match crate::equashion_bridge::clipboard_equation(t) {
+            Some((format, Ok(m))) => {
+                let mut r = super::equation::paste_math(s, &m)?;
+                if let Some(o) = r.as_object_mut() {
+                    o.insert("pasted".into(), json!("equation"));
+                    o.insert("format".into(), json!(format.name()));
+                }
+                return Ok(r);
+            }
+            Some((format, Err(why))) => {
+                let text = format!("Pasted as text: the {} equation could not be read ({why}).", format.name());
+                s.ui_requests.push(crate::UiRequest::Message { text });
+            }
+            None => {}
+        }
         if let Some(html) = str_param(p, "html")
             && let Some(body) = richclip::html_to_body(html)
             && richclip::same_words(&body.text(), t)

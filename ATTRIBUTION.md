@@ -60,7 +60,19 @@ families excluded by `crates/fonts/build.rs`:
 | Montserrat, Lato, Open Sans, Roboto, Merriweather, Playfair Display, Poppins, Nunito Sans | OFL-1.1 | Theme fonts |
 | BIZ UDPGothic, BIZ UDMincho, Shippori Mincho, Noto Sans Arabic | OFL-1.1 | Japanese and Arabic text |
 
-Web (wasm32) builds embed only Inter Regular/Bold and BIZ UDPGothic Regular.
+Web (wasm32) builds embed Inter Regular/Bold, BIZ UDPGothic Regular and the equation fonts below.
+
+## Equation integration
+
+| Asset | Author | Source | Licence | Used for |
+|---|---|---|---|---|
+| `fonts/stix-two-math/STIXTwoMath-Regular.otf` in the external craft-fonts checkout; SHA-256 `3a5f3f26f40d5698b3c62dd085d48d6663696a3f80825aab8b553d5097518e8c` | The STIX Fonts Project Authors; design by Tiro Typeworks | [STIX v2.13b171](https://github.com/stipub/stixfonts/tree/744a22a4dd626cd14d75728aef34fc8ad7c85db0/fonts/static_otf); installed by `scripts/equation-fonts.py` | OFL-1.1; accompanying `fonts/stix-two-math/OFL.txt` | Equation layout and gallery previews, native and web |
+| `fonts/latin-modern-math/latinmodern-math.otf` in the external craft-fonts checkout; SHA-256 `6075562b771f8b82f0c179e363389684f2dd09de30038269e2628e504bd7be0f` | Bogusław Jackowski, Piotr Strzelczyk and Piotr Pianowski, on behalf of TeX Users Groups | [Latin Modern Math 1.959, original GUST distribution](https://www.gust.org.pl/projects/e-foundry/lm-math/download/latinmodern-math-1959.zip); installed unmodified by `scripts/equation-fonts.py` | GUST Font License (LPPL-1.3c-or-later); accompanying `GUST-FONT-LICENSE.txt`, `README-Latin-Modern-Math.txt` and `MANIFEST-Latin-Modern-Math.txt` retained in that directory | Selectable equation font, native and web |
+| `vendor/equashion/crates/math/src/gallery.json` | ArtCraft Team, WordCraft contributors, shuff57 | [equaSHion 386b16c](https://github.com/shuff57/equaSHion/tree/386b16cff9fddb69db2f1759aea384e8887e3970) | MIT OR Apache-2.0 | Structured equation templates, symbols and gallery previews |
+
+The vendored equaSHion code includes none of its upstream font binaries. It uses only
+DeckCraft's approved font bundle and Ubuntu fallback. Copyright and licence notices are
+preserved in `vendor/equashion/NOTICE` and its two licence files.
 
 ## PDF writer colour profiles
 

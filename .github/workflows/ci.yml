@@ -36,6 +36,8 @@ jobs:
           repository: storytold/craft-fonts
           ref: ${{ env.CRAFT_FONTS_REF }}
           path: craft-fonts
+      - name: Prepare the equation fonts
+        run: python3 scripts/equation-fonts.py craft-fonts
       - name: Linux build dependencies
         if: runner.os == 'Linux'
         run: |
@@ -53,3 +55,10 @@ jobs:
         env:
           CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
         run: cargo xtask ci
+      - name: Vendored equation library checks
+        env:
+          CRAFT_FONTS_DIR: ${{ github.workspace }}/craft-fonts
+        run: |
+          cargo fmt --manifest-path vendor/equashion/Cargo.toml --all -- --check
+          cargo clippy --manifest-path vendor/equashion/Cargo.toml --workspace --all-targets -- -D warnings
+          cargo test --manifest-path vendor/equashion/Cargo.toml --workspace

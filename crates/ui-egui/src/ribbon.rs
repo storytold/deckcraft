@@ -148,6 +148,9 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_))) {
         v.push("Playback");
     }
+    if app.session.active().is_some_and(|st| deckcraft_engine::cmd::equation::active(st).is_some()) {
+        v.push("Equation");
+    }
     v
 }
 
@@ -157,6 +160,15 @@ const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "An
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let ctx_tabs = contextual(app);
+    if ctx_tabs.contains(&"Equation") {
+        if app.equation_previous_tab.is_none() {
+            app.equation_previous_tab = Some(if app.ui.tab == "Equation" { "Home".into() } else { app.ui.tab.clone() });
+            app.ui.tab = "Equation".into();
+            app.ui.ribbon_collapsed = false;
+        }
+    } else if let Some(previous) = app.equation_previous_tab.take() {
+        app.ui.tab = previous;
+    }
     if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) {
         app.ui.tab = "Home".into();
     }
@@ -187,6 +199,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.id().with(("tab", name)), Sense::click());
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::SelectableLabel, true, format!("{name} tab")));
             let active = app.ui.tab == name;
             if resp.hovered() && !active {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
@@ -245,6 +258,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             "Slide Master" => slide_master(app, ui),
             "Handout Master" => handout_master(app, ui),
             "Notes Master" => notes_master(app, ui),
+            "Equation" => crate::equation_tab::show(app, ui),
             _ => {}
         }
     });
@@ -484,7 +498,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let size = st.get("size").and_then(Value::as_f64);
                 let fams = font_families(app);
                 let theme_fonts: Vec<String> = fams.iter().take(2).cloned().collect();
-                dropdown(ui, "font", &font, 150.0, en, |ui| {
+                let font_picker = dropdown(ui, "font", &font, 150.0, en, |ui| {
                     for (k, f) in fams.iter().enumerate() {
                         let label = if k == 0 && theme_fonts.len() == 2 {
                             format!("{f} (Headings)")
@@ -508,6 +522,7 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                         ui.close();
                     }
                 });
+                font_picker.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, en, "Font"));
                 let size_text = size.map(|s| widgets::fmt_num(s, "")).unwrap_or_default();
                 dropdown(ui, "size", &size_text, 52.0, en, |ui| {
                     for s in deckcraft_engine::cmd::format::SIZES.iter().chain([72.0, 80.0, 88.0, 96.0].iter()) {
@@ -1281,7 +1296,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::SlideNumber, "Slide\nNumber", "insert.slideNumber", json!({}));
     });
     group(ui, |ui| {
-        big(app, ui, Icon::Equation, "Equation", "app.dialog", json!({"id": "equation"}));
+        crate::equation_tab::insert_button(app, ui);
         big(app, ui, Icon::Symbol, "Symbol", "app.dialog", json!({"id": "symbol"}));
     });
     group(ui, |ui| {

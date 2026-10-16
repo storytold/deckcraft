@@ -1,0 +1,14 @@
+[package]
+name = "equashion-math"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "equaSHion equations: math tree, OMML import/export, linear (typed) format, templates, edit model"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+quick-xml = { workspace = true }
+serde_json = { workspace = true }

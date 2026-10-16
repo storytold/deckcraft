@@ -1,0 +1,75 @@
+[workspace]
+resolver = "3"
+members = ["crates/math", "crates/font", "crates/layout", "crates/render", "crates/egui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.90"
+publish = false
+
+# Version requirements are copied verbatim from WordCraft (dbfe1b1) so that a host depending on
+# these crates by path resolves one copy of each. Do not `cargo update`.
+[workspace.dependencies]
+# internal
+equashion-math = { path = "crates/math" }
+equashion-font = { path = "crates/font", default-features = false }
+equashion-layout = { path = "crates/layout", default-features = false }
+equashion-render = { path = "crates/render", default-features = false }
+equashion-egui = { path = "crates/egui" }
+
+# foundation
+kurbo = { version = "0.13", features = ["serde"] }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+log = "0.4"
+unicode-bidi = "0.3"
+
+# text / rendering / formats
+skrifa = "0.47"
+harfrust = "0.13"
+vello_cpu = "0.2"
+quick-xml = "0.38"
+
+# ui
+egui = "0.36"
+eframe = { version = "0.36", default-features = false }
+egui_kittest = "0.36"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+too_many_arguments = "allow"
+type_complexity = "allow"
+# WordCraft sets these per crate with `#![deny(...)]` at each crate root; the crate roots here
+# keep that attribute too, and the workspace denies them as well so new crates inherit it.
+# Tests are exempt through clippy.toml (allow-unwrap-in-tests etc.).
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+
+
+[workspace.dependencies.deckcraft-fonts]
+path = "../../crates/fonts"
+
+[workspace.dependencies.epaint_default_fonts]
+version = "0.36"
+
+# Keep upstream's development profile: its bounded-recursion tests also run on a 1 MiB stack.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 16
+debug = 0

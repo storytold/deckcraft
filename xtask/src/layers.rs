@@ -34,6 +34,12 @@ impl Class {
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
+    // Vendored equaSHion: tree and font/layout libraries, plus gallery rendering in the UI.
+    ("equashion-math", Class::Standalone),
+    ("equashion-font", Class::Layer(1)),
+    ("equashion-layout", Class::Layer(2)),
+    ("equashion-render", Class::Layer(3)),
+    ("equashion-egui", Class::Layer(6)),
     // Codecs and containers (ported from FilmCraft): L0 standalone leaves, L1 codecs over
     // `bitstream`, and `media` (probe, decode, playback mixer) at L2.
     ("bitstream", Class::Standalone),
@@ -73,7 +79,7 @@ pub const TABLE: &[(&str, Class)] = &[
 pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["fonts", "equashion-font"], &["equashion-layout", "text"], &["equashion-egui", "ui-egui"]];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));

@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (equation font selection; stage unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -14,7 +14,7 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 
 | | Value | Kind |
 |---|---|---|
-| **Feature breadth** | **84%** weighted over 191 PowerPoint features (P0 92%, P1 82%, P2 55%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
+| **Feature breadth** | **84%** weighted over 191 PowerPoint features (P0 92%, P1 82%, P2 56%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
 | Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands at d556ff9 (the registry has grown since; not re-measured) |
 | **Ready for real work** | **~55%** | estimated: weighted dimensions below |
 | Mainstream practitioner | ~53% | estimated: weekly-use areas × discounts for interaction (×0.92), stability (×0.92) and `.pptx` exchange (×0.88), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
@@ -131,6 +131,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-14 | Native OMML equations with paragraph-inline editing, structured galleries, caret navigation and shared undo; combines #192 and #771. See [scope and build notes](docs/equations.md). |
+| 2026-10-14 | Equations follow the selected font, including Latin Modern Math; font choices preserve the math caret and survive native/PPTX saves. |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
 | 2026-10-14 | Empty bulleted and numbered paragraphs show gray markers while editing, including on first click and after Enter. Markers use the list style and stay out of slide shows and exports. |
@@ -226,6 +228,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Native equations and inline editing; remaining equation gaps and font requirements documented |
+| 2026-10-14 | minor | Equation font selection and Latin Modern Math preparation; equation parity remains partial |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |

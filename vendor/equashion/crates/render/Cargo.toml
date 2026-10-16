@@ -1,0 +1,23 @@
+[package]
+name = "equashion-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "equaSHion rendering: equation scenes to RGBA pixels (vello_cpu) and to SVG"
+
+[lints]
+workspace = true
+
+[features]
+default = ["raster", "extra-fonts"]
+extra-fonts = ["equashion-layout/extra-fonts"]
+# RGBA rendering through vello_cpu. SVG output does not need it.
+raster = ["dep:vello_cpu"]
+
+[dependencies]
+equashion-layout = { workspace = true }
+kurbo = { workspace = true }
+vello_cpu = { workspace = true, optional = true }
+
+[dev-dependencies]
+equashion-math = { workspace = true }

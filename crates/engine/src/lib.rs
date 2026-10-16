@@ -11,6 +11,7 @@ pub mod cmd;
 pub mod compare;
 pub mod connect;
 pub mod drawtable;
+pub mod equashion_bridge;
 pub mod file_access;
 pub mod fonts;
 pub mod gif_export;
@@ -85,6 +86,19 @@ pub struct TextSel {
     /// start of the next line. Ignored once the caret moves anywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_end: Option<(usize, usize)>,
+    /// Caret within a native OMML run; the prose caret stays at the run start.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equation: Option<EquationSel>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EquationSel {
+    pub run: usize,
+    pub caret: equashion_math::Caret,
+    #[serde(default)]
+    pub input: equashion_math::InputState,
+    pub anchor: Option<usize>,
 }
 
 impl TextSel {
