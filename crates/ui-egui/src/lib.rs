@@ -448,6 +448,9 @@ pub struct SlideApp {
     pub show: Option<show::Show>,
     /// Current slide's animations playing on the editor canvas (not the full-screen show).
     anim_preview: Option<AnimPreview>,
+    /// Displays connected this frame (`winit` order). Empty in the browser and in tests: the show
+    /// then stays on the current display.
+    pub displays: Vec<show::DisplayInfo>,
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
     pub status: Option<(String, f64)>,
@@ -542,6 +545,7 @@ impl SlideApp {
             thesaurus_query: String::new(),
             show: None,
             anim_preview: None,
+            displays: Vec::new(),
             media: media::MediaHost::new(audio_out),
             status: None,
             opening: None,
@@ -1066,6 +1070,11 @@ impl SlideApp {
     /// First slide Play from Start should open: the custom show or range, skipping hidden slides.
     pub fn show_start_index(&self) -> usize {
         self.session.active().and_then(|d| deckcraft_anim::show_order(&d.doc).first().copied()).unwrap_or(0)
+    }
+
+    /// Replace the display list used the next time a slide show starts.
+    pub fn set_displays(&mut self, displays: Vec<show::DisplayInfo>) {
+        self.displays = displays;
     }
 
     pub fn start_show(&mut self, from: usize, reading: bool) {

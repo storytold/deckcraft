@@ -107,7 +107,7 @@ PowerPoint is taken out of the areas and charged once, as a discount.
 | Tables | 5 | 78 | Styles, merge/split, grow-to-fit |
 | Charts: column, bar, line, pie with data | 6 | 58 | Chart Data dialog; elements partial |
 | Transitions and common animations | 8 | 76 | 48/48 transitions; effects cover ~85% of use; pane has no timeline |
-| Presenting: show, presenter view | 10 | 70 | Works; not auto-placed on the second display; no laser |
+| Presenting: show, presenter view | 10 | 70 | Works; show on the other display and presenter view on the primary; no swap, no laser |
 | Audio and video on slides | 3 | 62 | Plays; slow video in the show on Linux (#91) |
 | Comments | 3 | 60 | Threads, resolve |
 | Undo and clipboard | 4 | 75 | Unlimited undo; Paste Special partial |
@@ -195,7 +195,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
 | Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, Animation Pane timeline, preview from the selected effect, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
-| Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
+| Slide show and presenter view | 8 | 74% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
 | Undo and clipboard | 3 | 100% | ~75% | 3–5 | Image paste (#53) | [ui-parity.md](ui-parity.md) |
