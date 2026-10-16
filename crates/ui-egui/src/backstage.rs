@@ -169,6 +169,11 @@ pub struct Backstage {
     /// Notes and handouts: a paper id from [`deckcraft_engine::cmd::file::PAPERS`] and its orientation.
     pub print_paper: &'static str,
     pub print_landscape: bool,
+    /// File › Print printer: empty for the PDF viewer (which has its own printer list).
+    pub print_printer: String,
+    pub print_copies: u32,
+    /// The system's printers, listed once per visit of the Print page.
+    pub printers: Option<Vec<String>>,
     pub preview_page: usize,
     pub export: ExportTask,
     /// Export › Change File Type / Save As: the chosen type (an [`SAVE_TYPES`] id).
@@ -192,6 +197,9 @@ impl Backstage {
             print_frame: true,
             print_paper: "letter",
             print_landscape: false,
+            print_printer: String::new(),
+            print_copies: 1,
+            printers: None,
             preview_page: 0,
             export: ExportTask::Pdf,
             file_type: "pptx",
@@ -1031,15 +1039,52 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.vertical(|ui| {
             ui.set_width(250.0);
             let ok = slides.as_ref().is_ok_and(|s| !s.is_empty());
+            if bs.printers.is_none() {
+                bs.printers = Some(app.services.printers.as_ref().map(|f| f()).unwrap_or_default());
+            }
+            let printers = bs.printers.clone().unwrap_or_default();
+            if !printers.contains(&bs.print_printer) {
+                bs.print_printer.clear();
+            }
+            let direct = !bs.print_printer.is_empty();
             if square_button(ui, Icon::Print, "Print", ok).clicked()
                 && let Ok(s) = &slides
             {
-                app.print_pdf(print_params(bs, s));
+                let mut p = print_params(bs, s);
+                if direct {
+                    p["printer"] = json!(bs.print_printer);
+                    p["copies"] = json!(bs.print_copies.clamp(1, 999));
+                }
+                app.print_pdf(p);
             }
             ui.add_space(6.0);
+            if !printers.is_empty() {
+                heading(ui, "Printer");
+                let viewer = "PDF viewer (choose a printer there)";
+                let shown = if direct { bs.print_printer.clone() } else { viewer.to_string() };
+                egui::ComboBox::from_id_salt("backstage_printer").width(240.0).selected_text(shown).show_ui(ui, |ui| {
+                    if ui.selectable_label(!direct, viewer).clicked() {
+                        bs.print_printer.clear();
+                    }
+                    for p in &printers {
+                        if ui.selectable_label(&bs.print_printer == p, p).clicked() {
+                            bs.print_printer = p.clone();
+                        }
+                    }
+                });
+                if direct {
+                    ui.horizontal(|ui| {
+                        ui.label("Copies:");
+                        ui.add(egui::DragValue::new(&mut bs.print_copies).range(1..=999));
+                    });
+                }
+                ui.add_space(6.0);
+            }
             dim(
                 ui,
-                if app.services.pick_save.is_some() {
+                if direct {
+                    "DeckCraft sends a PDF of these pages to the printer."
+                } else if app.services.pick_save.is_some() {
                     "DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer."
                 } else {
                     "DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer."

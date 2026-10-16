@@ -220,7 +220,14 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// The system's printers, by name, when the host can list them (CUPS on Linux and macOS).
+    pub printers: Option<Box<dyn Fn() -> Vec<String>>>,
+    /// Send a PDF file to a printer: (path, printer, copies).
+    pub print_file: Option<PrintFn>,
 }
+
+/// Print a PDF file on a named printer, `copies` times.
+pub type PrintFn = Box<dyn FnMut(&str, &str, u32) -> Result<(), String>>;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -817,7 +824,28 @@ impl SlideApp {
             o.insert("path".into(), json!(path));
             o.insert("format".into(), json!("pdf"));
         }
+        let printer = params.get("printer").and_then(Value::as_str).map(str::to_string).filter(|p| !p.is_empty());
+        let copies = params.get("copies").and_then(Value::as_u64).map_or(1, |c| c.clamp(1, 999) as u32);
+        if let Some(o) = params.as_object_mut() {
+            o.remove("printer");
+            o.remove("copies");
+        }
         match self.run("file.export", params) {
+            Ok(_) if printer.is_some() && self.services.print_file.is_some() => {
+                let printer = printer.unwrap_or_default();
+                let sent = self.services.print_file.as_mut().map(|f| f(&path, &printer, copies));
+                match sent {
+                    Some(Ok(())) => {
+                        self.set_status(format!("Sent to {printer}"));
+                        true
+                    }
+                    Some(Err(e)) => {
+                        self.set_status(format!("Couldn't print on {printer}: {e}"));
+                        false
+                    }
+                    None => false,
+                }
+            }
             Ok(_) => {
                 self.open_url(&format!("file:///{}", path.replace('\\', "/").trim_start_matches('/')));
                 self.set_status("Opened the presentation as a PDF to print");

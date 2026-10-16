@@ -535,3 +535,39 @@ fn print_slides_follow_the_settings() {
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
 }
+
+/// With printers listed by the host, File › Print offers them; picking one sends the PDF to it
+/// with the copies asked for instead of opening the viewer.
+#[test]
+fn print_sends_the_pdf_to_a_chosen_printer() {
+    let dir = temp_dir("print-direct");
+    let (mut services, _) = saving_into(&dir);
+    let sent: std::sync::Arc<std::sync::Mutex<Vec<(String, String, u32)>>> = Default::default();
+    let log = sent.clone();
+    services.printers = Some(Box::new(|| vec!["Office_Laser".to_string()]));
+    services.print_file = Some(Box::new(move |path: &str, printer: &str, copies: u32| {
+        let ok = std::fs::read(path).is_ok_and(|b| b.starts_with(b"%PDF"));
+        log.lock().unwrap().push((printer.to_string(), if ok { "pdf".into() } else { path.to_string() }, copies));
+        Ok(())
+    }));
+    let app = SlideApp::new(Session::with_new(), services);
+    let mut h = harness(app);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+    h.run_steps(3);
+    {
+        let bs = h.state().backstage.as_ref().unwrap();
+        assert_eq!(bs.printers.as_deref(), Some(&["Office_Laser".to_string()][..]), "the host's printers are listed");
+        assert!(bs.print_printer.is_empty(), "the printer starts on the PDF viewer");
+    }
+    {
+        let bs = h.state_mut().backstage.as_mut().unwrap();
+        bs.print_printer = "Office_Laser".into();
+        bs.print_copies = 3;
+    }
+    h.run_steps(2);
+    click_on_page(&h, "Print");
+    h.run_steps(2);
+    assert_eq!(sent.lock().unwrap().as_slice(), [("Office_Laser".to_string(), "pdf".to_string(), 3)]);
+    assert!(h.state().pending_urls.is_empty(), "no viewer opened");
+    let _ = std::fs::remove_dir_all(&dir);
+}
