@@ -96,6 +96,10 @@ impl Package {
         }
         Ok(Package { parts })
     }
+    /// Part names, normalised (no leading slash, lowercase).
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.parts.keys().map(String::as_str)
+    }
     pub fn get(&self, name: &str) -> Option<&[u8]> {
         self.parts.get(&norm(name)).map(|(_, d)| d.as_slice())
     }

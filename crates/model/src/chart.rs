@@ -396,6 +396,42 @@ pub struct Chart {
     /// The writer clears this before comparing modelled state. A native save does not store the bytes.
     #[serde(skip)]
     pub kept: ChartKept,
+    /// Where the data sits in the chart's workbook, and the data as read from there. Unlike
+    /// `raw`, edits keep it: an export compares the chart data with it to keep the workbook, or to
+    /// update only the cells that changed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<ChartSource>,
+}
+
+/// The data of an imported chart as its chart part cached it, with the workbook formulas each
+/// series reads it from.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChartSource {
+    /// The series read X values (scatter and bubble charts) rather than categories.
+    pub xy: bool,
+    pub categories: Vec<String>,
+    pub series: Vec<SeriesSource>,
+}
+
+/// One series of a [`ChartSource`]: its data as read, and its formulas (`Sheet1!$B$2:$B$5`).
+/// A formula is `None` when the chart part held the data as a literal, or had none.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SeriesSource {
+    pub name: String,
+    pub values: Vec<Option<f64>>,
+    pub x_values: Vec<Option<f64>>,
+    pub sizes: Vec<Option<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_ref: Option<String>,
+    /// Categories, or X values.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub categories_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub values_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sizes_ref: Option<String>,
 }
 
 /// One relationship of a chart part, with the target string as it was written.
@@ -425,6 +461,17 @@ pub struct ChartPart {
 pub struct ChartKept {
     pub rels: Vec<ChartRel>,
     pub parts: Vec<ChartPart>,
+}
+
+impl ChartKept {
+    /// The workbook that holds the chart data (the target of `c:externalData`): the embedded
+    /// package, or an older embedded OLE object. `None` when the chart has none, or links to an
+    /// outside file.
+    pub fn workbook(&self) -> Option<&ChartPart> {
+        let norm = |n: &str| n.trim_start_matches('/').to_ascii_lowercase();
+        let rel = self.rels.iter().find(|r| !r.external && (r.rel_type.ends_with("/package") || r.rel_type.ends_with("/oleObject")))?;
+        self.parts.iter().find(|p| norm(&p.name) == norm(&rel.part))
+    }
 }
 
 impl Default for Chart {
@@ -472,6 +519,7 @@ impl Default for Chart {
             bin_size: None,
             raw: None,
             kept: ChartKept::default(),
+            source: None,
         }
     }
 }
