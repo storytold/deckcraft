@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; cloud Open, Save As, sharing and account badge landed; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -285,8 +285,16 @@ Detail in [ui-parity.md](ui-parity.md).
   blocker.**
 - **Format Shape pane thinner than PowerPoint's** (Fill/Line/Effects/Size/Text Box pages, picture
   and texture options, 3-D). 6–10 h. **Beta blocker.**
-- **File tab depth** (#76 landed the Backstage): no online templates, cloud places, printer
-  choice, video/GIF/CD exports or document protection. 4–8 h for the parts that need no cloud.
+- **File tab depth** (#76 landed the Backstage, cloud Open and Save As landed): no online
+  templates, printer choice, video/GIF/CD exports or document protection. 4–8 h.
+- **Nobody feeds the presence row.** The account badge draws who else is in the presentation when
+  something sets the roster. DeckCraft has no shared editing session. The row is therefore always
+  empty outside a test. Co-editing a deck through the CollabCraft relay is the work behind it.
+  20–40 h.
+- **A cloud save always writes DeckCraft's own format.** The shared pages encode a presentation
+  once and never pass the destination name to the encoder. A `.pptx` opened from cloud storage is
+  therefore written back as `.deckcraft` bytes under its own name. The Save page's name field says so under
+  it. That is the stopgap for now. The fix belongs in `craft-ui`. 2–4 h.
 - **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar, #41 system light/dark).
   2–4 h.
 - **Icon consistency across Craft apps** (#73, #56). 2–4 h; coordinate in craftrules.
@@ -355,6 +363,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | minor | Cloud Open, Save As, sharing, the account badge and Work together landed. The File tab gap loses cloud places. Three cloud gaps are added (presence roster, the one save format, no co-editing) |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |

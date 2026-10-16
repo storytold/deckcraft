@@ -555,6 +555,13 @@ impl Session {
             self.active = Some(i);
         }
     }
+    /// One open presentation by its uid, whichever one is active.
+    ///
+    /// A transfer that finishes later reports the uid it was given. The
+    /// presentation it belongs to need not be the one on screen by then.
+    pub fn document_mut(&mut self, uid: u64) -> Option<&mut DocState> {
+        self.docs.iter_mut().find(|d| d.uid == uid)
+    }
     pub fn add_document(&mut self, d: DocState) -> usize {
         self.docs.push(d);
         self.active = Some(self.docs.len() - 1);

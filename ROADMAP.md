@@ -133,6 +133,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
+| 2026-10-14 | Cloud documents, sharing and working together. File › Open gains a Cloud section with your own files beside what other people shared with you. Save As offers the same account. The title bar gains an account badge that signs in and says who, Share as a split button whose chevron offers Work together and the Save a Copy formats, and a presence row for who else is in the deck. Each cloud presentation carries an overflow menu. A save refuses to overwrite somebody else's work. The pages are `craft-ui`'s. Every Craft app offers the same ones. DeckCraft answers only what a presentation is (`crates/ui-egui/src/cloud.rs`) and how to reach the service (`apps/deckcraft/src/cloud.rs`) |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
 | 2026-10-14 | Empty bulleted and numbered paragraphs show gray markers while editing, including on first click and after Enter. Markers use the list style and stay out of slide shows and exports. |
 | 2026-10-13 | Interface font fallback continues to eligible installed faces when the first covering face is colour or exceeds the 48 MiB limit; document fallback order and the CJK/IME rendering assertions are retained (#101) |
@@ -227,6 +228,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-14 | trivial | Progress log: cloud documents, sharing and working together |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |
