@@ -910,6 +910,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckcraft-aac"
+version = "0.7.0"
+dependencies = [
+ "deckcraft-bitstream",
+ "rayon",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "deckcraft-anim"
 version = "0.7.0"
 dependencies = [
@@ -954,11 +963,14 @@ dependencies = [
 name = "deckcraft-engine"
 version = "0.7.0"
 dependencies = [
+ "deckcraft-aac",
  "deckcraft-anim",
  "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-format",
  "deckcraft-geom",
+ "deckcraft-h264",
+ "deckcraft-isobmff",
  "deckcraft-media",
  "deckcraft-model",
  "deckcraft-pdf",
