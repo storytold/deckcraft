@@ -2456,8 +2456,8 @@ const DATE_KINDS: [&str; 13] = [
     "datetime13",
 ];
 
-/// Samples `field_text` can compute for `lang`. Named months and AM/PM exist for English only;
-/// other languages keep the numeric date and the 24-hour times.
+/// Samples `field_text` can compute for `lang`. Named months exist for English and Japanese;
+/// other languages list the numeric date and the 24-hour times.
 fn date_rows(lang: &str) -> Vec<(&'static str, String)> {
     let now = deckcraft_text::datetime::DateTime::now_local();
     let mut rows = Vec::new();
@@ -2505,7 +2505,7 @@ fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         opened.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, lang_label));
     });
     ui.label(
-        egui::RichText::new("Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time.")
+        egui::RichText::new("Month and day names are listed for English and Japanese. Other languages list the numeric date and the 24-hour time.")
             .size(11.0)
             .color(Tokens::get(ui.ctx()).text_dim),
     );

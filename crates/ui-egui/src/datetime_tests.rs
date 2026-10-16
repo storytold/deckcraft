@@ -66,6 +66,29 @@ fn insert_opens_the_dialog_and_ok_inserts_one_field() {
 }
 
 #[test]
+fn choosing_japanese_lists_and_inserts_a_japanese_date() {
+    let mut h = harness();
+    h.get_by_label("Date & Time").click();
+    h.run_steps(2);
+    h.get_by_label("English (United States)").click();
+    h.run_steps(2);
+    h.get_by_label("Japanese").click();
+    h.run_steps(2);
+    let now = deckcraft_text::datetime::DateTime::now_local().unwrap();
+    let sample = deckcraft_text::datetime::field_text("datetime2", Some("ja-JP"), now).unwrap();
+    assert!(sample.contains('曜'), "the dialog lists the Japanese weekday: {sample}");
+    h.get_by_label(&sample).click();
+    h.run_steps(1);
+    h.get_by_label("OK").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none());
+    let run = date_run(&h).unwrap();
+    assert!(matches!(run.kind, RunKind::Field { ref field } if field == "datetime2"), "{run:?}");
+    assert_eq!(run.text, sample);
+    assert_eq!(run.props.lang.as_deref(), Some("ja-JP"));
+}
+
+#[test]
 fn cancel_closes_the_dialog_without_a_date() {
     let mut h = harness();
     h.get_by_label("Date & Time").click();
