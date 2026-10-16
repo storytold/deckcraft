@@ -1019,6 +1019,40 @@ fn colour_glyphs_paint_their_layers() {
 }
 
 #[test]
+fn emoji_draw_their_colour_bitmap() {
+    // A grinning face is yellow. Without the `sbix` PNG strike it would be an empty outline
+    // (Apple Color Emoji has almost no contours). Skipped where that font is not installed.
+    if !cfg!(target_os = "macos") || !std::path::Path::new("/System/Library/Fonts/Apple Color Emoji.ttc").is_file() {
+        return;
+    }
+    let mut sh = Shape { id: ShapeId(721), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 200.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text("😀");
+    t.paragraphs[0].runs[0].props.size = Some(72.0);
+    sh.text = Some(t);
+    let p = deck_with(vec![sh]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 2.0, ..Default::default() });
+    let yellow = |px: &[u8; 4]| px[0] > 200 && px[1] > 160 && px[2] < 120 && px[0] > px[2] + 60 && px[1] > px[2] + 40;
+    let mut n = 0u32;
+    let mut bbox: Option<(u32, u32, u32, u32)> = None;
+    for y in 0..img.height {
+        for x in 0..img.width {
+            if yellow(&img.pixel(x, y)) {
+                n += 1;
+                bbox = Some(match bbox {
+                    Some((x0, y0, x1, y1)) => (x0.min(x), y0.min(y), x1.max(x), y1.max(y)),
+                    None => (x, y, x, y),
+                });
+            }
+        }
+    }
+    let (x0, y0, x1, y1) = bbox.unwrap_or((0, 0, 0, 0));
+    // 72 pt at 2× is about 144 px. The face sits in the text box, not under the baseline.
+    assert!(n > 2000, "yellow pixels {n} bbox {x0},{y0}-{x1},{y1}");
+    assert!(x1 - x0 > 80 && y1 - y0 > 80, "bbox {x0},{y0}-{x1},{y1}");
+    assert!(y0 < 80 && y1 < 400 && x0 < 80, "emoji placed at {x0},{y0}-{x1},{y1}");
+}
+
+#[test]
 fn a_text_gradient_starts_over_on_every_line() {
     // PowerPoint fills each line of gradient text with the whole gradient, spanning that line
     // (black at the top of every line to white at its bottom), not the text box.

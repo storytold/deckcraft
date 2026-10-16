@@ -349,7 +349,7 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
     }
     apply_adjust(&mut img, adj);
     let (w, h) = img.dimensions();
-    let pm = pixmap(&img)?;
+    let pm = premul_pixmap(&img)?;
     with(|c| {
         c.clock += 1;
         let n = w as usize * h as usize * 4;
@@ -366,7 +366,7 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
 }
 
 /// Straight RGBA to a premultiplied pixmap.
-fn pixmap(img: &image::RgbaImage) -> Option<Arc<Pixmap>> {
+pub(crate) fn premul_pixmap(img: &image::RgbaImage) -> Option<Arc<Pixmap>> {
     let (w, h) = img.dimensions();
     if w > u16::MAX as u32 || h > u16::MAX as u32 {
         return None;
@@ -410,7 +410,7 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
             img = image::imageops::resize(&img, nw, nh, image::imageops::FilterType::Triangle);
         }
         apply_adjust(&mut img, adj);
-        frames.push(pixmap(&img)?);
+        frames.push(premul_pixmap(&img)?);
         ends.push(t);
     }
     (frames.len() > 1).then_some(Anim { frames, ends })
