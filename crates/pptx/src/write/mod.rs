@@ -525,6 +525,23 @@ fn sanitized(p: &Presentation) -> std::borrow::Cow<'_, Presentation> {
     std::borrow::Cow::Owned(q)
 }
 
+/// Macro-enabled main content types by extension.
+const CT_PRES_MACRO: &str = "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml";
+const CT_TEMPLATE_MACRO: &str = "application/vnd.ms-powerpoint.template.macroEnabled.main+xml";
+const CT_SLIDESHOW_MACRO: &str = "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml";
+const CT_VBA: &str = "application/vnd.ms-office.vbaProject";
+const RT_VBA: &str = "http://schemas.microsoft.com/office/2006/relationships/vbaProject";
+
+/// Write a macro-enabled package (`pptm`, `potm` or `ppsm`) with the kept VBA project.
+pub fn export_macro_enabled(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
+    let ct = match ext.to_ascii_lowercase().as_str() {
+        "potm" => CT_TEMPLATE_MACRO,
+        "ppsm" => CT_SLIDESHOW_MACRO,
+        _ => CT_PRES_MACRO,
+    };
+    export(p, ct)
+}
+
 pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
     let p = sanitized(p);
     let p: &Presentation = &p;
@@ -707,6 +724,13 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
     x.pkg.xml_part("ppt/viewProps.xml", CT_VIEW_PROPS, view_props_xml(p));
     let ts = crate::tables::table_styles_xml(&x.table_styles, &p.table_styles);
     x.pkg.xml_part("ppt/tableStyles.xml", CT_TABLE_STYLES, ts);
+    // A macro-enabled main part also writes the kept VBA project.
+    if [CT_PRES_MACRO, CT_TEMPLATE_MACRO, CT_SLIDESHOW_MACRO].contains(&main_ct)
+        && let Some(vba) = p.vba_project.and_then(|m| p.media(m)).filter(|m| !m.data.is_empty())
+    {
+        pres.rels.add(RT_VBA, "vbaProject.bin", false);
+        x.pkg.xml_part_binary("ppt/vbaProject.bin", CT_VBA, vba.data.as_ref().clone());
+    }
     let pxml = presentation_xml(&mut x, &mut pres, &master_rids, notes_master_rid.as_deref(), handout_rid.as_deref(), &slide_rids);
     x.pkg.xml_part("ppt/presentation.xml", main_ct, pxml);
     // Kept parts never replace a part the writer makes.

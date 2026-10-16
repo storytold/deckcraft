@@ -107,13 +107,13 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
 - **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
 
-### Template, slide-show and macro variants are saved as plain `.pptx`
-- **Evidence:** `crates/pptx/src/write/mod.rs` always writes the
-  `presentationml.presentation.main+xml` content type; `.potx`/`.ppsx` open, `.pptm`/`.potm`/`.ppsm`
-  aren't recognised.
-- **Impact:** a template saved as `.potx` isn't a template to PowerPoint; macro decks can't be
-  opened even to view.
-- **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
+### Template and slide-show variants are saved as plain `.pptx`
+- **Evidence:** `crates/pptx/src/write/mod.rs` writes the `presentationml.presentation.main+xml`
+  content type for `.potx`/`.ppsx`. (Macro-enabled `.pptm`/`.potm`/`.ppsm` open and save with
+  their own content type and keep `vbaProject.bin` byte for byte, never running it; saving one
+  as `.pptx` drops the macros with a warning.)
+- **Impact:** a template saved as `.potx` isn't a template to PowerPoint.
+- **Estimate:** 1–2 h.
 
 ### No legacy `.ppt`/`.pot`/`.pps` import
 - **Evidence:** PowerPoint for Mac still opens and saves the 97–2003 binary formats

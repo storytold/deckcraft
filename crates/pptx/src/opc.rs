@@ -393,6 +393,13 @@ impl PackageOut {
     pub fn raw(&mut self, name: &str, data: Vec<u8>) {
         self.files.push((name.to_string(), data, true));
     }
+
+    /// Add a binary part under its own Override content type (for `.bin` parts whose type is
+    /// specific to the part, such as `vbaProject.bin`).
+    pub fn xml_part_binary(&mut self, name: &str, content_type: &str, data: Vec<u8>) {
+        self.overrides.push((format!("/{name}"), content_type.to_string()));
+        self.files.push((name.to_string(), data, false));
+    }
     /// Add a binary part; its extension gets a Default content type.
     pub fn binary(&mut self, name: &str, content_type: &str, data: Vec<u8>) {
         let ext = name.rsplit('.').next().unwrap_or("bin").to_ascii_lowercase();

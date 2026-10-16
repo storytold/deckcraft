@@ -1058,6 +1058,100 @@ fn transition_defaults_read_like_powerpoint() {
     }
 }
 
+/// Turn a .pptx into a macro-enabled .pptm with `vba` as `ppt/vbaProject.bin`, as PowerPoint
+/// lays it out.
+fn as_pptm(pptx: &[u8], vba: &[u8]) -> Vec<u8> {
+    use std::io::{Read, Write};
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(pptx)).unwrap();
+    let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default();
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).unwrap();
+        let name = f.name().to_string();
+        let mut data = vec![];
+        f.read_to_end(&mut data).unwrap();
+        if name == "[Content_Types].xml" {
+            data = String::from_utf8(data)
+                .unwrap()
+                .replace("presentationml.presentation.main+xml", "PLACEHOLDER")
+                .replace(
+                    "application/vnd.openxmlformats-officedocument.PLACEHOLDER",
+                    "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
+                )
+                .replace("</Types>", r#"<Override PartName="/ppt/vbaProject.bin" ContentType="application/vnd.ms-office.vbaProject"/></Types>"#)
+                .into_bytes();
+        }
+        if name == "ppt/_rels/presentation.xml.rels" {
+            data = String::from_utf8(data)
+                .unwrap()
+                .replace("</Relationships>", r#"<Relationship Id="rIdVba" Type="http://schemas.microsoft.com/office/2006/relationships/vbaProject" Target="vbaProject.bin"/></Relationships>"#)
+                .into_bytes();
+        }
+        out.start_file(name, opts).unwrap();
+        out.write_all(&data).unwrap();
+    }
+    out.start_file("ppt/vbaProject.bin", opts).unwrap();
+    out.write_all(vba).unwrap();
+    out.finish().unwrap().into_inner()
+}
+
+fn part(pkg: &[u8], name: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(pkg)).unwrap();
+    let mut f = z.by_name(name).ok()?;
+    let mut v = vec![];
+    f.read_to_end(&mut v).unwrap();
+    Some(v)
+}
+
+/// Macro-enabled decks: a .pptm opens, its VBA project is kept byte for byte (and never run),
+/// a save as .pptm writes it back with the macro-enabled content type, and a save as .pptx
+/// leaves it out with a warning, as PowerPoint does.
+#[test]
+fn pptm_keeps_its_vba_project() {
+    use deckcraft_engine::Session;
+    use serde_json::json;
+    let vba: Vec<u8> = (0..=255u8).cycle().take(3000).collect();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"title": "Macros"})).unwrap();
+    let pptm = as_pptm(&deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap(), &vba);
+    let doc = deckcraft_pptx::import(&pptm).unwrap();
+    let m = doc.vba_project.expect("VBA project read");
+    assert_eq!(doc.media(m).map(|i| i.data.as_slice() == vba.as_slice()), Some(true));
+    // Back to .pptm: same bytes, rel and content types.
+    for (ext, ct) in [
+        ("pptm", "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml"),
+        ("potm", "application/vnd.ms-powerpoint.template.macroEnabled.main+xml"),
+        ("ppsm", "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml"),
+    ] {
+        let out = deckcraft_pptx::export_macro_enabled(&doc, ext).unwrap();
+        assert_eq!(part(&out, "ppt/vbaProject.bin"), Some(vba.clone()), "{ext}");
+        let types = String::from_utf8(part(&out, "[Content_Types].xml").unwrap()).unwrap();
+        assert!(types.contains(ct) && types.contains("application/vnd.ms-office.vbaProject"), "{ext}: {types}");
+        let rels = String::from_utf8(part(&out, "ppt/_rels/presentation.xml.rels").unwrap()).unwrap();
+        assert!(rels.contains("relationships/vbaProject"), "{rels}");
+        let again = deckcraft_pptx::import(&out).unwrap();
+        assert!(again.vba_project.is_some(), "{ext} reopens with its macros");
+    }
+    // As .pptx: no macros, and no macro content type.
+    let plain = deckcraft_pptx::export(&doc).unwrap();
+    assert_eq!(part(&plain, "ppt/vbaProject.bin"), None);
+    assert!(!String::from_utf8(part(&plain, "[Content_Types].xml").unwrap()).unwrap().contains("macroEnabled"));
+    // The engine: open the .pptm, save as .pptx warns, save as .pptm keeps the macros.
+    let dir = std::env::temp_dir().join(format!("deckcraft-pptm-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("deck.pptm");
+    std::fs::write(&src, &pptm).unwrap();
+    let mut s = Session::new();
+    s.execute("file.open", &json!({"path": src.to_string_lossy()})).unwrap();
+    let r = s.execute("file.saveAs", &json!({"path": dir.join("deck.pptx").to_string_lossy()})).unwrap();
+    assert!(r["warning"].as_str().is_some_and(|w| w.contains("macros")), "{r}");
+    let r = s.execute("file.saveAs", &json!({"path": dir.join("copy.pptm").to_string_lossy()})).unwrap();
+    assert!(r["warning"].is_null(), "{r}");
+    assert_eq!(part(&std::fs::read(dir.join("copy.pptm")).unwrap(), "ppt/vbaProject.bin"), Some(vba));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn linked_pictures_are_written_with_r_link() {
     // A picture whose bytes live outside the package must be referenced with `r:link`; `r:embed`

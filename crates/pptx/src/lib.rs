@@ -58,7 +58,7 @@ pub fn is_encrypted(bytes: &[u8]) -> bool {
     cfb::is_encrypted(bytes)
 }
 
-/// Read a `.pptx` / `.potx` / `.ppsx` package.
+/// Read a `.pptx` / `.potx` / `.ppsx` package (and the macro-enabled `.pptm` / `.potm` / `.ppsm`).
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     read::import(bytes)
 }
@@ -82,6 +82,12 @@ pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
         _ => write::CT_PRES,
     };
     write::export(p, ct)
+}
+
+/// Write a macro-enabled `.pptm` / `.potm` / `.ppsm` package (`ext` without the dot), keeping
+/// the VBA project read from the original untouched. Macros are never run.
+pub fn export_macro_enabled(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
+    write::export_macro_enabled(p, ext)
 }
 
 /// Content type for a file name's extension.

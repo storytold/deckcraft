@@ -147,6 +147,9 @@ fn is_presentation_name(lower: &str) -> bool {
         || lower.ends_with(".pptx")
         || lower.ends_with(".potx")
         || lower.ends_with(".ppsx")
+        || lower.ends_with(".pptm")
+        || lower.ends_with(".potm")
+        || lower.ends_with(".ppsm")
 }
 
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.

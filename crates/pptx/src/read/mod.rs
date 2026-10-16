@@ -480,6 +480,11 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     if let Some(dts) = pres_el.child("defaultTextStyle") {
         p.default_text_style = dml::list_style(&mut imp, &pres_part, dts);
     }
+    // Macro-enabled decks: keep the VBA project's bytes (never run) for a save as .pptm.
+    if let Some(r) = pres_part.rels.first_of("vbaProject") {
+        let target = r.target.clone();
+        p.vba_project = imp.media_for(&target);
+    }
     if let Some(r) = pres_part.rels.first_of("tableStyles")
         && let Some(d) = load(&pkg, &r.target)
     {
