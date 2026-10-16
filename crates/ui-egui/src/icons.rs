@@ -289,6 +289,7 @@ icons! {
     Eye => "eye",
     EyeOff => "eye-off",
     Close => "close",
+    Pointer => "pointer",
     Check => "check",
     Plus => "plus",
     Minus => "minus",
@@ -2299,6 +2300,7 @@ fn draw(p: &Pen<'_>, icon: Icon) {
                 p.seg_w((4.0, 21.0), (20.0, 3.0), K, 1.1);
             }
         }
+        I::Pointer => p.rshape(&[(5.5, 3.5), (19.0, 12.0), (12.5, 13.5), (9.0, 20.0)], 1.2, N, K),
         I::Close => {
             p.seg_w((5.5, 5.5), (18.5, 18.5), K, 1.1);
             p.seg_w((18.5, 5.5), (5.5, 18.5), K, 1.1);

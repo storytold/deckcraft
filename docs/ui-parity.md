@@ -206,3 +206,61 @@ consistency is open (#73, #56).
 | 2026-10-12 | minor | Text editing keys: Ctrl+arrows, Ctrl+Backspace/Delete, Ctrl+Up/Down, Home/End on wrapped lines, Shift+F3, font size keys, as observed in PowerPoint for Windows (#268) |
 | 2026-10-11 | minor | Tab in text boxes keeps editing (#78) |
 | 2026-10-10 | major | Created: shell, panes and dialogs, direct manipulation, shortcuts and visual fidelity against PowerPoint 16.113 |
+
+## Canvas shell (in progress, branch `feat/canvas-shell`)
+
+A second window layout beside the PowerPoint-style one, for people who prefer a canvas-first
+editor. Choose it in Preferences (Layout: Ribbon / Canvas), with `view.shell {shell: canvas}`, the
+control channel's `ui.set {shell}`, or `deckcraft --shell canvas` (`DECKCRAFT_SHELL`). The desktop
+app opens in the canvas layout until a layout is saved in its settings; the library (tests, the web
+build) keeps the ribbon as its default. Both layouts drive the same commands, so files, undo and PPTX output don't change
+with the layout (`crates/ui-egui/src/canvas_shell.rs`).
+
+| Part | Landed (phases 1–5) | Later |
+|---|---|---|
+| Left sidebar | Name and folder (menu: Info, Save As, Export, Print, Close), slide / grid switch, New slide with layouts, +, slide list with sections, Layers (the Selection pane's list: rename, restack, eye, lock). Locked layers work as in canvas editors: clicks on the slide pass through them (engine pref `lockedClickThrough`, on in this layout only) and they are selected from Layers; the ribbon keeps PowerPoint's lock (picked, formatted, not moved) | |
+| Inspector | Present from this slide, Export, Design / Animate, zoom menu. With a selection, Design is a property editor laid out like a canvas editor's design panel (`crates/ui-egui/src/props.rs`): a header naming the layer (Text, Rectangle, Image, Group, N layers) with Link and More options; Position (alignment, X, Y, rotation, rotate 90°, flips); Layout (text resizing: auto width, auto height, fixed; W, H, constrain proportions); Appearance (show / hide, opacity, corner radius of rounded rectangles); Typography (the text style chip, horizontal and vertical alignment, type details); Fill (hex, opacity, solid / gradient / image / none; a text box's Fill is its text colour); Stroke (colour, width, add / remove); Effects (drop shadow, inner shadow, glow, soft edges, reflection: add / remove); Export (slide as PNG or JPEG, deck as PDF). Numbers sit in grey fields in pixels without a unit; drag a field's prefix to scrub. With nothing selected: text styles, Layout and Background. Animate shows the slide's states and, folded, the Animation pane | Layer opacity for outlines and text (PPTX keeps opacity per fill) |
+| Under the slide | Presenter notes card with a grip; floating toolbar: Select, Text box, Picture, Shape, Table, Chart, Comment, notes toggle, command search. Single-key tools: V select, T text box, R rectangle, O oval, L line, Esc back to Select (not while editing text). Letters don't type over a selected shape here: Enter edits its text | Pen and comment tools on the canvas |
+| Slide list | Keeps the current slide in view when it changes (both layouts); the Layers list marks (accent dot) the layers that change from the previous state | |
+
+PPTX-safe choices in the inspector: a weight is offered only when PPTX can name it, as Regular or
+Bold (the bold flag) or as a family name of its own ("Avenir Next Demi Bold"), so a variable font
+such as Inter offers Regular and Bold, not its in-between instances. Opacity is the fill's
+transparency (`shape.fill {transparency}`) or the picture's (`picture.adjust {transparency}`);
+outlines and text keep their own colour's transparency. Letter spacing offers presets because
+`format.state` doesn't report the current value.
+
+Text styles (`crates/ui-egui/src/textstyles.rs`) are the deck's own inherited styles: Title (the
+master's title style), Body, Body 2 and Body 3 (its body style's first three levels) and Plain text
+(the presentation's default text style, which text boxes inherit). With nothing selected the
+inspector lists them; click one to edit its font, weight, size, line height, italic and colour for
+the whole presentation (`master.textStyle`, one undo step). A theme font (`+mj-lt` / `+mn-lt`) is
+changed in the theme (`design.fonts`), so every style and shape in it follows. Size and line height
+leave layouts that set their own alone (the title slide's 60 pt title), as PowerPoint does; font,
+weight, italic and colour clear layout overrides (`layouts: true`). Applying a style to text whose
+box inherits it clears the text's own formatting (`format.clear`, and the list level for Body 2 and
+3), so it follows the style ("Title" in the menu). Elsewhere PPTX has no link, so the values are
+copied ("Title (copy)"), and editing the style also updates text whose formatting still matches its
+old values. Known gap (engine, both layouts): formatting an empty placeholder doesn't stick, since
+the engine formats runs and an empty placeholder has none.
+
+States (`crates/ui-egui/src/states.rs`, the Animate tab) are slides joined by the Morph transition:
+consecutive slides whose later ones enter with Morph are the states of one animation, and Morph
+animates each layer it pairs between two states (by `!!name`, name, text, then shape:
+`deckcraft_anim::morph_pairs`) in position, size, rotation, colour and transparency, fading in or
+out the layers only one state has. The tab shows the run as a strip of numbered thumbnails (click to
+go), **Add state** (duplicate the slide and set Morph on the copy, one undo step), **Play** (present
+from the first state), Morph's duration and Objects / Words / Characters, **Stop being a state**
+(Morph off), and **What changes** from the previous state, layer by layer (moves, resizes, rotates,
+restyles, text changes, fades in, fades out). A deck of states is an ordinary PPTX: PowerPoint 2019
+and Microsoft 365 play it the same way, older versions show a fade. Limits: PPTX gives Morph no
+easing setting, so there is none here; a layer hidden with the eye isn't animated (the tab says so
+and suggests deleting it in that state, which fades it).
+
+Units (`crates/ui-egui/src/units.rs`): the canvas layout shows pixels at 2 px per point, Figma
+Slides' scale (a 16:9 slide is 1920 × 1080 px, a 44 pt title 88 px): type sizes, the text style
+editor, sizes and positions, line widths, margins, glow and soft edges, and the ruler. Zoom follows
+Figma's meaning (100% is one slide pixel per screen point, so a fitted slide reads about 40–50%).
+The ribbon keeps PowerPoint's points and inches. Commands and files are unchanged: commands take
+points, and PPTX stores EMU, 6,350 to a pixel exactly. Dialogs opened from the command palette
+(Slide Size, Paragraph) still show points and inches.

@@ -204,7 +204,7 @@ fn color_button(
     });
 }
 
-fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let Some(sh) = st.selected_shapes().first().map(|s| (*s).clone()) else {
@@ -316,9 +316,11 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 );
             }
             ui.label(egui::RichText::new("Soft Edges").font(theme::bold(13.0)));
-            let mut s = sh.effects.as_ref().and_then(|e| e.soft_edge).unwrap_or(0.0);
-            if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("size (pt)")).drag_stopped() {
-                run(app, "shape.effects", json!({"softEdges": s}));
+            let u = crate::units::small(app);
+            let size_label = format!("size ({})", u.suffix.trim());
+            let mut s = u.show(sh.effects.as_ref().and_then(|e| e.soft_edge).unwrap_or(0.0));
+            if ui.add(egui::Slider::new(&mut s, 0.0..=u.show(50.0)).text(&size_label)).drag_stopped() {
+                run(app, "shape.effects", json!({"softEdges": u.to_pt(s)}));
             }
             let raw3d = sh.effects.as_ref().and_then(|e| e.raw3d.clone());
             three_d_options(app, ui, sh.id.0, raw3d.as_deref());
@@ -330,11 +332,15 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             let lock_id = egui::Id::new("fmt-lock-aspect");
             let mut lock: bool = ui.data_mut(|d| d.get_temp(lock_id).unwrap_or(false));
             let locked = lock;
-            let mut fields = |ui: &mut Ui, label: &str, id: &str, v: f64, key: &str, cmd: &str, unit: f64| {
+            let len = crate::units::length(app);
+            let deg = crate::units::Unit { per_pt: 1.0, suffix: "°" };
+            // Inches step by tenths, pixels and degrees by ones.
+            let step = |u: crate::units::Unit| if u == crate::units::INCH { 0.1 } else { 1.0 };
+            let mut fields = |ui: &mut Ui, label: &str, id: &str, v: f64, key: &str, cmd: &str, unit: crate::units::Unit| {
                 ui.horizontal(|ui| {
                     ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
-                    if let Some(nv) = widgets::spinner(ui, id, v / unit, 0.1, if unit == 72.0 { "\"" } else { "°" }, 70.0) {
-                        let mut p = json!({key: nv * unit});
+                    if let Some(nv) = widgets::spinner(ui, id, unit.show(v), step(unit), unit.suffix, 70.0) {
+                        let mut p = json!({key: unit.to_pt(nv)});
                         if cmd == "shape.resize" && locked {
                             p["lockAspect"] = json!(true);
                         }
@@ -343,16 +349,16 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 });
             };
             ui.label(egui::RichText::new("Size").font(theme::bold(13.0)));
-            fields(ui, "Height", "fh", x.h, "h", "shape.resize", 72.0);
-            fields(ui, "Width", "fw", x.w, "w", "shape.resize", 72.0);
-            fields(ui, "Rotation", "fr", x.rot, "deg", "shape.rotate", 1.0);
+            fields(ui, "Height", "fh", x.h, "h", "shape.resize", len);
+            fields(ui, "Width", "fw", x.w, "w", "shape.resize", len);
+            fields(ui, "Rotation", "fr", x.rot, "deg", "shape.rotate", deg);
             if ui.checkbox(&mut lock, "Lock aspect ratio").changed() {
                 ui.data_mut(|d| d.insert_temp(lock_id, lock));
             }
             ui.add_space(6.0);
             ui.label(egui::RichText::new("Position").font(theme::bold(13.0)));
-            fields(ui, "Horizontal", "fx", x.x, "x", "shape.move", 72.0);
-            fields(ui, "Vertical", "fy", x.y, "y", "shape.move", 72.0);
+            fields(ui, "Horizontal", "fx", x.x, "x", "shape.move", len);
+            fields(ui, "Vertical", "fy", x.y, "y", "shape.move", len);
             ui.add_space(6.0);
             ui.label(egui::RichText::new("Alt Text").font(theme::bold(13.0)));
             let id = ui.id().with(("alt", uid, sh.id.0));
@@ -393,7 +399,8 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             if ui.checkbox(&mut w, "Wrap text in shape").changed() {
                 run(app, "format.wrap", json!({"on": w}));
             }
-            ui.label("Margins (pt)");
+            let u = crate::units::small(app);
+            ui.label(format!("Margins ({})", u.suffix.trim()));
             let b = sh.text.as_ref().map(|t| t.body.clone()).unwrap_or_default();
             for (l, k, v) in [
                 ("Left", "left", b.inset_l.unwrap_or(7.2)),
@@ -403,8 +410,8 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             ] {
                 ui.horizontal(|ui| {
                     ui.add_sized(vec2(60.0, 20.0), egui::Label::new(l));
-                    if let Some(nv) = widgets::spinner(ui, &format!("m{k}"), v, 1.0, " pt", 60.0) {
-                        run(app, "format.margins", json!({k: nv.max(0.0)}));
+                    if let Some(nv) = widgets::spinner(ui, &format!("m{k}"), u.show(v), 1.0, u.suffix, 60.0) {
+                        run(app, "format.margins", json!({k: u.to_pt(nv).max(0.0)}));
                     }
                 });
             }
@@ -528,9 +535,10 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             });
             ui.horizontal(|ui| {
                 ui.label("Width");
+                let u = crate::units::small(app);
                 let w = sh.line.as_ref().and_then(|l| l.width).unwrap_or(0.75);
-                if let Some(v) = widgets::spinner(ui, "lw", w, 0.25, " pt", 60.0) {
-                    run(app, "shape.line", json!({"width": v.max(0.0)}));
+                if let Some(v) = widgets::spinner(ui, "lw", u.show(w), 0.25 * u.per_pt, u.suffix, 60.0) {
+                    run(app, "shape.line", json!({"width": u.to_pt(v).max(0.0)}));
                 }
             });
             ui.horizontal_wrapped(|ui| {
@@ -801,7 +809,7 @@ fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) 
     }
 }
 
-fn background(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn background(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
     let bg = app.session.active().and_then(|d| d.current_slide().and_then(|s| s.background.clone()));
     let fill = match &bg {
@@ -1007,7 +1015,7 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
     });
 }
 
-fn animation(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let Some(slide) = st.current_slide() else { return };

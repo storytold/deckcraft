@@ -9,6 +9,7 @@
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
+pub mod canvas_shell;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -16,12 +17,14 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
 pub mod icons;
+pub mod inspector;
 pub mod media;
 pub mod menus;
 pub mod notes;
 pub mod opening;
 pub mod panes;
 mod preview;
+pub mod props;
 pub mod qat;
 pub mod ribbon;
 pub mod selpane;
@@ -29,12 +32,15 @@ pub mod settings;
 pub mod show;
 pub mod sorter;
 pub mod squiggles;
+pub mod states;
 pub mod status;
+pub mod textstyles;
 pub mod textures;
 pub mod theme;
 pub mod thumbs;
 pub mod toast;
 pub mod uifonts;
+pub mod units;
 pub mod widgets;
 
 use std::collections::HashMap;
@@ -233,11 +239,41 @@ pub enum ViewMode {
     Reading,
 }
 
+/// The window layout around the slide.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Shell {
+    /// PowerPoint-style: ribbon, thumbnails, status bar.
+    #[default]
+    Classic,
+    /// Canvas-first: a slides-and-layers sidebar, an inspector on the right, no ribbon.
+    Canvas,
+}
+
+impl Shell {
+    pub fn id(self) -> &'static str {
+        match self {
+            Shell::Classic => "classic",
+            Shell::Canvas => "canvas",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Shell> {
+        match s {
+            "classic" => Some(Shell::Classic),
+            "canvas" => Some(Shell::Canvas),
+            _ => None,
+        }
+    }
+}
+
 /// Persisted UI state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    pub shell: Shell,
+    /// Canvas shell inspector tab: `design` or `animate`.
+    pub inspector_tab: String,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -280,6 +316,8 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            shell: Shell::Classic,
+            inspector_tab: "design".into(),
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -377,6 +415,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("view.shell", "Interface Layout", None, "{shell?: classic|canvas}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -586,6 +625,31 @@ impl SlideApp {
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
         self
+    }
+
+    /// Engine behaviour that follows the layout: in the canvas shell clicks pass through locked
+    /// layers (select them in the Layers list); the ribbon keeps PowerPoint's lock.
+    fn sync_shell_prefs(&mut self) {
+        self.session.prefs.locked_click_through = self.ui.shell == Shell::Canvas;
+    }
+
+    /// Run `cmds` as one undo step named `label` (each command would make its own).
+    pub fn run_as_one(&mut self, label: &str, cmds: Vec<(&str, Value)>) {
+        let before = self.session.active().map(|d| d.history.undo.len()).unwrap_or(0);
+        for (id, p) in cmds {
+            if let Err(e) = self.run(id, p) {
+                self.set_status(e);
+            }
+        }
+        let Some(st) = self.session.active_mut() else { return };
+        let undo = &mut st.history.undo;
+        if undo.len() > before + 1 {
+            // Keep the first step (the document before them all), drop the ones after it.
+            undo.truncate(before + 1);
+            if let Some(e) = undo.last_mut() {
+                e.label = label.to_string();
+            }
+        }
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -942,6 +1006,15 @@ impl SlideApp {
                 let on = self.flag(p, self.ui.brightness == theme::Brightness::Dark);
                 self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
                 self.restyle = true;
+            }
+            "view.shell" => {
+                self.ui.shell = match p.get("shell").and_then(Value::as_str) {
+                    Some(id) => Shell::parse(id).ok_or_else(|| format!("unknown layout `{id}` (classic or canvas)"))?,
+                    None if self.ui.shell == Shell::Classic => Shell::Canvas,
+                    None => Shell::Classic,
+                };
+                self.sync_shell_prefs();
+                return Ok(json!({"shell": self.ui.shell.id()}));
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
             "view.newWindow" => return doc_window::command(self, p),
@@ -1693,7 +1766,10 @@ impl SlideApp {
         for e in events {
             match e {
                 egui::Event::Text(t) => {
-                    if self.session.active().is_some_and(|d| d.selection.text.is_some() || d.selection.shapes.len() == 1)
+                    // In the canvas shell letters pick tools unless text is being edited (Enter
+                    // edits a selected shape's text); the ribbon types over a selected shape.
+                    let types_over = self.ui.shell == Shell::Classic;
+                    if self.session.active().is_some_and(|d| d.selection.text.is_some() || (types_over && d.selection.shapes.len() == 1))
                         && let Err(e) = self.session.type_text(&t)
                     {
                         self.set_status(e.to_string());
@@ -1737,6 +1813,9 @@ impl SlideApp {
                         continue;
                     }
                     let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
+                    if self.ui.shell == Shell::Canvas && canvas_shell::tool_key(self, key, mods) {
+                        continue;
+                    }
                     if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
                         continue;
                     }
@@ -1792,7 +1871,13 @@ impl SlideApp {
         self.sync_backstage();
         self.keyboard(&ctx);
         self.sync_backstage();
+        self.sync_shell_prefs();
         ribbon::title_bar(self, ui);
+        if self.ui.shell == Shell::Canvas && self.backstage.is_none() {
+            canvas_shell::show(self, ui);
+            self.finish_frame(&ctx, t0);
+            return;
+        }
         if self.backstage.is_none() && self.session.active().is_some() {
             ribbon::show(self, ui);
             status::status_bar(self, ui);
@@ -1831,10 +1916,15 @@ impl SlideApp {
                 }
             }
         });
+        self.finish_frame(&ctx, t0);
+    }
+
+    /// Toasts, dialogs, the palette and queued requests: drawn over whichever shell is in use.
+    fn finish_frame(&mut self, ctx: &egui::Context, t0: f64) {
         toast::note_missing_fonts(self);
-        toast::show(self, &ctx);
-        dialogs::show(self, &ctx);
-        menus::palette(self, &ctx);
+        toast::show(self, ctx);
+        dialogs::show(self, ctx);
+        menus::palette(self, ctx);
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
@@ -1842,7 +1932,7 @@ impl SlideApp {
             ctx.copy_text(t);
         }
         self.drain_requests();
-        doc_window::show(self, &ctx);
+        doc_window::show(self, ctx);
         self.perf.frame_ms = now_ms() - t0;
     }
 

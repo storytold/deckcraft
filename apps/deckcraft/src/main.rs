@@ -1,6 +1,6 @@
 //! DeckCraft desktop app.
 //!
-//! Usage: `deckcraft [--control <port>] [--sample] [--show] [files…]`
+//! Usage: `deckcraft [--control <port>] [--sample] [--show] [--shell canvas|classic] [files…]`
 //! `deckcraft --help` prints the flags and exits. `deckcraft --version` prints the version and exits.
 //!
 //! `--control <port>` (or `DECKCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
@@ -73,7 +73,17 @@ fn load_prefs(app: &mut SlideApp) {
     }
     let Some(dir) = config_dir() else { return };
     let (ui, prefs) = deckcraft_ui_egui::settings::load(&dir);
-    if let Some(ui) = ui {
+    // The app opens in the canvas layout until a layout is saved (the library's default stays the
+    // ribbon, which the tests and the web build use).
+    app.ui.shell = deckcraft_ui_egui::Shell::Canvas;
+    if let Some(mut ui) = ui {
+        let saved_shell = std::fs::read(dir.join(deckcraft_ui_egui::settings::UI_FILE))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .is_some_and(|v| v.get("shell").is_some());
+        if !saved_shell {
+            ui.shell = deckcraft_ui_egui::Shell::Canvas;
+        }
         app.ui = ui;
     }
     if let Some(prefs) = prefs {
@@ -127,11 +137,12 @@ fn services() -> Services {
 const APP_ID: &str = "ai.storyteller.deckcraft";
 
 const USAGE: &str = "\
-Usage: deckcraft [--control PORT] [--sample] [--show] [FILE...]
+Usage: deckcraft [--control PORT] [--sample] [--show] [--shell canvas|classic] [FILE...]
 
   --control PORT  JSON control server on 127.0.0.1:PORT
   --sample        open the sample presentation
   --show          start the slide show
+  --shell LAYOUT  open in the canvas or the classic (ribbon) layout
   --help, -h      print this help and exit
   --version, -V   print the version and exit
 ";
@@ -139,11 +150,11 @@ Usage: deckcraft [--control PORT] [--sample] [--show] [FILE...]
 enum Startup {
     Help,
     Version,
-    Run { control_port: Option<u16>, files: Vec<String>, sample: bool, show: bool },
+    Run { control_port: Option<u16>, files: Vec<String>, sample: bool, show: bool, shell: Option<String> },
 }
 
 /// `--help` and `--version` leave before the window and the log file.
-fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>) -> Startup {
+fn startup(mut control_port: Option<u16>, mut shell: Option<String>, args: impl IntoIterator<Item = String>) -> Startup {
     let mut files = Vec::new();
     let mut sample = false;
     let mut show = false;
@@ -153,12 +164,13 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
             "--sample" => sample = true,
             "--show" => show = true,
+            "--shell" => shell = args.next(),
             "--version" | "-V" => return Startup::Version,
             "--help" | "-h" => return Startup::Help,
             _ => files.push(a),
         }
     }
-    Startup::Run { control_port, files, sample, show }
+    Startup::Run { control_port, files, sample, show, shell }
 }
 
 fn app_icon() -> Option<egui::IconData> {
@@ -170,18 +182,21 @@ fn main() -> eframe::Result {
     // First, so every start-up record (and the engine's panic hook, installed with the first
     // Session) is captured; see `logging`.
     let logger = logging::install();
-    let (control_port, files, sample, show) =
-        match startup(std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()), std::env::args().skip(1)) {
-            Startup::Help => {
-                print!("{USAGE}");
-                return Ok(());
-            }
-            Startup::Version => {
-                println!("deckcraft {}", env!("CARGO_PKG_VERSION"));
-                return Ok(());
-            }
-            Startup::Run { control_port, files, sample, show } => (control_port, files, sample, show),
-        };
+    let (control_port, files, sample, show, shell) = match startup(
+        std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()),
+        std::env::var("DECKCRAFT_SHELL").ok(),
+        std::env::args().skip(1),
+    ) {
+        Startup::Help => {
+            print!("{USAGE}");
+            return Ok(());
+        }
+        Startup::Version => {
+            println!("deckcraft {}", env!("CARGO_PKG_VERSION"));
+            return Ok(());
+        }
+        Startup::Run { control_port, files, sample, show, shell } => (control_port, files, sample, show, shell),
+    };
     log::info!("DeckCraft {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
     // The log file lives under the settings directory; opened after the arguments, so `--help` and
     // `--version` leave no file behind. Records logged until now are written to it first.
@@ -251,6 +266,11 @@ fn main() -> eframe::Result {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);
             }
+            if let Some(s) = shell.as_deref()
+                && let Err(e) = app.run("view.shell", serde_json::json!({"shell": s}))
+            {
+                log::warn!("--shell: {e}");
+            }
             if sample && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                 log::error!("sample: {e}");
             }
@@ -296,13 +316,13 @@ mod tests {
 
     #[test]
     fn help_exits_instead_of_opening_a_file() {
-        assert!(matches!(startup(None, ["--help".to_string()]), Startup::Help));
-        assert!(matches!(startup(None, ["-h".to_string()]), Startup::Help));
-        assert!(matches!(startup(None, ["talk.pptx".to_string(), "--help".to_string()]), Startup::Help));
-        assert!(matches!(startup(None, ["--version".to_string()]), Startup::Version));
-        let launch = startup(Some(9), ["--sample".to_string(), "--control".to_string(), "4242".to_string(), "talk.pptx".to_string()]);
+        assert!(matches!(startup(None, None, ["--help".to_string()]), Startup::Help));
+        assert!(matches!(startup(None, None, ["-h".to_string()]), Startup::Help));
+        assert!(matches!(startup(None, None, ["talk.pptx".to_string(), "--help".to_string()]), Startup::Help));
+        assert!(matches!(startup(None, None, ["--version".to_string()]), Startup::Version));
+        let launch = startup(Some(9), None, ["--sample".to_string(), "--control".to_string(), "4242".to_string(), "talk.pptx".to_string()]);
         assert!(matches!(launch, Startup::Run { .. }));
-        if let Startup::Run { control_port, files, sample, show } = launch {
+        if let Startup::Run { control_port, files, sample, show, .. } = launch {
             assert_eq!(control_port, Some(4242));
             assert_eq!(files, ["talk.pptx".to_string()]);
             assert!(sample);
