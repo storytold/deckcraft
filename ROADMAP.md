@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (native macOS menus and window shortcuts) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -61,7 +61,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 | Area | Breadth (measured) | Ready (est.) | Hours | Doc |
 |---|---:|---:|---|---|
-| Application shell | 81% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Application shell | 85% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Slides and sections | 92% | ~85% | 3–5 | [checklist](docs/parity-checklist.md) |
 | Views | 98% | ~80% | 3–6 | [ui-parity](docs/ui-parity.md) |
 | Masters and themes | 92% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
@@ -128,6 +128,8 @@ window, `render`, `convert`), from MCP (`deckcraft-cli mcp`, optionally `--conne
 app's JSON control channel (`deckcraft --control PORT`).
 
 ## Progress log
+
+- 2026-10-15 (M14): Native macOS File/Edit/View/Insert/Format/Slide Show/Window/Help menus, plus application Settings and Quit. Menu state follows the command registry and editor focus; native Minimise/Zoom/Hide work, Close asks about unsaved documents and closes an empty window.
 
 | Date | What landed |
 |---|---|
@@ -227,6 +229,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Native macOS menus from the existing command catalogue; focus-aware edit actions, native window controls, and safe empty-window Close |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |

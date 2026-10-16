@@ -20,26 +20,40 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+#[cfg(target_os = "macos")]
+mod native_menu;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
 
-struct App(SlideApp);
+struct App {
+    ui: SlideApp,
+    #[cfg(target_os = "macos")]
+    menu: Option<native_menu::NativeMenu>,
+}
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.0.logic(ctx);
+        self.ui.logic(ctx);
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.0.raw_input_hook(raw);
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.menu {
+            menu.input(_ctx, raw, &mut self.ui);
+        }
+        self.ui.raw_input_hook(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.0.ui(ui);
+        self.ui.ui(ui);
+        #[cfg(target_os = "macos")]
+        if let Some(menu) = &mut self.menu {
+            menu.after_ui(ui.ctx(), &mut self.ui);
+        }
     }
     fn on_exit(&mut self) {
-        save_prefs(&self.0);
+        save_prefs(&self.ui);
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -262,7 +276,20 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
-            Ok(Box::new(App(app)))
+            #[cfg(target_os = "macos")]
+            let menu = match native_menu::NativeMenu::install(&cc.egui_ctx, &app) {
+                Ok(menu) => Some(menu),
+                Err(error) => {
+                    log::error!("native menu: {error}");
+                    app.set_status(format!("Couldn't install the macOS menus: {error}"));
+                    None
+                }
+            };
+            Ok(Box::new(App {
+                ui: app,
+                #[cfg(target_os = "macos")]
+                menu,
+            }))
         }),
     )
 }
@@ -276,7 +303,11 @@ mod tests {
     #[test]
     fn on_exit_ends_the_process_on_macos() {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
-            let mut app = App(SlideApp::new(Session::new(), Services::default()));
+            let mut app = App {
+                ui: SlideApp::new(Session::new(), Services::default()),
+                #[cfg(target_os = "macos")]
+                menu: None,
+            };
             println!("calling on_exit");
             eframe::App::on_exit(&mut app);
             println!("on_exit returned");

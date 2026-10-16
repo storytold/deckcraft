@@ -17,6 +17,7 @@ pub mod eyedropper;
 pub mod fillui;
 pub mod icons;
 pub mod media;
+pub mod menu_actions;
 pub mod menus;
 pub mod notes;
 pub mod opening;
@@ -371,7 +372,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.zoomOut", "Zoom Out", Some("Cmd+-"), "{}"),
     ("view.zoom", "Set Zoom", None, "{percent}"),
     ("view.zoomDialog", "Zoom…", None, "{}"),
-    ("view.fit", "Fit to Window", None, "{}"),
+    ("view.fit", "Fit to Window", Some("Cmd+0"), "{}"),
     ("view.pane", "Task Pane", None, "{pane: format|animation|selection|comments|designer|background|smartart|null}"),
     ("review.thesaurusPane", "Thesaurus", Some("Shift+F7"), "{word?}: open the Thesaurus pane on the selected word"),
     ("view.tab", "Ribbon Tab", None, "{tab}"),
@@ -395,14 +396,14 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.about", "About DeckCraft", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
-    ("app.openDialog", "Open…", None, "{purpose?}"),
+    ("app.openDialog", "Open…", Some("Cmd+O"), "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
     ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
     ("app.changePictureDialog", "Change Picture…", None, "{}"),
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
-    ("app.saveAsDialog", "Save As…", None, "{}"),
+    ("app.saveAsDialog", "Save As…", Some("Cmd+Shift+S"), "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
     ("app.compareDialog", "Compare…", None, "{}"),
@@ -1658,7 +1659,7 @@ impl SlideApp {
                 _ => {}
             }
         }
-        if ctx.memory(|m| m.focused().is_some()) || self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some() {
+        if ctx.text_edit_focused() || self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some() {
             return;
         }
         if self.backstage.is_some() {

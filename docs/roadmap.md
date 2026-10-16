@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (native macOS menus and window shortcuts) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -53,7 +53,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 8 | Charts: data grid, elements | 6–10 | Features |
 | 10 | Presenter view on the right display, swap displays | 2–4 | Hardware, Slide show |
 | 9 | Animation Pane: preview from the selected effect, effect options (the timeline is in) | 4–7 | Features |
-| 11 | Native macOS menu bar, Format Shape pane depth, start screen and window chrome fixes | 13–22 | UI/UX 60 → 75% |
+| 11 | Native menu breadth, Format Shape pane depth, start screen and window chrome fixes | 13–22 | UI/UX 60 → 75% |
 | 12 | Performance baseline and the obvious fixes | 4–8 | Performance |
 | **Total** | | **~120–210** | Ready ~55% → ~75% |
 
@@ -90,7 +90,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M11 | Output | partly | vector PDF, SVG, GIF, MP4, print |
 | M12 | Review | partly | dictionaries, AutoCorrect, find/replace dialog, compare |
 | M13 | Automation and CLI parity | done | |
-| M14 | 1.0 polish and release | partly | i18n, native menu bar, signed releases done (v0.4.0) |
+| M14 | 1.0 polish and release | partly | i18n, full native menu breadth; macOS menu integration and signed releases are in |
 
 ## History: the 2026-10-07 alpha checklist
 
@@ -115,6 +115,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Native macOS menus from the existing command catalogue; focus-aware edit actions, native window controls, and safe empty-window Close |
 | 2026-10-14 | trivial | M13 reliability: remote MCP validates IDs and envelopes, caps replies and rejects incomplete frames; #718 |
 | 2026-10-14 | minor | Community PR wave folded: one Review gate row, one Current focus item 2, one beta row each for items 9 and 10 (timeline and timer controls are in), one after-beta paragraph, one M9 and M10 row, one corpus row in the 2026-10-07 history |
 | 2026-10-13 | trivial | Beta item 3: embedded fonts are in, except MicroType Express subsets |

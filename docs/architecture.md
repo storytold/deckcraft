@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** minor (native macOS menus and window shortcuts) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -46,6 +46,12 @@ channel (`deckcraft --control PORT`, [control-protocol.md](control-protocol.md))
 Programmatic calls never open dialogs. Pointer gestures go through `Session::pointer`, keys through
 `Session::key`.
 
+The macOS desktop host owns `muda` menus in `apps/deckcraft/src/native_menu.rs`. It builds
+application menus from `menus::menu_tree()`, forwards activations to the egui event loop and
+updates changed labels, enabled states and checks. `menu_actions` routes clipboard/text editing
+through egui, and document commands through the existing UI handlers after field edits. The
+menu dependency is macOS-only; engine and web code do not depend on native menu types.
+
 ## Rendering and the show
 
 The renderer draws a slide to an RGBA pixmap on the CPU; the UI uploads it as an egui texture.
@@ -79,6 +85,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | minor | Native macOS menus from the existing command catalogue; focus-aware edit actions, native window controls, and safe empty-window Close |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |
 | 2026-10-14 | trivial | Command registry: 228 (`comment.next`, `comment.prev`) |
