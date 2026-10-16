@@ -126,6 +126,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Evidence:** PowerPoint opens and saves `.odp`.
 - **Impact:** LibreOffice users and public-sector exchange.
 - **Estimate:** 12–20 h (read and write the common subset).
+- **Progress:** a first export slice writes slides, text, shapes, pictures and notes (`odp_write`).
 
 ### PDF export rasterizes slide artwork
 - **Evidence:** `crates/pdf` places each slide as an image under a selectable text layer, links and
