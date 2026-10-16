@@ -8,6 +8,7 @@
 
 pub mod morph;
 pub mod preset;
+pub mod preset_text;
 pub mod squircle;
 pub mod warp;
 

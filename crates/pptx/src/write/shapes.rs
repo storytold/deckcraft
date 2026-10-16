@@ -94,7 +94,7 @@ pub fn geometry(w: &mut W, g: &Geom) {
                 w.empty0("a:avLst");
             } else {
                 // PowerPoint wants the complete guide list once any is given.
-                let defaults = deckcraft_geom::preset::info(name).map(|i| i.defaults).unwrap_or(&[]);
+                let defaults = deckcraft_geom::preset::defaults(name);
                 let mut vals: Vec<f64> = adj.iter().take(16).copied().collect();
                 while vals.len() < defaults.len() {
                     vals.push(defaults.get(vals.len()).copied().unwrap_or(0.0));

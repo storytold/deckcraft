@@ -335,6 +335,19 @@ pub static CATALOG: &[PresetInfo] = &[
     p!("actionButtonBlank", "Action Button: Custom", ActionButtons, []),
 ];
 
+/// Default adjust values of `name`: the catalogue's, or for the connectors the gallery doesn't
+/// list, the standard's.
+pub fn defaults(name: &str) -> &'static [f64] {
+    if let Some(i) = info(name) {
+        return i.defaults;
+    }
+    match name {
+        "bentConnector4" | "curvedConnector4" => &[50000.0, 50000.0],
+        "bentConnector5" | "curvedConnector5" => &[50000.0, 50000.0, 50000.0],
+        _ => &[],
+    }
+}
+
 pub fn info(name: &str) -> Option<&'static PresetInfo> {
     CATALOG.iter().find(|p| p.name == name)
 }
@@ -711,12 +724,21 @@ fn simple(path: BezPath, text: Rect, w: f64, h: f64) -> Geometry {
 /// Builds the geometry for preset `name` at size `w`×`h` with adjust values `adj` (missing
 /// values use the preset's defaults). Unknown names return `None`; the caller falls back to `rect`.
 pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
+    let mut g = build_outline(name, w, h, adj)?;
+    // Text goes where presetShapeDefinitions put it, from the standard's own guide formulas.
+    if let Some(t) = crate::preset_text::text_rect(name, w.max(0.0), h.max(0.0), adj) {
+        g.text_rect = t;
+    }
+    Some(g)
+}
+
+fn build_outline(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
     if !(w.is_finite() && h.is_finite()) {
         return None;
     }
     let w = w.max(0.0);
     let h = h.max(0.0);
-    let defaults = info(name).map(|i| i.defaults).unwrap_or(&[]);
+    let defaults = defaults(name);
     let a = |i: usize| -> f64 {
         let v = adj.get(i).copied().or_else(|| defaults.get(i).copied()).unwrap_or(0.0);
         if v.is_finite() { v } else { 0.0 }
