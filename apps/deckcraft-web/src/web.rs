@@ -28,6 +28,14 @@ pub fn start() {
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
+        let mut invite = match craft_cloud_client::invite::arrive().await {
+            craft_cloud_client::invite::Arrival::Ordinary => None,
+            craft_cloud_client::invite::Arrival::Refused(reason) => {
+                craft_cloud_client::invite::refuse(&reason);
+                return;
+            }
+            craft_cloud_client::invite::Arrival::Invited(invitation) => Some(invitation),
+        };
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -44,15 +52,20 @@ pub fn start() {
                     }
                     cloud::start(&mut app);
                     let q = query();
-                    if !q.contains("blank") {
-                        if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
-                            log::error!("sample deck: {e}");
+                    if invite.is_none() {
+                        if !q.contains("blank") {
+                            if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
+                                log::error!("sample deck: {e}");
+                            }
+                        } else if let Err(e) = app.run("file.new", serde_json::json!({})) {
+                            log::error!("new presentation: {e}");
                         }
-                    } else if let Err(e) = app.run("file.new", serde_json::json!({})) {
-                        log::error!("new presentation: {e}");
                     }
-                    if q.contains("show") {
+                    if q.contains("show") && invite.is_none() {
                         app.start_show(0, false);
+                    }
+                    if let Some(invitation) = invite.take() {
+                        open_invite(&mut app, invitation);
                     }
                     Ok(Box::new(WebShell { app, inbox }))
                 }),
@@ -65,6 +78,25 @@ pub fn start() {
             }
         }
     });
+}
+
+fn open_invite(app: &mut SlideApp, invitation: craft_cloud_client::invite::Invitation) {
+    let name = invitation.name.clone();
+    match deckcraft_ui_egui::cloud::CloudApp::open_bytes(app, &name, invitation.document.clone()) {
+        Ok(Some(_)) => {
+            let mode = if invitation.read_only() { " (view only)" } else { "" };
+            let who = if invitation.recipient.is_empty() { String::new() } else { format!(" (shared with {})", invitation.recipient) };
+            app.notify(format!("Opened \"{name}\"{mode}{who}"));
+            if let Err(e) = invitation.join() {
+                log::warn!("invite relay join failed: {e}");
+            }
+        }
+        Ok(None) => app.notify(format!("Shared \"{name}\" needs a choice before it opens")),
+        Err(e) => {
+            log::error!("invite open failed: {e}");
+            craft_cloud_client::invite::refuse(&format!("The shared presentation could not be opened. {e}"));
+        }
+    }
 }
 
 fn query() -> String {
