@@ -42,6 +42,10 @@ pub struct Tokens {
     pub text_selection: Color32,
     pub field_bg: Color32,
     pub shadow: Color32,
+    /// Canvas shell panel: number, colour and dropdown fields and segmented controls.
+    pub field: Color32,
+    /// Canvas shell panel: the small labels above fields.
+    pub caption: Color32,
 }
 
 impl Tokens {
@@ -71,6 +75,8 @@ impl Tokens {
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
             field_bg: Color32::WHITE,
             shadow: Color32::from_black_alpha(28),
+            field: Color32::from_rgb(0xF5, 0xF5, 0xF5),
+            caption: Color32::from_rgb(0x80, 0x80, 0x80),
         }
     }
     pub fn dark() -> Self {
@@ -99,6 +105,8 @@ impl Tokens {
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
             field_bg: Color32::from_rgb(0x2A, 0x2A, 0x2A),
             shadow: Color32::from_black_alpha(90),
+            field: Color32::from_rgb(0x3D, 0x3D, 0x3D),
+            caption: Color32::from_rgb(0xA6, 0xA6, 0xA6),
         }
     }
     pub fn for_brightness(b: Brightness) -> Self {
@@ -153,7 +161,14 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
     });
 }
 
-/// UI fonts: Inter (from craft-fonts) when embedded, a Japanese UI face for CJK, then egui's.
+/// Inter, the interface face: regular, medium and semibold (SIL OFL 1.1, `assets/fonts`).
+const BUNDLED_INTER: [(&str, &[u8]); 3] = [
+    ("Inter Regular", include_bytes!("../../../assets/fonts/Inter-Regular.ttf")),
+    ("Inter Medium", include_bytes!("../../../assets/fonts/Inter-Medium.ttf")),
+    ("Inter SemiBold", include_bytes!("../../../assets/fonts/Inter-SemiBold.ttf")),
+];
+
+/// UI fonts: Inter (bundled), a Japanese UI face for CJK, then egui's.
 pub fn install_fonts(ctx: &egui::Context) {
     install_fonts_with(ctx, &[]);
 }
@@ -180,16 +195,25 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
         defs.font_data.insert(name.clone(), std::sync::Arc::new(FontData::from_static(f.bytes)));
         names.push((f.family, f.style, name));
     }
-    let regular: Vec<String> = names.iter().filter(|(fam, st, _)| !(*fam == "Inter" && *st != "Regular")).map(|(_, _, n)| n.clone()).collect();
+    // Inter ships with DeckCraft (assets/fonts), so the interface looks the same whether or not
+    // the craft-fonts checkout has it.
+    for (name, bytes) in BUNDLED_INTER {
+        defs.font_data.insert(name.to_string(), std::sync::Arc::new(FontData::from_static(bytes)));
+    }
+    let mut regular: Vec<String> = vec![BUNDLED_INTER[0].0.to_string()];
+    regular.extend(names.iter().filter(|(fam, _, _)| *fam != "Inter").map(|(_, _, n)| n.clone()));
     if let Some(list) = defs.families.get_mut(&FontFamily::Proportional) {
         for (k, n) in regular.iter().enumerate() {
             list.insert(k, n.clone());
         }
     }
-    // A bold family for headings and selected tabs.
-    let mut bold: Vec<String> = names.iter().filter(|(fam, st, _)| *fam == "Inter" && *st == "SemiBold").map(|(_, _, n)| n.clone()).collect();
-    bold.extend(defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
-    defs.families.insert(FontFamily::Name("bold".into()), bold);
+    let rest = defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
+    // Semibold for headings and selected tabs, medium for labels that stand out a little.
+    for (family, face) in [("bold", BUNDLED_INTER[2].0), ("medium", BUNDLED_INTER[1].0)] {
+        let mut list = vec![face.to_string()];
+        list.extend(rest.iter().filter(|n| *n != BUNDLED_INTER[0].0).cloned());
+        defs.families.insert(FontFamily::Name(family.into()), list);
+    }
     add_fallback_faces(&mut defs, extra);
     // The Japanese interface face (the first one when Inter isn't embedded) hints its en and em
     // dashes, bars thinner than a pixel, down to nothing, so they drew as gaps in interface text;
@@ -224,6 +248,11 @@ pub fn bold(size: f32) -> egui::FontId {
     egui::FontId::new(size, FontFamily::Name("bold".into()))
 }
 
+/// Inter Medium: field values and labels a little stronger than body text.
+pub fn medium(size: f32) -> egui::FontId {
+    egui::FontId::new(size, FontFamily::Name("medium".into()))
+}
+
 pub fn font(size: f32) -> egui::FontId {
     egui::FontId::proportional(size)
 }
@@ -244,7 +273,7 @@ mod tests {
         let mut out = vec![];
         ctx.fonts_mut(|f| {
             for size in [11.0, 12.0, 13.0, 16.0] {
-                for family in [egui::FontFamily::Proportional, egui::FontFamily::Name("bold".into())] {
+                for family in [egui::FontFamily::Proportional, egui::FontFamily::Name("bold".into()), egui::FontFamily::Name("medium".into())] {
                     let g = f.layout_no_wrap(text.to_string(), egui::FontId::new(size, family), egui::Color32::WHITE);
                     for gl in g.rows.iter().flat_map(|r| &r.glyphs) {
                         out.push((gl.chr, size, gl.uv_rect.size.x > 0.0 && gl.uv_rect.size.y > 0.0));
