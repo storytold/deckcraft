@@ -764,6 +764,13 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
             1 | 5 => egui::CursorIcon::ResizeVertical,
             _ => egui::CursorIcon::ResizeHorizontal,
         },
+        (_, Some(Hit::Crop { handle, .. })) => match handle {
+            0 | 4 => egui::CursorIcon::ResizeNwSe,
+            2 | 6 => egui::CursorIcon::ResizeNeSw,
+            1 | 5 => egui::CursorIcon::ResizeVertical,
+            _ => egui::CursorIcon::ResizeHorizontal,
+        },
+        (_, Some(Hit::CropPan { .. })) => egui::CursorIcon::Move,
         (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
         (_, Some(Hit::TableColumn { .. })) => egui::CursorIcon::ResizeColumn,
         (_, Some(Hit::TableRow { .. })) => egui::CursorIcon::ResizeRow,
@@ -787,6 +794,39 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
     }
     if app.session.tool.dragging() {
         ui.ctx().request_repaint();
+    }
+}
+
+/// Crop mode: the whole image's outline (dashed), the frame, and black crop handles: an L on each
+/// corner and a bar on each side, white-edged so they show on any picture.
+fn crop_overlay(painter: &egui::Painter, xf: Xf, sh: &deckcraft_model::Shape, x: &Xfrm, corners: [Pos2; 4], t: &Tokens) {
+    if let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind
+        && let deckcraft_model::style::PictureMode::Stretch { fill_rect } = fill.mode
+    {
+        let r = deckcraft_engine::tools::crop_image_rect(x.w, x.h, fill.crop, fill_rect);
+        let a = x.affine();
+        let img = [Point::new(r.x0, r.y0), Point::new(r.x1, r.y0), Point::new(r.x1, r.y1), Point::new(r.x0, r.y1)].map(|q| xf.to_screen(a * q));
+        for i in 0..4 {
+            painter.add(egui::Shape::dashed_line(&[img[i], img[(i + 1) % 4]], Stroke::new(1.0, t.selection), 4.0, 3.0));
+        }
+    }
+    poly(painter, corners, Stroke::new(1.0, t.selection));
+    let toward = |from: Pos2, to: Pos2, len: f32| {
+        let d = to - from;
+        let n = d.length();
+        if n > 1e-3 { from + d * (len.min(n / 2.0) / n) } else { from }
+    };
+    let mut bars = Vec::with_capacity(8);
+    for i in 0..4 {
+        let (c, next, prev) = (corners[i], corners[(i + 1) % 4], corners[(i + 3) % 4]);
+        bars.push([toward(c, next, 12.0), c, toward(c, prev, 12.0)]);
+        let m = c + (next - c) * 0.5;
+        bars.push([toward(m, c, 8.0), m, toward(m, next, 8.0)]);
+    }
+    for (w, color) in [(6.0, Color32::WHITE), (4.0, Color32::BLACK)] {
+        for b in &bars {
+            painter.add(egui::Shape::line(b.to_vec(), Stroke::new(w, color)));
+        }
     }
 }
 
@@ -854,6 +894,10 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
                     egui::StrokeKind::Middle,
                 );
             }
+            continue;
+        }
+        if app.session.tool.cropping(st) == Some(sh.id) {
+            crop_overlay(painter, xf, sh, &x, corners, t);
             continue;
         }
         if editing_this {

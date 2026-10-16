@@ -57,6 +57,17 @@ impl Session {
         if self.tool.drawing_freeform() && matches!(k, "enter" | "return" | "escape") {
             return self.finish_freeform(false);
         }
+        if self.tool.crop.is_some() {
+            // Only while the picture is still the one selected: otherwise the mode is stale (the
+            // selection moved on) and the key does what it always does.
+            let on = self.active().and_then(|st| self.tool.cropping(st)).is_some();
+            if !on {
+                self.end_crop();
+            } else if matches!(k, "enter" | "return" | "escape" | "esc") {
+                self.end_crop();
+                return Ok(json!({"handled": true, "command": "picture.cropMode"}));
+            }
+        }
         if self.tool.edit_points.is_some() && matches!(k, "enter" | "return" | "escape") {
             self.tool.edit_points = None;
             self.tool.edit_vertex = None;

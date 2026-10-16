@@ -2717,6 +2717,10 @@ fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::Crop, "Crop", true);
         egui::Popup::menu(&r).show(|ui| {
+            if ui.button("Crop").on_hover_text("Drag the black handles to trim the picture; Esc or Enter when done").clicked() {
+                run(app, "picture.cropMode", json!({"on": true}));
+            }
+            ui.separator();
             ui.label("Crop to Shape");
             if let Some(p) = shapes_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));

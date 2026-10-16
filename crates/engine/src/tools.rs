@@ -115,6 +115,16 @@ pub enum Hit {
     Frame {
         id: ShapeId,
     },
+    /// Crop handle 0..8 (NW, N, NE, E, SE, S, SW, W) of the picture being cropped.
+    Crop {
+        id: ShapeId,
+        handle: u8,
+    },
+    /// Inside the picture being cropped (its frame or the whole image): dragging moves the
+    /// picture under its frame.
+    CropPan {
+        id: ShapeId,
+    },
     /// The right edge of table column `col` (dragging it resizes the column).
     TableColumn {
         id: ShapeId,
@@ -147,6 +157,16 @@ enum Drag {
         id: ShapeId,
         end: u8,
         orig: Xfrm,
+    },
+    /// A crop handle (`handle: Some`) or the picture under the frame; `orig`, `crop` and
+    /// `fill_rect` as they were at the press.
+    Crop {
+        id: ShapeId,
+        handle: Option<u8>,
+        orig: Xfrm,
+        crop: [f64; 4],
+        fill_rect: [f64; 4],
+        start: Point,
     },
     Rotate {
         ids: Vec<ShapeId>,
@@ -271,6 +291,11 @@ pub struct ToolState {
     pub guide_hover: Option<usize>,
     /// Pressure from the pointer event being handled, if the device reported one.
     pressure: Option<f32>,
+    /// The picture being cropped with handles (Picture Format > Crop).
+    pub crop: Option<ShapeId>,
+    /// The last crop drag pushed an undo step that the next drags of the same session fold into.
+    /// Any other undoable command, Undo, Redo or `picture.cropMode` clears it.
+    pub(crate) crop_merge: bool,
 }
 
 impl ToolState {
@@ -281,6 +306,13 @@ impl ToolState {
     /// The shape in Edit Points, while it is still the one selected shape.
     pub fn editing_points(&self, st: &crate::DocState) -> Option<ShapeId> {
         self.edit_points.filter(|id| st.selection.shapes.as_slice() == [*id] && st.selection.text.is_none() && st.shape(*id).is_some())
+    }
+
+    /// The picture being cropped, while it is still the one selected shape and can be cropped.
+    pub fn cropping(&self, st: &crate::DocState) -> Option<ShapeId> {
+        self.crop.filter(|id| {
+            st.selection.shapes.as_slice() == [*id] && st.selection.text.is_none() && st.shape(*id).is_some_and(|sh| !sh.locked && can_crop(sh))
+        })
     }
 
     /// A freeform path is being drawn (Enter/Escape/double-click finish it).
@@ -300,6 +332,138 @@ pub fn box_handles(x: &Xfrm) -> ([Point; 8], Point) {
     let rot =
         Affine::translate(Vec2::new(x.x + w / 2.0, x.y + h / 2.0)) * Affine::rotate(x.rot.to_radians()) * Point::new(0.0, up * (h / 2.0 + 20.0));
     (pts, rot)
+}
+
+/// A picture stretched over its box can be cropped with handles. A tiled one has no crop, and one
+/// drawn upright (`rotWithShape="0"`) in a turned or flipped box is not drawn in the box's frame.
+pub fn can_crop(sh: &Shape) -> bool {
+    let ShapeKind::Picture { fill } = &sh.kind else { return false };
+    let turned = sh.xfrm.is_some_and(|x| x.rot != 0.0 || x.flip_h || x.flip_v);
+    matches!(fill.mode, deckcraft_model::style::PictureMode::Stretch { .. }) && !(fill.upright && turned)
+}
+
+/// The rectangle a stretched picture is drawn in, in its `w` x `h` box (as the renderer does).
+fn fill_inner(w: f64, h: f64, [l, t, r, b]: [f64; 4]) -> Rect {
+    Rect::new(l * w, t * h, w - r * w, h - b * h)
+}
+
+/// The whole, uncropped image of a picture in its box's local points.
+pub fn crop_image_rect(w: f64, h: f64, crop: [f64; 4], fill_rect: [f64; 4]) -> Rect {
+    deckcraft_render::crop_dest(fill_inner(w, h, fill_rect), crop)
+}
+
+/// A crop the renderer draws as stored: finite, in the range the crop command allows, and leaving
+/// something visible on both axes.
+fn sane_crop(c: [f64; 4]) -> Option<[f64; 4]> {
+    let ok = c.iter().all(|v| v.is_finite() && (-10.0..=0.99).contains(v)) && c[0] + c[2] < 1.0 && c[1] + c[3] < 1.0;
+    ok.then_some(c)
+}
+
+/// The crop that shows `img` (box-local points) through a `w` x `h` box.
+fn crop_showing(w: f64, h: f64, fill_rect: [f64; 4], img: Rect) -> Option<[f64; 4]> {
+    let inner = fill_inner(w, h, fill_rect);
+    let (iw, ih) = (img.width(), img.height());
+    sane_crop([(inner.x0 - img.x0) / iw, (inner.y0 - img.y0) / ih, (img.x1 - inner.x1) / iw, (img.y1 - inner.y1) / ih])
+}
+
+/// Dragging crop handle `h` (0..8 as [`box_handles`]) of box `o` from `start` to `p` (slide
+/// points): the new box and crop, with the whole image left where it is on the slide. The work is
+/// done in the box's own frame, flips included, so a handle trims the side of the image drawn
+/// under it. Shift keeps the box's proportions on a corner, Alt trims the opposite side alike (as
+/// resizing does). The box never gets smaller than a point and never flips. `None` when the
+/// result would not be a usable crop.
+pub fn crop_box(o: &Xfrm, crop: [f64; 4], fill_rect: [f64; 4], h: u8, start: Point, p: Point, mods: Mods) -> Option<(Xfrm, [f64; 4])> {
+    const MIN: f64 = 1.0;
+    let (keep_aspect, from_center) = (mods.shift, mods.alt);
+    let (w, hh) = (o.w, o.h);
+    if !(w > 0.0 && hh > 0.0) {
+        return None;
+    }
+    let inv = o.affine().inverse();
+    let ld = inv * p - inv * start;
+    let mx = match h {
+        0 | 6 | 7 => -1.0,
+        2..=4 => 1.0,
+        _ => 0.0,
+    };
+    let my = match h {
+        0..=2 => -1.0,
+        4..=6 => 1.0,
+        _ => 0.0,
+    };
+    let k = if from_center { 2.0 } else { 1.0 };
+    let (mut gx, mut gy) = (ld.x * mx, ld.y * my);
+    if keep_aspect && mx != 0.0 && my != 0.0 {
+        if (gx / w).abs() > (gy / hh).abs() {
+            gy = gx * hh / w;
+        } else {
+            gx = gy * w / hh;
+        }
+    }
+    // Growth that would leave less than MIN is cut back (on both axes when keeping proportions).
+    let fx = if gx * k < MIN.min(w) - w { (MIN.min(w) - w) / k / gx } else { 1.0 };
+    let fy = if gy * k < MIN.min(hh) - hh { (MIN.min(hh) - hh) / k / gy } else { 1.0 };
+    if keep_aspect && mx != 0.0 && my != 0.0 {
+        let f = fx.min(fy);
+        gx *= f;
+        gy *= f;
+    } else {
+        gx *= fx;
+        gy *= fy;
+    }
+    let (mut l, mut t, mut r, mut b) = (0.0, 0.0, w, hh);
+    if mx != 0.0 {
+        if mx < 0.0 || from_center {
+            l = -gx;
+        }
+        if mx > 0.0 || from_center {
+            r = w + gx;
+        }
+    }
+    if my != 0.0 {
+        if my < 0.0 || from_center {
+            t = -gy;
+        }
+        if my > 0.0 || from_center {
+            b = hh + gy;
+        }
+    }
+    let (nw, nh) = (r - l, b - t);
+    if !(nw.is_finite() && nh.is_finite() && nw > 0.0 && nh > 0.0) {
+        return None;
+    }
+    // New local point (u, v) is old local (u + l, v + t): the image shifts by (-l, -t).
+    let c = o.affine() * Point::new((l + r) / 2.0, (t + b) / 2.0);
+    let img = crop_image_rect(w, hh, crop, fill_rect) - Vec2::new(l, t);
+    let nc = crop_showing(nw, nh, fill_rect, img)?;
+    Some((Xfrm { x: c.x - nw / 2.0, y: c.y - nh / 2.0, w: nw, h: nh, ..*o }, nc))
+}
+
+/// Dragging the picture under its crop frame from `start` to `p` (slide points): the new crop.
+/// The move is limited first so each side stays in range, then applied to both sides, so the
+/// visible share of the image never changes. `straight` keeps the move on one axis.
+pub fn crop_pan(o: &Xfrm, crop: [f64; 4], fill_rect: [f64; 4], start: Point, p: Point, straight: bool) -> Option<[f64; 4]> {
+    let inv = o.affine().inverse();
+    let mut ld = inv * p - inv * start;
+    if straight {
+        if ld.x.abs() > ld.y.abs() {
+            ld.y = 0.0;
+        } else {
+            ld.x = 0.0;
+        }
+    }
+    let img = crop_image_rect(o.w, o.h, crop, fill_rect);
+    let shift = |near: f64, far: f64, d: f64, size: f64| {
+        // The image moving by `d` takes `d / size` off the near side's crop and adds it to the far.
+        let lo = (-10.0 - near).max(far - 0.99);
+        let hi = (0.99 - near).min(far + 10.0);
+        let u = -d / size;
+        let u = if lo <= hi && u.is_finite() { u.clamp(lo, hi) } else { 0.0 };
+        (near + u, far - u)
+    };
+    let (l, r) = shift(crop[0], crop[2], ld.x, img.width());
+    let (t, b) = shift(crop[1], crop[3], ld.y, img.height());
+    sane_crop([l, t, r, b])
 }
 
 /// WordArt adjust handles for `sh`, in shape-local points (the text rectangle). Empty when the
@@ -342,6 +506,51 @@ fn set_warp_adj(sh: &mut Shape, name: &str, base: &[f64], index: usize, value: f
 }
 
 impl Session {
+    /// Leave crop mode (the next crop drag starts a new undo step).
+    pub fn end_crop(&mut self) {
+        self.tool.crop = None;
+        self.tool.crop_merge = false;
+    }
+
+    /// The box, crop and fill rectangle of picture `id`.
+    fn crop_state(&self, id: ShapeId) -> Option<(Xfrm, [f64; 4], [f64; 4])> {
+        let st = self.active()?;
+        let sh = st.shape(id)?;
+        let ShapeKind::Picture { fill } = &sh.kind else { return None };
+        let deckcraft_model::style::PictureMode::Stretch { fill_rect } = fill.mode else { return None };
+        Some((xfrm_of(&st.doc, &st.selection, sh), fill.crop, fill_rect))
+    }
+
+    fn set_crop(&mut self, id: ShapeId, x: Xfrm, crop: [f64; 4]) -> Result<()> {
+        self.edit(|doc, sel| {
+            let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("crop", "no slide"))?;
+            if let Some(sh) = deckcraft_model::find_shape_mut(list, id)
+                && let ShapeKind::Picture { fill } = &mut sh.kind
+            {
+                fill.crop = crop;
+                sh.xfrm = Some(x);
+            }
+            Ok(())
+        })
+    }
+
+    /// End a crop drag. Drags after the first one of a crop session fold into its undo step, as
+    /// long as nothing else was done or undone in between.
+    fn commit_crop(&mut self) {
+        let merge = self.tool.crop_merge && self.active().is_some_and(|st| st.history.undo.last().is_some_and(|e| e.label == "Crop"));
+        if merge {
+            if let Some(st) = self.active_mut() {
+                st.interaction = None;
+            }
+            return;
+        }
+        let changed = self.active().and_then(|st| st.interaction.as_ref().map(|i| !Arc::ptr_eq(&i.doc, &st.doc))).unwrap_or(false);
+        self.commit();
+        if changed {
+            self.tool.crop_merge = true;
+        }
+    }
+
     pub fn set_tool(&mut self, kind: ToolKind) {
         self.tool.kind = kind;
         self.tool.drag = None;
@@ -369,8 +578,26 @@ impl Session {
                 return Some(Hit::Vertex { id, path, index });
             }
         }
+        // Cropping: the frame's crop handles, then the picture (frame or whole image) to move it.
+        // Elsewhere hits as usual, and pressing there ends cropping.
+        let cropping = self.tool.cropping(st);
+        if let Some(id) = cropping
+            && let Some((x, crop, fill_rect)) = self.crop_state(id)
+        {
+            let (pts, _) = box_handles(&x);
+            for (i, q) in pts.iter().enumerate() {
+                if (*q - p).hypot() <= tol * 1.6 {
+                    return Some(Hit::Crop { id, handle: i as u8 });
+                }
+            }
+            let local = x.affine().inverse() * p;
+            let frame = Rect::new(0.0, 0.0, x.w, x.h);
+            if frame.contains(local) || crop_image_rect(x.w, x.h, crop, fill_rect).abs().contains(local) {
+                return Some(Hit::CropPan { id });
+            }
+        }
         // Handles of selected shapes first.
-        if st.selection.text.is_none() || st.selection.shapes.len() == 1 {
+        if cropping.is_none() && (st.selection.text.is_none() || st.selection.shapes.len() == 1) {
             for id in st.selection.shapes.iter().rev() {
                 let Some(sh) = st.shape(*id) else { continue };
                 // A locked object shows no live handles: it can't be sized, rotated or reshaped.
@@ -579,8 +806,26 @@ impl Session {
             self.tool.edit_points = None;
             self.tool.edit_vertex = None;
         }
+        if self.tool.crop.is_some() {
+            let on = self.doc().ok().and_then(|st| self.tool.cropping(st)).is_some();
+            let handle = match hit {
+                Some(Hit::Crop { id, handle }) if on => Some((id, Some(handle))),
+                Some(Hit::CropPan { id }) if on => Some((id, None)),
+                _ => None,
+            };
+            match handle.and_then(|(id, h)| self.crop_state(id).map(|s| (id, h, s))) {
+                Some((id, handle, (orig, crop, fill_rect))) => {
+                    self.begin("Crop");
+                    self.tool.drag = Some(Drag::Crop { id, handle, orig, crop, fill_rect, start: p });
+                    return Ok(json!({"crop": handle}));
+                }
+                None => self.end_crop(),
+            }
+        }
         let st = self.doc()?;
         match hit {
+            // Only reached while cropping (handled above).
+            Some(Hit::Crop { .. } | Hit::CropPan { .. }) => {}
             Some(Hit::TableColumn { id, col }) => self.begin_table_border(id, true, col, p)?,
             Some(Hit::TableRow { id, row }) => self.begin_table_border(id, false, row, p)?,
             Some(Hit::Resize { id, handle }) => {
@@ -761,6 +1006,15 @@ impl Session {
                 let nx = resize_box(&orig, handle, p - start, mods.shift || self.is_picture(id), mods.alt);
                 let nx = self.snap_resize(nx, &orig, handle, id, tol);
                 self.set_xfrm(id, nx)?;
+            }
+            Drag::Crop { id, handle, orig, crop, fill_rect, start } => {
+                let next = match handle {
+                    Some(h) => crop_box(&orig, crop, fill_rect, h, start, p, mods),
+                    None => crop_pan(&orig, crop, fill_rect, start, p, mods.shift).map(|c| (orig, c)),
+                };
+                if let Some((x, c)) = next {
+                    self.set_crop(id, x, c)?;
+                }
             }
             Drag::LineEnd { id, end, orig } => {
                 let a = orig.affine();
@@ -1092,6 +1346,7 @@ impl Session {
                     out = self.add_ink(points)?;
                 }
             }
+            Some(Drag::Crop { .. }) => self.commit_crop(),
             Some(Drag::Resize { id, .. }) => {
                 self.commit();
                 let _ = cmd::text::fit_text_box(self, id);
@@ -1114,6 +1369,20 @@ impl Session {
             }
             self.tool.drag = Some(Drag::Freeform { mode, points, pressed: false });
             return self.finish_freeform(false);
+        }
+        // A double-click on the picture being cropped ends cropping, and does nothing else.
+        if self.tool.crop.is_some() {
+            let on = self.doc().ok().and_then(|st| self.tool.cropping(st)).is_some();
+            self.end_crop();
+            if on {
+                if matches!(self.tool.drag, Some(Drag::Crop { .. })) {
+                    self.tool.drag = None;
+                }
+                // The second press began a crop drag, and the UI sends no release after a
+                // double-click: close it here (nothing changed, so no undo step).
+                self.commit();
+                return Ok(json!({"cropping": false}));
+            }
         }
         if !matches!(self.tool.kind, ToolKind::Select) {
             // Double-click while drawing: lock drawing mode off.
@@ -1195,7 +1464,9 @@ impl Session {
                 | Hit::Frame { id }
                 | Hit::TableColumn { id, .. }
                 | Hit::TableRow { id, .. }
-                | Hit::Warp { id, .. },
+                | Hit::Warp { id, .. }
+                | Hit::Crop { id, .. }
+                | Hit::CropPan { id },
             ) => Some(*id),
             None => None,
         };

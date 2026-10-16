@@ -88,7 +88,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Connector glue and rerouting | yes | yes |
 | Edit points on freeforms | yes | partial: Edit Shape ▸ Edit Points turns any shape into a freeform; drag vertices and their Bézier handles, Ctrl/Cmd-click to add or delete, right-click for Smooth/Straight/Corner Point and Delete Point; no Straight/Curved Segment or Open/Close Path yet |
 | WordArt adjust handles | yellow handles on transformed text | yes, one per adjust when the text has a warp; dragging sets that guide value |
-| Crop handles, crop to shape, aspect ratio | yes | partial |
+| Crop handles, crop to shape, aspect ratio | yes | partial: Picture Format ▸ Crop ▸ Crop puts black handles on the frame; dragging one trims that side with the picture left in place (Shift keeps the proportions on a corner, Option trims both sides), dragging inside moves the picture under the frame; Esc, Enter, a click outside or a double-click end it, one undo step. The cropped-away part shows as a dashed outline, not greyed; no handles to scale the picture inside the crop, no Fill/Fit or Aspect Ratio yet |
 | Text caret, selection, double/triple click, drag-select | yes | yes |
 | Exact size/position, lock aspect | yes | yes — Size and Position dialog (height, width, rotation, scale %, lock aspect, position from the top-left), one undo step; ribbon spinners still resize one side at a time |
 | Drag the frame of a text box being edited to move it | yes | yes |

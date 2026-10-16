@@ -139,6 +139,15 @@ pub fn specs() -> Vec<CommandSpec> {
             crop
         ),
         cmd!(
+            noundo "picture.cropMode",
+            "Crop",
+            ["Picture Format", "Size"],
+            None,
+            "{on?: bool (default: toggle), id?} — crop one picture with handles on the canvas: drag a handle to trim a side, drag inside to move the picture under its frame; Esc, Enter, a click outside or a double-click end it",
+            has_selection,
+            crop_mode
+        ),
+        cmd!(
             "picture.adjust",
             "Corrections",
             ["Picture Format", "Adjust"],
@@ -1048,6 +1057,39 @@ fn crop(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(())
     })
+}
+
+fn crop_mode(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "picture.cropMode";
+    let on = bool_param(p, "on").unwrap_or(s.tool.crop.is_none());
+    s.end_crop();
+    if !on {
+        return Ok(json!({"cropping": Value::Null}));
+    }
+    let st = s.doc()?;
+    let id = match id_param(p, "id", CMD)? {
+        Some(i) => i,
+        None => match st.selection.shapes.as_slice() {
+            [one] => *one,
+            _ => return Err(bad(CMD, "select one picture")),
+        },
+    };
+    let sh = st.shapes().iter().find(|t| t.id == id).ok_or_else(|| bad(CMD, "select one picture outside a group"))?;
+    if sh.locked {
+        return Err(bad(CMD, "the object is locked"));
+    }
+    if !crate::tools::can_crop(sh) {
+        return Err(bad(CMD, "select a picture to crop"));
+    }
+    if st.selection.shapes.as_slice() != [id] || st.selection.text.is_some() {
+        s.select(|_, sel| {
+            sel.shapes = vec![id];
+            sel.text = None;
+            sel.cells = None;
+        })?;
+    }
+    s.tool.crop = Some(id);
+    Ok(json!({"cropping": id.0}))
 }
 
 fn picture_adjust(s: &mut Session, p: &Value) -> Result<Value> {

@@ -594,6 +594,10 @@ impl Session {
         }
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
         let outer = self.depth == 0;
+        // A crop drag folds into the previous one only when nothing else happened in between.
+        if outer && (spec.undoable || matches!(id, "edit.undo" | "edit.redo" | "picture.cropMode")) {
+            self.tool.crop_merge = false;
+        }
         self.depth += 1;
         let r = (spec.run)(self, params);
         self.depth -= 1;
@@ -775,6 +779,8 @@ pub(crate) fn push_undo(st: &mut DocState, e: HistoryEntry) {
     }
 }
 
+#[cfg(test)]
+mod crop_tests;
 #[cfg(test)]
 mod soak_tests;
 #[cfg(test)]
