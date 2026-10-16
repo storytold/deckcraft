@@ -271,7 +271,8 @@ Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element
 `insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
 (1–2 h; `slide.reuse` inserts from a file), laser pointer from the presenter window (1–2 h),
 artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
-background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), record
+background (6–10 h; needs a model or a classical matte), insert screenshot on Linux and
+Windows (macOS lists open windows and clips the screen; 2–3 h), record
 audio/screen and record slide show (8–12 h), compare presentations beyond slide-level accept
 (reject, per-object accept, markers on the slide: 3–5 h), password protection (4–6 h, ECMA-376
 agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models and stock content
@@ -410,6 +411,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-13 | minor | WordArt adjust handles: a selected text warp shows one yellow handle per adjust, and dragging it sets that guide value (gallery and command still open) |
 | 2026-10-14 | minor | Pen pressure scales ink width when the pointer reports it; tilt, pinch-zoom and other trackpad gestures remain |
 | 2026-10-13 | trivial | Chart workbook round-trip (#335) noted under the charts gap; editing chart data is still open |
+| 2026-10-14 | minor | Insert ▸ Screenshot on macOS: open-window gallery and Screen Clipping. Linux and Windows still have no capturer |
 | 2026-10-13 | minor | Shape, picture and table rendering checked against PowerPoint on ~150 synthetic edge-case slides; 3-D bevels, cameras and face lighting now render approximately (gap narrowed to extrusion, rigs and the 3-D pane) |
 | 2026-10-13 | minor | Interactive decks: triggers, return-to-slide state and click rules landed in the slide show; the remaining pieces are one new entry under Features |
 | 2026-10-12 | minor | IME composition in slide text and notes, and CJK interface text with real glyphs (#101): the IME gap is now Korean on the web and table-cell underlines |

@@ -9,7 +9,7 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 17 | 25 | 12 | 55% |
+| P2 | 54 | 17 | 26 | 11 | 56% |
 
 | Area | Parity |
 |---|---|
@@ -25,7 +25,7 @@ The summary between `<!-- SUMMARY -->
 | Tables | 97% |
 | Charts | 65% |
 | SmartArt | 50% |
-| Pictures | 60% |
+| Pictures | 62% |
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
@@ -188,7 +188,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Pictures | Change / reset picture | P1 | D |
 | Pictures | Compress pictures | P2 | D |
 | Pictures | Paste image from clipboard (fails on Windows and Linux, #53) | P0 | P |
-| Pictures | Insert screenshot | P2 | M |
+| Pictures | Insert screenshot | P2 | P |
 | Media | Insert audio (any common format) | P0 | D |
 | Media | Insert video | P1 | D |
 | Media | Audio/video playback in the show (WMA/WMV not decodable yet) | P0 | P |

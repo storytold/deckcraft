@@ -22,6 +22,8 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+#[cfg(target_os = "macos")]
+mod screenshot;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -120,8 +122,30 @@ fn services() -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        capture_windows: window_capture(),
+        capture_screen_clip: screen_clip_capture(),
         ..Default::default()
     }
+}
+
+#[cfg(target_os = "macos")]
+fn window_capture() -> Option<deckcraft_ui_egui::CaptureWindowsFn> {
+    Some(std::sync::Arc::new(screenshot::windows))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn window_capture() -> Option<deckcraft_ui_egui::CaptureWindowsFn> {
+    None
+}
+
+#[cfg(target_os = "macos")]
+fn screen_clip_capture() -> Option<deckcraft_ui_egui::CaptureClipFn> {
+    Some(std::sync::Arc::new(screenshot::screen_clip))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn screen_clip_capture() -> Option<deckcraft_ui_egui::CaptureClipFn> {
+    None
 }
 
 const APP_ID: &str = "ai.storyteller.deckcraft";

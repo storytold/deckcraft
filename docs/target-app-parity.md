@@ -191,7 +191,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Tables | 5 | 97% | ~75% | 3–6 | Draw table depth, borders and cell effects depth | [parity-checklist.md](parity-checklist.md) |
 | Charts | 7 | 65% | ~45% | 12–20 | Data grid editing, chart elements, the `chartex` types (waterfall, funnel, treemap, sunburst, histogram, box) | [parity-checklist.md](parity-checklist.md) |
 | SmartArt | 4 | 50% | ~35% | 8–14 | PowerPoint diagrams editable (read their data model), the data model on save, more layouts | [parity-checklist.md](parity-checklist.md) |
-| Pictures | 7 | 60% | ~45% | 12–20 | SVG, EMF+ records, clipboard paste on Windows/Linux (#53), remove background, artistic-effect and correction depth | [file-format-parity.md](file-format-parity.md) |
+| Pictures | 7 | 62% | ~45% | 12–20 | SVG, EMF+ records, clipboard paste on Windows/Linux (#53), remove background, artistic-effect and correction depth | [file-format-parity.md](file-format-parity.md) |
 | Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
 | Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, Animation Pane timeline, preview from the selected effect, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
@@ -316,6 +316,7 @@ scored done (16 open issues).
 | 2026-10-13 | minor | Views: Grid Options dialog landed (spacing, snap, display). Remaining in that row: New Window. Percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed: yellow adjust handles drag; the gallery and command remain |
 | 2026-10-14 | trivial | Draw and hardware blurbs: pen pressure scales ink width when reported; percentages and hour ranges unchanged |
+| 2026-10-14 | trivial | Pictures breadth 48% → 50% (Insert screenshot is partial: macOS only). Weighted breadth stays 79%; the P2 line in the headline is resynced to the checklist (39%) |
 | 2026-10-10 | minor | Added the readiness-by-audience table: each number gets its own hours to ~95% (full 340–600, mainstream 150–250, essentials 50–90). The full number stays an additive weighted sum; no change to the percentages |
 | 2026-10-10 | minor | Added the mainstream practitioner (~53%) and essentials user (~62%) numbers with written weights, discounts and user evidence. Features dimension recomputed from written area weights (66% judgement → 62.4% weighted mean), which moves ready for real work from ~56% to ~55%; stage unchanged |
 | 2026-10-10 | minor | Stage checked against the core-workflow gate (all six pass); stays alpha |

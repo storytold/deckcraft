@@ -29,5 +29,10 @@ arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Window bitmaps for Insert ▸ Screenshot. Linux's build of this crate needs system
+# PipeWire/XCB libraries the CI image doesn't have, so capture stays macOS-only.
+xcap = { version = "0.9.8", default-features = false }
+
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }

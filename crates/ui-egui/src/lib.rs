@@ -197,6 +197,20 @@ fn command_for(purpose: FilePurpose, name: &str, bytes: &[u8]) -> Result<&'stati
 /// How long a transient status message stays visible.
 const STATUS_LINGER_MS: f64 = 6000.0;
 
+/// One open window the host captured, as PNG bytes.
+#[derive(Clone)]
+pub struct WindowShot {
+    /// Window title, shown in the Screenshot menu.
+    pub title: String,
+    /// PNG bytes of the window.
+    pub png: std::sync::Arc<[u8]>,
+}
+
+/// Lists open windows as PNG screenshots. `Send + Sync` so the ribbon can run it off the UI thread.
+pub type CaptureWindowsFn = std::sync::Arc<dyn Fn() -> Result<Vec<WindowShot>, String> + Send + Sync>;
+/// Interactive screen clipping. `Ok(None)` when the user cancels. Runs off the UI thread.
+pub type CaptureClipFn = std::sync::Arc<dyn Fn() -> Result<Option<Vec<u8>>, String> + Send + Sync>;
+
 /// Platform services injected by the host (desktop or web).
 #[derive(Default)]
 pub struct Services {
@@ -220,6 +234,10 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Open windows as PNG screenshots. None when this host can't capture the screen.
+    pub capture_windows: Option<CaptureWindowsFn>,
+    /// Drag out a region of the screen (macOS Screen Clipping).
+    pub capture_screen_clip: Option<CaptureClipFn>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -399,6 +417,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
     ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
     ("app.changePictureDialog", "Change Picture…", None, "{}"),
+    ("app.insertScreenshot", "Screenshot", None, "{title?}"),
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
@@ -513,6 +532,15 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// Window captures for the open Screenshot menu. Filled when the background capture finishes.
+    pub(crate) window_shots: Option<Result<Vec<WindowShot>, String>>,
+    /// In-flight capture started by the Screenshot menu.
+    pub(crate) shot_rx: Option<std::sync::mpsc::Receiver<Result<Vec<WindowShot>, String>>>,
+    /// In-flight Screen Clipping. Polled from [`Self::logic`] because the menu closes while the
+    /// user drags the rectangle.
+    pub(crate) clip_rx: Option<std::sync::mpsc::Receiver<Result<Option<Vec<u8>>, String>>>,
+    /// Bumps when `window_shots` is refreshed, so thumbnail URIs don't show a previous capture.
+    pub(crate) shot_gen: u64,
 }
 
 fn grid_options_touched(p: &Value) -> bool {
@@ -580,6 +608,10 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            window_shots: None,
+            shot_rx: None,
+            clip_rx: None,
+            shot_gen: 0,
         }
     }
 
@@ -1009,6 +1041,7 @@ impl SlideApp {
                 self.pick_and_run("picture", "smartArt.picture", p);
             }
             "app.changePictureDialog" => self.pick_and_insert("picture", "picture.change"),
+            "app.insertScreenshot" => return self.insert_screenshot(p.get("title").and_then(Value::as_str)),
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
@@ -1213,6 +1246,127 @@ impl SlideApp {
             Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
             Err(e) => self.set_status(e.to_string()),
         }
+    }
+
+    /// Insert a picture of an open window. `title` picks one (exact, then substring, ignoring case);
+    /// without it, the front-most captured window is used. The ribbon menu calls [`Self::insert_png`]
+    /// with a thumbnail the user chose instead.
+    fn insert_screenshot(&mut self, title: Option<&str>) -> Result<Value, String> {
+        let shots = {
+            let capture = self.services.capture_windows.as_ref().ok_or("Screen capture isn't available in this window")?;
+            capture()?
+        };
+        let want = title.map(str::trim).filter(|t| !t.is_empty());
+        let shot = match want {
+            Some(want) => shots
+                .iter()
+                .find(|s| s.title.eq_ignore_ascii_case(want))
+                .or_else(|| {
+                    let want = want.to_lowercase();
+                    shots.iter().find(|s| s.title.to_lowercase().contains(&want))
+                })
+                .ok_or_else(|| format!("No open window titled “{want}”"))?,
+            None => shots.first().ok_or("No windows to capture")?,
+        };
+        let name = shot_file_name(&shot.title);
+        let png = std::sync::Arc::clone(&shot.png);
+        self.insert_png(&name, &png)
+    }
+
+    /// Start a window capture if one isn't already running or finished. The work happens off the
+    /// UI thread: grabbing every window can take a moment, and the OS permission prompt must not
+    /// freeze the window.
+    pub(crate) fn ensure_window_shots(&mut self) {
+        if self.window_shots.is_some() || self.shot_rx.is_some() {
+            return;
+        }
+        let Some(capture) = self.services.capture_windows.clone() else {
+            self.window_shots = Some(Err("Screen capture isn't available in this window".into()));
+            return;
+        };
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(capture());
+        });
+        self.shot_rx = Some(rx);
+        self.set_status("Looking for windows…");
+    }
+
+    /// Screen Clipping closes the menu and waits for the drag on a background thread.
+    pub(crate) fn start_screen_clip(&mut self) {
+        let Some(capture) = self.services.capture_screen_clip.clone() else { return };
+        if self.clip_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(capture());
+        });
+        self.clip_rx = Some(rx);
+        self.set_status("Drag a rectangle to clip, or press Escape to cancel.");
+    }
+
+    fn poll_screen_clip(&mut self) {
+        let received = self.clip_rx.as_ref().map(|rx| rx.try_recv());
+        match received {
+            Some(Ok(Ok(Some(png)))) => {
+                self.clip_rx = None;
+                if let Err(e) = self.insert_png("Screen Clipping.png", &png) {
+                    self.set_status(e);
+                } else {
+                    self.status = None;
+                }
+            }
+            Some(Ok(Ok(None))) => {
+                self.clip_rx = None;
+                self.status = None;
+            }
+            Some(Ok(Err(e))) => {
+                self.clip_rx = None;
+                self.set_status(e);
+            }
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                self.clip_rx = None;
+                self.set_status("Screen Clipping stopped");
+            }
+            _ => {}
+        }
+    }
+
+    /// Take a finished capture, if the background thread has one. True when the menu should redraw.
+    pub(crate) fn poll_window_shots(&mut self) -> bool {
+        let received = self.shot_rx.as_ref().map(|rx| rx.try_recv());
+        match received {
+            Some(Ok(result)) => {
+                if let Err(e) = &result {
+                    self.set_status(e.clone());
+                } else if let Ok(shots) = &result
+                    && shots.is_empty()
+                {
+                    self.set_status("No windows to capture");
+                }
+                let clear = matches!(&result, Ok(shots) if !shots.is_empty());
+                self.window_shots = Some(result);
+                self.shot_rx = None;
+                self.shot_gen = self.shot_gen.wrapping_add(1);
+                if clear {
+                    self.status = None;
+                }
+                true
+            }
+            Some(Err(std::sync::mpsc::TryRecvError::Disconnected)) => {
+                self.window_shots = Some(Err("Screen capture stopped".into()));
+                self.set_status("Screen capture stopped");
+                self.shot_rx = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Insert `png` as a picture named `name` (the Screenshot menu and [`Self::insert_screenshot`]).
+    pub(crate) fn insert_png(&mut self, name: &str, png: &[u8]) -> Result<Value, String> {
+        self.session.execute("insert.picture", &json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(png)})).map_err(|e| e.to_string())
     }
 
     fn pick_and_insert(&mut self, purpose: &str, cmd: &str) {
@@ -1537,6 +1691,10 @@ impl SlideApp {
         self.last_time = now;
         self.drain_control(ctx);
         self.poll_opening();
+        self.poll_screen_clip();
+        if self.clip_rx.is_some() || self.shot_rx.is_some() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(50));
+        }
         if self.fonts_ready {
             self.drain_inbox();
         }
@@ -2009,6 +2167,27 @@ fn web_image_files(doc: &deckcraft_model::Presentation, current: usize, all: boo
 fn js_now() -> f64 {
     js_sys::Date::now()
 }
+
+/// A file name for a captured window. Control characters and path separators become spaces.
+pub(crate) fn shot_file_name(title: &str) -> String {
+    let mut safe = String::new();
+    for c in title.chars() {
+        if c.is_control() || matches!(c, '/' | '\\' | ':') {
+            safe.push(' ');
+        } else {
+            safe.push(c);
+        }
+        if safe.len() >= 80 {
+            break;
+        }
+    }
+    let safe = safe.trim();
+    let safe = if safe.is_empty() { "Screenshot" } else { safe };
+    format!("{safe}.png")
+}
+
+#[cfg(test)]
+mod screenshot_tests;
 
 #[cfg(test)]
 mod animpane_tests;
