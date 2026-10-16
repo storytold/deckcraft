@@ -29,7 +29,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | PNG / JPEG slide images | export | n/a | yes (`file.export`, `deckcraft-cli render`) | Matches the editor's renderer. PNG `pHYs` and JPEG JFIF density are `scale` × 72 dpi (default scale 2 is 144 dpi), so Preview shows the slide's real size | render and engine tests |
 | TIFF / BMP / GIF slide images | export | n/a | no | Easy (the `image` crate writes them) | none |
 | Animated GIF of the deck | export | n/a | yes (`file.export` format `gif`, Export…, `deckcraft-cli`, MCP `export`) | One frame per slide from the slide renderer; size small/medium/large/extra large or 16–3840 px wide, 0.1–600 s per slide, loop forever or play once, slide range, hidden slides skipped; a 256-colour palette per frame (exact, or NeuQuant above 256 colours). Transitions and build animations are not animated | `crates/engine/src/gif_export.rs` tests (decoded frames, size, delay, loop, hidden slides, hostile params), MCP, CLI and export dialog tests |
-| MP4 / MOV video of the deck | export | n/a | no | Needs timeline render + H.264 encode | none |
+| MP4 / MOV video of the deck | export | n/a | yes | `file.export` mp4/mov: transitions then each slide for its timing, 480p–4K, own H.264 encoder (intra + skip); no in-slide animations, no audio | none |
 | Print | yes | n/a | no | PR #66 (browser) open | none |
 
 ## Pictures and media inside decks
