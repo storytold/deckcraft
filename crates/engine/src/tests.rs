@@ -3592,3 +3592,76 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+/// A file with absurd effect sizes opens with them capped at what Format Shape allows: drawn as
+/// they were, a glow of 10^18 pt made the renderer ask for 34 GB and abort.
+#[test]
+fn opening_a_file_caps_absurd_effect_sizes() {
+    use deckcraft_model::style::{Glow, Reflection};
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Glow"})).unwrap();
+    s.execute("shape.effects", &json!({"shadow": "outer", "reflection": "tight", "softEdges": 4, "glow": {"radius": 8}})).unwrap();
+    s.execute("insert.table", &json!({"rows": 1, "cols": 1, "rect": [400, 300, 100, 40]})).unwrap();
+    let huge = 1e18;
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        for sh in list.iter_mut() {
+            if let Some(e) = sh.effects.as_mut() {
+                e.glow.as_mut().unwrap().radius = huge;
+                e.soft_edge = Some(f64::NAN);
+                let sw = e.outer_shadow.as_mut().unwrap();
+                (sw.blur, sw.dist, sw.sx) = (huge, huge, huge);
+                *e.reflection.as_mut().unwrap() = Reflection { blur: huge, start_alpha: 0.5, end_alpha: 0.0, end_pos: 0.5, dist: huge };
+            }
+            let glow = Some(Glow { color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::BLACK), radius: huge });
+            let runs: Vec<&mut deckcraft_model::text::Run> = match &mut sh.kind {
+                deckcraft_model::ShapeKind::Table(t) => t
+                    .rows
+                    .iter_mut()
+                    .flat_map(|r| r.cells.iter_mut())
+                    .flat_map(|c| c.text.paragraphs.iter_mut())
+                    .flat_map(|p| p.runs.iter_mut())
+                    .collect(),
+                _ => sh.text.iter_mut().flat_map(|t| t.paragraphs.iter_mut()).flat_map(|p| p.runs.iter_mut()).collect(),
+            };
+            for r in runs {
+                r.props.glow = glow.clone();
+            }
+        }
+        Ok(())
+    })
+    .unwrap();
+    for format in ["deckcraft", "pptx"] {
+        let bytes = cmd::file::save_bytes(&s.doc().unwrap().doc, format).unwrap();
+        let mut t = Session::new();
+        t.execute("file.openBytes", &json!({"name": format!("fx.{format}"), "data": cmd::base64_encode(&bytes)})).unwrap();
+        let st = t.doc().unwrap();
+        let slide = st.doc.slides.last().unwrap();
+        let mut glows = vec![];
+        deckcraft_model::walk(&slide.shapes, &mut |sh, _| {
+            if let Some(e) = &sh.effects {
+                glows.extend(e.glow.as_ref().map(|g| g.radius));
+                assert!(e.soft_edge.is_none_or(|v| (0.0..=100.0).contains(&v)), "{format}: {:?}", e.soft_edge);
+                if let Some(sw) = &e.outer_shadow {
+                    assert!(sw.blur <= 200.0 && sw.dist <= 200.0 && sw.sx <= 10.0, "{format}: {sw:?}");
+                }
+                if let Some(r) = &e.reflection {
+                    assert!(r.blur <= 100.0 && r.dist <= 100.0, "{format}: {r:?}");
+                }
+            }
+            for p in sh.text.iter().flat_map(|t| t.paragraphs.iter()) {
+                glows.extend(p.runs.iter().filter_map(|r| r.props.glow.as_ref().map(|g| g.radius)));
+            }
+            if let deckcraft_model::ShapeKind::Table(tb) = &sh.kind {
+                let cells = tb.rows.iter().flat_map(|r| r.cells.iter()).flat_map(|c| c.text.paragraphs.iter());
+                glows.extend(cells.flat_map(|p| p.runs.iter()).filter_map(|r| r.props.glow.as_ref().map(|g| g.radius)));
+            }
+        });
+        assert!(!glows.is_empty(), "{format}: the glows were kept");
+        assert!(glows.iter().all(|g| (0.0..=150.0).contains(g)), "{format}: {glows:?}");
+        // Capped, the slide renders (checked last: uncapped, this is what ran out of memory).
+        let i = st.doc.slides.len() - 1;
+        t.execute("file.render", &json!({"slide": i, "scale": 0.1})).unwrap();
+    }
+}
