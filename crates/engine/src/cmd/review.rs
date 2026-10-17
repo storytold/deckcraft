@@ -137,7 +137,14 @@ fn reply(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     let all = bool_or(p, "all", false);
-    let i = usize_param(p, "index");
+    let i = match p.get("index") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| bad("comment.delete", format!("`index` is not a valid comment index: {v}")))?,
+        ),
+    };
     s.edit(|doc, sel| {
         if all {
             for sl in &mut doc.slides {
@@ -792,5 +799,19 @@ mod tests {
         assert!(s.active().unwrap().doc.show.range.is_none());
         s.execute("show.setup", &json!({"custom": ""})).unwrap();
         assert!(s.active().unwrap().doc.show.custom_show.is_none());
+    }
+
+    #[test]
+    fn delete_rejects_an_invalid_index_and_keeps_the_comments() {
+        let mut s = Session::with_new();
+        s.execute("comment.add", &json!({"text": "a"})).unwrap();
+        s.execute("comment.add", &json!({"text": "b"})).unwrap();
+        for bad_index in [json!(-1), json!("2"), json!(1.5)] {
+            let r = s.execute("comment.delete", &json!({"index": bad_index}));
+            assert!(r.is_err(), "index {bad_index} gave {r:?}");
+            assert_eq!(s.active().unwrap().doc.slides[0].comments.len(), 2, "index {bad_index}");
+        }
+        s.execute("comment.delete", &json!({})).unwrap();
+        assert!(s.active().unwrap().doc.slides[0].comments.is_empty());
     }
 }
