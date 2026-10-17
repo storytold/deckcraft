@@ -2142,6 +2142,14 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             if ui.checkbox(&mut dark, "Dark appearance").changed() {
                 let _ = app.run("view.dark", json!({"on": dark}));
             }
+            ui.horizontal(|ui| {
+                ui.label("Layout:");
+                for (shell, label) in [(crate::Shell::Classic, "Ribbon"), (crate::Shell::Canvas, "Canvas")] {
+                    if ui.radio(app.ui.shell == shell, label).clicked() {
+                        let _ = app.run("view.shell", json!({"shell": shell.id()}));
+                    }
+                }
+            });
             // While the pointer holds the slider its value only waits in the dialog: applying it
             // would rescale the slider under the pointer and run it to an end (#767). It applies
             // on release, and at once from the keyboard.

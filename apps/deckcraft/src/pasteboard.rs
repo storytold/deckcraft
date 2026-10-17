@@ -21,6 +21,11 @@ pub fn set_html(html: &str, text: &str) -> bool {
 /// The pasteboard picture as PNG bytes (TIFF on macOS is decoded by arboard).
 pub fn image_png() -> Option<Vec<u8>> {
     let mut cb = arboard::Clipboard::new().ok()?;
+    // Copied files first: Finder also puts the file's icon on the clipboard as an image, which
+    // would otherwise paste instead of the picture.
+    if let Some(bytes) = cb.get().file_list().ok().and_then(|paths| picture_from_files(&paths)) {
+        return Some(bytes);
+    }
     let img = cb.get_image().ok()?;
     let width = u32::try_from(img.width).ok()?;
     let height = u32::try_from(img.height).ok()?;
@@ -28,6 +33,24 @@ pub fn image_png() -> Option<Vec<u8>> {
     let mut out = Vec::new();
     rgba.write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
     Some(out)
+}
+
+/// The bytes of the first copied file that is a picture (read whole only after its header is
+/// recognised, and up to 256 MB).
+fn picture_from_files(paths: &[std::path::PathBuf]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    const MAX: u64 = 256 << 20;
+    paths.iter().find_map(|path| {
+        let mut head = Vec::with_capacity(16);
+        std::fs::File::open(path).ok()?.take(16).read_to_end(&mut head).ok()?;
+        let name = path.to_string_lossy();
+        if !deckcraft_engine::cmd::insert::content_type(&name, &head).starts_with("image/") {
+            return None;
+        }
+        let mut bytes = Vec::new();
+        std::fs::File::open(path).ok()?.take(MAX).read_to_end(&mut bytes).ok()?;
+        Some(bytes)
+    })
 }
 
 #[cfg(test)]

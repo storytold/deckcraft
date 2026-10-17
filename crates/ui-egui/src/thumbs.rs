@@ -1,9 +1,9 @@
 //! The slide thumbnail pane (Normal view): numbered thumbnails grouped by section, selection,
 //! drag-to-reorder, and the slide context menu.
 
-use deckcraft_engine::Target;
+use deckcraft_engine::{Mods, Target};
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::SlideApp;
 use crate::theme::{self, Tokens};
@@ -38,7 +38,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
-fn list(app: &mut SlideApp, ui: &mut Ui) {
+pub(crate) fn list(app: &mut SlideApp, ui: &mut Ui) {
+    app.thumbs_rect = Some(ui.clip_rect());
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
@@ -53,6 +54,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     let section_starts: Vec<(usize, usize)> =
         doc.sections.iter().enumerate().filter_map(|(si, s)| s.slides.first().and_then(|id| doc.slide_index(*id)).map(|i| (i, si))).collect();
     let mut need_more = false;
+    // When the current slide changes (arrow keys, the canvas, a command), bring it into view.
+    let seen_id = ui.id().with("thumbs_current");
+    let now = (app.session.active().map(|d| d.uid).unwrap_or(0), cur);
+    let scroll_to_current = ui.data_mut(|d| d.get_temp::<(u64, usize)>(seen_id)) != Some(now);
+    ui.data_mut(|d| d.insert_temp(seen_id, now));
     for i in 0..doc.slides.len() {
         if let Some((_, si)) = section_starts.iter().find(|(start, _)| *start == i)
             && let Some(sec) = doc.sections.get(*si)
@@ -96,6 +102,9 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         let (row, resp) = ui.allocate_exact_size(vec2(width, th + 16.0), Sense::click_and_drag());
         let img = crate::textures::device_pixel_rect(Rect::from_min_size(pos2(row.min.x + 30.0, row.min.y + 6.0), vec2(tw, th)), ppp);
         rects.push((i, row));
+        if i == cur && scroll_to_current {
+            ui.scroll_to_rect(row, None);
+        }
         let p = ui.painter();
         let id = doc.slides.get(i).map(|s| s.id);
         let selected = i == cur || id.is_some_and(|id| multi.contains(&id));
@@ -113,6 +122,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         let has_anim = doc.slides.get(i).is_some_and(|s| !s.animations.is_empty() || s.transition.as_ref().is_some_and(|tr| tr.kind != "none"));
         if has_anim {
             p.text(pos2(row.min.x + 14.0, img.min.y + 20.0), Align2::CENTER_TOP, "★", theme::font(10.0), t.text_faint);
+        }
+        // While the list has the keyboard its selected rows are tinted, so it's clear where ⌘D and
+        // Delete go.
+        if selected && app.slides_focus {
+            p.rect_filled(row.shrink2(vec2(4.0, 0.0)), CornerRadius::same(6), t.accent.gamma_multiply(0.14));
         }
         let wpx = (img.width() * ppp).round() as u32;
         match app.textures.thumb(ui.ctx(), &doc, i, wpx, &mut budget) {
@@ -139,8 +153,15 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 egui::StrokeKind::Outside,
             );
         }
+        if resp.clicked() || resp.drag_started() {
+            app.slides_focus = true;
+        }
         if resp.clicked() {
             let (shift, cmd) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
+            if !shift {
+                app.slide_anchor = Some(i);
+            }
+            app.slide_cursor = Some(i);
             if let Some(id) = id {
                 if cmd {
                     let _ = app.run("slide.selectSlides", json!({"ids": [id.0], "add": true}));
@@ -199,6 +220,109 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     if resp.clicked() {
         let _ = app.run("slide.new", json!({}));
     }
+}
+
+/// Keys for the slide list while it has the keyboard (`SlideApp::slides_focus`), as in Keynote
+/// and PowerPoint: ⌘D duplicates the selected slides, Delete removes them, ⇧⌘H hides or shows
+/// them (⌘H is the Mac's Hide app), ⌘↑ / ⌘↓ (or ⌘← / ⌘→) move them one place and ⇧⌘↑ / ⇧⌘↓ to
+/// the start or end, ↑ / ↓ go to the previous or next slide and ⇧↑ / ⇧↓ extend the selection,
+/// ⌘A selects every slide. True when consumed.
+pub fn slide_key(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
+    use egui::Key::*;
+    let Some(st) = app.session.active() else { return false };
+    let n = st.doc.slides.len();
+    let cur = st.selection.slide;
+    let ids: Vec<u32> = st.doc.slides.iter().map(|s| s.id.0).collect();
+    let mut selected: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
+    if selected.is_empty() {
+        selected.push(cur);
+    }
+    selected.sort_unstable();
+    let run = |app: &mut SlideApp, id: &str, p: Value| {
+        if let Err(e) = app.run(id, p) {
+            app.set_status(e);
+        }
+    };
+    let back = matches!(key, ArrowUp | ArrowLeft);
+    let forth = matches!(key, ArrowDown | ArrowRight);
+    match (key, m.cmd, m.shift, m.alt) {
+        (D, true, false, false) => run(app, "slide.duplicate", json!({})),
+        (Delete | Backspace, false, false, false) => run(app, "slide.delete", json!({})),
+        (H, true, true, false) => run(app, "slide.hide", json!({})),
+        (A, true, false, false) => run(app, "slide.selectSlides", json!({"ids": ids})),
+        (_, true, shift, false) if back || forth => {
+            let order = moves(&selected, n, forth, shift);
+            if order.is_empty() {
+                return true;
+            }
+            let keep: Vec<u32> = selected.iter().filter_map(|i| ids.get(*i).copied()).collect();
+            let cmds = order.into_iter().map(|(from, to)| ("slide.move", json!({"from": from, "to": to}))).collect();
+            app.run_as_one(if keep.len() > 1 { "Move Slides" } else { "Move Slide" }, cmds);
+            // The moved slides stay selected, the current one last.
+            let current = st_id(app, cur, &ids);
+            let mut sel: Vec<u32> = keep.into_iter().filter(|id| Some(*id) != current).collect();
+            sel.extend(current);
+            run(app, "slide.selectSlides", json!({"ids": sel}));
+        }
+        (_, false, true, false) if back || forth => {
+            let cursor = app.slide_cursor.filter(|c| *c < n).unwrap_or(cur);
+            let anchor = app.slide_anchor.filter(|a| *a < n).unwrap_or(cursor);
+            let to = if back { cursor.saturating_sub(1) } else { (cursor + 1).min(n.saturating_sub(1)) };
+            let (a, b) = (anchor.min(to), anchor.max(to));
+            // The cursor's slide last: it becomes the current one.
+            let mut sel: Vec<u32> = (a..=b).filter(|i| *i != to).filter_map(|i| ids.get(i).copied()).collect();
+            sel.extend(ids.get(to));
+            run(app, "slide.selectSlides", json!({"ids": sel}));
+            app.slide_anchor = Some(anchor);
+            app.slide_cursor = Some(to);
+        }
+        (_, false, false, false) if back || forth || matches!(key, Home | End) => {
+            let to = match key {
+                Home => 0,
+                End => n.saturating_sub(1),
+                _ if back => cur.saturating_sub(1),
+                _ => (cur + 1).min(n.saturating_sub(1)),
+            };
+            run(app, "slide.go", json!({"index": to}));
+            app.slide_anchor = Some(to);
+            app.slide_cursor = Some(to);
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// The current slide's id after slides moved (it moved with them).
+fn st_id(app: &SlideApp, cur: usize, before: &[u32]) -> Option<u32> {
+    let id = before.get(cur).copied()?;
+    app.session.active()?.doc.slides.iter().any(|s| s.id.0 == id).then_some(id)
+}
+
+/// The `slide.move` steps that move the `selected` slides (sorted indices) one place back or
+/// forth, or (`to_end`) to the start or end, keeping their order. Each step's indices hold after
+/// the steps before it.
+pub fn moves(selected: &[usize], n: usize, forth: bool, to_end: bool) -> Vec<(usize, usize)> {
+    let mut out = vec![];
+    if !forth {
+        let mut limit = 0;
+        for (k, &i) in selected.iter().enumerate() {
+            let to = if to_end { k } else { i.saturating_sub(1).max(limit) };
+            if to != i {
+                out.push((i, to));
+            }
+            limit = to + 1;
+        }
+    } else {
+        let mut limit = n.saturating_sub(1);
+        for (k, &i) in selected.iter().rev().enumerate() {
+            let to = if to_end { n.saturating_sub(1 + k) } else { (i + 1).min(limit) };
+            if to != i {
+                out.push((i, to));
+            }
+            limit = to.saturating_sub(1);
+        }
+    }
+    out
 }
 
 pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {

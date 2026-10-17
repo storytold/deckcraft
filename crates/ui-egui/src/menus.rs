@@ -53,6 +53,17 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
             app.close_presentation();
             return true;
         }
+        // ⌃Tab / ⌃⇧Tab: the next or previous presentation tab (⌘Tab is the Mac's app switcher).
+        (Tab, true, shift, false) => {
+            let n = app.session.documents().len();
+            if n < 2 {
+                return false;
+            }
+            let i = app.session.active_index().unwrap_or(0);
+            let to = if shift { (i + n - 1) % n } else { (i + 1) % n };
+            let _ = app.run("window.next", json!({"index": to}));
+            return true;
+        }
         (O, true, false, false) => "app.openDialog",
         (V, true, false, true) if app.session.active().is_some() => {
             app.dialog = Some(crate::dialogs::Dialog::new("pasteSpecial"));
@@ -93,6 +104,43 @@ fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, S
     items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(q));
     items.truncate(60);
     items
+}
+
+/// Mac-style object shortcuts, as in Keynote and canvas editors, beside PowerPoint's (⌥⌘G, ⇧⌘],
+/// ⌘D… stay bound by the commands themselves): ⌘G groups, ⇧⌘G ungroups, ⌥⌘] / ⌥⌘[ bring to
+/// front / send to back, ⇧⌘L locks or unlocks, ⇧⌘H hides or shows, ⇧⌘R pastes to replace, ⇧⌘Z
+/// redoes. True when consumed.
+pub fn mac_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
+    use egui::Key::*;
+    if !m.cmd {
+        return false;
+    }
+    if (key, m.shift, m.alt) == (Z, true, false) {
+        let _ = app.run("edit.redo", json!({}));
+        return true;
+    }
+    let Some(st) = app.session.active() else { return false };
+    if st.selection.text.is_some() || st.selection.shapes.is_empty() {
+        return false;
+    }
+    let shapes = st.selected_shapes();
+    // Lock and hide act on the whole selection: any unlocked (shown) one makes them all locked (hidden).
+    let any_unlocked = shapes.iter().any(|s| !s.locked);
+    let any_shown = shapes.iter().any(|s| !s.hidden);
+    let (id, p) = match (key, m.shift, m.alt) {
+        (G, false, false) => ("arrange.group", json!({})),
+        (G, true, false) => ("arrange.ungroup", json!({})),
+        (CloseBracket | CloseCurlyBracket, false, true) => ("arrange.bringToFront", json!({})),
+        (OpenBracket | OpenCurlyBracket, false, true) => ("arrange.sendToBack", json!({})),
+        (L, true, false) => ("shape.lock", json!({"locked": any_unlocked})),
+        (H, true, false) => ("shape.visible", json!({"visible": !any_shown})),
+        (R, true, false) => ("edit.pasteToReplace", json!({})),
+        _ => return false,
+    };
+    if let Err(e) = app.run(id, p) {
+        app.set_status(e);
+    }
+    true
 }
 
 /// ⇧⌘P: search every command by name and run it.
@@ -186,6 +234,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Paste", "edit.paste"),
                 ("Paste and Match Formatting", "edit.pasteText"),
                 ("Paste Special…", "app.pasteSpecial"),
+                ("Paste to Replace", "edit.pasteToReplace"),
                 ("-", ""),
                 ("Select All", "edit.selectAll"),
                 ("Duplicate", "edit.duplicate"),
