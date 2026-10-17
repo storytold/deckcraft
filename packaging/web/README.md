@@ -86,3 +86,38 @@ DeckCraft renders with wgpu. It uses **WebGPU** when the browser has it and fall
 For example: `<iframe src="https://example.com/deckcraft/?webgl" ...>`.
 
 A browser with neither WebGPU nor WebGL2 gets a message in place of the app.
+
+## craft-live (Nextcloud Office)
+
+[craft-live](https://github.com/sirmmo/craft-live) serves this build to Nextcloud Office as its
+presentation editor. Put the site's files in the folder craft-live's configuration names for
+DeckCraft, and craft-live publishes `.pptx`, `.pptm` and `.odp` to Nextcloud:
+
+```sh
+packaging/web/package.sh            # or: cd apps/deckcraft-web && trunk build --release
+mkdir -p /srv/craft-live/apps/deckcraft
+cp -R dist/web/. /srv/craft-live/apps/deckcraft/
+```
+
+```toml
+# craft-live.toml
+[apps]
+deckcraft = "/srv/craft-live/apps/deckcraft"
+```
+
+craft-live serves the folder at `/apps/deckcraft/` (the relative URLs above make that work) and
+loads `index.html#craft-live=1&…` in its editor page; the build sees the fragment and becomes a
+live editor of that one presentation (docs/collab.md, "In Nextcloud"). Nothing else to set: the
+WebSocket and the API are craft-live's own origin, and the build needs no headers beyond the
+MIME types above. Check with `craft-live check --config craft-live.toml`. Without the fragment the
+same build is the ordinary web app.
+
+Without trunk (what `trunk build` does, by hand):
+
+```sh
+cargo build --release -p deckcraft-web --target wasm32-unknown-unknown
+wasm-bindgen --target web --no-typescript --out-dir dist/web --out-name deckcraft-web \
+  target/wasm32-unknown-unknown/release/deckcraft-web.wasm
+# then an index.html like apps/deckcraft-web/index.html whose module script imports
+# ./deckcraft-web.js and calls its default export (trunk writes that line itself)
+```

@@ -9,6 +9,8 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 /// A presentation being read on a background thread.
 pub struct Opening {
     pub path: String,
+    /// Where an add-in said the file came from (protocol 1.2 `open.label`), shown as its location.
+    pub label: Option<String>,
     pub started_ms: f64,
     rx: Receiver<Result<LoadedFile, String>>,
 }
@@ -24,6 +26,12 @@ impl SlideApp {
     /// Open `path` without blocking the UI: the file is read on a thread and the progress window
     /// shows until it arrives. Without threads (the web build) it opens at once.
     pub fn open_path_in_background(&mut self, path: &str) {
+        self.open_path_labelled(path, None);
+    }
+
+    /// [`SlideApp::open_path_in_background`], with the words an add-in gave for where the file
+    /// came from (`open.label`): File › Info shows them as the location.
+    pub fn open_path_labelled(&mut self, path: &str, label: Option<String>) {
         if let Some(o) = &self.opening {
             let name = o.name();
             self.set_status(format!("Still opening {name}"));
@@ -31,6 +39,7 @@ impl SlideApp {
         }
         #[cfg(target_arch = "wasm32")]
         {
+            let _ = label;
             if let Err(e) = self.open_path(path) {
                 self.notify(e);
             }
@@ -44,10 +53,12 @@ impl SlideApp {
                 let _ = tx.send(r);
             });
             match spawned {
-                Ok(_) => self.opening = Some(Opening { path: path.to_string(), started_ms: crate::now_ms(), rx }),
+                Ok(_) => self.opening = Some(Opening { path: path.to_string(), label, started_ms: crate::now_ms(), rx }),
                 Err(_) => {
-                    if let Err(e) = self.open_path(path) {
-                        self.notify(e);
+                    let r = self.session.execute("file.open", &serde_json::json!({"path": path, "label": label})).map_err(|e| e.to_string());
+                    match r {
+                        Ok(_) => self.note_recent(path),
+                        Err(e) => self.notify(e),
                     }
                 }
             }
@@ -74,7 +85,7 @@ impl SlideApp {
             Ok(f) => {
                 // Into the session through the command path, like file.open: journaled and guarded.
                 let token = self.session.stage_loaded(f);
-                match self.session.execute("file.adopt", &serde_json::json!({"path": o.path, "token": token})) {
+                match self.session.execute("file.adopt", &serde_json::json!({"path": o.path, "token": token, "label": o.label})) {
                     Ok(_) => self.note_recent(&o.path),
                     Err(e) => self.notify(e.to_string()),
                 }
@@ -184,7 +195,7 @@ mod tests {
         let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
         // A read that never answers: the window stays until Cancel.
         let (_tx, rx) = std::sync::mpsc::channel();
-        app.opening = Some(Opening { path: "/decks/Big deck.pptx".into(), started_ms: crate::now_ms(), rx });
+        app.opening = Some(Opening { path: "/decks/Big deck.pptx".into(), label: None, started_ms: crate::now_ms(), rx });
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());

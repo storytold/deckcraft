@@ -888,7 +888,15 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     }
                     ui.end_row();
                 }
-                row(ui, "Location", path.clone().unwrap_or_else(|| "Not saved yet".into()));
+                // Where an add-in said it came from (protocol 1.2 `open.label`), else the file.
+                match app.session.active().and_then(|d| d.location_label.clone()) {
+                    Some(label) => {
+                        let l = ui.label(RichText::new("Location").color(t.text_dim));
+                        ui.label(label).labelled_by(l.id).on_hover_text(path.clone().unwrap_or_default());
+                        ui.end_row();
+                    }
+                    None => row(ui, "Location", path.clone().unwrap_or_else(|| "Not saved yet".into())),
+                }
             });
         });
     });

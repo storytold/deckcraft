@@ -16,10 +16,10 @@ quick-xml = { workspace = true }
 zip = { workspace = true }
 thiserror = { workspace = true }
 log = { workspace = true }
+serde_json = { workspace = true }
 
 [dev-dependencies]
 deckcraft-engine = { workspace = true }
-serde_json = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-geom = { workspace = true }
 image = { workspace = true }

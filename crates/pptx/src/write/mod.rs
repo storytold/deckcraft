@@ -20,9 +20,6 @@ use crate::PptxError;
 use crate::opc::{self, NS_A, NS_P, NS_P14, NS_P188, NS_R, PackageOut, RelsOut};
 use crate::xml::{A, W};
 
-pub(crate) const CT_PRES: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml";
-pub(crate) const CT_TEMPLATE: &str = "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml";
-pub(crate) const CT_SHOW: &str = "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml";
 const CT_SLIDE: &str = "application/vnd.openxmlformats-officedocument.presentationml.slide+xml";
 const CT_LAYOUT: &str = "application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml";
 const CT_MASTER: &str = "application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml";
@@ -525,7 +522,7 @@ fn sanitized(p: &Presentation) -> std::borrow::Cow<'_, Presentation> {
     std::borrow::Cow::Owned(q)
 }
 
-pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
+pub fn export(p: &Presentation, kind: crate::PptxKind) -> Result<Vec<u8>, PptxError> {
     let p = sanitized(p);
     let p: &Presentation = &p;
     let mut x = Exp {
@@ -708,7 +705,13 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
     let ts = crate::tables::table_styles_xml(&x.table_styles, &p.table_styles);
     x.pkg.xml_part("ppt/tableStyles.xml", CT_TABLE_STYLES, ts);
     let pxml = presentation_xml(&mut x, &mut pres, &master_rids, notes_master_rid.as_deref(), handout_rid.as_deref(), &slide_rids);
-    x.pkg.xml_part("ppt/presentation.xml", main_ct, pxml);
+    x.pkg.xml_part("ppt/presentation.xml", kind.main_content_type(), pxml);
+    // Only a macro-enabled package holds the VBA project; the others leave it out (PowerPoint too).
+    if kind.macros() {
+        crate::vba::write(p, &mut x.pkg, &mut pres.rels);
+    } else if p.has_macros() {
+        log::warn!("pptx: a .{} file can't hold macros; the VBA project is left out", kind.ext());
+    }
     // Kept parts never replace a part the writer makes.
     let kept: Vec<_> = p
         .kept_parts
@@ -729,7 +732,11 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
     }
     x.pkg.rels("ppt/presentation.xml", &pres.rels);
     for k in &kept {
-        if k.content_type.is_empty() {
+        if let Some(data) = &k.data {
+            if !k.content_type.is_empty() {
+                x.pkg.binary_override(&k.name, &k.content_type, data.to_vec());
+            }
+        } else if k.content_type.is_empty() {
             x.pkg.raw(&k.name, k.xml.clone().into_bytes());
         } else {
             x.pkg.xml_part(&k.name, &k.content_type, k.xml.clone().into_bytes());
@@ -746,6 +753,14 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
     for k in kept.iter().filter(|k| !k.rel_type.is_empty() && k.from_root) {
         root.add_new(&k.rel_type, &k.name, false);
     }
+    // The presentation's own ribbon, unless the file kept a richer one (both would clash).
+    if let Some(r) = p.ribbon.as_ref().filter(|r| !r.is_empty() && !crate::custom_ui::has_kept(p))
+        && !x.pkg.has(crate::custom_ui::PART_CUSTOM_UI14)
+    {
+        x.pkg.xml_part(crate::custom_ui::PART_CUSTOM_UI14, "application/xml", crate::custom_ui::write(r).into_bytes());
+        root.add_new(crate::custom_ui::REL_CUSTOM_UI14, crate::custom_ui::PART_CUSTOM_UI14, false);
+    }
+    crate::chat::write(p, &mut x.pkg, &mut root);
     x.pkg.rels("", &root);
     x.pkg.finish()
 }

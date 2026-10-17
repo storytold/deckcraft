@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-16 · **Change:** minor (live co-editing: the web build in Nextcloud through craft-live; previously minor: live co-editing: document chat; previously minor: Office.js: what Microsoft's samples need; previously minor: add-ins that require other add-ins, manifest 1.3; previously minor: live co-editing, plugin protocol 2; previously minor: add-in protocol 1.2: dialogs, opening files, document events; previously minor: ribbon buttons that run macros, saved as `customUI14.xml`; Record Macro, a DeckCraft extra; previously major: add-ins, Office add-ins and VBA macros through an add-in; macro-enabled and template packages; previously major: community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -107,13 +107,12 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
 - **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
 
-### Template, slide-show and macro variants are saved as plain `.pptx`
-- **Evidence:** `crates/pptx/src/write/mod.rs` always writes the
-  `presentationml.presentation.main+xml` content type; `.potx`/`.ppsx` open, `.pptm`/`.potm`/`.ppsm`
-  aren't recognised.
-- **Impact:** a template saved as `.potx` isn't a template to PowerPoint; macro decks can't be
-  opened even to view.
-- **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
+### Opening a template or a show file doesn't start a new deck or the show
+- **Evidence:** `.potx`/`.potm`/`.ppsx`/`.ppsm` open and save with their own content types (and
+  the macro-enabled kinds keep `vbaProject.bin`), but opening a template edits the template itself
+  and a show file opens in Normal view.
+- **Impact:** small: PowerPoint starts an untitled deck from a template and plays a show file.
+- **Estimate:** 1–2 h.
 
 ### No legacy `.ppt`/`.pot`/`.pps` import
 - **Evidence:** PowerPoint for Mac still opens and saves the 97–2003 binary formats
@@ -338,12 +337,50 @@ Detail in [localization-parity.md](localization-parity.md).
 
 ## Ecosystem
 
+- **Add-ins: first version.** Out-of-process add-ins (the craft apps' shared `plugin.json`
+  manifest and protocol, installed from GitHub), Office add-ins' task panes on PowerPoint's
+  JavaScript API (PowerPointApi 1.1–1.4 subset, DeckCraft's own Office.js; macOS and Windows), and
+  VBA macros through a macro add-in (craft-vba) with the Developer tab: ribbon buttons that run
+  macros (Developer › Ribbon Buttons, saved as the package's `customUI14.xml` so PowerPoint shows
+  them too) and Record Macro (a DeckCraft extra: PowerPoint has no recorder). Add-ins speak the
+  craft apps' protocol 1.2 too: host-drawn dialogs, opening files, document events, and protocol 2:
+  live co-editing through transport add-ins ([collab.md](collab.md)), and manifest 1.3: add-ins
+  require other add-ins with Cargo-style version ranges, app versions, protocol and features;
+  unmet ones are blocked with the reason, installing the missing ones from their newest GitHub
+  release in range (Install Missing); Office add-ins' requirement sets are checked
+  ([plugins.md](plugins.md#requirements-manifest-13)). Office.js runs Microsoft's add-in samples'
+  common needs ([officejs.md](officejs.md)): their `office.js` never runs, function commands
+  (ExecuteFunction), colour names, tags, `insertSlidesFromBase64`, image and slide-range
+  coercions, `goToByIdAsync`, `DocumentSelectionChanged`. The owner reversed
+  the earlier "out of scope" policy on 2026-10-14 ([plugins.md](plugins.md)). Missing: Office.js
+  dialogs, the shared runtime and keyboard shortcuts, other events, hyperlinks and tables through
+  the object model, settings saved in the file, the unified JSON manifest; a Linux web view; editing a ribbon richer
+  than tabs, groups and buttons; VBA's UserForms, events and partial-text formatting; updating
+  installed add-ins (no update check) and more than one page (100) of a repository's releases.
+  12–25 h.
 - **Six original starter decks; PowerPoint's large template gallery remains.** File › New and the
   start screen offer Briefing, Lesson, Pitch, Field Notes, Quarterly and Evening Talk
   (`file.new {template}`), each a few slides on one of our themes. Dozens of further offline
   designs, and any online gallery, are still absent. 4–8 h for a larger original set (asset policy:
   our own designs only).
 - **No add-ins or VBA.** Out of scope by policy; MCP/CLI automation is the alternative.
+
+- **Live co-editing: first version.** Several people edit one presentation at once through a
+  transport add-in (craft-collab's MQTT or loopback), each in their own DeckCraft: Share and the
+  people's circles in the title bar, others' selections and carets on the slide, typing merged
+  character by character, per-person undo, end-to-end encryption, recovery, and a document chat
+  saved in the file (the Chat pane, unread count and mentions; [collab.md](collab.md#chat)).
+  The web build edits live inside Nextcloud Office through craft-live (the people, the popover and
+  the chat as on the desktop; saves go into Nextcloud as new versions of the file;
+  [collab.md](collab.md#in-nextcloud-craft-live)).
+  Missing: masters, layouts, themes, tables' cells and charts merge as
+  whole values (the later edit wins); comments threads aren't live; the web build reaches only
+  craft-live's rooms and can't read or write `.odp` (craft-live lists it); craft-live mode is
+  tested natively against the real server and its fake Nextcloud, and in wasm32 under Node, but
+  not yet in a browser inside a real Nextcloud (to check there: the `#craft-live` fragment
+  reaching the frame, `postMessage` with the shell, the WebSocket's binary frames and close
+  codes through a TLS proxy, `fetch` uploads of large decks, Nextcloud's version history after
+  saves, the Close button and `UI_Close`, view-only shares, the loading timeout). 8–16 h.
 
 ## AI features
 
@@ -355,6 +392,14 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | minor | Live co-editing entry: the web build edits live in Nextcloud through craft-live; what's left to check in a real Nextcloud |
+| 2026-10-16 | minor | Live co-editing entry: document chat (saved in the file, live in a session) |
+| 2026-10-15 | minor | Add-ins entry: Office.js closes the gaps Microsoft's samples hit (office.js blocking, ExecuteFunction, colour names, tags, `insertSlidesFromBase64`, coercions, `goToByIdAsync`, selection events); the missing list updated |
+| 2026-10-15 | minor | Add-ins entry: manifest 1.3 (add-ins require other add-ins: version ranges, blocked add-ins with reasons, start order, Install Missing from the newest release in range; Office add-ins' requirement sets checked) |
+| 2026-10-15 | minor | Live co-editing (plugin protocol 2): new Ecosystem entry; the add-ins entry mentions it |
+| 2026-10-15 | minor | Add-in protocol 1.2 (dialogs, opening files, document events) |
+| 2026-10-15 | minor | Ribbon buttons that run macros (`customUI14.xml` read and written) and Record Macro: the ribbon-buttons and `customUI` gap closed |
+| 2026-10-14 | minor | Add-ins, Office add-ins and VBA macros through an add-in (the owner reversed "out of scope"); `.pptm`/`.potm`/`.ppsm` and template/show content types: that gap narrowed to opening behaviour |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |

@@ -105,6 +105,10 @@ cp "$WORK/bin/deckcraft" "$APP/Contents/MacOS/DeckCraft"
 cp "$ROOT/assets/app-icon/deckcraft.icns" "$APP/Contents/Resources/DeckCraft.icns"
 # Licences of the embedded craft-fonts fonts (only when built with CRAFT_FONTS_DIR).
 copy_font_licences "$APP/Contents/Resources"
+# Office add-ins' library for task panes (`cargo xtask office-js`), when it was built.
+if [ -f "$CARGO_TARGET_DIR/office-js/office_js_bg.wasm" ]; then
+  cp -R "$CARGO_TARGET_DIR/office-js" "$APP/Contents/Resources/office-js"
+fi
 sed -e "s/@VERSION@/$VERSION/g" -e "s/@SHORT_VERSION@/$SHORT_VERSION/g" \
   -e "s/@BUILD_SHA@/${DECKCRAFT_BUILD_SHA:-unknown}/g" \
   "$HERE/Info.plist.in" >"$APP/Contents/Info.plist"

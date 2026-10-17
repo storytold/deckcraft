@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-16 · **Change:** minor (the document chat part `/craft/chat.json` is read and written, and the native format's `chat`; previously minor: the ribbon customisation part `customUI14.xml` / `customUI.xml` is read and written when it is tabs, groups and macro buttons, and kept with its pictures otherwise; previously major: Macro-enabled `.pptm` / `.potm` / `.ppsm` open and save, keeping the VBA project and its signatures byte for byte; `.potx` / `.ppsx` written with their own content types; previously major: community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -16,9 +16,12 @@ PowerPoint opens and saves; Viewer = opens only).
 
 | Format | PowerPoint | DeckCraft read | DeckCraft write | Fidelity / notes | Tested by |
 |---|---|---|---|---|---|
+| `.pptm` macro-enabled presentation | Editor | yes | yes | `ppt/vbaProject.bin` and the parts it relates to (signatures, VBA data) kept byte for byte in `Presentation::vba_project` / `vba_parts`, never parsed or run; also kept by `.deckcraft` (base64). Saving a deck with macros as `.pptx` writes `.pptm` instead and says so (`renamedFrom`); `.pptx` / `.potx` / `.ppsx` drop the project cleanly | `crates/pptx/tests/macros.rs` (9 tests: per-kind round trip and content types, clean drop, hostile packages), `file::tests` (5) |
+| `.potm` macro-enabled template | Editor | yes (as a presentation) | yes | As `.pptm`; a `.potx` with macros saves as `.potm` | as `.pptm` |
+| `.ppsm` macro-enabled show | Editor | yes (as a presentation) | yes | As `.pptm`; a `.ppsx` with macros saves as `.ppsm`. Doesn't start in show mode | as `.pptm` |
 | `.pptx` presentation | Editor | yes | yes | Broad (see below); an owned corpus of decks we author round-trips tables, charts, animations, media, sections, masters and layouts, comments, links and actions, custom shows, rotated groups, inherited placeholders, text effects and body layout, theme effects, fills, bevels, connectors, 3-D models and animation bounce end. Not measured against PowerPoint renders or decks from outside this repo | `crates/pptx/tests/corpus.rs`, `corpus_kinds.rs`, `corpus_elements.rs`, `corpus_style.rs`, `corpus_themes.rs`, `corpus_charts.rs`, `corpus_media.rs`, `roundtrip.rs`, `sample.rs`, `malformed.rs`, `sniff.rs`; opened in PowerPoint by hand 2026-10-06 |
-| `.potx` template | Editor | yes (as a presentation) | no: written with the `.pptx` content type | `file.saveTemplate` is Save As under another name | none |
-| `.ppsx` slide show | Editor | yes (as a presentation) | no: written as `.pptx` content | Doesn't start in show mode | none |
+| `.potx` template | Editor | yes (as a presentation) | yes (template content type) | `file.saveTemplate` is Save As under another name; opening one doesn't start a new untitled deck | `crates/pptx/tests/macros.rs`, `file::tests` |
+| `.ppsx` slide show | Editor | yes (as a presentation) | yes (slideshow content type) | Doesn't start in show mode | `crates/pptx/tests/macros.rs`, `file::tests` |
 | `.pptm` / `.potm` / `.ppsm` macro-enabled | Editor | no | no | Should open and keep `vbaProject.bin` without running it | none |
 | `.ppt` / `.pot` / `.pps` 97–2003 binary | Editor | no | no | Owner decision; import only would be enough | none |
 | `.odp` OpenDocument | Editor | no | no | | none |
@@ -83,10 +86,13 @@ the round trip even though DeckCraft doesn't model it.
 | Comments: legacy | yes | yes | |
 | Comments: modern threaded (`p188`) | yes | yes | Written next to the flattened legacy part; replies and resolved state round-trip (`threads_and_resolved_round_trip`) |
 | Unknown slide-level elements (`graphicFrame` OLE, extensions, `mc:AlternateContent`) | kept | kept | Rendered as a labelled placeholder with the preview picture when present |
+| Tags, custom XML, VBA | no / no / kept | no / no / kept (`.pptm`/`.potm`/`.ppsm` only) | VBA project and related parts are opaque bytes; capped at 64 MiB per part, 64 related parts |
 | Embedded fonts | yes | yes | MicroType Express subsets kept, not drawn |
 | Tags (`p:custDataLst`) on the presentation, slides and shapes | yes | yes | Add-ins such as think-cell keep their identity; `tags_survive_round_trip` |
 | Custom XML data, sensitivity label (`docMetadata/LabelInfo.xml`), custom document properties | kept verbatim | yes | SharePoint metadata and the label survive a save; `custom_xml_label_and_custom_properties_survive_save` |
+| Ribbon customisation (`customUI/customUI14.xml`, Office 2007 `customUI.xml`) | yes | yes | Modelled (`Presentation::ribbon`) when it is tabs, groups and macro buttons: edited in Developer › Ribbon Buttons and written back as `customUI14.xml` from the package root, in every kind (PowerPoint shows them too). A richer ribbon (menus, callbacks, pictures of its own) is kept verbatim with its pictures; its buttons show and run, read-only. Never written twice (`crates/pptx/tests/ribbon.rs`, 3 tests) |
 | VBA | no | no | |
+| Document chat (`/craft/chat.json`, `application/vnd.craft.chat+json`, root relationship `urn:craft:relationships:chat`; craft-collab's [chat.md](https://github.com/sirmmo/craft-collab/blob/main/docs/chat.md), shared with GridCraft and WordCraft) | yes | yes | A craft-apps part, modelled (`Presentation::chat`), not kept as opaque. An empty chat writes no part; a malformed part is ignored with a warning (the file opens), malformed entries are skipped, at most 10,000 messages. PowerPoint doesn't know it and drops it when it saves; the chat pane's menu says so. `.deckcraft` stores the same JSON as `chat` in `presentation.json`. `crates/pptx/tests/chat.rs` (round trip in `.pptx` and `.pptm`, no part when empty, malformed parts and entries), `crates/engine/tests/chat.rs` (`.pptx`, `.pptm`, `.deckcraft` through `file.save` / `file.open`) |
 | Encryption (password to open) | no | no | |
 
 ### What would move the PPTX number
@@ -103,7 +109,9 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
+| 2026-10-16 | minor | The document chat part (`/craft/chat.json`, craft-collab's chat.md) is read and written, modelled as `Presentation::chat`; `.deckcraft` stores it as `chat`; a malformed part is ignored |
+| 2026-10-15 | minor | The ribbon customisation part (`customUI14.xml` / `customUI.xml`) is read and written when it is tabs, groups and macro buttons; a richer one is kept with its pictures |
+| 2026-10-14 | minor | `.pptm` / `.potm` / `.ppsm` read and written with the VBA project (and its signature/data parts) carried byte for byte; macro-free kinds drop it cleanly; a deck with macros saved as `.pptx`/`.potx`/`.ppsx` becomes `.pptm`/`.potm`/`.ppsm`; `.potx` and `.ppsx` now get their own content types |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |
 | 2026-10-13 | minor | Embedded fonts read and written; TrueType, OpenType and Embedded OpenType faces drawn |

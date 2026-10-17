@@ -24,6 +24,9 @@ commands:
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
   ci              fmt --check, pdf-deps, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
+  office-js       build Office add-ins' library (crates/office-js) for task panes into
+                  <target>/office-js: wasm32 release build, `wasm-bindgen --target no-modules`,
+                  and the bootstrap script (the desktop app and packaging pick it up from there)
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   bench [--save] [DECK...]
                   time open, render, save and export of the sample (and DECKs) in release, and
@@ -42,6 +45,7 @@ fn main() -> ExitCode {
         Some("pdf-deps") => pdf_deps::run(&root()),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
+        Some("office-js") => cmd_office_js(),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
         Some("parity") => parity::run(&root()),
         Some("bench") => bench::run(&root(), &rest),
@@ -134,6 +138,24 @@ fn wasm_set() -> Result<Vec<String>, String> {
         })
         .map(|c| c.name)
         .collect())
+}
+
+/// `cargo xtask office-js`: the Office.js library task panes load (see `apps/deckcraft/src/office_web.rs`).
+fn cmd_office_js() -> Result<(), String> {
+    let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root().join("target"));
+    let mut build = cargo();
+    build.args(["build", "--release", "-p", "deckcraft-office-js", "--target", "wasm32-unknown-unknown"]);
+    run(build, "cargo build --release -p deckcraft-office-js --target wasm32-unknown-unknown")?;
+    let out = target.join("office-js");
+    std::fs::create_dir_all(&out).map_err(|e| format!("{}: {e}", out.display()))?;
+    let wasm = target.join("wasm32-unknown-unknown/release/deckcraft_office_js.wasm");
+    let mut bindgen = Command::new("wasm-bindgen");
+    bindgen.args(["--target", "no-modules", "--no-typescript", "--out-name", "office_js", "--out-dir"]).arg(&out).arg(&wasm);
+    run(bindgen, "wasm-bindgen --target no-modules (install it with `cargo install wasm-bindgen-cli` at the version in Cargo.lock)")?;
+    let bootstrap = root().join("crates/office-js/bootstrap.js");
+    std::fs::copy(&bootstrap, out.join("bootstrap.js")).map_err(|e| format!("{}: {e}", bootstrap.display()))?;
+    println!("Office.js library: {}", out.display());
+    Ok(())
 }
 
 fn cmd_wasm() -> Result<(), String> {

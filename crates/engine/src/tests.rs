@@ -94,6 +94,23 @@ fn text_editing_flow() {
     assert_eq!(s.doc().unwrap().selection.shapes.len(), 1);
 }
 
+/// Delete while editing text is a text delete: journaled (and so recorded as a macro) as one,
+/// never as a shape delete that a replay would turn into removing the shape.
+#[test]
+fn delete_in_text_is_journaled_as_a_text_delete() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "Hello"})).unwrap();
+    s.execute("text.move", &json!({"to": "start"})).unwrap();
+    s.execute("edit.delete", &json!({})).unwrap();
+    assert_eq!(s.execute("text.get", &json!({"id": title})).unwrap()["text"], "ello");
+    assert_eq!(s.journal.last().cloned(), Some(("text.delete".to_string(), json!({"dir": "forward"}))));
+    s.execute("text.exit", &json!({})).unwrap();
+    s.execute("edit.delete", &json!({})).unwrap();
+    assert_eq!(s.journal.last().map(|(id, _)| id.as_str()), Some("edit.delete"), "a shape delete stays one");
+}
+
 #[test]
 fn editing_text_refits_a_saved_shrink() {
     use deckcraft_model::text::AutoFit;

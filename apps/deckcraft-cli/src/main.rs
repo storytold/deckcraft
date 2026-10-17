@@ -487,6 +487,8 @@ fn run(args: &[String]) -> Result<(), String> {
     } else if export_params != json!({}) {
         return Err("--export-params needs --export OUT".into());
     }
+    // Add-ins that hear document events get them before the process ends.
+    s.wait_events(deckcraft_engine::plugin::EVENT_TIMEOUT);
     Ok(())
 }
 

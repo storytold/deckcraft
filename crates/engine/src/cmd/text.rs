@@ -822,7 +822,7 @@ fn compose(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Some(c) if text.is_empty() => {
             let st = s.doc_mut()?;
-            st.doc = c.before;
+            st.doc = crate::chat::keep_chat(c.before, &st.doc);
             st.selection = c.before_selection;
             st.composition = None;
             st.revision += 1;

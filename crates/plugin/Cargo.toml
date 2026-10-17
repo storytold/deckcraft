@@ -1,0 +1,27 @@
+[package]
+name = "deckcraft-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft plugin host: out-of-process add-ins over JSON-RPC (commands, macros, Office add-in manifests), installed from folders or GitHub"
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+zip = { workspace = true }
+quick-xml = { workspace = true }
+
+# Installing plugins from GitHub (desktop and CLI; the web build can't run plugins).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+ureq = { version = "2.12.1", default-features = false, features = ["tls"] }
+
+# A reference plugin written in Rust; the tests drive it as a real child process.
+[[bin]]
+name = "deckcraft-example-plugin"
+path = "src/bin/example_plugin.rs"
+test = false
+doc = false

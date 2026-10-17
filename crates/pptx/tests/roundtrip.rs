@@ -1091,7 +1091,7 @@ fn linked_pictures_are_written_with_r_link() {
 fn templates_and_slide_shows_declare_their_own_main_content_type() {
     let p = rich_deck();
     for (ext, kind) in [("pptx", "presentation"), ("potx", "template"), ("ppsx", "slideshow")] {
-        let bytes = deckcraft_pptx::export_as(&p, ext).expect("export");
+        let bytes = deckcraft_pptx::export_as(&p, deckcraft_pptx::PptxKind::from_ext(ext).expect("kind")).expect("export");
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
         let ct = std::io::read_to_string(z.by_name("[Content_Types].xml").expect("content types")).expect("read");
         assert!(ct.contains(&format!("presentationml.{kind}.main+xml")), "{ext}: {ct}");

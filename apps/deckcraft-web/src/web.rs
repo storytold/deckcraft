@@ -4,7 +4,7 @@ use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
 
-const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
+const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "pptm", "potm", "ppsm", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
@@ -38,6 +38,12 @@ pub fn start() {
                     }
                     let inbox: Inbox = Inbox::default();
                     let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
+                    // Inside craft-live (Nextcloud Office): the room's presentation, live.
+                    if let Some(config) = crate::live::detect() {
+                        crate::live::LiveShell::prepare(&mut app);
+                        let live = crate::live::LiveShell::new(config, cc.egui_ctx.clone());
+                        return Ok(Box::new(WebShell { app, inbox, live: Some(live) }));
+                    }
                     let q = query();
                     if !q.contains("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
@@ -49,7 +55,7 @@ pub fn start() {
                     if q.contains("show") {
                         app.start_show(0, false);
                     }
-                    Ok(Box::new(WebShell { app, inbox }))
+                    Ok(Box::new(WebShell { app, inbox, live: None }))
                 }),
             )
             .await;
@@ -71,6 +77,8 @@ fn query() -> String {
 struct WebShell {
     app: SlideApp,
     inbox: Inbox,
+    /// craft-live mode (`#craft-live=1&…`): the room, the shell, Save and Close.
+    live: Option<crate::live::LiveShell>,
 }
 
 impl eframe::App for WebShell {
@@ -96,6 +104,9 @@ impl eframe::App for WebShell {
                     }
                 }
             });
+        }
+        if let Some(live) = self.live.as_mut() {
+            live.tick(&mut self.app);
         }
         self.app.logic(ctx);
     }
@@ -184,6 +195,9 @@ fn mime_for(name: &str) -> &'static str {
         Some("gif") => "image/gif",
         Some("txt") => "text/plain",
         Some("pptx") => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        Some("pptm") => "application/vnd.ms-powerpoint.presentation.macroEnabled.12",
+        Some("potm") => "application/vnd.ms-powerpoint.template.macroEnabled.12",
+        Some("ppsm") => "application/vnd.ms-powerpoint.slideshow.macroEnabled.12",
         Some("deckcraft") => "application/zip",
         _ => "application/octet-stream",
     }

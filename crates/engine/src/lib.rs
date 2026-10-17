@@ -7,10 +7,13 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod chat;
 pub mod cmd;
+pub mod collab;
 pub mod compare;
 pub mod connect;
 pub mod drawtable;
+pub mod events;
 pub mod file_access;
 pub mod fonts;
 pub mod gif_export;
@@ -20,6 +23,7 @@ pub mod inkshape;
 pub mod io;
 pub mod keys;
 pub mod links;
+pub mod live;
 pub mod media_refs;
 pub mod recovery;
 pub mod sample;
@@ -36,10 +40,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
+pub use deckcraft_collab as collab_core;
 pub use deckcraft_geom as geom;
 pub use deckcraft_media as media;
 pub use deckcraft_model as model;
 pub use deckcraft_pdf as pdf;
+pub use deckcraft_plugin as plugin;
 pub use deckcraft_render as render;
 pub use tools::{Mods, PointerEvent, PointerKind, ToolKind};
 
@@ -220,8 +226,13 @@ pub struct DocState {
     pub missing_fonts: Vec<String>,
     /// An input method's composition in progress ([`Composition`]).
     pub composition: Option<Composition>,
+    /// The user let this presentation's macros run (Enable Content), until it closes.
+    pub macros_enabled: bool,
     /// Review › Compare in progress: the revised copy.
     pub compare: Option<compare::Compare>,
+    /// Where the document came from, in words, when an add-in opened it (`open.label`, protocol
+    /// 1.2: "Nextcloud · Documents/Budget.pptx"); File › Info shows it as the location.
+    pub location_label: Option<String>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -248,7 +259,9 @@ impl DocState {
             title,
             missing_fonts: Vec::new(),
             composition: None,
+            macros_enabled: false,
             compare: None,
+            location_label: None,
         }
     }
     pub fn is_dirty(&self) -> bool {
@@ -338,6 +351,15 @@ pub struct Prefs {
     pub undo_limit: usize,
     /// Minutes between AutoRecover saves of unsaved presentations.
     pub recovery_minutes: f64,
+    /// Add-ins the user turned off (File › Options › Add-ins), by id.
+    pub disabled_plugins: Vec<String>,
+    /// Which presentations' macros may run: `disable`, `prompt` (once enabled for the
+    /// presentation) or `enable` (Developer › Macro Security).
+    pub macro_security: String,
+    /// Live sessions: this person's stable id (made on first use) and colour (`#RRGGBB`); their
+    /// name is [`Prefs::author`].
+    pub collab_user_id: String,
+    pub collab_color: String,
 }
 
 impl Default for Prefs {
@@ -359,6 +381,10 @@ impl Default for Prefs {
             author: "Presenter".into(),
             undo_limit: 500,
             recovery_minutes: 1.0,
+            disabled_plugins: Vec::new(),
+            macro_security: "prompt".into(),
+            collab_user_id: String::new(),
+            collab_color: String::new(),
         }
     }
 }
@@ -413,6 +439,25 @@ pub enum UiRequest {
         shape: ShapeId,
         ms: Option<u64>,
     },
+    /// Open a web page in the browser (an add-in's documentation).
+    OpenUrl {
+        url: String,
+    },
+    /// Open an Office add-in's task pane (`plugins.run` of a ShowTaskpane command).
+    OfficePane {
+        plugin: String,
+        title: String,
+        url: String,
+        pane: Option<String>,
+    },
+    /// Call an Office add-in's function command (ExecuteFunction) in its hidden page.
+    OfficeFunction {
+        plugin: String,
+        url: String,
+        function: String,
+        /// The manifest control that ran it (`event.source.id`).
+        control: String,
+    },
 }
 
 /// Playback state of a media shape as the UI host reports it (see [`Session::media_status`]).
@@ -448,6 +493,9 @@ pub struct Session {
     active: Option<usize>,
     pub prefs: Prefs,
     pub journal: Vec<(String, Value)>,
+    /// Developer › Record Macro: the journal position where recording started (a DeckCraft
+    /// extra; PowerPoint has no macro recorder).
+    pub recording: Option<usize>,
     pub clipboard: Clipboard,
     pub ui_requests: Vec<UiRequest>,
     pub tool: tools::ToolState,
@@ -476,6 +524,10 @@ pub struct Session {
     /// Presentations a host read off the UI thread, waiting for `file.adopt` (by token).
     loaded: Vec<(u64, cmd::file::LoadedFile)>,
     next_loaded: u64,
+    /// Document events for add-ins, waiting for the outermost command to finish ([`events`]).
+    pub(crate) events: events::Events,
+    /// Live sessions (plugin protocol 2).
+    pub collab: collab::Collab,
 }
 
 impl Default for Session {
@@ -492,6 +544,7 @@ impl Session {
             active: None,
             prefs: Prefs::default(),
             journal: vec![],
+            recording: None,
             clipboard: Clipboard::default(),
             ui_requests: vec![],
             tool: tools::ToolState::default(),
@@ -507,6 +560,8 @@ impl Session {
             panics_caught: 0,
             loaded: vec![],
             next_loaded: 0,
+            events: Default::default(),
+            collab: Default::default(),
         }
     }
     /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
@@ -575,9 +630,28 @@ impl Session {
     }
 
     /// Run command `id`. A panic inside it becomes [`EngineError::Internal`] and leaves the
-    /// presentation as it was.
+    /// presentation as it was. In a live session the outermost command's change is shared as one
+    /// update, and Undo and Redo are the person's own.
     pub fn execute(&mut self, id: &str, params: &Value) -> Result<Value> {
-        self.guarded(id, |s| s.execute_unguarded(id, params))
+        if self.depth == 0
+            && !self.collab.rooms.is_empty()
+            && let Some(r) = collab::intercept(self, id, params)
+        {
+            return r;
+        }
+        if !self.collab.rooms.is_empty()
+            && find_command(id).is_some_and(|spec| spec.undoable)
+            && let Some(why) = collab::read_only(self)
+        {
+            return Err(EngineError::Disabled(id.to_string(), why));
+        }
+        let r = self.guarded(id, |s| s.execute_unguarded(id, params));
+        // Add-ins hear about opens, saves and closes once the outermost command is done.
+        if self.depth == 0 {
+            self.flush_events();
+            collab::after_command(self);
+        }
+        r
     }
 
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
@@ -594,6 +668,10 @@ impl Session {
         }
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
         let outer = self.depth == 0;
+        // Delete while editing text deletes forward in the text: journaled (and recorded as a
+        // macro) as the text delete it is, not as a shape delete.
+        let forward_text_delete =
+            id == "edit.delete" && params.get("ids").is_none_or(Value::is_null) && self.active().is_some_and(|d| d.selection.text.is_some());
         self.depth += 1;
         let r = (spec.run)(self, params);
         self.depth -= 1;
@@ -627,9 +705,15 @@ impl Session {
             push_undo(st, HistoryEntry { label: spec.label.to_string(), doc: old, selection: sel });
         }
         if spec.journal && outer {
-            self.journal.push((id.to_string(), params.clone()));
+            if forward_text_delete {
+                self.journal.push(("text.delete".to_string(), serde_json::json!({"dir": "forward"})));
+            } else {
+                self.journal.push((id.to_string(), params.clone()));
+            }
             if self.journal.len() > 10_000 {
                 self.journal.drain(..1000);
+                // A recording keeps its place in the shortened journal.
+                self.recording = self.recording.map(|r| r.saturating_sub(1000));
             }
         }
         Ok(r)
@@ -684,7 +768,7 @@ impl Session {
 }
 
 /// Keep the selection pointing at things that exist.
-fn clamp_selection(st: &mut DocState) {
+pub(crate) fn clamp_selection(st: &mut DocState) {
     let n = st.doc.slides.len();
     if n == 0 {
         st.selection.slide = 0;

@@ -18,28 +18,52 @@ pub fn specs() -> Vec<CommandSpec> {
             new
         ),
         cmd!(query "file.templates", "Starter Templates", [], None, "{} → [{name, summary, theme, slides}]", always, templates),
-        cmd!(noundo "file.open", "Open…", ["File"], Some("Cmd+O"), "{path}", always, open),
+        cmd!(
+            noundo "file.open",
+            "Open…",
+            ["File"],
+            Some("Cmd+O"),
+            "{path, label?: text (where an add-in's `open` says it came from; File › Info shows it as the location; at most 200 characters)}",
+            always,
+            open
+        ),
         cmd!(
             noundo "file.adopt",
             "Open",
             [],
             None,
-            "{path, token?} (a presentation the host read in the background and staged with Session::stage_loaded; without one, reads path like file.open)",
+            "{path, token?, label?} (a presentation the host read in the background and staged with Session::stage_loaded; without one, reads path like file.open)",
             always,
             adopt
         ),
         cmd!(noundo "file.openBytes", "Open Data", [], None, "{name, data: base64}", always, open_bytes),
-        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx}", has_doc, save),
+        cmd!(
+            noundo "file.save",
+            "Save",
+            ["File"],
+            Some("Cmd+S"),
+            "{path?, format?: deckcraft|pptx|potx|ppsx|pptm|potm|ppsm} → {path, bytes, renamedFrom}. A presentation with macros saves as .pptm (.potx as .potm, .ppsx as .ppsm)",
+            has_doc,
+            save
+        ),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
-        cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
+        cmd!(
+            query "file.saveBytes",
+            "Save to Data",
+            [],
+            None,
+            "{format?: deckcraft|pptx|potx|ppsx|pptm|potm|ppsm} → {data: base64, format}. With macros, pptx gives pptm (potx potm, ppsx ppsm)",
+            has_doc,
+            save_bytes_cmd
+        ),
         cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
             ["File"],
             None,
-            "{} → {title, path, format, dirty, slides, hiddenSlides, sections, bytes?, properties}",
+            "{} → {title, path, label, format, dirty, slides, hiddenSlides, sections, bytes?, properties}",
             has_doc,
             info
         ),
@@ -196,11 +220,18 @@ pub fn read_presentation_file(path: &str) -> Result<LoadedFile> {
 /// Add a loaded presentation as the active document: the shared end of `file.open` and
 /// `file.adopt`. A damaged file opens as an untitled repaired copy, so Save can't overwrite the
 /// original with the empty media.
-fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
+fn adopt_loaded(s: &mut Session, f: LoadedFile, p: &Value) -> Result<Value> {
     let LoadedFile { path, doc, native, damaged } = f;
     let keep_path = native && damaged.is_empty();
     let i = add_opened(s, &path, keep_path.then(|| path.clone()), doc);
     report_damage(s, &damaged)?;
+    if keep_path {
+        let label = str_param(p, "label").map(|l| l.chars().take(200).collect::<String>()).filter(|l| !l.trim().is_empty());
+        let st = s.doc_mut()?;
+        st.location_label = label;
+        // Add-ins that asked hear that a document was opened from a local file (protocol 1.2).
+        s.queue_event(crate::events::DOCUMENT_OPENED, &path, None);
+    }
     let st = s.doc()?;
     Ok(json!({"document": i, "slides": st.doc.slides.len(), "missingFonts": st.missing_fonts, "damagedMedia": damaged}))
 }
@@ -208,7 +239,7 @@ fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
 #[cfg(not(target_arch = "wasm32"))]
 fn open(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.open", "missing `path`"))?;
-    adopt_loaded(s, read_presentation_file(path)?)
+    adopt_loaded(s, read_presentation_file(path)?, p)
 }
 
 /// `file.adopt {path, token?}`: add the presentation a host read in the background and staged
@@ -218,9 +249,9 @@ fn adopt(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").ok_or_else(|| bad("file.adopt", "missing `path`"))?;
     let staged = p.get("token").and_then(Value::as_u64).and_then(|t| s.take_loaded(t)).filter(|f| f.path == path);
     match staged {
-        Some(f) => adopt_loaded(s, f),
+        Some(f) => adopt_loaded(s, f, p),
         #[cfg(not(target_arch = "wasm32"))]
-        None => adopt_loaded(s, read_presentation_file(path)?),
+        None => adopt_loaded(s, read_presentation_file(path)?, p),
         #[cfg(target_arch = "wasm32")]
         None => Err(bad("file.adopt", format!("{path} was not loaded"))),
     }
@@ -257,10 +288,14 @@ fn report_damage(s: &mut Session, damaged: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
+/// Encode the presentation in `format` (`deckcraft`, `outline`, `pdf`, or a PresentationML kind:
+/// `pptx`, `potx`, `ppsx` and the macro-enabled `pptm`, `potm`, `ppsm`). Only the macro-enabled
+/// kinds carry the VBA project.
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
+    if let Some(kind) = deckcraft_pptx::PptxKind::from_ext(format) {
+        return deckcraft_pptx::export_as(doc, kind).map_err(|e| EngineError::Other(e.to_string()));
+    }
     match format {
-        f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
@@ -336,8 +371,31 @@ pub fn pdf_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
     deckcraft_pdf::export(doc, &pdf_options(p, doc.slides.len())?).map_err(|e| EngineError::Other(e.to_string()))
 }
 
+/// The extensions File › Open reads: presentations, and outlines that become one.
+pub const OPENABLE_EXTENSIONS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "pptm", "potm", "ppsm", "txt", "md"];
+
+/// Whether `path` names a file File › Open could open: absolute, existing, a regular file, with an
+/// extension it reads. The error says what's wrong.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn check_openable(path: &str) -> std::result::Result<(), String> {
+    let p = std::path::Path::new(path);
+    if !p.is_absolute() {
+        return Err(format!("{path}: not an absolute path"));
+    }
+    let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    if !OPENABLE_EXTENSIONS.contains(&ext.as_str()) {
+        return Err(format!("{path}: DeckCraft doesn't open .{ext} files"));
+    }
+    match crate::io::is_regular_file(path) {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(format!("{path}: not a file")),
+        Err(e) => Err(e),
+    }
+}
+
 /// The output extensions [`format_for_path`] maps to a writer of that format.
-pub const WRITABLE_EXTENSIONS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "pdf", "png", "jpg", "jpeg", "gif", "txt", "md"];
+pub const WRITABLE_EXTENSIONS: &[&str] =
+    &["deckcraft", "pptx", "potx", "ppsx", "pptm", "potm", "ppsm", "pdf", "png", "jpg", "jpeg", "gif", "txt", "md"];
 
 /// The format a file named `path` is written in, or `None` when its extension names no format
 /// DeckCraft writes (`.odp`, `.svg`, no extension …): [`format_for_path`] would save
@@ -352,14 +410,12 @@ pub fn gif_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
     Ok(crate::gif_export::encode(doc, &crate::gif_export::GifOptions::from_params(p)?)?.bytes)
 }
 
+/// The save/export format a path's extension names. PresentationML packages give their own kind
+/// (`pptx`, `potx`, `ppsx`, `pptm`, `potm`, `ppsm`); anything unknown is `deckcraft`.
 pub fn format_for_path(path: &str) -> &'static str {
     let l = path.to_ascii_lowercase();
-    if l.ends_with(".pptx") {
-        "pptx"
-    } else if l.ends_with(".potx") {
-        "potx"
-    } else if l.ends_with(".ppsx") {
-        "ppsx"
+    if let Some(kind) = deckcraft_pptx::PptxKind::from_path(&l) {
+        kind.ext()
     } else if l.ends_with(".png") {
         "png"
     } else if l.ends_with(".jpg") || l.ends_with(".jpeg") {
@@ -379,6 +435,10 @@ fn mark_saved(s: &mut Session, path: Option<String>) -> Result<()> {
     let st = s.doc_mut()?;
     st.saved_doc = st.doc.clone();
     if path.is_some() {
+        // Saved somewhere else: where an add-in said it came from no longer holds.
+        if st.path != path {
+            st.location_label = None;
+        }
         st.path = path;
     }
     st.revision += 1;
@@ -393,17 +453,71 @@ fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
     crate::io::write_file(path, bytes).map_err(EngineError::Other)
 }
 
+/// Where a presentation with macros goes instead of `path`: a `.pptx` can't hold a VBA project,
+/// so it becomes a `.pptm` (a template `.potx` a `.potm`, a show `.ppsx` a `.ppsm`), in the same
+/// case as the name had (DECK.PPTX → DECK.PPTM). `None` when `path` is fine as it is.
+pub fn macro_enabled_path(doc: &Presentation, path: &str) -> Option<String> {
+    if !doc.has_macros() {
+        return None;
+    }
+    let p = std::path::Path::new(path);
+    let ext = p.extension().and_then(|e| e.to_str())?;
+    let kind = deckcraft_pptx::PptxKind::from_ext(ext)?;
+    if kind.macros() {
+        return None;
+    }
+    let to = kind.with_macros().ext();
+    let to = if ext.chars().all(|c| c.is_ascii_uppercase()) { to.to_ascii_uppercase() } else { to.to_string() };
+    Some(p.with_extension(to).to_string_lossy().into_owned())
+}
+
+/// The format to write `path` in: the `format` param when given (the generic `pptx` takes the
+/// package kind from a PresentationML extension: Deck.potx stays a template), else the extension.
+fn save_format(p: &Value, path: &str) -> String {
+    let by_path = format_for_path(path);
+    match str_param(p, "format") {
+        Some(f) if f.eq_ignore_ascii_case("pptx") && deckcraft_pptx::PptxKind::from_ext(by_path).is_some() => by_path.to_string(),
+        Some(f) => f.to_ascii_lowercase(),
+        None => by_path.to_string(),
+    }
+}
+
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(String::from).or_else(|| s.active().and_then(|d| d.path.clone()));
     let Some(path) = path else {
         s.ui_requests.push(crate::UiRequest::PickFile { purpose: "saveAs".into() });
         return Ok(json!({"needsPath": true}));
     };
-    let format = str_param(p, "format").unwrap_or(format_for_path(&path));
-    let bytes = save_bytes(&s.doc()?.doc, format)?;
+    let mut format = save_format(p, &path);
+    // Macros need a macro-enabled package: Deck.pptx is saved as Deck.pptm (the .pptx is left alone).
+    let asked = path.clone();
+    let renamed = match deckcraft_pptx::PptxKind::from_ext(&format) {
+        Some(kind) if !kind.macros() => macro_enabled_path(&s.doc()?.doc, &asked),
+        _ => None,
+    };
+    let path = match renamed {
+        Some(to) => {
+            let name = |p: &str| std::path::Path::new(p).file_name().and_then(|n| n.to_str()).unwrap_or(p).to_string();
+            s.ui_requests.push(crate::UiRequest::Message {
+                text: format!(
+                    "This presentation has macros, which a .{} file can't hold, so it was saved as {}.",
+                    std::path::Path::new(&asked).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase(),
+                    name(&to)
+                ),
+            });
+            format = format_for_path(&to).to_string();
+            to
+        }
+        None => path,
+    };
+    let bytes = save_bytes(&s.doc()?.doc, &format)?;
     write_file(&path, &bytes)?;
     mark_saved(s, Some(path.clone()))?;
-    Ok(json!({"path": path, "bytes": bytes.len()}))
+    // Add-ins that asked hear about the save (protocol 1.2); autosave isn't a save.
+    let ext = std::path::Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    s.queue_event(crate::events::DOCUMENT_SAVED, &path, Some(&ext));
+    let renamed_from = (path != asked).then_some(asked);
+    Ok(json!({"path": path, "bytes": bytes.len(), "renamedFrom": renamed_from}))
 }
 
 fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
@@ -415,9 +529,15 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn save_bytes_cmd(s: &mut Session, p: &Value) -> Result<Value> {
-    let format = str_param(p, "format").unwrap_or("deckcraft");
-    let bytes = save_bytes(&s.doc()?.doc, format)?;
-    Ok(json!({"data": base64_encode(&bytes), "bytes": bytes.len()}))
+    let doc = &s.doc()?.doc;
+    let asked = str_param(p, "format").unwrap_or("deckcraft").to_ascii_lowercase();
+    // A presentation with macros comes out as the macro-enabled kind (pptx → pptm).
+    let format = match deckcraft_pptx::PptxKind::from_ext(&asked) {
+        Some(kind) if doc.has_macros() => kind.with_macros().ext().to_string(),
+        _ => asked,
+    };
+    let bytes = save_bytes(doc, &format)?;
+    Ok(json!({"data": base64_encode(&bytes), "bytes": bytes.len(), "format": format}))
 }
 
 /// `scale` for rendering `doc`'s slides to an image: within 0.01–16, and small enough that the
@@ -556,6 +676,7 @@ fn info(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({
         "title": st.title(),
         "path": st.path,
+        "label": st.location_label,
         "format": st.path.as_deref().map(format_for_path),
         "dirty": st.is_dirty(),
         "slides": doc.slides.len(),
@@ -568,6 +689,9 @@ fn info(s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn close(s: &mut Session, _p: &Value) -> Result<Value> {
     if let Some(i) = s.active_index() {
+        if let Some(path) = s.active().and_then(|d| d.path.clone()) {
+            s.queue_event(crate::events::DOCUMENT_CLOSED, &path, None);
+        }
         s.close_document(i);
     }
     ok()
@@ -699,5 +823,176 @@ mod tests {
         assert!(dest.is_dir());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod macro_tests {
+    use std::sync::Arc;
+
+    use serde_json::json;
+
+    use crate::{Session, UiRequest};
+
+    fn project() -> Vec<u8> {
+        vec![0xD0, 0xCF, 0x11, 0xE0, 1, 2, 3, 4, 5, 6, 7, 8]
+    }
+
+    /// A session with one presentation that carries a VBA project and a signature part.
+    fn with_macros() -> Session {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        doc.vba_project = Some(Arc::new(project()));
+        doc.vba_parts.push(deckcraft_model::VbaPart {
+            rel_type: "http://schemas.microsoft.com/office/2006/relationships/vbaProjectSignature".into(),
+            name: "ppt/vbaProjectSignature.bin".into(),
+            content_type: "application/vnd.ms-office.vbaProjectSignature".into(),
+            data: Arc::new(vec![42; 10]),
+        });
+        s
+    }
+
+    fn temp_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("deckcraft-macros-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn main_content_type(bytes: &[u8]) -> &'static str {
+        deckcraft_pptx::kind_of(bytes).map(|k| k.main_content_type()).unwrap_or("none")
+    }
+
+    fn messages(s: &Session) -> Vec<String> {
+        s.ui_requests.iter().filter_map(|r| if let UiRequest::Message { text } = r { Some(text.clone()) } else { None }).collect()
+    }
+
+    #[test]
+    fn save_with_macros_renames_to_the_macro_enabled_kind() {
+        let dir = temp_dir("rename");
+        for (asked, saved, ext) in [
+            ("Deck.pptx", "Deck.pptm", "pptx"),
+            ("DECK.PPTX", "DECK.PPTM", "pptx"),
+            ("Model.potx", "Model.potm", "potx"),
+            ("Show.ppsx", "Show.ppsm", "ppsx"),
+        ] {
+            let mut s = with_macros();
+            let path = dir.join(asked).to_string_lossy().to_string();
+            let want = dir.join(saved).to_string_lossy().to_string();
+            let r = s.execute("file.save", &json!({"path": path})).unwrap();
+            assert_eq!(r["path"], want.as_str());
+            assert_eq!(r["renamedFrom"], path.as_str());
+            assert!(!std::path::Path::new(&path).exists(), "{asked} is left unwritten");
+            assert_eq!(s.doc().unwrap().path.as_deref(), Some(want.as_str()), "the document's file is the new name");
+            assert!(!s.doc().unwrap().is_dirty());
+            assert_eq!(messages(&s), [format!("This presentation has macros, which a .{ext} file can't hold, so it was saved as {saved}.")]);
+            // The file is the macro-enabled kind and carries the project byte for byte.
+            let bytes = std::fs::read(&want).unwrap();
+            let kind = deckcraft_pptx::PptxKind::from_path(&want).unwrap();
+            assert!(kind.macros());
+            assert_eq!(main_content_type(&bytes), kind.main_content_type());
+            let back = deckcraft_pptx::import(&bytes).unwrap();
+            assert_eq!(back.vba_project.as_deref(), Some(&project()));
+            assert_eq!(back.vba_parts.len(), 1);
+            // Saving again (no path) writes the same macro-enabled file, with no rename.
+            s.ui_requests.clear();
+            let r = s.execute("file.save", &json!({})).unwrap();
+            assert_eq!(r["path"], want.as_str());
+            assert!(r["renamedFrom"].is_null());
+            assert!(messages(&s).is_empty());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_without_macros_or_to_macro_kinds_keeps_the_name() {
+        let dir = temp_dir("keep");
+        // No macros: a .pptx is a .pptx.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let path = dir.join("Plain.pptx").to_string_lossy().to_string();
+        let r = s.execute("file.save", &json!({"path": path})).unwrap();
+        assert_eq!(r["path"], path.as_str());
+        assert!(r["renamedFrom"].is_null());
+        assert!(messages(&s).is_empty());
+        // Templates and shows get their own content types (they used to be written as .pptx).
+        for name in ["Plain.potx", "Plain.ppsx", "Plain.pptm"] {
+            let path = dir.join(name).to_string_lossy().to_string();
+            s.execute("file.saveAs", &json!({"path": path})).unwrap();
+            let kind = deckcraft_pptx::PptxKind::from_path(&path).unwrap();
+            assert_eq!(main_content_type(&std::fs::read(&path).unwrap()), kind.main_content_type(), "{name}");
+        }
+        // The generic `pptx` format follows a template's extension.
+        let path = dir.join("Generic.potx").to_string_lossy().to_string();
+        s.execute("file.saveAs", &json!({"path": path, "format": "pptx"})).unwrap();
+        assert_eq!(main_content_type(&std::fs::read(&path).unwrap()), deckcraft_pptx::PptxKind::Template.main_content_type());
+        // Macros saved as a .pptm, or natively, stay where asked.
+        let mut s = with_macros();
+        for name in ["Macro.pptm", "Macro.ppsm", "Macro.deckcraft"] {
+            let path = dir.join(name).to_string_lossy().to_string();
+            let r = s.execute("file.saveAs", &json!({"path": path})).unwrap();
+            assert_eq!(r["path"], path.as_str(), "{name}");
+            assert!(r["renamedFrom"].is_null());
+        }
+        assert!(messages(&s).is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn open_reads_macro_enabled_packages() {
+        let dir = temp_dir("open");
+        let mut src = with_macros();
+        for name in ["A.pptm", "B.potm", "C.ppsm", "D.deckcraft"] {
+            let path = dir.join(name).to_string_lossy().to_string();
+            src.execute("file.saveAs", &json!({"path": path})).unwrap();
+            let mut s = Session::new();
+            s.execute("file.open", &json!({"path": path})).unwrap();
+            let st = s.doc().unwrap();
+            assert_eq!(st.doc.vba_project.as_deref(), Some(&project()), "{name}");
+            assert_eq!(st.doc.vba_parts.len(), 1, "{name}");
+            assert_eq!(st.path.as_deref(), Some(path.as_str()));
+            // Through bytes too (the web).
+            let data = crate::cmd::base64_encode(&std::fs::read(&path).unwrap());
+            s.execute("file.openBytes", &json!({"name": name, "data": data})).unwrap();
+            assert!(s.doc().unwrap().doc.has_macros());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_bytes_with_macros_gives_the_macro_enabled_kind() {
+        let mut s = with_macros();
+        for (asked, got) in [("pptx", "pptm"), ("potx", "potm"), ("ppsx", "ppsm"), ("pptm", "pptm"), ("deckcraft", "deckcraft")] {
+            let r = s.execute("file.saveBytes", &json!({"format": asked})).unwrap();
+            assert_eq!(r["format"], got);
+        }
+        let r = s.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap();
+        let bytes = crate::cmd::base64_decode(r["data"].as_str().unwrap()).unwrap();
+        assert_eq!(deckcraft_pptx::import(&bytes).unwrap().vba_project.as_deref(), Some(&project()));
+        // Without macros, pptx stays pptx.
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        assert_eq!(s.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["format"], "pptx");
+    }
+
+    #[test]
+    fn formats_and_macro_paths() {
+        use super::{format_for_path as f, macro_enabled_path as m};
+        assert_eq!(f("a.PPTX"), "pptx");
+        assert_eq!(f("a.potx"), "potx");
+        assert_eq!(f("a.ppsx"), "ppsx");
+        assert_eq!(f("a.pptm"), "pptm");
+        assert_eq!(f("a.POTM"), "potm");
+        assert_eq!(f("a.ppsm"), "ppsm");
+        assert_eq!(f("a.deckcraft"), "deckcraft");
+        let s = with_macros();
+        let d = &s.doc().unwrap().doc;
+        assert_eq!(m(d, "/x/a.pptx").as_deref(), Some("/x/a.pptm"));
+        assert_eq!(m(d, "/x/a.Pptx").as_deref(), Some("/x/a.pptm"), "mixed case → lower case");
+        assert_eq!(m(d, "/x/a.pptm"), None);
+        assert_eq!(m(d, "/x/a.deckcraft"), None);
+        assert_eq!(m(d, "/x/noext"), None);
+        assert_eq!(m(&deckcraft_model::Presentation::default(), "/x/a.pptx"), None);
     }
 }

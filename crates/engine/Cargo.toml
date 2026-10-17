@@ -12,6 +12,8 @@ workspace = true
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }
+deckcraft-plugin = { workspace = true }
+deckcraft-collab = { workspace = true }
 deckcraft-fonts = { workspace = true }
 deckcraft-text = { workspace = true }
 deckcraft-render = { workspace = true }
@@ -29,8 +31,34 @@ image = { workspace = true }
 [dev-dependencies]
 deckcraft-anim = { workspace = true }
 zip = { workspace = true }
+# The fake craft-live room in the live client's tests keeps a plain Yjs document, as the server does.
+yrs = "0.28"
 
 # The browser clock for comment timestamps (wasm has no std::time::SystemTime).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 
+# tests/live_wasm.rs: the craft-live client in wasm32 (wasm-bindgen-test-runner).
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+# Add-ins and macros against a real child process: the test binary serves as the add-in, so it
+# runs without libtest's harness (standard output is the protocol's alone).
+[[test]]
+name = "addins"
+harness = false
+
+# Runs without libtest: the test binary doubles as the add-ins whose requirements it checks.
+[[test]]
+name = "plugin_requires"
+harness = false
+
+# Runs without libtest: the test binary doubles as the co-editing transport it starts.
+[[test]]
+name = "collab_push"
+harness = false
+
+# Runs without libtest: the test binary doubles as the two DeckCraft peers it starts.
+[[test]]
+name = "collab_loopback"
+harness = false

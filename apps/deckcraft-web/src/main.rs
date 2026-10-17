@@ -13,11 +13,17 @@
 //! - dropped files are read asynchronously by `web::WebShell` and delivered through the inbox;
 //! - preferences are not persisted.
 //!
+//! Inside craft-live (Nextcloud Office's live editor, `#craft-live=1&…` in the fragment) the build
+//! is a live editor of one presentation: it seeds or joins the room, saves into Nextcloud when the
+//! room asks, and talks to craft-live's shell (`live.rs`, craft-live's `docs/design.md` §9).
+//!
 //! URL query flags: `?webgl` forces the WebGL2 backend instead of WebGPU; `?blank` starts with an
 //! empty presentation instead of the sample deck; `?show` starts the slide show.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+#[cfg(target_arch = "wasm32")]
+mod live;
 #[cfg(target_arch = "wasm32")]
 mod web;
 

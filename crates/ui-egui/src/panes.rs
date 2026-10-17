@@ -31,6 +31,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 "smartart" => "Text Pane",
                 "thesaurus" => "Thesaurus",
                 "revisions" => "Revisions",
+                "chat" => "Chat",
                 _ => "Pane",
             };
             ui.horizontal(|ui| {
@@ -47,6 +48,11 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
             ui.add_space(6.0);
+            if pane == "chat" {
+                // The chat scrolls its messages itself, its box stays at the bottom.
+                crate::chat_ui::panel(app, ui);
+                return;
+            }
             egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match pane.as_str() {
                 "format" => format_shape(app, ui),
                 "background" => background(app, ui),

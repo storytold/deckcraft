@@ -53,13 +53,19 @@ pub const TABLE: &[(&str, Class)] = &[
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),
     ("anim", Class::Layer(2)),
+    // Co-editing (plugin protocol 2): the presentation as a Yjs document, encryption, awareness.
+    ("collab", Class::Layer(2)),
     ("format", Class::Layer(2)),
     ("render", Class::Layer(3)),
     ("pptx", Class::Layer(3)),
     ("pdf", Class::Layer(4)),
+    // The add-in host (out-of-process plugins, Office add-in manifests): no workspace deps.
+    ("plugin", Class::Layer(4)),
     ("engine", Class::Layer(5)),
     ("ui-egui", Class::Layer(6)),
     ("mcp", Class::Layer(6)),
+    // Office.js for add-ins' task panes (wasm, loaded by the desktop app's web views).
+    ("office-js", Class::Layer(6)),
     ("testkit", Class::Testkit),
     // L7 apps and tooling
     ("deckcraft", Class::Exempt),

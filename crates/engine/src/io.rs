@@ -63,6 +63,14 @@ pub fn file_len(path: &str) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.len())
 }
 
+/// Whether `path` is a regular file (`Ok(false)`: it exists but is a folder or such); an error when
+/// it can't be read or is outside the automation read root.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_regular_file(path: &str) -> Result<bool, String> {
+    crate::file_access::check_read(path)?;
+    std::fs::metadata(path).map(|m| m.is_file()).map_err(|e| format!("{path}: {e}"))
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn file_len(_path: &str) -> Option<u64> {
     None

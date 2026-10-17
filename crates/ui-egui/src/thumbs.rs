@@ -161,7 +161,10 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         if resp.drag_started() {
             app.thumb_drag = Some((i, i));
         }
-        resp.context_menu(|ui| slide_menu(app, ui, i));
+        resp.context_menu(|ui| {
+            slide_menu(app, ui, i);
+            crate::addins::context_items(app, ui, deckcraft_engine::plugin::MenuKind::Slide);
+        });
     }
     if need_more {
         ui.ctx().request_repaint();

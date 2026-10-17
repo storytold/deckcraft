@@ -8,13 +8,16 @@
 #![forbid(unsafe_code)]
 
 mod cfb;
+pub mod chat;
 mod custgeom;
+pub mod custom_ui;
 mod dgm;
 mod maps;
 mod opc;
 mod png;
 pub(crate) mod read;
 mod tables;
+mod vba;
 mod write;
 mod xml;
 
@@ -58,7 +61,8 @@ pub fn is_encrypted(bytes: &[u8]) -> bool {
     cfb::is_encrypted(bytes)
 }
 
-/// Read a `.pptx` / `.potx` / `.ppsx` package.
+/// Read a `.pptx` / `.potx` / `.ppsx` package, or a macro-enabled `.pptm` / `.potm` / `.ppsm`
+/// (whose VBA project is kept, never run, in [`Presentation::vba_project`]).
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     read::import(bytes)
 }
@@ -70,18 +74,119 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
 
 /// Write a `.pptx` package.
 pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
-    write::export(p, write::CT_PRES)
+    write::export(p, PptxKind::Presentation)
 }
 
-/// Write a package for `ext`: `potx` (template) and `ppsx` (slide show) differ from `pptx` only in
-/// the main part's content type.
-pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
-    let ct = match ext {
-        "potx" => write::CT_TEMPLATE,
-        "ppsx" => write::CT_SHOW,
-        _ => write::CT_PRES,
+/// Write a package of `kind`. Only the macro-enabled kinds carry the VBA project; the others
+/// leave it (and the parts it relates to) out, as PowerPoint does.
+pub fn export_as(p: &Presentation, kind: PptxKind) -> Result<Vec<u8>, PptxError> {
+    write::export(p, kind)
+}
+
+/// Which kind of package `bytes` is, by its presentation part's content type. `None` for
+/// anything that isn't a PresentationML package.
+pub fn kind_of(bytes: &[u8]) -> Option<PptxKind> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).ok()?;
+    let mut read = |name: &str| -> Option<Vec<u8>> {
+        use std::io::Read;
+        let f = zip.by_name(name).ok()?;
+        let mut out = vec![];
+        f.take(opc::MAX_XML_PART as u64).read_to_end(&mut out).ok()?;
+        Some(out)
     };
-    write::export(p, ct)
+    let root = xml::parse(&read("_rels/.rels")?).ok()?;
+    let main = root
+        .root
+        .children_named("Relationship")
+        .find(|r| r.attr("Type").is_some_and(|t| t.ends_with("/officeDocument")))
+        .and_then(|r| r.attr("Target"))
+        .map(|t| opc::resolve("", t))?;
+    let types = xml::parse(&read("[Content_Types].xml")?).ok()?;
+    let want = format!("/{}", opc::norm(&main));
+    let ct =
+        types.root.children_named("Override").find(|o| o.attr("PartName").is_some_and(|n| n.eq_ignore_ascii_case(&want)))?.attr("ContentType")?;
+    ALL_KINDS.into_iter().find(|k| k.main_content_type().eq_ignore_ascii_case(ct))
+}
+
+const ALL_KINDS: [PptxKind; 6] =
+    [PptxKind::Presentation, PptxKind::Template, PptxKind::Show, PptxKind::MacroPresentation, PptxKind::MacroTemplate, PptxKind::MacroShow];
+
+/// Which kind of PresentationML package to write. The presentation part's content type differs
+/// per kind (ECMA-376 Part 1 §13.3.6, MS-OFFMACRO2 for the macro-enabled ones), and PowerPoint
+/// refuses a file whose content type doesn't match its extension.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PptxKind {
+    /// `.pptx`
+    #[default]
+    Presentation,
+    /// `.potx`
+    Template,
+    /// `.ppsx`
+    Show,
+    /// `.pptm`: may carry a VBA project.
+    MacroPresentation,
+    /// `.potm`: may carry a VBA project.
+    MacroTemplate,
+    /// `.ppsm`: may carry a VBA project.
+    MacroShow,
+}
+
+impl PptxKind {
+    /// The kind a file extension (without the dot, any case) names.
+    pub fn from_ext(ext: &str) -> Option<PptxKind> {
+        match ext.to_ascii_lowercase().as_str() {
+            "pptx" => Some(PptxKind::Presentation),
+            "potx" => Some(PptxKind::Template),
+            "ppsx" => Some(PptxKind::Show),
+            "pptm" => Some(PptxKind::MacroPresentation),
+            "potm" => Some(PptxKind::MacroTemplate),
+            "ppsm" => Some(PptxKind::MacroShow),
+            _ => None,
+        }
+    }
+
+    /// The kind a path's extension names.
+    pub fn from_path(path: &str) -> Option<PptxKind> {
+        std::path::Path::new(path).extension().and_then(|e| e.to_str()).and_then(PptxKind::from_ext)
+    }
+
+    /// The extension (lower case, no dot).
+    pub fn ext(self) -> &'static str {
+        match self {
+            PptxKind::Presentation => "pptx",
+            PptxKind::Template => "potx",
+            PptxKind::Show => "ppsx",
+            PptxKind::MacroPresentation => "pptm",
+            PptxKind::MacroTemplate => "potm",
+            PptxKind::MacroShow => "ppsm",
+        }
+    }
+
+    /// Content type of the presentation part.
+    pub fn main_content_type(self) -> &'static str {
+        match self {
+            PptxKind::Presentation => "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml",
+            PptxKind::Template => "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml",
+            PptxKind::Show => "application/vnd.openxmlformats-officedocument.presentationml.slideshow.main+xml",
+            PptxKind::MacroPresentation => "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
+            PptxKind::MacroTemplate => "application/vnd.ms-powerpoint.template.macroEnabled.main+xml",
+            PptxKind::MacroShow => "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml",
+        }
+    }
+
+    /// Can this package hold macros?
+    pub fn macros(self) -> bool {
+        matches!(self, PptxKind::MacroPresentation | PptxKind::MacroTemplate | PptxKind::MacroShow)
+    }
+
+    /// The macro-enabled kind of the same family (a template stays a template, a show a show).
+    pub fn with_macros(self) -> PptxKind {
+        match self {
+            PptxKind::Presentation | PptxKind::MacroPresentation => PptxKind::MacroPresentation,
+            PptxKind::Template | PptxKind::MacroTemplate => PptxKind::MacroTemplate,
+            PptxKind::Show | PptxKind::MacroShow => PptxKind::MacroShow,
+        }
+    }
 }
 
 /// Content type for a file name's extension.

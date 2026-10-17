@@ -205,11 +205,18 @@ pub fn tags(imp: &Imp, part: &Part, holder: &El) -> Vec<(String, String)> {
 }
 
 /// Relationship types whose parts are kept verbatim, and whether they hang off the package root.
-const KEPT_RELS: [(&str, bool); 3] = [
+const KEPT_RELS: [(&str, bool); 5] = [
     ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/customXml", false),
     ("http://schemas.microsoft.com/office/2020/02/relationships/classificationlabels", true),
     ("http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties", true),
+    // A ribbon customisation DeckCraft doesn't model (one it models is `Presentation::ribbon`).
+    (crate::custom_ui::REL_CUSTOM_UI14, true),
+    (crate::custom_ui::REL_CUSTOM_UI, true),
 ];
+
+/// Largest binary part kept (a kept ribbon's own pictures), and how many.
+const MAX_KEPT_BINARY: usize = 8 * 1024 * 1024;
+const MAX_KEPT_BINARIES: usize = 64;
 
 /// A part we may keep: outside `ppt/` and the properties the writer makes itself.
 fn keepable(name: &str) -> bool {
@@ -222,11 +229,13 @@ fn keepable(name: &str) -> bool {
         && !n.starts_with("[content_types]")
 }
 
-/// Custom XML data, sensitivity labels and custom properties, with the parts they relate to
-/// (`itemProps`) and their relationships parts, as written.
-fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> {
+/// Custom XML data, sensitivity labels, custom properties and a ribbon customisation DeckCraft
+/// doesn't model, with the parts they relate to (`itemProps`, the ribbon's pictures) and their
+/// relationships parts, as written. `modelled` names parts the model took over (the ribbon).
+fn kept_parts(pkg: &Package, pres_path: &str, modelled: &[String]) -> Vec<deckcraft_model::KeptPart> {
     use deckcraft_model::KeptPart;
     let mut out: Vec<KeptPart> = Vec::new();
+    let mut binaries = 0usize;
     let text = |name: &str| pkg.get(name).and_then(|b| std::str::from_utf8(b).ok()).map(str::to_string);
     for (holder, from_root) in [("", true), (pres_path, false)] {
         let Some(doc) = pkg.xml(&opc::rels_path(holder)) else { continue };
@@ -239,6 +248,9 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
                 continue;
             }
             let name = opc::resolve(&base, target);
+            if modelled.iter().any(|m| m.eq_ignore_ascii_case(&name)) {
+                continue;
+            }
             if !keepable(&name) || out.iter().any(|k| k.name.eq_ignore_ascii_case(&name)) || out.len() >= 400 {
                 continue;
             }
@@ -249,20 +261,33 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
                 xml,
                 rel_type: ty.to_string(),
                 from_root,
+                data: None,
             });
             // The part's own relationships (customXml item → itemProps) and their targets.
             let rp = opc::rels_path(&name);
             if let Some(rels_xml) = text(&rp) {
                 for sub in pkg.rels(&name).items.iter().filter(|s| !s.external && keepable(&s.target)) {
-                    if let Some(x) = text(&sub.target)
-                        && !out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target))
+                    if out.iter().any(|k| k.name.eq_ignore_ascii_case(&sub.target)) {
+                        continue;
+                    }
+                    let content_type = pkg.content_type(&sub.target).unwrap_or_default();
+                    if let Some(x) = text(&sub.target) {
+                        out.push(KeptPart { content_type, name: sub.target.clone(), xml: x, ..Default::default() });
+                    } else if let Some(bytes) = pkg.get(&sub.target)
+                        && bytes.len() <= MAX_KEPT_BINARY
+                        && binaries < MAX_KEPT_BINARIES
+                        && !content_type.is_empty()
                     {
+                        // A picture of a kept ribbon: carried byte for byte.
+                        binaries += 1;
                         out.push(KeptPart {
-                            content_type: pkg.content_type(&sub.target).unwrap_or_default(),
+                            content_type,
                             name: sub.target.clone(),
-                            xml: x,
+                            data: Some(std::sync::Arc::new(bytes.to_vec())),
                             ..Default::default()
                         });
+                    } else {
+                        log::warn!("pptx: not keeping {}, which {name} relates to", sub.target);
                     }
                 }
                 out.push(KeptPart { name: rp, xml: rels_xml, ..Default::default() });
@@ -668,7 +693,11 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
         p.props.company = d.root.child("Company").map(|c| c.text()).unwrap_or_default();
     }
 
-    p.kept_parts = kept_parts(&pkg, &pres_path);
+    // Macros (a .pptm/.potm/.ppsm): kept as opaque bytes.
+    crate::vba::read(&pkg, &pres_part.rels, &mut p);
+    let modelled = crate::custom_ui::read(&pkg, &mut p);
+    p.kept_parts = kept_parts(&pkg, &pres_path, &modelled);
+    crate::chat::read(&pkg, &root_rels, &mut p);
 
     inherit_placeholder_geometry(&mut p);
     default_text_anchor(&mut p);

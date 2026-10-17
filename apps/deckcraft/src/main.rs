@@ -20,6 +20,8 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod office_web;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
@@ -35,11 +37,18 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(raw);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        // Office add-ins' task panes: their web views follow the panes drawn this frame.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        office_web::flush(frame);
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        let _ = frame;
     }
     fn on_exit(&mut self) {
         save_prefs(&self.0);
+        // Add-ins that hear documentClosed get it for what is still open (at most 5 s).
+        self.0.on_quit();
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -101,11 +110,13 @@ fn services() -> Services {
                     &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "caf", "wma", "weba", "mka"],
                 ),
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
-                "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
+                "theme" => {
+                    d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx", "pptm", "potm"]).add_filter("Office Theme", &["thmx"])
+                }
                 _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
+                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx", "pptm", "potm", "ppsm"])
                     .add_filter("DeckCraft", &["deckcraft"])
-                    .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
+                    .add_filter("PowerPoint", &["pptx", "potx", "ppsx", "pptm", "potm", "ppsm"])
                     .add_filter("Outline", &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
@@ -116,6 +127,8 @@ fn services() -> Services {
         clipboard_image: Some(Box::new(pasteboard::image_png)),
         clipboard_html: Some(Box::new(pasteboard::html)),
         clipboard_set_html: Some(Box::new(pasteboard::set_html)),
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        office: Some(office_web::service()),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
@@ -235,11 +248,27 @@ fn main() -> eframe::Result {
         "DeckCraft",
         options,
         Box::new(move |cc| {
+            // Add-ins: DECKCRAFT_PLUGIN_PATH, then `plugins` in the settings folder (where the
+            // Add-ins window installs them from GitHub). Each starts when first used.
+            let mut plugin_dirs = Vec::new();
+            if let Some(dir) = config_dir().filter(|_| std::env::var_os("DECKCRAFT_NO_PREFS").is_none()) {
+                plugin_dirs.push(dir.join("plugins"));
+                deckcraft_engine::plugin::install::set_install_dir(Some(dir.join("plugins")));
+            }
+            for (dir, r) in deckcraft_engine::plugin::autoload(&plugin_dirs) {
+                match r {
+                    Ok(id) => log::info!("add-in {id} from {}", dir.display()),
+                    Err(e) => log::warn!("add-in {}: {e}", dir.display()),
+                }
+            }
             let mut app = SlideApp::new(Session::new(), services());
             load_prefs(&mut app);
+            deckcraft_engine::cmd::plugins::apply_prefs(&app.session.prefs);
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
             if std::env::var_os("DECKCRAFT_NO_RECOVERY").is_none() {
                 app.session.recovery_dir = deckcraft_engine::recovery::default_dir();
+                // Live sessions keep their room's state beside it, so a crash and rejoin merges.
+                app.session.collab.recovery_dir = deckcraft_engine::recovery::default_dir().map(|d| d.join("rooms"));
                 if let Ok(v) = app.session.execute("file.recovery.open", &serde_json::json!({}))
                     && let Some(n) = v.get("opened").and_then(|o| o.as_array()).map(Vec::len).filter(|n| *n > 0)
                 {

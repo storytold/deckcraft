@@ -29,5 +29,10 @@ arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
 
+# Office add-ins' task panes (`office_web.rs`): the system web view (WKWebView, WebView2). Linux
+# and FreeBSD need WebKitGTK 4.1 for it, which the packages don't carry yet.
+[target.'cfg(any(target_os = "macos", target_os = "windows"))'.dependencies]
+wry = { version = "=0.57.0", default-features = false }
+
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }

@@ -48,7 +48,7 @@ fn restore(s: &mut Session, redo: bool) -> Result<Value> {
     let (from, to) = if redo { (&mut st.history.redo, &mut st.history.undo) } else { (&mut st.history.undo, &mut st.history.redo) };
     let Some(e) = from.pop() else { return ok() };
     to.push(HistoryEntry { label: e.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() });
-    st.doc = e.doc;
+    st.doc = crate::chat::keep_chat(e.doc, &st.doc);
     st.selection = e.selection;
     st.interaction = None;
     st.revision += 1;

@@ -14,10 +14,14 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let rect = ui.max_rect();
         let Some(st) = app.session.active() else { return };
         let n = st.doc.slides.len();
-        let left = match st.selection.target {
+        let mut left = match st.selection.target {
             deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
             _ => "Slide Master".to_string(),
         };
+        // A live session's state ("Joining…" while the presentation is read-only).
+        if let Some(live) = crate::collab_ui::state_label(app) {
+            left = format!("{left} · {live}");
+        }
         let p = ui.painter();
         p.text(pos2(rect.min.x + 14.0, rect.center().y), Align2::LEFT_CENTER, &left, theme::font(12.0), t.text_dim);
         // The selection's proofing language; a click opens Review › Language.

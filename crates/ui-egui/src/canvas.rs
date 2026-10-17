@@ -924,6 +924,8 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
             .map(|q| xf.to_screen(f.affine * q));
         poly(painter, pts, Stroke::new(2.0, t.accent));
     }
+    // Others in a live session: their selections, carets and recent edits.
+    crate::collab_ui::paint_remote(app, painter, xf);
     // Smart guides, marquee, previews.
     for g in &app.session.tool.guides {
         let (a, b) =
@@ -1308,6 +1310,13 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 ui.close();
             }
         }
+        // The add-ins' items: for the text being edited, the selected shapes, or the slide.
+        let kind = match app.session.active() {
+            Some(d) if d.selection.text.is_some() => deckcraft_engine::plugin::MenuKind::Text,
+            _ if has_sel => deckcraft_engine::plugin::MenuKind::Shape,
+            _ => deckcraft_engine::plugin::MenuKind::Slide,
+        };
+        crate::addins::context_items(app, ui, kind);
     });
 }
 

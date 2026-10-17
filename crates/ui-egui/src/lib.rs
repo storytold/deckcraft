@@ -6,9 +6,12 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod addins;
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
+pub mod chat_ui;
+pub mod collab_ui;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -19,6 +22,7 @@ pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod notes;
+pub mod office_pane;
 pub mod opening;
 pub mod panes;
 mod preview;
@@ -144,9 +148,7 @@ fn purpose_of(purpose: &str) -> FilePurpose {
 fn is_presentation_name(lower: &str) -> bool {
     lower.ends_with(".deckcraft")
         || lower.ends_with(".slidecraft")
-        || lower.ends_with(".pptx")
-        || lower.ends_with(".potx")
-        || lower.ends_with(".ppsx")
+        || [".pptx", ".potx", ".ppsx", ".pptm", ".potm", ".ppsm"].iter().any(|e| lower.ends_with(e))
 }
 
 /// File → Open keeps the requested operation: a presentation opens, an outline becomes slides.
@@ -220,6 +222,8 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Web views for Office add-ins' task panes (the desktop app on macOS and Windows).
+    pub office: Option<Box<dyn office_pane::OfficeHost>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -372,7 +376,8 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.zoom", "Set Zoom", None, "{percent}"),
     ("view.zoomDialog", "Zoom…", None, "{}"),
     ("view.fit", "Fit to Window", None, "{}"),
-    ("view.pane", "Task Pane", None, "{pane: format|animation|selection|comments|designer|background|smartart|null}"),
+    ("view.pane", "Task Pane", None, "{pane: format|animation|selection|comments|designer|background|smartart|chat|null}"),
+    ("view.chat", "Chat", None, "{on?: bool}: shows or hides the document chat"),
     ("review.thesaurusPane", "Thesaurus", Some("Shift+F7"), "{word?}: open the Thesaurus pane on the selected word"),
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
@@ -496,6 +501,14 @@ pub struct SlideApp {
     pub(crate) thumb_drag: Option<(usize, usize)>,
     /// Selection pane: folded groups, renaming, drag and drop.
     pub selpane: selpane::State,
+    /// Add-ins: their windows, the Developer tab's windows, an install in progress.
+    pub addins: addins::State,
+    /// Live sessions: the Share window and the session popover ([`collab_ui`]).
+    pub collab: collab_ui::State,
+    /// The document chat: the Chat pane's box, what was seen, the mention flash ([`chat_ui`]).
+    pub chat: chat_ui::State,
+    /// Office add-ins' task panes.
+    pub office: office_pane::Panes,
     /// View › New Window: a second window on one presentation. `None` when it is closed.
     pub doc_window: Option<doc_window::DocWindow>,
     /// Slide Sorter: folded sections, inline rename, dragging a whole section.
@@ -513,6 +526,22 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The page around the app when it's embedded (craft-live in Nextcloud Office): Save and
+    /// Close go to it. `None` in the desktop app and the plain web build.
+    pub embed: Option<Embed>,
+}
+
+/// An embedding page that keeps the file (craft-live, for Nextcloud Office): Save asks it to
+/// save, and a Close button in the title bar (and the session popover's Close, in place of
+/// Leave) asks it to close the editor. The host takes the requests each frame.
+#[derive(Clone, Debug, Default)]
+pub struct Embed {
+    /// Who keeps the file, for the buttons' tips ("Nextcloud").
+    pub host: String,
+    /// The person pressed Save.
+    pub save_requested: bool,
+    /// The person pressed Close.
+    pub close_requested: bool,
 }
 
 fn grid_options_touched(p: &Value) -> bool {
@@ -572,6 +601,10 @@ impl SlideApp {
             ui_fonts: uifonts::UiFonts::default(),
             thumb_drag: None,
             selpane: selpane::State::default(),
+            addins: addins::State::default(),
+            collab: collab_ui::State::default(),
+            chat: chat_ui::State::default(),
+            office: office_pane::Panes::default(),
             doc_window: None,
             sorter: sorter::State::default(),
             slides_focused: false,
@@ -580,12 +613,29 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            embed: None,
         }
     }
 
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
         self
+    }
+
+    /// Opens an Office add-in's task pane (`plugins.run` of a ShowTaskpane command).
+    pub fn open_office_pane(&mut self, plugin: &str, title: &str, url: &str, pane: Option<&str>) {
+        office_pane::open(self, plugin, title, url, pane);
+    }
+
+    /// Calls an Office add-in's function command in its hidden page (`control`: the manifest
+    /// control that ran it).
+    pub fn run_office_function(&mut self, plugin: &str, url: &str, function: &str, control: &str) {
+        office_pane::run_function(self, plugin, url, function, control);
+    }
+
+    /// Puts text on the system clipboard (at the end of the frame).
+    pub fn copy_text(&mut self, text: String) {
+        self.pending_copy = Some(text);
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -924,6 +974,7 @@ impl SlideApp {
                 self.thesaurus_query = word;
                 self.ui.pane = Some("thesaurus".into());
             }
+            "view.chat" => chat_ui::toggle(self, p.get("on").and_then(Value::as_bool)),
             "view.pane" => {
                 let pane = p.get("pane").and_then(Value::as_str).map(String::from);
                 self.ui.pane =
@@ -1256,7 +1307,13 @@ impl SlideApp {
 
     pub fn save_as_dialog(&mut self, format: &str) {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
+        // A presentation with macros is a .pptm as PowerPoint (a .pptx can't hold them).
+        let macros = self.session.active().is_some_and(|d| d.doc.has_macros());
+        let ext = match format {
+            "pptx" if macros => "pptm",
+            "pptx" => "pptx",
+            _ => "deckcraft",
+        };
         let suggested = format!("{name}.{ext}");
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
@@ -1294,6 +1351,11 @@ impl SlideApp {
     }
 
     pub fn save(&mut self) {
+        // Embedded (craft-live): the page around the app keeps the file; it saves the room now.
+        if let Some(e) = self.embed.as_mut() {
+            e.save_requested = true;
+            return;
+        }
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
                 Ok(_) => self.set_status("Saved"),
@@ -1308,6 +1370,8 @@ impl SlideApp {
     fn drain_requests(&mut self) {
         for r in std::mem::take(&mut self.session.ui_requests) {
             match r {
+                // Share (`collab.share` / `collab.join` with no params): the Share window.
+                UiRequest::Dialog { id, .. } if id == "collabShare" => collab_ui::open_share(self),
                 UiRequest::Dialog { id, params } => {
                     let mut d = dialogs::Dialog::new(&id);
                     d.params = params;
@@ -1316,6 +1380,9 @@ impl SlideApp {
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
                 UiRequest::StartShow { from } => self.start_show(from, false),
                 UiRequest::Message { text } => self.set_status(text),
+                UiRequest::OpenUrl { url } => self.pending_urls.push(url),
+                UiRequest::OfficePane { plugin, title, url, pane } => self.open_office_pane(&plugin, &title, &url, pane.as_deref()),
+                UiRequest::OfficeFunction { plugin, url, function, control } => self.run_office_function(&plugin, &url, &function, &control),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
                         self.save_as_dialog("deckcraft");
@@ -1512,6 +1579,33 @@ impl SlideApp {
         }
     }
 
+    /// Shows what add-ins answered to document events (protocol 1.2): a message in the status bar,
+    /// an error as a notice. Keeps painting while events are on their way.
+    pub(crate) fn poll_addin_events(&mut self, ctx: &egui::Context) {
+        if !self.session.events_pending() {
+            return;
+        }
+        for o in self.session.take_event_outcomes() {
+            let name = deckcraft_engine::plugin::get(&o.plugin).map(|p| p.manifest.name.clone()).unwrap_or_else(|| o.plugin.clone());
+            for note in o.notes.into_iter().filter(|n| !n.trim().is_empty()) {
+                self.set_status(note);
+            }
+            match o.result {
+                Ok(Some(m)) => self.set_status(m),
+                Ok(None) => {}
+                Err(e) => self.notify(format!("{name}: {e}")),
+            }
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+    }
+
+    /// The app is quitting: add-ins that hear `documentClosed` get it for every open presentation
+    /// that has a file, waiting at most 5 s (best effort).
+    pub fn on_quit(&mut self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        self.session.quit_events();
+    }
+
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
@@ -1537,6 +1631,7 @@ impl SlideApp {
         self.last_time = now;
         self.drain_control(ctx);
         self.poll_opening();
+        self.poll_addin_events(ctx);
         if self.fonts_ready {
             self.drain_inbox();
         }
@@ -1569,6 +1664,13 @@ impl SlideApp {
         // delivers them through `Services::inbox`, tagged with the request captured at the drop.
         #[cfg(not(target_arch = "wasm32"))]
         for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+            // A presentation dropped from the file manager opens from its file, as File › Open
+            // does: Save goes back to it, and add-ins hear that it was opened.
+            let dropped = f.path();
+            if dropped.is_absolute() && dropped.is_file() && is_presentation_name(&dropped.to_string_lossy().to_ascii_lowercase()) {
+                self.open_path_in_background(&dropped.to_string_lossy());
+                continue;
+            }
             let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
             match f.bytes() {
                 Ok(bytes) => self.open_or_insert_bytes(&name, &bytes),
@@ -1780,9 +1882,13 @@ impl SlideApp {
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.tick_media(&ctx);
+        collab_ui::pump(self, &ctx);
+        chat_ui::tick(self, &ctx);
+        office_pane::pump(self);
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
         if self.show.is_some() {
+            office_pane::covered(self);
             self.anim_preview = None;
             show::ui(self, ui);
             doc_window::show(self, &ctx);
@@ -1795,6 +1901,7 @@ impl SlideApp {
         ribbon::title_bar(self, ui);
         if self.backstage.is_none() && self.session.active().is_some() {
             ribbon::show(self, ui);
+            addins::notice_bar(self, ui);
             status::status_bar(self, ui);
         }
         let now = ui.input(|i| i.time);
@@ -1804,6 +1911,7 @@ impl SlideApp {
         egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
             if self.backstage.is_some() {
                 // File tab: the Backstage view replaces everything below the title bar.
+                office_pane::covered(self);
                 backstage::show(self, ui);
                 return;
             }
@@ -1814,6 +1922,7 @@ impl SlideApp {
                 ViewMode::Sorter => sorter::show(self, ui),
                 ViewMode::NotesPage => sorter::notes_page(self, ui),
                 ViewMode::Outline | ViewMode::Normal | ViewMode::Reading => {
+                    office_pane::show(self, ui);
                     if self.ui.pane.is_some() {
                         panes::show(self, ui);
                     }
@@ -1834,6 +1943,8 @@ impl SlideApp {
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);
+        addins::windows(self, &ctx);
+        collab_ui::windows(self, &ctx);
         menus::palette(self, &ctx);
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
@@ -2014,6 +2125,10 @@ fn js_now() -> f64 {
 mod animpane_tests;
 #[cfg(test)]
 mod browsetheme_tests;
+#[cfg(test)]
+mod chat_tests;
+#[cfg(test)]
+mod collab_tests;
 #[cfg(test)]
 mod compare_tests;
 #[cfg(test)]

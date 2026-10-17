@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-16 · **Change:** trivial (progress log: the web build in Nextcloud through craft-live; previously trivial: progress log: document chat; previously trivial: progress log: Office.js for Microsoft's add-in samples; previously minor: progress log: add-ins that require other add-ins; previously minor: live co-editing, plugin protocol 2; previously minor: add-in protocol 1.2; previously minor: ribbon buttons that run macros and Record Macro; previously major: add-ins, Office add-ins and VBA; Ecosystem re-scored; previously major: community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -53,7 +53,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Performance (unmeasured) | ~55% | 10–20 | [docs/hardware-parity.md](docs/hardware-parity.md#performance) |
 | Stability | ~60% | 10–20 | [docs/gaps.md](docs/gaps.md#stability) |
 | Platforms | ~80% | 5–10 | [Downloads in README](README.md#downloads) |
-| Ecosystem (templates; add-ins out of scope) | ~25% | 10–20 | [docs/gaps.md](docs/gaps.md#ecosystem) |
+| Ecosystem (templates, add-ins, macros) | ~35% | 25–50 | [docs/gaps.md](docs/gaps.md#ecosystem) |
 | AI features | ~10% | 20–40 | [docs/gaps.md](docs/gaps.md#ai-features) |
 | Automation ✱ (CLI, control channel, MCP) | ahead | 0 | [docs/mcp.md](docs/mcp.md) |
 
@@ -141,7 +141,11 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | Slide show: Honeycomb's hexagons cover the whole slide again — the bottom quarter stayed black until the endpoint (#420) |
 | 2026-10-13 | Copy and Cut from the ribbon, the slide's right-click menu and the menus put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431) |
 | 2026-10-13 | Video seeks and loops keep newly decoded frames and end-of-stream notifications; stale generations are filtered when consumed (upstream #416). Deterministic queue coverage and repeated seeks across H.264, HEVC, VP9 and AV1 |
-| 2026-10-14 | Presenter View handles the same keyboard navigation as the audience window, consumes handled keys before focused buttons, and remains available at the end screen. Regression tests cover presenter-only input, single-step navigation and Escape |
+| 2026-10-14 | Add-ins: out-of-process add-ins with the craft apps' shared manifest and protocol (commands, ribbon groups and menus, install from GitHub, the Add-ins window); Office add-ins' task panes on PowerPoint's JavaScript API with DeckCraft's own Office.js (`office.sync`, one undo step per sync); VBA macros through a macro add-in (craft-vba) with the Developer tab, Macro Security and Enable Content; `.pptm`/`.potm`/`.ppsm` keep their macros, and a deck with macros saves as `.pptm` |
+| 2026-10-15 | Add-ins: ribbon buttons that run the presentation's macros (Developer › Ribbon Buttons, Add to Ribbon in the Macros window), saved as the Office ribbon part `customUI14.xml` so PowerPoint shows them too, with a richer ribbon from a file kept and its buttons still shown; Record Macro / Stop Recording, a DeckCraft extra, sends the journaled commands to the macro add-in (`macros/record`) and keeps the code in Module1 |
+| 2026-10-15 | Add-ins that need other add-ins (plugin manifests 1.3, shared with GridCraft and WordCraft): a manifest names the add-ins, app versions and protocol features it needs, with version ranges; DeckCraft blocks an add-in whose needs aren't met and says why, starts required add-ins first, asks before turning off one others need, and installs what's missing from its newest GitHub release in range; Office add-ins needing more of Office.js than DeckCraft has are blocked with the reason ([docs/plugins.md](docs/plugins.md#requirements-manifest-13)) |
+| 2026-10-15 | Live co-editing (plugin protocol 2, shared with GridCraft and WordCraft): the push channel, transport add-ins (craft-collab's MQTT and loopback), DeckCraft schema 1 on Yjs (`yrs`: slides and shapes by stable ids, every property its own entry, text as Yjs text with formatting attributes so concurrent typing merges), Share and the people's circles in the title bar, others' selections and carets on the slide, per-person undo, end-to-end encryption, recovery; conformance transcripts from craft-collab replayed by the engine |
+| 2026-10-15 | Add-ins: plugin protocol 1.2, shared with GridCraft and WordCraft: add-ins learn the document (`context.document`), answer with a dialog DeckCraft draws (lists with a filter, forms, messages; dialogs chain) or a file to open the File › Open way, and hear when presentations open, save and close (from a background thread, never holding up the save) |
 | 2026-10-13 | EMF and WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records are still skipped |
 | 2026-10-13 | Embedded fonts (`p:embeddedFontLst`) are read, written and used to draw. TrueType, OpenType and Embedded OpenType faces load; MicroType Express subsets are kept for the round trip and still draw in a stand-in |
 | 2026-10-13 | Codec parsers (#426): H.264 and HEVC quantiser offsets, Matroska block times, Opus granule timing and QuickTime PCM frame sizes are range-checked before the arithmetic, so a hostile number is a format error instead of an overflow |
@@ -221,12 +225,22 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-08 | v0.2.0 and v0.3.0 released: Windows arm64, Flatpak aarch64, AppImage zsync updates, branded DMG |
 | 2026-10-07 | v0.1.0 released, signed and notarized; About window with contributor credits (#3); PrintCraft renamed PdfCraft |
 | 2026-10-06 | Renamed SlideCraft to DeckCraft. PPTX import/export, PDF export, media playback with pure-Rust codecs, connectors with glue, freeform tools, merge shapes, AutoRecover, gradient editor, web build, release CI, parity catalogue |
+| 2026-10-15 | Office add-ins run what Microsoft's add-in samples need ([docs/officejs.md](docs/officejs.md)): their `office.js` never runs (blocked before it runs; the API's globals can't be replaced), function commands (ExecuteFunction) call the add-in's function with `event.source.id` and wait for `event.completed()`, colours by CSS name (`"yellow"`), tags on the presentation, slides and shapes, `insertSlidesFromBase64`, pictures and slide ranges through the common API, `goToByIdAsync`, `DocumentSelectionChanged`, `new PowerPoint.RequestContext()`, `set({...})`, and the common API's enumerations |
+| 2026-10-16 | Document chat (craft-collab's chat.md, shared with GridCraft and WordCraft): the people editing a presentation talk in a Chat pane beside it; the chat is saved in the file (`/craft/chat.json` in `.pptx`, `chat` in `.deckcraft`), shared live in a session (seeded on share, brought in on join, encrypted with the room) and works outside one as notes; `chat.*` commands, not undo steps but making the presentation modified; replies, edits and deletions by the author, @mentions, links, "typing…"; the title bar's chat button with the unread count and a flash on mentions; craft-collab's chat transcripts replayed |
+| 2026-10-16 | The web build edits live in Nextcloud Office through craft-live (a WOPI editor in place of Collabora; [docs/collab.md](docs/collab.md#in-nextcloud-craft-live)): it reads craft-live's `#craft-live=1&…` fragment, says hello to its shell, seeds the room from the file or joins it ("Joining…" until it arrives), speaks y-websocket with lib0 framing and craft-live's control messages (`welcome`, `peers`, `save`, `saved`, `modified`, `notice`, `reseed`, `expired`) over the browser's WebSocket, uploads the presentation in the file's own format when the room saves, reconnects with backoff, and has Close in the title bar and Save into Nextcloud; the people's circles, the popover and the chat work there; the desktop's `collab/snapshot` takes a `format` hint. Checked against the real craft-live server and its fake Nextcloud; a real browser in a real Nextcloud is next. Found on the way: the web build stopped as soon as it opened a presentation (document ids used the process id, which browsers don't have; since 2026-10-13), now fixed, with a wasm32 test that opens, shares and saves presentations |
 | 2026-10-05 | M0: workspace, model, geometry, fonts, text, renderer, engine, MCP, CLI, PowerPoint-style egui UI, slide show engine |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | trivial | Progress log: the web build in Nextcloud through craft-live |
+| 2026-10-16 | trivial | Progress log: document chat |
+| 2026-10-15 | trivial | Progress log: Office.js for Microsoft's add-in samples |
+| 2026-10-15 | trivial | Progress log: add-ins that require other add-ins (manifest 1.3) |
+| 2026-10-15 | minor | Progress log: live co-editing (plugin protocol 2) |
+| 2026-10-15 | trivial | Progress log: add-in protocol 1.2 |
+| 2026-10-14 | minor | Progress log: add-ins, Office add-ins and VBA; Ecosystem re-scored |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |

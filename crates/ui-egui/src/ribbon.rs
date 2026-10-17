@@ -81,10 +81,31 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         // Right side.
         let mut right = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(Rect::from_min_max(pos2(rect.max.x - 320.0, rect.min.y), pos2(rect.max.x - 10.0, rect.max.y)))
+                .max_rect(Rect::from_min_max(pos2(rect.max.x - 620.0, rect.min.y), pos2(rect.max.x - 10.0, rect.max.y)))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 6.0;
+        // Embedded in a page that keeps the file (craft-live in Nextcloud): Close at the right end,
+        // since the page shows no close button of its own.
+        if let Some(host) = app.embed.as_ref().map(|e| e.host.clone()) {
+            let close = right.add(
+                egui::Button::new(egui::RichText::new("Close").font(theme::font(13.0)))
+                    .corner_radius(control_h / 2.0)
+                    .min_size(vec2(64.0, control_h)),
+            );
+            if close.on_hover_text(format!("Close the presentation and go back to {host}")).clicked()
+                && let Some(e) = app.embed.as_mut()
+            {
+                e.close_requested = true;
+            }
+        }
+        // Share at the right end, the people in the live session beside it.
+        if has_doc {
+            crate::collab_ui::title_bar(app, &mut right, control_h);
+            // The chat button with its unread count, beside the people.
+            crate::chat_ui::title_button(app, &mut right, control_h);
+            right.add_space(6.0);
+        }
         if icon_toggle(&mut right, Icon::Search, "Search commands (⇧⌘P)", true, false).clicked() {
             app.palette = Some((String::new(), 0));
         }
@@ -157,7 +178,17 @@ const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "An
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let ctx_tabs = contextual(app);
-    if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) {
+    // Developer, once an add-in that runs macros (VBA) is loaded; then the add-ins' own tabs.
+    let mut extra: Vec<String> = Vec::new();
+    if crate::addins::developer_visible() {
+        extra.push("Developer".into());
+    }
+    extra.extend(crate::addins::extra_tabs(&TABS));
+    // The presentation's own tabs (its ribbon buttons that run macros).
+    let shown: Vec<&str> = TABS.iter().copied().chain(extra.iter().map(String::as_str)).collect();
+    let deck_tabs = crate::addins::deck_tabs(app, &shown);
+    extra.extend(deck_tabs);
+    if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) && !extra.contains(&app.ui.tab) {
         app.ui.tab = "Home".into();
     }
     let h = 28.0 + if app.ui.ribbon_collapsed { 4.0 } else { RIBBON_H + 20.0 };
@@ -181,7 +212,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             }
             x += w + 2.0;
         }
-        let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
+        let all: Vec<(&str, bool)> =
+            TABS.iter().map(|s| (*s, false)).chain(extra.iter().map(|s| (s.as_str(), false))).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
             let font = theme::font(13.0);
             let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
@@ -243,10 +275,18 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             "SmartArt Design" => smartart_design(app, ui),
             "Playback" => playback(app, ui),
             "Slide Master" => slide_master(app, ui),
+            "Developer" => crate::addins::developer_ribbon(app, ui),
             "Handout Master" => handout_master(app, ui),
             "Notes Master" => notes_master(app, ui),
             _ => {}
         }
+        if tab == "Insert" {
+            crate::addins::add_ins_group(app, ui);
+        }
+        // The add-ins' groups: at the end of a built-in tab, or the whole of an add-in's own tab.
+        crate::addins::ribbon_groups(app, ui, &tab);
+        // Then the presentation's own buttons.
+        crate::addins::deck_ribbon_groups(app, ui, &tab);
     });
 }
 
@@ -2228,6 +2268,14 @@ fn view(app: &mut SlideApp, ui: &mut Ui) {
         let n = app.ui.notes;
         if big_button_ex(ui, Icon::Notes, "Notes", true, false, n).0.clicked() {
             app.ui.notes = !n;
+        }
+        let chat_on = app.ui.pane.as_deref() == Some("chat");
+        if big_button_ex(ui, Icon::CommentsBubble, "Chat", true, false, chat_on)
+            .0
+            .on_hover_text("Chat with the people editing this presentation")
+            .clicked()
+        {
+            let _ = app.run("view.chat", json!({}));
         }
     });
     group(ui, |ui| {
