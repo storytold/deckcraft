@@ -396,6 +396,8 @@ struct Cell {
     boundary: bool,
     /// Drawn upright in East Asian vertical text.
     upright: bool,
+    /// The face came from font fallback, not from the run's own fonts.
+    fallback: bool,
 }
 
 impl Cell {
@@ -852,8 +854,9 @@ fn shape_cells(
     };
     // A face per grapheme cluster (never split between faces).
     let mut char_face = vec![0usize; n];
+    let mut char_fallback = vec![false; n];
     let mut chains: HashMap<(usize, FontSlot, Option<ScriptTag>), Vec<Arc<FontFace>>> = HashMap::new();
-    let mut prev: Option<Arc<FontFace>> = None;
+    let mut prev: Option<(Arc<FontFace>, bool)> = None;
     for &(a, b) in &graphemes {
         let Some(cluster) = chars.get(a..b) else { continue };
         let si = char_style.get(a).copied().unwrap_or(0);
@@ -872,23 +875,28 @@ fn shape_cells(
             .filter(|f| db.has_family(f))
             .map(|f| db.face(f, st.style_name))
             .filter(|f| deckcraft_fonts::covers_cluster(f, cluster));
-        let face = match (sym_face, prev.as_ref()) {
-            (Some(f), _) => f,
-            (None, Some(p))
+        let (face, fallback) = match (sym_face, prev.as_ref()) {
+            (Some(f), _) => (f, false),
+            (None, Some((p, fallback)))
                 if neutral && !p.is_color() && deckcraft_fonts::covers_cluster(p, cluster) && char_style.get(a.wrapping_sub(1)) == Some(&si) =>
             {
-                p.clone()
+                (p.clone(), *fallback)
             }
             (None, _) => {
                 let chain = chains.entry((si, slot, sc)).or_insert_with(|| face_chain(ctx, st, slot, sc));
-                db.cascade(cluster, chain, st.style_name)
+                let f = db.cascade(cluster, chain, st.style_name);
+                let fallback = !chain.iter().any(|c| Arc::ptr_eq(c, &f));
+                (f, fallback)
             }
         };
         let fi = face_index(faces, &face);
         for f in char_face.get_mut(a..b).into_iter().flatten() {
             *f = fi;
         }
-        prev = Some(face);
+        for f in char_fallback.get_mut(a..b).into_iter().flatten() {
+            *f = fallback;
+        }
+        prev = Some((face, fallback));
     }
     let mut cells: Vec<Cell> = (0..n)
         .map(|i| Cell {
@@ -901,6 +909,7 @@ fn shape_cells(
             head: i,
             boundary: boundary.get(i).copied().unwrap_or(true),
             upright: false,
+            fallback: char_fallback.get(i).copied().unwrap_or(false),
         })
         .collect();
     // In East Asian vertical text, ideographs, kana, Hangul, full-width forms and the like stand
@@ -1972,7 +1981,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
         }
         // Group visually consecutive cells by (style, face).
         let mut cur: Option<GlyphRun> = None;
-        let mut cur_key = (usize::MAX, usize::MAX, false, false);
+        let mut cur_key = (usize::MAX, usize::MAX, false, false, false);
         for &k in &place.order {
             let ci = line.start + k;
             let Some(cell) = p.cells.get(ci) else { continue };
@@ -1982,7 +1991,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
             let size = if st.baseline != 0.0 { st.size * SUB_SUPER } else { st.size };
             let size = if st.caps == Caps::Small && cell.ch.is_lowercase() { size * 0.8 } else { size };
             // Small capitals are drawn smaller than the capitals beside them: a run of their own.
-            let key = (cell.style, cell.face, st.caps == Caps::Small && cell.ch.is_lowercase(), cell.upright);
+            let key = (cell.style, cell.face, st.caps == Caps::Small && cell.ch.is_lowercase(), cell.upright, cell.fallback);
             if key != cur_key {
                 if let Some(r) = cur.take() {
                     out.runs.push(r);
@@ -1994,7 +2003,9 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     color: st.color,
                     glyphs: vec![],
                     cells: vec![],
-                    fake_bold: st.fake_bold,
+                    // A bold run's fallback face without a bold weight (a CJK font) is made bolder;
+                    // the run's own fonts keep the run's setting.
+                    fake_bold: if cell.fallback { st.style_name.starts_with("Bold") && face.weight < 550.0 } else { st.fake_bold },
                     fake_italic: st.fake_italic,
                     outline: st.outline,
                     para: line.para,
