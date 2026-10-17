@@ -182,8 +182,16 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
     }
     let regular: Vec<String> = names.iter().filter(|(fam, st, _)| !(*fam == "Inter" && *st != "Regular")).map(|(_, _, n)| n.clone()).collect();
     if let Some(list) = defs.families.get_mut(&FontFamily::Proportional) {
-        for (k, n) in regular.iter().enumerate() {
-            list.insert(k, n.clone());
+        // The craft faces lead the interface only when they include the Latin face (Inter); the
+        // Latin manifest is optional in craft-fonts, and without it BIZ UDPGothic would become the
+        // primary interface font, with much wider Latin metrics (clipped ribbons, shifted hit
+        // targets). Then the script faces still serve, as fallbacks after egui's bundled ones.
+        if regular.iter().any(|n| n.contains("-Inter-")) {
+            for (k, n) in regular.iter().enumerate() {
+                list.insert(k, n.clone());
+            }
+        } else {
+            list.extend(regular.iter().cloned());
         }
     }
     // A bold family for headings and selected tabs.
@@ -191,9 +199,8 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
     bold.extend(defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     defs.families.insert(FontFamily::Name("bold".into()), bold);
     add_fallback_faces(&mut defs, extra);
-    // The Japanese interface face (the first one when Inter isn't embedded) hints its en and em
-    // dashes, bars thinner than a pixel, down to nothing, so they drew as gaps in interface text;
-    // unhinted, they draw.
+    // The Japanese interface face hints its en and em dashes, bars thinner than a pixel, down to
+    // nothing, so they drew as gaps in interface text; unhinted, they draw.
     for (name, d) in defs.font_data.iter_mut() {
         if name.contains("BIZ UDPGothic") {
             let mut data = (**d).clone();

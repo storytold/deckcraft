@@ -101,6 +101,7 @@ fn copy_opts<'a>(o: &RenderOpts<'a>) -> RenderOpts<'a> {
     RenderOpts {
         scale: o.scale,
         edit: o.edit,
+        placeholder_prompt: o.placeholder_prompt,
         show_hidden: o.show_hidden,
         state: o.state,
         skip: o.skip,
