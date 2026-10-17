@@ -274,20 +274,22 @@ fn decode_text(raw: &str) -> String {
             break;
         };
         let entity = &rest[1..end];
-        rest = &rest[end + 1..];
-        match entity {
-            "amp" => out.push('&'),
-            "lt" => out.push('<'),
-            "gt" => out.push('>'),
-            "quot" => out.push('"'),
-            "apos" => out.push('\''),
-            "nbsp" => out.push(' '),
-            _ => {
-                let ch = entity.strip_prefix('#').and_then(numeric_char);
-                if let Some(c) = ch {
-                    out.push(c);
-                }
-            }
+        let decoded = match entity {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" => Some('\''),
+            "nbsp" => Some(' '),
+            _ => entity.strip_prefix('#').and_then(numeric_char),
+        };
+        if let Some(c) = decoded {
+            out.push(c);
+            rest = &rest[end + 1..];
+        } else {
+            // Not a well-formed entity (e.g. a bare "R&D"): keep the '&' as typed.
+            out.push('&');
+            rest = &rest[1..];
         }
     }
     if !rest.is_empty() && !rest.starts_with('&') {
@@ -348,6 +350,14 @@ mod tests {
         let last = back.paragraphs[0].runs.last().unwrap();
         assert_eq!(last.props.italic, Some(true));
         assert!(last.props.underline.is_some());
+    }
+
+    #[test]
+    fn bare_ampersand_keeps_text_up_to_next_semicolon() {
+        let text = |html: &str| html_to_body(html).unwrap().text();
+        assert_eq!(text("<p>R&D costs; up</p>"), "R&D costs; up");
+        assert_eq!(text("<p>AT&T; Q&A</p>"), "AT&T; Q&A");
+        assert_eq!(text("<p>A &amp; B &#38; C &#x26; D</p>"), "A & B & C & D");
     }
 
     #[test]
