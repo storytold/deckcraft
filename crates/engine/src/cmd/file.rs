@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             info
         ),
-        cmd!(query "file.render", "Render Slide", [], None, "{slide?: index, scale?, edit?: bool} → {png: base64, width, height}", has_doc, render),
+        cmd!(query "file.render", "Render Slide", [], None, "{slide?: index, scale?, edit?: bool, transparentBackground?: bool} → {png: base64, width, height}", has_doc, render),
         cmd!(
             query "slide.colorAt",
             "Color At",
@@ -431,8 +431,14 @@ pub fn image_scale(doc: &Presentation, scale: f64) -> f64 {
 
 /// Render slide `index` (current when absent) to PNG bytes.
 pub fn render_png(doc: &Presentation, index: usize, scale: f64, edit: bool) -> (Vec<u8>, u32, u32) {
+    render_png_with(doc, index, scale, edit, false)
+}
+
+/// [`render_png`]; `transparent` leaves the slide background out (#784).
+pub fn render_png_with(doc: &Presentation, index: usize, scale: f64, edit: bool, transparent: bool) -> (Vec<u8>, u32, u32) {
     let scale = image_scale(doc, scale);
-    let img = deckcraft_render::render_slide(doc, index, &deckcraft_render::RenderOpts { scale, edit, ..Default::default() });
+    let opts = deckcraft_render::RenderOpts { scale, edit, transparent_background: transparent, ..Default::default() };
+    let img = deckcraft_render::render_slide(doc, index, &opts);
     (img.to_png_at(deckcraft_render::dpi_for_scale(scale)), img.width, img.height)
 }
 
@@ -451,7 +457,7 @@ fn render(s: &mut Session, p: &Value) -> Result<Value> {
     if i >= st.doc.slides.len() {
         return Err(bad("file.render", format!("no slide {i}")));
     }
-    let (png, w, h) = render_png(&st.doc, i, f64_or(p, "scale", 1.0), bool_or(p, "edit", false));
+    let (png, w, h) = render_png_with(&st.doc, i, f64_or(p, "scale", 1.0), bool_or(p, "edit", false), bool_or(p, "transparentBackground", false));
     Ok(json!({"png": base64_encode(&png), "width": w, "height": h}))
 }
 
@@ -483,6 +489,10 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let format = str_param(p, "format").unwrap_or(format_for_path(&path)).to_string();
     let st = s.doc()?;
     let scale = finite_scale(f64_or(p, "scale", 2.0));
+    let transparent = bool_or(p, "transparentBackground", false);
+    if transparent && format != "png" {
+        return Err(bad("file.export", format!("a transparent background is for PNG export, not {format}")));
+    }
     match format.as_str() {
         "png" | "jpeg" | "jpg" => {
             let slides: Vec<usize> = match usize_param(p, "slide") {
@@ -497,7 +507,11 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             let scale = image_scale(&st.doc, scale);
             let mut written = vec![];
             for (k, i) in slides.iter().enumerate() {
-                let img = deckcraft_render::render_slide(&st.doc, *i, &deckcraft_render::RenderOpts { scale, ..Default::default() });
+                let img = deckcraft_render::render_slide(
+                    &st.doc,
+                    *i,
+                    &deckcraft_render::RenderOpts { scale, transparent_background: transparent, ..Default::default() },
+                );
                 let bytes = picture_bytes(&img, &format, scale);
                 let out = if slides.len() == 1 {
                     path.clone()

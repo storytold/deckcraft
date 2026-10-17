@@ -2777,6 +2777,33 @@ fn a_png_export_records_the_slide_resolution() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// #784: `transparentBackground` leaves the slide background out of a PNG export, so only the
+/// slide's content is opaque; formats without transparency refuse it and write nothing.
+#[test]
+fn a_png_export_can_leave_the_background_transparent() {
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("design.background", &json!({"color": "#0000C8"})).unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-transparent-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let read = |path: &std::path::Path| image::load_from_memory(&std::fs::read(path).unwrap()).unwrap().to_rgba8();
+    let opaque = dir.join("opaque.png");
+    s.execute("file.export", &json!({"path": opaque.to_str().unwrap(), "scale": 1})).unwrap();
+    assert_eq!(read(&opaque).get_pixel(5, 5).0, [0, 0, 200, 255], "the background draws by default");
+    let clear = dir.join("clear.png");
+    s.execute("file.export", &json!({"path": clear.to_str().unwrap(), "scale": 1, "transparentBackground": true})).unwrap();
+    let img = read(&clear);
+    assert_eq!(img.get_pixel(5, 5).0[3], 0, "no background: {:?}", img.get_pixel(5, 5));
+    assert_eq!(img.get_pixel(200, 150).0[3], 255, "the shape stays opaque: {:?}", img.get_pixel(200, 150));
+    for (name, format) in [("slide.jpg", "jpeg"), ("deck.pdf", "pdf"), ("deck.gif", "gif"), ("deck.pptx", "pptx")] {
+        let path = dir.join(name);
+        let e = s.execute("file.export", &json!({"path": path.to_str().unwrap(), "format": format, "transparentBackground": true})).unwrap_err();
+        assert!(e.to_string().contains("for PNG export"), "{format}: {e}");
+        assert!(!path.exists(), "{format}: nothing is written");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 fn png_size(bytes: &[u8]) -> Option<(u32, u32)> {
     let w: [u8; 4] = bytes.get(16..20)?.try_into().ok()?;
     let h: [u8; 4] = bytes.get(20..24)?.try_into().ok()?;

@@ -302,6 +302,32 @@ fn save_as_and_export_run_the_file_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Export › Change File Type › PNG offers "Transparent background" (#784): the PNG it saves
+/// leaves the slide background out. Other types don't show the option.
+#[test]
+fn change_file_type_png_can_leave_the_background_transparent() {
+    let dir = temp_dir("png-clear");
+    let (services, _) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    assert!(h.query_by_label("Transparent background").is_none(), "only PNG has the option");
+    click_on_page(&h, "PNG Picture (*.png)");
+    h.run_steps(2);
+    h.get_by_label("Transparent background").click();
+    h.run_steps(2);
+    assert!(h.state().backstage.as_ref().is_some_and(|b| b.png_transparent));
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    let title = h.state().session.active().unwrap().title();
+    let png = std::fs::read(dir.join(format!("{title}.png"))).unwrap();
+    let img = deckcraft_render::decode_image(&png).unwrap();
+    assert_eq!(img.get_pixel(2, 2).0[3], 0, "the background is left out");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Close closes a saved presentation at once and asks about unsaved changes first.
 #[test]
 fn close_closes_and_asks_about_unsaved_changes() {

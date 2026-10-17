@@ -244,11 +244,13 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut all = false;
     let mut scale = 2.0;
     let mut edit = false;
+    let mut transparent = false;
     let mut out = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--sample" => sample = true,
+            "--transparent" => transparent = true,
             "--slide" => slide = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--slide needs a number")?),
             "--all" => all = true,
             "--edit" => edit = true,
@@ -281,7 +283,7 @@ fn render(args: &[String]) -> Result<(), String> {
         std::fs::create_dir_all(&out).map_err(|e| format!("{out}: {e}"))?;
     }
     for i in list {
-        let (png, w, h) = deckcraft_engine::cmd::file::render_png(&st.doc, i, scale, edit);
+        let (png, w, h) = deckcraft_engine::cmd::file::render_png_with(&st.doc, i, scale, edit, transparent);
         let path = if all { format!("{out}/slide-{:02}.png", i + 1) } else { out.clone() };
         std::fs::write(&path, png).map_err(|e| format!("{path}: {e}"))?;
         outln!("{path} ({w}×{h})");
@@ -678,6 +680,21 @@ mod tests {
             assert!(e.contains(&format!("unknown option `{flag}`")), "{flag}: {e}");
             assert!(!out.exists(), "{flag}: rendered anyway");
         }
+    }
+
+    /// `render --transparent` leaves the slide background out (#784): the corner is transparent.
+    #[test]
+    fn render_transparent_leaves_the_background_out() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-transparent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let alpha = |path: &std::path::Path| deckcraft_engine::render::decode_image(&std::fs::read(path).unwrap()).unwrap().get_pixel(1, 1).0[3];
+        let opaque = dir.join("opaque.png");
+        render(&args(&["--sample", "--scale", "0.25", &opaque.to_string_lossy()])).unwrap();
+        assert_eq!(alpha(&opaque), 255);
+        let clear = dir.join("clear.png");
+        render(&args(&["--sample", "--transparent", "--scale", "0.25", &clear.to_string_lossy()])).unwrap();
+        assert_eq!(alpha(&clear), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `run --export OUT.gif --export-params JSON` and `convert IN OUT.gif` write animated GIFs.

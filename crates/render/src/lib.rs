@@ -238,6 +238,10 @@ pub struct RenderOpts<'a> {
     pub date_text: Option<String>,
     /// The local date and time date fields show (`None`: the system clock).
     pub now: Option<DateTime>,
+    /// Leave the slide background out (neither the white underlay nor the background fill), so
+    /// only what is on the slide is drawn over transparency: PNG export with a transparent
+    /// background. Shapes filled with the background (`useBgFill`) still show it.
+    pub transparent_background: bool,
 }
 
 impl Default for RenderOpts<'_> {
@@ -257,6 +261,7 @@ impl Default for RenderOpts<'_> {
             clear: None,
             date_text: None,
             now: None,
+            transparent_background: false,
         }
     }
 }
@@ -794,6 +799,10 @@ impl Renderer {
 
     fn background(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, slide: Option<&Slide>, view: Affine) {
         let (fill, ph) = resolve::background(rctx, slide);
+        if f.opts.transparent_background {
+            self.bg = Some((fill, ph, view));
+            return;
+        }
         let r = Rect::new(0.0, 0.0, f.pres.slide_size.width, f.pres.slide_size.height);
         ctx.set_transform(view);
         let path = r.to_path(0.1);

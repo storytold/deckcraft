@@ -769,7 +769,8 @@ impl SlideApp {
                 // Every slide for "all slides", one download each, named like the desktop export (#64).
                 let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
                 let mut any = false;
-                for (file, bytes) in web_image_files(&doc, slide, all, &name, ext) {
+                let transparent = extra.get("transparentBackground").and_then(Value::as_bool).unwrap_or(false);
+                for (file, bytes) in web_image_files(&doc, slide, all, &name, ext, transparent) {
                     any = self.download(&file, Ok(bytes)) || any;
                 }
                 return any;
@@ -1987,8 +1988,16 @@ pub fn now_ms() -> f64 {
 }
 
 /// Images for the browser download: the current slide, or every slide (named `<name>1.png`,
-/// `<name>2.png`... like the native export) when `all`.
-fn web_image_files(doc: &deckcraft_model::Presentation, current: usize, all: bool, name: &str, ext: &str) -> Vec<(String, Vec<u8>)> {
+/// `<name>2.png`... like the native export) when `all`. `transparent` leaves the slide
+/// background out (PNG only, #784).
+fn web_image_files(
+    doc: &deckcraft_model::Presentation,
+    current: usize,
+    all: bool,
+    name: &str,
+    ext: &str,
+    transparent: bool,
+) -> Vec<(String, Vec<u8>)> {
     let slides: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![current] };
     let single = slides.len() == 1;
     let scale = 2.0;
@@ -1997,7 +2006,8 @@ fn web_image_files(doc: &deckcraft_model::Presentation, current: usize, all: boo
         .into_iter()
         .enumerate()
         .map(|(k, i)| {
-            let img = deckcraft_render::render_slide(doc, i, &deckcraft_render::RenderOpts { scale, ..Default::default() });
+            let opts = deckcraft_render::RenderOpts { scale, transparent_background: transparent && ext == "png", ..Default::default() };
+            let img = deckcraft_render::render_slide(doc, i, &opts);
             let bytes = if ext == "png" { img.to_png_at(dpi) } else { img.to_jpeg_at(92, Some(dpi)) };
             let file = if single { format!("{name}.{ext}") } else { format!("{name}{}.{ext}", k + 1) };
             (file, bytes)
@@ -2098,12 +2108,36 @@ mod tests {
             doc.slides.push(first);
         }
         assert_eq!(doc.slides.len(), 3);
-        let all = web_image_files(&doc, 1, true, "Deck", "png");
+        let all = web_image_files(&doc, 1, true, "Deck", "png", false);
         let names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["Deck1.png", "Deck2.png", "Deck3.png"]);
-        let one = web_image_files(&doc, 1, false, "Deck", "png");
+        let one = web_image_files(&doc, 1, false, "Deck", "png", false);
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].0, "Deck.png");
+    }
+
+    /// The web PNG download honours "Transparent background" (#784): the slide background is
+    /// left out, so the corner is transparent; a JPEG download stays opaque.
+    #[test]
+    fn web_png_export_can_leave_the_background_transparent() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let got: Rc<RefCell<Vec<(String, Vec<u8>)>>> = Rc::default();
+        let log = got.clone();
+        let services = Services {
+            download: Some(Box::new(move |name: &str, b: &[u8]| log.borrow_mut().push((name.to_string(), b.to_vec())))),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        let corner_alpha = |bytes: &[u8]| deckcraft_render::decode_image(bytes).unwrap().get_pixel(2, 2).0[3];
+        assert!(app.export_as("png", json!({})));
+        assert!(app.export_as("png", json!({"transparentBackground": true})));
+        assert!(app.export_as("jpeg", json!({"transparentBackground": true})));
+        let got = got.borrow();
+        assert_eq!(got.len(), 3);
+        assert_eq!(corner_alpha(&got[0].1), 255, "opaque by default");
+        assert_eq!(corner_alpha(&got[1].1), 0, "transparent background");
+        assert_eq!(corner_alpha(&got[2].1), 255, "JPEG has no transparency");
     }
 
     fn title_text(app: &SlideApp) -> String {
