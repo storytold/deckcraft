@@ -35,3 +35,10 @@ $FF $VID -c:v libx264 -pix_fmt yuv420p -g 5 -bf 0 $META clip-h264.mov
 $FF $VID -c:v libx265 -pix_fmt yuv420p -x265-params log-level=error:keyint=5 -tag:v hvc1 $META clip-hevc.mp4
 $FF $VID $TONE -c:v libvpx-vp9 -pix_fmt yuv420p -g 5 -b:v 100k -c:a libopus -b:a 32k -shortest $META clip-vp9.webm
 $FF -f rawvideo -pix_fmt rgb24 -s 64x64 -r 10 -i /tmp/deckcraft-fixture-64x64.rgb -c:v libsvtav1 -pix_fmt yuv420p -g 5 -svtav1-params loglevel=0 $META clip-av1.mkv
+# AV1 with film grain: libaom's built-in grain test vectors (film-grain-test=N) impose known
+# grain parameters whatever the picture holds. 4, 6 and 15 together reach every line of
+# crates/av1/src/grain.rs that the 16 vectors reach (measured with cargo-llvm-cov, 2026-10-16;
+# made with ffmpeg 5.1.9 and libaom 3.6.0 from Debian 12).
+for n in 4 6 15; do
+  $FF -f rawvideo -pix_fmt rgb24 -s 64x64 -r 10 -i /tmp/deckcraft-fixture-64x64.rgb -c:v libaom-av1 -cpu-used 8 -g 5 -pix_fmt yuv420p -aom-params "film-grain-test=$n" $META "clip-av1-grain-$n.mkv"
+done
