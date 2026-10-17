@@ -280,7 +280,12 @@ impl ToolState {
 
     /// The shape in Edit Points, while it is still the one selected shape.
     pub fn editing_points(&self, st: &crate::DocState) -> Option<ShapeId> {
-        self.edit_points.filter(|id| st.selection.shapes.as_slice() == [*id] && st.selection.text.is_none() && st.shape(*id).is_some())
+        // Only a freeform has points: after Undo takes the conversion back, Edit Points is over.
+        self.edit_points.filter(|id| {
+            st.selection.shapes.as_slice() == [*id]
+                && st.selection.text.is_none()
+                && st.shape(*id).is_some_and(|sh| matches!(sh.geom, deckcraft_model::Geom::Custom { .. }))
+        })
     }
 
     /// A freeform path is being drawn (Enter/Escape/double-click finish it).

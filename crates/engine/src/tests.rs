@@ -3592,3 +3592,35 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+/// Edit Points turns a preset into a freeform: one undo step, so Undo brings the preset back
+/// (and leaves Edit Points), Redo the freeform; leaving Edit Points adds no step.
+#[test]
+fn edit_points_conversion_is_one_undo_step() {
+    use deckcraft_model::Geom;
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "star5", "rect": [100, 100, 200, 100]})).unwrap();
+    let preset = |s: &Session| matches!(s.doc().unwrap().selected_shapes()[0].geom, Geom::Preset { .. });
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    assert!(!preset(&s), "Edit Points made a freeform");
+    assert!(s.tool.editing_points(s.doc().unwrap()).is_some());
+    s.execute("shape.editPoints", &json!({"on": false})).unwrap();
+    // Leaving changed nothing, so the next undo is the conversion itself.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(preset(&s), "Undo brings the star back");
+    s.execute("edit.redo", &json!({})).unwrap();
+    assert!(!preset(&s), "Redo makes it a freeform again");
+    // Undo while still editing points ends Edit Points: the star has no points to edit.
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(preset(&s));
+    assert!(s.tool.editing_points(s.doc().unwrap()).is_none());
+    // A freeform needs no conversion: entering Edit Points again adds no undo step.
+    s.execute("edit.redo", &json!({})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": false})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(preset(&s), "the only step was the conversion");
+}
