@@ -1314,9 +1314,11 @@ fn is_cj_nonstarter(c: char) -> bool {
 }
 
 /// Break opportunities: allowed[i] = a line may start at char i. Unicode line breaking, then
-/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/` or `\`, and
-/// Korean breaks only between words.
-fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, Vec<bool>) {
+/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/` or `\`, Korean
+/// breaks only between words, and without `eaLnBrk` (East Asian line breaking, the default) the
+/// strict Japanese rule that keeps a small kana or the prolonged sound mark off the start of a
+/// line is relaxed.
+fn break_opportunities(text: &str, latin_break: bool, east_asian_break: bool) -> (Vec<bool>, Vec<bool>) {
     let n = text.chars().count();
     let mut allowed = vec![false; n + 1];
     let mut mandatory = vec![false; n + 1];
@@ -1341,7 +1343,8 @@ fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, Vec<bool>) 
     for (i, w) in chars.windows(2).enumerate() {
         let (prev, next) = (w[0], w[1]);
         // PowerPoint never breaks after a zero-width space, nor before an em dash (only after it).
-        let keep = if (is_hangul(prev) && is_hangul(next)) || prev == '\u{200B}' || next == '\u{2014}' || is_cj_nonstarter(next) {
+        let keep = if (is_hangul(prev) && is_hangul(next)) || prev == '\u{200B}' || next == '\u{2014}' || (east_asian_break && is_cj_nonstarter(next))
+        {
             false
         } else {
             latin_break || !matches!(prev, '/' | '\\') || next.is_whitespace()
@@ -1351,6 +1354,16 @@ fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, Vec<bool>) 
             && let Some(a) = allowed.get_mut(i + 1)
         {
             *a = false;
+        }
+        // With East Asian line breaking off (`eaLnBrk="0"`, 禁則処理なし) a line may start with a
+        // small kana or the prolonged sound mark. Unicode offers no break before them at all, so
+        // relaxing 禁則 means adding the opportunity, not keeping one.
+        if !east_asian_break
+            && is_cj_nonstarter(next)
+            && !mandatory.get(i + 1).copied().unwrap_or(false)
+            && let Some(a) = allowed.get_mut(i + 1)
+        {
+            *a = true;
         }
     }
     (allowed, mandatory)
@@ -1374,7 +1387,12 @@ fn break_lines(
     x0_rest: f64,
 ) -> Vec<RawLine> {
     let text: String = p.cells.iter().map(|c| c.ch).collect();
-    let (allowed, _) = break_opportunities(&text, p.props.latin_line_break.unwrap_or(false));
+    let (allowed, _) = break_opportunities(
+        &text,
+        p.props.latin_line_break.unwrap_or(false),
+        // `eaLnBrk` absent means on (PowerPoint's default): only an explicit off relaxes 禁則.
+        p.props.east_asian_line_break.unwrap_or(true),
+    );
     let hang = p.props.hanging_punct.unwrap_or(false);
     let n = p.cells.len();
     let mut lines = vec![];

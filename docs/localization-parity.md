@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change:** minor (Japanese paragraph options 禁則処理, 句読点のぶら下げ and 英単語の途中で改行を許可 are settable from the Paragraph dialog and by command; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
 no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
@@ -32,7 +32,7 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | French | fr | 0 (0%) | no | full (Latin) | no | none | yes (fr, fr-CA) | 3–5 |
 | Portuguese | pt | 0 (0%) | no | full (Latin) | no | none | yes (pt-BR, pt-PT) | 3–5 |
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
-| Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
+| Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); 禁則処理, 句読点のぶら下げ and 英単語の途中で改行を許可 are settable (`format.eastAsianLineBreak`, `format.hangingPunctuation`, `format.latinLineBreak`, and the Paragraph dialog) and round-trip as `eaLnBrk`, `hangingPunct` and `latinLnBrk` on `a:pPr`; 禁則 line breaking follows `eaLnBrk` (off adds the break before a small kana or the prolonged sound mark, as Word's 禁則処理なし does), while closing brackets and closing punctuation still follow the Unicode rule; vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
@@ -58,6 +58,7 @@ common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#p
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | Japanese paragraph options are settable, not only read: 禁則処理, 句読点のぶら下げ and 英単語の途中で改行を許可 in the Paragraph dialog and through `format.eastAsianLineBreak`, `format.hangingPunctuation` and `format.latinLineBreak`; `eaLnBrk` off now relaxes 禁則 in the line breaker (a line may start with a small kana or the prolonged sound mark) |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
 | 2026-10-10 | major | Created: twelve-language table, ~1,050 UI strings measured, PowerPoint for Mac's 26 languages from its bundle |
