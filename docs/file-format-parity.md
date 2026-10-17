@@ -34,6 +34,12 @@ PowerPoint opens and saves; Viewer = opens only).
 
 ## Pictures and media inside decks
 
+Native files retain a nonempty chart `kept` sidecar in the zipped JSON manifest, including the
+original relationships and part bytes. This keeps the workbook and drawings through a native
+save before exporting back to PPTX. Binary payloads enlarge the JSON entry and remain subject
+to its existing inflated-size limit. Older native files without the field still load; older
+DeckCraft builds ignore the new field and will discard it if they save the file again.
+
 | Kind | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
 | PNG, JPEG, GIF (animated), BMP, TIFF, WebP | yes | yes | `image` 0.25; animated GIFs play since #39 |
@@ -103,6 +109,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |

@@ -115,6 +115,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | trivial | Native save/reopen retains imported chart workbooks and related parts; headless command tests cover a PPTX → native → PPTX cycle and stale-workbook rejection. Milestone scope and scores unchanged |
 | 2026-10-14 | trivial | M13 reliability: remote MCP validates IDs and envelopes, caps replies and rejects incomplete frames; #718 |
 | 2026-10-14 | minor | Community PR wave folded: one Review gate row, one Current focus item 2, one beta row each for items 9 and 10 (timeline and timer controls are in), one after-beta paragraph, one M9 and M10 row, one corpus row in the 2026-10-07 history |
 | 2026-10-13 | trivial | Beta item 3: embedded fonts are in, except MicroType Express subsets |

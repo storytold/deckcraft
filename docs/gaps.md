@@ -180,7 +180,8 @@ Detail in [file-format-parity.md](file-format-parity.md).
   neither label. A combo chart's secondary value axis is read (`y2_*`,
   `Series.secondary_axis`) and is not written back when the chart is rebuilt.
   An unchanged chart's embedded workbook now survives save (#335); editing the chart still
-  drops it rather than writing a stale spreadsheet.
+  drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
+  also survive `.deckcraft` save/reopen (`crates/engine/tests/chart_native.rs`).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
 
@@ -355,6 +356,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |

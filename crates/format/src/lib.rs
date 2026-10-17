@@ -526,6 +526,53 @@ pub fn slides_to_outline(p: &Presentation) -> String {
 mod tests {
     use super::*;
 
+    #[test]
+    fn chart_sidecars_are_optional_for_older_native_files() {
+        use deckcraft_model::chart::{Chart, ChartType};
+        let chart = Chart::sample(ChartType::Pie);
+        let mut json = serde_json::to_value(&chart).expect("chart JSON");
+        assert!(json.get("kept").is_none(), "empty sidecars should not enlarge ordinary files");
+        assert_eq!(serde_json::from_value::<Chart>(json.clone()).expect("old chart without kept"), chart);
+        json["kept"] = serde_json::json!({});
+        assert_eq!(serde_json::from_value::<Chart>(json).expect("empty sidecar"), chart);
+    }
+
+    #[test]
+    fn native_save_keeps_chart_relationships_and_payloads() {
+        use deckcraft_model::chart::{Chart, ChartKept, ChartPart, ChartRel, ChartType};
+        use deckcraft_model::{Shape, ShapeId, ShapeKind};
+        let kept = ChartKept {
+            rels: vec![ChartRel {
+                id: "rWorkbook".into(),
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
+                target: "../embeddings/data.xlsx".into(),
+                part: "ppt/embeddings/data.xlsx".into(),
+                external: false,
+            }],
+            parts: vec![ChartPart {
+                name: "ppt/embeddings/data.xlsx".into(),
+                content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+                bytes: vec![0, 255, 128, 42],
+            }],
+        };
+        let mut p = defaults::new_presentation(None);
+        let chart = Chart { kept: kept.clone(), ..Chart::sample(ChartType::Pie) };
+        let s = Shape { id: ShapeId(p.alloc_id().expect("id")), kind: ShapeKind::Chart(Box::new(chart)), ..Default::default() };
+        // Serialization must reach charts inside groups as well as top-level charts.
+        Arc::make_mut(&mut p.slides[0]).shapes = vec![Shape {
+            id: ShapeId(p.alloc_id().expect("group id")),
+            kind: ShapeKind::Group { children: vec![s], child: Default::default() },
+            ..Default::default()
+        }];
+        let mut q = load(&save(&p).expect("save")).expect("load");
+        for _ in 0..2 {
+            let ShapeKind::Group { children, .. } = &q.slides[0].shapes[0].kind else { panic!("group") };
+            let ShapeKind::Chart(chart) = &children[0].kind else { panic!("chart") };
+            assert_eq!(chart.kept, kept);
+            q = load(&save(&q).expect("save again")).expect("load again");
+        }
+    }
+
     /// The same package without the entries `drop` names.
     fn without(bytes: &[u8], drop: &str) -> Vec<u8> {
         let mut z = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
