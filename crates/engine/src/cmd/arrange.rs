@@ -423,3 +423,7 @@ fn guide_list(s: &mut Session, _p: &Value) -> Result<Value> {
 #[cfg(test)]
 #[path = "guides_tests.rs"]
 mod guides_tests;
+
+#[cfg(test)]
+#[path = "arrange_tests.rs"]
+mod arrange_tests;
