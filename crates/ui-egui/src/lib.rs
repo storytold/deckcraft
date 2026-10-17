@@ -1012,7 +1012,7 @@ impl SlideApp {
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
-            "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
+            "app.saveAsDialog" => self.save_as_dialog(),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
             "app.browseThemeDialog" => {
@@ -1254,9 +1254,9 @@ impl SlideApp {
         }
     }
 
-    pub fn save_as_dialog(&mut self, format: &str) {
+    pub fn save_as_dialog(&mut self) {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
+        let ext = self.session.active().map(save_as_ext).unwrap_or("pptx");
         let suggested = format!("{name}.{ext}");
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
@@ -1300,7 +1300,7 @@ impl SlideApp {
                 Err(e) => self.set_status(e.to_string()),
             }
         } else {
-            self.save_as_dialog("deckcraft");
+            self.save_as_dialog();
         }
     }
 
@@ -1318,7 +1318,7 @@ impl SlideApp {
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
+                        self.save_as_dialog();
                     }
                 }
                 UiRequest::Media { action, shape, ms } => {
@@ -2010,6 +2010,25 @@ fn js_now() -> f64 {
     js_sys::Date::now()
 }
 
+/// Filters for the save dialog that proposes `name`: for a presentation, the formats Save As
+/// writes, its own first (#105). Other files (exports) get none.
+pub fn save_filters(name: &str) -> Vec<(&'static str, &'static [&'static str])> {
+    const PPTX: (&str, &[&str]) = ("PowerPoint Presentation", &["pptx"]);
+    const DECKCRAFT: (&str, &[&str]) = ("DeckCraft Presentation", &["deckcraft"]);
+    match std::path::Path::new(name).extension().map(|e| e.to_string_lossy().to_ascii_lowercase()).as_deref() {
+        Some("pptx") => vec![PPTX, DECKCRAFT],
+        Some("deckcraft") => vec![DECKCRAFT, PPTX],
+        _ => Vec::new(),
+    }
+}
+
+/// The format Save As proposes: the presentation's own `.deckcraft` file, otherwise PowerPoint
+/// (`.potx`/`.ppsx`/outline files are written back as a `.pptx` presentation).
+fn save_as_ext(d: &deckcraft_engine::DocState) -> &'static str {
+    let ext = d.path.as_deref().and_then(|p| std::path::Path::new(p).extension()).map(|e| e.to_string_lossy().to_ascii_lowercase());
+    if ext.as_deref() == Some("deckcraft") { "deckcraft" } else { "pptx" }
+}
+
 #[cfg(test)]
 mod animpane_tests;
 #[cfg(test)]
@@ -2273,6 +2292,67 @@ mod tests {
         harness.run_steps(2);
         assert!(!harness.state().backstage_open(), "a new presentation leaves Home");
         assert_eq!(harness.state().session.documents().len(), 2);
+    }
+
+    /// The names the save dialog was offered; it is cancelled each time.
+    fn suggested_names(app: &mut SlideApp) -> std::rc::Rc<std::cell::RefCell<Vec<String>>> {
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let log = seen.clone();
+        app.services.pick_save = Some(Box::new(move |name: &str| {
+            log.borrow_mut().push(name.to_string());
+            None
+        }));
+        seen
+    }
+
+    /// #105: Save As and the first Save proposed `Presentation.deckcraft` instead of a PowerPoint file.
+    #[test]
+    fn save_as_proposes_a_pptx_file() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let seen = suggested_names(&mut app);
+        app.run("app.saveAsDialog", json!({})).unwrap();
+        app.save();
+        app.session.execute("file.saveAs", &json!({})).unwrap();
+        app.drain_requests();
+        let title = app.session.active().unwrap().title();
+        assert_eq!(*seen.borrow(), vec![format!("{title}.pptx"); 3]);
+
+        // A presentation opened from a file keeps a format DeckCraft writes; a template, show or
+        // outline is saved as a .pptx (the PowerPoint writer always writes a presentation).
+        for (path, suggested) in
+            [("/d/Deck.deckcraft", "Deck.deckcraft"), ("/d/Deck.PPTX", "Deck.pptx"), ("/d/Deck.potx", "Deck.pptx"), ("/d/Notes.txt", "Notes.pptx")]
+        {
+            seen.borrow_mut().clear();
+            app.session.doc_mut().unwrap().path = Some(path.into());
+            app.run("app.saveAsDialog", json!({})).unwrap();
+            assert_eq!(*seen.borrow(), vec![suggested.to_string()], "{path}");
+        }
+    }
+
+    /// #105: without a save dialog (web) Save As downloads a .pptx file.
+    #[test]
+    fn save_as_downloads_a_pptx_file() {
+        let got = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let log = got.clone();
+        let services = Services {
+            download: Some(Box::new(move |name: &str, bytes: &[u8]| *log.borrow_mut() = Some((name.to_string(), bytes.to_vec())))),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        app.run("app.saveAsDialog", json!({})).unwrap();
+        let (name, bytes) = got.borrow_mut().take().unwrap();
+        assert!(name.ends_with(".pptx"), "{name}");
+        assert!(bytes.windows(20).any(|w| w == b"ppt/presentation.xml"), "the download is a PowerPoint package");
+    }
+
+    #[test]
+    fn save_filters_offer_the_formats_deckcraft_writes() {
+        let names = |f: Vec<(&str, &[&str])>| f.iter().map(|(_, e)| e.join(",")).collect::<Vec<_>>();
+        assert_eq!(names(save_filters("Deck.pptx")), ["pptx", "deckcraft"]);
+        assert_eq!(names(save_filters("Deck.deckcraft")), ["deckcraft", "pptx"]);
+        assert_eq!(names(save_filters("Deck.PPTX")), ["pptx", "deckcraft"]);
+        assert!(save_filters("Deck.pdf").is_empty(), "exports keep an unfiltered dialog");
+        assert!(save_filters("Deck").is_empty());
     }
 
     /// #268: Ctrl+Backspace, Ctrl+Delete, Ctrl+arrows and Ctrl+Shift+arrows in text, through real
