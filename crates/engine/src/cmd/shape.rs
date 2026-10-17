@@ -169,13 +169,23 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// Keeps a side length in `0..=MAX_PT` so a huge value cannot exhaust memory when rendering.
+fn clamp_side(v: f64) -> f64 {
+    if v.is_finite() { v.clamp(0.0, MAX_PT) } else { 0.0 }
+}
+
+/// Keeps a coordinate within `±POS_LIMIT`.
+fn clamp_pos(v: f64) -> f64 {
+    if v.is_finite() { v.clamp(-POS_LIMIT, POS_LIMIT) } else { 0.0 }
+}
+
 fn move_by(s: &mut Session, p: &Value) -> Result<Value> {
     let (dx, dy) = (f64_param(p, "dx"), f64_param(p, "dy"));
     let (ax, ay) = (f64_param(p, "x"), f64_param(p, "y"));
     edit_geometry(s, p, "shape.move", |sh| {
         if let Some(x) = sh.xfrm.as_mut() {
-            x.x = ax.unwrap_or(x.x) + dx.unwrap_or(0.0);
-            x.y = ay.unwrap_or(x.y) + dy.unwrap_or(0.0);
+            x.x = clamp_pos(ax.unwrap_or(x.x) + dx.unwrap_or(0.0));
+            x.y = clamp_pos(ay.unwrap_or(x.y) + dy.unwrap_or(0.0));
         }
         Ok(())
     })
@@ -202,6 +212,8 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
                     x.h = h.unwrap_or(x.h);
                 }
             }
+            x.w = clamp_side(x.w);
+            x.h = clamp_side(x.h);
             // Rotated shapes resize about their centre; others keep the top-left.
             if x.rot != 0.0 {
                 x.x = cx - x.w / 2.0;
@@ -215,10 +227,10 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
 fn set_bounds(s: &mut Session, p: &Value) -> Result<Value> {
     edit_geometry(s, p, "shape.setBounds", |sh| {
         if let Some(x) = sh.xfrm.as_mut() {
-            x.x = f64_param(p, "x").unwrap_or(x.x);
-            x.y = f64_param(p, "y").unwrap_or(x.y);
-            x.w = f64_param(p, "w").unwrap_or(x.w).max(0.0);
-            x.h = f64_param(p, "h").unwrap_or(x.h).max(0.0);
+            x.x = clamp_pos(f64_param(p, "x").unwrap_or(x.x));
+            x.y = clamp_pos(f64_param(p, "y").unwrap_or(x.y));
+            x.w = clamp_side(f64_param(p, "w").unwrap_or(x.w));
+            x.h = clamp_side(f64_param(p, "h").unwrap_or(x.h));
         }
         Ok(())
     })
