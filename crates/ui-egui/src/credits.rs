@@ -49,9 +49,9 @@ impl NameMode {
 
     pub fn label(self) -> &'static str {
         match self {
-            NameMode::Username => "Username",
-            NameMode::DisplayName => "Display name",
-            NameMode::RealName => "Real name",
+            NameMode::Username => crate::tl!("Username"),
+            NameMode::DisplayName => crate::tl!("Display name"),
+            NameMode::RealName => crate::tl!("Real name"),
         }
     }
 }
@@ -88,16 +88,16 @@ impl SortKey {
     /// Menu label and table header.
     pub fn label(self) -> (&'static str, &'static str) {
         match self {
-            SortKey::Name => ("Name (A–Z)", "Name"),
-            SortKey::Prs => ("Merged PRs", "PRs"),
-            SortKey::Commits => ("Commits", "Commits"),
-            SortKey::LinesAdded => ("Lines added", "+LOC"),
-            SortKey::LinesDeleted => ("Lines deleted", "−LOC"),
-            SortKey::LinesDelta => ("Line delta", "ΔLOC"),
-            SortKey::BinaryAdded => ("Binary assets added", "+Bin"),
-            SortKey::BinaryDeleted => ("Binary assets removed", "−Bin"),
-            SortKey::FirstCommit => ("First commit", "First"),
-            SortKey::LastCommit => ("Last commit", "Last"),
+            SortKey::Name => (crate::tl!("Name (A–Z)"), crate::tl!("Name")),
+            SortKey::Prs => (crate::tl!("Merged PRs"), crate::tl!("PRs")),
+            SortKey::Commits => (crate::tl!("Commits"), crate::tl!("Commits")),
+            SortKey::LinesAdded => (crate::tl!("Lines added"), crate::tl!("+LOC")),
+            SortKey::LinesDeleted => (crate::tl!("Lines deleted"), crate::tl!("−LOC")),
+            SortKey::LinesDelta => (crate::tl!("Line delta"), crate::tl!("ΔLOC")),
+            SortKey::BinaryAdded => (crate::tl!("Binary assets added"), crate::tl!("+Bin")),
+            SortKey::BinaryDeleted => (crate::tl!("Binary assets removed"), crate::tl!("−Bin")),
+            SortKey::FirstCommit => (crate::tl!("First commit"), crate::tl!("First")),
+            SortKey::LastCommit => (crate::tl!("Last commit"), crate::tl!("Last")),
         }
     }
 
@@ -123,18 +123,29 @@ impl Contributor {
 
     /// One line with everything we know, for tooltips.
     pub fn summary(&self) -> String {
-        format!(
-            "@{}: {} PRs, {} commits, +{} / −{} lines (Δ {}), +{} / −{} binary assets, {} – {}",
-            self.login,
-            self.prs,
-            self.commits,
-            group(self.lines_added),
-            group(self.lines_deleted),
-            signed(self.lines_delta()),
-            self.binary_added,
-            self.binary_deleted,
-            day(self.first_commit),
-            day(self.last_commit),
+        let prs = self.prs.to_string();
+        let commits = self.commits.to_string();
+        let added = group(self.lines_added);
+        let deleted = group(self.lines_deleted);
+        let delta = signed(self.lines_delta());
+        let bin_added = self.binary_added.to_string();
+        let bin_deleted = self.binary_deleted.to_string();
+        crate::i18n::fmt(
+            crate::tl!(
+                "@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{bin_added} / −{bin_deleted} binary assets, {first} – {last}"
+            ),
+            &[
+                ("login", self.login),
+                ("prs", &prs),
+                ("commits", &commits),
+                ("added", &added),
+                ("deleted", &deleted),
+                ("delta", &delta),
+                ("bin_added", &bin_added),
+                ("bin_deleted", &bin_deleted),
+                ("first", day(self.first_commit)),
+                ("last", day(self.last_commit)),
+            ],
         )
     }
 }
@@ -215,14 +226,14 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     let id = egui::Id::new("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
-        ui.label("Show");
+        ui.label(crate::tl!("Show"));
         for m in NameMode::ALL {
             if ui.selectable_label(v.names == m, m.label()).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
-        ui.label("Sort");
+        ui.label(crate::tl!("Sort"));
         egui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
             for k in SortKey::ALL {
                 if ui.selectable_label(v.key == k, k.label().0).clicked() {
@@ -231,23 +242,30 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
                 }
             }
         });
-        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text("Reverse the order").clicked() {
+        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text(crate::tl!("Reverse the order")).clicked() {
             v.ascending = !v.ascending;
         }
         ui.separator();
-        if ui.selectable_label(!v.table, "Grab bag").clicked() {
+        if ui.selectable_label(!v.table, crate::tl!("Grab bag")).clicked() {
             v.table = false;
         }
-        if ui.selectable_label(v.table, "Table").clicked() {
+        if ui.selectable_label(v.table, crate::tl!("Table")).clicked() {
             v.table = true;
         }
     });
     let list = sorted(CONTRIBUTORS, v.names, v.key, v.ascending);
-    ui.label(RichText::new(format!("{} contributors · {} commits", list.len(), group(TOTAL_COMMITS))).small().weak());
+    ui.label(
+        RichText::new(crate::i18n::fmt(
+            crate::tl!("{count} contributors · {commits} commits"),
+            &[("count", &list.len().to_string()), ("commits", &group(TOTAL_COMMITS))],
+        ))
+        .small()
+        .weak(),
+    );
     ui.separator();
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         if list.is_empty() {
-            ui.label("No contributor data was built into this copy.");
+            ui.label(crate::tl!("No contributor data was built into this copy."));
         } else if v.table {
             table(ui, &list, &mut v);
         } else {
@@ -297,13 +315,20 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
 /// About ▸ Models: AI models credited in Co-Authored-By trailers.
 pub fn models_ui(ui: &mut egui::Ui) {
     if MODELS.is_empty() {
-        ui.label("No model credits were built into this copy.");
+        ui.label(crate::tl!("No model credits were built into this copy."));
         return;
     }
     let assisted: u64 = MODELS.iter().map(|m| m.commits).max().unwrap_or(0).max(1);
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         egui::Grid::new("credits_models").striped(true).num_columns(6).show(ui, |ui| {
-            for h in ["Company", "Model", "Version", "Commits", "% of all commits", "Lines +/−"] {
+            for h in [
+                crate::tl!("Company"),
+                crate::tl!("Model"),
+                crate::tl!("Version"),
+                crate::tl!("Commits"),
+                crate::tl!("% of all commits"),
+                crate::tl!("Lines +/−"),
+            ] {
                 ui.label(RichText::new(h).strong());
             }
             ui.end_row();

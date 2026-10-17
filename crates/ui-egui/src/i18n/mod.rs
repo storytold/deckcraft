@@ -293,4 +293,6 @@ pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
 #[cfg(test)]
 pub(crate) mod pseudo;
 #[cfg(test)]
+mod audit;
+#[cfg(test)]
 mod tests;
