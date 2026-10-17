@@ -230,6 +230,25 @@ fn bold_copy_is_html_and_pages_html_pastes_bold() {
 }
 
 #[test]
+fn html_paste_with_a_source_newline_keeps_its_bold() {
+    let mut s = session();
+    s.execute("edit.paste", &json!({"text": "Hello world", "html": "<p><b>Hello</b>\nworld</p>"})).unwrap();
+    let body = s
+        .doc()
+        .unwrap()
+        .current_slide()
+        .unwrap()
+        .shapes
+        .iter()
+        .find(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Hello world"))
+        .unwrap()
+        .text
+        .clone()
+        .unwrap();
+    assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true), "{body:?}");
+}
+
+#[test]
 fn group_ungroup_roundtrip_positions() {
     let mut s = session();
     let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 50, 50]})).unwrap()["id"].as_u64().unwrap();
