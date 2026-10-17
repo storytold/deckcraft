@@ -222,7 +222,6 @@ pub fn ramp(stops: &[(f64, Rgba)]) -> Vec<Rgba> {
 
 /// Fill `path` with a `rect` or `shape` path gradient of `stops` (sorted and expanded, see
 /// `ramp::expand`) over `bounds`, faded by `alpha`; `m` maps the path to the output.
-#[allow(clippy::too_many_arguments)]
 pub fn fill(ctx: &mut RenderContext, kind: &str, focus: [f64; 4], stops: &[(f64, Rgba)], bounds: Rect, path: &BezPath, m: Affine, alpha: f64) {
     if bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() || stops.is_empty() {
         return;

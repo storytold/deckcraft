@@ -608,7 +608,6 @@ fn line_details(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
 
 /// A slider for one property of a shape effect: shows `value` (in display units), and when the
 /// drag ends runs `shape.effects` with `{key: {prop: shown × scale}}`.
-#[allow(clippy::too_many_arguments)]
 fn fx_slider(
     app: &mut SlideApp,
     ui: &mut Ui,

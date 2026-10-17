@@ -505,7 +505,6 @@ fn write_model(
 
 /// A SmartArt graphic: a graphic frame naming its data, layout, quick style and colour parts,
 /// with the group's shapes as the cached drawing PowerPoint shows until it lays the diagram out.
-#[allow(clippy::too_many_arguments)]
 fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &deckcraft_model::Diagram, children: &[Shape], child: &Xfrm) {
     use crate::dgm;
     let id = cx.id_for(s);
@@ -836,7 +835,6 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
     w.close("p:pic");
 }
 
-#[allow(clippy::too_many_arguments)]
 fn opaque(
     w: &mut W,
     x: &mut Exp,

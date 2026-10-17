@@ -698,7 +698,6 @@ pub fn autonum(scheme: &str, n: u32) -> String {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, opts: &Opts, number: Option<u32>, vertical: Upright) -> ParaShaped {
     let db = FontDb::global();
     let Some(para) = body.paragraphs.get(pi) else {
@@ -813,7 +812,6 @@ fn run_effects(ctx: &Ctx, r: &RunProps, scale: f64) -> Option<RunEffects> {
     (shadow.is_some() || glow.is_some()).then_some(RunEffects { shadow, glow })
 }
 
-#[allow(clippy::too_many_arguments)]
 fn shape_cells(
     ctx: &Ctx,
     text: &str,
@@ -1035,7 +1033,6 @@ fn shaping_features(cells: &[Cell], styles: &[Style], script: Option<ScriptTag>)
 
 /// Shape cells `range` (one item) and hang each cluster's glyphs on its first cell, sharing the
 /// cluster's advance among its graphemes (by the ligature's GDEF carets when it has them).
-#[allow(clippy::too_many_arguments)]
 fn shape_item(
     cells: &mut [Cell],
     styles: &[Style],
@@ -1595,7 +1592,6 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
     l
 }
 
-#[allow(clippy::too_many_arguments)]
 fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts: &Opts, scale: f64, reduce: f64) -> TextLayout {
     #[cfg(test)]
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));

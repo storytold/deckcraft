@@ -104,7 +104,6 @@ fn nearest_edge(polys: &[Vec<Point>], areas: &[f64], p: Point) -> Option<(f64, k
 /// Draw the lit face and bevel band over a shape filled with `fill` (a solid colour, or `None`
 /// for any other fill, which gets the band's highlights and shading as light and dark veils)
 /// inside `path` (shape space, laid out in `bounds`), `m` mapping it to the output.
-#[allow(clippy::too_many_arguments)]
 pub fn draw(ctx: &mut RenderContext, bevel: &Bevel, fill: Option<Rgba>, path: &BezPath, bounds: Rect, m: Affine, alpha: f64) {
     let lit = &bevel.lighting;
     if bounds.width() <= 0.0 || bounds.height() <= 0.0 || !bounds.is_finite() {
