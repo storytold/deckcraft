@@ -64,14 +64,14 @@ impl Page {
     /// Side-menu label and page heading.
     pub fn label(self) -> &'static str {
         match self {
-            Page::Home => "Home",
-            Page::New => "New",
-            Page::Open => "Open",
-            Page::Info => "Info",
-            Page::SaveAs => "Save As",
-            Page::Print => "Print",
-            Page::Export => "Export",
-            Page::Account => "Account",
+            Page::Home => crate::tl!("Home"),
+            Page::New => crate::tl!("New"),
+            Page::Open => crate::tl!("Open"),
+            Page::Info => crate::tl!("Info"),
+            Page::SaveAs => crate::tl!("Save As"),
+            Page::Print => crate::tl!("Print"),
+            Page::Export => crate::tl!("Export"),
+            Page::Account => crate::tl!("Account"),
         }
     }
 
@@ -107,9 +107,9 @@ impl Nav {
     fn label(self) -> &'static str {
         match self {
             Nav::Page(p) => p.label(),
-            Nav::Save => "Save",
-            Nav::Close => "Close",
-            Nav::Options => "Options",
+            Nav::Save => crate::tl!("Save"),
+            Nav::Close => crate::tl!("Close"),
+            Nav::Options => crate::tl!("Options"),
         }
     }
     fn icon(self) -> Icon {
@@ -333,7 +333,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Back"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::tl!("Back")));
             let hovered = resp.hovered();
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
@@ -345,7 +345,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text,
                 false,
             );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            if resp.on_hover_text(crate::tl!("Back (Esc)")).clicked() {
                 out.close = true;
             }
         } else {
@@ -523,7 +523,7 @@ fn new_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize, blank: 
     }
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-        if blank && tile(ui, "Blank Presentation", None, false).clicked() {
+        if blank && tile(ui, crate::tl!("Blank Presentation"), None, false).clicked() {
             let _ = app.run("file.new", json!({}));
         }
         let mut shown = 0;
@@ -538,7 +538,7 @@ fn new_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize, blank: 
         }
         if sample && shown < limit {
             let th = deckcraft_model::theme::builtin_themes().into_iter().find(|t| t.name == "DeckCraft");
-            if tile(ui, "Sample deck: Northern Lights", th.as_ref(), false).clicked()
+            if tile(ui, crate::tl!("Sample deck: Northern Lights"), th.as_ref(), false).clicked()
                 && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session)
             {
                 app.set_status(e.to_string());
@@ -579,14 +579,14 @@ pub fn split_path(path: &str) -> (String, String) {
 fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
     let t = Tokens::get(ui.ctx());
     if app.ui.recent.is_empty() {
-        dim(ui, "Presentations you open show up here. Use Open to browse for one.");
+        dim(ui, crate::tl!("Presentations you open show up here. Use Open to browse for one."));
         return;
     }
     let q = query.trim().to_lowercase();
     let list: Vec<String> =
         app.ui.recent.iter().filter(|p| q.is_empty() || split_path(p).0.to_lowercase().contains(&q)).take(limit).cloned().collect();
     if list.is_empty() {
-        dim(ui, &format!("No recent presentations match “{}”.", query.trim()));
+        dim(ui, &crate::i18n::fmt(crate::tl!("No recent presentations match “{query}”."), &[("query", query.trim())]));
         return;
     }
     let width = ui.available_width().min(CONTENT_W);
@@ -610,22 +610,26 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
             p.text(pos2(rect.left() + 44.0, rect.center().y + 9.0), Align2::LEFT_CENTER, &folder, theme::font(11.0), t.text_dim);
             // A missing file says so before it is clicked (#172).
             if missing {
-                p.text(pos2(visible_right - 82.0, rect.center().y), Align2::RIGHT_CENTER, "(missing)", theme::font(11.0), t.text_dim);
+                p.text(pos2(visible_right - 82.0, rect.center().y), Align2::RIGHT_CENTER, crate::tl!("(missing)"), theme::font(11.0), t.text_dim);
             }
         }
-        let resp = if missing { resp.on_hover_text(format!("{path} — this file can't be found")) } else { resp.on_hover_text(&path) };
+        let resp = if missing {
+            resp.on_hover_text(crate::i18n::fmt(crate::tl!("{path} — this file can't be found"), &[("path", &path)]))
+        } else {
+            resp.on_hover_text(&path)
+        };
         // Remove from the list: a real labelled widget on top of the row, with a code-drawn icon
         // (a text glyph would need a font that has it).
         let x = ui.allocate_rect(
             Rect::from_min_max(pos2(visible_right - 32.0, rect.top() + 5.0), pos2(visible_right, rect.bottom() - 5.0)),
             Sense::click(),
         );
-        x.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Remove from Recent"));
+        x.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::tl!("Remove from Recent")));
         if x.hovered() {
             ui.painter().rect_filled(x.rect, CornerRadius::same(3), t.hover);
         }
         icons::paint(ui.painter(), Rect::from_center_size(x.rect.center(), vec2(14.0, 14.0)), Icon::Close, t.text_dim, false);
-        if x.on_hover_text("Remove from Recent").clicked() {
+        if x.on_hover_text(crate::tl!("Remove from Recent")).clicked() {
             app.forget_recent(&path);
         }
         if resp.clicked() {
@@ -696,9 +700,9 @@ fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) 
     });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("New").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(crate::tl!("New")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if arrow_link(ui, "More themes") {
+            if arrow_link(ui, crate::tl!("More themes")) {
                 out.page = Some(Page::New);
             }
         });
@@ -707,9 +711,9 @@ fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) 
     new_tiles(app, ui, "", 5, true);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Templates").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(crate::tl!("Templates")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if arrow_link(ui, "More templates") {
+            if arrow_link(ui, crate::tl!("More templates")) {
                 out.page = Some(Page::New);
             }
         });
@@ -718,9 +722,9 @@ fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) 
     template_tiles(app, ui, "", 3);
     ui.add_space(22.0);
     ui.horizontal(|ui| {
-        ui.label(RichText::new("Recent").font(theme::bold(16.0)).color(t.text));
+        ui.label(RichText::new(crate::tl!("Recent")).font(theme::bold(16.0)).color(t.text));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            search(ui, &mut bs.query, "Search for a file", 280.0);
+            search(ui, &mut bs.query, crate::tl!("Search for a file"), 280.0);
         });
     });
     ui.add_space(6.0);
@@ -728,19 +732,19 @@ fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) 
     if app.ui.recent.len() > 8 {
         ui.add_space(6.0);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
-            if arrow_link(ui, "More presentations") {
+            if arrow_link(ui, crate::tl!("More presentations")) {
                 out.page = Some(Page::Open);
             }
         });
     }
     ui.add_space(30.0);
-    ui.hyperlink_to("Join the ArtCraft community on Discord", deckcraft_engine::links::DISCORD);
+    ui.hyperlink_to(crate::tl!("Join the ArtCraft community on Discord"), deckcraft_engine::links::DISCORD);
 }
 
 /// New: a blank presentation, then every theme and starter template, with a search box.
 fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
-    if tile(ui, "Blank Presentation", None, true).clicked() {
+    if tile(ui, crate::tl!("Blank Presentation"), None, true).clicked() {
         let _ = app.run("file.new", json!({}));
     }
     ui.add_space(8.0);
@@ -748,19 +752,19 @@ fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let (r, _) = ui.allocate_exact_size(vec2(w, 1.0), Sense::hover());
     ui.painter().line_segment([r.left_center(), r.right_center()], Stroke::new(1.0, t.separator));
     ui.add_space(14.0);
-    search(ui, &mut bs.query, "Search for themes and templates", 380.0);
+    search(ui, &mut bs.query, crate::tl!("Search for themes and templates"), 380.0);
     ui.add_space(14.0);
     let q = bs.query.clone();
     let themes = new_tiles(app, ui, &q, usize::MAX, false);
     let templates = if q.trim().is_empty() || !deckcraft_engine::templates::matching(&q).is_empty() {
         ui.add_space(18.0);
-        heading(ui, "Templates");
+        heading(ui, crate::tl!("Templates"));
         template_tiles(app, ui, &q, usize::MAX)
     } else {
         false
     };
     if !themes && !templates {
-        dim(ui, &format!("No themes or templates match “{}”.", q.trim()));
+        dim(ui, &crate::i18n::fmt(crate::tl!("No themes or templates match “{query}”."), &[("query", q.trim())]));
     }
 }
 
@@ -770,16 +774,19 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(230.0);
-            place_row(ui, Icon::Recent, "Recent", true, 220.0);
-            if place_row(ui, Icon::OpenFolder, "Browse", false, 220.0).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
+            place_row(ui, Icon::Recent, crate::tl!("Recent"), true, 220.0);
+            if place_row(ui, Icon::OpenFolder, crate::tl!("Browse"), false, 220.0)
+                .on_hover_text(crate::tl!("Open a presentation from a folder (Ctrl+O)"))
+                .clicked()
+            {
                 let _ = app.run("app.openDialog", json!({}));
             }
             if app.session.recovery_dir.is_some() {
                 ui.add_space(24.0);
-                if ui.button("Recover Unsaved Presentations").clicked() {
+                if ui.button(crate::tl!("Recover Unsaved Presentations")).clicked() {
                     match app.run("file.recovery.open", json!({})) {
                         Ok(v) if v.get("opened").and_then(Value::as_array).is_some_and(|a| a.is_empty()) => {
-                            app.set_status("There are no unsaved presentations to recover");
+                            app.set_status(crate::tl!("There are no unsaved presentations to recover"));
                         }
                         _ => {}
                     }
@@ -791,9 +798,9 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
         ui.add_space(24.0);
         ui.vertical(|ui| {
-            search(ui, &mut bs.query, "Search for a file", 380.0);
+            search(ui, &mut bs.query, crate::tl!("Search for a file"), 380.0);
             ui.add_space(12.0);
-            heading(ui, "Presentations");
+            heading(ui, crate::tl!("Presentations"));
             let q = bs.query.clone();
             recent_list(app, ui, &q, usize::MAX);
         });
@@ -805,7 +812,7 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
 fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
     let Ok(v) = app.session.execute("file.info", &json!({})) else {
-        dim(ui, "No presentation is open.");
+        dim(ui, crate::tl!("No presentation is open."));
         return;
     };
     let path = v.get("path").and_then(Value::as_str).map(str::to_string);
@@ -814,18 +821,18 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     ui.label(RichText::new(&title).font(theme::font(24.0)).color(t.accent));
     match &path {
         Some(p) => dim(ui, p),
-        None => dim(ui, "Not saved yet"),
+        None => dim(ui, crate::tl!("Not saved yet")),
     }
     if let Some(p) = &path {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Copy path").clicked() {
+            if ui.button(crate::tl!("Copy path")).clicked() {
                 ui.ctx().copy_text(p.clone());
-                app.set_status("Copied the path");
+                app.set_status(crate::tl!("Copied the path"));
             }
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(dir) = std::path::Path::new(p).parent().and_then(|d| d.to_str())
-                && ui.button("Open file location").clicked()
+                && ui.button(crate::tl!("Open file location")).clicked()
             {
                 app.open_url(&format!("file:///{}", dir.replace('\\', "/").trim_start_matches('/')));
             }
@@ -838,25 +845,25 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             if task(
                 ui,
                 Icon::Accessibility,
-                "Check for Issues",
-                "Inspect Presentation",
-                "Before you share it, check the presentation for things people with disabilities might find hard to read.",
+                crate::tl!("Check for Issues"),
+                crate::tl!("Inspect Presentation"),
+                crate::tl!("Before you share it, check the presentation for things people with disabilities might find hard to read."),
                 true,
             ) {
                 let _ = app.run("app.dialog", json!({"id": "accessibility"}));
             }
             let (detail, can_revert) = match (dirty, path.is_some()) {
-                (false, _) => ("There are no unsaved changes.", false),
-                (true, true) => ("This presentation has unsaved changes. Revert goes back to the saved file.", true),
-                (true, false) => ("This presentation has never been saved.", false),
+                (false, _) => (crate::tl!("There are no unsaved changes."), false),
+                (true, true) => (crate::tl!("This presentation has unsaved changes. Revert goes back to the saved file."), true),
+                (true, false) => (crate::tl!("This presentation has never been saved."), false),
             };
-            if task(ui, Icon::ResetSlide, "Revert", "Manage Presentation", detail, can_revert) {
+            if task(ui, Icon::ResetSlide, crate::tl!("Revert"), crate::tl!("Manage Presentation"), detail, can_revert) {
                 let _ = app.run("file.revert", json!({}));
             }
         });
         ui.add_space(30.0);
         ui.vertical(|ui| {
-            heading(ui, "Properties");
+            heading(ui, crate::tl!("Properties"));
             let props = v.get("properties").cloned().unwrap_or_default();
             let size = v.get("bytes").and_then(Value::as_u64).map(format_bytes);
             egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 7.0)).show(ui, |ui| {
@@ -866,16 +873,16 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     ui.end_row();
                 };
                 if let Some(s) = size {
-                    row(ui, "Size", s);
+                    row(ui, crate::tl!("Size"), s);
                 }
-                row(ui, "Slides", v.get("slides").and_then(Value::as_u64).unwrap_or(0).to_string());
-                row(ui, "Hidden slides", v.get("hiddenSlides").and_then(Value::as_u64).unwrap_or(0).to_string());
+                row(ui, crate::tl!("Slides"), v.get("slides").and_then(Value::as_u64).unwrap_or(0).to_string());
+                row(ui, crate::tl!("Hidden slides"), v.get("hiddenSlides").and_then(Value::as_u64).unwrap_or(0).to_string());
                 for (i, (key, label, hint)) in PROPERTIES.iter().enumerate() {
                     let saved = props.get(*key).and_then(Value::as_str).unwrap_or("").to_string();
                     let Some(draft) = bs.props.get_mut(i) else { continue };
-                    let l = ui.label(RichText::new(*label).color(t.text_dim));
+                    let l = ui.label(RichText::new(crate::tl!(*label)).color(t.text_dim));
                     let id = ui.make_persistent_id(("backstage_prop", *key));
-                    let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(*hint).desired_width(300.0)).labelled_by(l.id);
+                    let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(crate::tl!(*hint)).desired_width(300.0)).labelled_by(l.id);
                     if resp.lost_focus() && *draft != saved {
                         // Commit first: a click on another field takes the focus before this one is drawn.
                         let mut p = serde_json::Map::new();
@@ -888,7 +895,7 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     }
                     ui.end_row();
                 }
-                row(ui, "Location", path.clone().unwrap_or_else(|| "Not saved yet".into()));
+                row(ui, crate::tl!("Location"), path.clone().unwrap_or_else(|| crate::tl!("Not saved yet").into()));
             });
         });
     });
@@ -927,21 +934,21 @@ fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();
     ui.label(RichText::new(&title).font(theme::font(15.0)).color(t.text));
-    dim(ui, path.as_deref().unwrap_or("Not saved yet"));
+    dim(ui, path.as_deref().unwrap_or(crate::tl!("Not saved yet")));
     ui.add_space(14.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("backstage_save_type").width(340.0).selected_text(current).show_ui(ui, |ui| {
+        egui::ComboBox::from_id_salt("backstage_save_type").width(340.0).selected_text(crate::tl!(current)).show_ui(ui, |ui| {
             for (id, label, _) in SAVE_TYPES {
-                if ui.selectable_label(bs.file_type == id, label).clicked() {
+                if ui.selectable_label(bs.file_type == id, crate::tl!(label)).clicked() {
                     bs.file_type = id;
                 }
             }
         });
         let web = app.services.pick_save.is_none();
-        let label = if web { "Download" } else { "Save" };
+        let label = if web { crate::tl!("Download") } else { crate::tl!("Save") };
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
-        if save.on_hover_text(if web { "Download the file" } else { "Choose where to save" }).clicked() {
+        if save.on_hover_text(if web { crate::tl!("Download the file") } else { crate::tl!("Choose where to save") }).clicked() {
             let fmt = bs.file_type;
             let done = if matches!(fmt, "pptx" | "deckcraft") {
                 let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
@@ -957,7 +964,7 @@ fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     });
     ui.add_space(8.0);
     if let Some((_, _, detail)) = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type) {
-        dim(ui, detail);
+        dim(ui, crate::tl!(detail));
     }
 }
 
@@ -1023,7 +1030,7 @@ const LAYOUTS: [(&str, &str); 8] = [
 fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
     let Some((doc, current)) = app.session.active().map(|d| (d.doc.clone(), d.selection.slide)) else {
-        dim(ui, "No presentation is open.");
+        dim(ui, crate::tl!("No presentation is open."));
         return;
     };
     let slides = print_slides(&doc, bs, current);
@@ -1031,7 +1038,7 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.vertical(|ui| {
             ui.set_width(250.0);
             let ok = slides.as_ref().is_ok_and(|s| !s.is_empty());
-            if square_button(ui, Icon::Print, "Print", ok).clicked()
+            if square_button(ui, Icon::Print, crate::tl!("Print"), ok).clicked()
                 && let Ok(s) = &slides
             {
                 app.print_pdf(print_params(bs, s));
@@ -1040,22 +1047,24 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             dim(
                 ui,
                 if app.services.pick_save.is_some() {
-                    "DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer."
+                    crate::tl!("DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer.")
                 } else {
-                    "DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer."
+                    crate::tl!("DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer.")
                 },
             );
             ui.add_space(14.0);
-            heading(ui, "Settings");
+            heading(ui, crate::tl!("Settings"));
             let scope = match bs.print_scope {
-                PrintScope::All => "Print All Slides",
-                PrintScope::Current => "Print Current Slide",
-                PrintScope::Custom => "Custom Range",
+                PrintScope::All => crate::tl!("Print All Slides"),
+                PrintScope::Current => crate::tl!("Print Current Slide"),
+                PrintScope::Custom => crate::tl!("Custom Range"),
             };
             egui::ComboBox::from_id_salt("backstage_print_scope").width(240.0).selected_text(scope).show_ui(ui, |ui| {
-                for (s, label) in
-                    [(PrintScope::All, "Print All Slides"), (PrintScope::Current, "Print Current Slide"), (PrintScope::Custom, "Custom Range")]
-                {
+                for (s, label) in [
+                    (PrintScope::All, crate::tl!("Print All Slides")),
+                    (PrintScope::Current, crate::tl!("Print Current Slide")),
+                    (PrintScope::Custom, crate::tl!("Custom Range")),
+                ] {
                     if ui.selectable_label(bs.print_scope == s, label).clicked() {
                         bs.print_scope = s;
                         bs.preview_page = 0;
@@ -1064,8 +1073,10 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let l = ui.label("Slides:");
-                let r = ui.add(egui::TextEdit::singleline(&mut bs.print_range).hint_text("e.g. 1-3, 5").desired_width(176.0)).labelled_by(l.id);
+                let l = ui.label(crate::tl!("Slides:"));
+                let r = ui
+                    .add(egui::TextEdit::singleline(&mut bs.print_range).hint_text(crate::tl!("e.g. 1-3, 5")).desired_width(176.0))
+                    .labelled_by(l.id);
                 if r.changed() {
                     // Typing a range picks Custom Range, as in PowerPoint.
                     bs.print_scope = if bs.print_range.trim().is_empty() { PrintScope::All } else { PrintScope::Custom };
@@ -1073,10 +1084,10 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 }
             });
             ui.add_space(4.0);
-            let layout = LAYOUTS.iter().find(|l| l.0 == bs.print_layout).map_or("Full Page Slides", |l| l.1);
-            egui::ComboBox::from_id_salt("backstage_print_layout").width(240.0).selected_text(layout).show_ui(ui, |ui| {
+            let layout = LAYOUTS.iter().find(|l| l.0 == bs.print_layout).map_or(crate::tl!("Full Page Slides"), |l| l.1);
+            egui::ComboBox::from_id_salt("backstage_print_layout").width(240.0).selected_text(crate::tl!(layout)).show_ui(ui, |ui| {
                 for (id, label) in LAYOUTS {
-                    if ui.selectable_label(bs.print_layout == id, label).clicked() {
+                    if ui.selectable_label(bs.print_layout == id, crate::tl!(label)).clicked() {
                         bs.print_layout = id;
                         bs.preview_page = 0;
                     }
@@ -1086,18 +1097,18 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             // PowerPoint prints full-page slides on slide-shaped pages; paper and orientation are
             // for notes pages and handouts.
             ui.add_enabled_ui(bs.print_layout != "slides", |ui| {
-                let paper = deckcraft_engine::cmd::file::PAPERS.iter().find(|p| p.0 == bs.print_paper).map_or("Letter", |p| p.1);
-                egui::ComboBox::from_id_salt("backstage_print_paper").width(240.0).selected_text(paper).show_ui(ui, |ui| {
+                let paper = deckcraft_engine::cmd::file::PAPERS.iter().find(|p| p.0 == bs.print_paper).map_or(crate::tl!("Letter"), |p| p.1);
+                egui::ComboBox::from_id_salt("backstage_print_paper").width(240.0).selected_text(crate::tl!(paper)).show_ui(ui, |ui| {
                     for (id, label, _) in deckcraft_engine::cmd::file::PAPERS {
-                        if ui.selectable_label(bs.print_paper == id, label).clicked() {
+                        if ui.selectable_label(bs.print_paper == id, crate::tl!(label)).clicked() {
                             bs.print_paper = id;
                         }
                     }
                 });
                 ui.add_space(4.0);
-                let orient = if bs.print_landscape { "Landscape Orientation" } else { "Portrait Orientation" };
+                let orient = if bs.print_landscape { crate::tl!("Landscape Orientation") } else { crate::tl!("Portrait Orientation") };
                 egui::ComboBox::from_id_salt("backstage_print_orientation").width(240.0).selected_text(orient).show_ui(ui, |ui| {
-                    for (land, label) in [(false, "Portrait Orientation"), (true, "Landscape Orientation")] {
+                    for (land, label) in [(false, crate::tl!("Portrait Orientation")), (true, crate::tl!("Landscape Orientation"))] {
                         if ui.selectable_label(bs.print_landscape == land, label).clicked() {
                             bs.print_landscape = land;
                         }
@@ -1105,12 +1116,12 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 });
             });
             ui.add_space(4.0);
-            if ui.checkbox(&mut bs.print_hidden, "Print Hidden Slides").changed() {
+            if ui.checkbox(&mut bs.print_hidden, crate::tl!("Print Hidden Slides")).changed() {
                 bs.preview_page = 0;
             }
-            ui.checkbox(&mut bs.print_frame, "Frame Slides");
+            ui.checkbox(&mut bs.print_frame, crate::tl!("Frame Slides"));
             ui.add_space(6.0);
-            if ui.link("Edit Header & Footer").clicked() {
+            if ui.link(crate::tl!("Edit Header & Footer")).clicked() {
                 let _ = app.run("app.dialog", json!({"id": "headerFooter"}));
             }
         });
@@ -1120,7 +1131,7 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.add_space(20.0);
         ui.vertical(|ui| match &slides {
             Err(e) => dim(ui, e),
-            Ok(s) if s.is_empty() => dim(ui, "Nothing to print: every slide in the range is hidden."),
+            Ok(s) if s.is_empty() => dim(ui, crate::tl!("Nothing to print: every slide in the range is hidden.")),
             Ok(s) => preview(app, ui, bs, &doc, s),
         });
     });
@@ -1214,12 +1225,15 @@ fn preview(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, doc: &deckcraft_
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let prev = icon_button(ui, Icon::ChevronLeft, "Previous Page", bs.preview_page > 0);
+        let prev = icon_button(ui, Icon::ChevronLeft, crate::tl!("Previous Page"), bs.preview_page > 0);
         if prev {
             bs.preview_page = bs.preview_page.saturating_sub(1);
         }
-        ui.label(format!("{} of {}", bs.preview_page + 1, pages.len()));
-        if icon_button(ui, Icon::ChevronRight, "Next Page", bs.preview_page < last) {
+        ui.label(crate::i18n::fmt(
+            crate::tl!("{current} of {total}"),
+            &[("current", &(bs.preview_page + 1).to_string()), ("total", &pages.len().to_string())],
+        ));
+        if icon_button(ui, Icon::ChevronRight, crate::tl!("Next Page"), bs.preview_page < last) {
             bs.preview_page = (bs.preview_page + 1).min(last);
         }
     });
@@ -1245,9 +1259,9 @@ fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.vertical(|ui| {
             ui.set_width(250.0);
             for (task, icon, label) in [
-                (ExportTask::Pdf, Icon::File, "Create PDF Document"),
-                (ExportTask::Handouts, Icon::Notes, "Create Handouts"),
-                (ExportTask::FileType, Icon::Export, "Change File Type"),
+                (ExportTask::Pdf, Icon::File, crate::tl!("Create PDF Document")),
+                (ExportTask::Handouts, Icon::Notes, crate::tl!("Create Handouts")),
+                (ExportTask::FileType, Icon::Export, crate::tl!("Change File Type")),
             ] {
                 if place_row(ui, icon, label, bs.export == task, 244.0).clicked() {
                     bs.export = task;
@@ -1261,56 +1275,75 @@ fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             ui.set_max_width(560.0);
             match bs.export {
                 ExportTask::Pdf => {
-                    ui.label(RichText::new("Create a PDF Document").font(theme::font(16.0)).color(t.text));
+                    ui.label(RichText::new(crate::tl!("Create a PDF Document")).font(theme::font(16.0)).color(t.text));
                     bullets(
                         ui,
-                        &["Keeps the layout, fonts and pictures", "Opens on any device with a PDF viewer", "The presentation keeps its own file"],
+                        &[
+                            crate::tl!("Keeps the layout, fonts and pictures"),
+                            crate::tl!("Opens on any device with a PDF viewer"),
+                            crate::tl!("The presentation keeps its own file"),
+                        ],
                     );
-                    ui.checkbox(&mut bs.pdf_hidden, "Include hidden slides");
+                    ui.checkbox(&mut bs.pdf_hidden, crate::tl!("Include hidden slides"));
                     ui.add_space(10.0);
-                    if square_button(ui, Icon::File, "Create PDF", true).clicked() {
+                    if square_button(ui, Icon::File, crate::tl!("Create PDF"), true).clicked() {
                         app.export_as("pdf", json!({"includeHidden": bs.pdf_hidden}));
                     }
                 }
                 ExportTask::Handouts => {
-                    ui.label(RichText::new("Create Handouts").font(theme::font(16.0)).color(t.text));
-                    bullets(ui, &["Several slides on each page of a PDF", "Three a page leaves lines for notes", "Print them for your audience"]);
+                    ui.label(RichText::new(crate::tl!("Create Handouts")).font(theme::font(16.0)).color(t.text));
+                    bullets(
+                        ui,
+                        &[
+                            crate::tl!("Several slides on each page of a PDF"),
+                            crate::tl!("Three a page leaves lines for notes"),
+                            crate::tl!("Print them for your audience"),
+                        ],
+                    );
                     egui::ComboBox::from_id_salt("backstage_handouts")
                         .width(240.0)
-                        .selected_text(format!("{} slides per page", bs.handouts_per_page))
+                        .selected_text(crate::i18n::fmt(crate::tl!("{count} slides per page"), &[("count", &bs.handouts_per_page.to_string())]))
                         .show_ui(ui, |ui| {
                             for n in [1u8, 2, 3, 4, 6, 9] {
-                                if ui.selectable_label(bs.handouts_per_page == n, format!("{n} slides per page")).clicked() {
+                                let count = n.to_string();
+                                let label = crate::i18n::fmt(crate::tl!("{count} slides per page"), &[("count", &count)]);
+                                if ui.selectable_label(bs.handouts_per_page == n, label).clicked() {
                                     bs.handouts_per_page = n;
                                 }
                             }
                         });
                     ui.add_space(10.0);
-                    if square_button(ui, Icon::Notes, "Create Handouts", true).clicked() {
+                    if square_button(ui, Icon::Notes, crate::tl!("Create Handouts"), true).clicked() {
                         app.export_as("pdf", json!({"layout": "handouts", "perPage": bs.handouts_per_page}));
                     }
                 }
                 ExportTask::FileType => {
-                    ui.label(RichText::new("Change File Type").font(theme::font(16.0)).color(t.text));
+                    ui.label(RichText::new(crate::tl!("Change File Type")).font(theme::font(16.0)).color(t.text));
                     ui.add_space(8.0);
                     for (id, label, detail) in SAVE_TYPES.iter().filter(|s| s.0 != "pdf") {
                         let selected = bs.file_type == *id;
                         let (rect, resp) = ui.allocate_exact_size(vec2(520.0, 46.0), Sense::click());
-                        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, *label));
+                        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, crate::tl!(label)));
                         let p = ui.painter();
                         if selected {
                             p.rect_filled(rect, CornerRadius::same(2), t.selected);
                         } else if resp.hovered() {
                             p.rect_filled(rect, CornerRadius::same(2), t.hover);
                         }
-                        p.text(pos2(rect.left() + 12.0, rect.center().y - 8.0), Align2::LEFT_CENTER, *label, theme::font(13.0), t.text);
-                        p.text(pos2(rect.left() + 12.0, rect.center().y + 9.0), Align2::LEFT_CENTER, *detail, theme::font(11.5), t.text_dim);
+                        p.text(pos2(rect.left() + 12.0, rect.center().y - 8.0), Align2::LEFT_CENTER, crate::tl!(label), theme::font(13.0), t.text);
+                        p.text(
+                            pos2(rect.left() + 12.0, rect.center().y + 9.0),
+                            Align2::LEFT_CENTER,
+                            crate::tl!(detail),
+                            theme::font(11.5),
+                            t.text_dim,
+                        );
                         if resp.clicked() {
                             bs.file_type = id;
                         }
                     }
                     ui.add_space(12.0);
-                    if square_button(ui, Icon::SaveAs, "Save As", true).clicked() {
+                    if square_button(ui, Icon::SaveAs, crate::tl!("Save As"), true).clicked() {
                         app.export_as(bs.file_type, json!({}));
                     }
                 }
@@ -1337,42 +1370,45 @@ fn account(app: &mut SlideApp, ui: &mut Ui) {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(340.0);
-            heading(ui, "Appearance");
+            heading(ui, crate::tl!("Appearance"));
             let dark = app.ui.brightness == theme::Brightness::Dark;
-            egui::ComboBox::from_id_salt("backstage_appearance").width(260.0).selected_text(if dark { "Dark" } else { "Light" }).show_ui(ui, |ui| {
-                for (on, label) in [(false, "Light"), (true, "Dark")] {
-                    if ui.selectable_label(dark == on, label).clicked() {
-                        let _ = app.run("view.dark", json!({"on": on}));
+            egui::ComboBox::from_id_salt("backstage_appearance")
+                .width(260.0)
+                .selected_text(if dark { crate::tl!("Dark") } else { crate::tl!("Light") })
+                .show_ui(ui, |ui| {
+                    for (on, label) in [(false, crate::tl!("Light")), (true, crate::tl!("Dark"))] {
+                        if ui.selectable_label(dark == on, label).clicked() {
+                            let _ = app.run("view.dark", json!({"on": on}));
+                        }
                     }
-                }
-            });
+                });
             ui.add_space(16.0);
-            heading(ui, "User Information");
-            dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
+            heading(ui, crate::tl!("User Information"));
+            dim(ui, crate::tl!("DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device."));
         });
         ui.add_space(40.0);
         ui.vertical(|ui| {
-            heading(ui, "Product Information");
+            heading(ui, crate::tl!("Product Information"));
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
                 crate::dialogs::paint_logo(ui.painter(), r);
                 ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
             });
             dim(ui, &crate::dialogs::version_line());
-            dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
+            dim(ui, crate::tl!("Open source under MIT OR Apache-2.0. Not affiliated with Microsoft."));
             ui.add_space(14.0);
             if task(
                 ui,
                 Icon::Help,
-                "About DeckCraft",
-                "About DeckCraft",
-                "The version, the people and models who built it, and where to find us.",
+                crate::tl!("About DeckCraft"),
+                crate::tl!("About DeckCraft"),
+                crate::tl!("The version, the people and models who built it, and where to find us."),
                 true,
             ) {
                 let _ = app.run("app.about", json!({}));
             }
-            ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+            ui.hyperlink_to(crate::tl!("Join our community on Discord"), deckcraft_engine::links::DISCORD);
+            ui.hyperlink_to(crate::tl!("Source on GitHub"), deckcraft_engine::links::GITHUB);
         });
     });
 }

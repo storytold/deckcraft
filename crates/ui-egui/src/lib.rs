@@ -6,6 +6,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// An English UI string in the current interface language ([`i18n::t`]).
+#[macro_export]
+macro_rules! tl {
+    ($s:expr) => {
+        $crate::i18n::t($s)
+    };
+}
+
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
@@ -15,6 +23,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -191,7 +200,7 @@ fn command_for(purpose: FilePurpose, name: &str, bytes: &[u8]) -> Result<&'stati
         FilePurpose::Open => open_command(name),
         FilePurpose::Infer => infer_command(name, bytes),
     };
-    cmd.ok_or_else(|| format!("{name}: DeckCraft can't open this kind of file"))
+    cmd.ok_or_else(|| crate::i18n::fmt(crate::tl!("{name}: DeckCraft can't open this kind of file"), &[("name", name)]))
 }
 
 /// How long a transient status message stays visible.
@@ -274,6 +283,14 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Interface language: `auto` (follow the system) or a registered code such as `zh-hans`.
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+/// The `language` default for older `ui.json` files that predate the setting.
+fn default_language() -> String {
+    i18n::AUTO.to_string()
 }
 
 impl Default for UiState {
@@ -305,6 +322,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: i18n::AUTO.to_string(),
         }
     }
 }
@@ -348,6 +366,8 @@ impl UiState {
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
+        // A language code from another version, or a hand edit, follows the system.
+        self.language = i18n::normalize_pref(&self.language).unwrap_or(i18n::AUTO).to_string();
         self
     }
 }
@@ -377,6 +397,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("ui.language", "Interface Language", None, "{value: auto | <code>}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -744,7 +765,7 @@ impl SlideApp {
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
-                self.set_status(format!("DeckCraft can't export “{other}”"));
+                self.set_status(crate::i18n::fmt(crate::tl!("DeckCraft can't export “{format}”"), &[("format", other)]));
                 return false;
             }
         };
@@ -757,7 +778,7 @@ impl SlideApp {
             }
             return match self.run("file.export", params) {
                 Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
+                    self.set_status(crate::i18n::fmt(crate::tl!("Exported {path}"), &[("path", path.as_str())]));
                     true
                 }
                 Err(_) => false,
@@ -794,7 +815,7 @@ impl SlideApp {
                 false
             }
             (Ok(_), None) => {
-                self.set_status("Saving a copy needs a file picker, which this window doesn't have.");
+                self.set_status(crate::tl!("Saving a copy needs a file picker, which this window doesn't have."));
                 false
             }
         }
@@ -820,7 +841,7 @@ impl SlideApp {
         match self.run("file.export", params) {
             Ok(_) => {
                 self.open_url(&format!("file:///{}", path.replace('\\', "/").trim_start_matches('/')));
-                self.set_status("Opened the presentation as a PDF to print");
+                self.set_status(crate::tl!("Opened the presentation as a PDF to print"));
                 true
             }
             Err(_) => false,
@@ -944,6 +965,10 @@ impl SlideApp {
                 self.restyle = true;
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
+            "ui.language" => {
+                let value = p.get("value").and_then(Value::as_str).ok_or("missing `value`")?;
+                self.ui.language = i18n::normalize_pref(value).ok_or_else(|| format!("unknown language {value:?}"))?.to_string();
+            }
             "view.newWindow" => return doc_window::command(self, p),
             "show.start" => {
                 if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
@@ -1023,7 +1048,7 @@ impl SlideApp {
                     self.pick_and_insert("theme", "design.browseTheme");
                 } else {
                     // The browser's asynchronous picker would open the file as a new document.
-                    self.set_status("Browse for Themes needs the desktop app for now".to_string());
+                    self.set_status(crate::tl!("Browse for Themes needs the desktop app for now").to_string());
                 }
             }
             "app.qat" => return qat::command(self, p),
@@ -1041,7 +1066,7 @@ impl SlideApp {
                     self.pick_and_insert("open", "review.compare");
                 } else {
                     // The browser's asynchronous picker would open the file as a new document.
-                    self.set_status("Compare needs the desktop app for now".to_string());
+                    self.set_status(crate::tl!("Compare needs the desktop app for now").to_string());
                 }
             }
             "app.dialog" => {
@@ -1152,7 +1177,7 @@ impl SlideApp {
         };
         if timeline.is_empty() {
             self.anim_preview = None;
-            self.set_status("This slide has no animations");
+            self.set_status(crate::tl!("This slide has no animations"));
             return Ok(json!({"playing": false}));
         }
         if matches!(self.ui.view, ViewMode::Sorter | ViewMode::NotesPage) {
@@ -1161,7 +1186,7 @@ impl SlideApp {
         self.close_backstage();
         let duration = timeline.total_duration();
         self.anim_preview = Some(AnimPreview { uid, slide, slide_ptr: ptr, started: None, elapsed: 0.0, timeline });
-        self.set_status("Previewing animations");
+        self.set_status(crate::tl!("Previewing animations"));
         Ok(json!({"playing": true, "slide": slide, "duration": duration}))
     }
 
@@ -1205,12 +1230,18 @@ impl SlideApp {
     /// current one (desktop only: the browser picker opens what it picks as a document).
     fn pick_and_reuse(&mut self, keep: bool) {
         let Some(pick) = self.services.pick_open.as_mut() else {
-            self.set_status("Reuse Slides needs the desktop app".to_string());
+            self.set_status(crate::tl!("Reuse Slides needs the desktop app").to_string());
             return;
         };
         let Some(path) = pick("open") else { return };
         match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep})) {
-            Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
+            Ok(r) => {
+                let count = r["slides"].to_string();
+                self.set_status(crate::i18n::fmt(
+                    crate::tl!("Inserted {count} slides from {path}"),
+                    &[("count", count.as_str()), ("path", path.as_str())],
+                ));
+            }
             Err(e) => self.set_status(e.to_string()),
         }
     }
@@ -1262,7 +1293,7 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status(crate::i18n::fmt(crate::tl!("Saved {path}"), &[("path", path.as_str())]));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }
@@ -1296,7 +1327,7 @@ impl SlideApp {
     pub fn save(&mut self) {
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
-                Ok(_) => self.set_status("Saved"),
+                Ok(_) => self.set_status(crate::tl!("Saved")),
                 Err(e) => self.set_status(e.to_string()),
             }
         } else {
@@ -1443,7 +1474,7 @@ impl SlideApp {
             return self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
         };
         let Some(idx) = self.session.documents().iter().position(|d| d.uid == *doc) else {
-            return Err(format!("{name} was not applied: the presentation it was chosen for is closed"));
+            return Err(crate::i18n::fmt(crate::tl!("{name} was not applied: the presentation it was chosen for is closed"), &[("name", name)]));
         };
         let view = self.session.active_index();
         let saved = self.session.documents().get(idx).map(|d| d.selection.clone());
@@ -1452,7 +1483,7 @@ impl SlideApp {
             Ok(located) => located,
             Err(e) => {
                 self.restore_file_view(view);
-                return Err(format!("{name} was not applied: {e}"));
+                return Err(crate::i18n::fmt(crate::tl!("{name} was not applied: {error}"), &[("name", name), ("error", e.as_str())]));
             }
         };
         if let Some(st) = self.session.active_mut() {
@@ -1488,32 +1519,42 @@ impl SlideApp {
         let d = self.session.doc().map_err(|e| e.to_string())?;
         match place {
             FilePlace::Slide(id) => {
-                let slide = d.doc.slide_index(*id).ok_or_else(|| "the slide it was chosen for was deleted".to_string())?;
+                let slide = d.doc.slide_index(*id).ok_or_else(|| crate::tl!("the slide it was chosen for was deleted").to_string())?;
                 Ok(LocatedPlace { target: Target::Slides, slide: Some(slide) })
             }
             FilePlace::Master(id) => {
-                let master =
-                    d.doc.masters.iter().position(|m| m.id == *id).ok_or_else(|| "the slide master it was chosen for was deleted".to_string())?;
+                let master = d
+                    .doc
+                    .masters
+                    .iter()
+                    .position(|m| m.id == *id)
+                    .ok_or_else(|| crate::tl!("the slide master it was chosen for was deleted").to_string())?;
                 Ok(LocatedPlace { target: Target::Master { master }, slide: None })
             }
             FilePlace::Layout { master, layout } => {
-                let mi =
-                    d.doc.masters.iter().position(|m| m.id == *master).ok_or_else(|| "the slide master it was chosen for was deleted".to_string())?;
+                let mi = d
+                    .doc
+                    .masters
+                    .iter()
+                    .position(|m| m.id == *master)
+                    .ok_or_else(|| crate::tl!("the slide master it was chosen for was deleted").to_string())?;
                 let li = d
                     .doc
                     .masters
                     .get(mi)
                     .and_then(|m| m.layouts.iter().position(|l| l.id == *layout))
-                    .ok_or_else(|| "the layout it was chosen for was deleted".to_string())?;
+                    .ok_or_else(|| crate::tl!("the layout it was chosen for was deleted").to_string())?;
                 Ok(LocatedPlace { target: Target::Layout { master: mi, layout: li }, slide: None })
             }
             FilePlace::NotesPage(t) => Ok(LocatedPlace { target: *t, slide: None }),
-            FilePlace::Unspecified => Err("there was no slide to put it on".into()),
+            FilePlace::Unspecified => Err(crate::tl!("there was no slide to put it on").into()),
         }
     }
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        // The interface is drawn in the setting's language; every `tl!`/`i18n::t` lookup reads it.
+        i18n::set_current(i18n::Lang::from_pref(&self.ui.language));
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -1562,7 +1603,8 @@ impl SlideApp {
             if self.session.documents().iter().any(|d| d.is_dirty())
                 && let Err(e) = self.session.execute("file.recovery.save", &json!({}))
             {
-                self.set_status(format!("Couldn't save AutoRecover information: {e}"));
+                let error = e.to_string();
+                self.set_status(crate::i18n::fmt(crate::tl!("Couldn't save AutoRecover information: {error}"), &[("error", error.as_str())]));
             }
         }
         // On the web, dropped files can only be read asynchronously: the host reads them and
@@ -1600,6 +1642,11 @@ impl SlideApp {
         }
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);
+        }
+        // The interface's own words: a CJK interface draws characters no presentation contains
+        // (ribbon labels, dialogs), so borrow a face for them from the catalogs.
+        if i18n::current().uses_cjk() {
+            self.ui_fonts.note(ctx, i18n::cjk_ui_text());
         }
         self.ui_fonts.apply(ctx);
     }
