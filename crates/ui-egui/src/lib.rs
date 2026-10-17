@@ -271,12 +271,12 @@ pub struct UiState {
     /// The Text Pane's line drafts, for the SmartArt group they were read from.
     pub smartart_drafts: (u32, Vec<String>),
     pub grayscale: bool,
+    pub language: UiLanguage,
     /// Comment the Review Previous/Next buttons last landed on: `(slide, index)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
-    pub language: UiLanguage,
 }
 
 impl Default for UiState {
@@ -306,9 +306,9 @@ impl Default for UiState {
             smartart_focus: None,
             smartart_drafts: (0, vec![]),
             grayscale: false,
+            language: UiLanguage::English,
             comment_focus: None,
             qat: qat::defaults(),
-            language: UiLanguage::English,
         }
     }
 }

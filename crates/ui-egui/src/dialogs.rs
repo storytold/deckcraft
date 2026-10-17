@@ -1175,7 +1175,11 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 format!("Do you want to save the changes you made to {what}?")
             };
             ui.label(egui::RichText::new(question).strong());
-            ui.label(if tr { "Kaydetmezseniz yaptığınız değişiklikler kaybolacaktır." } else { "Your changes will be lost if you don't save them." });
+            ui.label(if tr {
+                "Kaydetmezseniz yaptığınız değişiklikler kaybolacaktır."
+            } else {
+                "Your changes will be lost if you don't save them."
+            });
             ui.add_space(8.0);
             let mut done = false;
             ui.horizontal(|ui| {
@@ -1187,7 +1191,11 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     done = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save = ui.add(egui::Button::new(egui::RichText::new(app.ui.language.t("save")).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
+                    let save = ui.add(
+                        egui::Button::new(egui::RichText::new(app.ui.language.t("save")).color(t.accent_text))
+                            .fill(t.accent)
+                            .min_size(vec2(72.0, 24.0)),
+                    );
                     if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         if app.save_all() {
                             app.quit_confirmed = true;
@@ -1212,7 +1220,11 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 format!("Do you want to save the changes you made to “{name}”?")
             };
             ui.label(egui::RichText::new(question).strong());
-            ui.label(if tr { "Kaydetmezseniz yaptığınız değişiklikler kaybolacaktır." } else { "Your changes will be lost if you don't save them." });
+            ui.label(if tr {
+                "Kaydetmezseniz yaptığınız değişiklikler kaybolacaktır."
+            } else {
+                "Your changes will be lost if you don't save them."
+            });
             ui.add_space(8.0);
             let mut done = false;
             ui.horizontal(|ui| {
@@ -1222,7 +1234,11 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     done = true;
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let save = ui.add(egui::Button::new(egui::RichText::new(app.ui.language.t("save")).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0)));
+                    let save = ui.add(
+                        egui::Button::new(egui::RichText::new(app.ui.language.t("save")).color(t.accent_text))
+                            .fill(t.accent)
+                            .min_size(vec2(72.0, 24.0)),
+                    );
                     if save.clicked() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         app.save();
                         // In the browser a save is a download: the presentation stays "unsaved".
@@ -2125,15 +2141,13 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.label(egui::RichText::new(if tr { "Genel" } else { "General" }).font(theme::bold(13.0)));
             ui.horizontal(|ui| {
                 ui.label(if tr { "Arayüz dili:" } else { "Interface language:" });
-                egui::ComboBox::from_id_salt("ui_language")
-                    .selected_text(app.ui.language.name())
-                    .show_ui(ui, |ui| {
-                        for lang in crate::UiLanguage::ALL {
-                            if ui.selectable_label(app.ui.language == lang, lang.name()).clicked() {
-                                app.ui.language = lang;
-                            }
+                egui::ComboBox::from_id_salt("ui_language").selected_text(app.ui.language.name()).show_ui(ui, |ui| {
+                    for lang in crate::UiLanguage::ALL {
+                        if ui.selectable_label(app.ui.language == lang, lang.name()).clicked() {
+                            app.ui.language = lang;
                         }
-                    });
+                    }
+                });
             });
             let mut dark = app.ui.brightness == theme::Brightness::Dark;
             if ui.checkbox(&mut dark, if tr { "Koyu görünüm" } else { "Dark appearance" }).changed() {
@@ -2158,7 +2172,10 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.label(egui::RichText::new(if tr { "Düzenleme" } else { "Editing" }).font(theme::bold(13.0)));
             ui.checkbox(&mut app.session.prefs.smart_guides, if tr { "Akıllı kılavuzları göster" } else { "Show smart guides" });
             ui.checkbox(&mut app.session.prefs.snap_to_grid, if tr { "Nesneleri ızgaraya hizala" } else { "Snap objects to grid" });
-            ui.checkbox(&mut app.session.prefs.smart_quotes, if tr { "Düz tırnakları akıllı tırnaklarla değiştir" } else { "Replace straight quotes with smart quotes" });
+            ui.checkbox(
+                &mut app.session.prefs.smart_quotes,
+                if tr { "Düz tırnakları akıllı tırnaklarla değiştir" } else { "Replace straight quotes with smart quotes" },
+            );
             ui.horizontal(|ui| {
                 ui.checkbox(&mut app.session.prefs.autocorrect, if tr { "Yazarken Otomatik Düzelt" } else { "AutoCorrect as you type" });
                 if ui.button(if tr { "Otomatik Düzeltme Seçenekleri…" } else { "AutoCorrect Options…" }).clicked() {

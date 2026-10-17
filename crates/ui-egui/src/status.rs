@@ -18,21 +18,18 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let left = match st.selection.target {
             deckcraft_engine::Target::Slides => {
                 let current = (st.selection.slide + 1).min(n.max(1));
-                if lang == crate::UiLanguage::Turkish {
-                    format!("Slayt {} / {}", current, n)
-                } else {
-                    format!("Slide {} of {}", current, n)
-                }
+                if lang == crate::UiLanguage::Turkish { format!("Slayt {} / {}", current, n) } else { format!("Slide {} of {}", current, n) }
             }
             _ => lang.ribbon_tab("Slide Master").to_string(),
         };
         let p = ui.painter();
         p.text(pos2(rect.min.x + 14.0, rect.center().y), Align2::LEFT_CENTER, &left, theme::font(12.0), t.text_dim);
         // The selection's proofing language; a click opens Review › Language.
-        let (proofing_lang, no_proof) = crate::dialogs::selected_language(app);
-        let name = crate::squiggles::lang_name(&proofing_lang) + if no_proof { " (not checked)" } else { "" };
+        let (proof_lang, no_proof) = crate::dialogs::selected_language(app);
+        let name = crate::squiggles::lang_name(&proof_lang)
+            + if no_proof { if lang == crate::UiLanguage::Turkish { " (denetlenmiyor)" } else { " (not checked)" } } else { "" };
         let lr = p.text(pos2(rect.min.x + 120.0, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
-        if ui.interact(lr.expand(3.0), ui.id().with("status_lang"), Sense::click()).on_hover_text(lang.t("language")).clicked() {
+        if ui.interact(lr.expand(3.0), ui.id().with("status_lang"), Sense::click()).on_hover_text(lang.dialog_title("language")).clicked() {
             app.dialog = Some(crate::dialogs::Dialog::new("language"));
         }
         // Transient status message.
