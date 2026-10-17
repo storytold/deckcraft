@@ -92,23 +92,25 @@ fn regroup_regroups_the_last_ungroup() {
 
     s.execute("selection.select", &json!({"ids": [a, b]})).expect("select both");
     s.execute("arrange.group", &json!({})).expect("group");
-    assert_eq!(shapes(&s).len(), 1, "the two shapes are one now");
+    let grouped = plain(&s);
+    assert_eq!(grouped.len(), 1, "the two shapes are one now");
+    assert_eq!(children(&s, grouped[0]), vec![a, b], "a group holding both of them");
 
     s.execute("arrange.ungroup", &json!({})).expect("ungroup");
-    assert_eq!(shapes(&s), vec![a, b], "ungroup leaves the two shapes in their order");
+    assert_eq!(plain(&s), vec![a, b], "ungroup leaves the two shapes in their order");
     assert_eq!(selected(&s), vec![a, b], "ungroup leaves the children selected");
 
     s.execute("arrange.regroup", &json!({})).expect("regroup");
-    let grouped = shapes(&s);
-    assert_eq!(grouped.len(), 1, "regroup puts them back in one shape");
-    assert_eq!(children(&s, grouped[0]), vec![a, b], "holding the same two shapes");
-    assert_eq!(selected(&s), vec![grouped[0]], "and the new group is selected");
+    assert_eq!(plain(&s).len(), 1, "regroup puts them back in one shape");
+    let group = plain(&s)[0];
+    assert_eq!(children(&s, group), vec![a, b], "holding the same two shapes");
+    assert_eq!(selected(&s), vec![group], "and the new group is selected");
 }
 
-/// The shapes of the current slide, in stacking order.
-fn shapes(s: &Session) -> Vec<u32> {
+/// The slide's own shapes — the placeholders a layout brings in are not part of this test.
+fn plain(s: &Session) -> Vec<u32> {
     let st = s.doc().expect("doc");
-    st.doc.slides[st.selection.slide].shapes.iter().map(|x| x.id.0).collect()
+    st.doc.slides[st.selection.slide].shapes.iter().filter(|x| x.ph.is_none()).map(|x| x.id.0).collect()
 }
 
 fn selected(s: &Session) -> Vec<u32> {
