@@ -69,7 +69,9 @@ impl Tokens {
             guide: Color32::from_rgb(0xE8, 0x5D, 0x2A),
             caret: Color32::BLACK,
             text_selection: Color32::from_rgba_unmultiplied(0x5A, 0x8F, 0xE0, 90),
-            field_bg: Color32::WHITE,
+            // Controls drawn from this (checkboxes, slider troughs, fields) must stand out on
+            // the white card and the chrome, which have no border of their own (#826).
+            field_bg: Color32::from_rgb(0xE3, 0xE3, 0xE3),
             shadow: Color32::from_black_alpha(28),
         }
     }
@@ -263,6 +265,22 @@ mod tests {
         // so notes and the outline showed gaps where they were.
         for (c, size, ink) in drawn("\u{2013}\u{2014}-_\u{2026}\u{2022}\u{00b7}\u{2018}\u{2019}\u{201c}\u{201d}=~") {
             assert!(ink, "{c:?} ({:04X}) draws nothing at {size} px", c as u32);
+        }
+    }
+
+    /// Checkbox fills and slider troughs come from `field_bg`; they must stand out against the
+    /// dialog background in both themes (#826: white-on-white controls in light mode).
+    #[test]
+    fn field_backgrounds_stand_out_on_dialogs() {
+        let lum = |c: egui::Color32| 0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32;
+        for t in [super::Tokens::light(), super::Tokens::dark()] {
+            let ctx = egui::Context::default();
+            super::apply(&ctx, &t);
+            let v = ctx.global_style().visuals.clone();
+            for bg in [v.extreme_bg_color, v.widgets.inactive.bg_fill] {
+                let delta = (lum(bg) - lum(v.window_fill)).abs();
+                assert!(delta >= 8.0, "dark={}: control {:?} is invisible on dialog {:?}", t.dark, bg, v.window_fill);
+            }
         }
     }
 }
