@@ -169,6 +169,10 @@ pub struct Backstage {
     /// Notes and handouts: a paper id from [`deckcraft_engine::cmd::file::PAPERS`] and its orientation.
     pub print_paper: &'static str,
     pub print_landscape: bool,
+    /// Where Print sends the PDF ([`crate::print_dest`]).
+    pub print_dest: crate::print_dest::PrintDest,
+    /// The Print page has been shown since the File tab opened (a confirmation from before is void).
+    print_seen: bool,
     pub preview_page: usize,
     pub export: ExportTask,
     /// Export › Change File Type / Save As: the chosen type (an [`SAVE_TYPES`] id).
@@ -192,6 +196,8 @@ impl Backstage {
             print_frame: true,
             print_paper: "letter",
             print_landscape: false,
+            print_dest: Default::default(),
+            print_seen: false,
             preview_page: 0,
             export: ExportTask::Pdf,
             file_type: "pptx",
@@ -203,6 +209,7 @@ impl Backstage {
     /// Show `page`, as a click in the side menu does.
     pub fn go(&mut self, page: Page) {
         if self.page != page {
+            self.print_seen = false;
             self.query.clear();
             self.preview_page = 0;
         }
@@ -1029,20 +1036,37 @@ fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let slides = print_slides(&doc, bs, current);
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(250.0);
+            ui.set_width(if bs.print_dest == crate::print_dest::PrintDest::Network { 380.0 } else { 250.0 });
             let ok = slides.as_ref().is_ok_and(|s| !s.is_empty());
-            if square_button(ui, Icon::Print, "Print", ok).clicked()
+            if !bs.print_seen {
+                // A network printer's confirmation from an earlier visit is void.
+                bs.print_seen = true;
+                #[cfg(network_print)]
+                app.net_print.state.dialog_opened();
+            }
+            heading(ui, "Printer");
+            let ready = crate::print_dest::destination(app, ui, bs, ok);
+            ui.add_space(6.0);
+            if square_button(ui, Icon::Print, "Print", ok && ready).clicked()
                 && let Ok(s) = &slides
             {
-                app.print_pdf(print_params(bs, s));
+                let (params, count) = (print_params(bs, s), s.len());
+                crate::print_dest::send(app, bs, params, count);
             }
             ui.add_space(6.0);
             dim(
                 ui,
-                if app.services.pick_save.is_some() {
-                    "DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer."
-                } else {
-                    "DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer."
+                match (&bs.print_dest, app.services.pick_save.is_some()) {
+                    (crate::print_dest::PrintDest::Viewer, true) => {
+                        "DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer."
+                    }
+                    (crate::print_dest::PrintDest::Viewer, false) => {
+                        "DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer."
+                    }
+                    (crate::print_dest::PrintDest::Local(_), _) => "DeckCraft sends the PDF to this printer's queue.",
+                    (crate::print_dest::PrintDest::Network, _) => {
+                        "DeckCraft sends the PDF straight to the printer on your network; nothing is sent until you confirm."
+                    }
                 },
             );
             ui.add_space(14.0);
@@ -1149,9 +1173,11 @@ fn preview(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, doc: &deckcraft_
     p.rect_filled(page, 0.0, Color32::WHITE);
     let aspect = (doc.slide_size.height / doc.slide_size.width.max(1.0)) as f32;
     let mut budget = 4u32;
+    // Grayscale shows gray here too, from the very first frame (a separate cache entry per mode).
+    let gray = crate::print_dest::print_grayscale(app, bs);
     let mut draw_slide = |ui: &mut Ui, i: usize, r: Rect| {
         let px = (r.width() * ui.ctx().pixels_per_point()).round().clamp(16.0, 1600.0) as u32;
-        match app.textures.thumb(ui.ctx(), doc, i, px, &mut budget) {
+        match app.textures.thumb_in(ui.ctx(), doc, i, px, &mut budget, gray) {
             Some(tex) => {
                 ui.painter().image(tex.id(), r, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }

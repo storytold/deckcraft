@@ -504,6 +504,37 @@ fn print_previews_pages_and_prints_a_pdf() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The Print page's colour box says Grayscale, and ticking it turns the preview gray at once: the
+/// gray page is its own raster, requested on the toggle, and unticking brings the colour one back.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn print_grayscale_box_is_named_and_greys_the_preview() {
+    fn list() -> Vec<String> {
+        vec!["Office".into()]
+    }
+    fn submit(_: &[u8], _: &craft_print::Job, _: &mut dyn FnMut(usize, usize)) -> Result<String, String> {
+        Ok(String::new())
+    }
+    let mut app = new_app();
+    app.local_print = crate::localprint::Local::with(list, submit);
+    let mut h = harness(app);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+    h.run_steps(3);
+    h.state_mut().backstage.as_mut().unwrap().print_dest = crate::print_dest::PrintDest::Local("Office".into());
+    h.run_steps(4);
+    assert!(h.query_by_label("Black and white").is_none(), "the old wording is gone");
+    let colour_thumbs = h.state().textures.thumb_count();
+    h.get_by_label("Grayscale").click();
+    h.run_steps(6);
+    assert!(h.state().local_print.settings.grayscale);
+    assert!(crate::print_dest::print_grayscale(h.state(), h.state().backstage.as_ref().unwrap()));
+    assert!(h.state().textures.thumb_count() > colour_thumbs, "a gray raster of the page was requested, beside the colour one");
+    h.get_by_label("Grayscale").click();
+    h.run_steps(4);
+    assert!(!h.state().local_print.settings.grayscale);
+    assert!(!crate::print_dest::print_grayscale(h.state(), h.state().backstage.as_ref().unwrap()));
+}
+
 #[test]
 fn print_slides_follow_the_settings() {
     let mut s = Session::with_new();
@@ -534,4 +565,64 @@ fn print_slides_follow_the_settings() {
     assert!((w - 841.89).abs() < 0.01 && (h - 595.28).abs() < 0.01);
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
+}
+
+/// Print > Network printer through the real page: nothing is sent until the printer is queried and
+/// the box is ticked, then Print sends DeckCraft's own PDF for the page's settings, and the finished
+/// job's words name the printer.
+#[cfg(network_print)]
+#[test]
+fn print_to_a_network_printer_sends_the_pdf_after_query_and_confirmation() {
+    use craft_print::wsd::testing::{FakeConfig, FakePrinter, MemTransport};
+    use craft_ui::printing::network as net;
+
+    let printer = FakePrinter::new(FakeConfig::default());
+    let mut app = new_app();
+    for _ in 0..2 {
+        app.run("slide.new", json!({})).unwrap();
+    }
+    app.set_wsd_transport(std::sync::Arc::new(MemTransport(printer.clone())));
+    let mut h = harness(app);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::P);
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::Print));
+    h.state_mut().backstage.as_mut().unwrap().print_dest = crate::print_dest::PrintDest::Network;
+    h.state_mut().net_print.state.draft = net::Draft::for_address("127.0.0.1:5357/printer");
+    h.run_steps(3);
+    // Not queried, not confirmed: Print does nothing.
+    click_on_page(&h, "Print");
+    h.run_steps(3);
+    assert_eq!(printer.jobs(), 0);
+    click_on_page(&h, "Query printer");
+    for _ in 0..2000 {
+        h.run_steps(1);
+        if matches!(h.state().net_print.state.draft.query, net::Query::Done(_)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(matches!(h.state().net_print.state.draft.query, net::Query::Done(_)), "{:?}", h.state().net_print.state.draft.query);
+    click_on_page(&h, "Print");
+    h.run_steps(3);
+    assert_eq!(printer.jobs(), 0, "queried but not confirmed");
+    h.get_by_label("I confirm sending this document to this printer").click();
+    h.run_steps(3);
+    click_on_page(&h, "Print");
+    for _ in 0..2000 {
+        h.run_steps(1);
+        if matches!(h.state().net_print.state.draft.job, net::JobView::Finished(_) | net::JobView::Failed(_)) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(
+        matches!(&h.state().net_print.state.draft.job, net::JobView::Finished(r) if r.outcome == net::Outcome::Completed),
+        "{:?}",
+        h.state().net_print.state.draft.job
+    );
+    assert_eq!(printer.jobs(), 1);
+    let sent = printer.job(1).unwrap().document.unwrap();
+    assert!(sent.starts_with(b"%PDF"), "DeckCraft's own PDF went to the printer");
+    // Three slides (the new deck's one and two added) on full-page slide sheets: the job's page total is the sheet count.
+    assert_eq!(h.state().net_print.state.draft.expected_pages, Some(3));
 }

@@ -441,3 +441,93 @@ fn glyph_ranges_follow_shaping_clusters() {
     // A run starting mid-paragraph, multi-byte characters in visual (right-to-left) order.
     assert_eq!(glyph_text_ranges("αβγ", (3, 6), &[(5, 'γ'), (4, 'β'), (3, 'α')], 3), vec![4..6, 2..4, 0..2]);
 }
+
+/// The RGB image streams of a PDF, as (width, height, decoded bytes).
+fn rgb_images(bytes: &[u8]) -> Vec<(i32, i32, Vec<u8>)> {
+    use hayro_syntax::object::Object;
+    let pdf = hayro_syntax::Pdf::new(bytes.to_vec()).expect("pdf");
+    let mut out = Vec::new();
+    for obj in pdf.objects() {
+        let Object::Stream(s) = obj else { continue };
+        let d = s.dict();
+        let is_image = d.get::<hayro_syntax::object::Name>("Subtype").is_some_and(|n| n.as_str() == "Image");
+        let is_rgb = d.get::<hayro_syntax::object::Name>("ColorSpace").is_some_and(|n| n.as_str() == "DeviceRGB");
+        if is_image && is_rgb {
+            out.push((d.get::<i32>("Width").unwrap_or(0), d.get::<i32>("Height").unwrap_or(0), s.decoded().expect("decode").to_vec()));
+        }
+    }
+    out
+}
+
+fn red_slide() -> Presentation {
+    let mut p = deck(1);
+    Arc::make_mut(&mut p.slides[0]).background = Some(deckcraft_model::Background::Fill {
+        fill: deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(220, 30, 40))),
+    });
+    p
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_grayscale_export_has_only_gray_artwork() {
+    let p = red_slide();
+    let colour = rgb_images(&export(&p, &opts(PageLayout::Slides)).unwrap());
+    assert!(!colour.is_empty(), "the slide is one RGB image");
+    assert!(
+        colour.iter().any(|(_, _, px)| px.as_chunks::<3>().0.iter().any(|c| c[0] != c[1] || c[1] != c[2])),
+        "the plain export keeps the red fill"
+    );
+
+    let gray = rgb_images(&export(&p, &PdfOptions { grayscale: true, ..opts(PageLayout::Slides) }).unwrap());
+    assert!(!gray.is_empty());
+    for (w, h, px) in &gray {
+        assert_eq!(px.len(), (*w as usize) * (*h as usize) * 3);
+        assert!(px.as_chunks::<3>().0.iter().all(|c| c[0] == c[1] && c[1] == c[2]), "every pixel has R == G == B");
+    }
+    // Rec. 709 of (220, 30, 40) is 70: the red became a mid-dark gray, not white or black.
+    let (_, _, px) = &gray[0];
+    assert!(px.as_chunks::<3>().0.iter().any(|c| c[0] == 70), "the red fill is its luminance");
+    // Notes pages and handouts are gray too.
+    for layout in [PageLayout::Notes, PageLayout::Handouts { per_page: 4 }] {
+        let imgs = rgb_images(&export(&p, &PdfOptions { grayscale: true, ..opts(layout) }).unwrap());
+        assert!(!imgs.is_empty() && imgs.iter().all(|(_, _, px)| px.as_chunks::<3>().0.iter().all(|c| c[0] == c[1] && c[1] == c[2])), "{layout:?}");
+    }
+}
+
+/// A one-slide deck whose title text and whose shape both link out.
+fn linked_deck() -> Presentation {
+    use deckcraft_model::text::{Action, Hyperlink};
+    let mut p = red_slide();
+    let link = |action| Hyperlink { action, tooltip: "Link".into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None };
+    let slide = Arc::make_mut(&mut p.slides[0]);
+    let shape = slide.shapes.first_mut().expect("title shape");
+    shape.click = Some(link(Action::Url { url: "https://example.com/deck".into() }));
+    if let Some(run) = shape.text.as_mut().and_then(|t| t.paragraphs.first_mut()).and_then(|para| para.runs.first_mut()) {
+        run.props.link = Some(link(Action::Url { url: "https://example.com/text".into() }));
+    }
+    p
+}
+
+fn has_link_markup(bytes: &[u8]) -> bool {
+    [b"/Annots".as_slice(), b"/Link", b"/URI"].iter().any(|n| bytes.windows(n.len()).any(|w| w == *n))
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_pdf_without_annotations_has_no_links_but_the_same_pages() {
+    use hayro_syntax::object::Array;
+    let p = linked_deck();
+    let with = export(&p, &opts(PageLayout::Slides)).unwrap();
+    let without = export(&p, &PdfOptions { annotations: false, ..opts(PageLayout::Slides) }).unwrap();
+    assert!(has_link_markup(&with), "links are on by default");
+    assert!(!has_link_markup(&without), "no /Annots, /Link or /URI without annotations");
+    let pdf = hayro_syntax::Pdf::new(without.clone()).unwrap();
+    assert!(pdf.pages().iter().all(|page| page.raw().get::<Array<'_>>(b"Annots").is_none()));
+    // The page content (the artwork, with the links' own styling in it) is the same either way.
+    assert_eq!(rgb_images(&with), rgb_images(&without));
+    assert!(!rgb_images(&without).is_empty());
+    for layout in [PageLayout::Notes, PageLayout::Handouts { per_page: 6 }] {
+        let bytes = export(&p, &PdfOptions { annotations: false, ..opts(layout) }).unwrap();
+        assert!(!has_link_markup(&bytes));
+    }
+}

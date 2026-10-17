@@ -512,6 +512,21 @@ fn luma(rgb: [f64; 3]) -> f64 {
     0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
 }
 
+/// Gray of an 8-bit colour with the same Rec. 709 weights as [`luma`], in integers that sum to 256
+/// (white stays 255, black 0).
+pub fn gray_of(r: u8, g: u8, b: u8) -> u8 {
+    ((u32::from(r) * 54 + u32::from(g) * 183 + u32::from(b) * 19) >> 8) as u8
+}
+
+/// Turn RGBA pixels (4 bytes each; alpha is kept) gray in place with [`gray_of`]. The one conversion
+/// behind both the Print page's preview and the PDF it sends, so what is shown is what is printed.
+pub fn gray_rgba_in_place(pixels: &mut [u8]) {
+    for px in pixels.as_chunks_mut::<4>().0 {
+        let y = gray_of(px[0], px[1], px[2]);
+        px[..3].fill(y);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
@@ -595,6 +610,15 @@ mod tests {
         let other = PictureAdjust { duotone: Some((ColorRef::rgb(Rgba::rgb(0, 0, 0)), ColorRef::rgb(Rgba::rgb(255, 0, 0)))), ..Default::default() };
         assert_ne!(adjust_key(&adj), adjust_key(&other));
         assert_ne!(adjust_key(&adj), adjust_key(&PictureAdjust::default()));
+    }
+
+    #[test]
+    fn print_gray_is_rec709_keeps_alpha_and_the_extremes() {
+        let mut px = vec![255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 0, 255, 255, 255, 255, 0, 0, 0, 255];
+        gray_rgba_in_place(&mut px);
+        assert_eq!(px, [53, 53, 53, 255, 182, 182, 182, 128, 18, 18, 18, 0, 255, 255, 255, 255, 0, 0, 0, 255]);
+        assert_eq!(gray_of(255, 255, 255), 255);
+        assert_eq!(gray_of(90, 90, 90), 90, "an already gray pixel stays put");
     }
 
     #[test]
