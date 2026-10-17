@@ -3592,3 +3592,21 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+/// Slides imported from an outline join the section of the slide they follow, like `slide.new`.
+#[test]
+fn slides_from_outline_join_the_section_of_the_slide_they_follow() {
+    for markdown in [false, true] {
+        let mut s = session();
+        s.execute("slide.new", &json!({"title": "A"})).unwrap();
+        s.execute("section.add", &json!({"name": "B", "at": 1})).unwrap();
+        let text = if markdown { "# Imported\n- bullet" } else { "Imported\n\tbullet" };
+        s.execute("slide.fromOutline", &json!({"text": text, "markdown": markdown})).unwrap();
+        let doc = s.doc().unwrap().doc.clone();
+        let orphans: Vec<_> = doc.slides.iter().map(|x| x.id).filter(|id| doc.section_of(*id).is_none()).collect();
+        assert!(orphans.is_empty(), "markdown={markdown}: slides in no section: {orphans:?}; sections {:?}", doc.sections);
+        let order: Vec<_> = doc.sections.iter().flat_map(|x| x.slides.iter().copied()).collect();
+        let slides: Vec<_> = doc.slides.iter().map(|x| x.id).collect();
+        assert_eq!(order, slides, "markdown={markdown}: sections follow the slide order");
+    }
+}
