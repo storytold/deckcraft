@@ -23,7 +23,9 @@ commands:
   pdf-deps        verify pinned writer sources and the production feature boundary
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
+                  (every L0-L5 crate, the egui shell, mcp and the web app)
   ci              fmt --check, pdf-deps, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
+  version         set the workspace version and rewrite what depends on it
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   bench [--save] [DECK...]
                   time open, render, save and export of the sample (and DECKs) in release, and
@@ -121,16 +123,29 @@ fn cmd_layers() -> Result<(), String> {
     }
 }
 
-/// Workspace packages that must build for wasm32: all L0–L5 crates plus
-/// the egui shell.
+/// Workspace packages that must build for wasm32: all L0–L5 crates, the egui shell, the MCP
+/// server and the web app that loads it.
+///
+/// `mcp` and `web` used to be left out — `mcp` because it sits above the L5 cut-off, `web`
+/// because the apps are exempt from the layering table — so "never break wasm" was enforced for
+/// every library and for nothing a browser actually runs.
+const WASM_ABOVE_L5: &[&str] = &["ui-egui", "mcp"];
+const WASM_APPS: &[&str] = &["web"];
+
 fn wasm_set() -> Result<Vec<String>, String> {
     let crates = layers::from_metadata(&metadata()?)?;
     Ok(crates
         .into_iter()
-        .filter(|c| match layers::classify(&c.name) {
-            Some(layers::Class::Layer(l)) => l <= 5 || layers::short_name(&c.name) == "ui-egui",
-            Some(layers::Class::Standalone) => true,
-            _ => false,
+        .filter(|c| {
+            let name = layers::short_name(&c.name);
+            if WASM_APPS.contains(&name) {
+                return true;
+            }
+            match layers::classify(&c.name) {
+                Some(layers::Class::Layer(l)) => l <= 5 || WASM_ABOVE_L5.contains(&name),
+                Some(layers::Class::Standalone) => true,
+                _ => false,
+            }
         })
         .map(|c| c.name)
         .collect())

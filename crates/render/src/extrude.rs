@@ -108,7 +108,6 @@ pub fn side_color(rctx: &Ctx, e: &Extrusion, face: Option<Rgba>) -> Rgba {
 /// Draw the sides of `outline` (shape space, `w` × `h`): one quad per edge between the front face
 /// and the back face, each lit by `lit` for its own normal as camera `cam` sees it, farthest first.
 /// `pre` maps the turned shape's space to the output and `turn` is the camera's turn.
-#[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &mut RenderContext,
     outline: &BezPath,

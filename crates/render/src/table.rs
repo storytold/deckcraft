@@ -317,7 +317,6 @@ thread_local! {
 }
 
 /// Draws the table; returns the box its cells cover (table space), which grows with their text.
-#[allow(clippy::too_many_arguments)]
 pub fn draw(
     ctx: &mut RenderContext,
     pres: &Presentation,

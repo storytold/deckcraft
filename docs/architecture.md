@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change:** minor (2026-10-17: the control channel requires a token before any method, and the wasm check now covers `mcp` and `deckcraft-web`; 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -71,7 +71,9 @@ overlays an invisible real-text layer with embedded font subsets.
 ## Quality gates
 
 `cargo xtask ci`: rustfmt check, clippy `-D warnings`, tests, layering, asset attribution
-(`cargo xtask assets`), wasm32 check. CI runs it on Ubuntu for every PR and push to `main`;
+(`cargo xtask assets`), wasm32 check. The wasm check covers every L0–L5 crate, the egui shell, the
+MCP server and the web app, so what a browser loads is checked too. CI runs it on Ubuntu for every PR
+and push to `main`;
 macOS is built and tested by the release workflow only. Releases (pushes to `release`) build signed
 macOS, Windows, Linux, FreeBSD and web artifacts.
 
@@ -79,6 +81,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | Control channel: a `control.hello` token handshake before any method (transport-answered, so an unauthenticated peer cannot run one or fill the queue). The wasm check covers `mcp` and the web app, not just the libraries. Both painters are disarmed through commands |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |
 | 2026-10-14 | trivial | Command registry: 228 (`comment.next`, `comment.prev`) |

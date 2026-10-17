@@ -101,7 +101,6 @@ pub fn place_master_texts(pres: &Presentation, master: &deckcraft_model::Master,
 
 /// `group` is the index in `out.shapes` of the enclosing group; `own` is true for the slide's own
 /// shapes (recorded in `out.shapes`), false for the layout's and master's.
-#[allow(clippy::too_many_arguments)]
 fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: Affine, depth: usize, group: Option<usize>, own: bool) {
     if depth > 32 || s.hidden {
         return;
@@ -148,7 +147,6 @@ fn place(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, s: &Shape, parent: 
 }
 
 /// Lay out `body` in text rect `tr` of shape `s` (shape-local → slide `m`) and record it and its hyperlinks.
-#[allow(clippy::too_many_arguments)]
 fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId, s: &Shape, body: &TextBody, tr: Rect, m: Affine) {
     let layout = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: None, no_shrink: false });
     let m = crate::text_transform(m, tr, layout.rotation);

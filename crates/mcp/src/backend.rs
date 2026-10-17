@@ -4,11 +4,16 @@ use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::Duration;
 
+use deckcraft_engine::control_auth::{self, HELLO};
 use serde_json::{Value, json};
 
 // Includes the newline, matching the control server's request budget. In particular a peer
 // must not be able to grow a reply indefinitely by withholding its newline.
 const MAX_REPLY_BYTES: u64 = 16 * 1024 * 1024;
+
+/// The handshake's request id, kept below the ids methods use so a reply to it can never be
+/// mistaken for the answer to a command.
+const HELLO_ID: u64 = 0;
 
 /// Something that answers control-channel methods (`engine.execute`, `document.inspect`,
 /// `ui.pointer`, `ui.render`, …). See `deckcraft_ui_egui::control` for the full list.
@@ -24,16 +29,38 @@ pub trait Backend {
 /// A running DeckCraft app, reached through its loopback control port.
 pub struct Remote {
     addr: String,
+    token: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
 }
 
 impl Remote {
-    /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening.
-    pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+    /// Connect to `addr` (`127.0.0.1:7979`) and authenticate with `token`, failing fast when
+    /// nothing is listening or the token is refused. Every (re)connection repeats the handshake,
+    /// since the app has no memory of who connected before.
+    ///
+    /// Get the token with [`token_for`] unless the caller already has one.
+    pub fn connect(addr: &str, token: &str) -> std::io::Result<Self> {
+        let mut r = Self { addr: addr.to_string(), token: token.to_string(), conn: None, next_id: 1 };
         r.reconnect()?;
         Ok(r)
+    }
+
+    /// The token to present to the app on `addr`: the one in `DECKCRAFT_CONTROL_TOKEN`, else the
+    /// file the app wrote for that port. `--token` on the command line wins over both, and is the
+    /// caller's to check first.
+    pub fn token_for(addr: &str) -> Result<String, String> {
+        if let Ok(token) = std::env::var(control_auth::ENV) {
+            let token = token.trim();
+            if !token.is_empty() {
+                return Ok(token.to_string());
+            }
+        }
+        let hint = control_auth::port_of(addr)
+            .and_then(control_auth::token_file)
+            .map(|p| format!("the app writes it to {}", p.display()))
+            .unwrap_or_else(|| "start the app so it writes one".to_string());
+        Err(format!("no control token for {addr}: pass --token, set {}, or {hint}", control_auth::ENV))
     }
 
     pub fn addr(&self) -> &str {
@@ -51,12 +78,41 @@ impl Remote {
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
                     let read = s.try_clone()?;
                     self.conn = Some((BufReader::new(read), s));
+                    self.authenticate()?;
                     return Ok(());
                 }
                 Err(e) => last = e,
             }
         }
         Err(last)
+    }
+
+    /// Present the token. The app answers nothing else before this, and closes the connection on a
+    /// wrong token, so a refusal here is about the token rather than about the request that was
+    /// never sent.
+    fn authenticate(&mut self) -> std::io::Result<()> {
+        let hello = json!({"id": HELLO_ID, "method": HELLO, "params": {"token": self.token}}).to_string();
+        if let Err(e) = self.send(&hello) {
+            self.conn = None;
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                format!("the app at {} closed the connection during the handshake: {e}", self.addr),
+            ));
+        }
+        match self.receive(HELLO_ID) {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(refused)) => {
+                self.conn = None;
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    format!("the app at {} refused the control token: {refused}", self.addr),
+                ))
+            }
+            Err(e) => {
+                self.conn = None;
+                Err(e)
+            }
+        }
     }
 
     /// Write one request line. A failure here means the app never got a complete line, so retrying is safe.
@@ -155,6 +211,66 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+    /// Answer the handshake the way the app does, and hand back the reader for the request that
+    /// follows it. `None` means the peer hung up instead.
+    fn say_hello(stream: &TcpStream) -> Option<BufReader<TcpStream>> {
+        let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+        let mut line = String::new();
+        if reader.read_line(&mut line).expect("handshake") == 0 {
+            return None;
+        }
+        let hello: Value = serde_json::from_str(&line).expect("handshake JSON");
+        assert_eq!(hello["method"], HELLO, "a client authenticates before it sends a method");
+        assert_eq!(hello["params"]["token"], TOKEN, "the client presents the token it was given");
+        let mut w = stream;
+        let _ = w.write_all(format!("{{\"id\":{},\"ok\":true,\"result\":\"{HELLO}\"}}\n", hello["id"]).as_bytes());
+        Some(reader)
+    }
+
+    fn connect(addr: &str) -> Remote {
+        Remote::connect(addr, TOKEN).expect("connect")
+    }
+
+    /// A peer that refuses this token: it answers the handshake and closes without reading a method.
+    fn refuses(token_it_wants: &str) -> (std::thread::JoinHandle<()>, String) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        let wanted = token_it_wants.to_string();
+        let peer = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+            let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+            let mut line = String::new();
+            reader.read_line(&mut line).expect("handshake");
+            let hello: Value = serde_json::from_str(&line).expect("handshake JSON");
+            let given = hello["params"]["token"].as_str().unwrap_or_default().to_string();
+            if given == wanted {
+                let _ = stream.write_all(format!("{{\"id\":{},\"ok\":true,\"result\":\"{HELLO}\"}}\n", hello["id"]).as_bytes());
+            } else {
+                let _ = stream.write_all(b"{\"id\":0,\"ok\":false,\"error\":\"unauthorized: wrong control token\"}\n");
+            }
+        });
+        (peer, addr)
+    }
+
+    #[test]
+    fn a_refused_token_fails_to_connect_and_says_why() {
+        let (peer, addr) = refuses("a-different-token");
+        let Err(err) = Remote::connect(&addr, TOKEN) else {
+            panic!("the app refuses this token");
+        };
+        assert!(err.to_string().contains("refused the control token"), "{err}");
+        assert!(err.to_string().contains("wrong control token"), "the app's own reason is reported: {err}");
+        peer.join().expect("peer");
+    }
+
+    #[test]
+    fn the_handshake_uses_its_own_id() {
+        assert_eq!(HELLO_ID, 0, "method ids start at 1, so a handshake reply can never be read as one");
+    }
+
     fn reply_once(reply: Vec<u8>) -> (Remote, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr").to_string();
@@ -162,13 +278,14 @@ mod tests {
             let (mut stream, _) = listener.accept().expect("accept");
             stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
             stream.set_write_timeout(Some(Duration::from_secs(5))).expect("write timeout");
+            let Some(mut reader) = say_hello(&stream) else { return };
             let mut line = String::new();
-            BufReader::new(&stream).read_line(&mut line).expect("request");
+            reader.read_line(&mut line).expect("request");
             assert_eq!(serde_json::from_str::<Value>(&line).expect("JSON")["id"], 1);
             // An oversized reply may be rejected before the peer finishes writing it.
             let _ = stream.write_all(&reply);
         });
-        (Remote::connect(&addr).expect("connect"), peer)
+        (connect(&addr), peer)
     }
 
     #[test]
@@ -261,23 +378,26 @@ mod tests {
         let peer = std::thread::spawn(move || {
             let (mut first, _) = listener.accept().expect("first connection");
             first.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+            let Some(mut reader) = say_hello(&first) else { return false };
             let mut line = String::new();
-            BufReader::new(&first).read_line(&mut line).expect("initial request");
+            reader.read_line(&mut line).expect("initial request");
             // Even a stale frame whose ID happens to match must not answer a new request.
             first
                 .write_all(b"{\"id\":1,\"ok\":true,\"result\":\"first\"}\n{\"id\":2,\"ok\":true,\"result\":\"stale\"}\n")
                 .expect("two replies together");
             line.clear();
-            let sent_on_stale = BufReader::new(&first).read_line(&mut line).expect("first request") != 0;
+            let sent_on_stale = reader.read_line(&mut line).expect("next request") != 0;
             if !sent_on_stale {
                 let (mut fresh, _) = listener.accept().expect("fresh connection");
                 fresh.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
-                BufReader::new(&fresh).read_line(&mut line).expect("fresh request");
+                let Some(mut reader) = say_hello(&fresh) else { return false };
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("fresh request");
                 fresh.write_all(b"{\"id\":2,\"ok\":false,\"error\":\"rejected\"}\n").expect("actual reply");
             }
             sent_on_stale
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = connect(&addr);
         assert_eq!(remote.call("document.inspect", json!({})), Ok(json!("first")));
         // Force the stale frame into BufReader, where a socket-only peek cannot see it.
         assert!(!remote.conn.as_mut().expect("connection").0.fill_buf().expect("buffer").is_empty());
@@ -295,20 +415,17 @@ mod tests {
         let count = Arc::clone(&executed);
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
-                let mut reader = BufReader::new(&stream);
+                // The handshake is answered on every connection; only methods are counted.
+                let Some(mut reader) = say_hello(&stream) else { continue };
                 let mut line = String::new();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     continue;
                 }
-                let n = count.fetch_add(1, Ordering::SeqCst) + 1;
-                if n > 1 {
-                    let mut w = &stream;
-                    let _ = w.write_all(b"{\"id\":2,\"ok\":true,\"result\":null}\n");
-                }
-                // The first request is executed, then the connection drops without a reply.
+                count.fetch_add(1, Ordering::SeqCst);
+                // The request is executed, then the connection drops without a reply.
             }
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = connect(&addr);
         let err = remote.call("engine.execute", json!({})).expect_err("lost reply must be an error");
         assert!(err.contains("may or may not have run"), "{err}");
         assert_eq!(executed.load(Ordering::SeqCst), 1, "the command must not be replayed");
@@ -334,7 +451,7 @@ mod tests {
                     let _ = closed_tx.send(());
                     continue;
                 }
-                let mut reader = BufReader::new(&stream);
+                let Some(mut reader) = say_hello(&stream) else { continue };
                 let mut line = String::new();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     continue;
@@ -344,7 +461,7 @@ mod tests {
                 let _ = w.write_all(b"{\"id\":1,\"ok\":true,\"result\":null}\n");
             }
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = connect(&addr);
         closed_rx.recv().expect("server closed the first connection");
         std::thread::sleep(Duration::from_millis(200));
         assert!(remote.call("engine.execute", json!({})).is_ok(), "a request that never left must be sent on a fresh connection");

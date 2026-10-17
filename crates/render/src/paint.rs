@@ -10,7 +10,6 @@ use vello_cpu::{RenderContext, peniko};
 
 use crate::{color, images, shade};
 
-#[allow(clippy::too_many_arguments)]
 pub fn fill_path(
     ctx: &mut RenderContext,
     rctx: &Ctx,

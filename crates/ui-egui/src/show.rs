@@ -93,7 +93,6 @@ fn render_threads() -> u16 {
     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) }
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Slide `idx` at `step`, `t` seconds into it, `size` pixels, with `hidden` media hidden.
 fn render_frame(
     doc: &Presentation,
@@ -717,9 +716,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         let tex = if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == key) {
             show.tex.as_ref().map(|(_, t)| t.clone())
         } else {
-            // The frame rendered ahead of time, when it is this one (waiting for it beats starting over).
+            // The frame rendered ahead of time, when it is this one. Never wait for it here: the
+            // decoder behind the other thread can be slower than the frame, and on wasm a
+            // blocking receive freezes the browser outright, since nothing else can run (#240).
+            // An unfinished prefetch just falls through and renders this frame instead.
             let ready = match show.prefetch.take() {
-                Some(p) if p.key == key && !animating => p.rx.recv().ok(),
+                Some(p) if p.key == key && !animating => p.rx.try_recv().ok(),
                 _ => None,
             };
             let ci = match ready {

@@ -249,7 +249,6 @@ impl Textures {
     /// covers: the slide, grown over the pasteboard to show what reaches off the slide within
     /// `visible` (the canvas, in pixels from the slide's top-left corner). `extra` changes with the
     /// GIF frames. `editing_text` replaces its placeholder prompt with gray empty list markers.
-    #[allow(clippy::too_many_arguments)]
     pub fn slide(
         &mut self,
         ctx: &egui::Context,

@@ -363,7 +363,7 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "format.painter", json!({"sticky": true}));
             } else if r.clicked() {
                 if on {
-                    app.session.painter = None;
+                    run(app, "format.painterDisarm", json!({}));
                 } else {
                     run(app, "format.painter", json!({}));
                 }
@@ -1991,7 +1991,7 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "animation.painter", json!({"sticky": true}));
         } else if r.clicked() {
             if on {
-                app.session.anim_painter = None;
+                run(app, "animation.painterDisarm", json!({}));
             } else {
                 run(app, "animation.painter", json!({}));
             }

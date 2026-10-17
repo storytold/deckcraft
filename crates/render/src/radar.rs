@@ -144,7 +144,6 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
 
 /// A stock chart's marks at one category: the high-low line, then the up/down bar between the
 /// first (open) and last (close) series, else a dash at the close.
-#[allow(clippy::too_many_arguments)]
 pub fn stock_marks(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, x: f64, band: f64, i: usize, to_y: &dyn Fn(f64) -> f64) {
     let vals: Vec<f64> = c.series.iter().filter_map(|s| s.values.get(i).copied().flatten()).collect();
     if vals.len() < 2 {

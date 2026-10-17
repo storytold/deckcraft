@@ -692,7 +692,6 @@ impl Renderer {
         self.finish(ctx, w, h)
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn blend(
         &mut self,
         pres: &Presentation,
@@ -983,7 +982,6 @@ impl Renderer {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn geometry_shape(
         &mut self,
         ctx: &mut RenderContext,
@@ -1562,7 +1560,6 @@ fn blur(sigma: f64) -> Filter {
 
 /// Stroke `path` with `line`. A gradient line is laid out over `extent` (the untrimmed outline the
 /// line belongs to; `path` itself when `None`).
-#[allow(clippy::too_many_arguments)]
 pub(crate) fn stroke(
     ctx: &mut RenderContext,
     rctx: &Ctx,
@@ -1911,7 +1908,6 @@ fn trim_ends(path: &BezPath, start: f64, end: f64) -> BezPath {
     out
 }
 
-#[allow(clippy::too_many_arguments)]
 fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, geo: &Geometry, rel: Affine, m: Affine, lw: f64) {
     let Some(sp) = geo.paths.iter().find(|p| p.stroke) else { return };
     let Some(((a, a2), (b, b2))) = end_points(&sp.path) else { return };

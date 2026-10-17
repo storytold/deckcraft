@@ -36,7 +36,6 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
 
 /// Bars centred on one axis, as wide as their value, widest first as given: category labels on
 /// the left, values inside.
-#[allow(clippy::too_many_arguments)]
 fn funnel(
     ctx: &mut RenderContext,
     rctx: &Ctx,
@@ -203,7 +202,6 @@ pub fn squarify(vals: &[f64], r: Rect) -> Vec<Rect> {
     out
 }
 
-#[allow(clippy::too_many_arguments)]
 fn treemap(
     ctx: &mut RenderContext,
     rctx: &Ctx,
@@ -292,10 +290,8 @@ fn lighten(col: Rgba, k: f64) -> Rgba {
 /// A multi-level treemap: top-level groups squarified by their totals, each with its label in
 /// a banner along the top, and their children squarified inside, down to the leaves. A group
 /// and everything in it take the group's colour.
-#[allow(clippy::too_many_arguments)]
 fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, value_label: Option<&dyn Fn(f64) -> String>) {
     let tree = c.category_tree();
-    #[allow(clippy::too_many_arguments)]
     fn place(
         ctx: &mut RenderContext,
         rctx: &Ctx,
@@ -367,7 +363,6 @@ fn tree_sunburst(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area
     let hole = r * 0.2;
     let ring = (r - hole) / levels as f64;
     let cen = area.center();
-    #[allow(clippy::too_many_arguments)]
     fn ring_of(
         ctx: &mut RenderContext,
         rctx: &Ctx,
@@ -471,7 +466,6 @@ pub fn box_view(c: &Chart) -> (Chart, Boxes) {
 /// Boxes from the first to the third quartile with the median line and a mean marker, whiskers
 /// to the furthest points within 1.5 IQR, and outliers as dots; series side by side in each
 /// group's band.
-#[allow(clippy::too_many_arguments)]
 pub fn draw_boxes(
     ctx: &mut RenderContext,
     rctx: &Ctx,
