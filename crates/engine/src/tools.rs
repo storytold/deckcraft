@@ -1228,7 +1228,16 @@ impl Session {
             None => edited_box(st).is_some_and(|e| edit_zone(&e.xfrm, p, tol) != EditZone::Outside),
             Some(_) => xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p),
         };
+        // A shape in front of the edited text takes the click, as in PowerPoint (#931): the shapes
+        // above the one holding the text, topmost first.
+        let in_front = st
+            .shapes()
+            .iter()
+            .rev()
+            .take_while(|s| deckcraft_model::find_shape(std::slice::from_ref(*s), t.shape).is_none())
+            .any(|s| !s.hidden && hit_shape(st, s, p, tol).is_some());
         if !inside
+            || in_front
             || matches!(
                 self.hit_test(p, tol),
                 Some(

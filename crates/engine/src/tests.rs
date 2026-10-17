@@ -3592,3 +3592,30 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+/// #931: while the text of a placeholder is being edited, a shape in front of it still takes a
+/// click (as in PowerPoint); a click on the text where nothing is in front still moves the caret.
+#[test]
+fn a_shape_in_front_of_edited_text_takes_the_click() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+    let square = s.execute("shape.insert", &json!({"preset": "rect", "rect": [380, 260, 200, 120]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let ev = |kind, x: f64, y: f64| tools::PointerEvent { kind, x, y, mods: Default::default(), tol: 4.0, pressure: None };
+    let click = |s: &mut Session, x: f64, y: f64| {
+        s.pointer(ev(tools::PointerKind::Down, x, y)).unwrap();
+        s.pointer(ev(tools::PointerKind::Up, x, y)).unwrap();
+    };
+    // The content placeholder's edge: its (empty) text is now being edited.
+    click(&mut s, 66.0, 300.0);
+    let body = s.doc().unwrap().selection.text.as_ref().map(|t| t.shape).expect("editing the content placeholder");
+    assert_ne!(body.0 as u64, square);
+    // A click on the text away from the square keeps editing it.
+    click(&mut s, 200.0, 300.0);
+    assert_eq!(s.doc().unwrap().selection.text.as_ref().map(|t| t.shape), Some(body));
+    // A click on the square, in front of the text, selects the square.
+    click(&mut s, 480.0, 320.0);
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes.iter().map(|id| id.0 as u64).collect::<Vec<_>>(), vec![square]);
+    assert!(st.selection.text.as_ref().is_none_or(|t| t.shape.0 as u64 == square), "{:?}", st.selection.text);
+}
