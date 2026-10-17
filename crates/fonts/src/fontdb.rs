@@ -1175,6 +1175,19 @@ impl FontDb {
         None
     }
 
+    /// A covering fallback that prefers faces matching the requested style's weight and italic,
+    /// so bold CJK text falls back to a bold face instead of a regular one (#892).
+    pub fn fallback_for_styled(&self, c: char, exclude: u32, style: &str) -> Option<Arc<FontFace>> {
+        if let Some(f) = self.loaded_fallback_styled(c, exclude, style) {
+            return Some(f);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.system_fallback(c) {
+            return self.loaded_fallback_styled(c, exclude, style);
+        }
+        None
+    }
+
     /// A covering fallback accepted by the caller (for example, an interface that cannot use
     /// colour or very large faces). Rejected faces do not stop the search for another face.
     /// A policy-specific miss is not stored as a general document-font miss.
@@ -1191,6 +1204,17 @@ impl FontDb {
 
     fn loaded_fallback(&self, c: char, exclude: u32) -> Option<Arc<FontFace>> {
         self.loaded_fallback_filtered(c, exclude, &|_| true)
+    }
+
+    /// Like `loaded_fallback`, but prefers faces matching the requested style's weight and
+    /// italic, so bold CJK text falls back to a bold face instead of a regular one (#892).
+    fn loaded_fallback_styled(&self, c: char, exclude: u32, style: &str) -> Option<Arc<FontFace>> {
+        let faces = self.read_faces();
+        let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
+        order.sort_by_key(|f| {
+            (!f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic != style_italic(style), (f.weight - style_weight(style)).abs() as i32)
+        });
+        order.into_iter().find(|f| f.covers(c)).cloned()
     }
 
     fn loaded_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {
