@@ -6,6 +6,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// An English UI string in the current interface language ([`i18n::t`]).
+#[macro_export]
+macro_rules! tl {
+    ($s:expr) => {
+        $crate::i18n::t($s)
+    };
+}
+
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
@@ -15,6 +23,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -274,6 +283,14 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Interface language: `auto` (follow the system) or a registered code such as `zh-hans`.
+    #[serde(default = "default_language")]
+    pub language: String,
+}
+
+/// The `language` default for older `ui.json` files that predate the setting.
+fn default_language() -> String {
+    i18n::AUTO.to_string()
 }
 
 impl Default for UiState {
@@ -305,6 +322,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: i18n::AUTO.to_string(),
         }
     }
 }
@@ -348,6 +366,8 @@ impl UiState {
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
+        // A language code from another version, or a hand edit, follows the system.
+        self.language = i18n::normalize_pref(&self.language).unwrap_or(i18n::AUTO).to_string();
         self
     }
 }
@@ -377,6 +397,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("ui.language", "Interface Language", None, "{value: auto | <code>}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -944,6 +965,10 @@ impl SlideApp {
                 self.restyle = true;
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
+            "ui.language" => {
+                let value = p.get("value").and_then(Value::as_str).ok_or("missing `value`")?;
+                self.ui.language = i18n::normalize_pref(value).ok_or_else(|| format!("unknown language {value:?}"))?.to_string();
+            }
             "view.newWindow" => return doc_window::command(self, p),
             "show.start" => {
                 if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
@@ -1514,6 +1539,8 @@ impl SlideApp {
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        // The interface is drawn in the setting's language; every `tl!`/`i18n::t` lookup reads it.
+        i18n::set_current(i18n::Lang::from_pref(&self.ui.language));
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);

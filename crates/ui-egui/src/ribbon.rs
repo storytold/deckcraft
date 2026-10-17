@@ -251,6 +251,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 fn big(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Value) {
+    let label = crate::tl!(label);
     let en = enabled(app, id);
     let r = big_button(ui, icon, label, en);
     if id == "insert.dateTime" {
@@ -286,6 +287,7 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 fn small(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Value) {
+    let label = crate::tl!(label);
     let en = enabled(app, id);
     let r = small_button(ui, icon, label, en, false).on_hover_text(tip(id, label));
     if r.clicked() {
@@ -302,6 +304,7 @@ fn toggle(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, on
 }
 
 fn tip(id: &str, label: &str) -> String {
+    let label = crate::tl!(label);
     let sc = deckcraft_engine::find_command(id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == id).and_then(|c| c.2));
     match sc {
         Some(s) => format!("{label} ({})", pretty_shortcut(s)),

@@ -2158,6 +2158,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
                 d.fields.remove("uiScale");
             }
+            language_picker(app, ui);
             ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
             ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
             ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
@@ -2195,6 +2196,27 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 
 fn num_text(v: f64) -> String {
     crate::widgets::fmt_num(v, "")
+}
+
+/// Interface language: follow the system (the default) or pick one.
+fn language_picker(app: &mut crate::SlideApp, ui: &mut Ui) {
+    use crate::i18n::{self, Lang, AUTO};
+    let system = i18n::system_lang();
+    let auto_label = i18n::fmt(crate::tl!("Automatic ({language})"), &[("language", system.name())]);
+    let current = if app.ui.language == AUTO { auto_label.clone() } else { Lang::from_pref(&app.ui.language).name().to_string() };
+    ui.horizontal(|ui| {
+        ui.label(crate::tl!("Interface language:"));
+        egui::ComboBox::from_id_salt("interface_language").selected_text(current).width(220.0).show_ui(ui, |ui| {
+            if ui.selectable_label(app.ui.language == AUTO, auto_label.as_str()).clicked() {
+                let _ = app.run("ui.language", json!({"value": AUTO}));
+            }
+            for lang in Lang::all() {
+                if ui.selectable_label(app.ui.language == lang.code(), lang.name()).clicked() {
+                    let _ = app.run("ui.language", json!({"value": lang.code()}));
+                }
+            }
+        });
+    });
 }
 
 fn field_of(d: &Dialog, key: &str) -> String {

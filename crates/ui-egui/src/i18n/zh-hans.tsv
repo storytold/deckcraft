@@ -1,0 +1,16 @@
+# Simplified Chinese (zh-Hans) interface catalog. Columns, separated by a TAB:
+#   context <TAB> English source <TAB> translation
+#   context    usually empty. `preview` is short sample text inside a rendered preview tile;
+#              `template` is a built-in template's name in File > New.
+#              Both fall back to the plain entry.
+#   source     the English text exactly as in the code (tl!(...), ribbon labels, command labels)
+#   escapes    \n  \t  \\  inside a column. `{name}` placeholders must appear in both columns, and a
+#              trailing "…" in one needs one in the other.
+#   Lines starting with # and blank lines are ignored. A missing entry shows in English.
+#
+# Clean room: every entry was written from the plain meaning of the English label in ordinary
+# Simplified Chinese computing and typography vocabulary. No Microsoft PowerPoint (or other product)
+# localisation, string table or translated UI was consulted or copied; add entries the same way.
+# Where a string is identical to one WordCraft ships, WordCraft's zh-hans.tsv wording is reused, so
+# the Crafting Apps read the same. Product, format and technology names (DeckCraft, PowerPoint,
+# PDF, PPTX …) stay in Latin letters.

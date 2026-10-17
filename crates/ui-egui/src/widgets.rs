@@ -33,6 +33,7 @@ pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> Respon
 
 /// Large button; with `split`, the label row is a separate dropdown target (returns its response).
 pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split: bool, selected: bool) -> (Response, Option<Response>) {
+    let label = crate::tl!(label);
     let t = Tokens::get(ui.ctx());
     let font = theme::font(11.0);
     let lines: Vec<&str> = wrap_label(label);
@@ -100,7 +101,23 @@ fn wrap_label(label: &str) -> Vec<&str> {
             return vec![a, b];
         }
     }
+    // CJK labels have no spaces: break near the middle by character, as PowerPoint does.
+    let n = label.chars().count();
+    if n > 7 && 2 * label.chars().filter(|c| is_cjk(*c)).count() >= n {
+        let half = n / 2;
+        let at = label.char_indices().nth(half).map(|(i, _)| i);
+        if let Some(at) = at
+            && let (Some(a), Some(b)) = (label.get(..at), label.get(at..))
+        {
+            return vec![a, b];
+        }
+    }
     vec![label]
+}
+
+/// A character in a CJK writing system (Han, Hiragana, Katakana, Hangul): written without spaces.
+fn is_cjk(c: char) -> bool {
+    matches!(c as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF | 0xAC00..=0xD7AF)
 }
 
 pub fn chevron(p: &egui::Painter, c: egui::Pos2, s: f32, col: Color32) {
@@ -114,6 +131,7 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, selecte
 }
 
 pub fn small_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, selected: bool, split: bool) -> (Response, Option<Response>) {
+    let label = crate::tl!(label);
     let t = Tokens::get(ui.ctx());
     let font = theme::font(12.0);
     let tw = if label.is_empty() { 0.0 } else { ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0 };
