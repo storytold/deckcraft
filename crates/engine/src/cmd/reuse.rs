@@ -3,11 +3,13 @@
 //! The slides take the destination's look by default (each one moves to the destination layout
 //! with the same name, else the same kind); with `keepFormatting` the source master and its
 //! layouts come along. Pictures, media and sounds are copied under fresh ids, and shape ids are
-//! renumbered with animations, triggers and connector ends following them.
+//! renumbered with animations, triggers and connector ends following them. Links to another
+//! reused slide follow its copy.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use deckcraft_model::text::{Action, Hyperlink, RunProps, TextBody};
 use deckcraft_model::{LayoutId, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};
 
@@ -56,6 +58,57 @@ fn remap_connectors(shapes: &mut [deckcraft_model::Shape], map: &HashMap<ShapeId
         }
         if let Some(ch) = sh.children_mut() {
             remap_connectors(ch, map, depth + 1);
+        }
+    }
+}
+
+/// Point a link to a reused slide at its copy (`map`: source → destination).
+fn relink(h: &mut Option<Hyperlink>, map: &HashMap<SlideId, SlideId>) {
+    let Some(h) = h else { return };
+    if let Action::Slide { slide } = &mut h.action {
+        *slide = map.get(slide).copied().unwrap_or(*slide);
+    }
+    if let Some(z) = &mut h.zoom_return {
+        *z = map.get(z).copied().unwrap_or(*z);
+    }
+}
+
+fn relink_run(r: &mut RunProps, map: &HashMap<SlideId, SlideId>) {
+    relink(&mut r.link, map);
+    relink(&mut r.hover, map);
+}
+
+fn relink_text(t: &mut TextBody, map: &HashMap<SlideId, SlideId>) {
+    for lv in t.list_style.levels.iter_mut().flatten() {
+        relink_run(&mut lv.run, map);
+    }
+    for p in &mut t.paragraphs {
+        relink_run(&mut p.def_props, map);
+        relink_run(&mut p.end_props, map);
+        for r in &mut p.runs {
+            relink_run(&mut r.props, map);
+        }
+    }
+}
+
+/// Point the slide links under `shapes` (click and hover actions, text links) at the copies.
+fn relink_shapes(shapes: &mut [deckcraft_model::Shape], map: &HashMap<SlideId, SlideId>, depth: usize) {
+    if depth > 64 {
+        return;
+    }
+    for sh in shapes {
+        relink(&mut sh.click, map);
+        relink(&mut sh.hover, map);
+        if let Some(t) = &mut sh.text {
+            relink_text(t, map);
+        }
+        if let ShapeKind::Table(t) = &mut sh.kind {
+            for c in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                relink_text(&mut c.text, map);
+            }
+        }
+        if let Some(ch) = sh.children_mut() {
+            relink_shapes(ch, map, depth + 1);
         }
     }
 }
@@ -134,8 +187,10 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
                 doc.masters.push(Arc::new(m));
             }
         }
-        let mut new_ids = vec![];
-        for (k, &i) in picked.iter().enumerate() {
+        let mut copies: Vec<Slide> = vec![];
+        // Source slide → its copy, so links between reused slides follow (forward ones too).
+        let mut slide_map: HashMap<SlideId, SlideId> = HashMap::new();
+        for &i in &picked {
             let Some(from) = src.slides.get(i) else { continue };
             copy_media(doc, &src, &media_refs::slide_media(from), &mut media_map)?;
             let mut sl: Slide = from.as_ref().clone();
@@ -154,6 +209,13 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
                     matching_layout(doc, &lname, kind)
                 }
             };
+            slide_map.insert(from.id, sl.id);
+            copies.push(sl);
+        }
+        let mut new_ids = vec![];
+        for (k, mut sl) in copies.into_iter().enumerate() {
+            relink_shapes(&mut sl.shapes, &slide_map, 0);
+            relink_text(&mut sl.notes, &slide_map);
             new_ids.push(sl.id);
             doc.slides.insert((at + k).min(doc.slides.len()), Arc::new(sl));
         }
@@ -262,5 +324,77 @@ mod tests {
         let mut want = blobs.clone();
         want.sort();
         assert_eq!(got, want, "every reference resolves to its own copied bytes");
+    }
+
+    fn link_to(slide: SlideId) -> Hyperlink {
+        Hyperlink {
+            action: Action::Slide { slide },
+            tooltip: String::new(),
+            highlight_click: false,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }
+    }
+
+    fn linked_text(slide: SlideId) -> TextBody {
+        let mut text = TextBody::from_text("go");
+        if let Some(r) = text.paragraphs.first_mut().and_then(|p| p.runs.first_mut()) {
+            r.props.link = Some(link_to(slide));
+        }
+        text
+    }
+
+    /// Links to a slide that is reused too follow the copy; links to a slide left behind stay.
+    #[test]
+    fn reused_slides_link_to_each_others_copies() {
+        let mut src = defaults::new_presentation(None);
+        let template = src.slides.first().map(|s| s.as_ref().clone()).expect("slide");
+        for _ in 0..2 {
+            let mut sl = template.clone();
+            sl.id = SlideId(src.alloc_id().expect("id"));
+            src.slides.push(Arc::new(sl));
+        }
+        let ids: Vec<SlideId> = src.slides.iter().map(|s| s.id).collect();
+        let id = |i: usize| ids.get(i).copied().unwrap_or_default();
+        if let Some(sl) = src.slides.first_mut().map(Arc::make_mut) {
+            sl.shapes = vec![
+                Shape { id: ShapeId(9001), click: Some(link_to(id(1))), ..Default::default() },
+                Shape { id: ShapeId(9002), text: Some(linked_text(id(1))), ..Default::default() },
+                Shape { id: ShapeId(9003), click: Some(link_to(id(2))), ..Default::default() },
+            ];
+        }
+        if let Some(sl) = src.slides.get_mut(1).map(Arc::make_mut) {
+            sl.shapes = vec![Shape { id: ShapeId(9004), click: Some(link_to(id(0))), ..Default::default() }];
+        }
+        let bytes = deckcraft_format::save(&src).expect("save");
+        let reopened = crate::cmd::file::open_presentation("src.deckcraft", &bytes).expect("open");
+        let left_behind = reopened.slides.get(2).map(|s| s.id).expect("third slide");
+
+        let mut s = Session::with_new();
+        for _ in 0..3 {
+            s.execute("slide.new", &json!({})).expect("new");
+        }
+        let out = s
+            .execute("slide.reuse", &json!({"data": super::super::base64_encode(&bytes), "name": "src.deckcraft", "slides": [0, 1]}))
+            .expect("reuse");
+        let new: Vec<SlideId> = serde_json::from_value(out.get("ids").cloned().unwrap_or_default()).expect("ids");
+        let doc = &s.doc().expect("doc").doc;
+        let copy = |i: usize| new.get(i).and_then(|id| doc.slide(*id)).expect("copied slide");
+        let click = |sh: Option<&Shape>| sh.and_then(|sh| sh.click.as_ref()).map(|h| h.action.clone());
+        let first = copy(0);
+        let to = |i: usize| Some(Action::Slide { slide: new.get(i).copied().unwrap_or_default() });
+        assert_eq!(click(first.shapes.first()), to(1), "shape click follows the copy");
+        let run_link = first
+            .shapes
+            .get(1)
+            .and_then(|sh| sh.text.as_ref())
+            .and_then(|t| t.paragraphs.first())
+            .and_then(|p| p.runs.first())
+            .and_then(|r| r.props.link.as_ref())
+            .map(|h| h.action.clone());
+        assert_eq!(run_link, to(1), "text link follows the copy");
+        assert_eq!(click(first.shapes.get(2)), Some(Action::Slide { slide: left_behind }), "a slide not reused keeps its link");
+        assert_eq!(click(copy(1).shapes.first()), to(0), "a link back to an earlier copy follows too");
     }
 }
