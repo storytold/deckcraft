@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change:** minor (Paragraph dialog: Asian Typography — East Asian line breaking, hanging punctuation and mid-word Latin wrapping; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
 direct manipulation, keyboard and precision. Observations of PowerPoint are kept locally in
@@ -71,7 +71,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Comments pane (threads) | yes | yes: every slide, with Previous and Next on the Review tab |
 | Animation Pane | list + advanced timeline | list, reorder, timing, an advanced timeline with draggable bars, play the current slide on the canvas; no preview from the selected effect |
 | Design Ideas (Designer) | yes (cloud) | no |
-| Dialogs | ~60 (Font, Paragraph, Bullets and Numbering, Find, Replace, Replace Fonts, Hyperlink, Action Settings, Header and Footer, Slide Size, Set Up Show, Custom Shows, Print, Page Setup, Insert Object, Symbol, Photo Album, Equation, Chart data sheet, SmartArt chooser, Preferences…) | 41 (`crates/ui-egui/src/dialogs.rs`): Font, Paragraph, Tabs, Bullets and Numbering, Find and Replace, Replace Fonts, Table, Slide Size, Size and Position, Header and Footer, Date and Time, Hyperlink (address, slide and ScreenTip follow the selection), Action Settings, Set Up Show, Zoom (percent or Fit, applies on OK), Comment, Alt Text (decorative follows the selection), Outline, Rename (section, shape, layout), About, Preferences, AutoCorrect, Grid Options, Export, Symbol, Photo Album (Edit Photo Album reopens this dialog), Paste Special, Equation (placeholder), Spelling, Accessibility, Language, Custom Shows, Chart Data, Trim Media (start, end and fades follow the selection), SmartArt chooser, Create New Theme Colors, Create New Theme Fonts, Quit, Notes Pages |
+| Dialogs | ~60 (Font, Paragraph, Bullets and Numbering, Find, Replace, Replace Fonts, Hyperlink, Action Settings, Header and Footer, Slide Size, Set Up Show, Custom Shows, Print, Page Setup, Insert Object, Symbol, Photo Album, Equation, Chart data sheet, SmartArt chooser, Preferences…) | 41 (`crates/ui-egui/src/dialogs.rs`): Font, Paragraph (alignment, indents, spacing, tabs and Asian Typography: East Asian line breaking, hanging punctuation, mid-word Latin wrapping), Tabs, Bullets and Numbering, Find and Replace, Replace Fonts, Table, Slide Size, Size and Position, Header and Footer, Date and Time, Hyperlink (address, slide and ScreenTip follow the selection), Action Settings, Set Up Show, Zoom (percent or Fit, applies on OK), Comment, Alt Text (decorative follows the selection), Outline, Rename (section, shape, layout), About, Preferences, AutoCorrect, Grid Options, Export, Symbol, Photo Album (Edit Photo Album reopens this dialog), Paste Special, Equation (placeholder), Spelling, Accessibility, Language, Custom Shows, Chart Data, Trim Media (start, end and fades follow the selection), SmartArt chooser, Create New Theme Colors, Create New Theme Fonts, Quit, Notes Pages |
 | Design ▸ Effects | named theme effect schemes | DeckCraft, Soft, Crisp, Lift, Glow and Plain (`design.effects`); colours and fonts stay |
 
 ## Direct manipulation
@@ -165,6 +165,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | minor | Paragraph dialog: Asian Typography section — East Asian line breaking (禁則処理), hanging punctuation (句読点のぶら下げ) and mid-word Latin wrapping (英単語の途中で改行を許可), applied with the dialog's other edits in one undo step |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: one row each for Format Shape, Dialogs (41, listed from `dialogs.rs`), Animation Pane (timeline is in), window, Quick Access Toolbar, Format Background, rulers, image paste, context menus, exact size and edit points; estimates re-totalled (~26–46 h) |
 | 2026-10-13 | trivial | Eyedropper in the colour menus (#367) |
