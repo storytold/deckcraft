@@ -44,7 +44,15 @@ pub fn instance_id() -> u64 {
     *ID.get_or_init(|| {
         use std::hash::{BuildHasher, Hasher};
         let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        #[cfg(not(target_arch = "wasm32"))]
         h.write_u32(std::process::id());
+        #[cfg(target_arch = "wasm32")]
+        {
+            // Browsers have no process id. These are identity seeds, not secrets;
+            // each WASM instance still keeps one stable, JSON-safe recovery base.
+            h.write_u64(js_sys::Date::now().to_bits());
+            h.write_u64(js_sys::Math::random().to_bits());
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
             h.write_u128(d.as_nanos());
@@ -240,6 +248,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("deckcraft-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn instance_identity_is_stable_nonzero_and_json_safe() {
+        let id = instance_id();
+        assert_eq!(instance_id(), id);
+        assert!(id != 0 && id <= UID_MASK);
+        assert_eq!(id & 0xFF_FFFF, 0);
+        let encoded = serde_json::to_value(id).unwrap();
+        assert_eq!(encoded.as_f64().unwrap() as u64, id);
     }
 
     #[test]

@@ -21,6 +21,7 @@ pub mod menus;
 pub mod notes;
 pub mod opening;
 pub mod panes;
+pub mod presenter;
 mod preview;
 pub mod qat;
 pub mod ribbon;
@@ -200,6 +201,8 @@ const STATUS_LINGER_MS: f64 = 6000.0;
 /// Platform services injected by the host (desktop or web).
 #[derive(Default)]
 pub struct Services {
+    /// Browser-owned presenter popup; absent on native hosts.
+    pub presenter: Option<Box<dyn presenter::Host>>,
     /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
     pub pick_open: Option<PickFn>,
     /// Save dialog with a suggested name → path.

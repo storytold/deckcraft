@@ -28,6 +28,10 @@ pub struct Show {
     trans: Option<Transition>,
     tex: Option<(Key, TextureHandle)>,
     next_tex: Option<(usize, TextureHandle)>,
+    remote_preview: Option<crate::presenter::Preview>,
+    remote_next: Option<(usize, crate::presenter::Preview)>,
+    remote_sent: f64,
+    remote_opened: bool,
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
@@ -184,6 +188,10 @@ impl Show {
             trans: None,
             tex: None,
             next_tex: None,
+            remote_preview: None,
+            remote_next: None,
+            remote_sent: f64::NEG_INFINITY,
+            remote_opened: false,
             prefetch: None,
             blank: None,
             grid: false,
@@ -429,8 +437,18 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
             .filter_map(|e| if let egui::Event::Key { key, pressed: true, modifiers, .. } = e { Some((*key, *modifiers)) } else { None })
             .collect()
     });
+    let (keep, consumed) = handle_keys(show, doc, now, keys);
+    for (key, modifiers) in consumed {
+        ctx.input_mut(|i| i.consume_key(modifiers, key));
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+    }
+    keep
+}
+
+fn handle_keys(show: &mut Show, doc: &Presentation, now: f64, keys: Vec<(egui::Key, egui::Modifiers)>) -> (bool, Vec<(egui::Key, egui::Modifiers)>) {
     let mut keep = true;
     let mut actions = vec![];
+    let mut consumed = vec![];
     for (k, m) in keys {
         use egui::Key::*;
         if show.grid && !matches!(k, Escape | Minus) {
@@ -507,21 +525,23 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
         }
         // The same key must not also activate a focused presenter button or be handled again
         // by an embedded presenter viewport.
-        ctx.input_mut(|i| i.consume_key(m, k));
-        ctx.request_repaint_of(egui::ViewportId::ROOT);
+        consumed.push((k, m));
     }
     for action in actions {
         if !show.apply(action, doc, now) {
             keep = false;
         }
     }
-    keep
+    (keep, consumed)
 }
 
 pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some((doc_uid, doc)) = app.session.active().map(|d| (d.uid, d.doc.clone())) else {
         app.show = None;
+        if let Some(host) = app.services.presenter.as_mut() {
+            host.close();
+        }
         return;
     };
     let now = ctx.input(|i| i.time);
@@ -533,12 +553,39 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
-        if !show.reading {
+        if !show.reading && !(show.presenter && app.services.presenter.is_some()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
         }
         show.after_enter(&doc, now);
     }
     let mut keep = keyboard(&ctx, &mut show, &doc, now);
+    if show.presenter
+        && !show.reading
+        && let Some(host) = app.services.presenter.as_mut()
+    {
+        if !show.remote_opened {
+            show.remote_opened = true;
+            if let Err(message) = host.open() {
+                app.status = Some((message, crate::now_ms()));
+            }
+        }
+        for command in host.commands() {
+            match command {
+                crate::presenter::Command::End => keep = false,
+                crate::presenter::Command::Zoom { x, y } if x.is_finite() && y.is_finite() && show.zoom_arm => {
+                    show.zoom = Some(Zoom::at(x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)));
+                    show.zoom_arm = false;
+                }
+                crate::presenter::Command::Key { name, command, shift, alt, ctrl } => {
+                    if let Some(key) = egui::Key::ALL.iter().copied().find(|key| key.name() == name) {
+                        let modifiers = egui::Modifiers { command, shift, alt, ctrl, mac_cmd: command && !ctrl };
+                        keep &= handle_keys(&mut show, &doc, now, vec![(key, modifiers)]).0;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
     if moved {
         show.last_move = now;
@@ -729,6 +776,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                     render_frame(&doc, idx, tl, step, t, size, hidden.clone(), &times, render_threads(), &plays, &stamps)
                 }
             };
+            if app.services.presenter.is_some() && show.presenter {
+                show.remote_preview = crate::presenter::Preview::from_image(&ci);
+            }
             let tex = match show.tex.take() {
                 Some((_, mut h)) => {
                     crate::textures::replace(&ctx, &mut h, ci);
@@ -1034,11 +1084,48 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     // Presenter view in a second window.
     if keep && show.presenter && !show.reading {
-        presenter_window(&ctx, &mut show, &doc, now, &mut keep);
+        if let Some(host) = app.services.presenter.as_mut() {
+            if now - show.remote_sent >= 0.2 {
+                let next = show.state.peek_next(&doc);
+                if let Some(n) = next
+                    && show.remote_next.as_ref().is_none_or(|(old, _)| *old != n)
+                {
+                    let size =
+                        crate::textures::fit_size((480, (480.0 * doc.slide_size.height / doc.slide_size.width.max(1.0)).clamp(1.0, 1e9) as u32), 640);
+                    let image = deckcraft_render::render_slide(
+                        &doc,
+                        n,
+                        &RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), ..Default::default() },
+                    );
+                    show.remote_next = crate::presenter::Preview::from_image(&crate::textures::to_color_image(&image, false)).map(|image| (n, image));
+                }
+                host.update(crate::presenter::Snapshot {
+                    slide: show.state.slide,
+                    total: doc.slides.len(),
+                    ended: show.ended,
+                    notes: doc.slides.get(show.state.slide).map(|s| s.notes_text()).unwrap_or_default(),
+                    elapsed: format_elapsed(show.timer.elapsed(now)),
+                    paused: show.timer.paused(),
+                    notes_px: show.notes_px,
+                    blank: show.blank_name().map(str::to_owned),
+                    grid: show.grid,
+                    zoom_armed: show.zoom_arm,
+                    current: show.remote_preview.clone(),
+                    next: show.remote_next.as_ref().filter(|(n, _)| Some(*n) == next).map(|(_, image)| image.clone()),
+                });
+                show.remote_sent = now;
+            }
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        } else {
+            presenter_window(&ctx, &mut show, &doc, now, &mut keep);
+        }
     }
     if keep {
         app.show = Some(show);
     } else {
+        if let Some(host) = app.services.presenter.as_mut() {
+            host.close();
+        }
         app.media.stop_owned(crate::media::Owner::Show);
         if !show.reading {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
@@ -1880,6 +1967,66 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    #[test]
+    fn remote_presenter_uses_the_audience_state_and_closes_with_the_show() {
+        use crate::presenter::{Command, Host, Snapshot};
+        use std::{cell::RefCell, rc::Rc};
+        #[derive(Default)]
+        struct Bridge {
+            opens: usize,
+            closes: usize,
+            commands: Vec<Command>,
+        }
+        struct Mock(Rc<RefCell<Bridge>>);
+        impl Host for Mock {
+            fn open(&mut self) -> Result<(), String> {
+                self.0.borrow_mut().opens += 1;
+                Ok(())
+            }
+            fn is_open(&self) -> bool {
+                true
+            }
+            fn commands(&mut self) -> Vec<Command> {
+                std::mem::take(&mut self.0.borrow_mut().commands)
+            }
+            fn update(&mut self, _: Snapshot) {}
+            fn close(&mut self) {
+                self.0.borrow_mut().closes += 1;
+            }
+        }
+        let bridge = Rc::new(RefCell::new(Bridge::default()));
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        session.execute("slide.new", &json!({})).unwrap();
+        let services = crate::Services { presenter: Some(Box::new(Mock(bridge.clone()))), ..Default::default() };
+        let mut app = SlideApp::new(session, services);
+        app.ui.presenter_view = true;
+        let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        h.state_mut().start_show(0, false);
+        h.run_steps(2);
+        assert_eq!(bridge.borrow().opens, 1);
+        for (key, slide) in [(egui::Key::ArrowRight, 1), (egui::Key::ArrowLeft, 0), (egui::Key::End, 2), (egui::Key::Home, 0)] {
+            bridge.borrow_mut().commands.push(Command::Key { name: key.name().into(), command: false, shift: false, alt: false, ctrl: false });
+            h.run_steps(2);
+            assert_eq!(h.state().show.as_ref().unwrap().state.slide, slide);
+        }
+        bridge.borrow_mut().commands.push(Command::End);
+        h.run_steps(2);
+        assert!(h.state().show.is_none());
+        assert_eq!(bridge.borrow().closes, 1);
+        h.state_mut().start_show(1, false);
+        h.run_steps(2);
+        assert_eq!(bridge.borrow().opens, 2);
+        assert_eq!(h.state().show.as_ref().unwrap().state.slide, 1);
+    }
 
     /// Send real egui key events to the presenter UI, without the audience window's handler.
     #[test]
