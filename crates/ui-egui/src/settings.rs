@@ -140,6 +140,24 @@ mod tests {
         save(&d.join("blocked"), &ui, &prefs);
     }
 
+    /// Dark appearance is saved as `darkMode`. A `ui.json` from before it could follow the system
+    /// saved `brightness`: dark stays on, and light (the old default) follows the system.
+    #[test]
+    fn dark_appearance_is_saved_and_older_files_carry_over() {
+        use crate::theme::DarkMode;
+        let d = dir("dark-mode");
+        for mode in DarkMode::ALL {
+            save(&d, &UiState { dark_mode: mode, ..Default::default() }, &Prefs::default());
+            let text = std::fs::read_to_string(d.join(UI_FILE)).unwrap();
+            assert!(!text.contains("brightness"), "only darkMode is written: {text}");
+            assert_eq!(load(&d).0.unwrap().dark_mode, mode);
+        }
+        for (old, now) in [(r#"{"brightness": "dark"}"#, DarkMode::On), (r#"{"brightness": "light"}"#, DarkMode::System), ("{}", DarkMode::System)] {
+            std::fs::write(d.join(UI_FILE), old).unwrap();
+            assert_eq!(load(&d).0.unwrap().dark_mode, now, "{old}");
+        }
+    }
+
     /// The window opens with the worst `ui.json` values once they are sanitized; a zoom of
     /// 10,000 % used to panic in egui and 1e30 exhausted memory at start-up.
     #[test]
