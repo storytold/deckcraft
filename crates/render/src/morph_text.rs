@@ -219,7 +219,11 @@ pub(crate) fn draw(
         for d in &l.decos {
             ctx.set_transform(place);
             ctx.set_paint(color(d.color, alpha));
-            crate::fill_deco(ctx, d);
+            // Equation radicals, brackets and big operators are shapes, not boxes.
+            match &d.path {
+                Some(p) => ctx.fill_path(p),
+                None => crate::fill_deco(ctx, d),
+            }
         }
     }
 }

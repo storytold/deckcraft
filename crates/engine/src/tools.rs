@@ -4,6 +4,7 @@
 use std::sync::Arc;
 
 use deckcraft_geom::{Affine, Point, Rect, Vec2, Xfrm};
+use deckcraft_model::text::RunKind;
 use deckcraft_model::{Shape, ShapeId, ShapeKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -545,6 +546,20 @@ impl Session {
             ToolKind::Select => {}
         }
         // Clicking inside the text being edited moves the caret / starts a text selection.
+        {
+            let st = self.doc()?;
+            if let Some(t) = st.selection.text.clone()
+                && !t.notes
+                && t.cell.is_none()
+                && let Some(sh) = st.shape(t.shape)
+                && let Some((pi, ri)) = math_run_at(st, sh, p)
+            {
+                // A click on an equation edits it, where it sits.
+                let id = sh.id;
+                self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                return Ok(Value::Null);
+            }
+        }
         if let Some((shape, pos)) = self.place_caret(p, tol, mods.shift)? {
             self.tool.drag = Some(Drag::TextSelect { shape });
             return Ok(json!({"caret": [pos.0, pos.1]}));
@@ -654,7 +669,9 @@ impl Session {
                 // placeholders take the caret straight away like PowerPoint. A click in a selected
                 // table puts the caret in the clicked cell.
                 let table = st.shape(id).is_some_and(|s| matches!(s.kind, ShapeKind::Table(_)));
-                let enter_text = (!toggle && ((text && (selected || is_text_first(st, id))) || (table && selected))).then_some((id, p));
+                // An equation under the click edits in place on a plain click, selected or not.
+                let on_equation = text && !toggle && st.shape(id).is_some_and(|sh| math_run_at(st, sh, p).is_some());
+                let enter_text = (!toggle && ((text && (selected || is_text_first(st, id) || on_equation)) || (table && selected))).then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;
@@ -990,7 +1007,15 @@ impl Session {
             }
             Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. }) => {
                 // Plain click on text: caret at the click (in a table, in the clicked cell).
-                if self.edit_text_at(id, at)? {
+                let eq = {
+                    let st = self.doc()?;
+                    st.shape(id).and_then(|sh| math_run_at(st, sh, at))
+                };
+                if let Some((pi, ri)) = eq {
+                    // A click on an equation edits it in place (the editor opens over it).
+                    self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                    out = json!({"editing": id, "equation": [pi, ri]});
+                } else if self.edit_text_at(id, at)? {
                     out = json!({"editing": id});
                 }
             }
@@ -1124,6 +1149,18 @@ impl Session {
         if matches!(self.tool.drag, Some(Drag::Move { moved: false, .. })) {
             self.tool.drag = None;
         }
+        {
+            let st = self.doc()?;
+            if let Some(t) = st.selection.text.clone()
+                && !t.notes
+                && t.cell.is_none()
+                && let Some(sh) = st.shape(t.shape).cloned()
+                && let Some((pi, ri)) = math_run_at(st, &sh, p)
+            {
+                self.ui_requests.push(equation_dialog(sh.id, None, pi, ri));
+                return Ok(Value::Null);
+            }
+        }
         // In the text being edited: select the word double-clicked.
         if self.place_caret(p, tol, false)?.is_some() {
             return self.execute("text.selectWord", &json!({}));
@@ -1134,6 +1171,24 @@ impl Session {
                 let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
                 match &sh.kind {
                     ShapeKind::Table(_) | ShapeKind::Shape | ShapeKind::Connector { .. } if !sh.is_line() => {
+                        // A cell holding nothing but one equation, or an equation under the
+                        // pointer, opens the equation editor.
+                        if let ShapeKind::Table(t) = &sh.kind {
+                            let x = xfrm_of(&st.doc, &st.selection, &sh);
+                            let local = x.affine().inverse() * p;
+                            let cell = deckcraft_render_cell(t, &table_rows(st, t), local);
+                            if let Some(body) = t.cell(cell.0, cell.1).map(|c| &c.text)
+                                && let [para] = body.paragraphs.as_slice()
+                                && let [run] = para.runs.as_slice()
+                                && matches!(run.kind, RunKind::Math { .. })
+                            {
+                                self.ui_requests.push(equation_dialog(id, Some(cell), 0, 0));
+                                return Ok(Value::Null);
+                            }
+                        } else if let Some((pi, ri)) = math_run_at(st, &sh, p) {
+                            self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                            return Ok(Value::Null);
+                        }
                         // Caret at the double-click (in a table, in the clicked cell), then select
                         // the word there.
                         if !self.edit_text_at(id, p)? {
@@ -1880,6 +1935,77 @@ pub fn table_rows(st: &crate::DocState, t: &deckcraft_model::Table) -> Vec<f64> 
     cmd::table_drawn_heights(&st.doc, &st.selection, t)
 }
 
+/// The equation run (paragraph, run) under slide point `p` in a non-table shape, if any. The
+/// equation is one atom whose characters all sit at its edges, so this tests the point against
+/// the atom's horizontal extent and its line instead of the nearest caret position.
+fn math_run_at(st: &crate::DocState, sh: &Shape, p: Point) -> Option<(usize, usize)> {
+    let body = sh.text.as_ref()?;
+    if !body.paragraphs.iter().any(|q| q.runs.iter().any(|r| matches!(r.kind, RunKind::Math { .. }))) {
+        return None;
+    }
+    // A box that holds nothing but one equation is that equation: any point in it opens the editor.
+    if let [q] = body.paragraphs.as_slice()
+        && let [r] = q.runs.as_slice()
+        && matches!(r.kind, RunKind::Math { .. })
+    {
+        return Some((0, 0));
+    }
+    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let local = x.affine().inverse() * p;
+    let t = TextSel { shape: sh.id, ..Default::default() };
+    let l = cmd::text::layout_for(st, &t)?;
+    for (pi, q) in body.paragraphs.iter().enumerate() {
+        let mut at = 0;
+        for (ri, r) in q.runs.iter().enumerate() {
+            let end = at + r.char_len();
+            if matches!(r.kind, RunKind::Math { .. })
+                && let Some((x0, top, bottom)) = l.caret(deckcraft_text::Pos { para: pi, ch: at })
+                && let Some((x1, _, _)) = l.caret(deckcraft_text::Pos { para: pi, ch: end })
+                && local.x >= x0.min(x1) - 2.0
+                && local.x <= x0.max(x1) + 2.0
+                && local.y >= top
+                && local.y <= bottom
+            {
+                return Some((pi, ri));
+            }
+            at = end;
+        }
+    }
+    None
+}
+
+/// The request that opens the equation editor on one equation run.
+fn equation_dialog(id: ShapeId, cell: Option<(usize, usize)>, paragraph: usize, run: usize) -> crate::UiRequest {
+    let mut params = json!({"edit": true, "id": id, "paragraph": paragraph, "run": run});
+    if let (Some((r, c)), Some(o)) = (cell, params.as_object_mut()) {
+        o.insert("cell".into(), json!([r, c]));
+    }
+    crate::UiRequest::Dialog { id: "equation".into(), params }
+}
+
+/// Which table cell contains a table-local point (`heights` from [`table_rows`]).
+fn deckcraft_render_cell(t: &deckcraft_model::Table, heights: &[f64], p: Point) -> (usize, usize) {
+    let mut y = 0.0;
+    let mut row = heights.len().saturating_sub(1);
+    for (i, h) in heights.iter().enumerate() {
+        if p.y < y + h {
+            row = i;
+            break;
+        }
+        y += h;
+    }
+    let mut x = 0.0;
+    let mut col = t.cols.len().saturating_sub(1);
+    for (i, w) in t.cols.iter().enumerate() {
+        if p.x < x + w {
+            col = i;
+            break;
+        }
+        x += w;
+    }
+    (row, col)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1906,5 +2032,72 @@ mod tests {
         let n = resize_box(&o, 4, Vec2::new(-10.0, 30.0), false, false);
         let anchor2 = n.affine() * Point::new(0.0, 0.0);
         assert!((anchor - anchor2).hypot() < 1e-6, "{anchor:?} {anchor2:?}");
+    }
+
+    fn dbl(s: &mut Session, x: f64, y: f64) {
+        let ev = PointerEvent { kind: PointerKind::DoubleClick, x, y, ..Default::default() };
+        s.pointer(ev).unwrap();
+    }
+
+    fn ptr(s: &mut Session, kind: PointerKind, x: f64, y: f64) {
+        s.pointer(PointerEvent { kind, x, y, ..Default::default() }).unwrap();
+    }
+
+    /// A single click on an equation edits it (as in WordCraft); a drag still moves the box.
+    #[test]
+    fn a_single_click_on_an_equation_edits_it_and_a_drag_moves_it() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        // Nothing selected: one click both selects the box and opens the editor.
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        s.ui_requests.clear();
+        ptr(&mut s, PointerKind::Down, 150.0, 125.0);
+        ptr(&mut s, PointerKind::Up, 150.0, 125.0);
+        assert_eq!(
+            s.ui_requests,
+            vec![crate::UiRequest::Dialog { id: "equation".into(), params: json!({"edit": true, "id": id, "paragraph": 0, "run": 0}) }]
+        );
+        // A drag from the same place moves the box and opens nothing.
+        s.ui_requests.clear();
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        let before = s.doc().unwrap().shape(ShapeId(id as u32)).map(|sh| xfrm_of(&s.doc().unwrap().doc, &s.doc().unwrap().selection, sh).x).unwrap();
+        ptr(&mut s, PointerKind::Down, 150.0, 125.0);
+        ptr(&mut s, PointerKind::Drag, 230.0, 125.0);
+        ptr(&mut s, PointerKind::Up, 230.0, 125.0);
+        assert!(s.ui_requests.is_empty(), "{:?}", s.ui_requests);
+        let after = s.doc().unwrap().shape(ShapeId(id as u32)).map(|sh| xfrm_of(&s.doc().unwrap().doc, &s.doc().unwrap().selection, sh).x).unwrap();
+        assert!(after > before + 50.0, "{before} -> {after}");
+    }
+
+    #[test]
+    fn double_click_on_equation_opens_the_dialog_and_elsewhere_does_not() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        s.ui_requests.clear();
+        // Find the equation's extent from the layout, then click on it.
+        let st = s.doc().unwrap();
+        let sh = st.shape(ShapeId(id as u32)).unwrap().clone();
+        let t = TextSel { shape: sh.id, ..Default::default() };
+        let l = cmd::text::layout_for(st, &t).unwrap();
+        let n = sh.text.as_ref().unwrap().paragraphs[0].runs[0].char_len();
+        let (x0, top, bottom) = l.caret(deckcraft_text::Pos { para: 0, ch: 0 }).unwrap();
+        let (x1, _, _) = l.caret(deckcraft_text::Pos { para: 0, ch: n }).unwrap();
+        let x = xfrm_of(&st.doc, &st.selection, &sh);
+        let hit = x.affine() * Point::new((x0 + x1) / 2.0, (top + bottom) / 2.0);
+        dbl(&mut s, hit.x, hit.y);
+        assert_eq!(
+            s.ui_requests,
+            vec![crate::UiRequest::Dialog { id: "equation".into(), params: json!({"edit": true, "id": id, "paragraph": 0, "run": 0}) }]
+        );
+        // Blank padding of a box that holds only the equation opens it too.
+        s.ui_requests.clear();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        let far = x.affine() * Point::new(x1 + 120.0, (top + bottom) / 2.0);
+        dbl(&mut s, far.x, far.y);
+        assert_eq!(s.ui_requests.len(), 1);
+        assert!(matches!(s.ui_requests[0], crate::UiRequest::Dialog { .. }));
     }
 }

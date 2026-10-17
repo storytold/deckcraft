@@ -1029,6 +1029,13 @@ fn para_rtl(layout: Option<&deckcraft_text::TextLayout>, body: &TextBody, para: 
     }
 }
 
+/// Is paragraph `para` of the text `t` addresses right-to-left on screen (the rule the arrow keys
+/// use: Left goes forward in the text there)?
+pub fn paragraph_is_rtl(st: &DocState, t: &TextSel, para: usize) -> bool {
+    let body = body_of(st, t).cloned().unwrap_or_default();
+    para_rtl(layout_for(st, t).as_ref(), &body, para)
+}
+
 fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
     use deckcraft_text::Affinity;
     let to = str_param(p, "to").unwrap_or("right").to_string();

@@ -301,6 +301,24 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         {
             return paste_external_body(s, &body);
         }
+        // Text that is exactly one equation (OMML, MathML or delimited LaTeX) pastes as an
+        // equation; one that cannot be read pastes as the text it is, with a note why.
+        // Paste and Match Formatting (`edit.pasteText`) always pastes the text.
+        match crate::equashion_bridge::clipboard_equation(t) {
+            Some((format, Ok(m))) => {
+                let mut r = super::equation::paste_math(s, &m)?;
+                if let Some(o) = r.as_object_mut() {
+                    o.insert("pasted".into(), json!("equation"));
+                    o.insert("format".into(), json!(format.name()));
+                }
+                return Ok(r);
+            }
+            Some((format, Err(why))) => {
+                let text = format!("Pasted as text: the {} equation could not be read ({why}).", format.name());
+                s.ui_requests.push(crate::UiRequest::Message { text });
+            }
+            None => {}
+        }
         return paste_plain(s, t);
     }
     let editing = s.doc()?.selection.text.is_some();

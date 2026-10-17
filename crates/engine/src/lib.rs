@@ -14,6 +14,7 @@ pub mod drawtable;
 pub mod file_access;
 pub mod fonts;
 pub mod gif_export;
+pub mod equashion_bridge;
 pub mod guard;
 pub mod icons;
 pub mod inkshape;
