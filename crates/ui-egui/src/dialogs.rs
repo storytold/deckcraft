@@ -122,6 +122,21 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     }
 }
 
+/// Room the About credits need for their table; the About tab keeps its compact size.
+const CREDITS_SIZE: egui::Vec2 = vec2(640.0, 380.0);
+
+/// The Contributors / Models body in a block of its own fixed size, below the tab row. Sizing the
+/// dialog's `ui` instead (`set_min_size` / `set_max_height`) squeezed the tab row and the first
+/// credits row together, so the text was garbled and the tabs stopped answering (#843).
+fn credits_block(ui: &mut Ui, models: bool) -> Rect {
+    ui.allocate_ui(CREDITS_SIZE, |ui| {
+        ui.set_min_size(CREDITS_SIZE);
+        if models { crate::credits::models_ui(ui) } else { crate::credits::contributors_ui(ui) }
+    })
+    .response
+    .rect
+}
+
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
@@ -2078,10 +2093,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.separator();
             match tab.as_str() {
                 "contributors" | "models" => {
-                    // The credits need room for the table; the About tab keeps its compact size.
-                    ui.set_min_size(vec2(640.0, 380.0));
-                    ui.set_max_height(380.0);
-                    if tab == "models" { crate::credits::models_ui(ui) } else { crate::credits::contributors_ui(ui) }
+                    credits_block(ui, tab == "models");
                 }
                 _ => about(app, ui),
             }
@@ -3629,3 +3641,27 @@ mod spelling_tests;
 #[cfg(test)]
 #[path = "paragraph_dialog_tests.rs"]
 mod paragraph_dialog_tests;
+
+#[cfg(test)]
+mod about_credits_tests {
+    use super::{CREDITS_SIZE, credits_block};
+
+    #[test]
+    fn credits_get_their_own_block_below_the_tab_row() {
+        for models in [false, true] {
+            let ctx = egui::Context::default();
+            let mut tabs = egui::Rect::NOTHING;
+            let mut block = egui::Rect::NOTHING;
+            let mut whole = egui::Rect::NOTHING;
+            let _ = ctx.run_ui(egui::RawInput::default(), |ui| {
+                tabs = ui.label("About").rect;
+                block = credits_block(ui, models);
+                whole = ui.min_rect();
+            });
+            assert_eq!(block.size(), CREDITS_SIZE, "models={models}");
+            assert!(block.min.y >= tabs.max.y, "the credits start below the tab row (models={models})");
+            assert!(whole.max.y >= block.max.y, "the dialog grows to hold the block (models={models})");
+            assert!(whole.height() > CREDITS_SIZE.y, "the tab row is not squeezed into the credits height (models={models})");
+        }
+    }
+}
