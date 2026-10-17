@@ -698,20 +698,27 @@ fn case(s: &mut Session, p: &Value) -> Result<Value> {
                 let from = if pi == a.0 { a.1 } else { 0 };
                 let to = if pi == b.0 { b.1 } else { n };
                 let mut pos = 0;
-                for r in &mut para.runs {
+                let mut pieces = Vec::new();
+                for (ri, r) in para.runs.iter().enumerate() {
+                    // Breaks and fields are read for context (a break ends a word) but not rewritten.
                     let len = r.char_len();
-                    if r.kind == deckcraft_model::text::RunKind::Text {
-                        let rs = from.max(pos).saturating_sub(pos);
-                        let re = to.min(pos + len).saturating_sub(pos);
-                        if re > rs {
-                            let chars: Vec<char> = r.text.chars().collect();
-                            let mid: String = chars.get(rs..re).map(|c| c.iter().collect()).unwrap_or_default();
-                            let pre: String = chars.get(..rs).map(|c| c.iter().collect()).unwrap_or_default();
-                            let post: String = chars.get(re..).map(|c| c.iter().collect()).unwrap_or_default();
-                            r.text = format!("{pre}{}{post}", ed::change_case(&mid, &m));
-                        }
+                    let rs = from.max(pos).saturating_sub(pos);
+                    let re = to.min(pos + len).saturating_sub(pos);
+                    if re > rs {
+                        pieces.push((ri, rs, re));
                     }
                     pos += len;
+                }
+                let mids: Vec<String> = pieces
+                    .iter()
+                    .map(|&(ri, rs, re)| para.runs.get(ri).map(|r| r.content().chars().skip(rs).take(re - rs).collect()).unwrap_or_default())
+                    .collect();
+                let changed = ed::change_case_parts(&mids.iter().map(String::as_str).collect::<Vec<_>>(), &m);
+                for (&(ri, rs, re), new) in pieces.iter().zip(changed) {
+                    let Some(r) = para.runs.get_mut(ri).filter(|r| r.kind == deckcraft_model::text::RunKind::Text) else { continue };
+                    let pre: String = r.text.chars().take(rs).collect();
+                    let post: String = r.text.chars().skip(re).collect();
+                    r.text = format!("{pre}{new}{post}");
                 }
             }
             if collapsed {
@@ -734,9 +741,12 @@ fn case(s: &mut Session, p: &Value) -> Result<Value> {
     edit_shapes(s, &json!({}), "format.case", |sh| {
         if let Some(t) = sh.text.as_mut() {
             for para in &mut t.paragraphs {
-                for r in &mut para.runs {
+                // Breaks and fields are read for context (a break ends a word) but not rewritten.
+                let texts: Vec<&str> = para.runs.iter().map(|r| r.content()).collect();
+                let changed = ed::change_case_parts(&texts, &mode);
+                for (r, new) in para.runs.iter_mut().zip(changed) {
                     if r.kind == deckcraft_model::text::RunKind::Text {
-                        r.text = ed::change_case(&r.text, &mode);
+                        r.text = new;
                     }
                 }
             }
