@@ -3592,3 +3592,34 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+#[test]
+fn flipping_a_rotated_shape_mirrors_its_outline() {
+    let corners = |s: &Session, id: deckcraft_model::ShapeId| {
+        let x = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+        let a = x.affine();
+        [(0.0, 0.0), (x.w, 0.0), (x.w, x.h), (0.0, x.h)].map(|(px, py)| {
+            let p = a * deckcraft_geom::Point::new(px, py);
+            ((p.x * 100.0).round() as i64, (p.y * 100.0).round() as i64)
+        })
+    };
+    let sorted = |mut c: [(i64, i64); 4]| {
+        c.sort_unstable();
+        c
+    };
+    for (cmd, horizontal) in [("arrange.flipHorizontal", true), ("arrange.flipVertical", false)] {
+        let mut s = session();
+        let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 50]})).unwrap();
+        let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+        s.execute("shape.rotate", &json!({"deg": 30})).unwrap();
+        let before = corners(&s, id);
+        // Mirror about the box's centre line (centre is 200, 125).
+        let mirrored = before.map(|(x, y)| if horizontal { (40000 - x, y) } else { (x, 25000 - y) });
+        s.execute(cmd, &json!({})).unwrap();
+        assert_eq!(sorted(corners(&s, id)), sorted(mirrored), "{cmd} of a 30° rotated rectangle is not its mirror image");
+        let rot = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap().rot;
+        assert!((rot - 330.0).abs() < 1e-9, "{cmd} negates the rotation, got {rot}");
+        s.execute(cmd, &json!({})).unwrap();
+        assert_eq!(sorted(corners(&s, id)), sorted(before), "{cmd} twice restores the outline");
+    }
+}

@@ -406,6 +406,8 @@ fn flip(s: &mut Session, p: &Value) -> Result<Value> {
             } else {
                 x.flip_h = !x.flip_h;
             }
+            // `Xfrm::affine` flips first and rotates second; a true mirror also negates the rotation.
+            x.rot = (360.0 - x.rot_norm()) % 360.0;
         }
         Ok(())
     })
