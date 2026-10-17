@@ -1,11 +1,19 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-17 · **Last updated:** 2026-10-17 · **Change:** major (language catalog and Simplified Chinese landed; previous: minor, IME composition underlined in table cells; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+The interface now has the shared Crafting-Apps language system
+(`crates/ui-egui/src/i18n/`, the system WordCraft/PdfCraft/PhotoCraft use): English strings in the
+code are the catalog keys, `crate::tl!(...)` looks them up per frame, and the `language` setting
+(`auto`, following the OS language, or a code) lives in `ui.json` with a picker under
+Backstage ▸ Options ▸ Interface language (#15). Simplified Chinese (`zh-hans.tsv`) ships with
+**1,323 entries**; the audit test `i18n::audit::the_catalog_covers_every_string_the_interface_looks_up`
+drives every ribbon tab, Backstage page, dialog and task pane in a pseudo-language and fails if any
+string the interface looks up has no entry. Interface text in a script the interface fonts lack
+borrows a system face (PingFang for Simplified Chinese on macOS), the catalog included.
+Requests: #30 and PR #34 (Ukrainian, open). Dimension score: **~65% ready** (English complete,
+Simplified Chinese interface complete and audited; other eleven key languages open; slide-text
+script support partly there), **40–70 h** to parity plus native-speaker review.
 
 ## How the numbers are measured
 
@@ -25,7 +33,7 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support (slide text) | Native review | Status | PowerPoint for Mac UI | Hours to full |
 |---|---|---|---|---|---|---|---|---|
 | English | en | ~1,050 / ~1,050 (100%) | yes / yes / no help | full | yes | **full** | yes | 0 |
-| Simplified Chinese (Mandarin) | zh-Hans | 0 (0%) | no | renders with system CJK fonts (asset policy excludes Noto CJK from builds); UAX #14 breaking; IME composition (#101); no true vertical layout | no | none | yes | 6–10 (incl. IME) |
+| Simplified Chinese (Mandarin) | zh-Hans | 1,323 / 1,323 entries (100% of what the interface looks up) | yes / yes / no help | renders with system CJK fonts and a borrowed system face (asset policy excludes Noto CJK from builds); UAX #14 breaking; IME composition (#101); no true vertical layout | no | **interface shipped** | yes | 0 (interface); review + IME polish remain |
 | Spanish | es | 0 (0%) | no | full (Latin) | no | none | yes (es, es-MX) | 3–5 |
 | Hindi | hi | 0 (0%) | no | Devanagari shaping through HarfRust, untested; no bundled Devanagari font | no | none | **no** (Windows only) | 4–7 |
 | Arabic | ar | 0 (0%) | no | bidi, contextual shaping, kashida justification, RTL bullets and caret (#4); **UI not mirrored**; browser export shows boxes (#81) | no | none | yes | 10–16 (incl. UI mirroring) |
@@ -58,6 +66,7 @@ common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#p
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-17 | major | Language catalog (`crates/ui-egui/src/i18n`, `tl!`, `language` setting, Options picker) and Simplified Chinese (`zh-hans.tsv`, 1,323 entries) landed; audit test requires every looked-up string to have an entry; interface CJK text borrows a system face |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
 | 2026-10-10 | major | Created: twelve-language table, ~1,050 UI strings measured, PowerPoint for Mac's 26 languages from its bundle |

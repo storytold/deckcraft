@@ -201,6 +201,26 @@ fn detect_system_lang() -> Lang {
     first_supported(tags.iter().map(String::as_str)).unwrap_or(Lang::EN)
 }
 
+/// The interface text of the CJK languages (their own names and their catalogs), for the interface
+/// font fallback (`uifonts`): every character the interface itself draws needs a face, and catalog
+/// text is never part of a presentation, so nothing else looks it up.
+pub fn cjk_ui_text() -> &'static str {
+    static TEXT: OnceLock<String> = OnceLock::new();
+    TEXT.get_or_init(|| {
+        let mut s = String::new();
+        for l in LANGUAGES.iter() {
+            if !l.prefer_hans {
+                continue;
+            }
+            s.push_str(l.name);
+            s.push('\n');
+            s.push_str(l.source);
+            s.push('\n');
+        }
+        s
+    })
+}
+
 thread_local! {
     // Per thread: parallel test harnesses must not change each other's language.
     static CURRENT: Cell<Lang> = const { Cell::new(Lang::EN) };

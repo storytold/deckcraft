@@ -1643,6 +1643,11 @@ impl SlideApp {
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);
         }
+        // The interface's own words: a CJK interface draws characters no presentation contains
+        // (ribbon labels, dialogs), so borrow a face for them from the catalogs.
+        if i18n::current().uses_cjk() {
+            self.ui_fonts.note(ctx, i18n::cjk_ui_text());
+        }
         self.ui_fonts.apply(ctx);
     }
 

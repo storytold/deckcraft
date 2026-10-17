@@ -95,7 +95,8 @@ fn the_catalog_covers_every_string_the_interface_looks_up() {
     pseudo::set(false);
 
     let lang = super::Lang::from_code("zh-hans").unwrap_or(super::Lang::EN);
-    let missing: Vec<&String> = keys.iter().filter(|k| !super::has(lang, k)).collect();
+    // An empty label (`small_button("")`) is not a catalog key.
+    let missing: Vec<&String> = keys.iter().filter(|k| !k.is_empty() && !super::has(lang, k)).collect();
     println!("LOOKED_UP_COUNT={}", keys.len());
     println!("MISSING_COUNT={}", missing.len());
     for k in &missing {

@@ -14,3 +14,1326 @@
 # Where a string is identical to one WordCraft ships, WordCraft's zh-hans.tsv wording is reused, so
 # the Crafting Apps read the same. Product, format and technology names (DeckCraft, PowerPoint,
 # PDF, PPTX …) stay in Latin letters.
+	  Fixed date (empty = update automatically):	  固定日期（留空 = 自动更新）：
+	  Footer text:	  页脚文本：
+	  Present  	  放映  
+	 (centre)	（居中）
+	 (not checked)	（未检查）
+	 (notes)	（备注）
+	 above centre	（中心上方）
+	 below centre	（中心下方）
+	 left of centre	（中心左侧）
+	 right of centre	（中心右侧）
+	(missing)	（缺失）
+	(no spelling suggestions)	（无拼写建议）
+	+ Add	+ 添加
+	+ New Comment	+ 新建批注
+	+ New Slide	+ 新建幻灯片
+	+ Row	+ 行
+	+ Series	+ 系列
+	+Bin	+二进制
+	+LOC	+代码行
+	1 picture	1 张图片
+	1) 2) 3)	1) 2) 3)
+	1. 2. 3.	1. 2. 3.
+	3-D Format	三维格式
+	3-D Rotation	三维旋转
+	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{bin_added} / −{bin_deleted} binary assets, {first} – {last}	@{login}：{prs} 个 PR，{commits} 次提交，+{added} / −{deleted} 行（Δ {delta}），+{bin_added} / −{bin_deleted} 个二进制资源，{first} – {last}
+	A photo album holds at most 48 pictures or text boxes	相册最多可容纳 48 张图片或文本框
+	A. B. C.	A. B. C.
+	ALL pictures black and white	所有图片转为黑白
+	About DeckCraft	关于 DeckCraft
+	Accept All ({n})	全部接受 ({n})
+	Accept Revision	接受修订
+	Accept\nAll	接受\n全部
+	Accessibility Checker	辅助功能检查器
+	Action	动作
+	Action Button: {kind}	动作按钮：{kind}
+	Action Buttons	动作按钮
+	Action Settings	动作设置
+	Action Settings…	动作设置…
+	Action on click	单击鼠标时
+	Action on mouse over	鼠标移过时
+	Add Animation	添加动画
+	Add Assistant	添加助理
+	Add Font	添加字体
+	Add Guide	添加参考线
+	Add Pictures…	添加图片…
+	Add Point	添加顶点
+	Add Section	添加节
+	Add Shape Above	在上方添加形状
+	Add Shape After	在后面添加形状
+	Add Shape Before	在前面添加形状
+	Add Shape Below	在下方添加形状
+	Add a category	添加类别
+	Add a picture or a text box first	请先添加图片或文本框
+	Add a tag	添加标记
+	Add a title	添加标题
+	Add a title with a picture or some text to get layout ideas.	添加标题以及图片或一些文字，即可获得版式创意。
+	Add an author	添加作者
+	Add comments	添加批注
+	Add\nAnimation	添加\n动画
+	Adjust Shape	调整形状
+	After Previous	上一动画之后
+	After text	文本之后
+	Album theme	相册主题
+	Align Cell Text	对齐单元格文本
+	Align text to the {edge} of the cell	将文本对齐到单元格的{edge}
+	All slides	所有幻灯片
+	All slides on	所有幻灯片开
+	An open-source, clean-room project. Not affiliated with Microsoft.	一个开源、净室开发的项目，与 Microsoft 没有关联。
+	Angle	角度
+	Animated GIF (.gif)	动画 GIF (.gif)
+	Animation Gallery	动画库
+	Animation Painter	动画刷
+	Animation Painter (double-click to keep it on)	动画刷（双击可保持启用）
+	Animation Pane	动画窗格
+	Animation Styles	动画样式
+	Animation\nPainter	动画刷
+	Animation\nPane	动画\n窗格
+	Animations	动画
+	Animations on Slide	幻灯片上的动画
+	Appearance	外观
+	Applies to this presentation's theme colours.	应用于此演示文稿的主题颜色。
+	Apply Animation	应用动画
+	Apply Design Idea	应用设计灵感
+	Apply To All	全部应用
+	Apply only to this picture	仅应用于此图片
+	Apply to All	全部应用
+	Apply\nTo All	全部\n应用
+	Arrow at end	终点箭头
+	Arrow at start	起点箭头
+	Arrows at both ends	两端箭头
+	As One Object	作为一个对象
+	As:	方式：
+	At	设置值
+	Audio	音频
+	Audio from File…	文件中的音频…
+	AutoCorrect Options…	自动更正选项…
+	AutoCorrect as you type	键入时自动更正
+	Autofit	自动调整
+	Available formats:	可用格式：
+	Back	返回
+	Back (Esc)	返回 (Esc)
+	Background\nStyles	背景\n样式
+	Baseline	基线
+	Before text	文本之前
+	Before you share it, check the presentation for things people with disabilities might find hard to read.	在共享之前，请检查演示文稿中可能让残障人士难以阅读的内容。
+	Bevel	棱台
+	Black	黑屏
+	Black Pen	黑色笔
+	Black on	黑屏开
+	Blank Presentation	空白演示文稿
+	Blue Pen	蓝色笔
+	Body	正文
+	Body font	正文字体
+	Body sample  {minor}	正文示例  {minor}
+	Body:	正文：
+	Brightness	亮度
+	Brightness {value}%	亮度 {value}%
+	Bring to Front	置于顶层
+	Browse	浏览
+	Browse for Themes needs the desktop app for now	浏览主题目前需要桌面应用
+	Browse for Themes…	浏览主题…
+	Browsed at a kiosk (full screen)	在展台浏览（全屏）
+	Browsed by an individual (window)	个人浏览（窗口）
+	Bulleted	项目符号
+	Bullets and Numbering	项目符号和编号
+	Bullets and Numbering…	项目符号和编号…
+	By	度量值
+	By Paragraph	按段落
+	Cameo	出镜
+	Camera capture is not available yet	摄像头拍摄尚不可用
+	Caps	大写
+	Captions under pictures	图片下方加题注
+	Change File Type	更改文件类型
+	Change Spelling	更改拼写
+	Change to:	更改为：
+	Character spacing must be a number	字符间距必须为数字
+	Chart Data	图表数据
+	Chart Elements	图表元素
+	Chart…	图表…
+	Check for Issues	检查问题
+	Choose a SmartArt Graphic	选择 SmartArt 图形
+	Choose a body font.	请选择正文字体。
+	Choose a font	选择字体
+	Choose a heading font.	请选择标题字体。
+	Choose where to save	选择保存位置
+	Choosing a presentation to reuse needs the desktop app	选择要重复使用的演示文稿目前需要桌面应用
+	Choosing a sound file needs the desktop app	选择声音文件目前需要桌面应用
+	Clear the tab at {pos}\\"	清除 {pos}\\" 处的制表位
+	Click a symbol to insert it at the insertion point.	单击符号即可将其插入到插入点。
+	Click the slide to take the colour under the pointer	单击幻灯片以拾取指针下的颜色
+	Click the slide to zoom in. Esc cancels.	单击幻灯片以放大。按 Esc 取消。
+	Click to add first slide	单击此处添加第一张幻灯片
+	Click to add notes	单击此处添加备注
+	Click to add text	单击此处添加文本
+	Click to change this one; Shift-click to change all	单击更改此项；按住 Shift 单击可更改全部
+	Close Master View	关闭母版视图
+	Collapse the Ribbon	折叠功能区
+	Color At	取色
+	Command Palette	命令面板
+	Commit Composition	提交组合
+	Community Links	社区链接
+	Compare needs the desktop app for now	比较目前需要桌面应用
+	Compare this presentation with a revised copy from Review › Compare.	通过“审阅 › 比较”将此演示文稿与修订副本进行比较。
+	Compared with {name}	与 {name} 比较
+	Compare…	比较…
+	Compose Text	组合文本
+	Compress	压缩
+	Compressed {n} picture(s): {before} KB → {after} KB	已压缩 {n} 张图片：{before} KB → {after} KB
+	Compression options	压缩选项
+	Connection Sites	连接点
+	Content	内容
+	Contrast	对比度
+	Contrast {value}%	对比度 {value}%
+	Contributors	贡献者
+	Convert to SmartArt	转换为 SmartArt
+	Copied the path	已复制路径
+	Copy path	复制路径
+	Correct accidental use of cAPS LOCK key	更正误按 Caps Lock 键造成的大小写错误
+	Couldn't save AutoRecover information: {error}	无法保存自动恢复信息：{error}
+	Create Handouts	创建讲义
+	Create New Theme Colors	新建主题颜色
+	Create New Theme Fonts	新建主题字体
+	Create PDF	创建 PDF
+	Create PDF Document	创建 PDF 文档
+	Create a PDF Document	创建 PDF 文档
+	Crop 10% each side	每侧裁剪 10%
+	Crop 20% each side	每侧裁剪 20%
+	Crop to Shape	裁剪为形状
+	Currency	货币
+	Custom Range	自定义范围
+	Custom Shows	自定义放映
+	Custom Slide Show	自定义幻灯片放映
+	Custom character:	自定义字符：
+	Custom width	自定义宽度
+	Custom\nShow	自定义\n放映
+	Customize Colors…	自定义颜色…
+	Customize Fonts…	自定义字体…
+	Dark appearance	深色外观
+	Dark\nMode	深色\n模式
+	Dash	虚线
+	Dash Dot	点划线
+	Dashes	虚线样式
+	Date	日期
+	Date &\nTime	日期和\n时间
+	Date and time	日期和时间
+	DeckCraft	DeckCraft
+	DeckCraft can't export “{format}”	DeckCraft 无法导出“{format}”
+	DeckCraft can't find “{text}”.	DeckCraft 找不到“{text}”。
+	DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.	DeckCraft 没有账号：无需登录，演示文稿始终保存在您的设备上。
+	DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer.	DeckCraft 通过 PDF 打印：文件会下载，可直接从浏览器或 PDF 阅读器打印。
+	DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer.	DeckCraft 通过 PDF 打印：文件会在 PDF 阅读器中打开，由您选择打印机。
+	Decrease List Level	降低列表级别
+	Default tab stops (in):	默认制表位（英寸）：
+	Delay:	延迟：
+	Delete Guide	删除参考线
+	Delete Layout	删除版式
+	Delete Point	删除顶点
+	Delete Repeated Word	删除重复的单词
+	Delete Slide	删除幻灯片
+	Delete Text	删除文本
+	Delete cropped areas of pictures	删除图片的裁剪区域
+	Deselect	取消选择
+	Design Ideas	设计灵感
+	Design\nIdeas	设计\n灵感
+	Dictionary: {name}	词典：{name}
+	Direction	方向
+	Discard Recovered Presentations	放弃已恢复的演示文稿
+	Display drawing guides on screen	在屏幕上显示绘图参考线
+	Display grid on screen	在屏幕上显示网格
+	Distribute	分布
+	Do not Autofit	不自动调整
+	Do you want to save the changes you made to {what}?	是否保存对{what}所做的更改？
+	Do you want to save the changes you made to “{name}”?	是否保存对“{name}”所做的更改？
+	Don't show on title slide	不在标题幻灯片上显示
+	Done	完成
+	Dot	点线
+	Download	下载
+	Download the file	下载文件
+	Duplicate	复制
+	Duplicate Selected Slides	复制所选幻灯片
+	Duplicate Slide	复制幻灯片
+	Duration handle {n}	持续时间手柄 {n}
+	Duration:	持续时间：
+	E-mail (96 ppi): minimise document size for sharing	电子邮件 (96 ppi)：缩小文档大小以便共享
+	Edit	编辑
+	Edit Alt Text…	编辑替代文字…
+	Edit Header & Footer	编辑页眉和页脚
+	Edit Photo Album…	编辑相册…
+	Edit Points	编辑顶点
+	Edit SmartArt Text	编辑 SmartArt 文本
+	Edit Text	编辑文本
+	Edit the data: first row = series names, first column = categories.	编辑数据：第一行为系列名称，第一列为分类。
+	Effect Options	效果选项
+	Effect\nOptions	效果\n选项
+	Email Address	电子邮件地址
+	Emphasis	强调
+	End	结束
+	End Review	结束审阅
+	End Show	结束放映
+	End of slide show	幻灯片放映结束
+	End of slide show, click to exit.	幻灯片放映已结束，单击退出。
+	End trim (s):	结束裁剪（秒）：
+	End\nReview	结束\n审阅
+	Enter a scheme name.	请输入方案名称。
+	Enter a zoom percent	请输入缩放百分比
+	Entrance	进入
+	Exit	退出
+	Exit Edit Points	退出编辑顶点
+	Export the presentation as:	将演示文稿导出为：
+	Export…	导出…
+	Extra Large (1920 px wide)	特大 (1920 像素宽)
+	Eyedropper	取色器
+	Eyedropper: click the slide (Esc cancels)	取色器：单击幻灯片（按 Esc 取消）
+	Fade in (s):	淡入（秒）：
+	Fade out (s):	淡出（秒）：
+	File (Alt+F)	文件 (Alt+F)
+	Fill & Line	填充与线条
+	Find whole words only	全字匹配
+	Find…	查找…
+	First Slide	第一张幻灯片
+	First {count} slides	前 {count} 张幻灯片
+	Fit slide to current window	使幻灯片适应当前窗口
+	Fit to Window	适应窗口
+	Fit to\nWindow	适应\n窗口
+	Flip	翻转
+	Follow Path	跟随路径
+	Follow the layout	遵循版式
+	Font name	字体名称
+	Font size must be a number	字号必须为数字
+	Fonts in Presentation	演示文稿中的字体
+	Footers	页脚
+	For rectangles and rounded rectangles	适用于矩形和圆角矩形
+	Format Background	设置背景格式
+	Format Background…	设置背景格式…
+	Format Painter (double-click to keep it on)	格式刷（双击可保持启用）
+	Format Shape	设置形状格式
+	Format Shape…	设置形状格式…
+	Format\nBackground	设置背景\n格式
+	Formatting State	格式状态
+	Frame Slides	为幻灯片加边框
+	Frame shape	框架形状
+	Freeform	任意多边形
+	From Bottom	自底部
+	From Left	自左侧
+	From Right	自右侧
+	From Top	自顶部
+	From the top-left corner of the slide	从幻灯片左上角
+	From\nBeginning	从\n开头
+	From\nCurrent Slide	从\n当前幻灯片
+	Full	完整
+	Full Page Slides	整页幻灯片
+	Get Text	获取文本
+	Go to Slide	定位到幻灯片
+	Go to slide {number}	转到第 {number} 张幻灯片
+	Gradient fill	渐变填充
+	Gradient stops	渐变光圈
+	Gradient…	渐变…
+	Grid Options	网格选项
+	Grid Options…	网格选项…
+	Grid and Guides	网格和参考线
+	Grid\nOptions	网格\n选项
+	Group Objects	组合对象
+	Guides	参考线
+	HD (330 ppi): good quality for high-definition displays	高清 (330 ppi)：适合高分辨率显示器的良好质量
+	Half	一半
+	Handout Master	讲义母版
+	Handout Placeholders	讲义占位符
+	Handout\nMaster	讲义\n母版
+	Handouts (1 slide per page)	讲义（每页 1 张幻灯片）
+	Handouts (2 slides per page)	讲义（每页 2 张幻灯片）
+	Handouts (3 slides per page)	讲义（每页 3 张幻灯片）
+	Handouts (4 slides per page)	讲义（每页 4 张幻灯片）
+	Handouts (6 slides per page)	讲义（每页 6 张幻灯片）
+	Handouts (9 slides per page)	讲义（每页 9 张幻灯片）
+	Header &\nFooter	页眉和\n页脚
+	Header and Footer	页眉和页脚
+	Header and Footer…	页眉和页脚…
+	Heading and body fonts for this presentation.	此演示文稿的标题和正文字体。
+	Heading font	标题字体
+	Heading sample  {major}	标题示例  {major}
+	Heading:	标题：
+	Height	高度
+	Height (in):	高度（英寸）：
+	Hidden slides	隐藏的幻灯片
+	Hide	隐藏
+	Hide All	全部隐藏
+	Hide Background Graphics	隐藏背景图形
+	Hide During Show	放映时隐藏
+	Hide Slide	隐藏幻灯片
+	Hide background graphics	隐藏背景图形
+	Hide\nSlide	隐藏\n幻灯片
+	High	高
+	Highlight click	单击时突出显示
+	Horizontal (in):	水平位置（英寸）：
+	How would you describe this object and its context to someone who is blind or has low vision?	您会如何向盲人或低视力人士描述此对象及其上下文？
+	Hyperlink to:	超链接到：
+	I. II. III.	I. II. III.
+	Icon Gallery	图标库
+	In	内
+	Include hidden slides	包括隐藏幻灯片
+	Increase List Level	提高列表级别
+	Indent after text must be a number of inches	文本之后的缩进必须是以英寸为单位的数值
+	Indent before text must be a number of inches	文本之前的缩进必须是以英寸为单位的数值
+	Ink to Math (coming soon)	墨迹转公式（即将推出）
+	Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes	墨迹转形状：将绘制的线条、矩形、椭圆和三角形转换为形状
+	Ink to Text (coming soon)	墨迹转文本（即将推出）
+	Ink to\nText	墨迹转\n文本
+	Inner	内侧
+	Insert Layout	插入版式
+	Insert Picture in SmartArt	在 SmartArt 中插入图片
+	Insert Picture in SmartArt…	在 SmartArt 中插入图片…
+	Insert Placeholder	插入占位符
+	Insert Synonym	插入同义词
+	Insert picture from file…	从文件插入图片…
+	Inserted {count} slides from {path}	已从 {path} 插入 {count} 张幻灯片
+	Insert…	插入…
+	Inspect Presentation	检查演示文稿
+	Inspect Shape	检查形状
+	Inspect Slide	检查幻灯片
+	Interface Language	界面语言
+	Interface size	界面大小
+	JPEG image (current slide)	JPEG 图像（当前幻灯片）
+	Join our community on Discord	加入我们的 Discord 社区
+	Keep Source Formatting	保留源格式
+	Keeps the layout, fonts and pictures	保留版式、字体和图片
+	Landscape Orientation	横向
+	Language:	语言：
+	Large (1280 px wide)	大（宽 1280 像素）
+	Last Slide	最后一张幻灯片
+	Layout Placeholders	版式占位符
+	Learn\nMore	了解\n更多
+	Less Brightness	降低亮度
+	Less Contrast	降低对比度
+	Letter (8.5 × 11 in)	信纸 (8.5 × 11 英寸)
+	Light/Dark appearance	浅色/深色外观
+	Line spacing must be a number	行距必须是数值
+	List Commands	列出命令
+	Lock	锁定
+	Lock aspect ratio	锁定纵横比
+	Long Dash	长划线
+	Long Dash Dot	长划线-点
+	Loop Until Next Sound	循环播放，直到下一个声音
+	Loop continuously until 'Esc'	连续循环，直到按 Esc
+	Loop until Stopped	循环播放，直到停止
+	Loose	宽松
+	Low	低
+	MISSING_COUNT=584	MISSING_COUNT=584
+	MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors	MIT OR Apache-2.0 · © 2026 ArtCraft Team 和 DeckCraft 贡献者
+	Manage Presentation	管理演示文稿
+	Margins (pt)	边距（磅）
+	Match {n} of {total} on slide {slide}{where_}.	在幻灯片 {slide}{where_} 上匹配 {total} 个中的 {n} 个。
+	Math	公式
+	Maximize content (else ensure fit)	最大化内容（否则确保适合）
+	Media	媒体
+	Media Info	媒体信息
+	Medium (960 px wide)	中（宽 960 像素）
+	Merge Shapes	合并形状
+	Mirror	镜像
+	Models	模型
+	Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time.	英文会列出月份名称和上午/下午，其他语言则列出数字日期和 24 小时制时间。
+	More Brightness	提高亮度
+	More Colors… #	其他颜色… #
+	More Contrast	提高对比度
+	More presentations	更多演示文稿
+	More templates	更多模板
+	More themes	更多主题
+	Motion	动作
+	Motion Paths	动作路径
+	Mouse Click	鼠标单击
+	Mouse Over	鼠标悬停
+	Move	移动
+	Move Guide	移动参考线
+	Move Handle	移动控点
+	Move Insertion Point	移动插入点
+	Move Point	移动顶点
+	Move Section	移动节
+	Move Section Down	下移节
+	Move Section Up	上移节
+	Move Slide	移动幻灯片
+	Mute	静音
+	New Presentation	新建演示文稿
+	New Slide	新建幻灯片
+	New Slide (⇧⌘N)	新建幻灯片 (⇧⌘N)
+	New Text Box	新建文本框
+	New show name:	新放映名称：
+	New\nSlide	新建\n幻灯片
+	Next Slide	下一张幻灯片
+	Next Window	下一个窗口
+	Next ▶	下一个 ▶
+	No accessibility issues found. People with disabilities should not have difficulty reading this document.	未发现辅助功能问题。残障人士阅读此文档应该不会有困难。
+	No comments.	没有批注。
+	No differences left.	没有剩余差异。
+	No fill	无填充
+	No icons match.	没有匹配的图标。
+	No line	无线条
+	No notes.	没有备注。
+	No pictures yet	还没有图片
+	No presentation is open.	没有打开的演示文稿。
+	No recent presentations match “{query}”.	没有与“{query}”匹配的最近演示文稿。
+	No slides.	没有幻灯片。
+	No sound: {error}	无声音：{error}
+	No synonyms for \\"{word}\\".	没有“{word}”的同义词。
+	No themes or templates match “{query}”.	没有与“{query}”匹配的主题或模板。
+	No {lang} dictionary is installed, so only common misspellings are found. Put a Hunspell .aff/.dic pair in {folder}.	未安装 {lang} 词典，因此只能找到常见拼写错误。请将一对 Hunspell .aff/.dic 文件放入 {folder}。
+	Normal	普通
+	Not a copy of this presentation: slides are matched by position.	不是此演示文稿的副本：幻灯片按位置匹配。
+	Notes	备注
+	Notes Master	备注母版
+	Notes Page	备注页
+	Notes Pages	备注页
+	Notes Placeholders	备注占位符
+	Notes\nMaster	备注\n母版
+	Notes\nPage	备注页
+	Nothing to print: every slide in the range is hidden.	没有可打印的内容：该范围内的每张幻灯片都处于隐藏状态。
+	Numbered	编号
+	On Click	单击时
+	On Click of {shape}	单击 {shape} 时
+	On Click of… (none)	单击时…（无）
+	On Mouse Click	单击鼠标时
+	Open Data	打开数据
+	Open Dialog	打开对话框
+	Open Recovered Presentations	打开恢复的演示文稿
+	Open a presentation from a folder (Ctrl+O)	从文件夹打开演示文稿 (Ctrl+O)
+	Open another window on this presentation	为此演示文稿打开另一个窗口
+	Open file location	打开文件位置
+	Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.	以 MIT OR Apache-2.0 许可开源。与 Microsoft 无关联。
+	Opened the presentation as a PDF to print	已将该演示文稿作为 PDF 打开以供打印
+	Opening {name}…	正在打开 {name}…
+	Opens in PowerPoint and other presentation apps	可在 PowerPoint 和其他演示文稿应用中打开
+	Opens on any device with a PDF viewer	可在任何装有 PDF 阅读器的设备上打开
+	Open…	打开…
+	Order Objects	排列对象
+	Orientation:	方向：
+	Other Sound…	其他声音…
+	Out	外
+	Outer	外侧
+	Outline (.txt)	大纲 (.txt)
+	Outline View	大纲视图
+	Outline\nView	大纲\n视图
+	Oval ends	圆形端点
+	PDF document (.pdf)	PDF 文档 (.pdf)
+	PNG images (all slides)	PNG 图像（所有幻灯片）
+	PNG images (current slide)	PNG 图像（当前幻灯片）
+	Page Setup…	页面设置…
+	Pane	窗格
+	Pass pictures to insert.photoAlbum	将图片传递给 insert.photoAlbum
+	Paste and Match Formatting	粘贴并匹配格式
+	Paste or type an outline. Unindented lines become slide titles; tab-indented lines become bullets.	粘贴或键入大纲。未缩进的行成为幻灯片标题；以制表符缩进的行成为项目符号。
+	Pattern fill	图案填充
+	Pen Color	笔颜色
+	Pen Style	笔样式
+	Pen Weight	笔粗细
+	Percent:	百分比：
+	Perspective	透视
+	Photo Album	相册
+	Photo Album options	相册选项
+	Photo Album…	相册…
+	Photo\nAlbum	相册
+	Pick a design for this slide. Ideas are generated on your device.	为此幻灯片选择一种设计。灵感将在你的设备上生成。
+	Pick a graphic; type one item per line.	选择图形；每行键入一项。
+	Picture (PNG)	图片 (PNG)
+	Picture Style Gallery	图片样式库
+	Picture from File…	来自文件的图片…
+	Picture layout	图片版式
+	Picture or texture fill	图片或纹理填充
+	Picture source	图片来源
+	Pictures are already at or below that resolution	图片已达到或低于该分辨率
+	Pictures in album	相册中的图片
+	Pixels of this colour become transparent:	此颜色的像素将变为透明：
+	Play Across Slides	跨幻灯片播放
+	Play Full Screen	全屏播放
+	Play Narrations	播放旁白
+	Play from Current Slide	从当前幻灯片播放
+	Play from Start	从头开始播放
+	Play from\nCurrent Slide	从当前幻灯片\n播放
+	Play from\nStart	从头开始\n播放
+	Play the shape's media	播放形状的媒体
+	Play this slide's animations on the canvas	在画布上播放此幻灯片的动画
+	Play/Pause GIF	播放/暂停 GIF
+	Playback	播放
+	Point Type	顶点类型
+	Portrait Orientation	纵向
+	Position Objects	定位对象
+	Position and Size	位置和大小
+	Post	发布
+	Poster Frame	海报帧
+	PowerPoint Presentation (*.pptx)	PowerPoint 演示文稿 (*.pptx)
+	PowerPoint Presentation (.pptx)	PowerPoint 演示文稿 (.pptx)
+	Preferences	首选项
+	Preferences…	首选项…
+	Presentations	演示文稿
+	Presentations and slide shows, rebuilt from scratch in pure Rust.	用纯 Rust 从零重建的演示文稿和幻灯片放映。
+	Presentations you open show up here. Use Open to browse for one.	你打开的演示文稿会显示在这里。请使用“打开”浏览查找。
+	Presented by a speaker (full screen)	由演讲者放映（全屏）
+	Presenter View	演示者视图
+	Presenter View — DeckCraft	演示者视图 — DeckCraft
+	Presenter\nView	演示者\n视图
+	Preserve	保留
+	Preset gradients	预设渐变
+	Preview Animations	预览动画
+	Previewing animations	正在预览动画
+	Previous Slide	上一张幻灯片
+	Print (220 ppi): excellent quality on most printers and screens	打印 (220 ppi)：在大多数打印机和屏幕上质量出色
+	Print All Slides	打印所有幻灯片
+	Print Current Slide	打印当前幻灯片
+	Print Hidden Slides	打印隐藏幻灯片
+	Print layout:	打印版式：
+	Print them for your audience	为听众打印这些内容
+	Print…	打印…
+	Product Information	产品信息
+	Punctuation	标点
+	Put a picture in the selected node's picture placeholder	将图片放入所选节点的图片占位符
+	Quick Styles	快速样式
+	Quick\nStyles	快速\n样式
+	Reading View	阅读视图
+	Reading the file: {seconds} s	正在读取文件：{seconds} 秒
+	Reading\nView	阅读\n视图
+	Recolor	重新着色
+	Recolor Gallery	重新着色库
+	Record	录制
+	Recording narration needs audio capture (coming soon)	录制旁白需要音频采集（即将推出）
+	Recover Unsaved Presentations	恢复未保存的演示文稿
+	Recovered Presentations	已恢复的演示文稿
+	Red Pen	红色笔
+	Regroup	重新组合
+	Rehearse\nTimings	排练\n计时
+	Remove All Animations	删除所有动画
+	Remove All Sections	删除所有节
+	Remove Animation	删除动画
+	Remove Less (tighter)	删除更少（更紧凑）
+	Remove More (looser)	删除更多（更宽松）
+	Remove Section	删除节
+	Remove Section & Slides	删除节和幻灯片
+	Remove Shape	删除形状
+	Remove bullets and numbering	删除项目符号和编号
+	Remove from Recent	从最近使用中删除
+	Remove stop	删除色标
+	Remove the picture style	删除图片样式
+	Rename Layout	重命名版式
+	Rename Section	重命名节
+	Rename Section…	重命名节…
+	Rename Slide	重命名幻灯片
+	Render Slide	渲染幻灯片
+	Reorder Animation	重新排序动画
+	Reorder Objects	重新排列对象
+	Repeated word	重复的单词
+	Replace Font	替换字体
+	Replace Fonts	替换字体
+	Replace Fonts…	替换字体…
+	Replace fractions (1/2) with fraction characters (½)	将分数 (1/2) 替换为分数字符 (½)
+	Replace straight quotes with smart quotes	以弯引号替换直引号
+	Replaced {n} occurrence(s).	已替换 {n} 处。
+	Replaced “{from}” with “{to}”.	已将“{from}”替换为“{to}”。
+	Replace…	替换…
+	Reply…	答复…
+	Rescan Installed Fonts	重新扫描已安装的字体
+	Reset 3-D	重设三维
+	Reset Background	重设背景
+	Reset Effects	重设效果
+	Reset Slide	重设幻灯片
+	Reset Slide Background	重设幻灯片背景
+	Reset Style	重设样式
+	Reset to Defaults	重置为默认值
+	Resize shape to fit text	调整形状大小以适合文字
+	Resolution	分辨率
+	Resolve Thread	解决对话
+	Resume	继续
+	Reuse Slides (Keep Source Formatting)…	重用幻灯片（保留源格式）…
+	Reuse Slides needs the desktop app	重用幻灯片需要桌面应用
+	Reuse Slides…	重用幻灯片…
+	Revert	还原
+	Revisions	修订
+	Rewind after Playing	播放后倒回
+	Ribbon Tab	功能区选项卡
+	Right-click any ribbon button to add it.	右键单击任意功能区按钮即可添加。
+	Rotate Left	向左旋转
+	Rotate Right	向右旋转
+	Rotate with shape	随形状旋转
+	Rotation (°):	旋转角度（°）：
+	Rotation {rot}°, brightness {brightness}, contrast {contrast}	旋转 {rot}°，亮度 {brightness}，对比度 {contrast}
+	Round Dot	圆点
+	Run program:	运行程序：
+	Sample deck: Northern Lights	示例演示文稿：Northern Lights
+	Saturation	饱和度
+	Saturation {value}%	饱和度 {value}%
+	Save As…	另存为…
+	Save AutoRecover Information	保存自动恢复信息
+	Save as Template…	另存为模板…
+	Save to Data	保存到数据
+	Saved {path}	已保存 {path}
+	Saving a copy needs a file picker, which this window doesn't have.	保存副本需要文件选择器，而此窗口没有。
+	Scale height	缩放高度
+	Scale height (%):	缩放高度（%）：
+	Scale width	缩放宽度
+	Scale width (%):	缩放宽度（%）：
+	Scheme name	方案名称
+	ScreenTip:	屏幕提示：
+	Screenshot	屏幕截图
+	Screenshot (not available yet)	屏幕截图（尚不可用）
+	Search commands (⇧⌘P)	搜索命令 (⇧⌘P)
+	Search commands…	搜索命令…
+	Search for a file	搜索文件
+	Search for a word	搜索单词
+	Search for themes and templates	搜索主题和模板
+	Seconds per slide: enter {min} to {max}	每张幻灯片秒数：输入 {min} 到 {max}
+	Section	节
+	Section Zoom	节缩放
+	Seek	定位
+	Select All Text	全选文本
+	Select Cells	选择单元格
+	Select Slides	选择幻灯片
+	Select a SmartArt graphic to edit its text.	选择 SmartArt 图形以编辑其文本。
+	Select a chart first.	请先选择图表。
+	Select a picture to rotate it or change brightness and contrast	选择图片以旋转它或更改亮度和对比度
+	Select a shape to format it.	选择形状以设置其格式。
+	Select a word on the slide, or type one above.	在幻灯片上选择一个单词，或在上方输入一个。
+	Select an object on the slide and add an animation from the Animations tab.	在幻灯片上选择对象，然后从“动画”选项卡添加动画。
+	Selection Pane…	选择窗格…
+	Selection\nPane	选择\n窗格
+	Send to Back	置于底层
+	Set Text	设置文本
+	Set Transparent Color	设置透明色
+	Set Up Show…	设置放映…
+	Set Up Slide Show	设置幻灯片放映
+	Set Up Slide Show…	设置幻灯片放映…
+	Set Up\nSlide Show	设置\n幻灯片放映
+	Set Zoom	设置缩放
+	Set as Default Shape	设为默认形状
+	Settings	设置
+	Several slides on each page of a PDF	PDF 每页包含多张幻灯片
+	Shape Gallery	形状库
+	Shape {id}	形状 {id}
+	Show All	全部显示
+	Show Media Controls	显示媒体控件
+	Show Slide	显示幻灯片
+	Show smart guides	显示智能参考线
+	Show type	显示类型
+	Show without animation	放映时不加动画
+	Show without narration	放映时不加旁白
+	Show/Hide	显示/隐藏
+	Shrink text on overflow	溢出时缩小文字
+	Size & Properties	大小和属性
+	Size (% of text):	大小（文本百分比）：
+	Size and Position	大小和位置
+	Size and Position…	大小和位置…
+	Slide Image	幻灯片图像
+	Slide Master	幻灯片母版
+	Slide Number	幻灯片编号
+	Slide Show	幻灯片放映
+	Slide Size	幻灯片大小
+	Slide Sorter	幻灯片浏览
+	Slide Zoom	幻灯片缩放
+	Slide inserted after {n}	幻灯片已插入到 {n} 之后
+	Slide number	幻灯片编号
+	Slide timings recorded.	已记录幻灯片计时。
+	Slide {current} of {total}	幻灯片 {current}/{total}
+	Slide {number}	幻灯片 {number}
+	Slide {n}	幻灯片 {n}
+	Slide {n} changed	幻灯片 {n} 已更改
+	Slide {n} deleted	幻灯片 {n} 已删除
+	Slide {n}: {issue}{name}	幻灯片 {n}：{issue}{name}
+	Slide {n}: “{word}”	幻灯片 {n}：“{word}”
+	Slide {slide}   Total {total}	幻灯片 {slide}   总计 {total}
+	Slide\nMaster	幻灯片\n母版
+	Slide\nNumber	幻灯片\n编号
+	Slide\nSize	幻灯片\n大小
+	Slide\nSorter	幻灯片\n浏览
+	Slides	幻灯片
+	Slides (e.g. 1,3,5):	幻灯片（例如 1,3,5）：
+	Slides Per\nPage: {n}	每页\n幻灯片数：{n}
+	Slides from Outline	从大纲插入幻灯片
+	Slides from Outline…	从大纲插入幻灯片…
+	Slides sized for:	幻灯片大小设置为：
+	Slides:	幻灯片：
+	Slides: choose a range from 1 to {n}	幻灯片：请选择 1 到 {n} 之间的范围
+	Small (640 px wide)	小（宽 640 像素）
+	Smooth Corners	平滑拐角
+	Snap	对齐
+	Snap objects to grid	将对象与网格对齐
+	Snap objects to other objects	将对象与其他对象对齐
+	Solid	实线
+	Solid fill	纯色填充
+	Solid line	实线
+	Sound	声音
+	Sound:	声音：
+	Source on GitHub	GitHub 上的源代码
+	Spacing after	段后间距
+	Spacing after must be a number	段后间距必须是数字
+	Spacing before	段前间距
+	Spacing before must be a number	段前间距必须是数字
+	Special indent must be a number of inches	特殊缩进必须是以英寸为单位的数字
+	Specify the company	指定公司
+	Specify the subject	指定主题
+	Spelling Dictionary	拼写词典
+	Spelling is checked for languages marked (dictionary).	仅对标记为（词典）的语言检查拼写。
+	Square Dot	方点
+	Standard (4:3)	标准 (4:3)
+	Start After Previous	上一动画之后
+	Start Automatically	自动开始
+	Start On Click	单击时
+	Start With Previous	与上一动画同时
+	Start a conversation	开始对话
+	Start from Beginning	从头开始
+	Start time (s):	开始时间（秒）：
+	Start:	开始：
+	Start: {start}s, End: {end}s	开始：{start} 秒，结束：{end} 秒
+	Starter Templates	入门模板
+	Stealth end	燕尾形终点箭头
+	Still opening {name}	仍在打开 {name}
+	Stop Editing Text	停止编辑文本
+	Stopped opening {name}	已停止打开 {name}
+	Style {n}	样式 {n}
+	Subject	主题
+	Summary Zoom	摘要缩放
+	Tab stop position (in):	制表位位置（英寸）：
+	Tab stops:	制表位：
+	Table Eraser	表格橡皮擦
+	Table…	表格…
+	Tags	标记
+	Task Pane	任务窗格
+	Text Box Margins	文本框边距
+	Text Options	文本选项
+	Text Shadow	文字阴影
+	Text Transform	文本转换
+	Text Transparency	文字透明度
+	Text box:	文本框：
+	Text boxes have no picture options	文本框没有图片选项
+	Text is longer than 400 characters	文本超过 400 个字符
+	Text: {text}	文本：{text}
+	That file is empty	该文件为空
+	That picture is larger than 32 MB	该图片大于 32 MB
+	The Eyedropper takes colours from a slide	取色器从幻灯片中取色
+	The picture list is invalid	图片列表无效
+	The presentation has no sections. Add one with Home › Section.	演示文稿没有节。请使用“开始 › 节”添加一节。
+	The presentation keeps its own file	演示文稿保留自己的文件
+	The spelling check is complete. No issues found.	拼写检查已完成。未发现问题。
+	The version, the people and models who built it, and where to find us.	版本信息、构建它的人员和模型，以及在哪里可以找到我们。
+	The web build inserts album pictures from data passed to insert.photoAlbum	Web 版本通过传递给 insert.photoAlbum 的数据插入相册图片
+	Theme Gallery	主题库
+	Themes (whole presentation)	主题（整个演示文稿）
+	There are no unsaved changes.	没有未保存的更改。
+	There are no unsaved presentations to recover	没有可恢复的未保存演示文稿
+	This Document	本文档
+	This presentation has never been saved.	此演示文稿从未保存过。
+	This presentation has no custom shows (Slide Show ▸ Custom Slide Show).	此演示文稿没有自定义放映（幻灯片放映 ▸ 自定义幻灯片放映）。
+	This presentation has unsaved changes. Revert goes back to the saved file.	此演示文稿有未保存的更改。还原将回到已保存的文件。
+	This slide has no animations	此幻灯片没有动画
+	Three a page leaves lines for notes	每页三张，会为备注留出线条
+	Tile picture as texture	将图片平铺为纹理
+	Timing	计时
+	Timing bar {n}	计时条 {n}
+	Transition	切换
+	Transition Gallery	切换库
+	Transitions	切换
+	Translation needs a language model (not bundled)	翻译需要语言模型（未内置）
+	Trigger	触发
+	Trim Media	剪裁媒体
+	Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).	以线性格式输入公式（例如 a^2+b^2=c^2、x=(-b±√(b^2-4ac))/2a）。
+	Type and organise the diagram's text	键入并整理图示的文本
+	Type the text for the new text box	键入新文本框的文本
+	Type your text here	在此处键入文本
+	Update automatically	自动更新
+	Use Destination Theme	使用目标主题
+	Use Timings	使用计时
+	Use timings, if present	使用计时（如果有）
+	User Information	用户信息
+	Variant Gallery	变体库
+	Variants	变体
+	Version {version}	版本 {version}
+	Vertical (in):	垂直（英寸）：
+	Vertical alignment	垂直对齐方式
+	Very Loose	非常稀疏
+	Very Tight	非常紧密
+	Very loose	非常稀疏
+	Very tight	非常紧密
+	Video	视频
+	Video from File…	文件中的视频…
+	Warp	弯曲
+	Web (150 ppi): good for web pages and projectors	Web (150 ppi)：适用于网页和投影仪
+	Web Page or File	网页或文件
+	White	白色
+	White on	白色开启
+	Widescreen (16:9)	宽屏 (16:9)
+	Width	宽度
+	Width (in):	宽度（英寸）：
+	Width: 	宽度： 
+	Width: enter {min} to {max} pixels	宽度：输入 {min} 到 {max} 像素
+	With	同时
+	With Previous	与上一动画同时
+	WordArt style {n}	艺术字样式 {n}
+	Wrap Text in Shape	在形状中环绕文字
+	Wrap text in shape	在形状中环绕文字
+	Your name (comments):	您的姓名（批注）：
+	Zoom on	缩放开启
+	Zoom to	缩放至
+	Zoom…	缩放…
+	[No Sound]	[无声音]
+	[Stop Previous Sound]	[停止上一个声音]
+	a) b) c)	a) b) c)
+	a. b. c.	a. b. c.
+	e.g. 1-3, 5	例如 1-3, 5
+	i. ii. iii.	i. ii. iii.
+	size (pt)	大小（磅）
+	tOGGLE cASE	切换大小写
+	the layout it was chosen for was deleted	它所属的版式已被删除
+	the slide it was chosen for was deleted	它所属的幻灯片已被删除
+	the slide master it was chosen for was deleted	它所属的幻灯片母版已被删除
+	there was no slide to put it on	没有可放置它的幻灯片
+	{action} {name}	{action} {name}
+	{a} and {b}	{a} 和 {b}
+	{a}, {b} and {c}	{a}、{b} 和 {c}
+	{a}, {b}, {c} and {more} more	{a}、{b}、{c} 以及另外 {more} 个
+	{char}  Bullet	{char}  项目符号
+	{cols}x{rows} Table	{cols}×{rows} 表格
+	{count} contributors · {commits} commits	{count} 位贡献者 · {commits} 次提交
+	{count} slides per page	每页 {count} 张幻灯片
+	{current} of {total}	{current} / {total}
+	{effect} — {class}	{effect} — {class}
+	{font} (Body)	{font}（正文）
+	{font} (Headings)	{font}（标题）
+	{kind_label} (click to change)	{kind_label}（单击以更改）
+	{label} ({shortcut})	{label}（{shortcut}）
+	{label} must be a number	{label} 必须是数字
+	{master} Slide Master	{master} 幻灯片母版
+	{names} aren't installed on this computer. Text that uses them is shown in a similar font.	{names} 未安装在此计算机上。使用它们的文本将以相似字体显示。
+	{names} isn't installed on this computer. Text that uses it is shown in a similar font.	{names} 未安装在此计算机上。使用它的文本将以相似字体显示。
+	{name}  (dictionary)	{name}  （词典）
+	{name} ({n} slides)	{name}（{n} 张幻灯片）
+	{name} was not applied: the presentation it was chosen for is closed	未应用 {name}：它所属的演示文稿已关闭
+	{name} was not applied: {error}	未应用 {name}：{error}
+	{name}: DeckCraft can't open this kind of file	{name}：DeckCraft 无法打开此类文件
+	{number}  Hidden	{number}  隐藏
+	{n} Column	{n} 列
+	{n} Columns	{n} 列
+	{n} Slide	{n} 张幻灯片
+	{n} Slides	{n} 张幻灯片
+	{n} presentations	{n} 个演示文稿
+	{path} — this file can't be found	{path} — 找不到此文件
+	{path}: reading the file stopped unexpectedly	{path}：读取文件意外停止
+	{radius} pt glow	{radius} 磅发光
+	{slot} hex	{slot} 十六进制
+	{slot} needs a colour like #RRGGBB.	{slot} 需要类似 #RRGGBB 的颜色。
+	{title} — Edited	{title} — 已编辑
+	{when} · Resolved	{when} · 已解决
+	ΔLOC	Δ代码行
+	“{from}” isn't used explicitly.	“{from}” 未被显式使用。
+	“{id}” is not available yet.	“{id}” 尚不可用。
+	−Bin	−二进制文件
+	−LOC	−代码行
+	▶ Play All	▶ 全部播放
+	◀ Previous	◀ 上一个
+	◉ on	◉ 开
+	✏ on	✏ 开
+	⟦Animation⟧\n⟦Pane⟧	⟦动画⟧\n⟦窗格⟧
+	⟦Apply⟧\n⟦To All⟧	⟦应用到⟧\n⟦全部⟧
+	⟦Audio⟧	⟦音频⟧
+	⟦Check⟧\n⟦Accessibility⟧	⟦检查⟧\n⟦辅助功能⟧
+	⟦Comment⟧	⟦批注⟧
+	⟦Compare⟧	⟦比较⟧
+	⟦Copy⟧	⟦复制⟧
+	⟦Custom⟧\n⟦Show⟧	⟦自定义⟧\n⟦放映⟧
+	⟦Cut⟧	⟦剪切⟧
+	⟦Date &⟧\n⟦Time⟧	⟦日期和⟧\n⟦时间⟧
+	⟦Delete⟧	⟦删除⟧
+	⟦Design⟧\n⟦Ideas⟧	⟦设计⟧\n⟦创意⟧
+	⟦Equation⟧	⟦公式⟧
+	⟦Find⟧	⟦查找⟧
+	⟦Format⟧\n⟦Background⟧	⟦格式⟧\n⟦背景⟧
+	⟦Header &⟧\n⟦Footer⟧	⟦页眉和⟧\n⟦页脚⟧
+	⟦Language⟧	⟦语言⟧
+	⟦Link⟧	⟦链接⟧
+	⟦New⟧\n⟦Comment⟧	⟦新建⟧\n⟦批注⟧
+	⟦Pictures⟧	⟦图片⟧
+	⟦Picture⟧	⟦图片⟧
+	⟦Replace⟧	⟦替换⟧
+	⟦Reset⟧	⟦重设⟧
+	⟦Selection⟧\n⟦Pane⟧	⟦选择⟧\n⟦窗格⟧
+	⟦Set Up⟧\n⟦Slide Show⟧	⟦设置⟧\n⟦幻灯片放映⟧
+	⟦Slide⟧\n⟦Number⟧	⟦幻灯片⟧\n⟦编号⟧
+	⟦SmartArt⟧	⟦SmartArt⟧
+	⟦Spelling⟧	⟦拼写⟧
+	⟦Symbol⟧	⟦符号⟧
+	⟦Text Box⟧	⟦文本框⟧
+	⟦Text⟧\n⟦Box⟧	⟦文本⟧\n⟦框⟧
+	⟦Thesaurus⟧	⟦同义词库⟧
+	⟦Video⟧	⟦视频⟧
+	% of all commits	占全部提交的百分比
+	(none)	(无)
+	3-D	三维
+	About	关于
+	Accept	接受
+	Account	账户
+	Add	添加
+	Add Shape	添加形状
+	Add to Dictionary	添加到词典
+	Add to Quick Access Toolbar	添加到快速访问工具栏
+	Address:	地址：
+	After:	段后：
+	Align	对齐
+	Align Left	左对齐
+	Align Right	右对齐
+	Align Text	对齐文本
+	Alignment	对齐方式
+	Alignment:	对齐方式：
+	All	全部
+	Alt Text	替代文字
+	Apply	应用
+	Arrange	排列
+	Arrows	箭头
+	Artistic Effects	艺术效果
+	Author	作者
+	AutoCorrect	自动更正
+	AutoCorrect Options	自动更正选项
+	Automatic	自动
+	Automatic ({language})	自动（{language}）
+	Banded Columns	镶边列
+	Banded Rows	镶边行
+	Basic Cycle	基本循环
+	Basic List	基本列表
+	Basic Process	基本流程
+	Binary assets added	新增二进制资源
+	Binary assets removed	删除二进制资源
+	Bold	加粗
+	Borders	边框
+	Bottom	底端
+	Bring Forward	上移一层
+	Bullets	项目符号
+	Cancel	取消
+	Capitalize Each Word	每个单词首字母大写
+	Capitalize first letter of sentences	句首字母大写
+	Capitalize names of days	星期名称首字母大写
+	Categories	类别
+	Cell Margins	单元格边距
+	Center	居中
+	Centered	居中
+	Change Case	更改大小写
+	Change Chart Type	更改图表类型
+	Change Colors	更改颜色
+	Change Layout	更改布局
+	Change Picture	更改图片
+	Change Picture…	更改图片…
+	Change Shape	更改形状
+	Character Spacing	字符间距
+	Chart	图表
+	Check Accessibility	检查辅助功能
+	Clear	清除
+	Clear All	全部清除
+	Clear All Formatting	清除所有格式
+	Close	关闭
+	Color	颜色
+	Color:	颜色：
+	Colors	颜色
+	Columns	栏
+	Comment	批注
+	Comments	批注
+	Commits	提交
+	Company	公司
+	Compare	比较
+	Compress Pictures	压缩图片
+	Connect Shapes	连接形状
+	Convert to Shapes	转换为形状
+	Convert to Text	转换为文本
+	Copy	复制
+	Correct TWo INitial CApitals	更正前两个字母连续大写
+	Corrections	更正
+	Create	创建
+	Crop	裁剪
+	Customize Quick Access Toolbar	自定义快速访问工具栏
+	Cut	剪切
+	Cycle	循环
+	Dark	深色
+	Dark Mode	深色模式
+	Date & Time	日期和时间
+	Date and Time	日期和时间
+	Decimal	小数点对齐
+	Decrease Font Size	减小字号
+	Delete	删除
+	Delete Columns	删除列
+	Delete Comment	删除批注
+	Delete Rows	删除行
+	Demote	降级
+	Design	设计
+	Display	显示
+	Display name	显示名称
+	Distribute Columns	平均分布各列
+	Distribute Rows	平均分布各行
+	Do not check spelling or grammar	不检查拼写或语法
+	Don't Save	不保存
+	Draw	绘图
+	Draw Table	绘制表格
+	Edit Data	编辑数据
+	Editing	编辑
+	Effects	效果
+	English (United States)	英语（美国）
+	Equation	公式
+	Eraser	橡皮擦
+	Export	导出
+	Exported {path}	已导出 {path}
+	File	文件
+	Fill	填充
+	Find	查找
+	Find Next	查找下一处
+	Find and Replace	查找和替换
+	Find what:	查找内容：
+	First	首次
+	First Column	第一列
+	First commit	首次提交
+	Fit	适应
+	Flip Horizontal	水平翻转
+	Flip Vertical	垂直翻转
+	Font	字体
+	Font Color	字体颜色
+	Font Size	字号
+	Fonts	字体
+	Font…	字体…
+	Footer	页脚
+	Format	格式
+	Format Painter	格式刷
+	General	常规
+	Glow	发光
+	Go to	转到
+	Grab bag	随机展示
+	Grayscale	灰度
+	Greek	希腊语
+	Gridlines	网格线
+	Group	组合
+	Header	页眉
+	Header Row	标题行
+	Height:	高度：
+	Help	帮助
+	Hierarchy	层次结构
+	Highlighter	荧光笔
+	Home	开始
+	Horizontal	水平
+	Icons	图标
+	Ignore All	全部忽略
+	Increase Font Size	增大字号
+	Indentation	缩进
+	Info	信息
+	Ink to Shape	墨迹转形状
+	Insert	插入
+	Insert Above	在上方插入
+	Insert Below	在下方插入
+	Insert Hyperlink	插入超链接
+	Insert Left	在左侧插入
+	Insert Right	在右侧插入
+	Insert Table	插入表格
+	Insert Table…	插入表格…
+	Interface language:	界面语言：
+	Italic	倾斜
+	Join the ArtCraft community on Discord	加入 Discord 上的 ArtCraft 社区
+	Justify	两端对齐
+	Keep Text Only	只保留文本
+	Landscape	横向
+	Language	语言
+	Last	最近
+	Last Column	最后一列
+	Last commit	最近提交
+	Layout	布局
+	Left	左
+	Letter	信函
+	Light	浅色
+	Line	直线
+	Line Spacing	行距
+	Line Spacing Options…	行距选项…
+	Line delta	行数变化
+	Line spacing	行距
+	Lines +/−	行数 +/−
+	Lines added	新增行数
+	Lines deleted	删除行数
+	Link	链接
+	Link…	链接…
+	List	列表
+	Location	位置
+	Mark as decorative	标记为装饰性
+	Mark selected text as:	将所选文字标记为：
+	Match case	区分大小写
+	Matrix	矩阵
+	Medium	中等
+	Merge Cells	合并单元格
+	Merged PRs	已合并的 PR
+	Middle	中部
+	Model	模型
+	Move Down	下移
+	Move Up	上移
+	Name	名称
+	Name (A–Z)	名称（A–Z）
+	Name:	名称：
+	Narrow	窄
+	New	新建
+	New Comment	新建批注
+	New Window	新建窗口
+	Next	下一条
+	Next Comment	下一条批注
+	Next Page	下一页
+	No Color	无颜色
+	No Fill	无填充
+	No Glow	无发光
+	No Outline	无轮廓
+	No Reflection	无映像
+	No Shadow	无阴影
+	No Soft Edges	无柔化边缘
+	No Transform	无转换
+	No contributor data was built into this copy.	此版本未内置贡献者数据。
+	No model credits were built into this copy.	此版本未内置模型致谢信息。
+	None	无
+	Not saved yet	尚未保存
+	Nudge	微移
+	Number of columns:	列数：
+	Number of rows:	行数：
+	Numbering	编号
+	OK	确定
+	Open	打开
+	Options	选项
+	PRs	PR
+	Page Number	页码
+	Paragraph	段落
+	Paragraph…	段落…
+	Paste	粘贴
+	Paste (⌘V)	粘贴 (⌘V)
+	Paste Formatting	粘贴格式
+	Paste Special	选择性粘贴
+	Paste Special…	选择性粘贴…
+	Pause	暂停
+	Pencil	铅笔
+	Picture	图片
+	Picture Border	图片边框
+	Picture Styles	图片样式
+	Pictures	图片
+	Play	播放
+	Play/Pause	播放/暂停
+	Points	磅
+	Portrait	纵向
+	Position	位置
+	Preview	预览
+	Previous	上一条
+	Previous Comment	上一条批注
+	Previous Page	上一页
+	Print	打印
+	Process	流程
+	Promote	升级
+	Properties	属性
+	Pyramid	棱锥图
+	Quick Access Toolbar	快速访问工具栏
+	Real name	真实姓名
+	Recent	最近
+	Rectangle	矩形
+	Redo	恢复
+	Reflection	映像
+	Relationship	关系
+	Remove	移除
+	Remove Background	删除背景
+	Remove from Quick Access Toolbar	从快速访问工具栏删除
+	Rename	重命名
+	Replace	替换
+	Replace All	全部替换
+	Replace text as you type	键入时自动替换文本
+	Replace:	替换:
+	Reply	答复
+	Reset	重设
+	Reset Crop	重设裁剪
+	Reset Picture	重设图片
+	Reverse the order	反转顺序
+	Review	审阅
+	Right	右
+	Right-to-Left Text Direction	从右向左文字方向
+	Rotate	旋转
+	Rotate Left 90°	向左旋转 90°
+	Rotate Right 90°	向右旋转 90°
+	Rotate all text 270°	将所有文字旋转 270°
+	Rotate all text 90°	将所有文字旋转 90°
+	Rotation	旋转角度
+	Ruler	标尺
+	Save	保存
+	Save As	另存为
+	Saved	已保存
+	Search icons	搜索图标
+	Select	选择
+	Select All	全选
+	Select Objects	选择对象
+	Select Paragraph	选择段落
+	Select Text	选择文本
+	Select Word	选择单词
+	Selection	选择
+	Send Backward	下移一层
+	Sentence case.	句首字母大写。
+	Set	设置
+	Shading	底纹
+	Shadow	阴影
+	Shape Effects	形状效果
+	Shape Fill	形状填充
+	Shape Outline	形状轮廓
+	Shapes	形状
+	Show	显示
+	Single	单线
+	Size	纸张大小
+	Size:	字号：
+	SmartArt	SmartArt
+	SmartArt Styles	SmartArt 样式
+	Soft Edges	柔化边缘
+	Sort	排序
+	Spacing	间距
+	Spacing (pt):	间距（磅）：
+	Special	特殊字符
+	Spelling	拼写
+	Split Cells	拆分单元格
+	Stacked	堆积
+	Standard Colors	标准色
+	Stop	停止
+	Strikethrough	删除线
+	Subscript	下标
+	Superscript	上标
+	Symbol	符号
+	Table	表格
+	Table Style Options	表格样式选项
+	Table Styles	表格样式
+	Tabs	制表位
+	Tabs…	制表位…
+	Templates	模板
+	Text	文本
+	Text Box	文本框
+	Text Direction	文字方向
+	Text Fill	文本填充
+	Text Highlight Color	文本突出显示颜色
+	Text Outline	文本轮廓
+	Text Pane	文本窗格
+	Theme Colors	主题颜色
+	Themes	主题
+	Thesaurus	同义词库
+	Tight	紧密
+	Title	标题
+	Top	顶端
+	Total Row	汇总行
+	Transform	转换
+	Translate	翻译
+	Transparency	透明度
+	Type	类型
+	Type Text	键入文本
+	UPPERCASE	全部大写
+	Underline	下划线
+	Undo	撤消
+	Ungroup	取消组合
+	Username	用户名
+	Version	版本
+	Vertical	垂直
+	View	视图
+	Weight	粗细
+	Wide	宽
+	Width:	宽度：
+	With:	替换为:
+	WordArt	艺术字
+	Your changes will be lost if you don't save them.	如果不保存，您的更改将会丢失。
+	Zoom	缩放
+	Zoom In	放大
+	Zoom Out	缩小
+	lowercase	全部小写
+	Check\nAccessibility	检查\n辅助功能
+	Ink to\nMath	墨迹转\n数学
+	Ink to\nShape	墨迹转\n形状
+	New\nComment	新建\n批注
+	New\nWindow	新建\n窗口
+	Show\nComments	显示\n批注
+	Text\nBox	文本\n框
