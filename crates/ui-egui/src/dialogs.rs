@@ -1076,6 +1076,24 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let hf = app.session.active().map(|s| s.doc.header_footer.clone()).unwrap_or_default();
             let date = check(ui, d, "Date and time", "date", hf.date);
             field(ui, d, "  Fixed date (empty = update automatically):", "dateText", &hf.date_text);
+            // The format applies to an automatic date; a fixed one is the text as typed.
+            let automatic = d.get("dateText", &hf.date_text).is_empty();
+            let fmt_now = if hf.date_format.is_empty() { "datetime1".to_string() } else { hf.date_format.clone() };
+            let fmt = d.get("dateFormat", &fmt_now);
+            let rows = date_rows("en-US");
+            let label = rows.iter().find(|(k, _)| *k == fmt).map(|(_, s)| s.clone()).unwrap_or_else(|| fmt.clone());
+            ui.add_enabled_ui(date && automatic, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("  Format:");
+                    egui::ComboBox::from_id_salt("hf-date-format").selected_text(label).width(200.0).show_ui(ui, |ui| {
+                        for (kind, sample) in &rows {
+                            if ui.selectable_label(fmt == *kind, sample).clicked() {
+                                d.fields.insert("dateFormat".into(), (*kind).to_string());
+                            }
+                        }
+                    });
+                });
+            });
             let num_on = check(ui, d, "Slide number", "num", hf.slide_number);
             let foot = check(ui, d, "Footer", "footer", hf.footer);
             field(ui, d, "  Footer text:", "footerText", &hf.footer_text);
@@ -1096,7 +1114,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 run(
                     app,
                     "design.headerFooter",
-                    json!({"date": date, "dateText": dt, "slideNumber": num_on, "footer": foot, "footerText": ft, "hideOnTitle": hide, "all": apply_all}),
+                    json!({"date": date, "dateText": dt, "dateFormat": d.get("dateFormat", &fmt_now), "slideNumber": num_on, "footer": foot, "footerText": ft, "hideOnTitle": hide, "all": apply_all}),
                 );
             }
             apply || apply_all || d.fields.contains_key("cancel")
@@ -2440,21 +2458,7 @@ const DATE_LANGS: &[(&str, &str)] = &[
     ("sv-SE", "Swedish"),
 ];
 
-const DATE_KINDS: [&str; 13] = [
-    "datetime1",
-    "datetime2",
-    "datetime3",
-    "datetime4",
-    "datetime5",
-    "datetime6",
-    "datetime7",
-    "datetime8",
-    "datetime9",
-    "datetime10",
-    "datetime11",
-    "datetime12",
-    "datetime13",
-];
+use deckcraft_text::datetime::DATE_KINDS;
 
 /// Samples `field_text` can compute for `lang`. Named months and AM/PM exist for English only;
 /// other languages keep the numeric date and the 24-hour times.
