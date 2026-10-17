@@ -244,6 +244,10 @@ pub struct UiState {
     pub notes: bool,
     pub notes_height: f32,
     pub thumbs_width: f32,
+    /// Vertical scroll offset of the thumbnail pane, recorded each frame for the control
+    /// channel and tests; not persisted.
+    #[serde(skip)]
+    pub thumbs_scroll: f32,
     /// Open task pane: `format`, `animation`, `selection`, `comments`, `designer`, `background`,
     /// `smartart` (Text Pane).
     pub pane: Option<String>,
@@ -286,6 +290,7 @@ impl Default for UiState {
             notes: true,
             notes_height: 52.0,
             thumbs_width: 236.0,
+            thumbs_scroll: 0.0,
             pane: None,
             pane_width: 300.0,
             ruler: false,
