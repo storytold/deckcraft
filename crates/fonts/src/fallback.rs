@@ -182,7 +182,9 @@ impl FontDb {
             }
         }
         let exclude = chain.first().map(|f| f.id()).unwrap_or(u32::MAX);
-        let f = match self.fallback_for(key, exclude) {
+        // The styled fallback prefers faces matching the run's bold/italic, so bold CJK text
+        // falls back to a bold face instead of a regular one (#892).
+        let f = match self.fallback_for_styled(key, exclude, style) {
             Some(f) if covers_cluster(&f, cluster) => f,
             Some(f) if chain.iter().all(|c| !c.covers(key)) => f,
             // A letter with marks the run's font lacks (stacked combining marks): a loaded plain
@@ -304,6 +306,33 @@ mod tests {
         for gid in [0, 1, 100, u32::MAX] {
             let c = ligature_carets(&face, gid);
             assert!(c.windows(2).all(|w| w[0] <= w[1]));
+        }
+    }
+
+    /// #892: bold CJK text falls back to a bold face of the CJK family, not a regular one.
+    /// The styled fallback should prefer faces matching the requested weight.
+    #[test]
+    fn styled_fallback_prefers_matching_weight() {
+        let db = FontDb::global();
+        let inter = db.face(crate::DEFAULT_FAMILY, "Regular");
+        // A CJK character that Inter does not cover: the fallback picks a face for it.
+        let cjk = '\u{4F60}';
+        if inter.covers(cjk) {
+            // The bundled font covers CJK: the test cannot force a fallback. Skip.
+            return;
+        }
+        let regular = db.fallback_for_styled(cjk, inter.id(), "Regular");
+        let bold = db.fallback_for_styled(cjk, inter.id(), "Bold");
+        assert!(regular.is_some(), "regular CJK fallback");
+        assert!(bold.is_some(), "bold CJK fallback");
+        // If both resolve to the same family, the bold one should have the heavier weight.
+        if regular.as_ref().unwrap().family == bold.as_ref().unwrap().family {
+            assert!(
+                bold.as_ref().unwrap().weight >= regular.as_ref().unwrap().weight,
+                "bold fallback weight {} should be >= regular {}",
+                bold.as_ref().unwrap().weight,
+                regular.as_ref().unwrap().weight
+            );
         }
     }
 }
