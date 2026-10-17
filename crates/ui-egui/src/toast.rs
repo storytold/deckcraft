@@ -4,6 +4,7 @@
 use egui::{Align2, CornerRadius, Margin, Stroke, vec2};
 
 use crate::SlideApp;
+use crate::i18n::tr;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
@@ -65,7 +66,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                         ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
                     }
                     icons::paint(ui.painter(), r.shrink(3.0), Icon::Close, t.text_dim, false);
-                    if resp.on_hover_text("Close").clicked() {
+                    if resp.on_hover_text(tr("Close")).clicked() {
                         close = true;
                     }
                 });

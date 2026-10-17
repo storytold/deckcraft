@@ -287,7 +287,8 @@ impl Textures {
             master: master.as_ref().map(|m| Arc::as_ptr(m) as usize).unwrap_or(0),
             size,
             edit,
-            extra: extra ^ grayscale as u64 ^ anim_key(anim),
+            // The placeholder prompts are in the interface language.
+            extra: extra ^ grayscale as u64 ^ anim_key(anim) ^ ((crate::i18n::current() as u64) << 63),
             want,
             editing_text,
         };
@@ -309,6 +310,7 @@ impl Textures {
                 size: Some(region.size()),
                 state,
                 editing_text,
+                prompt: crate::i18n::prompts(),
                 ..Default::default()
             };
             deckcraft_render::render_slide_drawn(p, index, &opts)

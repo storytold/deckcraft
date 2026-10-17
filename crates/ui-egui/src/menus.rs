@@ -5,6 +5,7 @@ use deckcraft_engine::Mods;
 use serde_json::json;
 
 use crate::SlideApp;
+use crate::i18n::tr;
 use crate::theme::{self, Tokens};
 
 /// Shortcuts the UI handles itself (views, show, zoom, palette, file dialogs). True when consumed.
@@ -88,9 +89,12 @@ fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, S
         .filter(|c| c.enabled && !crate::UI_COMMANDS.iter().any(|u| u.1 == c.label) && !deckcraft_engine::cmd::needs_arguments(c.params))
         .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
         .chain(crate::UI_COMMANDS.iter().filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3)).map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
-        .filter(|(id, label, _)| q.is_empty() || label.to_lowercase().contains(q) || id.to_lowercase().contains(q))
+        // Found by its name in English or in the interface language.
+        .filter(|(id, label, _)| {
+            q.is_empty() || label.to_lowercase().contains(q) || tr(label).to_lowercase().contains(q) || id.to_lowercase().contains(q)
+        })
         .collect();
-    items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(q));
+    items.sort_by_key(|(_, l, _)| !(l.to_lowercase().starts_with(q) || tr(l).to_lowercase().starts_with(q)));
     items.truncate(60);
     items
 }
@@ -106,7 +110,8 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 90.0))
         .fixed_size(egui::vec2(520.0, 380.0))
         .show(ctx, |ui| {
-            let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search commands…").desired_width(f32::INFINITY).font(theme::font(15.0)));
+            let r =
+                ui.add(egui::TextEdit::singleline(&mut query).hint_text(tr("Search commands…")).desired_width(f32::INFINITY).font(theme::font(15.0)));
             r.request_focus();
             let q = query.to_lowercase();
             let items = palette_items(&app.session, &q);
@@ -133,7 +138,7 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 for (k, (id, label, sc)) in items.iter().enumerate() {
                     let r = ui.horizontal(|ui| {
-                        let resp = ui.selectable_label(k == sel, label);
+                        let resp = ui.selectable_label(k == sel, tr(label));
                         if let Some(s) = sc {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(egui::RichText::new(crate::ribbon::pretty_shortcut(s)).color(t.text_faint));

@@ -9,6 +9,7 @@ use egui::{Color32, CornerRadius, Rect, RichText, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::SlideApp;
+use crate::i18n::tr;
 
 /// The extra window. `uid` is the presentation it was opened on.
 pub struct DocWindow {
@@ -96,10 +97,10 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                             ui.add_space(16.0);
                             ui.label(RichText::new(format!("Slide {} of {n}", slide + 1)).color(t.text_dim).font(crate::theme::font(13.0)));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.add_enabled(slide + 1 < n, egui::Button::new("Next")).clicked() {
+                                if ui.add_enabled(slide + 1 < n, egui::Button::new(tr("Next"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": 1}));
                                 }
-                                if ui.add_enabled(slide > 0, egui::Button::new("Previous")).clicked() {
+                                if ui.add_enabled(slide > 0, egui::Button::new(tr("Previous"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": -1}));
                                 }
                             });
@@ -162,7 +163,14 @@ fn ensure_texture(
     let img = deckcraft_render::render_slide(
         doc,
         slide,
-        &RenderOpts { scale: w as f64 / doc.slide_size.width.max(1.0), size: Some((w, h)), edit: true, threads: 0, ..Default::default() },
+        &RenderOpts {
+            scale: w as f64 / doc.slide_size.width.max(1.0),
+            size: Some((w, h)),
+            edit: true,
+            threads: 0,
+            prompt: crate::i18n::prompts(),
+            ..Default::default()
+        },
     );
     let tex = crate::textures::upload(ctx, "doc-window-slide", crate::textures::to_color_image(&img, grayscale));
     if let Some(win) = app.doc_window.as_mut() {
