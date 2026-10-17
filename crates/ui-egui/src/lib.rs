@@ -20,6 +20,7 @@ pub mod media;
 pub mod menus;
 pub mod notes;
 pub mod opening;
+pub mod options;
 pub mod panes;
 mod preview;
 pub mod qat;
@@ -274,6 +275,10 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// The File › Options pane last shown (`options::PANES`).
+    pub options_pane: String,
+    /// File › Options › General: start on File › Home (themes, templates, Recent) when the app opens.
+    pub start_screen: bool,
 }
 
 impl Default for UiState {
@@ -305,6 +310,8 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            options_pane: "general".into(),
+            start_screen: true,
         }
     }
 }
@@ -384,7 +391,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool}"),
     ("app.home", "Home", None, "{on?}"),
-    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account, on?: bool}"),
+    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account|options, on?: bool}"),
     ("app.closePresentation", "Close", Some("Cmd+W"), "{}"),
     (
         "app.print",
@@ -1792,45 +1799,45 @@ impl SlideApp {
         self.sync_backstage();
         self.keyboard(&ctx);
         self.sync_backstage();
-        ribbon::title_bar(self, ui);
-        if self.backstage.is_none() && self.session.active().is_some() {
-            ribbon::show(self, ui);
-            status::status_bar(self, ui);
-        }
-        let now = ui.input(|i| i.time);
-        if self.tick_anim_preview(now) {
-            ctx.request_repaint();
-        }
-        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
-            if self.backstage.is_some() {
-                // File tab: the Backstage view replaces everything below the title bar.
-                backstage::show(self, ui);
-                return;
+        if self.backstage.is_some() {
+            // File tab: the Backstage view is fullscreen, replacing the entire window (title bar, ribbon, canvas, status bar).
+            backstage::show(self, ui);
+        } else {
+            ribbon::title_bar(self, ui);
+            if self.session.active().is_some() {
+                ribbon::show(self, ui);
+                status::status_bar(self, ui);
             }
-            if self.session.active().is_none() {
-                return;
+            let now = ui.input(|i| i.time);
+            if self.tick_anim_preview(now) {
+                ctx.request_repaint();
             }
-            match self.ui.view {
-                ViewMode::Sorter => sorter::show(self, ui),
-                ViewMode::NotesPage => sorter::notes_page(self, ui),
-                ViewMode::Outline | ViewMode::Normal | ViewMode::Reading => {
-                    if self.ui.pane.is_some() {
-                        panes::show(self, ui);
-                    }
-                    if self.ui.view == ViewMode::Outline {
-                        sorter::outline_pane(self, ui);
-                    } else {
-                        thumbs::show(self, ui);
-                    }
-                    egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
-                        if self.ui.notes {
-                            status::notes_pane(self, ui);
-                        }
-                        canvas::show(self, ui);
-                    });
+            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
+                if self.session.active().is_none() {
+                    return;
                 }
-            }
-        });
+                match self.ui.view {
+                    ViewMode::Sorter => sorter::show(self, ui),
+                    ViewMode::NotesPage => sorter::notes_page(self, ui),
+                    ViewMode::Outline | ViewMode::Normal | ViewMode::Reading => {
+                        if self.ui.pane.is_some() {
+                            panes::show(self, ui);
+                        }
+                        if self.ui.view == ViewMode::Outline {
+                            sorter::outline_pane(self, ui);
+                        } else {
+                            thumbs::show(self, ui);
+                        }
+                        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(t.canvas)).show(ui, |ui| {
+                            if self.ui.notes {
+                                status::notes_pane(self, ui);
+                            }
+                            canvas::show(self, ui);
+                        });
+                    }
+                }
+            });
+        }
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);

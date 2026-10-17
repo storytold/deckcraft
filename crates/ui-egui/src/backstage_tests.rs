@@ -158,7 +158,7 @@ fn alt_f_arrows_enter_and_esc_drive_the_side_menu() {
 fn every_page_renders() {
     let mut h = harness(new_app());
     let last_theme = deckcraft_model::theme::builtin_themes().last().map(|t| t.name.clone()).unwrap();
-    let checks: [(Page, &str); 8] = [
+    let checks: [(Page, &str); 9] = [
         (Page::Home, "Recent"),
         (Page::New, &last_theme),
         (Page::Open, "Browse"),
@@ -167,6 +167,7 @@ fn every_page_renders() {
         (Page::Print, "Print Hidden Slides"),
         (Page::Export, "Create PDF Document"),
         (Page::Account, "About DeckCraft"),
+        (Page::Options, "Options"),
     ];
     for (p, marker) in checks {
         h.state_mut().run("app.backstage", json!({"page": p.id()})).unwrap();
@@ -192,6 +193,29 @@ fn new_template_opens_a_starter_deck() {
     assert_eq!(doc.slides[0].title(), "Weekly briefing");
     assert_eq!(doc.slides.len(), 5);
     assert!(h.state().backstage.is_none(), "the starter deck shows");
+}
+
+/// Options displays panes and lets the user switch between General, Display, Editing, Save, Advanced, Agents.
+#[test]
+fn options_page_renders_and_switches_panes() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "options"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::Options));
+    assert!(h.query_by_label("Show rulers").is_none());
+    assert!(h.query_by_label("Interface theme:").is_some());
+
+    // Switch to Display pane
+    h.get_by_label("Display").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.options_pane, "display");
+    assert!(h.query_by_label("Show rulers").is_some());
+
+    // Switch to Editing pane
+    h.get_by_label("Editing").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.options_pane, "editing");
+    assert!(h.query_by_label("Show smart guides").is_some());
 }
 
 /// New and Home create presentations, which leaves the File tab.

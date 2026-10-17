@@ -228,6 +228,22 @@ pub fn font(size: f32) -> egui::FontId {
     egui::FontId::proportional(size)
 }
 
+pub fn regular(size: f32) -> egui::FontId {
+    font(size)
+}
+
+pub fn medium(size: f32) -> egui::FontId {
+    font(size)
+}
+
+pub fn semibold(size: f32) -> egui::FontId {
+    bold(size)
+}
+
+/// DeckCraft's app brand colour (PowerPoint orange / terracotta).
+pub const APP_COLOR: Color32 = Color32::from_rgb(0xD9, 0x5A, 0x1A);
+pub const APP_INK: Color32 = Color32::from_rgb(0xB5, 0x47, 0x12);
+
 pub fn to_color32(c: deckcraft_color::Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }

@@ -19,7 +19,7 @@ use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
 
 /// Width of the side menu.
-pub const NAV_W: f32 = 160.0;
+pub const NAV_W: f32 = 200.0;
 /// Height of a side-menu entry (the back arrow's row is a little taller).
 const ITEM_H: f32 = 40.0;
 const BACK_H: f32 = 46.0;
@@ -37,10 +37,11 @@ pub enum Page {
     Print,
     Export,
     Account,
+    Options,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Account];
+    pub const ALL: [Page; 9] = [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Account, Page::Options];
 
     /// The id `app.backstage {page}` takes.
     pub fn id(self) -> &'static str {
@@ -53,6 +54,7 @@ impl Page {
             Page::Print => "print",
             Page::Export => "export",
             Page::Account => "account",
+            Page::Options => "options",
         }
     }
 
@@ -72,6 +74,7 @@ impl Page {
             Page::Print => "Print",
             Page::Export => "Export",
             Page::Account => "Account",
+            Page::Options => "Options",
         }
     }
 
@@ -85,6 +88,7 @@ impl Page {
             Page::Print => Icon::Print,
             Page::Export => Icon::Export,
             Page::Account => Icon::Account,
+            Page::Options => Icon::Settings,
         }
     }
 
@@ -238,10 +242,10 @@ struct Outcome {
     page: Option<Page>,
 }
 
-/// Colours of the side menu and the page, from the theme: the menu sits a step darker than the
-/// page, as in PowerPoint.
+/// Colours of the side menu and the page, from the theme: the menu sits in the app brand colour,
+/// as in WordCraft / PowerPoint.
 fn colours(t: &Tokens) -> (Color32, Color32) {
-    (t.chrome, t.card)
+    (theme::APP_COLOR, t.card)
 }
 
 /// Runs a side-menu action. Returns the page to show, or None to close the view (Some(current)
@@ -258,16 +262,13 @@ fn act(app: &mut SlideApp, nav: Nav, current: Page) -> Option<Page> {
             }
             app.save();
             let saved = app.session.active().is_some_and(|d| !d.is_dirty());
-            if saved || web { None } else { Some(current) }
+            if saved || web { None } else { Some(Page::SaveAs) }
         }
         Nav::Close => {
             app.close_presentation();
             Some(current)
         }
-        Nav::Options => {
-            let _ = app.run("app.preferences", json!({}));
-            Some(current)
-        }
+        Nav::Options => Some(Page::Options),
     }
 }
 
@@ -288,7 +289,7 @@ pub fn key(app: &mut SlideApp, key: Key, mods: deckcraft_engine::Mods) -> bool {
             true
         }
         Key::ArrowDown | Key::ArrowUp => {
-            let cur = bs.focus.or_else(|| all.iter().position(|n| *n == Nav::Page(bs.page)));
+            let cur = bs.focus.or_else(|| all.iter().position(|n| *n == Nav::Page(bs.page) || (*n == Nav::Options && bs.page == Page::Options)));
             let n = all.len();
             let next = match (cur, key == Key::ArrowDown) {
                 (None, _) => 0,
@@ -296,8 +297,12 @@ pub fn key(app: &mut SlideApp, key: Key, mods: deckcraft_engine::Mods) -> bool {
                 (Some(i), false) => (i + n - 1) % n,
             };
             bs.focus = Some(next);
-            if let Some(Nav::Page(p)) = all.get(next) {
-                bs.go(*p);
+            if let Some(nav) = all.get(next) {
+                match nav {
+                    Nav::Page(p) => bs.go(*p),
+                    Nav::Options => bs.go(Page::Options),
+                    _ => {}
+                }
             }
             true
         }
@@ -318,7 +323,7 @@ pub fn key(app: &mut SlideApp, key: Key, mods: deckcraft_engine::Mods) -> bool {
     }
 }
 
-/// Draws the File tab in place of the ribbon, slides and status bar.
+/// Draws the File tab in fullscreen (replacing the title bar, ribbon, canvas and status bar).
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let Some(mut bs) = app.backstage.take() else { return };
     let t = Tokens::get(ui.ctx());
@@ -329,32 +334,62 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let (nav_bg, page_bg) = colours(&t);
     let mut out = Outcome::default();
     let (top, bottom) = entries(has_doc);
+    let mac = app.integrated_titlebar;
     egui::Panel::left("backstage_nav").exact_size(NAV_W).resizable(false).frame(egui::Frame::NONE.fill(nav_bg)).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
+        let band_h = if mac { crate::ribbon::TITLE_H } else { BACK_H };
         if has_doc {
-            let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Back"));
-            let hovered = resp.hovered();
-            if hovered {
-                ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
-            }
-            icons::paint(
-                ui.painter(),
-                Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(22.0, 22.0)),
-                Icon::BackCircle,
-                t.text,
-                false,
-            );
+            let (_r, resp) = if mac {
+                let (band, drag) = ui.allocate_exact_size(vec2(NAV_W, band_h), Sense::click_and_drag());
+                if drag.drag_started() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                let c = pos2(band.min.x + 84.0, band.center().y);
+                let resp = ui.interact(Rect::from_center_size(c, vec2(34.0, band.height())), ui.id().with("backstage_back"), Sense::click());
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Back"));
+                if resp.hovered() {
+                    ui.painter().rect_filled(Rect::from_center_size(c, vec2(34.0, 34.0)), 17.0, Color32::from_white_alpha(32));
+                }
+                icons::paint(ui.painter(), Rect::from_center_size(c, vec2(20.0, 20.0)), Icon::ChevronLeft, Color32::WHITE, false);
+                (band, resp)
+            } else {
+                let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, band_h), Sense::click());
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Back"));
+                let hovered = resp.hovered();
+                if hovered {
+                    ui.painter().rect_filled(
+                        Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)),
+                        17.0,
+                        Color32::from_white_alpha(32),
+                    );
+                }
+                icons::paint(
+                    ui.painter(),
+                    Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(20.0, 20.0)),
+                    Icon::ChevronLeft,
+                    Color32::WHITE,
+                    false,
+                );
+                (r, resp)
+            };
             if resp.on_hover_text("Back (Esc)").clicked() {
                 out.close = true;
             }
+        } else if mac {
+            let (_band, drag) = ui.allocate_exact_size(vec2(NAV_W, band_h), Sense::click_and_drag());
+            if drag.drag_started() {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+            }
         } else {
-            ui.add_space(BACK_H);
+            ui.add_space(band_h);
+        }
+        if has_doc && ui.input(|i| i.key_pressed(Key::Escape)) {
+            out.close = true;
         }
         let mut index = 0;
         for (k, nav) in top.iter().enumerate() {
             if k == 3 {
-                separator(ui, &t);
+                separator(ui);
             }
             if nav_item(ui, *nav, &bs, index, &t).clicked() {
                 bs.focus = None;
@@ -369,6 +404,21 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let first_bottom = index;
         ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
             ui.add_space(8.0);
+            for (label, id) in [("About", "about"), ("Discord community", "discord")] {
+                let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, 30.0), Sense::click());
+                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+                if resp.hovered() {
+                    ui.painter().rect_filled(r.shrink2(vec2(6.0, 1.0)), CornerRadius::same(3), Color32::from_white_alpha(26));
+                }
+                ui.painter().text(pos2(r.left() + 22.0, r.center().y), Align2::LEFT_CENTER, label, theme::font(12.5), Color32::WHITE);
+                if resp.clicked() {
+                    if id == "discord" {
+                        app.open_url(deckcraft_engine::links::DISCORD);
+                    } else {
+                        let _ = app.run("app.about", json!({}));
+                    }
+                }
+            }
             // Bottom-up: draw the last entry first.
             for (k, nav) in bottom.iter().enumerate().rev() {
                 if nav_item(ui, *nav, &bs, first_bottom + k, &t).clicked() {
@@ -380,7 +430,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             }
-            separator(ui, &t);
+            separator(ui);
         });
     });
     egui::CentralPanel::default().frame(egui::Frame::NONE.fill(page_bg)).show(ui, |ui| {
@@ -415,6 +465,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                     Page::Print => print(app, ui, &mut bs),
                     Page::Export => export(app, ui, &mut bs),
                     Page::Account => account(app, ui),
+                    Page::Options => crate::options::page(app, ui),
                 }
             });
         });
@@ -432,31 +483,36 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 
 // ---------------------------------------------------------------- side menu
 
-fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
+fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, _t: &Tokens) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
-    let selected = nav == Nav::Page(bs.page);
+    let selected = nav == Nav::Page(bs.page) || (nav == Nav::Options && bs.page == Page::Options);
     let label = nav.label();
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));
-    if resp.hovered() {
-        p.rect_filled(row, CornerRadius::same(2), t.hover);
+    if selected {
+        p.rect_filled(row, CornerRadius::same(3), Color32::from_white_alpha(46));
+    } else if resp.hovered() {
+        p.rect_filled(row, CornerRadius::same(3), Color32::from_white_alpha(26));
     }
-    if bs.focus == Some(index) || selected {
-        // The current page (and the keyboard focus) is outlined, as in PowerPoint.
-        let ink = if bs.focus == Some(index) { t.text } else { t.border };
-        p.rect_stroke(row, CornerRadius::same(2), Stroke::new(1.0, ink), StrokeKind::Inside);
+    if bs.focus == Some(index) {
+        p.rect_stroke(row, CornerRadius::same(3), Stroke::new(1.0, Color32::WHITE), StrokeKind::Inside);
     }
-    let ink = if selected { t.accent } else { t.text };
-    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 26.0, rect.center().y), vec2(16.0, 16.0)), nav.icon(), ink, false);
-    p.text(pos2(rect.left() + 44.0, rect.center().y), Align2::LEFT_CENTER, label, theme::font(13.0), ink);
+    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 26.0, rect.center().y), vec2(16.0, 16.0)), nav.icon(), Color32::WHITE, false);
+    p.text(
+        pos2(rect.left() + 44.0, rect.center().y),
+        Align2::LEFT_CENTER,
+        label,
+        if selected { theme::bold(13.5) } else { theme::font(13.5) },
+        Color32::WHITE,
+    );
     resp
 }
 
-fn separator(ui: &mut Ui, t: &Tokens) {
+fn separator(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(vec2(NAV_W, 13.0), Sense::hover());
     let y = rect.center().y;
-    ui.painter().line_segment([pos2(rect.left() + 20.0, y), pos2(rect.right() - 14.0, y)], Stroke::new(1.0, t.separator));
+    ui.painter().line_segment([pos2(rect.left() + 20.0, y), pos2(rect.right() - 14.0, y)], Stroke::new(1.0, Color32::from_white_alpha(40)));
 }
 
 // ---------------------------------------------------------------- shared pieces
@@ -685,14 +741,36 @@ fn task(ui: &mut Ui, icon: Icon, button: &str, title: &str, detail: &str, enable
 
 // ---------------------------------------------------------------- pages
 
+fn current_hour() -> u32 {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Date::new_0().get_hours()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        ((secs % 86400) / 3600) as u32
+    }
+}
+
 /// Home: DeckCraft's mark, new presentations (the first themes, with a link to New) and recent
 /// presentations (with a link to Open). The same page is the start screen.
 fn home(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcome) {
     let t = Tokens::get(ui.ctx());
+    let hour = current_hour();
+    let greeting = if hour < 12 {
+        "Good morning"
+    } else if hour < 18 {
+        "Good afternoon"
+    } else {
+        "Good evening"
+    };
     ui.horizontal(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(36.0, 36.0), Sense::hover());
         crate::dialogs::paint_logo(ui.painter(), r);
         ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
+        ui.add_space(8.0);
+        ui.label(RichText::new(format!("— {greeting}")).font(theme::font(16.0)).color(t.text_dim));
     });
     ui.add_space(18.0);
     ui.horizontal(|ui| {
@@ -853,6 +931,13 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             if task(ui, Icon::ResetSlide, "Revert", "Manage Presentation", detail, can_revert) {
                 let _ = app.run("file.revert", json!({}));
             }
+            ui.add_space(14.0);
+            heading(ui, "Protect Presentation");
+            dim(ui, "Control what types of changes people can make to this presentation. Encrypt or restrict permissions before sharing.");
+            ui.add_space(6.0);
+            if ui.button("Protect Presentation…").on_hover_text("Presentation protection settings").clicked() {
+                app.set_status("Presentation is open with full editing permissions");
+            }
         });
         ui.add_space(30.0);
         ui.vertical(|ui| {
@@ -870,13 +955,39 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 }
                 row(ui, "Slides", v.get("slides").and_then(Value::as_u64).unwrap_or(0).to_string());
                 row(ui, "Hidden slides", v.get("hiddenSlides").and_then(Value::as_u64).unwrap_or(0).to_string());
+                if let Some(doc) = app.session.active().map(|d| &d.doc) {
+                    let notes_count = doc.slides.iter().filter(|s| !s.notes_text().trim().is_empty()).count();
+                    let words_count: usize = doc
+                        .slides
+                        .iter()
+                        .map(|s| {
+                            let mut w = 0;
+                            for sh in &s.shapes {
+                                if let Some(t) = &sh.text {
+                                    w += t.text().split_whitespace().count();
+                                }
+                            }
+                            w
+                        })
+                        .sum();
+                    row(ui, "Notes", notes_count.to_string());
+                    row(ui, "Words", words_count.to_string());
+                    let slide_size_str = if (doc.slide_size.width - 960.0).abs() < 1.0 && (doc.slide_size.height - 540.0).abs() < 1.0 {
+                        "16:9 Widescreen (960 × 540 pt)".to_string()
+                    } else if (doc.slide_size.width - 720.0).abs() < 1.0 && (doc.slide_size.height - 540.0).abs() < 1.0 {
+                        "4:3 Standard (720 × 540 pt)".to_string()
+                    } else {
+                        format!("{:.0} × {:.0} pt", doc.slide_size.width, doc.slide_size.height)
+                    };
+                    row(ui, "Slide size", slide_size_str);
+                }
                 for (i, (key, label, hint)) in PROPERTIES.iter().enumerate() {
                     let saved = props.get(*key).and_then(Value::as_str).unwrap_or("").to_string();
                     let Some(draft) = bs.props.get_mut(i) else { continue };
                     let l = ui.label(RichText::new(*label).color(t.text_dim));
                     let id = ui.make_persistent_id(("backstage_prop", *key));
                     let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(*hint).desired_width(300.0)).labelled_by(l.id);
-                    if resp.lost_focus() && *draft != saved {
+                    if (resp.lost_focus() || (resp.changed() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && *draft != saved {
                         // Commit first: a click on another field takes the focus before this one is drawn.
                         let mut p = serde_json::Map::new();
                         p.insert((*key).to_string(), json!(draft.clone()));
