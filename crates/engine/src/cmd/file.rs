@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif|mp4|mov (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5; also mp4/mov), loop?: bool (gif; true: forever), height?: 480|720|1080|2160 (mp4/mov), fps? (mp4/mov), secondsPerClick? (mp4/mov), audio?: aac|pcm|none (mp4/mov; pcm in .mov)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -337,7 +337,7 @@ pub fn pdf_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
 }
 
 /// The output extensions [`format_for_path`] maps to a writer of that format.
-pub const WRITABLE_EXTENSIONS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "pdf", "png", "jpg", "jpeg", "gif", "txt", "md"];
+pub const WRITABLE_EXTENSIONS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "pdf", "png", "jpg", "jpeg", "gif", "mp4", "m4v", "mov", "txt", "md"];
 
 /// The format a file named `path` is written in, or `None` when its extension names no format
 /// DeckCraft writes (`.odp`, `.svg`, no extension …): [`format_for_path`] would save
@@ -368,6 +368,10 @@ pub fn format_for_path(path: &str) -> &'static str {
         "pdf"
     } else if l.ends_with(".gif") {
         "gif"
+    } else if l.ends_with(".mp4") || l.ends_with(".m4v") {
+        "mp4"
+    } else if l.ends_with(".mov") {
+        "mov"
     } else if l.ends_with(".txt") || l.ends_with(".md") {
         "outline"
     } else {
@@ -514,6 +518,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             }
             Ok(json!({"files": written}))
         }
+        "mp4" | "mov" => video_export(&st.doc, &path, &format, p),
         "pdf" => {
             let bytes = pdf_bytes(&st.doc, p)?;
             write_file(&path, &bytes)?;
@@ -543,6 +548,32 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
         }
         other => Err(bad("file.export", format!("unknown format `{other}`"))),
     }
+}
+
+/// File › Export › Create a Video.
+fn video_export(doc: &deckcraft_model::Presentation, path: &str, format: &str, p: &Value) -> Result<Value> {
+    use crate::video::AudioFormat;
+    let d = crate::video::VideoOpts::default();
+    let audio = match str_param(p, "audio") {
+        None | Some("aac") => AudioFormat::Aac,
+        Some("pcm") => AudioFormat::Pcm,
+        Some("none") => AudioFormat::None,
+        Some(other) => return Err(bad("file.export", format!("audio “{other}”: use aac, pcm (.mov) or none"))),
+    };
+    let opts = crate::video::VideoOpts {
+        height: usize_param(p, "height").map(|h| h.clamp(2, 4320) as u32).unwrap_or(d.height),
+        fps: usize_param(p, "fps").map(|f| f.clamp(1, 60) as u32).unwrap_or(d.fps),
+        seconds_per_slide: f64_or(p, "secondsPerSlide", d.seconds_per_slide).clamp(0.1, 3600.0),
+        seconds_per_click: f64_or(p, "secondsPerClick", d.seconds_per_click).clamp(0.0, 3600.0),
+        include_hidden: bool_or(p, "includeHidden", false),
+        audio,
+    };
+    let v = crate::video::encode(doc, format, &opts).map_err(|e| bad("file.export", e))?;
+    write_file(path, &v.bytes)?;
+    let fps = opts.fps.clamp(1, 60);
+    Ok(
+        json!({"path": path, "bytes": v.bytes.len(), "frames": v.frames, "width": v.size.0, "height": v.size.1, "fps": fps, "seconds": v.frames as f64 / fps as f64, "audioSeconds": v.audio_seconds, "warnings": v.warnings}),
+    )
 }
 
 /// File › Info: what the Info page shows about the active presentation.

@@ -138,13 +138,13 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** handouts and speaker notes are printed in many workplaces.
 - **Estimate:** 5–8 h (print through the PDF path and each OS's print dialog). **Beta blocker.**
 
-### No video export; the animated GIF has no transitions or builds
-- **Evidence:** checklist row "Export video (MP4) / animated GIF" is partial: `file.export` writes
-  an animated GIF with one frame per slide (#171), but there is no MP4/MOV export, and the GIF
-  doesn't animate transitions or build animations.
-- **Impact:** sharing a talk as a video is a common request.
-- **Estimate:** 10–16 h (render the timeline frame by frame, which the GIF can then reuse for
-  transitions and builds; an H.264 encoder is the hard part, FilmCraft has one to copy).
+### The animated GIF has no transitions or builds
+- **Evidence:** `file.export` writes MP4/MOV with transitions, in-slide animations on the
+  slide-show timeline, video clips playing their pictures (decoded by `deckcraft-media`), and a
+  sound track (AAC or PCM in .mov). The animated GIF (#171) still has one frame per slide, and
+  there is no Export dialog page for video yet.
+- **Impact:** small; GIF is a niche export.
+- **Estimate:** 2–3 h (an Export dialog page; the GIF can reuse the video's timeline frames).
 
 ### Embedded MicroType Express font subsets aren't drawn
 - **Evidence:** `p:embeddedFontLst` is read and written. A raw TrueType/OpenType face, or one inside an Embedded OpenType wrapper, is loaded and used to draw. A MicroType Express subset (`application/x-fontdata` with neither form) is kept and written back, and the text still uses a stand-in.

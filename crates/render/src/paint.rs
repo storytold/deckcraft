@@ -279,6 +279,30 @@ pub fn tile_origin(bounds: Rect, align: &str, tile: (f64, f64), offset: (f64, f6
     Point::new(bounds.x0 + ax * (bounds.width() - tile.0) + ox, bounds.y0 + ay * (bounds.height() - tile.1) + oy)
 }
 
+/// A decoded video frame stretched over `bounds`; `false` when it has no usable pixels.
+pub fn video_frame(ctx: &mut RenderContext, f: crate::VideoFrame, bounds: Rect, m: Affine) -> bool {
+    let (w, h) = (f.width, f.height);
+    let n = (w as usize).saturating_mul(h as usize);
+    if w == 0 || h == 0 || w > u32::from(u16::MAX) || h > u32::from(u16::MAX) || f.rgba.len() < n.saturating_mul(4) {
+        return false;
+    }
+    let data: Vec<vello_cpu::color::PremulRgba8> = f.rgba.as_chunks::<4>().0[..n]
+        .iter()
+        .map(|p| {
+            let a = u16::from(p[3]);
+            let k = |c: u8| ((u16::from(c) * a + 127) / 255) as u8;
+            vello_cpu::color::PremulRgba8 { r: k(p[0]), g: k(p[1]), b: k(p[2]), a: p[3] }
+        })
+        .collect();
+    let pm = vello_cpu::Pixmap::from_parts(data, w as u16, h as u16);
+    let image = vello_cpu::Image {
+        image: vello_cpu::ImageSource::Pixmap(std::sync::Arc::new(pm)),
+        sampler: peniko::ImageSampler { quality: peniko::ImageQuality::High, ..Default::default() },
+    };
+    draw_image(ctx, &image, f64::from(w), f64::from(h), bounds, m, 1.0);
+    true
+}
+
 fn draw_image(ctx: &mut RenderContext, image: &vello_cpu::Image, iw: f64, ih: f64, dest: Rect, m: Affine, alpha: f64) {
     let t = m * Affine::translate(dest.origin().to_vec2()) * Affine::scale_non_uniform(dest.width() / iw, dest.height() / ih);
     ctx.set_transform(t);
