@@ -394,13 +394,18 @@ mod tests {
         let v = reply(&mut cr).unwrap();
         assert!(v["error"].as_str().unwrap().starts_with("busy"));
         drop(a);
-        // The freed slot is reusable once the server notices the disconnect.
+        // The freed slot is reusable once the server notices the disconnect. Until it does, the
+        // handshake itself is answered `busy`, which is a reason to try again rather than a
+        // failure — so this loop talks to the server directly instead of through `authed`.
         let deadline = Instant::now() + Duration::from_secs(4);
         loop {
-            let (mut dr, mut dw) = authed(addr);
-            writeln!(dw, r#"{{"id":2,"method":"m"}}"#).unwrap();
+            let (mut dr, mut dw) = client(addr);
+            hello(&mut dw, TOKEN);
             if reply(&mut dr).is_some_and(|v| v["ok"] == true) {
-                break;
+                writeln!(dw, r#"{{"id":2,"method":"m"}}"#).unwrap();
+                if reply(&mut dr).is_some_and(|v| v["ok"] == true) {
+                    break;
+                }
             }
             assert!(Instant::now() < deadline, "slot never freed");
             std::thread::sleep(Duration::from_millis(50));

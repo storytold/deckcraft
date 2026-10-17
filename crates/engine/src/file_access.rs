@@ -461,8 +461,11 @@ mod tests {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             // `io` and this module are the checked gateway; `tests*.rs` are test-only modules.
             // `recovery` and `spell` touch only the app's own folders (AutoRecover files, the
-            // system and user spelling dictionaries), never a path a command names.
-            if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "recovery.rs" | "spell.rs")
+            // system and user spelling dictionaries), never a path a command names. `control_auth`
+            // is the same case: one file beside them, `control-<port>.token`, in a settings
+            // directory the OS names, and the port is a `u16`, so nothing an operator types can
+            // steer it out of that directory.
+            if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "recovery.rs" | "spell.rs" | "control_auth.rs")
                 || name.starts_with("tests")
             {
                 continue;
