@@ -1146,6 +1146,8 @@ fn select_para(s: &mut Session, p: &Value) -> Result<Value> {
     let t = st.selection.text.clone().ok_or_else(|| bad("text.selectParagraph", "not editing text"))?;
     let at = pos_param(p, "at").unwrap_or(t.caret);
     let body = body_of(st, &t);
+    // Clamp to the last paragraph so a huge index can neither overflow nor select past the body.
+    let at = (at.0.min(body.map_or(0, |b| b.paragraphs.len().saturating_sub(1))), at.1);
     let n = body.and_then(|b| b.paragraphs.get(at.0)).map(|x| x.char_len()).unwrap_or(0);
     // The paragraph mark is part of the paragraph (PowerPoint's triple-click selects it too).
     let end = if body.is_some_and(|b| at.0 + 1 < b.paragraphs.len()) { (at.0 + 1, 0) } else { (at.0, n) };
@@ -1474,5 +1476,25 @@ mod replace_font_tests {
         assert!(s.execute("font.replace", &json!({"from": "", "to": "Inter"})).is_err());
         assert!(s.execute("font.replace", &json!({"from": "Inter", "to": "a\nb"})).is_err());
         assert!(s.execute("font.replace", &json!({"from": "Inter"})).is_err());
+    }
+}
+
+#[cfg(test)]
+mod select_paragraph_tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn select_paragraph_huge_at() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "B"})).unwrap();
+        s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 50], "text": "hello"})).unwrap();
+        s.execute("text.edit", &json!({})).unwrap();
+        let r = s.execute("text.selectParagraph", &json!({"at": [u64::MAX, 0]}));
+        assert!(r.is_ok(), "{r:?}");
+        let t = s.doc().unwrap().selection.text.clone().unwrap();
+        // Clamped to the last (only) paragraph, never past the end of the body.
+        assert_eq!((t.anchor, t.caret), ((0, 0), (0, 5)));
     }
 }
