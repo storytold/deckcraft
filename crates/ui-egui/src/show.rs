@@ -650,12 +650,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             show.step_end = now;
         }
     } else if show.trans.is_none() {
-        // Auto-advance (After: timings) or autoplay preview.
+        // Auto-advance (After: timings) or autoplay preview. An automatic first step is started
+        // by `ShowState` as the slide appears; starting it here too replayed it after Back (#844).
         let idle = now - show.step_end.max(show.slide_start);
         let cur_step = show.state.step;
-        let next_auto = show.timeline(&doc).step_is_auto(cur_step);
         let n_steps = show.timeline(&doc).steps();
-        let step_due = cur_step < n_steps && ((show.autoplay && idle > 0.3) || next_auto);
+        let step_due = show.autoplay && cur_step < n_steps && idle > 0.3;
         let holding = show.grid || show.zoom.is_some() || show.zoom_arm;
         if !holding && (step_due || (!show.rehearse && show.state.auto_advance_due(&doc, idle) && !show.ended)) {
             actions.push(show.state.next(&doc));
@@ -2245,5 +2245,39 @@ mod tests {
         // 16:9 still takes the column's full width.
         let doc = s.active().unwrap().doc.clone();
         assert_eq!(next_rect(right, &doc).width(), 400.0);
+    }
+
+    #[test]
+    fn back_leaves_a_slide_whose_first_animation_is_with_previous() {
+        // #844: Back on such a slide undid its first step, and the next frame played that step
+        // again by itself, so Back never reached the slide before.
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let id = session.active().unwrap().doc.slides[1].shapes[0].id;
+        session
+            .execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "withPrevious", "duration": 500}))
+            .unwrap();
+        let app = SlideApp::new(session, crate::Services::default());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        harness.key_press(egui::Key::ArrowRight);
+        // The first step plays by itself and ends (0.5 s; a frame is 0.25 s).
+        harness.run_steps(8);
+        let st = &harness.state().show.as_ref().unwrap().state;
+        assert_eq!((st.slide, st.step, st.playing), (1, 1, false), "on slide 2, fully built");
+        for _ in 0..5 {
+            harness.key_press(egui::Key::ArrowLeft);
+            harness.run_steps(2);
+        }
+        let st = &harness.state().show.as_ref().unwrap().state;
+        assert_eq!(st.slide, 0, "five Backs leave slide 2 (step {}, playing {})", st.step, st.playing);
     }
 }
