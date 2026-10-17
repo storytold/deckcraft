@@ -492,7 +492,8 @@ pub fn markdown_to_slides(p: &mut Presentation, text: &str) -> usize {
 pub fn slides_to_outline(p: &Presentation) -> String {
     let mut out = String::new();
     for s in &p.slides {
-        out.push_str(&s.title());
+        // One line per title: a newline would start another slide on re-import.
+        out.push_str(&s.title().replace('\n', " "));
         out.push('\n');
         for sh in &s.shapes {
             if sh.ph_type().is_some_and(|k| k.is_title()) {
@@ -830,6 +831,18 @@ mod tests {
         assert_eq!(n, 2);
         let o = slides_to_outline(&p);
         assert!(o.contains("-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\nBullets\n\tPoint\n\tOther"), "{o}");
+    }
+
+    #[test]
+    fn outline_export_keeps_multi_paragraph_title_on_one_line() {
+        let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut p, "Intro\n\tPoint one\nSecond\n\tMore"), 2);
+        let title = Arc::make_mut(&mut p.slides[0]).shapes.iter_mut().find(|s| s.ph_type().is_some_and(|k| k.is_title())).expect("title placeholder");
+        title.text = Some(TextBody::from_text("Line one\nLine two"));
+        let o = slides_to_outline(&p);
+        assert_eq!(o, "Line one Line two\n\tPoint one\nSecond\n\tMore\n");
+        let mut q = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut q, &o), 2);
     }
 
     #[test]
