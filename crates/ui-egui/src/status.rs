@@ -41,24 +41,17 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
             app.ui.zoom = None;
         }
-        let pct = (app.canvas_scale * 100.0).round();
-        let lbl = right.add(egui::Label::new(egui::RichText::new(format!("{pct}%")).size(12.0).color(t.text_dim)).sense(Sense::click()));
-        if lbl.clicked() {
+        // Zoom: `−`, slider, `+` and the percentage, the shared Office-style zoom bar. It shows
+        // the scale the slide is drawn at, which with Fit is the fitted scale.
+        let mut z = f64::from(app.canvas_scale.clamp(0.1, 4.0)) * 100.0;
+        let style = crate::widgets::zoom_bar_style(&t);
+        let labels = craft_ui::slider::ZoomBarLabels { zoom: "Zoom", zoom_in: "Zoom In", zoom_out: "Zoom Out" };
+        let bar = craft_ui::slider::ZoomBar::new(&mut z, 10.0..=400.0, labels, &style).show(&mut right);
+        if bar.percent_clicked {
             let _ = app.run("view.zoomDialog", json!({}));
         }
-        if small_icon(&mut right, Icon::ZoomIn, "Zoom In", false).clicked() {
-            let _ = app.run("view.zoomIn", json!({}));
-        }
-        // Slider 10%–400% (log scale).
-        let mut z = app.ui.zoom.unwrap_or(app.canvas_scale).clamp(0.1, 4.0);
-        let mut lz = z.ln();
-        let s = right.add_sized(vec2(110.0, 18.0), egui::Slider::new(&mut lz, (0.1f32).ln()..=(4.0f32).ln()).show_value(false));
-        if s.changed() {
-            z = lz.exp();
-            app.ui.zoom = Some(z);
-        }
-        if small_icon(&mut right, Icon::ZoomOut, "Zoom Out", false).clicked() {
-            let _ = app.run("view.zoomOut", json!({}));
+        if bar.changed {
+            app.ui.zoom = Some((z / 100.0) as f32);
         }
         right.add_space(8.0);
         let view = app.ui.view;

@@ -305,14 +305,15 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         ui.horizontal(|ui| {
             ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Transparency"));
             let key = ui.id().with((id, "tr", sel));
-            let mut tr: f32 = ui.data_mut(|d| d.get_temp(key).unwrap_or(((1.0 - alpha_of(&s.color)) * 100.0) as f32));
-            let r = ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).suffix("%"));
-            if r.changed() {
+            let mut tr: f64 = ui.data_mut(|d| d.get_temp(key).unwrap_or((1.0 - alpha_of(&s.color)) * 100.0));
+            let before = tr;
+            let apply = crate::widgets::value_slider(ui, &mut tr, 0.0..=100.0, "Transparency", 0, "%", 0.0);
+            if tr != before {
                 ui.data_mut(|d| d.insert_temp(key, tr));
             }
-            if r.drag_stopped() || (r.changed() && !r.dragged()) {
+            if apply {
                 let mut ng = g.clone();
-                ng.stops[sel].color = with_alpha(s.color.clone(), 1.0 - tr as f64 / 100.0);
+                ng.stops[sel].color = with_alpha(s.color.clone(), 1.0 - tr / 100.0);
                 ui.data_mut(|d| d.remove::<f32>(key));
                 out = Some(ng);
             }
