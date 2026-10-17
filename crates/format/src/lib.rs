@@ -197,12 +197,64 @@ pub fn repair(p: &mut Presentation) {
             }
         }
     }
+    reid_duplicate_shapes(p);
     p.slide_size = sane_slide_size(p.slide_size);
     // The notes page only lays out notes, but its size divides too.
     if !(p.notes_size.width.is_finite() && p.notes_size.width > 0.0 && p.notes_size.height.is_finite() && p.notes_size.height > 0.0) {
         p.notes_size = Presentation::default().notes_size;
     }
     sane_numbers(p);
+}
+
+/// Give a shape that repeats an id already used on its slide, layout or master (groups included)
+/// a fresh one, so edits, selection and the Selection Pane find one shape per id. The first keeps
+/// its id, and with it what animations and connectors point at. An exhausted id space leaves the
+/// rest as they are (#407).
+fn reid_duplicate_shapes(p: &mut Presentation) {
+    fn has_duplicates(shapes: &[deckcraft_model::Shape]) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut dup = false;
+        deckcraft_model::walk(shapes, &mut |sh, _| dup |= !seen.insert(sh.id));
+        dup
+    }
+    fn reid(shapes: &mut [deckcraft_model::Shape], seen: &mut std::collections::HashSet<deckcraft_model::ShapeId>, next: &mut u32, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for sh in shapes {
+            if !seen.insert(sh.id)
+                && let Some(id) = (*next).max(1).checked_add(1)
+            {
+                *next = id;
+                sh.id = deckcraft_model::ShapeId(id);
+                seen.insert(sh.id);
+            }
+            if let deckcraft_model::ShapeKind::Group { children, .. } = &mut sh.kind {
+                reid(children, seen, next, depth + 1);
+            }
+        }
+    }
+    let mut next = p.next_id;
+    let mut fix = |shapes: &mut Vec<deckcraft_model::Shape>| {
+        if has_duplicates(shapes) {
+            reid(shapes, &mut std::collections::HashSet::new(), &mut next, 0);
+        }
+    };
+    for s in &mut p.slides {
+        if has_duplicates(&s.shapes) {
+            fix(&mut Arc::make_mut(s).shapes);
+        }
+    }
+    for m in p.masters.iter_mut().chain(p.notes_master.iter_mut()).chain(p.handout_master.iter_mut()) {
+        if has_duplicates(&m.shapes) || m.layouts.iter().any(|l| has_duplicates(&l.shapes)) {
+            let m = Arc::make_mut(m);
+            fix(&mut m.shapes);
+            for l in &mut m.layouts {
+                fix(&mut l.shapes);
+            }
+        }
+    }
+    p.next_id = next;
 }
 
 /// Smallest and largest slide side, in points: PowerPoint's 1–56 in, as Design › Slide Size allows.

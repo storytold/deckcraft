@@ -3592,3 +3592,49 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
     assert_eq!(t.n_cols(), 3);
     assert_eq!(t.cell(0, 1).unwrap().text.text(), "b", "the original columns keep their place");
 }
+
+/// A .deckcraft file whose shapes repeat an id (groups included) opens with fresh ids for the
+/// repeats: the deck passes `validate`, the first shape keeps its id and none is lost.
+#[test]
+fn opening_a_file_gives_repeated_shape_ids_fresh_ones() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    for x in [0, 100, 200, 300] {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 50, 80, 80]})).unwrap();
+    }
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [400, 300, 80, 80]})).unwrap();
+    let first = s.doc().unwrap().shapes()[0].id;
+    // Every shape, the group's children too, takes the group's id.
+    s.edit(|doc, sel| {
+        fn all(shapes: &mut [deckcraft_model::Shape], id: deckcraft_model::ShapeId) {
+            for sh in shapes {
+                sh.id = id;
+                if let deckcraft_model::ShapeKind::Group { children, .. } = &mut sh.kind {
+                    all(children, id);
+                }
+            }
+        }
+        all(crate::shapes_mut(doc, sel).unwrap(), first);
+        Ok(())
+    })
+    .unwrap();
+    assert!(!s.doc().unwrap().doc.validate().is_empty(), "the deck repeats ids");
+    let bytes = cmd::file::save_bytes(&s.doc().unwrap().doc, "deckcraft").unwrap();
+    let mut t = Session::new();
+    t.execute("file.openBytes", &json!({"name": "dup.deckcraft", "data": cmd::base64_encode(&bytes)})).unwrap();
+    let st = t.doc().unwrap();
+    assert_eq!(st.doc.validate(), Vec::<String>::new());
+    let slide = st.doc.slides.last().unwrap();
+    let mut ids = vec![];
+    deckcraft_model::walk(&slide.shapes, &mut |sh, _| ids.push(sh.id));
+    assert_eq!(ids.len(), 6, "the group, its four children and the ellipse");
+    assert_eq!(ids[0], first, "the first shape keeps its id");
+    assert!(ids.iter().all(|id| id.0 <= st.doc.next_id), "new ids come from the deck's counter");
+    // Each shape can be selected by its own id now.
+    let last = *ids.last().unwrap();
+    t.execute("slide.go", &json!({"index": st.doc.slides.len() - 1})).unwrap();
+    t.execute("selection.select", &json!({"id": last.0})).unwrap();
+    assert_eq!(t.doc().unwrap().selected_shapes()[0].id, last);
+}
