@@ -36,10 +36,11 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
+| Turkish | tr | ~150 / ~1,050 (14%) | ribbon, backstage, dialogs, panes, status bar | full (Latin) | yes | **partial** | yes | 3–5 |
 
-Other languages shipped: **0** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
-than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
-Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
+Other languages shipped: **0** (Ukrainian is in review as PR #34; Turkish partial UI in PR). PowerPoint for Mac ships 15 more
+than the thirteen above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
+Polish, Russian, Slovak, Swedish, Thai and Traditional Chinese.
 
 Per-language hours assume the infrastructure exists: **8–14 h** once for a string catalog (copy a
 sibling app's approach, e.g. EffectCraft's menu and panel catalogs), a language setting that follows

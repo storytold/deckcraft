@@ -21,18 +21,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         .frame(egui::Frame::NONE.fill(t.card).inner_margin(egui::Margin::same(10)))
         .show(ui, |ui| {
             app.ui.pane_width = ui.available_width() + 20.0;
-            let title = match pane.as_str() {
-                "format" => "Format Shape",
-                "background" => "Format Background",
-                "animation" => "Animation Pane",
-                "selection" => "Selection",
-                "comments" => "Comments",
-                "designer" => "Design Ideas",
-                "smartart" => "Text Pane",
-                "thesaurus" => "Thesaurus",
-                "revisions" => "Revisions",
-                _ => "Pane",
-            };
+            let title = app.ui.language.pane_title(pane.as_str());
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(title).font(theme::bold(16.0)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

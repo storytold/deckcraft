@@ -54,3 +54,8 @@ real_name = "Nikita Rakitin"
 
 [people.RCShoemaker]
 real_name = "Ryan C. Shoemaker"
+
+[people.yeniufuklar-com]
+real_name = "Ufuk Efe"
+display_name = "Ufuk Efe"
+sync_github_name = true

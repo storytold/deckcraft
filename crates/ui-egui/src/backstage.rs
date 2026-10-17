@@ -75,6 +75,11 @@ impl Page {
         }
     }
 
+    /// Localized side-menu label and page heading.
+    pub fn localized_label(self, lang: crate::UiLanguage) -> &'static str {
+        lang.backstage_page(self.label())
+    }
+
     fn icon(self) -> Icon {
         match self {
             Page::Home => Icon::Home,
@@ -111,6 +116,10 @@ impl Nav {
             Nav::Close => "Close",
             Nav::Options => "Options",
         }
+    }
+
+    fn localized_label(self, lang: crate::UiLanguage) -> &'static str {
+        lang.backstage_page(self.label())
     }
     fn icon(self) -> Icon {
         match self {
@@ -352,11 +361,12 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(BACK_H);
         }
         let mut index = 0;
+        let lang = app.ui.language;
         for (k, nav) in top.iter().enumerate() {
             if k == 3 {
                 separator(ui, &t);
             }
-            if nav_item(ui, *nav, &bs, index, &t).clicked() {
+            if nav_item(ui, *nav, &bs, index, &t, lang).clicked() {
                 bs.focus = None;
                 commit_props(app, &bs);
                 match act(app, *nav, bs.page) {
@@ -371,7 +381,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.add_space(8.0);
             // Bottom-up: draw the last entry first.
             for (k, nav) in bottom.iter().enumerate().rev() {
-                if nav_item(ui, *nav, &bs, first_bottom + k, &t).clicked() {
+                if nav_item(ui, *nav, &bs, first_bottom + k, &t, lang).clicked() {
                     bs.focus = None;
                     commit_props(app, &bs);
                     match act(app, *nav, bs.page) {
@@ -395,7 +405,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
                 ui.set_max_width(CONTENT_W);
                 if bs.page != Page::Home {
-                    ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
+                    ui.label(RichText::new(bs.page.localized_label(app.ui.language)).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);
                 }
                 // Errors raised on a backstage page (a missing recent file, a failed open) would
@@ -432,10 +442,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 
 // ---------------------------------------------------------------- side menu
 
-fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
+fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens, lang: crate::UiLanguage) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
     let selected = nav == Nav::Page(bs.page);
-    let label = nav.label();
+    let label = nav.localized_label(lang);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));
