@@ -112,6 +112,21 @@ impl Tokens {
     }
 }
 
+/// Resolves an [`egui::ThemePreference`] against the context's system theme.
+pub fn resolve_theme(pref: egui::ThemePreference, ctx: &egui::Context) -> egui::Theme {
+    match pref {
+        egui::ThemePreference::System => {
+            if ctx.input(|i| i.raw.system_theme == Some(egui::Theme::Dark)) {
+                egui::Theme::Dark
+            } else {
+                egui::Theme::Light
+            }
+        }
+        egui::ThemePreference::Light => egui::Theme::Light,
+        egui::ThemePreference::Dark => egui::Theme::Dark,
+    }
+}
+
 /// Apply tokens to egui's style.
 pub fn apply(ctx: &egui::Context, t: &Tokens) {
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
