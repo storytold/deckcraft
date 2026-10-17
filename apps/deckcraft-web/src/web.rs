@@ -141,12 +141,21 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             }
         })),
         inbox: Some(inbox),
+        animations_enabled: Some(animations_enabled()),
         ..Default::default()
     }
 }
 
 fn push_inbox(inbox: &Inbox, event: InboxEvent) {
     inbox.lock().unwrap_or_else(|e| e.into_inner()).push(event);
+}
+
+/// Whether the system has animation effects on, as the browser passes it on: off while the
+/// `prefers-reduced-motion: reduce` media query matches, `None` when the browser can't say. The
+/// query is made once and asked every frame; it follows the system's setting by itself.
+fn animations_enabled() -> Box<dyn Fn() -> Option<bool>> {
+    let reduce = web_sys::window().and_then(|window| window.match_media("(prefers-reduced-motion: reduce)").ok().flatten());
+    Box::new(move || reduce.as_ref().map(|query| !query.matches()))
 }
 
 /// Trigger a browser download of `bytes` named after the last component of `path`.

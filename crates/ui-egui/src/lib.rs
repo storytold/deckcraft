@@ -18,6 +18,7 @@ pub mod fillui;
 pub mod icons;
 pub mod media;
 pub mod menus;
+pub mod motion;
 pub mod notes;
 pub mod opening;
 pub mod panes;
@@ -220,6 +221,10 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Whether the system has animation effects on (`None`: it doesn't say), which Preferences ▸
+    /// Animation effects ▸ Use system setting follows ([`motion`]). Asked every frame, so it must
+    /// answer from memory. Without it animations stay on.
+    pub animations_enabled: Option<Box<dyn Fn() -> Option<bool>>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -269,6 +274,9 @@ pub struct UiState {
     /// The Text Pane's line drafts, for the SmartArt group they were read from.
     pub smartart_drafts: (u32, Vec<String>),
     pub grayscale: bool,
+    /// Preferences ▸ Animation effects: follow the system's setting, or always on or off ([`motion`]).
+    #[serde(deserialize_with = "motion::lenient")]
+    pub animation_effects: motion::AnimationEffects,
     /// Comment the Review Previous/Next buttons last landed on: `(slide, index)`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub comment_focus: Option<(usize, usize)>,
@@ -303,6 +311,7 @@ impl Default for UiState {
             smartart_focus: None,
             smartart_drafts: (0, vec![]),
             grayscale: false,
+            animation_effects: motion::AnimationEffects::System,
             comment_focus: None,
             qat: qat::defaults(),
         }
@@ -378,6 +387,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
+    ("view.animationEffects", "Animation Effects", None, "{mode?: system|on|off} or {on?: bool} (toggles without either) → {mode, on, system}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
     ("show.presenter", "Presenter View", None, "{on?: bool}"),
@@ -485,6 +495,8 @@ pub struct SlideApp {
     restyle: bool,
     fonts_ready: bool,
     last_time: f64,
+    /// What the system last said about its animation effects ([`Services::animations_enabled`]).
+    system_animations: Option<bool>,
     /// When AutoRecover data was last written (seconds, egui time).
     pub last_recovery: f64,
     /// Quit was confirmed (changes saved or discarded): let the window close.
@@ -566,6 +578,7 @@ impl SlideApp {
             restyle: true,
             fonts_ready: false,
             last_time: 0.0,
+            system_animations: None,
             last_recovery: 0.0,
             quit_confirmed: false,
             notes_buf: (0, usize::MAX, notes::Draft::default()),
@@ -590,6 +603,22 @@ impl SlideApp {
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), now_ms()));
+    }
+
+    /// Whether animation effects run right now: the preference, or the system's setting while the
+    /// preference follows it.
+    pub fn animations_on(&self) -> bool {
+        self.ui.animation_effects.enabled(self.system_animations)
+    }
+
+    /// What the system last said about its animation effects (`None`: it doesn't say).
+    pub fn system_animations(&self) -> Option<bool> {
+        self.system_animations
+    }
+
+    /// Asks the host what the system says about animation effects.
+    fn read_system_animations(&mut self) {
+        self.system_animations = self.services.animations_enabled.as_ref().and_then(|ask| ask());
     }
 
     /// A message that must be seen wherever the user is: a toast, which also shows over the start
@@ -944,6 +973,17 @@ impl SlideApp {
                 self.restyle = true;
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
+            "view.animationEffects" => {
+                self.read_system_animations();
+                let mode = match p.get("mode").filter(|mode| !mode.is_null()) {
+                    Some(mode) => mode.as_str().and_then(motion::AnimationEffects::parse).ok_or("`mode` must be system, on, or off")?,
+                    // No mode: `{"on": bool}` turns them on or off; nothing toggles what shows now.
+                    None if self.flag(p, self.animations_on()) => motion::AnimationEffects::On,
+                    None => motion::AnimationEffects::Off,
+                };
+                self.ui.animation_effects = mode;
+                return Ok(json!({"mode": mode.code(), "on": self.animations_on(), "system": self.system_animations}));
+            }
             "view.newWindow" => return doc_window::command(self, p),
             "show.start" => {
                 if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
@@ -1529,6 +1569,9 @@ impl SlideApp {
             theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
             self.restyle = false;
         }
+        // Asked every frame, so a change in the system's settings is followed while the app runs.
+        self.read_system_animations();
+        motion::apply(ctx, self.animations_on());
         let now = ctx.input(|i| i.time);
         let dt = now - self.last_time;
         if dt > 0.0 {

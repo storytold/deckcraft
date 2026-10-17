@@ -31,3 +31,19 @@ cpal = "0.16"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+# The desktop's animations setting, from the XDG settings portal over D-Bus (`motion/desktop.rs`).
+# Already in the tree through AccessKit, at the same version.
+zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# Settings ▸ Accessibility ▸ Visual effects ▸ Animation effects (`motion.rs`), read through the
+# Windows Runtime's `UISettings`: its bindings are safe to call, where the Win32 call
+# (`SystemParametersInfo`) needs unsafe, which our workspace forbids. Already in the tree through
+# wgpu's DirectX 12 backend and AccessKit, at this version; this adds one small namespace to it.
+windows = { version = "0.62", default-features = false, features = ["std", "UI_ViewManagement"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# System Settings ▸ Accessibility ▸ Display ▸ Reduce motion (`motion.rs`), read through
+# `NSWorkspace`: a safe call in these bindings. Already in the tree through arboard, at this
+# version; this adds only the `NSAccessibility` bindings.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSWorkspace", "NSAccessibility"] }

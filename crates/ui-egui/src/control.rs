@@ -9,7 +9,7 @@
 //! - `ui.tool.select {tool, preset?}`
 //! - `ui.click {x, y, button?, count?}` / `ui.move {x, y}` / `ui.drag {x, y, toX, toY, steps?}`: real egui pointer
 //!   input in window points (reaches every widget)
-//! - `ui.set {tab?, pane?, view?, zoom?, dark?, notes?, ribbonCollapsed?}`; `ui.dialog.close`
+//! - `ui.set {tab?, pane?, view?, zoom?, dark?, notes?, ribbonCollapsed?, animationEffects?}`; `ui.dialog.close`
 //! - `ui.screenshot {path?}`: the whole window as PNG; `ui.render {slide?, scale?, path?}`: one slide (headless)
 //! - `ui.resize {width, height}`, `ui.focus`
 //! - `show.start {from?}`, `show.key {key}`, `show.end`
@@ -89,6 +89,10 @@ pub fn inspect(app: &SlideApp, ctx: &egui::Context) -> Value {
     let r = ctx.content_rect();
     json!({
         "ui": serde_json::to_value(&app.ui).unwrap_or_default(),
+        // Whether animation effects run now (`ui.animationEffects` may be "system"), and what the
+        // system says (null: nothing).
+        "animationsOn": app.animations_on(),
+        "systemAnimations": app.system_animations(),
         "tool": serde_json::to_value(&app.session.tool.kind).unwrap_or_default(),
         "window": [r.width(), r.height()],
         "canvasRect": app.canvas_rect.map(|c| json!([c.left(), c.top(), c.width(), c.height()])),
@@ -281,6 +285,16 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             }
             if let Some(ft) = s("formatTab") {
                 app.ui.format_tab = ft.to_string();
+            }
+            // `"system"`, `"on"` or `"off"`; `true` and `false` mean on and off.
+            if let Some(effects) = p.get("animationEffects") {
+                let params = match effects.as_bool() {
+                    Some(on) => json!({"on": on}),
+                    None => json!({"mode": effects}),
+                };
+                if let Err(e) = app.run("view.animationEffects", params) {
+                    return err(e);
+                }
             }
             ok(serde_json::to_value(&app.ui).unwrap_or_default())
         }

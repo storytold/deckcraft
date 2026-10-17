@@ -20,6 +20,7 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+mod motion;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
@@ -247,6 +248,7 @@ fn main() -> eframe::Result {
                 }
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            app.services.animations_enabled = Some(motion::animations_enabled(&cc.egui_ctx));
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);

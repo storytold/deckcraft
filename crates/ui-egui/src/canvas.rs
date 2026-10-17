@@ -114,7 +114,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let mut offset: egui::Vec2 = ui.data_mut(|d| d.get_temp(scroll_id).unwrap_or_default());
     let last: Option<(Rect, f32)> = ui.data_mut(|d| d.get_temp(last_id));
     let resp = ui.allocate_rect(avail, Sense::click_and_drag());
-    let (wheel, zoom_delta, hover) = ui.input(|i| (i.smooth_scroll_delta, i.zoom_delta(), i.pointer.hover_pos()));
+    // With animation effects off, a Ctrl+wheel notch zooms by the whole notch at once.
+    let zoom_delta = crate::motion::zoom_delta(ui.ctx(), app.animations_on());
+    let (wheel, hover) = ui.input(|i| (i.smooth_scroll_delta, i.pointer.hover_pos()));
     let zooming = resp.hovered() && (zoom_delta - 1.0).abs() > 1e-3;
     if zooming {
         let cur = app.ui.zoom.unwrap_or_else(|| layout(app, avail).1);

@@ -346,8 +346,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 app.thumb_drag = None;
             }
         }
-        // Ctrl/⌘ + wheel zooms the sorter.
-        let (zd, cmd) = ui.input(|i| (i.zoom_delta(), i.modifiers.command));
+        // Ctrl/⌘ + wheel zooms the sorter (a whole notch at once with animation effects off).
+        let zd = crate::motion::zoom_delta(ui.ctx(), app.animations_on());
+        let cmd = ui.input(|i| i.modifiers.command);
         if (zd - 1.0).abs() > 1e-3 || cmd {
             app.ui.sorter_zoom = (zoom * zd).clamp(0.5, 3.0);
         }

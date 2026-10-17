@@ -6,6 +6,7 @@ use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
 use crate::SlideApp;
+use crate::motion::{self, AnimationEffects};
 use crate::theme::{self, Tokens};
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -145,6 +146,7 @@ fn preferences_snapshot(app: &SlideApp) -> Value {
     json!({
         "dark": app.ui.brightness == theme::Brightness::Dark,
         "uiScale": app.ui.ui_scale,
+        "animationEffects": app.ui.animation_effects.code(),
         "prefs": serde_json::to_value(&app.session.prefs).unwrap_or(Value::Null),
     })
 }
@@ -160,8 +162,38 @@ fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     if let Some(scale) = before.get("uiScale").and_then(Value::as_f64) {
         app.ui.ui_scale = scale as f32;
     }
+    if let Some(effects) = before.get("animationEffects").and_then(Value::as_str).and_then(AnimationEffects::parse) {
+        app.ui.animation_effects = effects;
+    }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;
+    }
+}
+
+/// Preferences ▸ Animation effects, and while it follows the system, what the system says.
+fn animation_effects_setting(app: &mut SlideApp, ui: &mut Ui) {
+    let current = app.ui.animation_effects;
+    ui.horizontal(|ui| {
+        ui.label("Animation effects:");
+        egui::ComboBox::from_id_salt("animation_effects")
+            .selected_text(current.label())
+            .show_ui(ui, |ui| {
+                for mode in AnimationEffects::ALL {
+                    if ui.selectable_label(current == mode, mode.label()).clicked() {
+                        let _ = app.run("view.animationEffects", json!({"mode": mode.code()}));
+                    }
+                }
+            })
+            .response
+            .on_hover_text(motion::HINT);
+    });
+    if current == AnimationEffects::System {
+        let system = match app.system_animations() {
+            Some(true) => "Animation effects are on in your system's settings.",
+            Some(false) => "Animation effects are off in your system's settings.",
+            None => "Your system doesn't report an animation setting, so effects stay on.",
+        };
+        ui.label(egui::RichText::new(system).color(Tokens::get(ui.ctx()).text_dim));
     }
 }
 
@@ -2158,6 +2190,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
                 d.fields.remove("uiScale");
             }
+            animation_effects_setting(app, ui);
             ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
             ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
             ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
