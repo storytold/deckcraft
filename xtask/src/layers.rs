@@ -60,6 +60,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("engine", Class::Layer(5)),
     ("ui-egui", Class::Layer(6)),
     ("mcp", Class::Layer(6)),
+    // No `testkit` crate here yet, but the class stays so the rule it carries (a test helper may
+    // only be a dev-dependency) keeps working if one is added.
     ("testkit", Class::Testkit),
     // L7 apps and tooling
     ("deckcraft", Class::Exempt),
@@ -85,7 +87,12 @@ fn intra_layer_allowed(from: &str, to: &str) -> bool {
 
 /// External crates that constitute a UI toolkit / windowing dependency.
 /// Entries ending in `*` are prefixes.
-pub const UI_CRATES: &[&str] = &["egui", "eframe", "winit", "egui_kittest", "rfd", "bevy*"];
+///
+/// The egui/wgpu/accesskit family is here because a lower crate could reach a UI toolkit through
+/// any of them: `egui_extras`, the `egui-wgpu`/`egui-winit` backends, `wgpu` itself and the
+/// accessibility bridges all belong below L6 as much as `egui` does.
+pub const UI_CRATES: &[&str] =
+    &["egui", "egui_extras", "eframe", "egui-wgpu", "egui-winit", "egui_kittest", "winit", "rfd", "wgpu", "accesskit", "bevy*"];
 
 /// First layer allowed to use UI crates.
 pub const UI_MIN_LAYER: u8 = 6;
@@ -348,5 +355,15 @@ mod tests {
         assert!(doc.deps[0].workspace && !doc.deps[1].workspace);
         assert_eq!(doc.deps[2].kind, Dev);
         assert!(check(&g).is_empty());
+    }
+
+    /// A UI toolkit reached by another name is still a UI toolkit: the lower layers must not be
+    /// able to reach egui's backends, wgpu or the accessibility bridges under L6.
+    #[test]
+    fn the_whole_egui_and_wgpu_family_is_below_l6() {
+        for dep in ["egui_extras", "egui-wgpu", "egui-winit", "wgpu", "accesskit", "egui"] {
+            let v = check(&[c("deckcraft-render", &[(dep, Normal, false)])]);
+            assert!(matches!(v[..], [Violation::UiBelowL6 { .. }]), "{dep} must not be usable below L6: {v:?}");
+        }
     }
 }

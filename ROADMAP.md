@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-17 | The loopback control channel requires a token (`control.hello`) before it answers any method, so another process on the machine can no longer drive the app, quit it with unsaved work, or make it read and write files; `deckcraft-web` and `mcp` are in the wasm check; the slide show takes the prefetched frame without blocking; both painters disarm through commands |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
