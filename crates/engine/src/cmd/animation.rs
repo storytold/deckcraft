@@ -59,6 +59,7 @@ pub fn specs() -> Vec<CommandSpec> {
             painter_pick
         ),
         cmd!("animation.painterApply", "Apply Animation", [], Some("Alt+Shift+V"), "{ids?}", has_selection, painter_apply),
+        cmd!("animation.painterDisarm", "Stop Animation Painter", [], None, "{}", always, painter_disarm),
         cmd!(query "animation.list", "Animation Gallery", [], None, "{} → [{id, label, class, options}]", always, list),
         cmd!(query "animation.get", "Animations on Slide", [], None, "{slide?} → [animation]", has_slide, get),
     ]
@@ -372,6 +373,14 @@ fn painter_pick(s: &mut Session, p: &Value) -> Result<Value> {
     let count = anims.len();
     s.anim_painter = Some((anims, sticky));
     Ok(json!({"armed": true, "count": count}))
+}
+
+fn painter_disarm(s: &mut Session, _p: &Value) -> Result<Value> {
+    // As `format.painterDisarm`: the painter is engine state, so every front end clears it the
+    // same way instead of the UI reaching into the session.
+    let was_armed = s.anim_painter.is_some();
+    s.anim_painter = None;
+    Ok(json!({"armed": was_armed}))
 }
 
 fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {

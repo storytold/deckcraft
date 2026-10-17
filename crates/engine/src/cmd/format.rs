@@ -212,6 +212,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!(noundo "format.painter", "Format Painter", ["Home", "Clipboard"], Some("Cmd+Shift+C"), "{sticky?: bool}", has_text_or_shapes, painter_pick),
         cmd!("format.painterApply", "Paste Formatting", [], Some("Cmd+Shift+V"), "{ids?}", has_text_or_shapes, painter_apply),
+        cmd!("format.painterDisarm", "Stop Format Painter", [], None, "{}", always, painter_disarm),
         cmd!(query "format.state", "Formatting State", [], None, "{} → the effective formatting at the selection (font, size, bold, …)", has_doc, state),
     ]
 }
@@ -323,10 +324,7 @@ fn step(cur: f64, up: bool) -> f64 {
 
 fn grow_shrink(s: &mut Session, up: bool) -> Result<Value> {
     // Each run steps from its own size, like PowerPoint.
-    let st = s.doc()?;
-    let ctx_sizes = current_run(s).size.unwrap_or(18.0);
-    let _ = st;
-    let base = ctx_sizes;
+    let base = current_run(s).size.unwrap_or(18.0);
     format_run(s, &move |r| {
         let cur = r.size.unwrap_or(base);
         r.size = Some(step(cur, up));
@@ -1158,6 +1156,15 @@ pub(crate) fn apply_painted(sh: &mut Shape, p: &Painted) {
     if let (Some(r), Some(t)) = (&p.run, sh.text.as_mut()) {
         ed::format_all(t, &|rp| *rp = r.clone());
     }
+}
+
+fn painter_disarm(s: &mut Session, _p: &Value) -> Result<Value> {
+    // Disarming is a command so the CLI, the control channel and MCP can do it too: while only the
+    // UI cleared the painter, every other front end was left with an armed painter nobody could
+    // disarm but the mouse.
+    let was_armed = s.painter.is_some();
+    s.painter = None;
+    Ok(json!({"armed": was_armed}))
 }
 
 fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
