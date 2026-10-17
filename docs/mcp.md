@@ -5,6 +5,10 @@ headless engine (no window); with `--connect PORT` it drives a running DeckCraft
 `--control PORT`, so an agent and a person can work on the same deck. `--sample` opens the sample
 deck.
 
+A connected app requires its control token (see [control-protocol.md](control-protocol.md)). Without
+`--token`, this reads `DECKCRAFT_CONTROL_TOKEN` and then the file the app wrote for that port, which
+is what `deckcraft --control PORT` logs the path of.
+
 Connected mode accepts only newline-terminated replies of at most 16 MiB (including the newline),
 with the current request's numeric `id`, a boolean `ok`, and either `result` on success or a string
 `error` on failure. CRLF is accepted. Invalid replies close the connection and report that the

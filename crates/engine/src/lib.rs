@@ -10,6 +10,7 @@
 pub mod cmd;
 pub mod compare;
 pub mod connect;
+pub mod control_auth;
 pub mod drawtable;
 pub mod file_access;
 pub mod fonts;

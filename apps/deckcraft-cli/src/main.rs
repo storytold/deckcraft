@@ -555,12 +555,14 @@ fn remark(args: &str) -> &str {
 fn app(args: &[String]) -> Result<(), String> {
     use deckcraft_mcp::{Backend, Remote, control_addr};
     let mut port = deckcraft_mcp::DEFAULT_PORT.to_string();
+    let mut token: Option<String> = None;
     let mut method: Option<String> = None;
     let mut rest = vec![];
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--port" => port = it.next().cloned().ok_or("--port needs a value")?,
+            "--token" => token = Some(it.next().cloned().ok_or("--token needs a value")?),
             "--method" => method = Some(it.next().cloned().ok_or("--method needs a name")?),
             "--help" | "-h" => {
                 outln!("{}", help_page("app"));
@@ -569,8 +571,11 @@ fn app(args: &[String]) -> Result<(), String> {
             other => rest.push(other.to_string()),
         }
     }
-    let mut r = Remote::connect(&control_addr(&port))
-        .map_err(|e| format!("no DeckCraft app on port {port} ({e}); start it with `deckcraft --control {port}`"))?;
+    let addr = control_addr(&port);
+    // `--token` beats the environment variable, which beats the file the app wrote.
+    let token = token.map_or_else(|| Remote::token_for(&addr), Ok)?;
+    let mut r =
+        Remote::connect(&addr, &token).map_err(|e| format!("no DeckCraft app on port {port} ({e}); start it with `deckcraft --control {port}`"))?;
     let parse = |s: Option<&String>| -> Result<Value, String> {
         s.map(|j| serde_json::from_str(j).map_err(|e| format!("bad JSON: {e}"))).transpose().map(|v| v.unwrap_or(json!({})))
     };
@@ -589,6 +594,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
     use deckcraft_engine::file_access::{self, AutomationRoots};
     use deckcraft_mcp::{Backend, Headless, Remote, Server, control_addr};
     let mut connect: Option<String> = None;
+    let mut token: Option<String> = None;
     let mut sample = false;
     let mut roots_args = automation_args::AutomationArgs::new(None, None);
     let mut it = args.iter().cloned();
@@ -598,6 +604,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
         }
         match a.as_str() {
             "--connect" => connect = Some(it.next().ok_or("--connect needs a port or host:port")?),
+            "--token" => token = Some(it.next().ok_or("--token needs a value")?),
             "--sample" => sample = true,
             "--help" | "-h" => {
                 outln!("{}", help_page("mcp"));
@@ -613,7 +620,12 @@ so drop --connect (or use --connect without the roots)"
             .into());
     }
     let backend: Box<dyn Backend> = match connect {
-        Some(c) => Box::new(Remote::connect(&control_addr(&c)).map_err(|e| format!("can't reach the app at {c}: {e}"))?),
+        Some(c) => {
+            let addr = control_addr(&c);
+            // `--token` beats the environment variable, which beats the file the app wrote.
+            let token = token.map_or_else(|| Remote::token_for(&addr), Ok)?;
+            Box::new(Remote::connect(&addr, &token).map_err(|e| format!("can't reach the app at {c}: {e}"))?)
+        }
         None => {
             let mut h = Headless::new();
             // `--sample` is the operator's own choice, made before the roots come into force.

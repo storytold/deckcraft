@@ -4,8 +4,10 @@
 //! `deckcraft --help` prints the flags and exits. `deckcraft --version` prints the version and exits.
 //!
 //! `--control <port>` (or `DECKCRAFT_CONTROL_PORT`) starts a localhost JSON-lines control server:
-//! `{"id":1,"method":"ui.inspect","params":{}}` → `{"id":1,"ok":true,"result":…}`.
-//! See `deckcraft_ui_egui::control` for the methods.
+//! `{"id":1,"method":"ui.inspect","params":{}}` → `{"id":1,"ok":true,"result":…}`. The server
+//! requires the app's control token before it answers anything (`--control-token`,
+//! `DECKCRAFT_CONTROL_TOKEN`, or the file the app writes); see `deckcraft_engine::control_auth` and
+//! `docs/control-protocol.md`. For the methods, see `deckcraft_ui_egui::control`.
 //!
 //! `log` records go to standard error and `<settings dir>/logs/deckcraft.log` (`RUST_LOG` sets the
 //! levels); see [`logging`].
@@ -55,16 +57,9 @@ impl eframe::App for App {
 
 /// The per-user settings directory: `ui.json`, `prefs.json` and `logs/` live here.
 fn config_dir() -> Option<std::path::PathBuf> {
-    if cfg!(target_os = "macos") {
-        std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join("Library/Application Support/DeckCraft"))
-    } else if cfg!(windows) {
-        std::env::var_os("APPDATA").map(|a| std::path::PathBuf::from(a).join("DeckCraft"))
-    } else {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".config")))
-            .map(|c| c.join("deckcraft"))
-    }
+    // The engine owns this path so the control token, its log file and its preferences cannot end
+    // up in different directories; see `deckcraft_engine::control_auth`.
+    deckcraft_engine::control_auth::settings_dir()
 }
 
 fn load_prefs(app: &mut SlideApp) {
@@ -127,23 +122,26 @@ fn services() -> Services {
 const APP_ID: &str = "ai.storyteller.deckcraft";
 
 const USAGE: &str = "\
-Usage: deckcraft [--control PORT] [--sample] [--show] [FILE...]
+Usage: deckcraft [--control PORT [--control-token TOKEN]] [--sample] [--show] [FILE...]
 
-  --control PORT  JSON control server on 127.0.0.1:PORT
-  --sample        open the sample presentation
-  --show          start the slide show
-  --help, -h      print this help and exit
-  --version, -V   print the version and exit
+  --control PORT       JSON control server on 127.0.0.1:PORT
+  --control-token TOK  the token that server requires; without it one is
+                       generated and written to <settings dir>/control-PORT.token
+  --sample             open the sample presentation
+  --show               start the slide show
+  --help, -h           print this help and exit
+  --version, -V        print the version and exit
 ";
 
 enum Startup {
     Help,
     Version,
-    Run { control_port: Option<u16>, files: Vec<String>, sample: bool, show: bool },
+    Run { control_port: Option<u16>, control_token: Option<String>, files: Vec<String>, sample: bool, show: bool },
 }
 
 /// `--help` and `--version` leave before the window and the log file.
 fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>) -> Startup {
+    let mut control_token = None;
     let mut files = Vec::new();
     let mut sample = false;
     let mut show = false;
@@ -151,6 +149,7 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
     while let Some(a) = args.next() {
         match a.as_str() {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
+            "--control-token" => control_token = args.next(),
             "--sample" => sample = true,
             "--show" => show = true,
             "--version" | "-V" => return Startup::Version,
@@ -158,7 +157,33 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
             _ => files.push(a),
         }
     }
-    Startup::Run { control_port, files, sample, show }
+    Startup::Run { control_port, control_token, files, sample, show }
+}
+
+/// The token the control server requires: `--control-token`, else `DECKCRAFT_CONTROL_TOKEN`, else a
+/// fresh one written where a client on this account can find it. Returns `None` only when a token
+/// was handed in and a new one had to be generated but no settings directory was available to put
+/// it in — the caller then refuses to start the server rather than serve an unknown token.
+fn resolve_control_token(port: u16, given: Option<String>) -> Option<String> {
+    use deckcraft_engine::control_auth;
+    if let Some(token) = given.or_else(|| std::env::var(control_auth::ENV).ok()).map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        return Some(token);
+    }
+    let token = control_auth::generate();
+    match control_auth::store(port, &token) {
+        Ok(Some(path)) => {
+            log::info!("control token written to {}", path.display());
+            Some(token)
+        }
+        Ok(None) => {
+            log::error!("control server needs a token but there is no settings directory; pass --control-token");
+            None
+        }
+        Err(e) => {
+            log::error!("control server could not write its token ({e}); pass --control-token");
+            None
+        }
+    }
 }
 
 fn app_icon() -> Option<egui::IconData> {
@@ -170,7 +195,7 @@ fn main() -> eframe::Result {
     // First, so every start-up record (and the engine's panic hook, installed with the first
     // Session) is captured; see `logging`.
     let logger = logging::install();
-    let (control_port, files, sample, show) =
+    let (control_port, control_token, files, sample, show) =
         match startup(std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()), std::env::args().skip(1)) {
             Startup::Help => {
                 print!("{USAGE}");
@@ -180,7 +205,7 @@ fn main() -> eframe::Result {
                 println!("deckcraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
-            Startup::Run { control_port, files, sample, show } => (control_port, files, sample, show),
+            Startup::Run { control_port, control_token, files, sample, show } => (control_port, control_token, files, sample, show),
         };
     log::info!("DeckCraft {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
     // The log file lives under the settings directory; opened after the arguments, so `--help` and
@@ -248,8 +273,13 @@ fn main() -> eframe::Result {
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
             if let Some(port) = control_port {
-                let rx = control_server::start(port, cc.egui_ctx.clone());
-                app = app.with_control(rx);
+                match resolve_control_token(port, control_token) {
+                    Some(token) => {
+                        let rx = control_server::start(port, &token, cc.egui_ctx.clone());
+                        app = app.with_control(rx);
+                    }
+                    None => log::error!("no control token: the control server on port {port} was not started"),
+                }
             }
             if sample && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                 log::error!("sample: {e}");
@@ -300,13 +330,32 @@ mod tests {
         assert!(matches!(startup(None, ["-h".to_string()]), Startup::Help));
         assert!(matches!(startup(None, ["talk.pptx".to_string(), "--help".to_string()]), Startup::Help));
         assert!(matches!(startup(None, ["--version".to_string()]), Startup::Version));
-        let launch = startup(Some(9), ["--sample".to_string(), "--control".to_string(), "4242".to_string(), "talk.pptx".to_string()]);
+        let launch = startup(
+            Some(9),
+            [
+                "--sample".to_string(),
+                "--control".to_string(),
+                "4242".to_string(),
+                "--control-token".to_string(),
+                "tok".to_string(),
+                "talk.pptx".to_string(),
+            ],
+        );
         assert!(matches!(launch, Startup::Run { .. }));
-        if let Startup::Run { control_port, files, sample, show } = launch {
+        if let Startup::Run { control_port, control_token, files, sample, show } = launch {
             assert_eq!(control_port, Some(4242));
+            assert_eq!(control_token.as_deref(), Some("tok"));
             assert_eq!(files, ["talk.pptx".to_string()]);
             assert!(sample);
             assert!(!show);
         }
+    }
+
+    /// A token the operator supplied wins, trimmed: it is what the client has to present, so a
+    /// generated one would lock the client out. (The generated branch is left untested here
+    /// because it writes the token file.)
+    #[test]
+    fn a_given_control_token_is_used_as_is() {
+        assert_eq!(resolve_control_token(1234, Some("  tok  ".to_string())).as_deref(), Some("tok"));
     }
 }

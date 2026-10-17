@@ -3,6 +3,36 @@
 Start the app with `--control <port>`. The server listens on `127.0.0.1` only and speaks JSON
 lines: one request object per line, one reply per line.
 
+## The token comes first
+
+`127.0.0.1` keeps the channel off the network, but every process on the machine can reach it, and
+a method can quit the app or read and write files at a path of the caller's choosing. So a
+connection must present the app's control token before anything else:
+
+```json
+{"id": 0, "method": "control.hello", "params": {"token": "…"}}
+{"id": 0, "ok": true, "result": "control.hello"}
+```
+
+Anything else sent first is refused with `unauthorized`, and a wrong token is refused too — in both
+cases the server closes the connection. The handshake is answered by the transport itself, so an
+unauthenticated peer cannot run a method or fill the request queue either. `deckcraft-cli` does this
+for you on every (re)connection.
+
+Where the token comes from, in order:
+
+| Source | Who uses it |
+|---|---|
+| `--control-token TOKEN` (`deckcraft --control`) | the operator, when they know it |
+| `DECKCRAFT_CONTROL_TOKEN` | the app and any client, in their environment |
+| `<settings dir>/control-<port>.token` | written by the app when neither of the above is set; readable only by its owner where the platform says so |
+
+The app logs the path it wrote. `deckcraft-cli app --token …` and `deckcraft-cli mcp --connect …
+--token …` override the rest; without `--token` they fall back to the environment variable and then
+to the file.
+
+## Framing
+
 The connected MCP client requires the reply's numeric `id` to match its request, `ok` to be a
 boolean, and exactly one of `result` (success) or a string `error` (failure). It caps each reply at
 16 MiB including its terminating newline, accepts CRLF, and rejects EOF inside a frame. Invalid
@@ -10,11 +40,13 @@ replies invalidate the connection and leave the command's outcome unknown; the c
 replay it. Unsolicited bytes already buffered between calls force a reconnect before sending.
 
 The server bounds what a client can hold: 16 connections at once (more get `{"ok":false,"error":"busy: …"}`
-and are closed), 16 MiB per request line (longer closes the connection), 64 queued requests (more are
-answered `busy`), 10 minutes idle and 30 seconds per blocked reply write before the socket is closed, and
-60 seconds waiting for the UI (`"error":"timeout"`). A request still queued when that wait expires is
-abandoned: the UI skips it, so a retry cannot run it twice. If the UI had already started it, the reply
-says the outcome is unknown instead of `timeout`.
+and are closed), 256 MiB per request line (longer closes the connection — picture and media inserts
+carry base64 payloads, room for files of about 190 MB; only a client that has already presented the
+token gets this far), 64 queued requests (more are answered `busy`), 10 minutes idle and 30 seconds
+per blocked reply write before the socket is closed, and 60 seconds waiting for the UI
+(`"error":"timeout"`). A request still queued when that wait expires is abandoned: the UI skips it,
+so a retry cannot run it twice. If the UI had already started it, the reply says the outcome is
+unknown instead of `timeout`.
 
 ```json
 {"id": 1, "method": "engine.execute", "params": {"command": "shape.insert", "params": {"preset": "roundRect", "rect": [100, 100, 240, 120], "text": "Hello"}}}
@@ -28,15 +60,10 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 | `engine.execute` / `ui.menu.invoke` / `command` | `{command, params}` | Run any command (see `engine.commands`; `deckcraft-cli describe COMMAND` documents one) |
 | `engine.commands` | — | Every command: id, label, menu path, shortcut, params doc, enabled / disabled reason |
 | `document.inspect` | — | Slides, sections, layouts, shapes, selection |
-| `ui.inspect` | — | UI state, active tool, window/canvas/slide rects, dialog, `home` (the File tab open over a presentation), `backstage` (its page, also the start screen), slide show state (`grid`, `zoomArm`, `zoom`, `blank`, `presenterPaused`, `presenterSecs`, `notesPx`, `custom`, `goto`; `cells` while See All Slides is open), documents, perf (fps, render ms) |
-| `ui.inspect` | — | UI state, active tool, window/canvas/slide rects, dialog, `home` (the File tab open over a presentation), `backstage` (its page, also the start screen), slide show state, `animPreview` (canvas playback: slide, time, duration), documents, perf (fps, render ms) |
+| `ui.inspect` | — | UI state, active tool, window/canvas/slide rects, dialog, `home` (the File tab open over a presentation), `backstage` (its page, also the start screen), slide show state (`grid`, `zoomArm`, `zoom`, `blank`, `presenterPaused`, `presenterSecs`, `notesPx`, `custom`, `goto`; `cells` while See All Slides is open) and `animPreview` (canvas playback: slide, time, duration), documents, perf (fps, render ms) |
 | `ui.tool.select` | `{tool, preset?}` | `select`, `text`, `shape` + preset, any preset name, `curve`, `freeform`, `scribble`, `pen`, `highlighter`, `eraser` |
-| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick\|contextclick, x, y, mods?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse (`contextclick`: the right-button press that selects before the context menu) |
-| `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show: digits then Enter go to that slide, G is See All Slides, Z arms zoom, T pauses the presenter timer, R resets it, `[` and `]` change notes size, Esc clears a slide number, the grid and zoom before it leaves the show) |
-| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick, x, y, mods?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse |
-| `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show; Escape stops the canvas animation preview) |
-| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick, x, y, mods?, pressure?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse. `pressure` is `0..=1` for a pen; omit it for a mouse |
-| `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show) |
+| `ui.pointer` | `{events: [{kind: down\|drag\|up\|move\|doubleclick\|tripleclick\|contextclick, x, y, mods?, pressure?}], mods?}` | Drive the active tool in slide points through the same code path as the mouse (`contextclick`: the right-button press that selects before the context menu). `pressure` is `0..=1` for a pen; omit it for a mouse |
+| `ui.key` / `ui.text` | `{key, shift?, alt?, cmd?}` / `{text}` | Keyboard input (also drives a running slide show: digits then Enter go to that slide, G is See All Slides, Z arms zoom, T pauses the presenter timer, R resets it, `[` and `]` change notes size, Esc clears a slide number, the grid and zoom before it leaves the show; Escape stops the canvas animation preview) |
 | `ui.ime` | `{preedit, active?: [start, end]}` / `{commit}` | An input method's composition through egui, as a real one arrives: shown in place on the slide or in a focused field; `{"preedit": ""}` cancels |
 | `ui.move` / `ui.click` / `ui.drag` | screen points | Real egui pointer input — reaches every widget, menu and pane |
 | `ui.set` | `{tab?, view?, pane?, notes?, zoom?, brightness?, ruler?, gridlines?, guides?, …}` | UI state (returns the full state) |
@@ -48,4 +75,5 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 | `app.open` / `app.save` / `app.export` / `app.quit` | `{path, …}` | Files (export takes the `file.export` params, e.g. `{"path": "deck.pdf", "layout": "handouts", "perPage": 3}` or `{"path": "deck.gif", "width": "large", "secondsPerSlide": 3, "loop": false}`) |
 
 The MCP server (`deckcraft-cli mcp`, see [mcp.md](mcp.md)) wraps the same methods for Claude
-and other agents; `deckcraft-cli app --method METHOD [PARAMS]` sends one request from a shell.
+and other agents; `deckcraft-cli app --method METHOD [PARAMS]` sends one request from a shell. Both
+present the control token on every connection.

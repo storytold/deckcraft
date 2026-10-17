@@ -156,6 +156,10 @@ deckcraft-cli mcp --connect 7990        # drive the running app (deckcraft --con
 deckcraft-cli mcp --automation-read-root DIR --automation-write-root DIR   # confine the headless agent to folders
 ```
 
+A running app's control channel requires its control token, so only a client that has it can drive
+the window. `--connect` reads `DECKCRAFT_CONTROL_TOKEN`, or the file the app wrote for that port
+and logged; `--token` passes the token directly.
+
 ## Roadmap
 
 DeckCraft is in **alpha**. It covers **84% of PowerPoint's features by breadth** (92% of the core
