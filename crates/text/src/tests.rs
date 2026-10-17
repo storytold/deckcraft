@@ -830,8 +830,9 @@ fn one_line(text: &str) -> f64 {
 #[test]
 fn a_word_does_not_break_after_a_slash_or_backslash() {
     // PowerPoint (latinLnBrk off, its default) keeps "alpha/beta/gamma" whole and only breaks it
-    // where it no longer fits; Unicode line breaking would allow a break after each slash.
-    for sep in ["/", "\\"] {
+    // where it no longer fits; Unicode line breaking would allow a break after each slash. The
+    // same holds after ?, !, } and + (a URL's query, measured in PowerPoint 2016 for Windows).
+    for sep in ["/", "\\", "?", "!", "}", "+"] {
         let text = ["alpha", "beta", "gamma", "delta", "epsilon"].join(sep);
         let w = one_line(&text) * 0.6;
         let lines = wrapped(&text, w, |_| {});
