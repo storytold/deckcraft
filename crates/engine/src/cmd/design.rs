@@ -821,6 +821,14 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = str_param(p, "dateText") {
             hf.date_text = v.into();
         }
+        if let Some(v) = str_param(p, "dateFormat") {
+            // Refused rather than ignored: a format that renders nothing would leave the
+            // placeholder showing its saved text for ever.
+            if !deckcraft_text::datetime::DATE_KINDS.contains(&v) {
+                return Err(bad("design.headerFooter", "dateFormat: one of datetime1…datetime13"));
+            }
+            hf.date_format = v.into();
+        }
         if let Some(v) = bool_param(p, "slideNumber") {
             hf.slide_number = v;
         }
@@ -836,6 +844,7 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let hf = hf.clone();
         let date_given = str_param(p, "dateText").is_some();
+        let format_given = str_param(p, "dateFormat").is_some();
         let all = bool_or(p, "all", true);
         let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![sel.slide] };
         for i in list {
@@ -880,7 +889,11 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
                             },
                             PhType::Date if hf.date_text.is_empty() => TextBody {
                                 paragraphs: vec![deckcraft_model::Paragraph {
-                                    runs: vec![Run { text: today(), props: Default::default(), kind: RunKind::Field { field: "datetime1".into() } }],
+                                    runs: vec![Run {
+                                        text: date_now(&hf.date_format),
+                                        props: Default::default(),
+                                        kind: RunKind::Field { field: date_kind(&hf.date_format).into() },
+                                    }],
                                     ..Default::default()
                                 }],
                                 ..Default::default()
@@ -901,9 +914,9 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
                             sh.text = Some(TextBody::from_text(&hf.footer_text));
                         }
                     }
-                    (Some(pos), true) if k == PhType::Date && date_given => {
+                    (Some(pos), true) if k == PhType::Date && (date_given || format_given) => {
                         if let Some(sh) = sl.shapes.get_mut(pos) {
-                            set_date(sh, &hf.date_text);
+                            set_date(sh, &hf.date_text, &hf.date_format);
                         }
                     }
                     _ => {}
@@ -917,13 +930,31 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Point a slide's date placeholder at a fixed date (its own plain text) or, for an empty
 /// `fixed`, at an automatic date field (one it already has keeps its format).
-fn set_date(sh: &mut Shape, fixed: &str) {
+/// The date field type `format` names, `datetime1` when it is empty or unknown.
+fn date_kind(format: &str) -> &str {
+    if deckcraft_text::datetime::DATE_KINDS.contains(&format) { format } else { "datetime1" }
+}
+
+/// The saved text of a date field of `format`, as it shows now.
+fn date_now(format: &str) -> String {
+    let kind = date_kind(format);
+    deckcraft_text::datetime::DateTime::now_local().and_then(|now| deckcraft_text::datetime::field_text(kind, None, now)).unwrap_or_else(today)
+}
+
+fn set_date(sh: &mut Shape, fixed: &str, format: &str) {
     let runs = || sh.text.iter().flat_map(|t| &t.paragraphs).flat_map(|p| &p.runs);
-    let has_field = runs().any(|r| matches!(&r.kind, RunKind::Field { field } if deckcraft_text::datetime::is_date_field(field)));
+    let field_now = runs().find_map(|r| match &r.kind {
+        RunKind::Field { field } if deckcraft_text::datetime::is_date_field(field) => Some(field.clone()),
+        _ => None,
+    });
+    let has_field = field_now.is_some();
     let props = runs().next().map(|r| r.props.clone()).unwrap_or_default();
+    let want = date_kind(format);
     let (text, kind) = match fixed {
-        "" if has_field => return,
-        "" => (today(), RunKind::Field { field: "datetime1".into() }),
+        // Automatic: keep the field, but follow a format that has changed.
+        "" if field_now.as_deref() == Some(want) => return,
+        "" if has_field && format.is_empty() => return,
+        "" => (date_now(format), RunKind::Field { field: want.into() }),
         _ if !has_field && sh.text.as_ref().is_some_and(|t| t.text() == fixed) => return,
         _ => (fixed.to_string(), RunKind::Text),
     };
@@ -1906,5 +1937,80 @@ mod browse_theme_tests {
         let box_ = title.xfrm.unwrap();
         assert!((box_.x - 60.0).abs() < 0.01 && (box_.y - 29.0).abs() < 0.01);
         assert!((box_.w - 840.0).abs() < 0.01 && (box_.h - 104.0).abs() < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod header_footer_date_tests {
+    use deckcraft_model::PhType;
+    use deckcraft_model::text::RunKind;
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// The date field of the Date placeholders of every slide: (saved text, field type).
+    fn dates(s: &Session) -> Vec<(String, Option<String>)> {
+        let d = &s.doc().unwrap().doc;
+        d.slides
+            .iter()
+            .flat_map(|sl| sl.shapes.iter())
+            .filter(|sh| sh.ph_type() == Some(PhType::Date))
+            .flat_map(|sh| sh.text.iter())
+            .flat_map(|t| t.paragraphs.iter())
+            .flat_map(|p| p.runs.iter())
+            .map(|r| {
+                let kind = match &r.kind {
+                    RunKind::Field { field } => Some(field.clone()),
+                    _ => None,
+                };
+                (r.text.clone(), kind)
+            })
+            .collect()
+    }
+
+    fn sample(kind: &str) -> String {
+        let now = deckcraft_text::datetime::DateTime::now_local().expect("a local date");
+        deckcraft_text::datetime::field_text(kind, None, now).expect("a sample")
+    }
+
+    /// Header & Footer's automatic date takes the format it is given. `HeaderFooter::date_format`
+    /// existed for this and was never read: the placeholder was always `datetime1`, and a
+    /// `dateFormat` parameter was accepted and silently dropped.
+    #[test]
+    fn the_automatic_date_takes_the_format_it_is_given() {
+        let mut s = Session::with_new();
+
+        // Default: the short date, as before.
+        s.execute("design.headerFooter", &json!({"date": true, "dateText": "", "all": true})).unwrap();
+        assert_eq!(dates(&s), vec![(sample("datetime1"), Some("datetime1".into()))]);
+
+        // A format: the field type changes and the saved text is that format's.
+        s.execute("design.headerFooter", &json!({"date": true, "dateFormat": "datetime5", "all": true})).unwrap();
+        assert_eq!(dates(&s), vec![(sample("datetime5"), Some("datetime5".into()))]);
+        assert_eq!(s.doc().unwrap().doc.header_footer.date_format, "datetime5");
+
+        // A time format works the same way, and these two differ, so the format is really read.
+        s.execute("design.headerFooter", &json!({"date": true, "dateFormat": "datetime11", "all": true})).unwrap();
+        assert_eq!(dates(&s), vec![(sample("datetime11"), Some("datetime11".into()))]);
+        assert_ne!(sample("datetime11"), sample("datetime5"));
+
+        // Asking again changes nothing (and does not rewrite the run).
+        s.execute("design.headerFooter", &json!({"date": true, "dateFormat": "datetime11", "all": true})).unwrap();
+        assert_eq!(dates(&s), vec![(sample("datetime11"), Some("datetime11".into()))]);
+
+        // A fixed date still wins: plain text, no field.
+        s.execute("design.headerFooter", &json!({"date": true, "dateText": "4 July 1776", "all": true})).unwrap();
+        assert_eq!(dates(&s), vec![("4 July 1776".to_string(), None)]);
+
+        // Back to automatic: the remembered format comes back, not datetime1.
+        s.execute("design.headerFooter", &json!({"date": true, "dateText": "", "dateFormat": "datetime11", "all": true})).unwrap();
+        assert_eq!(dates(&s), vec![(sample("datetime11"), Some("datetime11".into()))]);
+
+        // An unknown format is refused rather than ignored, and changes nothing.
+        for bad in ["datetime0", "datetime14", "nonsense", ""] {
+            assert!(s.execute("design.headerFooter", &json!({"date": true, "dateFormat": bad})).is_err(), "{bad}");
+        }
+        assert_eq!(s.doc().unwrap().doc.header_footer.date_format, "datetime11");
+        assert_eq!(dates(&s), vec![(sample("datetime11"), Some("datetime11".into()))]);
     }
 }
