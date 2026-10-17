@@ -722,7 +722,14 @@ pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Wor
                 if p.runs.get(c.1).is_some_and(|r| r.props.no_proof == Some(true)) {
                     // Marked "do not check spelling".
                 } else {
-                    out.push(Word { start: k, end: k + n, text: part.to_string(), lang: lang_of(c.1), repeated: None });
+                    // Hangul is Korean whatever the run says: typed text often carries the
+                    // presentation's default (English) language, and an English dictionary would
+                    // flag every Korean word.
+                    let mut lang = lang_of(c.1);
+                    if part.chars().any(deckcraft_model::words::is_hangul) && !lang.to_ascii_lowercase().starts_with("ko") {
+                        lang = "ko-KR".into();
+                    }
+                    out.push(Word { start: k, end: k + n, text: part.to_string(), lang, repeated: None });
                 }
             }
             k += n + 1;
@@ -868,6 +875,22 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
                 ("l'été", "de-DE", 34)
             ]
         );
+    }
+
+    /// Korean typed into an English run is checked as Korean (and so skipped when no Korean
+    /// dictionary is installed), not flagged word by word by the English one.
+    #[test]
+    fn hangul_words_are_korean() {
+        use deckcraft_model::{Paragraph, Run, RunProps};
+        let p = Paragraph {
+            runs: vec![Run::with("Hello 안녕하세요 world", RunProps { lang: Some("xx-HG".into()), ..Default::default() })],
+            ..Default::default()
+        };
+        let got: Vec<(String, String)> = paragraph_words(&p, "en-US").into_iter().map(|w| (w.text, w.lang)).collect();
+        assert_eq!(got, vec![("Hello".into(), "xx-HG".into()), ("안녕하세요".into(), "ko-KR".into()), ("world".into(), "xx-HG".into())]);
+        install("xx-HG", d());
+        let flagged: Vec<String> = misspelt(&p, "en-US", &[]).into_iter().map(|w| w.text).collect();
+        assert!(!flagged.iter().any(|w| w == "안녕하세요"), "{flagged:?}");
     }
 
     #[test]

@@ -101,6 +101,39 @@ fn japanese_conversion_shows_the_active_part() {
     assert_eq!(undo_len(h.state()), undo0 + 1);
 }
 
+/// A click or a command settles a composition the input method is still composing (하). The app
+/// tells the input method to stop, so the next key starts a new syllable instead of growing the
+/// settled one (하 + ㄴ → 한), and the input method's late commit of 하 isn't typed a second time
+/// (Windows' Korean IME sends it with the next key: "안녕" became "안녕녕나").
+#[test]
+fn a_settled_composition_interrupts_the_input_method_and_is_not_typed_twice() {
+    let mut h = harness(Session::with_new());
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+    h.state_mut().run("text.edit", json!({"id": title})).unwrap();
+    h.event(preedit("ㅎ"));
+    h.event(preedit("하"));
+    h.run_steps(2);
+    assert!(!h.output().platform_output.ime.unwrap().should_interrupt_composition);
+    h.state_mut().run("format.bold", json!({})).unwrap();
+    h.run_steps(1);
+    assert!(h.output().platform_output.ime.unwrap().should_interrupt_composition, "the input method is told to stop composing");
+    assert_eq!(title_text(h.state()), "하", "the syllable stays");
+    h.run_steps(1);
+    assert!(!h.output().platform_output.ime.unwrap().should_interrupt_composition, "once");
+    // What the input method sends with the next key, ㄴ.
+    for e in [preedit(""), Event::Ime(ImeEvent::Commit("하".into())), preedit("ㄴ"), Event::Ime(ImeEvent::Commit("ㄴ".into()))] {
+        h.event(e);
+        h.run_steps(1);
+    }
+    assert_eq!(title_text(h.state()), "하ㄴ");
+    // A later word that happens to be the same syllable is typed as usual.
+    for e in [preedit("ㅎ"), preedit("하"), Event::Ime(ImeEvent::Commit("하".into()))] {
+        h.event(e);
+        h.run_steps(1);
+    }
+    assert_eq!(title_text(h.state()), "하ㄴ하");
+}
+
 /// Typing on a selected (not edited) shape with an input method replaces its text, as typing does;
 /// the input method is on for it.
 #[test]
