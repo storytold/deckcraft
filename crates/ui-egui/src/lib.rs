@@ -1012,7 +1012,7 @@ impl SlideApp {
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
-            "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
+            "app.saveAsDialog" => self.save_as_dialog("pptx"),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
             "app.browseThemeDialog" => {
@@ -1256,7 +1256,7 @@ impl SlideApp {
 
     pub fn save_as_dialog(&mut self, format: &str) {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
-        let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
+        let ext = if format == "deckcraft" { "deckcraft" } else { "pptx" };
         let suggested = format!("{name}.{ext}");
         if let Some(pick) = self.services.pick_save.as_mut() {
             if let Some(path) = pick(&suggested) {
@@ -1300,7 +1300,7 @@ impl SlideApp {
                 Err(e) => self.set_status(e.to_string()),
             }
         } else {
-            self.save_as_dialog("deckcraft");
+            self.save_as_dialog("pptx");
         }
     }
 
@@ -1318,7 +1318,7 @@ impl SlideApp {
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
+                        self.save_as_dialog("pptx");
                     }
                 }
                 UiRequest::Media { action, shape, ms } => {

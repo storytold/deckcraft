@@ -337,9 +337,28 @@ fn save_and_reopen_native() {
     sample::open_sample(&mut s).unwrap();
     let bytes = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
     let n = s.doc().unwrap().doc.slides.len();
-    s.execute("file.openBytes", &json!({"name": "x.deckcraft", "data": bytes})).unwrap();
+    s.execute("file.openBytes", &json!({"name": "x.pptx", "data": bytes})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), n);
     assert_eq!(s.documents().len(), 2);
+
+    // Explicit deckcraft format still works as native format:
+    let dc_bytes = s.execute("file.saveBytes", &json!({"format": "deckcraft"})).unwrap()["data"].as_str().unwrap().to_string();
+    s.execute("file.openBytes", &json!({"name": "y.deckcraft", "data": dc_bytes})).unwrap();
+    assert_eq!(s.documents().len(), 3);
+}
+
+#[test]
+fn default_save_format_is_pptx() {
+    let mut s = Session::new();
+    sample::open_sample(&mut s).unwrap();
+    let res = s.execute("file.saveBytes", &json!({})).unwrap();
+    let b64 = res["data"].as_str().unwrap();
+    let bytes = crate::cmd::base64_decode(b64).unwrap();
+    assert!(deckcraft_pptx::sniff(&bytes), "default format is pptx");
+    assert_eq!(crate::cmd::file::format_for_path("presentation"), "pptx");
+    assert_eq!(crate::cmd::file::format_for_path("presentation.pptx"), "pptx");
+    assert_eq!(crate::cmd::file::format_for_path("test.xyz"), "pptx");
+    assert_eq!(crate::cmd::file::format_for_path("custom.deckcraft"), "deckcraft");
 }
 
 #[test]

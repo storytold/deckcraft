@@ -103,9 +103,9 @@ fn services() -> Services {
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
                 _ => d
-                    .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
-                    .add_filter("DeckCraft", &["deckcraft"])
+                    .add_filter("Presentations", &["pptx", "deckcraft", "potx", "ppsx"])
                     .add_filter("PowerPoint", &["pptx", "potx", "ppsx"])
+                    .add_filter("DeckCraft", &["deckcraft"])
                     .add_filter("Outline", &["txt", "md"]),
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())

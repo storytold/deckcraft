@@ -4,7 +4,7 @@ use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
 
-const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
+const PRESENTATION_EXTS: &[&str] = &["pptx", "deckcraft", "potx", "ppsx", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
@@ -152,7 +152,7 @@ fn push_inbox(inbox: &Inbox, event: InboxEvent) {
 /// Trigger a browser download of `bytes` named after the last component of `path`.
 fn download(path: &str, bytes: &[u8]) -> Result<(), String> {
     let js = |e: wasm_bindgen::JsValue| format!("{e:?}");
-    let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "deckcraft".into());
+    let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "presentation.pptx".into());
     let window = web_sys::window().ok_or("no window")?;
     let document = window.document().ok_or("no document")?;
     let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));

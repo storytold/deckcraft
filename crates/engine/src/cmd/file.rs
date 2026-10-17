@@ -29,10 +29,10 @@ pub fn specs() -> Vec<CommandSpec> {
             adopt
         ),
         cmd!(noundo "file.openBytes", "Open Data", [], None, "{name, data: base64}", always, open_bytes),
-        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: deckcraft|pptx}", has_doc, save),
+        cmd!(noundo "file.save", "Save", ["File"], Some("Cmd+S"), "{path?, format?: pptx|deckcraft}", has_doc, save),
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
-        cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
+        cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: pptx|deckcraft} → {data: base64}", has_doc, save_bytes_cmd),
         cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
@@ -257,14 +257,15 @@ fn report_damage(s: &mut Session, damaged: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
+/// Encode the presentation in `format` (`pptx`, `deckcraft`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
+        "deckcraft" => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
         f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),
-        _ => deckcraft_format::save(doc).map_err(|e| EngineError::Other(e.to_string())),
+        _ => deckcraft_pptx::export(doc).map_err(|e| EngineError::Other(e.to_string())),
     }
 }
 
@@ -354,7 +355,9 @@ pub fn gif_bytes(doc: &Presentation, p: &Value) -> Result<Vec<u8>> {
 
 pub fn format_for_path(path: &str) -> &'static str {
     let l = path.to_ascii_lowercase();
-    if l.ends_with(".pptx") {
+    if l.ends_with(".deckcraft") {
+        "deckcraft"
+    } else if l.ends_with(".pptx") {
         "pptx"
     } else if l.ends_with(".potx") {
         "potx"
@@ -371,7 +374,7 @@ pub fn format_for_path(path: &str) -> &'static str {
     } else if l.ends_with(".txt") || l.ends_with(".md") {
         "outline"
     } else {
-        "deckcraft"
+        "pptx"
     }
 }
 
@@ -415,7 +418,7 @@ fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn save_bytes_cmd(s: &mut Session, p: &Value) -> Result<Value> {
-    let format = str_param(p, "format").unwrap_or("deckcraft");
+    let format = str_param(p, "format").unwrap_or("pptx");
     let bytes = save_bytes(&s.doc()?.doc, format)?;
     Ok(json!({"data": base64_encode(&bytes), "bytes": bytes.len()}))
 }
