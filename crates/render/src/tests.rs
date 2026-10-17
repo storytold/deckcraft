@@ -873,10 +873,15 @@ fn hyperlinks_draw_in_the_hyperlink_colour_underlined() {
     // Exactly the theme's hyperlink colour, single underline.
     let styled = px(&run_deck(RunProps { fill: hlink, underline: Some("sng".into()), ..Default::default() }));
     assert_eq!(diff(&linked, &styled), 0);
-    // A colour on the run itself wins; u="none" drops the underline.
-    let own = px(&run_deck(RunProps { link: link.clone(), fill: red.clone(), underline: Some("none".into()), ..Default::default() }));
+    // A colour on the run doesn't change it (measured in PowerPoint 2016 and 365 for Windows)…
+    let own = px(&run_deck(RunProps { link: link.clone(), fill: red.clone(), ..Default::default() }));
+    assert_eq!(diff(&own, &styled), 0);
+    // …unless the link keeps the text's colour (`ahyp:hlinkClr val="tx"`); u="none" drops the underline.
+    let keeps =
+        |underline: Option<String>| RunProps { link: link.clone(), link_keeps_color: Some(true), fill: red.clone(), underline, ..Default::default() };
+    let own = px(&run_deck(keeps(Some("none".into()))));
     assert_eq!(diff(&own, &px(&run_deck(RunProps { fill: red.clone(), ..Default::default() }))), 0);
-    let own = px(&run_deck(RunProps { link, fill: red.clone(), ..Default::default() }));
+    let own = px(&run_deck(keeps(None)));
     assert_eq!(diff(&own, &px(&run_deck(RunProps { fill: red, underline: Some("sng".into()), ..Default::default() }))), 0);
 }
 

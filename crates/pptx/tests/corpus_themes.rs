@@ -246,3 +246,38 @@ fn themes_masters_and_layouts_survive_a_round_trip() {
     let twice = deckcraft_pptx::export(&deckcraft_pptx::import(&once).expect("import")).expect("export");
     assert_eq!(names(&once), names(&twice));
 }
+
+#[test]
+fn a_link_that_keeps_its_text_colour_survives_a_round_trip() {
+    // PowerPoint 2019 and later mark a link given its own colour with `ahyp:hlinkClr val="tx"`;
+    // without it the link is drawn in the theme's hyperlink colour whatever the run's colour.
+    let mut p = defaults::new_presentation(None);
+    let layout = defaults::layout_of_kind(&p, LayoutType::Blank).unwrap_or_default();
+    let s = defaults::new_slide(&mut p, layout).expect("slide");
+    p.slides.push(Arc::new(s));
+    p.slides.truncate(1);
+    let base = deckcraft_pptx::export(&p).expect("export");
+    let rels = part(&base, "ppt/slides/_rels/slide1.xml.rels").replace(
+        "</Relationships>",
+        r#"<Relationship Id="rId90" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="https://example.com/" TargetMode="External"/></Relationships>"#,
+    );
+    let red = r#"<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>"#;
+    let ext = r#"<a:extLst><a:ext uri="{A12FA001-AC4F-418D-AE19-62706E023703}"><ahyp:hlinkClr xmlns:ahyp="http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor" val="tx"/></a:ext></a:extLst>"#;
+    let body = format!(
+        r#"<a:p><a:r><a:rPr lang="en-US">{red}<a:hlinkClick r:id="rId90">{ext}</a:hlinkClick></a:rPr><a:t>Own</a:t></a:r><a:r><a:rPr lang="en-US">{red}<a:hlinkClick r:id="rId90"/></a:rPr><a:t>Theme</a:t></a:r></a:p>"#
+    );
+    let links = sp(10, "Links", "", 254000, "", &body);
+    let slide = format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><p:sld {NS}><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr><p:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/><a:chOff x="0" y="0"/><a:chExt cx="0" cy="0"/></a:xfrm></p:grpSpPr>{links}</p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:sld>"#
+    );
+    let bytes = repack(&base, &[("ppt/slides/slide1.xml", slide), ("ppt/slides/_rels/slide1.xml.rels", rels)]);
+    let keeps = |bytes: &[u8]| -> Vec<Option<bool>> {
+        let a = deckcraft_pptx::import(bytes).expect("import");
+        let get = shapes_named(&a, 0);
+        get("Links").text.iter().flat_map(|t| t.paragraphs.iter()).flat_map(|p| p.runs.iter()).map(|r| r.props.link_keeps_color).collect()
+    };
+    assert_eq!(keeps(&bytes), [Some(true), None]);
+    let again = deckcraft_pptx::export(&deckcraft_pptx::import(&bytes).expect("import")).expect("export");
+    assert_eq!(keeps(&again), [Some(true), None]);
+    assert_eq!(part(&again, "ppt/slides/slide1.xml").matches("hlinkClr").count(), 1);
+}

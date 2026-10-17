@@ -290,14 +290,14 @@ pub fn run(ctx: &Ctx, shape: &Shape, para: &crate::text::Paragraph, run: &RunPro
     r.inherit(&para.def_props);
     let lvl = level_style(ctx, shape, para.level);
     r.inherit(&lvl.run);
-    // Hyperlinked text is drawn in the theme's hyperlink colour and underlined, as in PowerPoint,
-    // unless the run itself sets a colour (honoured since PowerPoint 2019) or an underline
-    // (`u="none"` removes it). Colours and underlines from list styles don't count.
+    // Hyperlinked text is drawn in the theme's hyperlink colour, whatever colour the run sets,
+    // unless the link keeps the text's colour (`ahyp:hlinkClr val="tx"`); measured in PowerPoint
+    // 2016 and 365 for Windows. It is underlined unless the run sets an underline (`u="none"`
+    // removes it); underlines from list styles don't count.
     if r.link.is_some() {
-        // A colour or underline on the run, or on the same `defRPr` that carries the link, is
-        // kept. A colour that arrived only from a list style is not.
         let from_def = run.link.is_none();
-        if run.fill.is_none() && !(from_def && para.def_props.fill.is_some()) {
+        let keeps_color = if from_def { para.def_props.link_keeps_color } else { run.link_keeps_color };
+        if keeps_color != Some(true) {
             r.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Hlink)));
         }
         if run.underline.is_none() && !(from_def && para.def_props.underline.is_some()) {
