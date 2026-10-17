@@ -85,6 +85,12 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 6.0;
+        let on_settings = app.backstage.as_ref().is_some_and(|b| b.page == crate::backstage::Page::Settings);
+        let gear = icon_toggle(&mut right, Icon::Settings, "Settings: themes, keyboard shortcuts, reset (File › Settings)", true, on_settings);
+        gear.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Open Settings"));
+        if gear.clicked() {
+            let _ = app.run("app.backstage", json!({"page": "settings"}));
+        }
         if icon_toggle(&mut right, Icon::Search, "Search commands (⇧⌘P)", true, false).clicked() {
             app.palette = Some((String::new(), 0));
         }

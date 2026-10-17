@@ -1024,8 +1024,8 @@ fn set_locked(sh: &mut deckcraft_model::Shape, to: bool, depth: usize) {
 fn set_default(s: &mut Session, _p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let Some(sh) = st.selected_shapes().first().map(|x| (*x).clone()) else { return ok() };
-    // New shapes drawn in this session take this look (Set as Default Shape).
-    s.default_look = Some(super::format::Painted {
+    // New shapes take this look (Set as Default Shape), in this session and the next ones.
+    s.prefs.default_shape = Some(super::format::Painted {
         run: sh.text.as_ref().and_then(|t| t.paragraphs.first()).and_then(|p| p.runs.first()).map(|r| r.props.clone()),
         para: None,
         fill: sh.fill.clone(),
