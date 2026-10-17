@@ -68,7 +68,9 @@ impl SlideApp {
         let r = match o.rx.try_recv() {
             Ok(r) => r,
             Err(TryRecvError::Empty) => return,
-            Err(TryRecvError::Disconnected) => Err(crate::i18n::fmt(crate::tl!("{path}: reading the file stopped unexpectedly"), &[("path", o.path.as_str())])),
+            Err(TryRecvError::Disconnected) => {
+                Err(crate::i18n::fmt(crate::tl!("{path}: reading the file stopped unexpectedly"), &[("path", o.path.as_str())]))
+            }
         };
         let Some(o) = self.opening.take() else { return };
         match r {

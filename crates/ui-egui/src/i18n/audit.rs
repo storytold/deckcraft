@@ -106,7 +106,18 @@ fn the_catalog_covers_every_string_the_interface_looks_up() {
         let mut h = harness();
         let _ = h.state_mut().run(command, params.clone());
         h.run_steps(3);
-        for tab in ["Shape Format", "Picture Format", "Table Design", "Layout", "SmartArt Design", "Chart Design", "Playback", "Slide Master", "Handout Master", "Notes Master"] {
+        for tab in [
+            "Shape Format",
+            "Picture Format",
+            "Table Design",
+            "Layout",
+            "SmartArt Design",
+            "Chart Design",
+            "Playback",
+            "Slide Master",
+            "Handout Master",
+            "Notes Master",
+        ] {
             let mut h = harness();
             let _ = h.state_mut().run(command, params.clone());
             let _ = h.state_mut().run("view.tab", json!({"tab": tab}));

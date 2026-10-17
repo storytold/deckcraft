@@ -94,7 +94,14 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                         ui.horizontal_centered(|ui| {
                             ui.label(RichText::new(title.clone()).font(crate::theme::bold(13.0)).color(t.text));
                             ui.add_space(16.0);
-                            ui.label(RichText::new(crate::i18n::fmt(crate::tl!("Slide {current} of {total}"), &[("current", &(slide + 1).to_string()), ("total", &n.to_string())])).color(t.text_dim).font(crate::theme::font(13.0)));
+                            ui.label(
+                                RichText::new(crate::i18n::fmt(
+                                    crate::tl!("Slide {current} of {total}"),
+                                    &[("current", &(slide + 1).to_string()), ("total", &n.to_string())],
+                                ))
+                                .color(t.text_dim)
+                                .font(crate::theme::font(13.0)),
+                            );
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 if ui.add_enabled(slide + 1 < n, egui::Button::new(crate::tl!("Next"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": 1}));

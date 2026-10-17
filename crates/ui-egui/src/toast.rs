@@ -24,7 +24,10 @@ pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
         [a, b, c] => crate::i18n::fmt(crate::tl!("{a}, {b} and {c}"), &[("a", a.as_str()), ("b", b.as_str()), ("c", c.as_str())]),
         [a, b, c, rest @ ..] => {
             let more = rest.len().to_string();
-            crate::i18n::fmt(crate::tl!("{a}, {b}, {c} and {more} more"), &[("a", a.as_str()), ("b", b.as_str()), ("c", c.as_str()), ("more", more.as_str())])
+            crate::i18n::fmt(
+                crate::tl!("{a}, {b}, {c} and {more} more"),
+                &[("a", a.as_str()), ("b", b.as_str()), ("c", c.as_str()), ("more", more.as_str())],
+            )
         }
     };
     let sentence = if fonts.len() == 1 {

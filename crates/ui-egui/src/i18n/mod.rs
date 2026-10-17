@@ -53,13 +53,7 @@ pub struct LangInfo {
 pub static LANGUAGES: [LangInfo; 2] = [
     LangInfo { code: "en", name: "English", source: "", prefer_hans: false, catalog: OnceLock::new() },
     // Simplified Chinese; `zh`, `zh-CN`, `zh-SG` and `zh-Hans-*` resolve here (see `candidates`).
-    LangInfo {
-        code: "zh-hans",
-        name: "简体中文",
-        source: include_str!("zh-hans.tsv"),
-        prefer_hans: true,
-        catalog: OnceLock::new(),
-    },
+    LangInfo { code: "zh-hans", name: "简体中文", source: include_str!("zh-hans.tsv"), prefer_hans: true, catalog: OnceLock::new() },
 ];
 
 impl LangInfo {
@@ -311,8 +305,8 @@ pub fn fmt(template: &str, args: &[(&str, &str)]) -> String {
 }
 
 #[cfg(test)]
-pub(crate) mod pseudo;
-#[cfg(test)]
 mod audit;
+#[cfg(test)]
+pub(crate) mod pseudo;
 #[cfg(test)]
 mod tests;

@@ -32,6 +32,7 @@ pub fn mark(s: &str) -> &'static str {
 
 /// `text` without its marked segments. Lines are marked one by one, since multi-line labels are
 /// often drawn a line at a time.
+#[allow(dead_code)]
 pub fn unmarked(text: &str) -> String {
     let mut out = String::new();
     let mut depth = 0usize;
