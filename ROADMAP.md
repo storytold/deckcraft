@@ -133,10 +133,14 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
+| 2026-10-14 | File › Settings › AI (#732): bring your own model. Any OpenAI-compatible server (Ollama, LM Studio, LocalAI, vLLM, OpenAI…) with your own address, model and key, a Test connection button, and Draft slides: describe a talk and the model's outline becomes slides after the current one, in one undoable step. Desktop only; the key is kept apart from settings backups |
 | 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
 | 2026-10-14 | Empty bulleted and numbered paragraphs show gray markers while editing, including on first click and after Enter. Markers use the list style and stay out of slide shows and exports. |
 | 2026-10-13 | Interface font fallback continues to eligible installed faces when the first covering face is colour or exceeds the 48 MiB limit; document fallback order and the CJK/IME rendering assertions are retained (#101) |
 | 2026-10-13 | PDFW2: adopt the shared writer with native unwind recovery and explicit font-embedding failures; preserve app-owned export behavior and keep reader dependencies out of production |
+| 2026-10-13 | File › Settings grows: General (interface size, reduce motion, what opens at start), New Presentations (theme, slide size and font for every new presentation; Set as Default Shape now kept between sessions), a search box over the tabs, Backup and Reset (settings to and from a file), and a printable keyboard-shortcut cheat sheet |
+| 2026-10-13 | File › Settings, one page with tabs: Themes, Keyboard Shortcuts and Reset (the title bar's gear opens it). Custom keyboard shortcuts (#127): any command or slide-show action gets your own keys, recorded from a key press, with a warning before a key moves from another action; Reset all settings |
+| 2026-10-13 | Interface themes on File › Account (Office Theme's place): High Contrast, Lagoon, Sunset and Custom in light and dark, with previews and contrast checks; a gear in the title bar opens it |
 | 2026-10-13 | Eyedropper: Shape Fill, Shape Outline, Font Color and every other colour menu end with an Eyedropper that takes the colour drawn at a point of the slide (hover shows it, a click applies it, Esc cancels); `slide.colorAt` gives the same from scripts and MCP (#367) |
 | 2026-10-13 | Slide show: Honeycomb's hexagons cover the whole slide again — the bottom quarter stayed black until the endpoint (#420) |
 | 2026-10-13 | Copy and Cut from the ribbon, the slide's right-click menu and the menus put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431) |

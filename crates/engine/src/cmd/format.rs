@@ -1117,8 +1117,9 @@ fn margins(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// Formatting picked up by the Format Painter.
-#[derive(Clone, Debug, Default)]
+/// Formatting picked up by the Format Painter (and kept by Set as Default Shape).
+#[derive(Clone, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
 pub struct Painted {
     pub run: Option<RunProps>,
     pub para: Option<ParaProps>,

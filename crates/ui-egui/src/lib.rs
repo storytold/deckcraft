@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod ai;
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
@@ -16,6 +17,7 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
 pub mod icons;
+pub mod keymap;
 pub mod media;
 pub mod menus;
 pub mod notes;
@@ -55,6 +57,8 @@ pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 /// not applied to whichever document happens to be active.
 pub type OpenAsyncFn = Box<dyn FnMut(&str, u64)>;
 pub type DownloadFn = Box<dyn FnMut(&str, &[u8])>;
+/// Send an AI request (File › Settings › AI) in the background; the reply arrives on the receiver.
+pub type AiSendFn = Box<dyn FnMut(ai::AiCall) -> std::sync::mpsc::Receiver<Result<Value, String>>>;
 
 /// A file the host finished reading for the request `id` from [`SlideApp::begin_external_file`].
 #[derive(Clone, Debug)]
@@ -220,6 +224,8 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// Sends AI requests (desktop); without it the AI tab explains that this window can't.
+    pub ai_send: Option<AiSendFn>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,10 +240,59 @@ pub enum ViewMode {
 }
 
 /// Persisted UI state.
+/// What DeckCraft shows when it starts with nothing to open (File › Settings › General).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Startup {
+    /// The File view's Home page, with the recent presentations.
+    #[default]
+    StartScreen,
+    /// The presentation at the top of the recent list.
+    LastFile,
+    /// A new presentation, as New › Blank Presentation makes it.
+    Blank,
+}
+
+impl Startup {
+    pub const ALL: [Startup; 3] = [Startup::StartScreen, Startup::LastFile, Startup::Blank];
+
+    /// The id `app.startup {open}` takes.
+    pub fn id(self) -> &'static str {
+        match self {
+            Startup::StartScreen => "startScreen",
+            Startup::LastFile => "lastFile",
+            Startup::Blank => "blank",
+        }
+    }
+
+    pub fn parse(id: &str) -> Option<Startup> {
+        Startup::ALL.into_iter().find(|s| s.id().eq_ignore_ascii_case(id))
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Startup::StartScreen => "The start screen",
+            Startup::LastFile => "The presentation I had open last",
+            Startup::Blank => "A new blank presentation",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    /// The interface theme (File › Settings › Themes), in light or dark per `brightness`.
+    pub ui_theme: theme::UiTheme,
+    pub custom_theme: theme::CustomTheme,
+    /// Custom keyboard shortcuts (File › Settings › Keyboard Shortcuts): only the actions the user changed.
+    pub keymap: keymap::Keymap,
+    /// File › Settings › General: no sliding or fading in DeckCraft's own interface.
+    pub reduce_motion: bool,
+    /// File › Settings › General: what DeckCraft shows when it starts with nothing to open.
+    pub startup: Startup,
+    /// File › Settings › AI: the server and model (the key is kept apart, in `SlideApp::ai_key`).
+    pub ai: ai::AiSettings,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -280,6 +335,12 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            ui_theme: theme::UiTheme::Standard,
+            custom_theme: theme::CustomTheme::default(),
+            keymap: keymap::Keymap::default(),
+            reduce_motion: false,
+            startup: Startup::StartScreen,
+            ai: ai::AiSettings::default(),
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -309,6 +370,11 @@ impl Default for UiState {
     }
 }
 
+/// File › Settings › General › Interface size: smallest and largest.
+pub const MIN_UI_SCALE: f32 = 0.75;
+pub const MAX_UI_SCALE: f32 = 2.0;
+/// The largest settings backup `settings.import` reads.
+const MAX_SETTINGS_BYTES: usize = 1 << 20;
 /// Text put on the system clipboard when the copied objects (a rectangle, a picture, slides…)
 /// carry no text. egui-winit drops Ctrl+V when the system clipboard is empty, so without it the
 /// shortcut never reached the session and only the context menu could paste objects (#182). An
@@ -377,6 +443,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    (
+        "view.uiTheme",
+        "Interface Theme",
+        None,
+        "{theme?: standard|highContrast|lagoon|sunset|custom, tint?: #rrggbb, accent?: #rrggbb, strength?: 0-1}",
+    ),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -384,7 +456,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool}"),
     ("app.home", "Home", None, "{on?}"),
-    ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account, on?: bool}"),
+    (
+        "app.backstage",
+        "File",
+        Some("Alt+F"),
+        "{page?: home|new|open|info|saveAs|print|export|account|settings, tab?: general|themes|new|shortcuts|ai|backup, on?: bool}",
+    ),
     ("app.closePresentation", "Close", Some("Cmd+W"), "{}"),
     (
         "app.print",
@@ -412,6 +489,26 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
     ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
+    ("keys.list", "Keyboard Shortcuts", None, "{} → [{id, label, group, scope, keys, defaults, custom}]"),
+    ("keys.set", "Set Keyboard Shortcut", None, "{action, keys: [\"Cmd+Shift+K\"…], replace?: bool}"),
+    ("keys.reset", "Reset Keyboard Shortcuts", None, "{action?}"),
+    ("app.resetSettings", "Reset All Settings", None, "{}"),
+    ("view.interfaceSize", "Interface Size", None, "{scale: 0.75 to 2, 1 = 100%}"),
+    ("view.reduceMotion", "Reduce Motion", None, "{on?: bool}"),
+    ("app.startup", "When DeckCraft Starts", None, "{open: startScreen|lastFile|blank}"),
+    (
+        "settings.newPresentation",
+        "New Presentation Defaults",
+        None,
+        "{theme?: built-in name (empty: the default), size?: widescreen|standard, font?: name (empty: the theme's), forgetShape?: bool}",
+    ),
+    ("settings.export", "Back Up Settings", None, "{path?} → {settings} or {path}"),
+    ("settings.import", "Restore Settings", None, "{path? | settings?: what settings.export gave}"),
+    ("keys.cheatSheet", "Keyboard Shortcut Cheat Sheet", None, "{} → {text, html}"),
+    ("settings.ai", "AI Settings", None, "{endpoint?: http(s) address up to /v1, model?, key?: \"\" forgets it} → {endpoint, model, hasKey}"),
+    ("ai.test", "Test AI Connection", None, "{} (the answer arrives later, in File › Settings › AI)"),
+    ("ai.draftSlides", "Draft Slides with AI", None, "{prompt} (the slides arrive later, after the current slide; 50 at most)"),
+    ("ai.cancel", "Cancel AI Request", None, "{} → {cancelled: bool}"),
 ];
 
 pub struct Perf {
@@ -513,6 +610,11 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// File › Settings › AI: the API key and the server it is for. Not part of `UiState`, so it
+    /// stays out of ui.json and settings backups; the desktop app keeps it in a file of its own.
+    pub ai_key: ai::ApiKey,
+    /// AI requests in flight and their outcome.
+    pub ai: ai::State,
 }
 
 fn grid_options_touched(p: &Value) -> bool {
@@ -580,6 +682,8 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            ai_key: ai::ApiKey::default(),
+            ai: ai::State::default(),
         }
     }
 
@@ -673,6 +777,307 @@ impl SlideApp {
 
     pub(crate) fn docs_key(&self) -> (usize, Option<usize>) {
         (self.session.documents().len(), self.session.active_index())
+    }
+
+    /// `view.uiTheme`: the interface theme and the Custom theme's colours. Setting a custom
+    /// colour without a theme switches to Custom.
+    fn set_ui_theme(&mut self, p: &Value) -> Result<Value, String> {
+        let colour = |k: &str| -> Result<Option<[u8; 3]>, String> {
+            match p.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => v.as_str().and_then(theme::parse_hex).map(Some).ok_or_else(|| format!("`{k}` must be a colour like \"#1f6fb8\"")),
+            }
+        };
+        let (tint, accent) = (colour("tint")?, colour("accent")?);
+        let strength = match p.get("strength") {
+            None | Some(Value::Null) => None,
+            Some(v) => Some(v.as_f64().filter(|s| s.is_finite()).ok_or("`strength` must be a number from 0 to 1")?.clamp(0.0, 1.0) as f32),
+        };
+        let theme = match p.get("theme").and_then(Value::as_str) {
+            Some(id) => Some(theme::UiTheme::from_id(id).ok_or_else(|| format!("unknown interface theme `{id}`"))?),
+            None if p.get("theme").is_some_and(|v| !v.is_null()) => return Err("`theme` must be a theme id".into()),
+            None => None,
+        };
+        let custom = &mut self.ui.custom_theme;
+        custom.tint = tint.unwrap_or(custom.tint);
+        custom.accent = accent.unwrap_or(custom.accent);
+        custom.strength = strength.unwrap_or(custom.strength);
+        self.ui.ui_theme =
+            theme.unwrap_or(if tint.is_some() || accent.is_some() || strength.is_some() { theme::UiTheme::Custom } else { self.ui.ui_theme });
+        self.restyle = true;
+        let c = self.ui.custom_theme;
+        Ok(json!({"theme": self.ui.ui_theme.id(), "tint": theme::hex(c.tint), "accent": theme::hex(c.accent), "strength": c.strength}))
+    }
+
+    /// `settings.newPresentation`: File › Settings › New Presentations. Each setting given is
+    /// checked and stored in the engine's prefs, which `file.new` reads.
+    fn new_presentation_defaults(&mut self, p: &Value) -> Result<Value, String> {
+        let prefs = &mut self.session.prefs;
+        if let Some(name) = p.get("theme").and_then(Value::as_str).map(str::trim) {
+            prefs.new_theme = if name.is_empty() {
+                String::new()
+            } else {
+                let th = deckcraft_model::theme::builtin_themes().into_iter().find(|t| t.name.eq_ignore_ascii_case(name));
+                th.map(|t| t.name).ok_or_else(|| format!("no built-in theme is called `{name}`"))?
+            };
+        }
+        if let Some(size) = p.get("size").and_then(Value::as_str) {
+            prefs.new_size = match size.to_ascii_lowercase().as_str() {
+                "standard" => "standard".into(),
+                "widescreen" => String::new(),
+                _ => return Err(format!("`size` must be widescreen or standard, not `{size}`")),
+            };
+        }
+        if let Some(font) = p.get("font").and_then(Value::as_str).map(str::trim) {
+            if font.len() > 128 {
+                return Err("`font` is too long to be a font name".into());
+            }
+            prefs.new_font = font.to_string();
+        }
+        if p.get("forgetShape").and_then(Value::as_bool) == Some(true) {
+            prefs.default_shape = None;
+        }
+        Ok(json!({
+            "theme": prefs.new_theme,
+            "size": if prefs.new_size == "standard" { "standard" } else { "widescreen" },
+            "font": prefs.new_font,
+            "defaultShape": prefs.default_shape.is_some(),
+        }))
+    }
+
+    /// What a settings backup holds: the interface's settings and the engine's prefs. The recent
+    /// files stay out: they name documents on this computer.
+    fn settings_backup(&self) -> Result<Value, String> {
+        let mut ui = self.ui.clone();
+        ui.recent.clear();
+        let ui = serde_json::to_value(&ui).map_err(|e| e.to_string())?;
+        let prefs = serde_json::to_value(&self.session.prefs).map_err(|e| e.to_string())?;
+        Ok(json!({"deckcraft": "settings", "version": 1, "ui": ui, "prefs": prefs}))
+    }
+
+    /// `settings.export {path?}`: the backup, written to `path` when one is given.
+    fn export_settings(&mut self, p: &Value) -> Result<Value, String> {
+        let backup = self.settings_backup()?;
+        let Some(path) = p.get("path").and_then(Value::as_str) else { return Ok(json!({"settings": backup})) };
+        let bytes = serde_json::to_vec_pretty(&backup).map_err(|e| e.to_string())?;
+        let write = self.services.write.as_mut().ok_or("this window can't write files")?;
+        write(path, &bytes)?;
+        Ok(json!({"path": path}))
+    }
+
+    /// `settings.import {path | settings}`: every setting from a backup. The recent files stay as
+    /// they are. A file that isn't a backup changes nothing.
+    fn import_settings(&mut self, p: &Value) -> Result<Value, String> {
+        const NOT_A_BACKUP: &str = "that isn't a DeckCraft settings backup";
+        let backup: Value = match (p.get("settings"), p.get("path").and_then(Value::as_str)) {
+            (Some(v), _) => v.clone(),
+            (None, Some(path)) => {
+                let read = self.services.read.as_ref().ok_or("this window can't read files")?;
+                let bytes = read(path)?;
+                if bytes.len() > MAX_SETTINGS_BYTES {
+                    return Err(NOT_A_BACKUP.into());
+                }
+                serde_json::from_slice(&bytes).map_err(|_| NOT_A_BACKUP.to_string())?
+            }
+            (None, None) => return Err("give the backup's `path`, or its `settings`".into()),
+        };
+        if backup.get("deckcraft").and_then(Value::as_str) != Some("settings") {
+            return Err(NOT_A_BACKUP.into());
+        }
+        let part = |k: &str| backup.get(k).cloned().unwrap_or_else(|| json!({}));
+        let ui: UiState = serde_json::from_value(part("ui")).map_err(|e| format!("{NOT_A_BACKUP}: {e}"))?;
+        let prefs: deckcraft_engine::Prefs = serde_json::from_value(part("prefs")).map_err(|e| format!("{NOT_A_BACKUP}: {e}"))?;
+        let recent = std::mem::take(&mut self.ui.recent);
+        self.ui = UiState { recent, ..ui };
+        self.ui.keymap.sanitize();
+        self.session.prefs = prefs;
+        self.restyle = true;
+        Ok(json!({"restored": true}))
+    }
+
+    /// `settings.ai`: File › Settings › AI. Each field given is checked and stored; the key is
+    /// never handed back, only whether there is one.
+    fn ai_settings(&mut self, p: &Value) -> Result<Value, String> {
+        let text = |k: &str| -> Result<Option<String>, String> {
+            match p.get(k) {
+                None | Some(Value::Null) => Ok(None),
+                Some(v) => v.as_str().ok_or_else(|| format!("`{k}` must be text")).and_then(|v| ai::field(k, v)).map(Some),
+            }
+        };
+        let (endpoint, model, key) = (text("endpoint")?, text("model")?, text("key")?);
+        if let Some(e) = &endpoint {
+            ai::chat_url(e)?;
+        }
+        if let Some(e) = endpoint {
+            self.ui.ai.endpoint = e;
+        }
+        if let Some(m) = model {
+            self.ui.ai.model = m;
+        }
+        // A key belongs to the address it is typed with.
+        if let Some(k) = key {
+            if !k.is_empty() && ai::chat_url(&self.ui.ai.endpoint).is_err() {
+                return Err("Type the server's address before its key: the key is only ever sent there.".into());
+            }
+            self.ai_key = ai::ApiKey::new(&self.ui.ai.endpoint, &k);
+        }
+        let key_for = (!self.ai_key.is_empty()).then(|| self.ai_key.host().to_string());
+        Ok(json!({
+            "endpoint": self.ui.ai.endpoint,
+            "model": self.ui.ai.model,
+            "hasKey": !self.ai_key.is_empty(),
+            "keyFor": key_for,
+            "keySentHere": !self.ai_key.for_endpoint(&self.ui.ai.endpoint).is_empty(),
+        }))
+    }
+
+    /// Hand an AI request to the host; one at a time.
+    fn ai_send(&mut self, job: ai::Job, call: ai::AiCall) -> Result<Value, String> {
+        if self.ai.pending.is_some() {
+            return Err("DeckCraft is still waiting for the AI's last answer.".into());
+        }
+        let send = self.services.ai_send.as_mut().ok_or("AI needs the DeckCraft desktop app: this window can't reach an AI server.")?;
+        self.ai.pending = Some((job, send(call)));
+        self.ai.outcome = None;
+        Ok(json!({"waiting": true}))
+    }
+
+    /// Collect an AI reply that has arrived: a test's verdict, or a draft's slides.
+    fn poll_ai(&mut self, ctx: &egui::Context) {
+        let Some((job, rx)) = &self.ai.pending else { return };
+        let reply = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                ctx.request_repaint_after(std::time::Duration::from_millis(100));
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => Err("The AI request stopped without an answer.".into()),
+        };
+        let job = job.clone();
+        self.ai.pending = None;
+        let text = reply.and_then(|v| ai::reply_text(&v));
+        let outcome = match (job, text) {
+            (_, Err(e)) => Err(e),
+            (ai::Job::Test, Ok(_)) => Ok(format!("Connected: {} answered.", self.ui.ai.model)),
+            (ai::Job::Draft, Ok(t)) => {
+                let (outline, total) = ai::cap_slides(&ai::outline(&t));
+                let target = self.ai.target.take();
+                if total == 0 {
+                    Err("The AI didn't answer with an outline. Try again, or try another model.".into())
+                } else if self.session.active().is_none_or(|d| Some(d.uid) != target) {
+                    Err("The presentation the slides were for isn't the one open now, so they weren't added.".into())
+                } else {
+                    match self.run("slide.fromOutline", json!({"text": outline, "markdown": true})) {
+                        Ok(v) => {
+                            let n = v.get("slides").and_then(Value::as_u64).unwrap_or(0);
+                            let cut = if total > ai::MAX_SLIDES { format!(" (the first {} of {total})", ai::MAX_SLIDES) } else { String::new() };
+                            Ok(format!("Added {n} slide{}{cut} after the current one. Undo takes them away.", if n == 1 { "" } else { "s" }))
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            }
+        };
+        match &outcome {
+            Ok(m) => self.set_status(m.clone()),
+            Err(e) => self.set_status(e.clone()),
+        }
+        self.ai.outcome = Some(outcome);
+        ctx.request_repaint();
+    }
+
+    /// File › Settings › Backup and Reset › Back up settings…: a file the user picks (desktop) or
+    /// a download (web).
+    pub fn backup_settings(&mut self) {
+        const NAME: &str = "DeckCraft settings.json";
+        if let Some(pick) = self.services.pick_save.as_mut() {
+            let Some(path) = pick(NAME) else { return };
+            if self.run("settings.export", json!({"path": path})).is_ok() {
+                self.set_status(format!("Backed up your settings to {path}"));
+            }
+            return;
+        }
+        match self.settings_backup().and_then(|v| serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())) {
+            Ok(bytes) => {
+                self.download(NAME, Ok(bytes));
+            }
+            Err(e) => self.set_status(e),
+        }
+    }
+
+    /// File › Settings › Backup and Reset › Restore from a backup…
+    pub fn restore_settings(&mut self) {
+        let Some(pick) = self.services.pick_open.as_mut() else {
+            self.set_status("Restoring settings needs a file picker, which this window doesn't have.");
+            return;
+        };
+        let Some(path) = pick("settings") else { return };
+        if self.run("settings.import", json!({"path": path})).is_ok() {
+            self.set_status("Restored your settings from the backup");
+        }
+    }
+
+    /// File › Settings › Keyboard Shortcuts › Save cheat sheet…: a page with every shortcut,
+    /// opened in the browser to print (desktop) or downloaded (web).
+    pub fn save_cheat_sheet(&mut self) {
+        const NAME: &str = "DeckCraft keyboard shortcuts.html";
+        let (_, html) = self.ui.keymap.cheat_sheet();
+        let Some(pick) = self.services.pick_save.as_mut() else {
+            self.download(NAME, Ok(html.into_bytes()));
+            return;
+        };
+        let Some(path) = pick(NAME) else { return };
+        let written = match self.services.write.as_mut() {
+            Some(write) => write(&path, html.as_bytes()),
+            None => Err("this window can't write files".into()),
+        };
+        match written {
+            Ok(()) => {
+                self.open_url(&format!("file:///{}", path.replace('\\', "/").trim_start_matches('/')));
+                self.set_status(format!("Saved the cheat sheet to {path}; print it from your browser"));
+            }
+            Err(e) => self.set_status(e),
+        }
+    }
+
+    /// File › Settings › General › When DeckCraft starts: called once the files given on the
+    /// command line are open. With nothing open, opens the last presentation or a blank one; the
+    /// start screen needs nothing.
+    pub fn startup(&mut self) {
+        if self.session.active().is_some() {
+            return;
+        }
+        match self.ui.startup {
+            Startup::StartScreen => {}
+            Startup::LastFile => {
+                if let Some(path) = self.ui.recent.first().cloned()
+                    && let Err(e) = self.open_path(&path)
+                {
+                    self.set_status(format!("Couldn't reopen {path}: {e}"));
+                }
+            }
+            Startup::Blank => {
+                let _ = self.run("file.new", json!({}));
+            }
+        }
+    }
+
+    /// Ctrl+C, Ctrl+X and Ctrl+V arrive as Copy, Cut and Paste events as well as key presses: when
+    /// the user gave their key to another action, or gave the action other keys, the event is
+    /// dropped and the key press does what the custom keys say.
+    fn clipboard_key_moved(&self, e: &egui::Event) -> bool {
+        let key = match e {
+            egui::Event::Copy => egui::Key::C,
+            egui::Event::Cut => egui::Key::X,
+            _ => egui::Key::V,
+        };
+        let c = keymap::Combo::from_egui(key, egui::Modifiers::COMMAND);
+        self.ui.keymap.hit(keymap::Scope::Editor, &c) != keymap::Hit::Pass
+    }
+
+    /// The interface colours for the current theme and light/dark choice.
+    pub fn tokens(&self) -> theme::Tokens {
+        theme::Tokens::build(self.ui.ui_theme, self.ui.brightness, &self.ui.custom_theme)
     }
 
     /// The File tab's view is open over a presentation (not just the start screen with nothing
@@ -943,6 +1348,62 @@ impl SlideApp {
                 self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
                 self.restyle = true;
             }
+            "view.uiTheme" => return self.set_ui_theme(p),
+            "keys.list" => return Ok(self.ui.keymap.list()),
+            "keys.set" => return self.ui.keymap.set(p),
+            "keys.reset" => return self.ui.keymap.reset(p),
+            "keys.cheatSheet" => {
+                let (text, html) = self.ui.keymap.cheat_sheet();
+                return Ok(json!({"text": text, "html": html}));
+            }
+            "view.interfaceSize" => {
+                let scale = p.get("scale").and_then(Value::as_f64).filter(|s| s.is_finite()).ok_or("`scale` must be a number, 1 = 100%")?;
+                self.ui.ui_scale = (scale as f32).clamp(MIN_UI_SCALE, MAX_UI_SCALE);
+                return Ok(json!({"scale": self.ui.ui_scale}));
+            }
+            "view.reduceMotion" => {
+                self.ui.reduce_motion = self.flag(p, self.ui.reduce_motion);
+                self.restyle = true;
+            }
+            "app.startup" => {
+                let id = p.get("open").and_then(Value::as_str).unwrap_or("");
+                self.ui.startup = Startup::parse(id).ok_or_else(|| format!("`open` must be startScreen, lastFile or blank, not `{id}`"))?;
+            }
+            "settings.newPresentation" => return self.new_presentation_defaults(p),
+            "settings.export" => return self.export_settings(p),
+            "settings.import" => return self.import_settings(p),
+            "settings.ai" => return self.ai_settings(p),
+            "ai.test" => {
+                let call = ai::test_call(&self.ui.ai, &self.ai_key)?;
+                return self.ai_send(ai::Job::Test, call);
+            }
+            "ai.draftSlides" => {
+                if self.session.active().is_none() {
+                    return Err("Open or create a presentation for the slides first.".into());
+                }
+                let prompt = p.get("prompt").and_then(Value::as_str).unwrap_or("");
+                let call = ai::draft_call(&self.ui.ai, &self.ai_key, prompt)?;
+                let r = self.ai_send(ai::Job::Draft, call)?;
+                self.ai.target = self.session.active().map(|d| d.uid);
+                return Ok(r);
+            }
+            "ai.cancel" => {
+                // The request carries on in the background; its answer is dropped.
+                let was = self.ai.pending.take().is_some();
+                self.ai.target = None;
+                if was {
+                    self.ai.outcome = Some(Err("Cancelled.".into()));
+                }
+                return Ok(json!({"cancelled": was}));
+            }
+            "app.resetSettings" => {
+                // Every setting back to how DeckCraft ships; the recent files are a list of the
+                // user's documents, not a setting, so they stay.
+                let recent = std::mem::take(&mut self.ui.recent);
+                self.ui = UiState { recent, ..UiState::default() };
+                self.session.prefs = deckcraft_engine::Prefs::default();
+                self.restyle = true;
+            }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
             "view.newWindow" => return doc_window::command(self, p),
             "show.start" => {
@@ -987,7 +1448,14 @@ impl SlideApp {
                 if page.needs_doc() && self.session.active().is_none() {
                     return Err(format!("File › {} needs an open presentation", page.label()));
                 }
+                let tab = match p.get("tab").and_then(Value::as_str) {
+                    Some(id) => Some(backstage::SettingsTab::parse(id).ok_or_else(|| format!("unknown Settings tab `{id}`"))?),
+                    None => None,
+                };
                 self.open_backstage(page);
+                if let (Some(tab), Some(b)) = (tab, self.backstage.as_mut()) {
+                    b.open_tab(tab);
+                }
                 return Ok(json!({"page": page.id()}));
             }
             "app.closePresentation" => self.close_presentation(),
@@ -1519,6 +1987,7 @@ impl SlideApp {
             ctx.set_zoom_factor(scale);
         }
         if !self.styled {
+            self.ui.keymap.sanitize();
             theme::install_fonts_with(ctx, &self.ui_fonts.faces);
             self.styled = true;
             self.restyle = true;
@@ -1526,9 +1995,16 @@ impl SlideApp {
             self.fonts_ready = true;
         }
         if self.restyle {
-            theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
+            theme::apply(ctx, &self.tokens());
+            // Reduce motion: no animated opening, hovering or scrolling in the interface.
+            let calm = self.ui.reduce_motion;
+            ctx.all_styles_mut(|s| {
+                s.animation_time = if calm { 0.0 } else { egui::Style::default().animation_time };
+                s.scroll_animation = if calm { egui::style::ScrollAnimation::none() } else { egui::style::ScrollAnimation::default() };
+            });
             self.restyle = false;
         }
+        self.poll_ai(ctx);
         let now = ctx.input(|i| i.time);
         let dt = now - self.last_time;
         if dt > 0.0 {
@@ -1658,6 +2134,9 @@ impl SlideApp {
                 _ => {}
             }
         }
+        if self.backstage.as_ref().is_some_and(|b| b.recording.is_some()) {
+            return;
+        }
         if ctx.memory(|m| m.focused().is_some()) || self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some() {
             return;
         }
@@ -1668,7 +2147,19 @@ impl SlideApp {
             for e in events {
                 if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
                     let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
-                    if backstage::key(self, key, mods) || !(mods.cmd || mods.alt) || menus::ui_shortcut(self, key, mods) {
+                    if backstage::key(self, key, mods) || !(mods.cmd || mods.alt) {
+                        continue;
+                    }
+                    match self.ui.keymap.hit(keymap::Scope::Editor, &keymap::Combo::from_egui(key, modifiers)) {
+                        // Only app actions: the presentation is hidden behind the File view.
+                        keymap::Hit::Run(id) if id.starts_with("app.") => {
+                            let _ = self.run(&id, json!({}));
+                            continue;
+                        }
+                        keymap::Hit::Run(_) | keymap::Hit::Swallow => continue,
+                        keymap::Hit::Pass => {}
+                    }
+                    if menus::ui_shortcut(self, key, mods) {
                         continue;
                     }
                     // Engine shortcuts that don't touch the hidden slide (Ctrl+N).
@@ -1683,7 +2174,12 @@ impl SlideApp {
             self.drain_requests();
             return;
         }
-        let img = if image_paste { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+        // A Ctrl+V moved to another action (File › Settings › Keyboard Shortcuts) pastes no image either.
+        let img = if image_paste && !self.clipboard_key_moved(&egui::Event::Paste(String::new())) {
+            self.services.clipboard_image.as_mut().and_then(|f| f())
+        } else {
+            None
+        };
         if let Some(png) = img {
             let data = deckcraft_engine::cmd::base64_encode(&png);
             if let Err(e) = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})) {
@@ -1700,6 +2196,7 @@ impl SlideApp {
                     }
                 }
                 egui::Event::Ime(ime) => self.ime_event(&ime),
+                egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) if self.clipboard_key_moved(&e) => {}
                 egui::Event::Copy => self.publish_clipboard(ctx, false),
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
@@ -1737,6 +2234,14 @@ impl SlideApp {
                         continue;
                     }
                     let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
+                    match self.ui.keymap.hit(keymap::Scope::Editor, &keymap::Combo::from_egui(key, modifiers)) {
+                        keymap::Hit::Run(id) => {
+                            let _ = self.run(&id, json!({}));
+                            continue;
+                        }
+                        keymap::Hit::Swallow => continue,
+                        keymap::Hit::Pass => {}
+                    }
                     if !self.session.tool.drawing_freeform() && menus::ui_shortcut(self, key, mods) {
                         continue;
                     }

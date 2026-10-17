@@ -37,10 +37,13 @@ pub enum Page {
     Print,
     Export,
     Account,
+    /// Settings: interface themes, keyboard shortcuts (#127) and Reset, one tab each.
+    Settings,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Account];
+    pub const ALL: [Page; 9] =
+        [Page::Home, Page::New, Page::Open, Page::Info, Page::SaveAs, Page::Print, Page::Export, Page::Account, Page::Settings];
 
     /// The id `app.backstage {page}` takes.
     pub fn id(self) -> &'static str {
@@ -53,6 +56,7 @@ impl Page {
             Page::Print => "print",
             Page::Export => "export",
             Page::Account => "account",
+            Page::Settings => "settings",
         }
     }
 
@@ -72,6 +76,7 @@ impl Page {
             Page::Print => "Print",
             Page::Export => "Export",
             Page::Account => "Account",
+            Page::Settings => "Settings",
         }
     }
 
@@ -85,6 +90,7 @@ impl Page {
             Page::Print => Icon::Print,
             Page::Export => Icon::Export,
             Page::Account => Icon::Account,
+            Page::Settings => Icon::Settings,
         }
     }
 
@@ -92,6 +98,99 @@ impl Page {
     pub fn needs_doc(self) -> bool {
         matches!(self, Page::Info | Page::SaveAs | Page::Print | Page::Export)
     }
+}
+
+/// A tab of File › Settings.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsTab {
+    General,
+    Themes,
+    NewPresentations,
+    Shortcuts,
+    Ai,
+    Backup,
+}
+
+impl SettingsTab {
+    pub const ALL: [SettingsTab; 6] =
+        [SettingsTab::General, SettingsTab::Themes, SettingsTab::NewPresentations, SettingsTab::Shortcuts, SettingsTab::Ai, SettingsTab::Backup];
+
+    /// The id `app.backstage {page: "settings", tab}` takes.
+    pub fn id(self) -> &'static str {
+        match self {
+            SettingsTab::General => "general",
+            SettingsTab::Themes => "themes",
+            SettingsTab::NewPresentations => "new",
+            SettingsTab::Shortcuts => "shortcuts",
+            SettingsTab::Ai => "ai",
+            SettingsTab::Backup => "backup",
+        }
+    }
+
+    pub fn parse(id: &str) -> Option<SettingsTab> {
+        if id.eq_ignore_ascii_case("reset") {
+            return Some(SettingsTab::Backup);
+        }
+        SettingsTab::ALL.into_iter().find(|t| t.id().eq_ignore_ascii_case(id))
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsTab::General => "General",
+            SettingsTab::Themes => "Themes",
+            SettingsTab::NewPresentations => "New Presentations",
+            SettingsTab::Shortcuts => "Keyboard Shortcuts",
+            SettingsTab::Ai => "AI",
+            SettingsTab::Backup => "Backup and Reset",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            SettingsTab::General => Icon::Settings,
+            SettingsTab::Themes => Icon::Palette,
+            SettingsTab::NewPresentations => Icon::NewFile,
+            SettingsTab::Shortcuts => Icon::Keyboard,
+            SettingsTab::Ai => Icon::Sparkle,
+            SettingsTab::Backup => Icon::Save,
+        }
+    }
+}
+
+/// What each Settings tab holds, for its search box: (tab, setting, more words that find it).
+const SETTINGS_INDEX: &[(SettingsTab, &str, &str)] = &[
+    (SettingsTab::General, "Interface size", "zoom scale bigger smaller larger text accessibility"),
+    (SettingsTab::General, "Reduce motion", "animation sliding fading accessibility"),
+    (SettingsTab::General, "When DeckCraft starts", "startup launch open last presentation blank start screen"),
+    (SettingsTab::Themes, "Light or dark", "dark mode night appearance"),
+    (SettingsTab::Themes, "Interface theme", "colour color high contrast lagoon sunset custom accent tint appearance"),
+    (SettingsTab::NewPresentations, "Theme for new presentations", "design default template"),
+    (SettingsTab::NewPresentations, "Slide size", "widescreen 16:9 standard 4:3 aspect"),
+    (SettingsTab::NewPresentations, "Font for new presentations", "typeface default text"),
+    (SettingsTab::NewPresentations, "Default shape", "set as default shape look style"),
+    (SettingsTab::Shortcuts, "Keyboard shortcuts", "keys hotkeys keybindings customise customize"),
+    (SettingsTab::Shortcuts, "Shortcut cheat sheet", "print save copy list"),
+    (SettingsTab::Ai, "AI server and model", "artificial intelligence llm ollama lm studio openai api key endpoint address byok local"),
+    (SettingsTab::Ai, "Draft slides with AI", "artificial intelligence generate write outline prompt copilot"),
+    (SettingsTab::Backup, "Back up settings", "export save file another computer"),
+    (SettingsTab::Backup, "Restore settings", "import load file another computer"),
+    (SettingsTab::Backup, "Reset all settings", "factory defaults"),
+];
+
+/// The settings whose name, tab or extra words contain every word of `query`.
+pub fn settings_search(query: &str) -> Vec<(SettingsTab, &'static str)> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    if words.is_empty() {
+        return vec![];
+    }
+    SETTINGS_INDEX
+        .iter()
+        .filter(|(tab, name, more)| {
+            let hay = format!("{} {name} {more}", tab.label()).to_lowercase();
+            words.iter().all(|w| hay.contains(w.as_str()))
+        })
+        .map(|(tab, name, _)| (*tab, *name))
+        .collect()
 }
 
 /// A side-menu entry: a page, or an action that runs at once.
@@ -129,7 +228,7 @@ pub fn entries(has_doc: bool) -> (Vec<Nav>, Vec<Nav>) {
     if has_doc {
         top.extend([Nav::Page(Page::Info), Nav::Save, Nav::Page(Page::SaveAs), Nav::Page(Page::Print), Nav::Page(Page::Export), Nav::Close]);
     }
-    (top, vec![Nav::Page(Page::Account), Nav::Options])
+    (top, vec![Nav::Page(Page::Account), Nav::Page(Page::Settings), Nav::Options])
 }
 
 /// Print page: which slides.
@@ -175,6 +274,23 @@ pub struct Backstage {
     pub file_type: &'static str,
     pub handouts_per_page: u8,
     pub pdf_hidden: bool,
+    /// Settings: the open tab.
+    pub settings_tab: SettingsTab,
+    /// Settings: the search box above the tabs.
+    pub settings_query: String,
+    /// Keyboard Shortcuts: the slide-show list instead of the editor's.
+    pub keys_show: bool,
+    /// Keyboard Shortcuts: only actions that have a key.
+    pub keys_bound_only: bool,
+    /// Keyboard Shortcuts: the action whose next key press is being recorded. While it is, the
+    /// app's own shortcuts are off.
+    pub recording: Option<String>,
+    /// Keyboard Shortcuts: a recorded key another action has (action, keys it would get, message).
+    pub clash: Option<(String, Vec<String>, String)>,
+    /// Keyboard Shortcuts: why the last recorded key was refused.
+    pub key_note: Option<String>,
+    /// Settings › Reset: Reset all settings asked to be confirmed.
+    pub confirm_reset: bool,
 }
 
 impl Backstage {
@@ -197,6 +313,14 @@ impl Backstage {
             file_type: "pptx",
             handouts_per_page: 3,
             pdf_hidden: false,
+            settings_tab: SettingsTab::General,
+            settings_query: String::new(),
+            keys_show: false,
+            keys_bound_only: true,
+            recording: None,
+            clash: None,
+            key_note: None,
+            confirm_reset: false,
         }
     }
 
@@ -205,8 +329,24 @@ impl Backstage {
         if self.page != page {
             self.query.clear();
             self.preview_page = 0;
+            self.recording = None;
+            self.clash = None;
+            self.key_note = None;
+            self.confirm_reset = false;
         }
         self.page = page;
+    }
+
+    /// Show Settings' `tab`, as a click in its list does.
+    pub fn open_tab(&mut self, tab: SettingsTab) {
+        if self.settings_tab != tab {
+            self.query.clear();
+            self.recording = None;
+            self.clash = None;
+            self.key_note = None;
+            self.confirm_reset = false;
+        }
+        self.settings_tab = tab;
     }
 }
 
@@ -415,6 +555,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                     Page::Print => print(app, ui, &mut bs),
                     Page::Export => export(app, ui, &mut bs),
                     Page::Account => account(app, ui),
+                    Page::Settings => settings(app, ui, &mut bs),
                 }
             });
         });
@@ -1330,8 +1471,7 @@ fn bullets(ui: &mut Ui, items: &[&str]) {
     ui.add_space(10.0);
 }
 
-/// Account: the interface's appearance and what DeckCraft is. DeckCraft has no accounts, so
-/// there is nothing to sign in to.
+/// Account: what DeckCraft is. DeckCraft has no accounts, so there is nothing to sign in to.
 fn account(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     ui.horizontal_top(|ui| {
@@ -1346,6 +1486,10 @@ fn account(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
+            ui.add_space(6.0);
+            if arrow_link(ui, "Themes, keyboard shortcuts and more in Settings") {
+                bs_settings(app);
+            }
             ui.add_space(16.0);
             heading(ui, "User Information");
             dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
@@ -1375,6 +1519,687 @@ fn account(app: &mut SlideApp, ui: &mut Ui) {
             ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
         });
     });
+}
+
+/// Account's link to Settings › Themes.
+fn bs_settings(app: &mut SlideApp) {
+    let _ = app.run("app.backstage", json!({"page": "settings", "tab": "themes"}));
+}
+
+/// Settings: a search box and a list of tabs on the left, the chosen tab on the right.
+fn settings(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    let t = Tokens::get(ui.ctx());
+    let top = ui.cursor().top();
+    ui.horizontal_top(|ui| {
+        let tabs = ui
+            .vertical(|ui| {
+                ui.set_width(TAB_W);
+                let field = egui::TextEdit::singleline(&mut bs.settings_query).hint_text("Search settings").desired_width(TAB_W - 8.0);
+                let field = ui.add(field);
+                // The hint isn't a name: screen readers get one.
+                field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Search settings"));
+                let typed = field.changed();
+                ui.add_space(8.0);
+                let hits = settings_search(&bs.settings_query);
+                let searching = !bs.settings_query.trim().is_empty();
+                // Typing jumps to the first tab with a match, unless the open one has one.
+                if typed
+                    && let Some(first) = hits.first()
+                    && !hits.iter().any(|h| h.0 == bs.settings_tab)
+                {
+                    bs.open_tab(first.0);
+                }
+                if searching && hits.is_empty() {
+                    dim(ui, "No settings match.");
+                }
+                for tab in SettingsTab::ALL {
+                    let found: Vec<&str> = hits.iter().filter(|h| h.0 == tab).map(|h| h.1).collect();
+                    if searching && found.is_empty() {
+                        continue;
+                    }
+                    if settings_tab(ui, tab, bs.settings_tab == tab, &t).clicked() {
+                        bs.open_tab(tab);
+                    }
+                    for name in found {
+                        ui.horizontal(|ui| {
+                            ui.add_space(42.0);
+                            let l = egui::Label::new(RichText::new(name).font(theme::font(12.0)).color(t.text_dim)).sense(Sense::click());
+                            if ui.add(l).on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+                                bs.open_tab(tab);
+                            }
+                        });
+                    }
+                }
+            })
+            .response;
+        let (gap, _) = ui.allocate_exact_size(vec2(33.0, 1.0), Sense::hover());
+        let content = ui
+            .vertical(|ui| {
+                let tab = bs.settings_tab;
+                ui.label(RichText::new(tab.label()).font(theme::bold(16.0)).color(t.text));
+                ui.add_space(8.0);
+                match tab {
+                    SettingsTab::General => general_settings(app, ui, &t),
+                    SettingsTab::Themes => {
+                        ui.set_max_width(THEMES_W);
+                        appearance(app, ui, &t);
+                    }
+                    SettingsTab::NewPresentations => new_presentation_settings(app, ui, &t),
+                    SettingsTab::Shortcuts => shortcuts(app, ui, bs),
+                    SettingsTab::Ai => ai_settings(app, ui, &t),
+                    SettingsTab::Backup => backup_and_reset(app, ui, bs),
+                }
+            })
+            .response;
+        // The line between the tabs and the tab's content runs as far down as either goes.
+        let bottom = tabs.rect.bottom().max(content.rect.bottom());
+        let x = gap.center().x;
+        ui.painter().line_segment([pos2(x, top), pos2(x, bottom)], Stroke::new(1.0, t.separator));
+    });
+}
+
+/// A tab in Settings' list: an icon and a name; the open one has an accent bar and a shaded row.
+fn settings_tab(ui: &mut Ui, tab: SettingsTab, selected: bool, t: &Tokens) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(vec2(TAB_W, 38.0), Sense::click());
+    let label = tab.label();
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, label));
+    let p = ui.painter();
+    if selected || resp.hovered() {
+        p.rect_filled(rect, CornerRadius::same(4), t.hover);
+    }
+    if selected {
+        let bar = Rect::from_min_size(rect.min + vec2(0.0, 7.0), vec2(3.0, rect.height() - 14.0));
+        p.rect_filled(bar, CornerRadius::same(1), t.accent);
+    }
+    if resp.has_focus() {
+        p.rect_stroke(rect, CornerRadius::same(4), Stroke::new(1.0, t.text), StrokeKind::Inside);
+    }
+    let ink = if selected { t.accent } else { t.text };
+    icons::paint(p, Rect::from_center_size(pos2(rect.left() + 22.0, rect.center().y), vec2(16.0, 16.0)), tab.icon(), ink, false);
+    let font = if selected { theme::bold(13.5) } else { theme::font(13.5) };
+    p.text(pos2(rect.left() + 42.0, rect.center().y), Align2::LEFT_CENTER, label, font, t.text);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A setting's name inside a Settings tab.
+fn sub(ui: &mut Ui, text: &str, t: &Tokens) {
+    ui.add_space(14.0);
+    ui.label(RichText::new(text).font(theme::bold(13.5)).color(t.text));
+    ui.add_space(2.0);
+}
+
+/// Settings › General: interface size, reduce motion and what opens at start.
+fn general_settings(app: &mut SlideApp, ui: &mut Ui, t: &Tokens) {
+    use crate::{MAX_UI_SCALE, MIN_UI_SCALE, Startup};
+    ui.set_max_width(640.0);
+    sub(ui, "Interface size", t);
+    dim(ui, "Makes all of DeckCraft bigger or smaller: menus, ribbon, panes and their text. Slides have their own zoom.");
+    ui.add_space(6.0);
+    let scale = app.ui.ui_scale;
+    ui.horizontal(|ui| {
+        for (s, label) in [(0.9, "90%"), (1.0, "100%"), (1.25, "125%"), (1.5, "150%"), (1.75, "175%")] {
+            if ui.add(egui::Button::selectable((scale - s).abs() < 0.005, label).min_size(vec2(56.0, 26.0))).clicked() {
+                let _ = app.run("view.interfaceSize", json!({"scale": s}));
+            }
+        }
+        ui.add_space(14.0);
+        // Five-percent steps from the nearest one.
+        let step = |d: f32| ((scale * 20.0).round() + d) / 20.0;
+        let smaller = egui::Button::new("−").min_size(vec2(26.0, 26.0));
+        if ui.add_enabled(scale > MIN_UI_SCALE + 0.001, smaller).on_hover_text("Smaller").clicked() {
+            let _ = app.run("view.interfaceSize", json!({"scale": step(-1.0)}));
+        }
+        ui.label(RichText::new(format!("{:.0}%", scale * 100.0)).color(t.text));
+        let larger = egui::Button::new("+").min_size(vec2(26.0, 26.0));
+        if ui.add_enabled(scale < MAX_UI_SCALE - 0.001, larger).on_hover_text("Larger").clicked() {
+            let _ = app.run("view.interfaceSize", json!({"scale": step(1.0)}));
+        }
+    });
+
+    sub(ui, "Motion", t);
+    let mut calm = app.ui.reduce_motion;
+    if ui.checkbox(&mut calm, "Reduce motion").changed() {
+        let _ = app.run("view.reduceMotion", json!({"on": calm}));
+    }
+    dim(ui, "Turns off the sliding and fading of DeckCraft's own menus, panes and scrolling. Transitions and animations in your slides still play.");
+
+    sub(ui, "When DeckCraft starts", t);
+    for s in Startup::ALL {
+        if ui.radio(app.ui.startup == s, s.label()).clicked() {
+            let _ = app.run("app.startup", json!({"open": s.id()}));
+        }
+    }
+    dim(ui, "A presentation you open with DeckCraft (by double-clicking it, say) always opens, whatever you pick here.");
+}
+
+/// Settings › New Presentations: the theme, slide size and font new presentations start with,
+/// and the default shape.
+fn new_presentation_settings(app: &mut SlideApp, ui: &mut Ui, t: &Tokens) {
+    dim(ui, "What every new presentation starts with. A theme you pick on the New page wins over the one here.");
+    ui.add_space(12.0);
+    let prefs = app.session.prefs.clone();
+    let themes = deckcraft_model::theme::builtin_themes();
+    let chosen = themes.iter().find(|th| th.name.eq_ignore_ascii_case(&prefs.new_theme)).cloned().unwrap_or_default();
+    let standard = prefs.new_size == "standard";
+    ui.horizontal_top(|ui| {
+        // A preview: the theme, its font and the slide's shape.
+        let mut preview = chosen.clone();
+        if !prefs.new_font.is_empty() {
+            preview.fonts.major.latin = prefs.new_font.clone();
+            preview.fonts.minor.latin = prefs.new_font.clone();
+        }
+        let size = if standard { vec2(144.0, 108.0) } else { vec2(192.0, 108.0) };
+        let (slot, _) = ui.allocate_exact_size(vec2(192.0, 108.0), Sense::hover());
+        let r = Rect::from_center_size(slot.center(), size);
+        crate::ribbon::paint_theme_tile(ui.painter(), r, &preview);
+        ui.painter().rect_stroke(r, CornerRadius::same(2), Stroke::new(1.0, t.border), StrokeKind::Outside);
+        ui.add_space(20.0);
+        egui::Grid::new("new_presentation_defaults").num_columns(2).spacing(vec2(14.0, 10.0)).show(ui, |ui| {
+            ui.label("Theme");
+            egui::ComboBox::from_id_salt("new_presentation_theme").width(240.0).selected_text(chosen.name.clone()).show_ui(ui, |ui| {
+                for th in &themes {
+                    if ui.selectable_label(th.name == chosen.name, th.name.as_str()).clicked() {
+                        let _ = app.run("settings.newPresentation", json!({"theme": th.name}));
+                    }
+                }
+            });
+            ui.end_row();
+            ui.label("Slide size");
+            ui.horizontal(|ui| {
+                for (id, label, on) in [("widescreen", "Widescreen (16:9)", !standard), ("standard", "Standard (4:3)", standard)] {
+                    if ui.add(egui::Button::selectable(on, label).min_size(vec2(0.0, 26.0))).clicked() {
+                        let _ = app.run("settings.newPresentation", json!({"size": id}));
+                    }
+                }
+            });
+            ui.end_row();
+            ui.label("Font");
+            const THEMES_FONTS: &str = "The theme's fonts";
+            let shown = if prefs.new_font.is_empty() { THEMES_FONTS.to_string() } else { prefs.new_font.clone() };
+            egui::ComboBox::from_id_salt("new_presentation_font").width(240.0).height(360.0).selected_text(shown).show_ui(ui, |ui| {
+                if ui.selectable_label(prefs.new_font.is_empty(), THEMES_FONTS).clicked() {
+                    let _ = app.run("settings.newPresentation", json!({"font": ""}));
+                }
+                for f in deckcraft_fonts::FontDb::global().families() {
+                    if ui.selectable_label(prefs.new_font == f, f.as_str()).clicked() {
+                        let _ = app.run("settings.newPresentation", json!({"font": f}));
+                    }
+                }
+            });
+            ui.end_row();
+        });
+    });
+
+    sub(ui, "Default shape", t);
+    if prefs.default_shape.is_some() {
+        dim(ui, "New shapes look like the one you picked with Set as Default Shape, now and the next time you open DeckCraft.");
+        ui.add_space(6.0);
+        if ui.button("Forget the default shape").clicked() {
+            let _ = app.run("settings.newPresentation", json!({"forgetShape": true}));
+        }
+    } else {
+        dim(ui, "Right-click a shape and pick Set as Default Shape: new shapes then look like it, and DeckCraft remembers it next time.");
+    }
+    ui.add_space(18.0);
+    if ui.button("New presentation with these settings").clicked() {
+        let _ = app.run("file.new", json!({}));
+    }
+}
+
+/// Settings › AI (#732): the user's own AI server, model and key, and Draft slides from a prompt.
+fn ai_settings(app: &mut SlideApp, ui: &mut Ui, t: &Tokens) {
+    use crate::ai::{Job, PRESETS};
+    ui.set_max_width(640.0);
+    dim(
+        ui,
+        "Use an AI model you choose: one running on this computer, like Ollama or LM Studio, or a service you have a key for. DeckCraft sends only what you type below, and only when you ask.",
+    );
+    if app.services.ai_send.is_none() {
+        ui.add_space(6.0);
+        ui.label(RichText::new("AI needs the DeckCraft desktop app: this window can't reach an AI server.").color(ui.visuals().warn_fg_color));
+    }
+    let waiting = app.ai.pending.as_ref().map(|(job, _)| job.clone());
+
+    sub(ui, "Server", t);
+    ui.horizontal(|ui| {
+        for (name, endpoint, model) in PRESETS {
+            let on = app.ui.ai.endpoint.trim_end_matches('/') == endpoint;
+            if ui.add(egui::Button::selectable(on, name).min_size(vec2(0.0, 26.0))).clicked() {
+                let model = if model.is_empty() { app.ui.ai.model.clone() } else { model.to_string() };
+                let _ = app.run("settings.ai", json!({"endpoint": endpoint, "model": model}));
+            }
+        }
+    });
+    ui.add_space(6.0);
+    egui::Grid::new("ai_settings").num_columns(2).spacing(vec2(14.0, 10.0)).show(ui, |ui| {
+        ui.label("Address");
+        // Kept as typed (it is checked when a request goes out), so half an address isn't an error.
+        let mut endpoint = app.ui.ai.endpoint.clone();
+        let field = ui.add(egui::TextEdit::singleline(&mut endpoint).hint_text("http://localhost:11434/v1").desired_width(380.0));
+        field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "AI server address"));
+        if field.changed() && endpoint.len() <= 2048 {
+            app.ui.ai.endpoint = endpoint;
+        }
+        ui.end_row();
+        ui.label("Model");
+        let mut model = app.ui.ai.model.clone();
+        let field = ui.add(egui::TextEdit::singleline(&mut model).hint_text("llama3.2").desired_width(380.0));
+        field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "AI model"));
+        if field.changed() {
+            let _ = app.run("settings.ai", json!({"model": model}));
+        }
+        ui.end_row();
+        ui.label("API key");
+        ui.horizontal(|ui| {
+            // Only the key for this address is shown (as dots); another server's key stays hidden.
+            let mut key = app.ai_key.for_endpoint(&app.ui.ai.endpoint).to_string();
+            let field = ui.add(egui::TextEdit::singleline(&mut key).password(true).hint_text("Not needed on this computer").desired_width(280.0));
+            field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "AI API key"));
+            if field.changed() {
+                let _ = app.run("settings.ai", json!({"key": key}));
+            }
+            if !app.ai_key.is_empty() && ui.button("Forget key").on_hover_text(format!("The saved key is for {}", app.ai_key.host())).clicked() {
+                let _ = app.run("settings.ai", json!({"key": ""}));
+            }
+        });
+        ui.end_row();
+    });
+    dim(
+        ui,
+        "The key stays on this computer, apart from your other settings (a settings backup doesn't include it), and goes only to the server it was typed for.",
+    );
+    let here = app.ai_key.for_endpoint(&app.ui.ai.endpoint);
+    if let Err(e) = crate::ai::chat_url(&app.ui.ai.endpoint) {
+        ui.label(RichText::new(e).color(ui.visuals().error_fg_color));
+    } else if crate::ai::key_in_the_clear(&app.ui.ai.endpoint, here) {
+        ui.label(
+            RichText::new(
+                "DeckCraft won't send your key to this address: it starts with http://, so the key would travel unencrypted. Use https://.",
+            )
+            .color(ui.visuals().warn_fg_color),
+        );
+    } else if here.is_empty() && !app.ai_key.is_empty() {
+        dim(ui, &format!("Your saved key is for {}, so DeckCraft doesn't send it to this address.", app.ai_key.host()));
+    }
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        let can = waiting.is_none() && app.services.ai_send.is_some();
+        if ui.add_enabled(can, egui::Button::new("Test connection")).clicked() {
+            let _ = app.run("ai.test", json!({}));
+        }
+        if waiting == Some(Job::Test) {
+            ui.spinner();
+            dim(ui, "Asking the server…");
+            if ui.button("Cancel").clicked() {
+                let _ = app.run("ai.cancel", json!({}));
+            }
+        }
+    });
+
+    sub(ui, "Draft slides", t);
+    dim(ui, "Describe a talk and the AI writes an outline; DeckCraft makes it into slides after the current one. Undo takes them away again.");
+    ui.add_space(6.0);
+    let field = egui::TextEdit::multiline(&mut app.ai.prompt)
+        .hint_text("Five slides introducing the solar system to a school class")
+        .desired_rows(3)
+        .desired_width(560.0)
+        .char_limit(crate::ai::MAX_PROMPT);
+    let field = ui.add(field);
+    field.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "What the slides are about"));
+    ui.add_space(6.0);
+    let has_doc = app.session.active().is_some();
+    ui.horizontal(|ui| {
+        let can = waiting.is_none() && has_doc && app.services.ai_send.is_some() && !app.ai.prompt.trim().is_empty();
+        if ui.add_enabled(can, egui::Button::new("Draft slides")).clicked() {
+            let prompt = app.ai.prompt.clone();
+            let _ = app.run("ai.draftSlides", json!({"prompt": prompt}));
+        }
+        if waiting == Some(Job::Draft) {
+            ui.spinner();
+            dim(ui, "Writing your slides… a model on this computer can take a minute.");
+            if ui.button("Cancel").clicked() {
+                let _ = app.run("ai.cancel", json!({}));
+            }
+        } else if !has_doc {
+            dim(ui, "Open or create a presentation first.");
+        }
+    });
+    if let Some(outcome) = &app.ai.outcome {
+        ui.add_space(8.0);
+        let (text, colour) = match outcome {
+            Ok(m) => (m.as_str(), t.text),
+            Err(e) => (e.as_str(), ui.visuals().error_fg_color),
+        };
+        ui.label(RichText::new(text).color(colour));
+    }
+}
+
+/// Settings › Backup and Reset: settings to and from a file, and Reset all settings.
+fn backup_and_reset(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    let t = Tokens::get(ui.ctx());
+    ui.set_max_width(640.0);
+    sub(ui, "Back up and restore", &t);
+    dim(
+        ui,
+        "Keep your theme, keyboard shortcuts, editing options and the rest in one file, to save or to bring to another computer. Recent files aren't included.",
+    );
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui.button("Back up settings…").clicked() {
+            app.backup_settings();
+        }
+        if ui.button("Restore from a backup…").clicked() {
+            app.restore_settings();
+        }
+    });
+    sub(ui, "Reset", &t);
+    reset_settings(app, ui, bs);
+}
+
+/// Settings › Backup and Reset: Reset all settings, with a confirmation in place.
+fn reset_settings(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    if !bs.confirm_reset {
+        dim(ui, "Put the theme, editing options, keyboard shortcuts and window layout back to how DeckCraft ships.");
+        dim(ui, "Your presentations and recent files are not touched.");
+        ui.add_space(6.0);
+        if ui.button("Reset all settings…").clicked() {
+            bs.confirm_reset = true;
+        }
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    ui.label(RichText::new("Reset every setting? Your presentations and recent files stay; this can't be undone.").color(t.text));
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui.add(egui::Button::new(RichText::new("Yes, reset everything").color(t.accent_text)).fill(t.accent)).clicked() {
+            let _ = app.run("app.resetSettings", json!({}));
+            bs.confirm_reset = false;
+            app.set_status("All settings are back to their defaults");
+        }
+        if ui.button("Cancel").clicked() {
+            bs.confirm_reset = false;
+        }
+    });
+}
+
+/// Keyboard Shortcuts (#127): every command and slide-show action with its keys. Each key can be
+/// removed, a new one recorded with +, and an action or everything reset. A recorded key another
+/// action has asks before it moves.
+fn shortcuts(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    use crate::keymap::{Combo, Scope};
+    let t = Tokens::get(ui.ctx());
+    record_key(app, ui, bs);
+    dim(
+        ui,
+        "Give any command your own keyboard keys. Custom keys are checked first; an action's built-in keys stop working once you change its keys.",
+    );
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        if ui.button("Save cheat sheet…").on_hover_text("A page with all your shortcuts, to print or keep").clicked() {
+            app.save_cheat_sheet();
+        }
+        if ui.button("Copy as text").clicked() {
+            let (text, _) = app.ui.keymap.cheat_sheet();
+            ui.ctx().copy_text(text);
+            app.set_status("Copied all your shortcuts as text");
+        }
+    });
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        for (show, label) in [(false, "Editor"), (true, "Slide Show")] {
+            if ui.add(egui::Button::selectable(bs.keys_show == show, label).min_size(vec2(96.0, 26.0))).clicked() {
+                bs.keys_show = show;
+                bs.recording = None;
+                bs.clash = None;
+            }
+        }
+        ui.add_space(16.0);
+        ui.add(egui::TextEdit::singleline(&mut bs.query).hint_text("Search commands or keys").desired_width(240.0));
+        if !bs.keys_show {
+            ui.checkbox(&mut bs.keys_bound_only, "Only commands with keys");
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let any = !app.ui.keymap.0.is_empty();
+            if ui.add_enabled(any, egui::Button::new("Reset all shortcuts")).clicked() {
+                let _ = app.run("keys.reset", json!({}));
+                bs.clash = None;
+            }
+        });
+    });
+    if !bs.keys_show {
+        dim(ui, "Editor shortcuts need Ctrl, Alt or a function key, so typing stays typing.");
+    }
+    if let Some(note) = &bs.key_note {
+        ui.label(RichText::new(note.as_str()).color(t.accent));
+    }
+    if let Some((id, keys, msg)) = bs.clash.clone() {
+        ui.add_space(6.0);
+        egui::Frame::NONE.fill(t.card).stroke(Stroke::new(1.0, t.accent)).corner_radius(CornerRadius::same(6)).inner_margin(10).show(ui, |ui| {
+            ui.label(RichText::new(msg).color(t.text));
+            ui.horizontal(|ui| {
+                if ui.add(egui::Button::new(RichText::new("Move it here").color(t.accent_text)).fill(t.accent)).clicked() {
+                    let _ = app.run("keys.set", json!({"action": id, "keys": keys, "replace": true}));
+                    bs.clash = None;
+                }
+                if ui.button("Cancel").clicked() {
+                    bs.clash = None;
+                }
+            });
+        });
+    }
+    ui.add_space(10.0);
+    let scope = if bs.keys_show { Scope::Show } else { Scope::Editor };
+    let q = bs.query.trim().to_lowercase();
+    let mut rows: Vec<_> = crate::keymap::actions().into_iter().filter(|a| a.scope == scope).collect();
+    rows.sort_by(|a, b| a.group.cmp(&b.group).then(a.label.cmp(&b.label)));
+    let km = app.ui.keymap.clone();
+    let mut edits: Vec<(String, Vec<String>)> = vec![];
+    let mut resets: Vec<String> = vec![];
+    egui::Grid::new("shortcut_rows").num_columns(3).striped(true).spacing(vec2(18.0, 6.0)).min_col_width(80.0).show(ui, |ui| {
+        for a in &rows {
+            let keys = km.keys_of(a);
+            let hay = format!("{} {} {} {}", a.label, a.id, a.group, keys.iter().map(Combo::display).collect::<Vec<_>>().join(" ")).to_lowercase();
+            if (!q.is_empty() && !hay.contains(&q))
+                || (scope == Scope::Editor && bs.keys_bound_only && q.is_empty() && keys.is_empty() && !km.is_custom(&a.id))
+            {
+                continue;
+            }
+            ui.vertical(|ui| {
+                ui.set_min_width(300.0);
+                ui.label(RichText::new(&a.label).color(t.text));
+                ui.label(RichText::new(format!("{} · {}", a.group, a.id)).font(theme::font(11.0)).color(t.text_faint));
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.set_max_width(420.0);
+                for k in &keys {
+                    let chip = ui.add(egui::Button::new(format!("{}  ×", k.display())).corner_radius(CornerRadius::same(10)));
+                    chip.widget_info(|| {
+                        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Remove {} from {}", k.display(), a.label))
+                    });
+                    if chip.on_hover_text("Remove this key").clicked() {
+                        edits.push((a.id.clone(), keys.iter().filter(|x| *x != k).map(Combo::spec).collect()));
+                    }
+                }
+                if bs.recording.as_deref() == Some(a.id.as_str()) {
+                    ui.label(RichText::new("Press the new keys… (Esc cancels)").color(t.accent));
+                } else if keys.len() < crate::keymap::MAX_KEYS {
+                    let add = ui.button("+").on_hover_text("Add a key");
+                    add.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Add a key to {}", a.label)));
+                    if add.clicked() {
+                        add.surrender_focus();
+                        bs.recording = Some(a.id.clone());
+                        bs.clash = None;
+                        bs.key_note = None;
+                    }
+                }
+            });
+            if km.is_custom(&a.id) {
+                if ui
+                    .link("Reset")
+                    .on_hover_text(format!(
+                        "Back to {}",
+                        if a.defaults.is_empty() {
+                            "no key".to_string()
+                        } else {
+                            a.defaults.iter().map(Combo::display).collect::<Vec<_>>().join(", ")
+                        }
+                    ))
+                    .clicked()
+                {
+                    resets.push(a.id.clone());
+                }
+            } else {
+                ui.label("");
+            }
+            ui.end_row();
+        }
+    });
+    for (id, keys) in edits {
+        let _ = app.run("keys.set", json!({"action": id, "keys": keys}));
+    }
+    for id in resets {
+        let _ = app.run("keys.reset", json!({"action": id}));
+    }
+}
+
+/// While an action is recording: the next key press becomes one of its keys (Esc cancels).
+fn record_key(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    use crate::keymap::Combo;
+    let Some(id) = bs.recording.clone() else { return };
+    let presses: Vec<(egui::Key, egui::Modifiers)> = ui.input(|i| {
+        i.events
+            .iter()
+            .filter_map(|e| if let egui::Event::Key { key, pressed: true, modifiers, .. } = e { Some((*key, *modifiers)) } else { None })
+            .collect()
+    });
+    let Some((key, m)) = presses.into_iter().next() else { return };
+    bs.recording = None;
+    if key == egui::Key::Escape && m.is_none() {
+        return;
+    }
+    let c = Combo::from_egui(key, m);
+    let Some(a) = crate::keymap::actions().into_iter().find(|a| a.id == id) else { return };
+    if a.scope == crate::keymap::Scope::Editor && !c.ok_for_editor() {
+        bs.key_note = Some(format!("{} can't be an editor shortcut: add Ctrl, Alt or use a function key.", c.display()));
+        return;
+    }
+    let mut keys: Vec<String> = app.ui.keymap.keys_of(&a).iter().map(Combo::spec).collect();
+    if keys.contains(&c.spec()) {
+        return;
+    }
+    keys.push(c.spec());
+    match app.run("keys.set", json!({"action": id, "keys": keys})) {
+        Ok(_) => bs.key_note = None,
+        Err(e) if e.contains("replace: true") => {
+            let msg = e.split(';').next().unwrap_or(&e).to_string();
+            bs.clash = Some((id, keys, format!("{msg}. Move it to {}?", a.label)));
+        }
+        Err(e) => bs.key_note = Some(e),
+    }
+}
+
+/// Width of Settings' tab list.
+const TAB_W: f32 = 210.0;
+/// Width of Settings › Themes: three theme cards side by side.
+const THEMES_W: f32 = 3.0 * THEME_CARD.x + 2.0 * 12.0;
+const THEME_CARD: egui::Vec2 = vec2(170.0, 102.0);
+
+/// Light or dark, and the interface theme (PowerPoint's Office Theme): a preview of every theme in
+/// the current mode, and the Custom theme's colours.
+fn appearance(app: &mut SlideApp, ui: &mut Ui, t: &Tokens) {
+    dim(ui, "Colours DeckCraft's own windows, ribbon and panes. Your slides keep their own colours.");
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        for (b, label) in [(theme::Brightness::Light, "Light"), (theme::Brightness::Dark, "Dark")] {
+            if ui.add(egui::Button::selectable(app.ui.brightness == b, label).min_size(vec2(84.0, 26.0))).clicked() {
+                let _ = app.run("view.dark", json!({"on": b == theme::Brightness::Dark}));
+            }
+        }
+    });
+    ui.add_space(10.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+        for th in theme::UiTheme::ALL {
+            let (r, resp) = ui.allocate_exact_size(THEME_CARD + vec2(0.0, 24.0), Sense::click());
+            let card = Rect::from_min_size(r.min, THEME_CARD);
+            paint_theme_preview(ui.painter(), card, &Tokens::build(th, app.ui.brightness, &app.ui.custom_theme));
+            let selected = app.ui.ui_theme == th;
+            if selected || resp.hovered() || resp.has_focus() {
+                ui.painter().rect_stroke(card, CornerRadius::same(6), Stroke::new(if selected { 2.5 } else { 1.5 }, t.accent), StrokeKind::Outside);
+            }
+            let font = if selected { theme::bold(13.0) } else { theme::font(13.0) };
+            ui.painter().text(pos2(r.min.x + 2.0, r.max.y - 10.0), Align2::LEFT_CENTER, th.label(), font, t.text);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, th.label()));
+            if resp.on_hover_text(th.description()).clicked() {
+                let _ = app.run("view.uiTheme", json!({"theme": th.id()}));
+            }
+        }
+    });
+    dim(ui, app.ui.ui_theme.description());
+    if app.ui.ui_theme == theme::UiTheme::Custom {
+        ui.add_space(12.0);
+        let mut c = app.ui.custom_theme;
+        let mut changed = false;
+        egui::Grid::new("custom_theme").num_columns(2).spacing(vec2(16.0, 8.0)).show(ui, |ui| {
+            ui.label("Window tint");
+            changed |= ui.color_edit_button_srgb(&mut c.tint).changed();
+            ui.end_row();
+            ui.label("Accent");
+            changed |= ui.color_edit_button_srgb(&mut c.accent).changed();
+            ui.end_row();
+            ui.label("Tint strength");
+            changed |= ui.add(egui::Slider::new(&mut c.strength, 0.0..=1.0).show_value(false)).changed();
+            ui.end_row();
+        });
+        if changed {
+            let _ = app.run("view.uiTheme", json!({"tint": theme::hex(c.tint), "accent": theme::hex(c.accent), "strength": c.strength}));
+        }
+        let ratio = [t.chrome, t.card, t.canvas].iter().map(|b| theme::contrast(t.text, *b)).fold(f32::INFINITY, f32::min);
+        let verdict = if ratio >= 7.0 { "very easy to read (WCAG AAA)" } else { "easy to read (WCAG AA)" };
+        dim(ui, &format!("Text contrast {ratio:.1}:1, {verdict}. Text colours adjust automatically to stay readable."));
+    }
+}
+
+/// A miniature DeckCraft window in the theme `tk`: title bar, ribbon, thumbnails and a slide.
+pub fn paint_theme_preview(p: &egui::Painter, r: Rect, tk: &Tokens) {
+    p.rect(r, CornerRadius::same(6), tk.canvas, Stroke::new(1.0, tk.card_border), StrokeKind::Inside);
+    let inner = r.shrink(1.0);
+    // Title bar with the Present button.
+    let title = Rect::from_min_size(inner.min, vec2(inner.width(), 16.0));
+    p.rect_filled(title, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, tk.chrome);
+    p.rect_filled(Rect::from_min_size(pos2(title.max.x - 30.0, title.min.y + 4.0), vec2(24.0, 8.0)), CornerRadius::same(4), tk.accent);
+    p.text(pos2(title.min.x + 6.0, title.center().y), Align2::LEFT_CENTER, "Aa", theme::bold(10.0), tk.text);
+    // Ribbon card with a selected tab underline and a few buttons.
+    let ribbon = Rect::from_min_size(pos2(inner.min.x + 4.0, title.max.y + 2.0), vec2(inner.width() - 8.0, 20.0));
+    p.rect(ribbon, CornerRadius::same(3), tk.card, Stroke::new(if tk.high_contrast { 1.0 } else { 0.0 }, tk.card_border), StrokeKind::Inside);
+    for i in 0..5 {
+        let b = Rect::from_min_size(pos2(ribbon.min.x + 6.0 + i as f32 * 14.0, ribbon.min.y + 6.0), vec2(9.0, 9.0));
+        p.rect_filled(b, CornerRadius::same(2), if i == 1 { tk.selected } else { tk.text_dim.gamma_multiply(0.85) });
+    }
+    p.line_segment([pos2(ribbon.min.x + 6.0, title.max.y), pos2(ribbon.min.x + 22.0, title.max.y)], Stroke::new(2.0, tk.accent));
+    // Thumbnails pane.
+    let side = Rect::from_min_max(pos2(inner.min.x, ribbon.max.y + 3.0), pos2(inner.min.x + 34.0, inner.max.y));
+    p.rect_filled(side, CornerRadius { nw: 0, ne: 0, sw: 5, se: 0 }, tk.chrome);
+    for i in 0..3 {
+        let th = Rect::from_min_size(pos2(side.min.x + 6.0, side.min.y + 4.0 + i as f32 * 17.0), vec2(22.0, 13.0));
+        let (w, c) = if i == 0 { (1.5, tk.accent) } else { (0.5, tk.border) };
+        p.rect(th, CornerRadius::same(1), Color32::WHITE, Stroke::new(w, c), StrokeKind::Outside);
+    }
+    // The slide on the canvas.
+    let area = Rect::from_min_max(pos2(side.max.x + 8.0, side.min.y + 6.0), pos2(inner.max.x - 8.0, inner.max.y - 8.0));
+    let h = (area.width() * 9.0 / 16.0).min(area.height());
+    let slide = Rect::from_center_size(area.center(), vec2(h * 16.0 / 9.0, h));
+    p.rect_filled(slide, CornerRadius::same(1), Color32::WHITE);
+    p.rect_filled(
+        Rect::from_min_size(slide.min + vec2(8.0, h * 0.3), vec2(slide.width() * 0.55, 4.0)),
+        CornerRadius::same(1),
+        Color32::from_gray(0x40),
+    );
+    p.rect_filled(
+        Rect::from_min_size(slide.min + vec2(8.0, h * 0.3 + 8.0), vec2(slide.width() * 0.4, 3.0)),
+        CornerRadius::same(1),
+        Color32::from_gray(0x9A),
+    );
 }
 
 #[cfg(test)]

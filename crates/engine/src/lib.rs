@@ -338,6 +338,15 @@ pub struct Prefs {
     pub undo_limit: usize,
     /// Minutes between AutoRecover saves of unsaved presentations.
     pub recovery_minutes: f64,
+    /// New presentations (File › Settings › New Presentations): the built-in theme `file.new`
+    /// uses when it isn't given one; empty is DeckCraft's default.
+    pub new_theme: String,
+    /// New presentations: `standard` (4:3); anything else is widescreen (16:9).
+    pub new_size: String,
+    /// New presentations: heading and body font; empty keeps the theme's.
+    pub new_font: String,
+    /// Set as Default Shape: the look new shapes get, kept between sessions.
+    pub default_shape: Option<cmd::format::Painted>,
 }
 
 impl Default for Prefs {
@@ -359,6 +368,10 @@ impl Default for Prefs {
             author: "Presenter".into(),
             undo_limit: 500,
             recovery_minutes: 1.0,
+            new_theme: String::new(),
+            new_size: String::new(),
+            new_font: String::new(),
+            default_shape: None,
         }
     }
 }
@@ -456,8 +469,6 @@ pub struct Session {
     pub painter: Option<(cmd::format::Painted, bool)>,
     /// Animation Painter: copied shape animations and whether it stays on (double-click).
     pub anim_painter: Option<(Vec<deckcraft_model::anim::Animation>, bool)>,
-    /// Set as Default Shape: the look new shapes get.
-    pub default_look: Option<cmd::format::Painted>,
     /// Nesting of commands run by commands: only the outermost one is an undo step and a journal
     /// entry.
     depth: u32,
@@ -496,7 +507,6 @@ impl Session {
             ui_requests: vec![],
             tool: tools::ToolState::default(),
             untitled: 0,
-            default_look: None,
             painter: None,
             anim_painter: None,
             depth: 0,

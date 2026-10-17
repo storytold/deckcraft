@@ -219,7 +219,7 @@ fn insert_shape(s: &mut Session, p: &Value) -> Result<Value> {
             });
         }
     }
-    if let (Some(look), false) = (&s.default_look, line_like) {
+    if let (Some(look), false) = (&s.prefs.default_shape, line_like) {
         super::format::apply_painted(&mut shape, look);
     }
     let id = add_shape(s, "shape.insert", shape, true)?;
