@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-17 | Insert › Date and Time: Japanese (`ja`, `ja-JP`, `ja_JP`) computes month and weekday names and the Japanese layout of every format (`datetime1`–`datetime13`), so a run in Japanese updates instead of keeping its saved text. The dialog's Japanese language entry lists the Japanese samples; English text is unchanged |
 | 2026-10-15 | PPTX trigger sequences keep separate On Click steps, including paragraph builds; synthetic import/edit/save/reopen and headless show regressions |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |

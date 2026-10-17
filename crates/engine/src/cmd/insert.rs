@@ -1436,7 +1436,8 @@ fn date_opts(p: &Value) -> Result<DateOpts> {
 }
 
 /// The text `format` shows now in `lang`. Errors when that language has no names for the format
-/// (month names and AM/PM are English only). An empty string where there is no clock (wasm).
+/// (month and day names are English and Japanese only). An empty string where there is no clock
+/// (wasm).
 fn date_sample(format: &str, lang: Option<&str>) -> Result<String> {
     use deckcraft_text::datetime::{DateTime, field_text};
     let probe = DateTime::new(2026, 10, 9, 20, 5, 7);
