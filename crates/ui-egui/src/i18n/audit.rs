@@ -91,12 +91,41 @@ fn the_catalog_covers_every_string_the_interface_looks_up() {
         let _ = h.state_mut().run("view.pane", json!({"pane": pane}));
         h.run_steps(3);
     }
+    // Contextual tabs only exist once something is selected, so give the harness a shape, a table,
+    // a chart and a SmartArt graphic, and the master views too.
+    let set_up: &[(&str, serde_json::Value)] = &[
+        ("insert.textBox", json!({"rect": [40, 40, 320, 90], "text": "Hello"})),
+        ("insert.table", json!({"rows": 2, "cols": 2})),
+        ("insert.chart", json!({"type": "column"})),
+        ("insert.smartArt", json!({"layout": "process"})),
+        ("view.slideMaster", json!({})),
+        ("view.handoutMaster", json!({})),
+        ("view.notesMaster", json!({})),
+    ];
+    for (command, params) in set_up {
+        let mut h = harness();
+        let _ = h.state_mut().run(command, params.clone());
+        h.run_steps(3);
+        for tab in ["Shape Format", "Picture Format", "Table Design", "Layout", "SmartArt Design", "Chart Design", "Playback", "Slide Master", "Handout Master", "Notes Master"] {
+            let mut h = harness();
+            let _ = h.state_mut().run(command, params.clone());
+            let _ = h.state_mut().run("view.tab", json!({"tab": tab}));
+            h.run_steps(3);
+        }
+    }
+    // The command palette shows every command label.
+    {
+        let mut h = harness();
+        let _ = h.state_mut().run("app.palette", json!({}));
+        h.run_steps(3);
+    }
     let keys = pseudo::looked_up();
     pseudo::set(false);
 
     let lang = super::Lang::from_code("zh-hans").unwrap_or(super::Lang::EN);
-    // An empty label (`small_button("")`) is not a catalog key.
-    let missing: Vec<&String> = keys.iter().filter(|k| !k.is_empty() && !super::has(lang, k)).collect();
+    // An empty label (`small_button("")`) is not a catalog key, and a key still carrying the
+    // pseudo-language marks (`⟦…⟧`) only appears in tests: it is a double-translation artifact.
+    let missing: Vec<&String> = keys.iter().filter(|k| !k.is_empty() && !k.contains('⟦') && !super::has(lang, k)).collect();
     println!("LOOKED_UP_COUNT={}", keys.len());
     println!("MISSING_COUNT={}", missing.len());
     for k in &missing {

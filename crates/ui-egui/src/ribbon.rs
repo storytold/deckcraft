@@ -190,7 +190,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
             let font = theme::font(13.0);
-            let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
+            // The tab's own text decides its width, so a translated label fits (a CJK tab is a
+            // different size from its English key).
+            let label = crate::tl!(name);
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.id().with(("tab", name)), Sense::click());
             let active = app.ui.tab == name;
@@ -199,7 +202,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             }
             let col = if contextual { t.contextual } else { t.text };
             let f = if active { theme::bold(13.0) } else { font };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, crate::tl!(name), f, col);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, label, f, col);
             if active {
                 let uw = (w - 20.0).max(16.0);
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
