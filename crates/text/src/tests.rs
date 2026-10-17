@@ -1467,3 +1467,109 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
 }
+
+/// #780: an empty line inside a paragraph is sized by the line break that ends it, and a
+/// trailing empty line is sized by the paragraph mark (`endParaRPr`).
+#[test]
+fn empty_line_height_follows_break_or_end_para_mark() {
+    let mut p = Presentation::default();
+    let lay_type = defaults::layout_of_kind(&p, LayoutType::TitleAndContent).unwrap();
+    let mut s = defaults::new_slide(&mut p, lay_type).expect("slide");
+    let mut body = s.shapes.remove(1);
+    body.xfrm = Some(Xfrm::new(0.0, 0.0, 1000.0, 1000.0));
+
+    // Box A: A1 (40 pt) · <a:br> (40 pt) · <a:br> (10 pt) · A2 (40 pt)
+    let para_a = Paragraph {
+        props: ParaProps {
+            bullet: Some(Bullet::None),
+            line_spacing: Some(Spacing::Pct(1.0)),
+            space_before: Some(Spacing::Pts(0.0)),
+            space_after: Some(Spacing::Pts(0.0)),
+            ..Default::default()
+        },
+        runs: vec![
+            Run { text: "A1".into(), props: RunProps { size: Some(40.0), ..Default::default() }, kind: RunKind::Text },
+            Run { text: String::new(), props: RunProps { size: Some(40.0), ..Default::default() }, kind: RunKind::Break },
+            Run { text: String::new(), props: RunProps { size: Some(10.0), ..Default::default() }, kind: RunKind::Break },
+            Run { text: "A2".into(), props: RunProps { size: Some(40.0), ..Default::default() }, kind: RunKind::Text },
+        ],
+        ..Default::default()
+    };
+
+    // Box B: B1 (40 pt) · <a:br> (40 pt) · endParaRPr (10 pt)
+    let para_b = Paragraph {
+        props: ParaProps {
+            bullet: Some(Bullet::None),
+            line_spacing: Some(Spacing::Pct(1.0)),
+            space_before: Some(Spacing::Pts(0.0)),
+            space_after: Some(Spacing::Pts(0.0)),
+            ..Default::default()
+        },
+        runs: vec![
+            Run { text: "B1".into(), props: RunProps { size: Some(40.0), ..Default::default() }, kind: RunKind::Text },
+            Run { text: String::new(), props: RunProps { size: Some(40.0), ..Default::default() }, kind: RunKind::Break },
+        ],
+        end_props: RunProps { size: Some(10.0), ..Default::default() },
+        ..Default::default()
+    };
+
+    // Box C: C1 (20 pt) · <a:br> (20 pt) · <a:br> (60 pt) · C2 (20 pt)
+    let para_c = Paragraph {
+        props: ParaProps {
+            bullet: Some(Bullet::None),
+            line_spacing: Some(Spacing::Pct(1.0)),
+            space_before: Some(Spacing::Pts(0.0)),
+            space_after: Some(Spacing::Pts(0.0)),
+            ..Default::default()
+        },
+        runs: vec![
+            Run { text: "C1".into(), props: RunProps { size: Some(20.0), ..Default::default() }, kind: RunKind::Text },
+            Run { text: String::new(), props: RunProps { size: Some(20.0), ..Default::default() }, kind: RunKind::Break },
+            Run { text: String::new(), props: RunProps { size: Some(60.0), ..Default::default() }, kind: RunKind::Break },
+            Run { text: "C2".into(), props: RunProps { size: Some(20.0), ..Default::default() }, kind: RunKind::Text },
+        ],
+        ..Default::default()
+    };
+
+    body.text = Some(TextBody {
+        paragraphs: vec![para_a, para_b, para_c],
+        body: BodyProps {
+            autofit: Some(AutoFit::None),
+            inset_l: Some(0.0),
+            inset_t: Some(0.0),
+            inset_r: Some(0.0),
+            inset_b: Some(0.0),
+            ..Default::default()
+        },
+        list_style: Default::default(),
+    });
+    s.shapes = vec![body.clone()];
+    p.slides = vec![std::sync::Arc::new(s)];
+
+    let l = lay(&p, &body, 1000.0, 1000.0);
+
+    // Box A has 3 lines: 40 pt line (height 48 pt), empty line ended by 10 pt break (height 12 pt), 40 pt line.
+    assert_eq!(l.para_lines[0], (0, 3));
+    let line_a0_h = l.lines[0].bottom - l.lines[0].top;
+    let line_a1_h = l.lines[1].bottom - l.lines[1].top;
+    let line_a2_h = l.lines[2].bottom - l.lines[2].top;
+    assert!((line_a0_h - 40.0 * LINE_PITCH).abs() < 1e-6, "A1 line height is 48 pt: {line_a0_h}");
+    assert!((line_a1_h - 10.0 * LINE_PITCH).abs() < 1e-6, "empty line ended by 10 pt break is 12 pt: {line_a1_h}");
+    assert!((line_a2_h - 40.0 * LINE_PITCH).abs() < 1e-6, "A2 line height is 48 pt: {line_a2_h}");
+
+    // Box B has 2 lines: 40 pt line (height 48 pt), trailing empty line ended by endParaRPr (10 pt, height 12 pt).
+    assert_eq!(l.para_lines[1], (3, 2));
+    let line_b0_h = l.lines[3].bottom - l.lines[3].top;
+    let line_b1_h = l.lines[4].bottom - l.lines[4].top;
+    assert!((line_b0_h - 40.0 * LINE_PITCH).abs() < 1e-6, "B1 line height is 48 pt: {line_b0_h}");
+    assert!((line_b1_h - 10.0 * LINE_PITCH).abs() < 1e-6, "trailing line ended by endParaRPr 10 pt is 12 pt: {line_b1_h}");
+
+    // Box C has 3 lines: 20 pt line (height 24 pt), empty line ended by 60 pt break (height 72 pt), 20 pt line.
+    assert_eq!(l.para_lines[2], (5, 3));
+    let line_c0_h = l.lines[5].bottom - l.lines[5].top;
+    let line_c1_h = l.lines[6].bottom - l.lines[6].top;
+    let line_c2_h = l.lines[7].bottom - l.lines[7].top;
+    assert!((line_c0_h - 20.0 * LINE_PITCH).abs() < 1e-6, "C1 line height is 24 pt: {line_c0_h}");
+    assert!((line_c1_h - 60.0 * LINE_PITCH).abs() < 1e-6, "empty line ended by 60 pt break is 72 pt: {line_c1_h}");
+    assert!((line_c2_h - 20.0 * LINE_PITCH).abs() < 1e-6, "C2 line height is 24 pt: {line_c2_h}");
+}
