@@ -513,6 +513,7 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
         }),
         spacing: r.f64("spc").map(|s| (s / 100.0).clamp(-4000.0, 4000.0)),
         kern: r.f64("kern").map(|k| (k / 100.0).clamp(0.0, 4000.0)),
+        kumimoji: r.bool("kumimoji"),
         no_proof: r.bool("noProof"),
         ..Default::default()
     };

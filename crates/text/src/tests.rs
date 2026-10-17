@@ -1220,6 +1220,35 @@ fn east_asian_vertical_text_marks_cjk_upright() {
 }
 
 #[test]
+fn kumimoji_stands_digits_upright_in_east_asian_vertical_text() {
+    let flags = |l: &TextLayout| -> Vec<(char, bool)> {
+        l.runs.iter().filter(|r| !r.cells.is_empty()).flat_map(|r| r.cells.iter().map(move |c| (c.1, r.upright))).filter(|(c, _)| *c != ' ').collect()
+    };
+    let (p, mut sh) = setup("第1章", 300.0, 600.0);
+    sh.text.as_mut().unwrap().body.vert = Some(deckcraft_model::text::TextDir::EaVertical);
+    let l = lay(&p, &sh, 300.0, 600.0);
+    // Without `a:rPr/@kumimoji` the number lies on its side, the ideographs stand.
+    assert_eq!(flags(&l), vec![('第', true), ('1', false), ('章', true)]);
+    // 組み文字: the run's number stands upright too; an explicit false changes nothing.
+    for kumimoji in [Some(true), Some(false), None] {
+        sh.text.as_mut().unwrap().paragraphs[0].runs[0].props.kumimoji = kumimoji;
+        let l = lay(&p, &sh, 300.0, 600.0);
+        let want =
+            if kumimoji == Some(true) { vec![('第', true), ('1', true), ('章', true)] } else { vec![('第', true), ('1', false), ('章', true)] };
+        assert_eq!(flags(&l), want, "kumimoji {kumimoji:?}");
+    }
+    // The attribute only concerns vertical text: horizontal text has no upright glyphs.
+    sh.text.as_mut().unwrap().paragraphs[0].runs[0].props.kumimoji = Some(true);
+    sh.text.as_mut().unwrap().body.vert = None;
+    let l = lay(&p, &sh, 300.0, 600.0);
+    assert!(l.runs.iter().all(|r| !r.upright));
+    // Stacked text already stands every character upright (`Upright::All` is untouched).
+    sh.text.as_mut().unwrap().body.vert = Some(deckcraft_model::text::TextDir::Stacked);
+    let l = lay(&p, &sh, 300.0, 600.0);
+    assert!(l.runs.iter().filter(|r| !r.cells.is_empty()).all(|r| r.upright));
+}
+
+#[test]
 fn mongolian_lines_run_left_to_right_and_stacked_letters_stand_one_em_apart() {
     let (p, mut sh) = setup("one\ntwo", 200.0, 400.0);
     sh.text.as_mut().unwrap().body.vert = Some(deckcraft_model::text::TextDir::Vertical);
