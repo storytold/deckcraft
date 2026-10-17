@@ -201,10 +201,13 @@ fn hyperlinked_runs_take_the_theme_hyperlink_look() {
         zoom_return: None,
     });
     assert_eq!(resolve::run(&ctx, title, &para, &RunProps { link: slide, ..Default::default() }).fill, hlink);
-    // The run's own colour and underline win; u="none" removes the underline.
+    // The run's own colour gives way to hlink unless the link keeps its text colour
+    // (`ahyp:hlinkClr val="tx"`); the run's underline wins: u="none" removes it.
     let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
     let own = RunProps { link: link.clone(), fill: red.clone(), underline: Some("none".into()), ..Default::default() };
     let r = resolve::run(&ctx, title, &para, &own);
+    assert_eq!((r.fill, r.underline.as_deref()), (hlink.clone(), Some("none")));
+    let r = resolve::run(&ctx, title, &para, &RunProps { link_keeps_color: Some(true), ..own });
     assert_eq!((r.fill, r.underline.as_deref()), (red, Some("none")));
     let dbl = resolve::run(&ctx, title, &para, &RunProps { link, underline: Some("dbl".into()), ..Default::default() });
     assert_eq!((dbl.fill, dbl.underline.as_deref()), (hlink, Some("dbl")));
