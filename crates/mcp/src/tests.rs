@@ -358,3 +358,24 @@ fn tools_with_x_y_w_h_place_the_shape() {
     let text = bad["result"]["content"][0]["text"].as_str().unwrap();
     assert!(!text.contains("doesn't take"), "x/y/w/h must not reach the engine: {text}");
 }
+
+/// Phase-2 findings: `set_text` reaches a table cell with `cell`, and `list_commands` says what a
+/// command acts on, so "disabled: nothing selected" no longer hides that `ids`/`id` work.
+#[test]
+fn set_text_takes_a_cell_and_list_commands_says_what_acts_on_what() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let t = tool(&mut s, "insert_table", json!({"rows": 2, "cols": 2, "x": 50, "y": 50, "w": 400, "h": 100}));
+    let id = t["id"].as_u64().expect("table id");
+    tool(&mut s, "set_text", json!({"id": id, "cell": [1, 0], "text": "pptx"}));
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let table = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap();
+    assert_eq!(table["table"]["cells"][1][0], "pptx", "{table}");
+    let cmds = tool(&mut s, "list_commands", json!({"filter": "shape.fill"}));
+    let fill = cmds.as_array().unwrap().iter().find(|c| c["id"] == "shape.fill").unwrap();
+    assert!(fill["actsOn"].as_str().unwrap_or("").contains("`ids`"), "{fill}");
+    let cmds = tool(&mut s, "list_commands", json!({"filter": "table.style"}));
+    let style = cmds.as_array().unwrap().iter().find(|c| c["id"] == "table.style").unwrap();
+    assert!(style["actsOn"].as_str().unwrap_or("").contains("`id`"), "{style}");
+}
