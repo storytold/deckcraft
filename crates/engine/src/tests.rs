@@ -4119,3 +4119,24 @@ fn picture_crop_answers_the_box_of_a_picture_it_cropped_not_a_locked_one() {
     let x = st.shape(ShapeId(locked as u32)).unwrap().xfrm.unwrap();
     assert_eq!((x.w, x.h), (200.0, 100.0), "the locked picture kept its box");
 }
+
+/// A rotated picture turns about its centre, so a new height alone would move the corner it hangs
+/// from; the refit keeps that corner where it was.
+#[test]
+fn picture_crop_keeps_the_corner_of_a_rotated_picture() {
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"name": "wide.png", "data": wide_png_b64(), "rect": [100, 50, 400, 200]})).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("shape.sizePosition", &json!({"rot": 30.0})).unwrap();
+    let corner = |s: &Session| {
+        let x = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
+        (x, x.affine() * deckcraft_geom::Point::ZERO)
+    };
+    let (before, c0) = corner(&s);
+    assert_eq!(before.rot, 30.0);
+    s.execute("picture.crop", &json!({"id": id, "right": 0.5})).unwrap();
+    let (after, c1) = corner(&s);
+    assert_eq!((after.w, after.h, after.rot), (400.0, 400.0, 30.0), "{after:?}");
+    assert!((c0 - c1).hypot() < 1e-6, "the top-left corner moved from {c0:?} to {c1:?}");
+}

@@ -1089,7 +1089,15 @@ fn crop(s: &mut Session, p: &Value) -> Result<Value> {
                 if let Some(x) = sh.xfrm.as_mut().filter(|_| vw > 1e-9 && vh > 1e-9) {
                     let h = x.w * vh / vw;
                     if h.is_finite() && h > 0.0 {
+                        // A rotated frame turns about its centre, which the new height moves:
+                        // shift it back so the corner the picture hangs from stays where it was.
+                        let corner = x.affine() * deckcraft_geom::Point::ZERO;
                         x.h = h;
+                        if x.rot != 0.0 {
+                            let moved = x.affine() * deckcraft_geom::Point::ZERO;
+                            x.x += corner.x - moved.x;
+                            x.y += corner.y - moved.y;
+                        }
                     }
                 }
             }
