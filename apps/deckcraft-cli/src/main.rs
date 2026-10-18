@@ -484,10 +484,10 @@ fn run(args: &[String]) -> Result<(), String> {
     for p in save.iter().chain(&export) {
         output_format(p)?;
     }
-    let mut s = Session::new();
-    open(&mut s, input.as_deref(), sample)?;
-    // Every --cmd is read before any runs, so a malformed one leaves nothing half done; a refusal
-    // mirrors how the text was read and shows the form that works (#298).
+    // Every --cmd is read before the presentation is opened and before any runs (file.open and
+    // file.new included), so a malformed one leaves nothing half done and is reported ahead of an
+    // --in that cannot be opened; a refusal mirrors how the text was read and shows the form that
+    // works (#298).
     let total = cmds.len();
     let mut parsed = Vec::with_capacity(total);
     for (k, c) in cmds.iter().enumerate() {
@@ -509,6 +509,8 @@ fn run(args: &[String]) -> Result<(), String> {
         };
         parsed.push((n, id, p));
     }
+    let mut s = Session::new();
+    open(&mut s, input.as_deref(), sample)?;
     for (n, id, p) in &parsed {
         let r = s.execute(id, p).map_err(|e| format!("--cmd {n} of {total}, `{id}`: {e}"))?;
         if print {
