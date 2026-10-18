@@ -105,7 +105,10 @@ presentation: a shape or text command given an id on another slide edits it ther
 slide current and answers `{"changed": 1, "onSlides": [4], "currentSlide": 4}`; commands that need
 several shapes on one slide (`shape.connect`, `arrange.*`) say where the shape is and the
 `slide.go` that gets there. `batch` items and `run_command` may name a tool (`add_shape`,
-`add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`.
+`add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`. A
+`batch` item with `"as": "a"` can be referred to by any later item's params as `"$a"` (its `id`,
+or its whole answer when it has none), so insert, connect and animate fit in one batch; a `$name`
+with no such earlier item is refused.
 
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,
 rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, closed, smooth}`,
