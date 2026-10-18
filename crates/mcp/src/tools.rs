@@ -124,13 +124,13 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
+            "Export slides: png/jpeg (one slide, or all with all:true: one file per slide, numbered from 1, the displayed slide number: d.png → d1.png, d2.png…; the answer's `indices` are the 0-based slide of each file), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
             obj(
                 json!({
                     "path": string("Output path"),
                     "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
                     "slide": int("Slide index for images"),
-                    "all": boolean("All slides (images)"),
+                    "all": boolean("All slides (images): one file per slide, numbered from 1 (the displayed slide number), while `slide` is a 0-based index"),
                     "scale": num("Pixels per point for images (default 2)"),
                     "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
                     "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
