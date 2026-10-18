@@ -215,14 +215,14 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     let id = egui::Id::new("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
-        ui.label("Show");
+        ui.label(crate::i18n::t("Show"));
         for m in NameMode::ALL {
             if ui.selectable_label(v.names == m, m.label()).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
-        ui.label("Sort");
+        ui.label(crate::i18n::t("Sort"));
         egui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
             for k in SortKey::ALL {
                 if ui.selectable_label(v.key == k, k.label().0).clicked() {
@@ -238,12 +238,12 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
         if ui.selectable_label(!v.table, "Grab bag").clicked() {
             v.table = false;
         }
-        if ui.selectable_label(v.table, "Table").clicked() {
+        if ui.selectable_label(v.table, crate::i18n::t("Table")).clicked() {
             v.table = true;
         }
     });
     let list = sorted(CONTRIBUTORS, v.names, v.key, v.ascending);
-    ui.label(RichText::new(format!("{} contributors · {} commits", list.len(), group(TOTAL_COMMITS))).small().weak());
+    ui.label(RichText::new(crate::i18n::tf("{} contributors · {} commits", &[(list.len()).to_string(), (group(TOTAL_COMMITS)).to_string()])).small().weak());
     ui.separator();
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         if list.is_empty() {

@@ -15,6 +15,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -238,6 +239,8 @@ pub enum ViewMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    /// UI language (English default; العربية switches the interface and its alignment).
+    pub language: i18n::Language,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -280,6 +283,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            language: i18n::Language::English,
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -611,6 +615,12 @@ impl SlideApp {
         }
     }
 
+    /// Set the UI language and remember it in `UiState`.
+    pub fn set_language(&mut self, l: i18n::Language) {
+        self.ui.language = l;
+        i18n::set_language(l);
+    }
+
     /// Does this recent path exist on disk? Probed once per path per session and only on
     /// desktop (the web build has no file system to ask): a stat on a dead network share can
     /// block for seconds, so it must not repeat on every frame. A stale answer is harmless —
@@ -665,7 +675,7 @@ impl SlideApp {
                 }
             }
             Ok(_) => {}
-            Err(e) => self.set_status(e.clone()),
+            Err(e) => self.set_status(i18n::t(e)),
         }
         self.drain_requests();
         r
@@ -1237,7 +1247,7 @@ impl SlideApp {
                     }
                 };
                 if let Err(e) = r {
-                    self.set_status(e.to_string());
+                    self.set_status(i18n::t(&e.to_string()));
                 }
             }
         } else if self.services.open_async.is_some() {
@@ -1262,11 +1272,11 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status(i18n::tf("Saved {}", &[path.clone()]));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }
-                    Err(e) => self.set_status(e.to_string()),
+                    Err(e) => self.set_status(i18n::t(&e.to_string())),
                 }
             }
         } else if let Some(dl) = self.services.download.as_mut()
@@ -1274,7 +1284,7 @@ impl SlideApp {
         {
             match deckcraft_engine::cmd::file::save_bytes(&d.doc, ext) {
                 Ok(bytes) => dl(&suggested, &bytes),
-                Err(e) => self.set_status(e.to_string()),
+                Err(e) => self.set_status(i18n::t(&e.to_string())),
             }
         }
     }
@@ -1296,8 +1306,8 @@ impl SlideApp {
     pub fn save(&mut self) {
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
-                Ok(_) => self.set_status("Saved"),
-                Err(e) => self.set_status(e.to_string()),
+                Ok(_) => self.set_status(i18n::t("Saved")),
+                Err(e) => self.set_status(i18n::t(&e.to_string())),
             }
         } else {
             self.save_as_dialog("deckcraft");
@@ -1315,7 +1325,7 @@ impl SlideApp {
                 }
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
                 UiRequest::StartShow { from } => self.start_show(from, false),
-                UiRequest::Message { text } => self.set_status(text),
+                UiRequest::Message { text } => self.set_status(i18n::t(&text)),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
                         self.save_as_dialog("deckcraft");
@@ -1562,7 +1572,7 @@ impl SlideApp {
             if self.session.documents().iter().any(|d| d.is_dirty())
                 && let Err(e) = self.session.execute("file.recovery.save", &json!({}))
             {
-                self.set_status(format!("Couldn't save AutoRecover information: {e}"));
+                self.set_status(crate::i18n::tf("Couldn't save AutoRecover information: {}", &[e.to_string()]));
             }
         }
         // On the web, dropped files can only be read asynchronously: the host reads them and
@@ -1773,6 +1783,7 @@ impl SlideApp {
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        i18n::set_language(self.ui.language);
         if !self.fonts_ready {
             ctx.request_repaint();
             return;

@@ -22,6 +22,9 @@ egui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
+# The Arabic dictionary's translations are handed out in visual order (i18n/bidi.rs): a UAX #9
+# reordering pass for egui's run-by-run, left-to-right text layout.
+unicode-bidi = "0.3.18"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
