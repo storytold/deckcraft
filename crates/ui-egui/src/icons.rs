@@ -286,9 +286,40 @@ icons! {
     Lock => "lock",
     /// Open padlock (Selection pane: an object that isn't locked).
     Unlock => "unlock",
+    /// A broken link (detach text from its style).
+    Detach => "detach",
+    /// Text box padding: left and right, top and bottom, each side.
+    PadH => "pad-h",
+    PadV => "pad-v",
+    PadSides => "pad-sides",
+    /// Corner radius: each corner on its own, and the corners themselves.
+    Corners => "corners",
+    CornerTl => "corner-tl",
+    CornerTr => "corner-tr",
+    CornerBr => "corner-br",
+    CornerBl => "corner-bl",
+    /// Four small circles: styles (text styles, colour styles), as canvas editors mark them.
+    Styles => "styles",
+    /// Two sliders: more settings for a section (type details).
+    Sliders => "sliders",
+    /// Text anchored at the top, middle or bottom of its box: an arrow onto a line.
+    TextTop => "text-top",
+    TextMiddle => "text-middle",
+    TextBottom => "text-bottom",
+    /// A circular arrow: put back as it was (a placeholder onto its layout's position).
+    Revert => "revert",
+    /// A slide on an easel: a presentation (document tabs).
+    Deck => "deck",
+    /// A luggage tag: what placeholder of the layout a box is.
+    Tag => "tag",
+    /// A row of frames with a plus: the slide's animation states.
+    States => "states",
+    /// Lines appearing one by one: build a text box's paragraphs one at a time.
+    Build => "build",
     Eye => "eye",
     EyeOff => "eye-off",
     Close => "close",
+    Pointer => "pointer",
     Check => "check",
     Plus => "plus",
     Minus => "minus",
@@ -341,7 +372,19 @@ pub fn paint(painter: &egui::Painter, rect: egui::Rect, icon: Icon, ink: egui::C
         return;
     }
     let origin = rect.center() - vec2(size * 0.5, size * 0.5);
-    let pen = Pen { p: painter, o: origin, k: size / 24.0, sw: stroke_width(size), ink, dis: disabled };
+    let pen = Pen { p: painter, o: origin, k: size / 24.0, sw: stroke_width(size), ink, dis: disabled, mono: false };
+    draw(&pen, icon);
+}
+
+/// [`paint`] in `ink` alone: accent colours are drawn in the ink too (the canvas shell's panel,
+/// whose icons are one grey, as in canvas editors).
+pub fn paint_mono(painter: &egui::Painter, rect: egui::Rect, icon: Icon, ink: egui::Color32, disabled: bool) {
+    let size = rect.width().min(rect.height());
+    if !size.is_finite() || size <= 0.5 {
+        return;
+    }
+    let origin = rect.center() - vec2(size * 0.5, size * 0.5);
+    let pen = Pen { p: painter, o: origin, k: size / 24.0, sw: stroke_width(size), ink, dis: disabled, mono: true };
     draw(&pen, icon);
 }
 
@@ -402,6 +445,8 @@ struct Pen<'a> {
     sw: f32,
     ink: Color32,
     dis: bool,
+    /// Accents in the ink.
+    mono: bool,
 }
 
 fn rad(deg: f32) -> f32 {
@@ -561,7 +606,7 @@ impl Pen<'_> {
         match c {
             C::Ink(a) => self.ink.gamma_multiply(a * dim),
             C::Acc(col, a) => {
-                if self.dis {
+                if self.dis || self.mono {
                     self.ink.gamma_multiply(a * dim)
                 } else {
                     col.gamma_multiply(a)
@@ -2289,6 +2334,114 @@ fn draw(p: &Pen<'_>, icon: Icon) {
             p.rect(3.0, 10.5, 16.5, 21.5, 1.8, N, K);
             p.seg((9.75, 14.5), (9.75, 17.5), K);
         }
+        I::Detach => {
+            // The link's two halves pulled apart, with the break marked between them.
+            let link = |c: P2| {
+                let local = rrect_pts(-4.5, -2.8, 4.5, 2.8, 2.8);
+                p.shape(&tf(c, -45.0, &local), N, K);
+            };
+            link((7.0, 17.0));
+            link((17.0, 7.0));
+            p.seg((9.0, 4.0), (10.0, 7.0), K);
+            p.seg((4.0, 9.0), (7.0, 10.0), K);
+            p.seg((15.0, 20.0), (14.0, 17.0), K);
+            p.seg((20.0, 15.0), (17.0, 14.0), K);
+        }
+        I::Revert => {
+            // Three quarters of a circle, from the left over the top round to the bottom, with
+            // the arrowhead at its start: turning back.
+            p.line(&arc_pts((12.0, 12.0), 7.0, 7.0, 180.0, 450.0), K);
+            p.line(&[(2.5, 10.0), (5.0, 12.8), (7.5, 10.0)], K);
+        }
+        I::Deck => {
+            p.rect(3.5, 4.5, 20.5, 15.5, 1.5, N, K);
+            p.seg((12.0, 15.5), (12.0, 18.0), K);
+            p.line(&[(8.0, 20.5), (12.0, 18.0), (16.0, 20.5)], K);
+        }
+        I::Styles => {
+            for (x, y) in [(8.0, 8.0), (16.0, 8.0), (8.0, 16.0), (16.0, 16.0)] {
+                p.circle((x, y), 2.6, N, K);
+            }
+        }
+        I::Sliders => {
+            // Two vertical tracks, each with a knob at a different height.
+            p.seg((8.0, 4.0), (8.0, 20.0), K);
+            p.seg((16.0, 4.0), (16.0, 20.0), K);
+            p.circle((8.0, 14.5), 2.4, W, K);
+            p.circle((16.0, 9.5), 2.4, W, K);
+        }
+        I::TextTop => {
+            p.seg((5.0, 5.0), (19.0, 5.0), K);
+            p.seg((12.0, 19.0), (12.0, 7.5), K);
+            p.line(&[(8.5, 11.0), (12.0, 7.5), (15.5, 11.0)], K);
+        }
+        I::TextBottom => {
+            p.seg((5.0, 19.0), (19.0, 19.0), K);
+            p.seg((12.0, 5.0), (12.0, 16.5), K);
+            p.line(&[(8.5, 13.0), (12.0, 16.5), (15.5, 13.0)], K);
+        }
+        I::TextMiddle => {
+            p.seg((5.0, 12.0), (19.0, 12.0), K);
+            p.seg((12.0, 3.5), (12.0, 9.0), K);
+            p.line(&[(9.5, 6.5), (12.0, 9.0), (14.5, 6.5)], K);
+            p.seg((12.0, 20.5), (12.0, 15.0), K);
+            p.line(&[(9.5, 17.5), (12.0, 15.0), (14.5, 17.5)], K);
+        }
+        I::Tag => {
+            // A tag with its corner cut to a point and a hole near the point.
+            p.shape(&[(4.0, 6.0), (4.0, 12.0), (12.5, 20.5), (20.5, 12.5), (12.0, 4.0), (6.0, 4.0)], N, K);
+            p.circle((8.5, 8.5), 1.5, N, K);
+        }
+        I::States => {
+            // Three frames in a row, the last one dashed, as the strip under the slide shows them.
+            p.rect(2.5, 8.0, 8.5, 16.0, 1.0, N, K);
+            p.rect(10.0, 8.0, 16.0, 16.0, 1.0, N, K);
+            p.seg((17.5, 12.0), (21.5, 12.0), K);
+            p.seg((19.5, 10.0), (19.5, 14.0), K);
+        }
+        I::Build => {
+            // Three bullet lines, the last one faint, appearing from the left.
+            for (k, y) in [6.5f32, 12.0, 17.5].into_iter().enumerate() {
+                let c = if k == 2 { C::Ink(0.4) } else { K };
+                p.dot((5.0, y), 1.4, c);
+                p.seg((8.5, y), (20.0, y), c);
+            }
+        }
+        I::CornerTl | I::CornerTr | I::CornerBr | I::CornerBl => {
+            // A rounded corner, drawn top-left and mirrored into place.
+            let mut pts = vec![(5.0, 19.0), (5.0, 12.0)];
+            pts.extend(arc_pts((12.0, 12.0), 7.0, 7.0, 180.0, 270.0));
+            pts.push((19.0, 5.0));
+            let (fx, fy) = match icon {
+                I::CornerTr => (true, false),
+                I::CornerBr => (true, true),
+                I::CornerBl => (false, true),
+                _ => (false, false),
+            };
+            let pts: Vec<P2> = pts.into_iter().map(|(x, y)| (if fx { 24.0 - x } else { x }, if fy { 24.0 - y } else { y })).collect();
+            p.line(&pts, K);
+        }
+        I::Corners => {
+            // The four corners of a rounded square, apart.
+            for (fx, fy) in [(false, false), (true, false), (true, true), (false, true)] {
+                let mut pts = vec![(4.0, 9.0), (4.0, 7.5)];
+                pts.extend(arc_pts((7.5, 7.5), 3.5, 3.5, 180.0, 270.0));
+                pts.push((9.0, 4.0));
+                let pts: Vec<P2> = pts.into_iter().map(|(x, y)| (if fx { 24.0 - x } else { x }, if fy { 24.0 - y } else { y })).collect();
+                p.line(&pts, K);
+            }
+        }
+        I::PadH | I::PadV | I::PadSides => {
+            p.rect(3.5, 3.5, 20.5, 20.5, 2.5, N, K);
+            if icon != I::PadV {
+                p.seg((7.5, 7.5), (7.5, 16.5), K);
+                p.seg((16.5, 7.5), (16.5, 16.5), K);
+            }
+            if icon != I::PadH {
+                p.seg((7.5, 7.5), (16.5, 7.5), K);
+                p.seg((7.5, 16.5), (16.5, 16.5), K);
+            }
+        }
         I::Eye | I::EyeOff => {
             let mut e = quad_pts((2.0, 12.0), (12.0, 4.0), (22.0, 12.0), 16);
             e.extend(quad_pts((22.0, 12.0), (12.0, 20.0), (2.0, 12.0), 16).into_iter().skip(1));
@@ -2299,6 +2452,7 @@ fn draw(p: &Pen<'_>, icon: Icon) {
                 p.seg_w((4.0, 21.0), (20.0, 3.0), K, 1.1);
             }
         }
+        I::Pointer => p.rshape(&[(5.5, 3.5), (19.0, 12.0), (12.5, 13.5), (9.0, 20.0)], 1.2, N, K),
         I::Close => {
             p.seg_w((5.5, 5.5), (18.5, 18.5), K, 1.1);
             p.seg_w((18.5, 5.5), (5.5, 18.5), K, 1.1);

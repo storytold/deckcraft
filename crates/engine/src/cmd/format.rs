@@ -1191,6 +1191,7 @@ fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "size": r.size,
         "bold": r.bold.unwrap_or(false),
         "italic": r.italic.unwrap_or(false),
+        "spacing": r.spacing.unwrap_or(0.0),
         "underline": r.underline.as_deref().is_some_and(|u| u != "none"),
         "strike": r.strike.is_some_and(|x| x != Strike::None),
         "superscript": r.baseline.unwrap_or(0.0) > 0.0,

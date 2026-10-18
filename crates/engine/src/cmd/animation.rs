@@ -48,6 +48,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             options
         ),
+        cmd!(
+            "animation.build",
+            "Build Text",
+            [],
+            None,
+            "{effect: none|appear|fade|fly|wipe|zoom, ids?} — the text boxes' paragraphs come in one per click with that entrance (PowerPoint's By Paragraph build), replacing their earlier builds; none removes the builds",
+            has_selection,
+            build_text
+        ),
         cmd!("animation.clear", "Remove All Animations", [], None, "{index?: slide}", has_slide, clear),
         cmd!(
             noundo "animation.painter",
@@ -207,6 +216,56 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if a.effect == "none" {
             out.retain(|x| !ids.contains(&x.shape));
+        }
+        sl.animations = out;
+        Ok(json!({"count": sl.animations.len()}))
+    })
+}
+
+/// Is `a` a paragraph-by-paragraph entrance (a text build)?
+pub fn is_build(a: &Animation) -> bool {
+    a.class == AnimClass::Entrance && a.text_build == TextBuild::ByParagraph && a.paragraph.is_none()
+}
+
+fn build_text(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "animation.build";
+    let ids = targets(s, p)?;
+    let effect = str_param(p, "effect").ok_or_else(|| bad(CMD, "missing `effect`"))?;
+    let a = if effect == "none" {
+        None
+    } else {
+        if !["appear", "fade", "fly", "wipe", "zoom"].contains(&effect) {
+            return Err(bad(CMD, format!("`{effect}` isn't a build effect (appear, fade, fly, wipe, zoom)")));
+        }
+        let mut a = build(&json!({"effect": effect, "class": "entrance"}))?;
+        a.text_build = TextBuild::ByParagraph;
+        a.start = AnimStart::OnClick;
+        Some(a)
+    };
+    s.edit(|doc, sel| {
+        let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad(CMD, "no slide"))?);
+        // A shape's earlier build is replaced in its place in the sequence.
+        let mut out = vec![];
+        let mut placed = vec![];
+        for x in sl.animations.drain(..) {
+            if ids.contains(&x.shape) && is_build(&x) {
+                if let Some(a) = &a
+                    && !placed.contains(&x.shape)
+                {
+                    placed.push(x.shape);
+                    out.push(Animation { shape: x.shape, ..a.clone() });
+                }
+            } else {
+                out.push(x);
+            }
+        }
+        if let Some(a) = &a {
+            for id in &ids {
+                let texty = deckcraft_model::find_shape(&sl.shapes, *id).is_some_and(|sh| sh.text.as_ref().is_some_and(|t| !t.is_empty()));
+                if !placed.contains(id) && texty {
+                    out.push(Animation { shape: *id, ..a.clone() });
+                }
+            }
         }
         sl.animations = out;
         Ok(json!({"count": sl.animations.len()}))
@@ -524,5 +583,34 @@ mod tests {
         // Apply to shape 3 - painter still armed
         s.execute("animation.painterApply", &json!({"ids": [id3]})).unwrap();
         assert!(s.anim_painter.is_some());
+    }
+
+    #[test]
+    fn build_brings_paragraphs_in_one_per_click() {
+        let mut s = Session::with_new();
+        let v = s.execute("insert.textBox", &json!({"rect": [50.0, 50.0, 300.0, 100.0], "text": "One\nTwo\nThree"})).unwrap();
+        let id = v["id"].as_u64().unwrap();
+        s.execute("selection.select", &json!({"ids": [id]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "spin", "class": "emphasis"})).unwrap();
+        s.execute("animation.build", &json!({"effect": "fade"})).unwrap();
+        let anims = || s.doc().unwrap().current_slide().unwrap().animations.clone();
+        let a = anims();
+        assert_eq!(a.len(), 2, "the spin stays");
+        assert!(is_build(&a[1]) && a[1].effect == "fade");
+        s.execute("animation.build", &json!({"effect": "appear"})).unwrap();
+        let a = s.doc().unwrap().current_slide().unwrap().animations.clone();
+        assert_eq!(a.len(), 2, "replaced, not added");
+        assert_eq!(a[1].effect, "appear");
+        s.execute("animation.build", &json!({"effect": "none"})).unwrap();
+        let a = s.doc().unwrap().current_slide().unwrap().animations.clone();
+        assert_eq!(a.len(), 1);
+        assert!(!is_build(&a[0]));
+        assert!(s.execute("animation.build", &json!({"effect": "spin"})).is_err());
+        // It plays as one click per paragraph and survives a round trip.
+        s.execute("animation.build", &json!({"effect": "fade"})).unwrap();
+        let data = s.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["data"].clone();
+        s.execute("file.openBytes", &json!({"name": "b.pptx", "data": data})).unwrap();
+        let a = s.doc().unwrap().doc.slides[0].animations.clone();
+        assert!(a.iter().any(is_build), "the build is read back: {a:?}");
     }
 }

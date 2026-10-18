@@ -43,11 +43,19 @@ pub fn specs() -> Vec<CommandSpec> {
             "Format Background",
             ["Design", "Customize"],
             None,
-            "{color? | gradient? | picture?: base64 | pattern? | style?: 1..12 | reset?, all?: bool, index?, transparency?: 0..1, pictureProps?: {tile?, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0.01..10, align?, mirror?, stretch?: [l,t,r,b], rotateWithShape?}, copy?: bool}",
-            has_slide,
+            "{color? | gradient? | picture?: base64 | pattern? | style?: 1..12 | reset?, all?: bool, index?, transparency?: 0..1, pictureProps?: {tile?, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0.01..10, align?, mirror?, stretch?: [l,t,r,b], rotateWithShape?}, copy?: bool} — the current slide's, or in Slide Master view the master's or layout's",
+            has_doc,
             background
         ),
-        cmd!("design.hideBackgroundGraphics", "Hide Background Graphics", ["Format Background"], None, "{hide?: bool}", has_slide, hide_bg_graphics),
+        cmd!(
+            "design.hideBackgroundGraphics",
+            "Hide Background Graphics",
+            ["Format Background"],
+            None,
+            "{hide?: bool} — the current slide's, or in Slide Master view the layout's",
+            has_doc,
+            hide_bg_graphics
+        ),
         cmd!(
             "design.slideSize",
             "Slide Size",
@@ -66,7 +74,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             header_footer
         ),
-        cmd!(noundo "view.slideMaster", "Slide Master", ["View", "Master Views"], None, "{master?: index, layout?: index}", has_doc, master_view),
+        cmd!(noundo "view.slideMaster", "Slide Master", ["View", "Master Views"], None, "{master?: index, layout?: index|null (null, or a master alone: the master itself)}", has_doc, master_view),
         cmd!(
             "view.handoutMaster",
             "Handout Master",
@@ -734,9 +742,21 @@ fn apply_picture_props(pf: &mut deckcraft_model::style::PictureFill, pp: &Value)
 
 fn hide_bg_graphics(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, sel| {
-        if let Some(sl) = doc.slides.get_mut(sel.slide) {
-            let sl = Arc::make_mut(sl);
-            sl.show_master_shapes = !bool_param(p, "hide").unwrap_or(sl.show_master_shapes);
+        match sel.target {
+            // A layout hides the master's graphics for every slide using it.
+            Target::Layout { master, layout } => {
+                if let Some(l) = doc.masters.get_mut(master).and_then(|m| Arc::make_mut(m).layouts.get_mut(layout)) {
+                    l.show_master_shapes = !bool_param(p, "hide").unwrap_or(l.show_master_shapes);
+                }
+            }
+            Target::Master { .. } => return Err(bad("design.hideBackgroundGraphics", "the master has no graphics behind it")),
+            Target::Handout | Target::NotesMaster => return Err(bad("design.hideBackgroundGraphics", "open a slide or a layout")),
+            Target::Slides => {
+                if let Some(sl) = doc.slides.get_mut(sel.slide) {
+                    let sl = Arc::make_mut(sl);
+                    sl.show_master_shapes = !bool_param(p, "hide").unwrap_or(sl.show_master_shapes);
+                }
+            }
         }
         Ok(())
     })?;
@@ -960,13 +980,13 @@ pub fn civil(z: i64) -> (i64, u32, u32) {
 fn master_view(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let mi = usize_param(p, "master").unwrap_or_else(|| master_index(&st.doc, &st.selection));
-    // A master thumbnail sends `{master}` and means the master itself. `{master, layout}` selects
-    // that layout. With neither key, follow the current slide's layout.
-    let layout = if p.get("master").is_some() && p.get("layout").is_none() {
-        None
-    } else {
-        usize_param(p, "layout")
-            .or_else(|| st.current_slide().and_then(|sl| st.doc.masters.get(mi).and_then(|m| m.layouts.iter().position(|l| l.id == sl.layout))))
+    // `layout: null`, or a master thumbnail's `{master}` alone, opens the master itself;
+    // `{master, layout}` selects that layout; with neither key, the current slide's layout.
+    let layout = match p.get("layout") {
+        Some(Value::Null) => None,
+        Some(_) => usize_param(p, "layout"),
+        None if p.get("master").is_some() => None,
+        None => st.current_slide().and_then(|sl| st.doc.masters.get(mi).and_then(|m| m.layouts.iter().position(|l| l.id == sl.layout))),
     };
     let target = match layout {
         Some(l) => Target::Layout { master: mi, layout: l },

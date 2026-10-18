@@ -88,15 +88,18 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         if icon_toggle(&mut right, Icon::Search, "Search commands (⇧⌘P)", true, false).clicked() {
             app.palette = Some((String::new(), 0));
         }
-        let share = right.add(
-            egui::Button::new(egui::RichText::new("  Present  ").color(t.accent_text).font(theme::bold(13.0)))
-                .fill(t.accent)
-                .corner_radius(control_h / 2.0)
-                .min_size(vec2(84.0, control_h)),
-        );
-        if share.clicked() && has_doc {
-            let from = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
-            app.start_show(from, false);
+        // The canvas shell presents from its inspector.
+        if app.ui.shell == crate::Shell::Classic {
+            let share = right.add(
+                egui::Button::new(egui::RichText::new("  Present  ").color(t.accent_text).font(theme::bold(13.0)))
+                    .fill(t.accent)
+                    .corner_radius(control_h / 2.0)
+                    .min_size(vec2(84.0, control_h)),
+            );
+            if share.clicked() && has_doc {
+                let from = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
+                app.start_show(from, false);
+            }
         }
         if icon_toggle(&mut right, Icon::CommentsBubble, "Comments", has_doc, app.ui.pane.as_deref() == Some("comments")).clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));
@@ -113,6 +116,140 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
             let _ = app.run("view.dark", json!({}));
         }
     });
+}
+
+/// Height of the document tab row.
+pub const TABS_H: f32 = 30.0;
+
+/// The tab row under the title bar while more than one presentation is open, as in canvas
+/// editors: Home, then one tab per presentation (an icon and its name, fading out when it's
+/// long; a dot while it has unsaved changes, the close button on hover and on the current tab),
+/// then + for a new one. Click a tab to switch to it (⌃Tab and ⌘` go to the next one),
+/// middle-click to close it.
+pub fn doc_strip(app: &mut SlideApp, ui: &mut Ui) {
+    if app.session.documents().len() < 2 {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    // The row's empty part is a shade darker than the tabs; the current tab is the colour of
+    // what's under it.
+    let strip_bg = if t.dark { Color32::from_rgb(0x1F, 0x1F, 0x1F) } else { Color32::from_rgb(0xE2, 0xE2, 0xE2) };
+    let tab_bg = t.chrome;
+    let current_bg = if app.ui.shell == crate::Shell::Canvas { t.card } else { t.chrome };
+    let divider = if t.dark { Color32::from_rgb(0x3A, 0x3A, 0x3A) } else { Color32::from_rgb(0xD4, 0xD4, 0xD4) };
+    egui::Panel::top("doc_tabs").exact_size(TABS_H).frame(egui::Frame::NONE.fill(strip_bg)).show(ui, |ui| {
+        let area = ui.max_rect();
+        let docs: Vec<(String, bool, Option<String>)> = app.session.documents().iter().map(|d| (d.title(), d.is_dirty(), d.path.clone())).collect();
+        let active = if app.backstage_open() { None } else { app.session.active_index() };
+        let home_w = 40.0;
+        let plus_w = 32.0;
+        let n = docs.len() as f32;
+        let w = ((area.width() - home_w - plus_w) / n).clamp(72.0, 176.0);
+        let p = ui.painter().clone();
+        // Home.
+        let home = Rect::from_min_size(area.min, vec2(home_w, area.height()));
+        let hresp = ui.interact(home, ui.id().with("doc-tab-home"), Sense::click());
+        let home_on = app.backstage_open();
+        p.rect_filled(
+            home,
+            CornerRadius::ZERO,
+            if home_on {
+                current_bg
+            } else if hresp.hovered() {
+                t.hover
+            } else {
+                tab_bg
+            },
+        );
+        icons::paint_mono(&p, Rect::from_center_size(home.center(), vec2(15.0, 15.0)), Icon::Home, t.text_dim, false);
+        p.vline(home.max.x, area.y_range(), Stroke::new(1.0, divider));
+        hresp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, home_on, "Home tab"));
+        if hresp.on_hover_text("Home").clicked() {
+            let _ = app.run("app.home", json!({}));
+        }
+        let mut switch = None;
+        let mut close = None;
+        let mut x = home.max.x;
+        for (i, (title, dirty, path)) in docs.iter().enumerate() {
+            let r = Rect::from_min_size(pos2(x, area.min.y), vec2(w, area.height()));
+            if r.max.x > area.max.x - plus_w {
+                break;
+            }
+            x = r.max.x;
+            let on = active == Some(i);
+            let resp = ui.interact(r, ui.id().with(("doc-tab", i)), Sense::click());
+            let x_r = Rect::from_center_size(pos2(r.max.x - 14.0, r.center().y), vec2(18.0, 18.0));
+            let x_resp = ui.interact(x_r, ui.id().with(("doc-tab-close", i)), Sense::click());
+            let hovered = resp.hovered() || x_resp.hovered();
+            let bg = if on {
+                current_bg
+            } else if hovered {
+                t.hover
+            } else {
+                tab_bg
+            };
+            p.rect_filled(r, CornerRadius::ZERO, bg);
+            p.vline(r.max.x, area.y_range(), Stroke::new(1.0, divider));
+            let ink = if on { t.text } else { t.text_dim };
+            icons::paint_mono(&p, Rect::from_center_size(pos2(r.min.x + 18.0, r.center().y), vec2(15.0, 15.0)), Icon::Deck, ink, false);
+            // The name, faded out where it meets the close button.
+            let text_r = Rect::from_min_max(pos2(r.min.x + 32.0, r.min.y), pos2(r.max.x - 26.0, r.max.y));
+            let galley = p.layout_no_wrap(title.clone(), theme::font(12.0), ink);
+            let long = galley.size().x > text_r.width();
+            p.with_clip_rect(text_r).galley(pos2(text_r.min.x, r.center().y - galley.size().y / 2.0), galley, ink);
+            if long {
+                fade_out(&p, Rect::from_min_max(pos2(text_r.max.x - 18.0, r.min.y), text_r.max), bg);
+            }
+            if on || hovered {
+                if x_resp.hovered() {
+                    p.rect_filled(x_r, CornerRadius::same(4), t.pressed);
+                }
+                icons::paint_mono(&p, x_r.shrink(4.5), Icon::Close, t.text_dim, false);
+            } else if *dirty {
+                p.circle_filled(x_r.center(), 3.0, t.text_dim);
+            }
+            x_resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Close {title}")));
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, title));
+            let tip = path.clone().unwrap_or_else(|| format!("{title} (not saved yet)"));
+            if x_resp.clicked() || resp.middle_clicked() {
+                close = Some(i);
+            } else if resp.on_hover_text(tip).clicked() {
+                switch = Some(i);
+            }
+        }
+        // New presentation.
+        let plus = Rect::from_min_size(pos2(x, area.min.y), vec2(plus_w, area.height()));
+        let resp = ui.interact(plus, ui.id().with("doc-tab-new"), Sense::click());
+        if resp.hovered() {
+            p.rect_filled(plus.shrink(4.0), CornerRadius::same(5), t.hover);
+        }
+        icons::paint_mono(&p, Rect::from_center_size(plus.center(), vec2(14.0, 14.0)), Icon::Plus, t.text_dim, false);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "New Presentation"));
+        if resp.on_hover_text("New Presentation (⌘N)").clicked() {
+            run(app, "file.new", json!({}));
+        }
+        if let Some(i) = switch.or(close) {
+            run(app, "window.next", json!({"index": i}));
+            app.backstage = None;
+            app.slides_focus = false;
+        }
+        if close.is_some() {
+            app.close_presentation();
+        }
+    });
+}
+
+/// Fade the right edge of `r` into `bg` (long names in tabs).
+fn fade_out(p: &egui::Painter, r: Rect, bg: Color32) {
+    let mut mesh = egui::Mesh::default();
+    let clear = Color32::from_rgba_unmultiplied(bg.r(), bg.g(), bg.b(), 0);
+    mesh.colored_vertex(r.left_top(), clear);
+    mesh.colored_vertex(r.right_top(), bg);
+    mesh.colored_vertex(r.right_bottom(), bg);
+    mesh.colored_vertex(r.left_bottom(), clear);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    p.add(egui::Shape::mesh(mesh));
 }
 
 /// Which contextual tabs apply to the selection.
@@ -372,7 +509,7 @@ fn clipboard_group(app: &mut SlideApp, ui: &mut Ui) {
     });
 }
 
-fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
+pub(crate) fn layout_menu(app: &mut SlideApp, ui: &mut Ui, cmd: &str) {
     let layouts: Vec<(String, deckcraft_model::LayoutId)> = app
         .session
         .active()

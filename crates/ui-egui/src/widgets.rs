@@ -162,7 +162,7 @@ pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) 
     }
     icons::paint(&painter, rect.shrink(3.0), icon, t.text, !enabled);
     // Named for screen readers (and tests) by its tooltip.
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, tip));
     resp.on_hover_text(tip)
 }
 
@@ -350,6 +350,20 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     {
         out = Some(None);
     }
+    // Any colour: a saturation / value square and hue bar. The colour applies when the pointer is
+    // let go, so a drag is one change.
+    ui.label(egui::RichText::new("Custom").font(theme::bold(12.0)));
+    let pid = ui.id().with("picker");
+    let (mut c, mut pending): (Color32, bool) = ui.data_mut(|d| d.get_temp(pid)).unwrap_or((Color32::from_rgb(0x33, 0x66, 0xCC), false));
+    ui.spacing_mut().slider_width = 200.0;
+    if egui::widgets::color_picker::color_picker_color32(ui, &mut c, egui::widgets::color_picker::Alpha::Opaque) {
+        pending = true;
+    }
+    if pending && !ui.input(|i| i.pointer.any_down()) {
+        pending = false;
+        out = Some(Some(ColorRef::rgb(Rgba::rgb(c.r(), c.g(), c.b()))));
+    }
+    ui.data_mut(|d| d.insert_temp(pid, (c, pending)));
     // "More Colors…": a hex field.
     let id = ui.id().with("hex");
     let mut hex: String = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_default());
@@ -411,17 +425,23 @@ pub fn spinner(ui: &mut Ui, id: &str, value: f64, step: f64, suffix: &str, width
     let mut out = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).font(theme::font(12.0)));
+        let edit = key.with("edit");
+        if let Some(d) = arrow_step(ui, edit, step) {
+            let v = parse_num(&text).unwrap_or(value) + d;
+            text = fmt_num(v, suffix);
+            out = Some(v);
+        }
+        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).font(theme::font(12.0)).id(edit));
         if r.has_focus() {
             ui.data_mut(|d| d.insert_temp(key, text.clone()));
         } else {
             ui.data_mut(|d| d.remove::<String>(key));
         }
-        if r.lost_focus() {
-            let num: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
-            if let Ok(v) = num.parse::<f64>() {
-                out = Some(v);
-            }
+        if r.lost_focus()
+            && let Some(v) = parse_num(&text)
+            && out.is_none()
+        {
+            out = Some(v);
         }
         let (rect, _) = ui.allocate_exact_size(vec2(12.0, 22.0), Sense::hover());
         let up = ui.interact(Rect::from_min_max(rect.min, pos2(rect.max.x, rect.center().y)), key.with("up"), Sense::click());
@@ -440,6 +460,36 @@ pub fn spinner(ui: &mut Ui, id: &str, value: f64, step: f64, suffix: &str, width
         }
     });
     out
+}
+
+/// ↑ / ↓ pressed in the focused number field `field`: the change to make, `step` (⇧: ten steps),
+/// with the keys taken so the caret doesn't move. None when the field doesn't have the keyboard.
+pub fn arrow_step(ui: &Ui, field: egui::Id, step: f64) -> Option<f64> {
+    if !ui.memory(|m| m.has_focus(field)) {
+        return None;
+    }
+    let mut d = 0.0;
+    ui.input_mut(|i| {
+        i.events.retain(|e| match e {
+            egui::Event::Key { key: k @ (egui::Key::ArrowUp | egui::Key::ArrowDown), pressed, modifiers, .. }
+                if !modifiers.command && !modifiers.alt && !modifiers.ctrl =>
+            {
+                if *pressed {
+                    let n = if modifiers.shift { 10.0 } else { 1.0 };
+                    d += if *k == egui::Key::ArrowUp { n * step } else { -n * step };
+                }
+                false
+            }
+            _ => true,
+        });
+    });
+    (d != 0.0).then_some(d)
+}
+
+/// The number in a field's text ("120 px", "45%", "-3"), if there is one.
+pub fn parse_num(text: &str) -> Option<f64> {
+    let num: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+    num.parse::<f64>().ok()
 }
 
 pub fn fmt_num(v: f64, suffix: &str) -> String {
@@ -526,7 +576,7 @@ mod tests {
     fn the_eyedroppers_colour_comes_back_through_the_menu_that_asked() {
         let picked = RefCell::new(None);
         let scheme = deckcraft_model::Theme::default().colors;
-        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 500.0)).build_ui(|ui| {
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 800.0)).build_ui(|ui| {
             theme::install_fonts(ui.ctx());
             let r = ui.button("Pick");
             color_popup(&r).show(|ui| {

@@ -418,8 +418,9 @@ impl Session {
         }
         // Shapes, topmost first.
         // Locked objects are still picked (to format them or type in them); they just don't move.
+        // With `locked_click_through` clicks pass through them to what's below.
         for sh in st.shapes().iter().rev() {
-            if sh.hidden {
+            if sh.hidden || (sh.locked && self.prefs.locked_click_through) {
                 continue;
             }
             if let Some(h) = hit_shape(st, sh, p, tol) {

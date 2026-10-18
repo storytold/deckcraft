@@ -338,6 +338,9 @@ pub struct Prefs {
     pub undo_limit: usize,
     /// Minutes between AutoRecover saves of unsaved presentations.
     pub recovery_minutes: f64,
+    /// Clicks pass through locked objects (canvas editors' lock: select them from a list). Off,
+    /// a locked object is picked and formatted but doesn't move, as in PowerPoint.
+    pub locked_click_through: bool,
 }
 
 impl Default for Prefs {
@@ -359,6 +362,7 @@ impl Default for Prefs {
             author: "Presenter".into(),
             undo_limit: 500,
             recovery_minutes: 1.0,
+            locked_click_through: false,
         }
     }
 }

@@ -14,6 +14,8 @@ artwork. The ribbon and menu icons stay original drawings.
 
 | Asset | Author | Source | Licence | Used for |
 |---|---|---|---|---|
+| `assets/fonts/Inter-Regular.ttf`, `assets/fonts/Inter-Medium.ttf`, `assets/fonts/Inter-SemiBold.ttf` | The Inter Project Authors (Rasmus Andersson) | Inter 4.001, <https://github.com/rsms/inter> (copied from PhotoCraft's `assets/fonts`) | SIL OFL 1.1, `assets/fonts/OFL-Inter.txt` | Interface font (text, medium labels, semibold headings), embedded at build time |
+| `assets/fonts/OFL-Inter.txt` | The Inter Project Authors | <https://github.com/rsms/inter> | — (licence text) | Inter's licence |
 | `docs/brand/artcraft-logo.svg`, `docs/brand/artcraft-logo.png` | ArtCraft Team | ArtCraft brand kit (project owner) | ArtCraft trademark, `docs/brand/LICENSE-brand.txt` (not open source) | README header |
 | `docs/brand/artcraft-logo-white.svg`, `docs/brand/artcraft-logo-white.png` | ArtCraft Team | ArtCraft brand kit | ArtCraft trademark, `docs/brand/LICENSE-brand.txt` | README header (dark mode) |
 | `docs/brand/artcraft-mark.svg`, `docs/brand/artcraft-mark.png` | ArtCraft Team | ArtCraft brand kit | ArtCraft trademark, `docs/brand/LICENSE-brand.txt` | README footer, About |
