@@ -6,7 +6,8 @@ use super::{
 
 /// Apply run formatting to the text selection (or, when not editing, to all text of the
 /// selected shapes). A caret without a range formats the word it's in (PowerPoint behaviour),
-/// or sets the formatting for what is typed next at a word boundary.
+/// or sets the formatting for what is typed next at a word boundary. Formatting shapes answers
+/// as [`edit_shapes`] does (how many changed), so a caller can check a multi-selection took.
 pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sync)) -> Result<Value> {
     format_run_levels(s, f, &|r, _| f(r))
 }
@@ -56,7 +57,7 @@ pub(crate) fn format_run_levels(
     } else {
         Vec::new()
     };
-    edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+    let changed = edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         let id = sh.id;
         match &mut sh.kind {
             ShapeKind::Table(t) => {
@@ -95,7 +96,7 @@ pub(crate) fn format_run_levels(
     for id in ids {
         fit_text_box(s, id)?;
     }
-    ok()
+    Ok(changed)
 }
 
 /// Format the runs of [a, b) paragraph by paragraph, each with its own level's effective props, so
@@ -223,7 +224,7 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     }
     let cells = st.selection.cells;
     let on_master = editing_master(st);
-    edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+    let changed = edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         let id = sh.id;
         let inherited = on_master && sh.ph.is_some();
         match &mut sh.kind {
@@ -256,7 +257,7 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     for id in ids {
         fit_text_box(s, id)?;
     }
-    ok()
+    Ok(changed)
 }
 
 /// Apply a paragraph change to one level of a body's list style.
@@ -281,14 +282,14 @@ pub(crate) fn format_body(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     if ids.is_empty() {
         return Err(bad("format", "select a shape"));
     }
-    edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+    let changed = edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         f(&mut sh.text.get_or_insert_with(TextBody::default).body);
         Ok(())
     })?;
     for id in ids {
         fit_text_box(s, id)?;
     }
-    ok()
+    Ok(changed)
 }
 
 pub(super) fn fonts_used(s: &mut Session, _: &Value) -> Result<Value> {
