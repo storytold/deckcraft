@@ -93,7 +93,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "batch",
             "Run several commands",
-            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params. An item with `as: \"box\"` can be referred to by a later item's params as \"$box\" (its id), so insert, connect and animate fit in one batch.",
+            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params; a tool that answers an image (render_slide) is refused here: call it on its own. An item with `as: \"box\"` can be referred to by a later item's params as \"$box\" (its id), so insert, connect and animate fit in one batch.",
             obj(
                 json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}, "as": string("Name for this item's answer, for \"$name\" in later params")}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
                 &["commands"],
@@ -359,12 +359,17 @@ fn substitute(v: &mut Value, named: &std::collections::HashMap<String, Value>) -
     Ok(())
 }
 
-/// A command id or a tool name, run either way, as a command's answer.
+/// A command id or a tool name, run either way, as a command's answer. A batch answers text, so a
+/// tool that answers an image (render_slide, screenshot without `path`) is refused rather than
+/// reported ok with the image dropped.
 fn run_either(b: &mut dyn Backend, id: &str, params: Value) -> Result<Value, String> {
     if !is_tool(id) {
         return exec(b, id, params);
     }
     let r = call_tool(b, id, &params);
+    if r.content.iter().any(|c| c.get("type").and_then(Value::as_str) == Some("image")) {
+        return Err(format!("`{id}` answers an image, which a batch cannot carry (it answers one text array): call {id} on its own"));
+    }
     let text = r.content.iter().filter_map(|c| c.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
     if r.is_error { Err(text) } else { Ok(serde_json::from_str(&text).unwrap_or(Value::String(text))) }
 }
