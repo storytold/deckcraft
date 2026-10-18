@@ -41,6 +41,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("ogg", Class::Standalone),
     ("opus", Class::Standalone),
     ("h264", Class::Layer(1)),
+    ("aac", Class::Layer(1)),
     ("hevc", Class::Layer(1)),
     ("vp9", Class::Layer(1)),
     ("av1", Class::Layer(1)),

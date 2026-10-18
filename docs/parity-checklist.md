@@ -65,7 +65,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending) | P0 | P |
 | Files | Export slides as PNG/JPEG | P0 | D |
 | Files | Export outline / RTF | P2 | P |
-| Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
+| Files | Export video (MP4/MOV with animations, media and sound; File › Export › Create a Video) / animated GIF (one frame per slide, no transitions) | P2 | P |
 | Files | Print (slides, handouts, notes, outline) | P1 | M |
 | Files | Password protection | P2 | M |
 | Files | Reuse slides from another file | P1 | P |

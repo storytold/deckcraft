@@ -535,3 +535,102 @@ fn print_slides_follow_the_settings() {
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
 }
+
+/// Steps the window until the background video export has finished (at most ~60 s).
+fn wait_for_video(h: &mut Harness<'_, SlideApp>) {
+    for _ in 0..3000 {
+        if h.state().video_job.is_none() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        h.run_steps(1);
+    }
+    panic!("the video export didn't finish");
+}
+
+/// The window as PNG into `$DECKCRAFT_UI_SHOTS/<name>.png`, to look at (when a GPU renderer
+/// is available and the variable is set).
+fn shot(h: &mut Harness<'_, SlideApp>, name: &str) {
+    if let (Ok(dir), Ok(img)) = (std::env::var("DECKCRAFT_UI_SHOTS"), h.render()) {
+        let _ = img.save(std::path::Path::new(&dir).join(format!("{name}.png")));
+    }
+}
+
+#[test]
+fn export_creates_a_video_with_the_chosen_options() {
+    let dir = temp_dir("video");
+    let (services, asked) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Create a Video");
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.export), Some(ExportTask::Video));
+    for label in ["Resolution", "Frames per second", "Sound", "Include hidden slides", "Create Video"] {
+        assert!(h.query_all_by_label(label).next().is_some(), "no “{label}” on the page");
+    }
+    // Pick Standard (480p) in the resolution list, then keep the rest small for the test.
+    h.query_all_by_role(Role::ComboBox).find(|n| !in_nav(n.rect())).expect("the resolution list").click();
+    h.run_steps(3);
+    h.query_all_by_label_contains("Standard (480p)").last().expect("480p in the list").click();
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.video_height), Some(480));
+    shot(&mut h, "video-export-page");
+    if let Some(b) = h.state_mut().backstage.as_mut() {
+        b.video_height = 90;
+        b.video_fps = 10;
+        b.video_slide_s = 0.3;
+        b.video_click_s = 0.1;
+        b.video_audio = "pcm";
+    }
+    h.run_steps(2);
+    click_on_page(&h, "Create Video");
+    h.run_steps(2);
+    wait_for_video(&mut h);
+    let title = h.state().session.active().unwrap().title();
+    // PCM sound means a MOV.
+    assert_eq!(asked.borrow().last(), Some(&format!("{title}.mov")));
+    let bytes = std::fs::read(dir.join(format!("{title}.mov"))).unwrap();
+    assert_eq!(&bytes[4..8], b"ftyp");
+    let status = h.state().status.as_ref().map(|s| s.0.clone()).unwrap_or_default();
+    assert!(status.starts_with("Exported"), "{status}");
+    assert!(h.state().session.active().unwrap().path.is_none(), "exports are copies");
+}
+
+#[test]
+fn a_video_export_shows_progress_and_can_be_cancelled() {
+    let dir = temp_dir("video-cancel");
+    let (services, _) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Create a Video");
+    h.run_steps(3);
+    if let Some(b) = h.state_mut().backstage.as_mut() {
+        b.video_height = 360;
+        b.video_slide_s = 600.0;
+    }
+    click_on_page(&h, "Create Video");
+    h.run_steps(2);
+    assert!(h.state().video_job.is_some());
+    assert!(h.state_mut().run("app.exportVideo", json!({})).is_err(), "one export at a time");
+    // The progress bar counts frames.
+    let mut seen = false;
+    for _ in 0..500 {
+        h.run_steps(1);
+        if h.query_all_by_label_contains("Frame ").next().is_some() {
+            seen = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    assert!(seen, "no progress shown");
+    shot(&mut h, "video-export-progress");
+    click_on_page(&h, "Cancel");
+    h.run_steps(2);
+    wait_for_video(&mut h);
+    assert_eq!(h.state().status.as_ref().map(|s| s.0.as_str()), Some("Video export cancelled"));
+    let title = h.state().session.active().unwrap().title();
+    assert!(!dir.join(format!("{title}.mp4")).exists(), "nothing written");
+    assert_eq!(h.state_mut().run("app.cancelVideoExport", json!({})).unwrap(), json!({"cancelled": false}));
+}
