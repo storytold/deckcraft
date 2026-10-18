@@ -137,7 +137,13 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
         let mut placeholders = serde_json::Map::new();
         for sh in &slide.shapes {
             if let Some(ph) = &sh.ph {
-                placeholders.entry(ph.kind.xml().to_string()).or_insert(json!(sh.id));
+                let role = match ph.kind {
+                    k if k.is_title() => "title",
+                    deckcraft_model::PhType::SubTitle => "subtitle",
+                    deckcraft_model::PhType::Body | deckcraft_model::PhType::Obj => "body",
+                    k => k.xml(),
+                };
+                placeholders.entry(role.to_string()).or_insert(json!(sh.id));
             }
         }
         if let Some(t) = slide.shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())) {
