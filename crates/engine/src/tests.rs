@@ -6603,6 +6603,37 @@ fn chart_options_palette_takes_a_name_and_refuses_a_colour_list() {
     assert_eq!(c.palette, "monochrome3");
 }
 
+/// V2: `design.headerFooter` answers the slides it changed and sets the presentation's default,
+/// so slides added later (slide.new, slide.fromOutline) get the same footer and slide number
+/// without running it again.
+#[test]
+fn header_footer_is_inherited_by_slides_added_later() {
+    use deckcraft_model::PhType;
+    let mut s = session();
+    let r = s.execute("design.headerFooter", &json!({"slideNumber": true, "footer": true, "footerText": "Q3 review"})).unwrap();
+    assert_eq!(r, json!({"slides": 1, "default": true}), "{r}");
+    let footer = |s: &Session, i: usize| {
+        let sl = s.doc().unwrap().doc.slides[i].clone();
+        let num = sl.shapes.iter().any(|x| x.ph_type() == Some(PhType::SlideNum));
+        let text = sl.shapes.iter().find(|x| x.ph_type() == Some(PhType::Footer)).and_then(|x| x.text.as_ref()).map(|t| t.text());
+        (num, text)
+    };
+    assert_eq!(footer(&s, 0), (true, Some("Q3 review".into())));
+    let n = s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+    assert_eq!(footer(&s, 1), (true, Some("Q3 review".into())), "slide.new inherits: {n}");
+    // The footer and slide number design.headerFooter adds are named in the answer too.
+    let num = s.doc().unwrap().doc.slides[1].shapes.iter().find(|x| x.ph_type() == Some(PhType::SlideNum)).map(|x| json!(x.id));
+    assert_eq!(n["placeholders"].get("sldNum"), num.as_ref(), "{n}");
+    assert!(n["placeholders"].get("ftr").is_some_and(Value::is_u64), "{n}");
+    s.execute("slide.fromOutline", &json!({"text": "# Two\n- b", "markdown": true})).unwrap();
+    assert_eq!(footer(&s, 2), (true, Some("Q3 review".into())), "slide.fromOutline inherits");
+    // Turning them off is inherited too.
+    let r = s.execute("design.headerFooter", &json!({"slideNumber": false, "footer": false})).unwrap();
+    assert_eq!(r["slides"], 3, "{r}");
+    s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(footer(&s, 3), (false, None));
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
