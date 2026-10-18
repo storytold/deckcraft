@@ -484,19 +484,36 @@ fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(Value::Array(ANIMATIONS.iter().map(|a| json!({"id": a.0, "label": a.1, "class": a.2.xml(), "options": a.5})).collect()))
 }
 
-fn get(s: &mut Session, p: &Value) -> Result<Value> {
-    let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
-    let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
+/// The click step of each animation, counted from 1: the first animation opens step 1, and every
+/// later `onClick` opens the next; `withPrevious` and `afterPrevious` join the step before them.
+fn steps(anims: &[Animation]) -> Vec<usize> {
     let mut step = 0usize;
-    let list: Vec<Value> = sl
-        .animations
+    anims
         .iter()
         .enumerate()
         .map(|(k, a)| {
             if k == 0 || a.start == AnimStart::OnClick {
                 step += 1;
             }
+            step
+        })
+        .collect()
+}
+
+/// How many clicks play the slide's animations (`slide.inspect`'s summary).
+pub(crate) fn click_steps(anims: &[Animation]) -> usize {
+    steps(anims).last().copied().unwrap_or(0)
+}
+
+fn get(s: &mut Session, p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
+    let list: Vec<Value> = sl
+        .animations
+        .iter()
+        .zip(steps(&sl.animations))
+        .map(|(a, step)| {
             let mut v = serde_json::to_value(a).unwrap_or_default();
             if let Some(o) = v.as_object_mut() {
                 o.retain(|_, x| !x.is_null());
