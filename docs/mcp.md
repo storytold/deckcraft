@@ -130,7 +130,12 @@ from slide `source`, the current slide) and is refused when the current slide ha
 since copying nothing would clear every slide; `{clear: true}` does that on purpose. `file.export`
 refuses `perPage` with the `notes` or `slides` PDF layout: as in PowerPoint's Print page, notes
 pages (one slide with its notes per page) and handouts (several slides per page) are separate
-layouts, and `perPage` belongs to handouts. `review.spelling` answers `{dictionary, lang, issues}`:
+layouts, and `perPage` belongs to handouts. `file.export {all: true, path: "d.png"}` writes one
+file per slide numbered from 1, the displayed slide number (`d1.png`, `d2.png`…), while `slide`
+is a 0-based index; it answers `{files, indices}`, `indices` being the 0-based slide of each file.
+`chart.data` replaces the whole `categories`/`series` it is given, so pass every series to keep.
+`animation.timing`'s `index` is the animation's position in the slide's list as `animation.get`
+numbers them; `animation.get` reports each one's click `step`. `review.spelling` answers `{dictionary, lang, issues}`:
 with `dictionary: false` no Hunspell dictionary was installed for `lang` and only the built-in
 common-misspellings list ran, so an empty `issues` is not a clean deck (`review.dictionary` says
 which folders are searched). An unknown
