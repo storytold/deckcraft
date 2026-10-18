@@ -66,7 +66,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Table Styles",
             ["Table Design", "Table Styles"],
             None,
-            "{style: medium2-accent1|light1-accent2|dark1-tx1|grid|none…, id?}",
+            "{style: none|grid|<light1|light2|medium2|medium4|dark1>-<tx1|accent1…accent6> (medium2-accent1, light1-accent2, dark1-tx1…; an unknown id is refused naming them), id?}",
             has_selection,
             style
         ),
@@ -374,6 +374,12 @@ fn split(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn style(s: &mut Session, p: &Value) -> Result<Value> {
     let st = str_param(p, "style").ok_or_else(|| bad("table.style", "missing `style`"))?.to_string();
+    // The built-in ids, then the styles the file defines (by their GUID).
+    let mut known: Vec<String> = deckcraft_model::table::table_styles().into_iter().map(|(id, _)| id).collect();
+    known.extend(s.doc()?.doc.table_styles.iter().map(|d| d.id.clone()));
+    if !known.contains(&st) {
+        return Err(bad("table.style", format!("no table style `{st}`; the styles are {}", known.join(", "))));
+    }
     with_table(s, p, "table.style", move |t| {
         t.style = st.clone();
         Ok(())
