@@ -1116,6 +1116,7 @@ dependencies = [
 name = "deckcraft-pptx"
 version = "0.8.0"
 dependencies = [
+ "deckcraft-anim",
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-geom",

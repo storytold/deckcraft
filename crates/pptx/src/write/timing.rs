@@ -565,10 +565,6 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
     }
 }
 
-fn para_count(s: &Shape) -> u32 {
-    s.text.as_ref().map(|t| t.paragraphs.iter().filter(|p| !p.is_empty()).count()).unwrap_or(0).min(10_000) as u32
-}
-
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
@@ -588,23 +584,15 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             g
         };
         let is_text_sp = matches!(shape.kind, ShapeKind::Shape) && shape.text.as_ref().is_some_and(|t| !t.is_empty());
-        let by_para = a.text_build == TextBuild::ByParagraph && is_text_sp && para_count(shape) > 0;
+        // Paragraph indices in the file count empty paragraphs too.
+        let paras = match (a.text_build, is_text_sp, &shape.text) {
+            (TextBuild::ByParagraph, true, Some(t)) => crate::maps::paragraph_build(t, a.start),
+            _ => vec![],
+        };
+        let by_para = !paras.is_empty();
         let mut effs = vec![];
         if by_para {
-            // Paragraph indices in the file count empty paragraphs too.
-            let idxs: Vec<u32> = shape
-                .text
-                .as_ref()
-                .map(|t| t.paragraphs.iter().enumerate().filter(|(_, p)| !p.is_empty()).map(|(i, _)| i as u32).collect())
-                .unwrap_or_default();
-            for (k, pi) in idxs.into_iter().enumerate() {
-                let start = if k == 0 {
-                    a.start
-                } else if a.start == AnimStart::OnClick {
-                    AnimStart::OnClick
-                } else {
-                    AnimStart::AfterPrevious
-                };
+            for (pi, start) in paras {
                 effs.push(Eff { a, spid, start, paragraph: Some(pi), grp });
             }
         } else {

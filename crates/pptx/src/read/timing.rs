@@ -95,7 +95,7 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
 }
 
 /// Flatten the timing tree into the Animation Pane list.
-pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, _shapes: &[Shape]) -> Vec<Animation> {
+pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);
     let Some(tn) = timing.child("tnLst") else { return vec![] };
     let mut found = vec![];
@@ -172,15 +172,39 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, _shapes:
             a.color = dml::color(clr);
         }
         let grp = c.attr("grpId").unwrap_or("0").to_string();
-        // Collapse a paragraph-by-paragraph build into one animation.
-        if paragraph.is_some() && by_para.iter().any(|(s, g)| *s == file_id && *g == grp) {
-            if out.last().is_some_and(|(l, lf, lg)| *lf == file_id && *lg == grp && l.text_build == TextBuild::ByParagraph) {
-                continue;
-            }
-            a.text_build = TextBuild::ByParagraph;
-            a.paragraph = None;
-        }
         out.push((a, file_id, grp));
     }
+    for (spid, grp) in &by_para {
+        collapse_paragraph_build(&mut out, *spid, grp, shapes);
+    }
     out.into_iter().map(|(a, _, _)| a).collect()
+}
+
+/// Fold a paragraph build (`bldP build="p"`) into one [`TextBuild::ByParagraph`] animation, but
+/// only when it is exactly what such an animation saves as ([`maps::paragraph_build`]): the same
+/// effect on every paragraph, top-level paragraphs taking turns and sub-levels coming in with
+/// their parent. Any other pattern (a first paragraph that comes in by itself before the clicks,
+/// several top-level paragraphs on one click, only some of the paragraphs) keeps one animation
+/// per paragraph, so the show plays the clicks the file asks for.
+fn collapse_paragraph_build(out: &mut Vec<(Animation, u32, String)>, spid: u32, grp: &str, shapes: &[Shape]) {
+    let members: Vec<usize> =
+        out.iter().enumerate().filter(|(_, (a, f, g))| *f == spid && g == grp && a.paragraph.is_some()).map(|(i, _)| i).collect();
+    let (Some(&first), Some(&last)) = (members.first(), members.last()) else { return };
+    if last - first + 1 != members.len() {
+        return;
+    }
+    let Some(group) = out.get(first..=last) else { return };
+    let Some((lead, _, _)) = group.first() else { return };
+    let Some(text) = deckcraft_model::find_shape(shapes, lead.shape).and_then(|s| s.text.as_ref()) else { return };
+    let plain = |a: &Animation| Animation { paragraph: None, start: lead.start, ..a.clone() };
+    let base = plain(lead);
+    if group.iter().any(|(a, _, _)| plain(a) != base) {
+        return;
+    }
+    let found = group.iter().map(|(a, _, _)| (a.paragraph, a.start));
+    if !found.eq(maps::paragraph_build(text, lead.start).into_iter().map(|(p, s)| (Some(p), s))) {
+        return;
+    }
+    let collapsed = Animation { text_build: TextBuild::ByParagraph, ..base };
+    out.splice(first..=last, [(collapsed, spid, grp.to_string())]);
 }
