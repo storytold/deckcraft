@@ -44,7 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply To All",
             ["Transitions", "Timing"],
             None,
-            "{} (copies the current slide's transition to every slide)",
+            "{} (copies the current slide's transition, kind, duration and options alike, to every slide) → {slides: n}",
             has_slide,
             apply_all
         ),
@@ -215,9 +215,8 @@ fn apply_all(s: &mut Session, _p: &Value) -> Result<Value> {
         for sl in &mut doc.slides {
             Arc::make_mut(sl).transition.clone_from(&t);
         }
-        Ok(())
-    })?;
-    ok()
+        Ok(json!({"slides": doc.slides.len()}))
+    })
 }
 
 fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
