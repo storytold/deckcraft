@@ -49,7 +49,24 @@ fn document(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
-    let x = ctx.map(|c| resolve::xfrm(c, sh)).or(sh.xfrm).unwrap_or_default();
+    let mut x = ctx.map(|c| resolve::xfrm(c, sh)).or(sh.xfrm).unwrap_or_default();
+    // A table's rows grow with their text: the box is what draws, not what was asked for.
+    if let (Some(c), deckcraft_model::ShapeKind::Table(t)) = (ctx, &sh.kind) {
+        x.h = x.h.max(deckcraft_render::table_row_heights(c, t, &deckcraft_text::NoFields).iter().sum());
+    }
+    // Text that needs more height than its box has: what an agent otherwise learns only from a
+    // render. Only for a box that neither grows (autofit shape) nor shrinks its text.
+    let overflow = ctx.and_then(|c| {
+        let body = sh.text.as_ref().filter(|b| !b.is_empty())?;
+        if matches!(sh.kind, deckcraft_model::ShapeKind::Table(_))
+            || !matches!(resolve::body(c, sh).autofit, None | Some(deckcraft_model::text::AutoFit::None))
+        {
+            return None;
+        }
+        let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
+        let need = deckcraft_text::fit_height(c, sh, body, rect, &deckcraft_text::NoFields);
+        (need > rect.height() + 0.5).then_some(need)
+    });
     let fill = ctx.map(|c| {
         let (f, ph) = resolve::fill(c, sh);
         match f {
@@ -66,6 +83,10 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
         "rotation": x.rot,
     });
     if let Some(o) = v.as_object_mut() {
+        if let Some(need) = overflow {
+            o.insert("textOverflows".into(), json!(true));
+            o.insert("textHeight".into(), json!(round(need)));
+        }
         if let Some(p) = &sh.ph {
             o.insert("placeholder".into(), json!(p.kind.xml()));
         }
@@ -141,7 +162,21 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
     {
         o.remove("notesBody");
     }
+    prune_nulls(&mut v);
     Ok(v)
+}
+
+/// Drops every null-valued key, recursively: an absent field reads the same and costs nothing,
+/// where a formatted body or an animation serialises dozens of `null`s.
+fn prune_nulls(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            o.retain(|_, x| !x.is_null());
+            o.values_mut().for_each(prune_nulls);
+        }
+        Value::Array(a) => a.iter_mut().for_each(prune_nulls),
+        _ => {}
+    }
 }
 
 fn actions(s: &mut Session, p: &Value) -> Result<Value> {

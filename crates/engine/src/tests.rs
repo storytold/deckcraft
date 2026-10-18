@@ -6213,6 +6213,71 @@ fn connector_default_sites_face_each_other() {
     assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(3), Some(1)), "more sideways than up: right → left: {r}");
 }
 
+/// Agents export a PNG to learn that text wrapped or spilled: slide.inspect says so
+/// (`textOverflows`, `textHeight`), reports a table's drawn height (rows grow with their text),
+/// and carries no null fields.
+#[test]
+fn slide_inspect_flags_text_overflow_reports_drawn_table_height_and_has_no_nulls() {
+    let mut s = session();
+    let tight = s
+        .execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 120, 24], "text": "This sentence is far too long for a box this small to hold it", "size": 24}))
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let roomy = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 100, 600, 200], "text": "Fits"})).unwrap()["id"].as_u64().unwrap();
+    let table = s.execute("insert.table", &json!({"rows": 3, "cols": 1, "rect": [10, 320, 300, 30], "data": [["one"], ["two"], ["three"]]})).unwrap()
+        ["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("animation.add", &json!({"ids": [roomy], "effect": "fade"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    let shape = |id: u64| r["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).cloned().unwrap();
+    let t = shape(tight);
+    assert_eq!(t["textOverflows"], true, "{t}");
+    assert!(t["textHeight"].as_f64().unwrap_or(0.0) > 24.0, "{t}");
+    assert!(shape(roomy).get("textOverflows").is_none(), "{}", shape(roomy));
+    assert!(shape(table)["box"][3].as_f64().unwrap() > 30.0, "rows grow with their text: {}", shape(table));
+    fn has_null(v: &serde_json::Value) -> bool {
+        match v {
+            serde_json::Value::Null => true,
+            serde_json::Value::Object(o) => o.values().any(has_null),
+            serde_json::Value::Array(a) => a.iter().any(has_null),
+            _ => false,
+        }
+    }
+    assert!(!has_null(&r), "{r}");
+}
+
+/// animation.get numbers the click steps; several ids in one animation.add form one step.
+#[test]
+fn animation_get_numbers_the_click_steps() {
+    let mut s = session();
+    let ids: Vec<u64> = (0..3)
+        .map(|k| s.execute("shape.insert", &json!({"preset": "rect", "rect": [10 + 150 * k, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap())
+        .collect();
+    s.execute("animation.add", &json!({"ids": [ids[0], ids[1]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[2]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[0]], "effect": "zoom", "class": "exit", "start": "afterPrevious"})).unwrap();
+    let r = s.execute("animation.get", &json!({})).unwrap();
+    let steps: Vec<u64> = r.as_array().unwrap().iter().map(|a| a["step"].as_u64().unwrap()).collect();
+    assert_eq!(steps, [1, 1, 2, 2], "{r}");
+}
+
+/// A size (or colour, bold…) set on a shape before it has any text survives the text that is
+/// then set: text.set keeps the first run's properties, and an empty paragraph keeps them on its
+/// end mark, which is what the agent's format.size then set_text sequence relies on.
+#[test]
+fn text_set_keeps_the_formatting_of_an_empty_shape() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("format.size", &json!({"size": 30})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("text.set", &json!({"id": id, "text": "Hello"})).unwrap();
+    let st = s.doc().unwrap();
+    let run = &st.shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props;
+    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "{run:?}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
