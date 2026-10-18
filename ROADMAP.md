@@ -3,6 +3,7 @@
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (View › Arrange All; previous: trivial, View › New Window) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -16,6 +17,8 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 |---|---|---|
 | **Feature breadth** | **84%** weighted over 191 PowerPoint features (P0 92%, P1 82%, P2 55%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
 | Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands at d556ff9 (the registry has grown since; not re-measured) |
+| **Feature breadth** | **80%** weighted over 191 PowerPoint features (P0 92%, P1 75%, P2 40%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
+| Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands |
 | **Ready for real work** | **~55%** | estimated: weighted dimensions below |
 | Mainstream practitioner | ~53% | estimated: weekly-use areas × discounts for interaction (×0.92), stability (×0.92) and `.pptx` exchange (×0.88), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
 | Essentials user | ~62% | estimated: core features × discounts for launch (×0.90), clarity (×0.95) and opening received files (×0.90), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
@@ -47,6 +50,8 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 |---|---:|---|---|
 | Features (breadth 84% measured, with depth) | ~62% | 140–240 | [docs/parity-checklist.md](docs/parity-checklist.md) |
 | UI/UX fidelity | ~60% | 30–50 | [docs/ui-parity.md](docs/ui-parity.md) |
+| Features (breadth 80% measured, with depth) | ~62% | 140–240 | [docs/parity-checklist.md](docs/parity-checklist.md) |
+| UI/UX fidelity | ~60% | 28–49 | [docs/ui-parity.md](docs/ui-parity.md) |
 | File formats (PPTX, PDF, legacy, export) | ~58% | 60–110 | [docs/file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (GPU raster, video decode, displays, pens) | ~40% | 25–45 | [docs/hardware-parity.md](docs/hardware-parity.md) |
 | Localization | ~8% | 55–90 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
@@ -67,6 +72,12 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Masters and themes | 92% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
 | Shapes | 91% | ~75% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Format (fill, line, effects) | 83% | ~65% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Application shell | 71% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Slides and sections | 90% | ~85% | 3–5 | [checklist](docs/parity-checklist.md) |
+| Views | 95% | ~80% | 3–6 | [ui-parity](docs/ui-parity.md) |
+| Masters and themes | 85% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
+| Shapes | 86% | ~75% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Format (fill, line, effects) | 81% | ~65% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Arrange | 100% | ~90% | 1–2 | [ui-parity](docs/ui-parity.md) |
 | Text | 83% | ~62% | 18–30 | [gaps](docs/gaps.md#features) |
 | Tables | 97% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
@@ -165,6 +176,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | Insert › Icons: a gallery of Lucide stroke icons (release 1.56.0) inserted as custom shapes, no fill, round stroke scaled from the 24-unit design |
 | 2026-10-14 | Size and Position dialog: height, width, rotation, scale and lock aspect ratio in one undo step, from Shape Format › Size and the shape menu |
 | 2026-10-14 | Review: Previous and Next comment walk every comment in the deck; the Comments pane lists every slide and highlights the one you landed on |
+| 2026-10-13 | View › Arrange All tiles the main window and the New Window once. The second window moves and resizes shapes on its own slide; the editor's selection stays put. The text caret stays in the first window. Breadth 79% → 80% |
 | 2026-10-13 | View › New Window opens a second window on the same presentation. The window has its own slide and shows edits made in the first window. Arrange All is not included |
 | 2026-10-14 | File › New starter decks: Briefing, Lesson, Pitch, Field Notes, Quarterly and Evening Talk, original text on our themes (`file.new {template}`, `file.templates`). The large template gallery is still open |
 | 2026-10-14 | Slide Sorter sections: Add Section, rename in place, collapse a section, and drag the bar to move that section and its slides |
@@ -258,6 +270,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | trivial | Progress log: Lucide icon gallery |
 | 2026-10-14 | trivial | Progress log: Size and Position dialog. Breadth stays 79%, ready stays ~55% |
 | 2026-10-14 | trivial | Progress log: previous and next comment |
+| 2026-10-13 | trivial | Progress log: View › Arrange All; breadth 79% → 80% |
 | 2026-10-13 | trivial | Progress log: View › New Window |
 | 2026-10-14 | trivial | Progress log: six original starter decks |
 | 2026-10-14 | trivial | Progress log: Slide Sorter sections |

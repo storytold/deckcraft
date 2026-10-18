@@ -2280,6 +2280,10 @@ fn view(app: &mut SlideApp, ui: &mut Ui) {
         if resp.on_hover_text("Open another window on this presentation").clicked() {
             let _ = app.run("view.newWindow", json!({}));
         }
+        let arrange = big_button_ex(ui, Icon::Arrange, "Arrange\nAll", on, false, false).0;
+        if arrange.on_hover_text("Tile this window and the second window").clicked() {
+            let _ = app.run("view.arrangeAll", json!({}));
+        }
     });
     group(ui, |ui| {
         let gs = app.ui.grayscale;

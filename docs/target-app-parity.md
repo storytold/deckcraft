@@ -182,7 +182,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Application shell | 5 | 81% | ~55% | 8–14 | No native macOS menu bar, contextual tabs and multiple-window handling thinner than PowerPoint's | [ui-parity.md](ui-parity.md) |
 | Files (commands) | 4 | 75% | ~50% | see file formats | Print, passwords, legacy and macro formats, video export; reuse slides is partial | [file-format-parity.md](file-format-parity.md) |
 | Slides and sections | 6 | 92% | ~85% | 3–5 | Zoom (summary/section/slide) is partial, copying slides between decks keeps formatting only partly | [parity-checklist.md](parity-checklist.md) |
-| Views | 4 | 98% | ~80% | 3–6 | Arrange All (Grid Options and New Window are in) | [ui-parity.md](ui-parity.md) |
+| Views | 4 | 100% | ~80% | 3–6 | The second window has no text caret (Grid Options, New Window and Arrange All are in) | [ui-parity.md](ui-parity.md) |
 | Masters and themes | 7 | 92% | ~70% | 8–14 | Notes/Handout master view polish, effect-scheme depth, Designer suggestions | [parity-checklist.md](parity-checklist.md) |
 | Shapes | 7 | 91% | ~75% | 8–14 | Edit points depth, WordArt depth (the Transform gallery and warp adjust handles are in) | [ui-parity.md](ui-parity.md) |
 | Format (fill, line, effects) | 6 | 83% | ~65% | 8–14 | Format Shape pane depth, bevel and 3-D, picture/texture fill options | [ui-parity.md](ui-parity.md) |
@@ -317,6 +317,7 @@ scored done (16 open issues).
 | 2026-10-13 | minor | Views: Grid Options dialog landed (spacing, snap, display). Remaining in that row: New Window. Percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed: yellow adjust handles drag; the gallery and command remain |
 | 2026-10-14 | trivial | Draw and hardware blurbs: pen pressure scales ink width when reported; percentages and hour ranges unchanged |
+| 2026-10-13 | minor | View › Arrange All. Checklist breadth 79% → 80% (P2 40%, Views 95%). The second window still has no text caret |
 | 2026-10-10 | minor | Added the readiness-by-audience table: each number gets its own hours to ~95% (full 340–600, mainstream 150–250, essentials 50–90). The full number stays an additive weighted sum; no change to the percentages |
 | 2026-10-10 | minor | Added the mainstream practitioner (~53%) and essentials user (~62%) numbers with written weights, discounts and user evidence. Features dimension recomputed from written area weights (66% judgement → 62.4% weighted mean), which moves ready for real work from ~56% to ~55%; stage unchanged |
 | 2026-10-10 | minor | Stage checked against the core-workflow gate (all six pass); stays alpha |

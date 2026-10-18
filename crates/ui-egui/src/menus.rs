@@ -220,6 +220,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Fit to Window", "view.fit"),
                 ("-", ""),
                 ("New Window", "view.newWindow"),
+                ("Arrange All", "view.arrangeAll"),
             ],
         ),
         (
