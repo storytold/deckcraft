@@ -2930,7 +2930,7 @@ fn smartart_pictures_3d_styles_and_colour_variants() {
     assert!(pics(&s).iter().all(|p| !matches!(p.fill, Some(deckcraft_model::Fill::Picture(_)))));
     // A 1×1 PNG put in through a sub-point lands in its top-level node.
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-    s.execute("smartArt.picture", &json!({"index": 1, "name": "p.png", "data": png})).unwrap();
+    s.execute("smartArt.picture", &json!({"index": 1, "data": png})).unwrap();
     let p = pics(&s);
     assert!(matches!(p[0].fill, Some(deckcraft_model::Fill::Picture(_))));
     assert!(!matches!(p[1].fill, Some(deckcraft_model::Fill::Picture(_))));
@@ -4723,4 +4723,57 @@ fn slide_hide_and_layout_reject_invalid_index() {
         assert!(e.contains("not a valid index"), "{e}");
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
+}
+
+/// #298: an unknown command id names the commands like it, so an agent that wrote `new` for
+/// `file.new` learns the id from the answer.
+#[test]
+fn an_unknown_command_names_commands_like_it() {
+    let mut s = session();
+    let e = s.execute("new", &json!({})).unwrap_err().to_string();
+    assert!(e.starts_with("unknown command `new`; commands named like it: "), "{e}");
+    assert!(e.contains("file.new") && e.contains("slide.new"), "{e}");
+    let e = s.execute("slide.nw", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("slide.new"), "{e}");
+    let e = s.execute("qqqqqq", &json!({})).unwrap_err().to_string();
+    assert_eq!(e, "unknown command `qqqqqq`");
+}
+
+/// #298: "not available" says how to make the command available, naming only the parameters
+/// that command takes.
+#[test]
+fn not_available_says_how_to_make_it_available() {
+    let mut s = session();
+    let e = s.execute("shape.setDefault", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("is not available right now: nothing selected") && e.contains("edit.select") && !e.contains("`ids`"), "{e}");
+    let e = s.execute("arrange.group", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("`ids`") && e.contains("edit.select"), "{e}");
+    let e = s.execute("table.style", &json!({"style": "grid"})).unwrap_err().to_string();
+    assert!(e.contains("`id`") && !e.contains("`ids`"), "{e}");
+    let e = s.execute("format.size", &json!({"size": 20})).unwrap_err().to_string();
+    assert!(e.contains("select text or a shape") && e.contains("text.edit") && e.contains("edit.select"), "{e}");
+    let mut empty = Session::new();
+    let e = empty.execute("slide.new", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("no presentation open") && e.contains("file.new") && e.contains("file.open"), "{e}");
+}
+
+/// #298: a parameter the command doesn't take is refused with the ones it does, instead of being
+/// dropped so the call "succeeds" and does something else.
+#[test]
+fn a_parameter_the_command_does_not_take_is_refused() {
+    let mut s = session();
+    let before = s.doc().unwrap().doc.clone();
+    let e = s.execute("shape.insert", &json!({"shape": "roundRect", "rect": [10, 10, 100, 50]})).unwrap_err().to_string();
+    assert!(e.contains("`shape.insert` was given `shape`, which it doesn't take. `shape.insert` takes {preset"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "a refused command changes nothing");
+    let e = s.execute("slide.new", &json!({"titel": "x", "layot": "blank"})).unwrap_err().to_string();
+    assert!(e.contains("was given `layot` and `titel`, which it doesn't take"), "{e}");
+    // The keys the docs list, including the ones they only mentioned in passing, still work.
+    s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [10, 10, 100, 50], "adj": [0.2], "flip": "h"})).unwrap();
+    s.execute("guide.add", &json!({"defaults": true})).unwrap();
+    // No command accepts a key it doesn't document: the check comes before anything runs.
+    for c in s.commands() {
+        let e = s.execute(c.id, &json!({"zzz": 1})).unwrap_err().to_string();
+        assert!(e.contains("was given `zzz`, which it doesn't take"), "{}: {e}", c.id);
+    }
 }

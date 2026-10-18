@@ -198,6 +198,110 @@ pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
     command_specs().iter().find(|c| c.id == id)
 }
 
+/// Commands named like `id`, for the unknown-command answer (#298): `new` names file.new and
+/// slide.new, `slide.nw` names slide.new. Empty when nothing is close.
+pub fn like_it(id: &str) -> String {
+    let id = id.to_ascii_lowercase();
+    let last = id.rsplit('.').next().unwrap_or(&id);
+    let mut found: Vec<(usize, &str)> = command_specs()
+        .iter()
+        .filter_map(|c| {
+            let cid = c.id.to_ascii_lowercase();
+            let clast = cid.rsplit('.').next().unwrap_or(&cid);
+            let rank = if clast == last || cid == id {
+                0
+            } else if cid.contains(&id) || (last.len() >= 3 && clast.contains(last)) {
+                1
+            } else {
+                let d = edit_distance(&cid, &id).min(edit_distance(clast, last) + 1);
+                if d > 2 {
+                    return None;
+                }
+                1 + d
+            };
+            Some((rank, c.id))
+        })
+        .collect();
+    found.sort_unstable();
+    found.truncate(6);
+    if found.is_empty() {
+        String::new()
+    } else {
+        format!("; commands named like it: {}", found.iter().map(|(_, id)| *id).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// Levenshtein distance of two short ids.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().take(64).collect();
+    let b: Vec<char> = b.chars().take(64).collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let above = prev.get(j + 1).copied().unwrap_or(0);
+            let diag = prev.get(j).copied().unwrap_or(0);
+            let left = cur.last().copied().unwrap_or(0);
+            cur.push((above + 1).min(left + 1).min(diag + usize::from(ca != cb)));
+        }
+        prev = cur;
+    }
+    prev.last().copied().unwrap_or(0)
+}
+
+/// The "not available" reason with how to make the command available, naming only the
+/// parameters it takes (#298).
+pub(crate) fn how_to_enable(spec: &CommandSpec, reason: &str) -> String {
+    let keys = param_keys(spec.params).unwrap_or_default();
+    let pass = if keys.contains(&"ids") {
+        ", or pass `ids` to act on those shapes"
+    } else if keys.contains(&"id") {
+        ", or pass `id` to act on that shape"
+    } else {
+        ""
+    };
+    match reason {
+        NOTHING_SELECTED => format!("{reason}: edit.select {{\"ids\": [id, …]}} selects shapes{pass}"),
+        SELECT_TWO => format!("{reason}: edit.select {{\"ids\": [id, id, …]}} selects them{pass}"),
+        SELECT_TEXT_OR_SHAPE => {
+            format!("{reason}: edit.select {{\"ids\": [id, …]}} selects shapes, text.edit {{\"id\": id}} starts editing a shape's text{pass}")
+        }
+        NO_TEXT_POINT => format!("{reason}: text.edit {{\"id\": id}} starts editing a shape's text"),
+        "no presentation open" => format!("{reason}: file.new {{}} or file.open {{\"path\": …}} opens one"),
+        "no slides" => format!("{reason}: slide.new adds one"),
+        _ => reason.to_string(),
+    }
+}
+
+/// The refusal for keys a command doesn't take, with the parameters it does (#298).
+pub(crate) fn not_taken(spec: &CommandSpec, unknown: &[&str]) -> String {
+    let quoted: Vec<String> = unknown.iter().map(|k| format!("`{k}`")).collect();
+    let list = match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    let takes = spec.params.split('→').next().unwrap_or_default().trim();
+    let takes = if takes.is_empty() || takes == "{}" { "no parameters" } else { takes };
+    format!("`{}` was given {list}, which it doesn't take. `{}` takes {takes}", spec.id, spec.id)
+}
+
+/// The keys a command accepts: the ones its params doc lists, plus `id` wherever `ids?` is
+/// optional, because [`targets`] reads either.
+pub(crate) fn accepted_keys(spec: &CommandSpec) -> std::result::Result<Vec<&'static str>, String> {
+    let params = parse_params(spec.params)?;
+    let mut keys: Vec<&'static str> = vec![];
+    for p in &params {
+        if !keys.contains(&p.name) {
+            keys.push(p.name);
+        }
+    }
+    if params.iter().any(|p| p.name == "ids" && p.optional) && !keys.contains(&"id") {
+        keys.push("id");
+    }
+    Ok(keys)
+}
+
 pub(crate) fn param_keys(doc: &str) -> std::result::Result<Vec<&str>, String> {
     let mut keys = vec![];
     for p in parse_params(doc)? {

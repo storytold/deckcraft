@@ -1813,7 +1813,7 @@ mod tests {
         s.execute("design.background", &json!({"transparency": 0.25})).unwrap();
         assert_eq!(undo_len(&s), n, "the same transparency is not an undo step");
 
-        s.execute("design.background", &json!({"picture": png(), "name": "dot.png", "transparency": 0.4, "pictureProps": {"tile": true}})).unwrap();
+        s.execute("design.background", &json!({"picture": png(), "transparency": 0.4, "pictureProps": {"tile": true}})).unwrap();
         let pf = picture(&s);
         assert!((pf.alpha.unwrap_or(1.0) - 0.6).abs() < 1e-6);
         assert!(matches!(pf.mode, PictureMode::Tile { .. }));

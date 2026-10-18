@@ -15,7 +15,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Animation Styles",
             ["Animations", "Animation"],
             None,
-            "{effect: fade|fly|zoom|wipe|appear|spin|pulse|fadeOut|lines|… (animation.list), class?: entrance|emphasis|exit|path, option?, ids?} — replaces the shapes' animations",
+            "{effect: fade|fly|zoom|wipe|appear|spin|pulse|fadeOut|lines|… (animation.list), class?: entrance|emphasis|exit|path, option?, start?: onClick|withPrevious|afterPrevious (shapes already animated keep theirs), duration?: ms, delay?: ms, ids?} — replaces the shapes' animations",
             has_selection,
             set
         ),

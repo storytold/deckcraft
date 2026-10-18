@@ -14,7 +14,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Guide",
             ["View", "Show", "Guides"],
             None,
-            "{vertical: bool, pos?: pt (default: the slide's centre)} → {index}. `defaults: true` adds the two centre guides when there are none",
+            "{vertical: bool, pos?: pt (default: the slide's centre), defaults?: true (adds the two centre guides when there are none)} → {index}",
             has_doc,
             guide_add
         ),
