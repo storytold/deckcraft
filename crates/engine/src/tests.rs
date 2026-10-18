@@ -4158,3 +4158,19 @@ fn picture_crop_leaves_the_box_of_a_picture_without_a_pixel_size() {
     let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind else { panic!("not a picture: {:?}", sh.kind) };
     assert_eq!(fill.crop, [0.0, 0.0, 0.5, 0.0], "the crop itself was applied");
 }
+
+/// A crop that keeps a sliver of a picture's width would ask for a frame far taller than any
+/// slide; the refit height stays within the limits shape.sizePosition keeps.
+#[test]
+fn picture_crop_caps_the_refit_height() {
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"name": "wide.png", "data": wide_png_b64(), "rect": [100, 50, 400, 200]})).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    // 0.5 % of the width stays: 2:1 becomes 1:100, a 40 000 pt frame if unchecked.
+    let r = s.execute("picture.crop", &json!({"id": id, "left": 0.5, "right": 0.495})).unwrap();
+    let h = r["rect"][3].as_f64().unwrap();
+    assert!((h - 15_840.0).abs() < 1e-6, "{r}");
+    let x = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
+    assert_eq!((x.w, x.h), (400.0, 15_840.0));
+}
