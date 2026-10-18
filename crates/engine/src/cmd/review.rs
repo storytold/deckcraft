@@ -10,7 +10,15 @@ use crate::{Result, Session, Target, UiRequest};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("comment.add", "New Comment", ["Review", "Comments"], Some("Cmd+Alt+M"), "{text, x?, y?, id?: shape}", has_slide, add),
+        cmd!(
+            "comment.add",
+            "New Comment",
+            ["Review", "Comments"],
+            Some("Cmd+Alt+M"),
+            "{text, x?, y?, id?: shape} → {index, slide} (on the current slide)",
+            has_slide,
+            add
+        ),
         cmd!("comment.reply", "Reply", ["Comments"], None, "{index, text} → {index, slide, resolved, replies: n}", has_slide, reply),
         cmd!("comment.delete", "Delete Comment", ["Review", "Comments"], None, "{index? | all?: bool}", has_slide, delete),
         cmd!(
@@ -143,7 +151,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.add", "no slide"))?);
         let initials: String = author.split_whitespace().filter_map(|w| w.chars().next()).collect();
         sl.comments.push(Comment { author: author.clone(), initials, text, date: now(), x, y, resolved: false, replies: vec![], shape });
-        Ok(json!({"index": sl.comments.len() - 1}))
+        Ok(json!({"index": sl.comments.len() - 1, "slide": sel.slide}))
     })
 }
 

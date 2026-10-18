@@ -4938,9 +4938,9 @@ fn animation_add_and_section_add_answer_what_they_made() {
     let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
     let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
     let r = s.execute("animation.add", &json!({"ids": [a, b], "effect": "fade"})).unwrap();
-    assert_eq!(r, json!({"count": 2, "indices": [0, 1]}), "{r}");
+    assert_eq!(r, json!({"count": 2, "indices": [0, 1], "steps": [1, 1]}), "{r}");
     let r = s.execute("animation.add", &json!({"ids": [a], "effect": "zoom", "class": "exit"})).unwrap();
-    assert_eq!(r, json!({"count": 3, "indices": [2]}), "{r}");
+    assert_eq!(r, json!({"count": 3, "indices": [2], "steps": [2]}), "{r}");
     s.execute("slide.new", &json!({})).unwrap();
     let r = s.execute("section.add", &json!({"name": "Part B", "at": 1})).unwrap();
     assert_eq!((r["count"].as_u64(), r["index"].as_u64(), r["name"].as_str()), (Some(2), Some(1), Some("Part B")), "{r}");
@@ -5534,4 +5534,31 @@ fn export_and_save_create_a_missing_folder() {
     let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
     assert!(doc.contains("slide?: 0-based index"), "{doc}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// X7: `comment.add` answers the slide it landed on beside `index`; `animation.add` answers the
+/// click step of each added animation (`steps`), as `animation.get` reports `step`.
+#[test]
+fn comment_add_answers_its_slide_and_animation_add_its_steps() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let r = s.execute("comment.add", &json!({"text": "here"})).unwrap();
+    assert_eq!(r, json!({"index": 0, "slide": 1}), "{r}");
+    let r = s.execute("comment.add", &json!({"text": "again"})).unwrap();
+    assert_eq!(r, json!({"index": 1, "slide": 1}), "{r}");
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("animation.add", &json!({"ids": [a, b], "effect": "fade"})).unwrap();
+    assert_eq!(r, json!({"count": 2, "indices": [0, 1], "steps": [1, 1]}), "one call, one click step: {r}");
+    let r = s.execute("animation.add", &json!({"ids": [a], "effect": "zoom", "class": "exit"})).unwrap();
+    assert_eq!(r, json!({"count": 3, "indices": [2], "steps": [2]}), "{r}");
+    let r = s.execute("animation.add", &json!({"ids": [b], "effect": "zoom", "class": "exit", "start": "afterPrevious"})).unwrap();
+    assert_eq!(r["steps"], json!([2]), "joins the step before it: {r}");
+    let got = s.execute("animation.get", &json!({})).unwrap();
+    let steps: Vec<u64> = got.as_array().unwrap().iter().map(|x| x["step"].as_u64().unwrap()).collect();
+    assert_eq!(steps, vec![1, 1, 2, 2], "{got}");
+    for id in ["comment.add", "animation.add"] {
+        let doc = command_specs().iter().find(|c| c.id == id).unwrap().params;
+        assert!(doc.contains(if id == "comment.add" { "slide" } else { "steps" }), "{id}: {doc}");
+    }
 }
