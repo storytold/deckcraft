@@ -130,7 +130,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             set
         ),
-        cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs}", has_slide, get),
+        cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs, slide: the index of the slide the shape is on} (any slide; moves nothing)", has_slide, get),
     ]
 }
 

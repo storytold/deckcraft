@@ -102,9 +102,12 @@ A tool refuses an argument that is not in its schema (`insert_chart: unknown arg
 styled box in one command. `add_slide` (and `slide.new`) answer `placeholders: {title: id, body:
 id, …}` so the title or body can be set without an inspect. Shape ids are unique in the
 presentation: a shape or text command given an id on another slide edits it there, makes that
-slide current and answers `{"changed": 1, "onSlides": [4], "currentSlide": 4}`; commands that need
-several shapes on one slide (`shape.connect`, `arrange.*`) say where the shape is and the
-`slide.go` that gets there. `batch` items and `run_command` may name a tool (`add_shape`,
+slide current and answers `{"changed": 1, "onSlides": [4], "currentSlide": 4}`; the read-only
+lookups (`shape.inspect`, `text.get`, `shape.sites`) find it anywhere, move nothing, and
+`shape.inspect` and `text.get` answer the `slide` index it is on. Only the commands that need
+several shapes on one slide (`shape.connect`, `arrange.*`, `smartArt.*`) refuse an id on another
+slide, saying where the shape is and the `slide.go` that gets there; `comment.*` acts on the
+current slide. `batch` items and `run_command` may name a tool (`add_shape`,
 `add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`. A
 `batch` item with `"as": "a"` can be referred to by any later item's params as `"$a"` (its `id`,
 or its whole answer when it has none), so insert, connect and animate fit in one batch; a `$name`
