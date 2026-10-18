@@ -12,8 +12,8 @@ use crate::{HistoryEntry, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
-        cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
+        cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{} → {label, slide: index}", can_undo, undo),
+        cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{} → {label, slide: index}", can_redo, redo),
         cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
         cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides} → {text, html?}", has_doc, copy),
         cmd!(
@@ -54,7 +54,8 @@ fn restore(s: &mut Session, redo: bool) -> Result<Value> {
     // A later shape can get an undone copy's id: Duplicate starts over with the usual offset.
     st.last_duplicate = None;
     st.revision += 1;
-    Ok(json!({"label": e.label}))
+    // The slide the restored state is on: where the change was made.
+    Ok(json!({"label": e.label, "slide": st.selection.slide}))
 }
 
 fn undo(s: &mut Session, _p: &Value) -> Result<Value> {

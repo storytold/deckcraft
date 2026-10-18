@@ -15,7 +15,15 @@ use crate::{Result, Session, Target};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("design.theme", "Themes", ["Design", "Themes"], None, "{name} (see design.themes)", has_doc, theme),
+        cmd!(
+            "design.theme",
+            "Themes",
+            ["Design", "Themes"],
+            None,
+            "{name} (see design.themes) → the palette, as design.palette answers it",
+            has_doc,
+            theme
+        ),
         cmd!(
             "design.browseTheme",
             "Browse for Themes…",
@@ -152,7 +160,8 @@ fn theme(s: &mut Session, p: &Value) -> Result<Value> {
         m.color_map = vec![];
         Ok(())
     })?;
-    Ok(json!({"theme": name}))
+    // The palette the theme brought, as design.palette answers it.
+    palette(s, &json!({}))
 }
 
 fn browse_theme(s: &mut Session, p: &Value) -> Result<Value> {
