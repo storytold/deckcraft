@@ -959,6 +959,8 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-format",
  "deckcraft-geom",
+ "deckcraft-h264",
+ "deckcraft-isobmff",
  "deckcraft-media",
  "deckcraft-model",
  "deckcraft-pdf",
