@@ -6634,6 +6634,24 @@ fn header_footer_is_inherited_by_slides_added_later() {
     assert_eq!(footer(&s, 3), (false, None));
 }
 
+/// V9: `comment.list {}` is the current slide's comments (the doc says so); `{all: true}` lists
+/// every slide's comments with their slide index, so "no comments" is not a wrong slide.
+#[test]
+fn comment_list_all_covers_every_slide() {
+    let mut s = session();
+    s.execute("comment.add", &json!({"text": "on first"})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("comment.add", &json!({"text": "on second"})).unwrap();
+    let here = s.execute("comment.list", &json!({})).unwrap();
+    assert_eq!(here.as_array().map(Vec::len), Some(1), "{here}");
+    assert_eq!(here[0]["text"], "on second", "{here}");
+    let all = s.execute("comment.list", &json!({"all": true})).unwrap();
+    let got: Vec<(u64, u64, &str)> =
+        all.as_array().unwrap().iter().map(|c| (c["slide"].as_u64().unwrap(), c["index"].as_u64().unwrap(), c["text"].as_str().unwrap())).collect();
+    assert_eq!(got, vec![(0, 0, "on first"), (1, 0, "on second")], "{all}");
+    assert!(all[0]["author"].is_string() && all[0]["resolved"].is_boolean(), "the comment's own fields stay: {all}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
