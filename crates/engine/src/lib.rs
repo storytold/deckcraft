@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use deckcraft_model::{Presentation, Shape, ShapeId, Slide, SlideId};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use deckcraft_geom as geom;
@@ -307,6 +307,17 @@ impl DocState {
     }
     pub fn selected_shapes(&self) -> Vec<&Shape> {
         self.selection.shapes.iter().filter_map(|id| self.shape(*id)).collect()
+    }
+    /// The selected shapes with their effective boxes, `[{id, rect: [x, y, w, h]}]`: what a
+    /// nudge or drag answers, so an agent needs no inspect after it.
+    pub fn selected_boxes(&self) -> Value {
+        Value::Array(
+            self.selection
+                .shapes
+                .iter()
+                .filter_map(|id| self.shape(*id).map(|sh| json!({"id": id, "rect": cmd::rect_json(&cmd::xfrm_of(&self.doc, &self.selection, sh))})))
+                .collect(),
+        )
     }
 }
 

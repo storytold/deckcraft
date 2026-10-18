@@ -484,6 +484,10 @@ impl crate::backend::Backend for FakeApp {
                 Some(p) => json!({"path": p, "width": 1280, "height": 800}),
                 None => json!({"png": "iVBORw0KGgo=", "width": 1280, "height": 800}),
             }),
+            "ui.key" => Ok(json!({"handled": true})),
+            "engine.execute" if params["command"] == "edit.selection" => {
+                Ok(json!({"slide": 0, "ids": [7], "selected": [{"id": 7, "rect": [1.0, 2.0, 3.0, 4.0]}]}))
+            }
             other => Err(format!("unknown method `{other}`")),
         }
     }
@@ -601,4 +605,33 @@ fn index_and_slide_name_the_same_slide_on_every_tool() {
         let props = t["inputSchema"]["properties"].as_object().unwrap();
         assert!(props.contains_key("index") && props.contains_key("slide"), "{name}: {t}");
     }
+}
+
+/// AA5: `key` nudges and `pointer` drags answer `selected: [{id, rect}]`, the moved shapes' boxes,
+/// so the agent does not inspect after each one. Headless the engine answers it itself; an app
+/// whose answer lacks it gets one follow-up `edit.selection` (still one agent call).
+#[test]
+fn key_and_pointer_answer_the_selected_boxes() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({}));
+    let id = tool(&mut s, "add_shape", json!({"preset": "rect", "x": 100, "y": 100, "w": 200, "h": 100}))["id"].as_u64().unwrap();
+    let r = tool(&mut s, "key", json!({"key": "ArrowRight"}));
+    assert_eq!(r["selected"], json!([{"id": id, "rect": [106.0, 100.0, 200.0, 100.0]}]), "{r}");
+    let r = tool(
+        &mut s,
+        "pointer",
+        json!({"events": [{"kind": "down", "x": 200, "y": 150}, {"kind": "drag", "x": 250, "y": 170}, {"kind": "up", "x": 250, "y": 170}]}),
+    );
+    assert_eq!(r["selected"], json!([{"id": id, "rect": [156.0, 120.0, 200.0, 100.0]}]), "{r}");
+    // A key that moves nothing answers no boxes.
+    let r = tool(&mut s, "key", json!({"key": "Escape"}));
+    assert!(r.get("selected").is_none(), "{r}");
+
+    let calls = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let mut s = Server::new(Box::new(FakeApp { calls: calls.clone() }));
+    let r = tool(&mut s, "key", json!({"key": "ArrowLeft"}));
+    assert_eq!(r, json!({"handled": true, "selected": [{"id": 7, "rect": [1.0, 2.0, 3.0, 4.0]}]}), "{r}");
+    let methods: Vec<String> = calls.borrow().iter().map(|(m, _)| m.clone()).collect();
+    assert_eq!(methods, ["ui.key", "engine.execute"], "one follow-up");
+    assert_eq!(calls.borrow()[1].1["command"], "edit.selection");
 }
