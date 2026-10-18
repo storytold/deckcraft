@@ -534,4 +534,22 @@ mod tests {
         s.execute("animation.painterApply", &json!({"ids": [id3]})).unwrap();
         assert!(s.anim_painter.is_some());
     }
+
+    /// The Animation Painter is disarmed through a command, so the CLI, the control channel and
+    /// MCP can stop it too. Disarming one that is already off is not an error: the ribbon asks on
+    /// every click of the toggle.
+    #[test]
+    fn animation_painter_disarm_reports_whether_it_was_armed() {
+        let mut s = Session::with_new();
+        let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("animation.add", &json!({"effect": "zoom", "class": "entrance", "ids": [id]})).unwrap();
+        assert!(s.anim_painter.is_none());
+
+        assert_eq!(s.execute("animation.painterDisarm", &json!({})).unwrap()["armed"], false, "nothing to disarm yet");
+
+        s.execute("animation.painter", &json!({"id": id, "sticky": true})).unwrap();
+        assert_eq!(s.execute("animation.painterDisarm", &json!({})).unwrap()["armed"], true);
+        assert!(s.anim_painter.is_none());
+        assert!(s.execute("animation.painterApply", &json!({"ids": [id]})).is_err(), "and there is nothing left to apply");
+    }
 }

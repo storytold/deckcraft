@@ -1588,4 +1588,51 @@ mod tests {
         assert!(s.execute("format.tabs", &json!({"set": "nope"})).is_err());
         assert_eq!(s.doc().unwrap().history.undo.len(), n);
     }
+
+    /// Pick the formatting of one shape, paste it onto another, and the painter lets go of it.
+    #[test]
+    fn the_format_painter_copies_formatting_then_forgets_it() {
+        let mut s = shape();
+        s.execute("format.bold", &json!({})).expect("bold the first shape");
+        assert!(is_bold(&s));
+
+        assert_eq!(s.execute("format.painter", &json!({})).expect("pick")["armed"], true);
+        assert!(s.painter.is_some(), "picking arms the painter");
+
+        s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100.0, 200.0, 240.0, 80.0], "text": "There"})).expect("second shape");
+        assert!(!is_bold(&s), "the shape it lands on starts unformatted");
+
+        s.execute("format.painterApply", &json!({})).expect("apply");
+        assert!(is_bold(&s), "the painter carried the bold across");
+        assert!(s.painter.is_none(), "a one-shot painter disarms itself when it is used");
+    }
+
+    /// Run props leave an unset boolean as `None`, so "not bold" means neither `false` nor missing.
+    fn is_bold(s: &Session) -> bool {
+        props(s).bold.unwrap_or(false)
+    }
+
+    /// Sticky keeps it armed for the next shape, and disarming is what the ribbon calls to stop it.
+    #[test]
+    fn a_sticky_painter_stays_armed_until_it_is_disarmed() {
+        let mut s = shape();
+        s.execute("format.painter", &json!({"sticky": true})).expect("pick sticky");
+        s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100.0, 200.0, 240.0, 80.0], "text": "There"})).expect("second shape");
+        s.execute("format.painterApply", &json!({})).expect("apply");
+        assert!(s.painter.is_some(), "a sticky painter survives being used");
+
+        assert_eq!(s.execute("format.painterDisarm", &json!({})).expect("disarm")["armed"], true);
+        assert!(s.painter.is_none());
+        // Disarming a painter that is already off is not an error: the ribbon asks on every click.
+        assert_eq!(s.execute("format.painterDisarm", &json!({})).expect("disarm again")["armed"], false);
+        assert!(s.execute("format.painterApply", &json!({})).is_err(), "and then there is nothing to apply");
+    }
+
+    /// Applying without picking says what to do, rather than doing nothing silently.
+    #[test]
+    fn applying_the_format_painter_before_picking_is_an_error() {
+        let mut s = shape();
+        let err = s.execute("format.painterApply", &json!({})).expect_err("nothing picked yet");
+        assert!(err.to_string().contains("Format Painter"), "{err}");
+    }
 }

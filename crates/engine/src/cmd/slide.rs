@@ -667,4 +667,105 @@ mod tests {
         let want = [(0, "Level one"), (1, "Level two"), (2, "Level three"), (0, "Level one again")];
         assert_eq!(got, want.iter().map(|(l, t)| (*l, t.to_string())).collect::<Vec<_>>());
     }
+
+    fn slide_index(s: &Session) -> usize {
+        s.doc().expect("doc").selection.slide
+    }
+
+    /// Next and previous stop at the ends instead of wrapping or failing.
+    #[test]
+    fn navigation_moves_and_stops_at_both_ends() {
+        let mut s = Session::with_new();
+        while s.doc().expect("doc").doc.slides.len() < 3 {
+            s.execute("slide.new", &json!({})).expect("new slide");
+        }
+        s.execute("slide.first", &json!({})).expect("first");
+        assert_eq!(slide_index(&s), 0);
+        s.execute("slide.previous", &json!({})).expect("previous at the first slide");
+        assert_eq!(slide_index(&s), 0, "previous on the first slide stays there");
+
+        s.execute("slide.next", &json!({})).expect("next");
+        assert_eq!(slide_index(&s), 1);
+        s.execute("slide.next", &json!({})).expect("next");
+        assert_eq!(slide_index(&s), 2);
+        s.execute("slide.next", &json!({})).expect("next past the last slide");
+        assert_eq!(slide_index(&s), 2, "next on the last slide stays there");
+
+        s.execute("slide.first", &json!({})).expect("first");
+        assert_eq!(slide_index(&s), 0);
+        s.execute("slide.last", &json!({})).expect("last");
+        assert_eq!(slide_index(&s), 2);
+    }
+
+    /// Navigation leaves nothing selected but the slide it landed on.
+    #[test]
+    fn navigating_clears_the_shape_selection() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("new slide");
+        let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).expect("insert")["id"].as_u64().expect("id")
+            as u32;
+        assert_eq!(s.doc().expect("doc").selection.shapes, vec![deckcraft_model::ShapeId(id)]);
+        s.execute("slide.first", &json!({})).expect("first");
+        let st = s.doc().expect("doc");
+        assert!(st.selection.shapes.is_empty(), "the shape selection does not follow the slide");
+        assert_eq!(st.selection.slides.len(), 1, "and the one slide we landed on is selected");
+    }
+
+    /// `slide.selectSlides` takes indices or ids, replaces by default and adds on request.
+    #[test]
+    fn select_slides_takes_indices_and_can_add() {
+        let mut s = Session::with_new();
+        while s.doc().expect("doc").doc.slides.len() < 3 {
+            s.execute("slide.new", &json!({})).expect("new slide");
+        }
+        let ids: Vec<u32> = s.doc().expect("doc").doc.slides.iter().map(|x| x.id.0).collect();
+
+        s.execute("slide.selectSlides", &json!({"indices": [0, 2]})).expect("select two");
+        let st = s.doc().expect("doc");
+        assert_eq!(st.selection.slides, vec![deckcraft_model::SlideId(ids[0]), deckcraft_model::SlideId(ids[2])]);
+        assert_eq!(st.selection.slide, 2, "the current slide is the last one named");
+
+        s.execute("slide.selectSlides", &json!({"indices": [1], "add": true})).expect("add one");
+        assert_eq!(s.doc().expect("doc").selection.slides.len(), 3, "add keeps what was selected");
+
+        s.execute("slide.selectSlides", &json!({"ids": [ids[0]]})).expect("select by id");
+        assert_eq!(s.doc().expect("doc").selection.slides, vec![deckcraft_model::SlideId(ids[0])]);
+    }
+
+    #[test]
+    fn rename_names_the_slide() {
+        let mut s = Session::with_new();
+        s.execute("slide.rename", &json!({"name": "Opening"})).expect("rename");
+        assert_eq!(s.doc().expect("doc").doc.slides[0].name, "Opening");
+        s.execute("slide.rename", &json!({"name": "Later", "index": 0})).expect("rename again");
+        assert_eq!(s.doc().expect("doc").doc.slides[0].name, "Later");
+    }
+
+    /// `slide.reset` hands the placeholders back to the layout: a box the user dragged onto one is
+    /// dropped, so the placeholder follows its layout again.
+    #[test]
+    fn reset_hands_a_moved_placeholder_back_to_the_layout() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleOnly", "title": "Hello"})).expect("new slide");
+        let id = title_id(&s);
+        assert!(placeholder_xfrm(&s, id).is_none(), "a fresh placeholder follows the layout");
+
+        s.execute("selection.select", &json!({"id": id})).expect("select the title");
+        s.execute("shape.move", &json!({"ax": 120.0, "ay": 80.0})).expect("move it");
+        assert!(placeholder_xfrm(&s, id).is_some(), "moving it gave the placeholder a box of its own");
+
+        s.execute("slide.reset", &json!({})).expect("reset");
+        assert!(placeholder_xfrm(&s, id).is_none(), "reset drops that box and restores the layout's");
+    }
+
+    /// The title placeholder of the current slide.
+    fn title_id(s: &Session) -> u32 {
+        let st = s.doc().expect("doc");
+        st.doc.slides[st.selection.slide].shapes.iter().find(|x| x.ph_type().is_some_and(|k| k.is_title())).expect("a title placeholder").id.0
+    }
+
+    fn placeholder_xfrm(s: &Session, id: u32) -> Option<deckcraft_geom::Xfrm> {
+        let st = s.doc().expect("doc");
+        st.doc.slides[st.selection.slide].shapes.iter().find(|x| x.id.0 == id).and_then(|x| x.xfrm)
+    }
 }
