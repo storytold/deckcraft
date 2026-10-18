@@ -6812,6 +6812,39 @@ fn comment_add_answers_its_slide_and_animation_add_its_steps() {
     }
 }
 
+/// Y1: `slide.duplicate` names the copy's `placeholders` by each placeholder's own kind, as
+/// `slide.new` does: a Title Only copy has `title` and its footer and slide number as `ftr` and
+/// `sldNum`, no `body` (it once answered `body` and `ftr` with one id, the footer's); a Title and
+/// Content copy has `title` and `body`.
+#[test]
+fn slide_duplicate_names_placeholders_by_their_kind() {
+    let mut s = session();
+    s.execute("design.headerFooter", &json!({"slideNumber": true, "footer": true, "footerText": "Q3"})).unwrap();
+    s.execute("slide.new", &json!({"layout": "titleOnly", "title": "Only"})).unwrap();
+    let d = s.execute("slide.duplicate", &json!({})).unwrap();
+    let ph = d["placeholders"].as_object().unwrap();
+    assert!(ph.get("body").is_none(), "a Title Only slide has no body placeholder: {d}");
+    for k in ["title", "ftr", "sldNum"] {
+        assert!(ph.get(k).is_some_and(Value::is_u64), "{k}: {d}");
+    }
+    let mut ids: Vec<u64> = ph.values().filter_map(Value::as_u64).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), ph.len(), "one id per placeholder: {d}");
+    let shapes = d["shapes"].as_array().unwrap();
+    assert!(ids.iter().all(|id| shapes.contains(&json!(id))), "every id is on the copy: {d}");
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let kinds: Vec<(Value, Value)> = sl["shapes"].as_array().unwrap().iter().map(|x| (x["id"].clone(), x["placeholder"].clone())).collect();
+    assert!(kinds.contains(&(ph["title"].clone(), json!("title"))), "{sl}");
+    assert!(kinds.contains(&(ph["ftr"].clone(), json!("ftr"))), "{sl}");
+    assert!(kinds.contains(&(ph["sldNum"].clone(), json!("sldNum"))), "{sl}");
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "b"})).unwrap();
+    let d = s.execute("slide.duplicate", &json!({})).unwrap();
+    let (t, b) = (&d["placeholders"]["title"], &d["placeholders"]["body"]);
+    assert!(t.is_u64() && b.is_u64() && t != b, "title and body: {d}");
+    assert!(d["placeholders"].get("ftr").is_some_and(Value::is_u64), "{d}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
