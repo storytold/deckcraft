@@ -5514,3 +5514,24 @@ fn spelling_answer_says_whether_a_dictionary_was_used() {
     let doc = command_specs().iter().find(|c| c.id == "review.spelling").unwrap().params;
     assert!(doc.contains("dictionary: bool") && doc.contains("issues") && doc.contains("common"), "{doc}");
 }
+
+/// X6: `file.export` and `file.save` to a folder that does not exist yet create it (the shared
+/// writer does), instead of failing with the raw OS error; the export doc says `slide` is 0-based.
+#[test]
+fn export_and_save_create_a_missing_folder() {
+    let mut s = session();
+    let dir = std::env::temp_dir().join(format!("deckcraft-x6-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let png = dir.join("new").join("deeper").join("slide.png");
+    let r = s.execute("file.export", &json!({"path": png.to_string_lossy(), "slide": 0})).unwrap();
+    assert!(png.is_file(), "{r}");
+    let deck = dir.join("saved").join("deck.deckcraft");
+    let r = s.execute("file.save", &json!({"path": deck.to_string_lossy()})).unwrap();
+    assert!(deck.is_file(), "{r}");
+    let pdf = dir.join("pdf").join("deck.pdf");
+    s.execute("file.export", &json!({"path": pdf.to_string_lossy(), "format": "pdf"})).unwrap();
+    assert!(pdf.is_file());
+    let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
+    assert!(doc.contains("slide?: 0-based index"), "{doc}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
