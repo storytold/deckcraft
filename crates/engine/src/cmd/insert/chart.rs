@@ -57,7 +57,7 @@ pub(super) fn chart(s: &mut Session, p: &Value) -> Result<Value> {
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or(Xfrm::new(size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7));
     let id = add_shape(s, "insert.chart", Shape { xfrm: Some(rect), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 #[allow(dead_code)]

@@ -478,6 +478,10 @@ pub(crate) fn id_param(p: &Value, key: &str, cmd: &str) -> Result<Option<ShapeId
             .ok_or_else(|| bad(cmd, format!("`{key}` is not a valid shape id: {v}"))),
     }
 }
+/// A box as commands answer it: `[x, y, w, h]` in slide points.
+pub(crate) fn rect_json(x: &Xfrm) -> Value {
+    json!([x.x, x.y, x.w, x.h])
+}
 pub(crate) fn ids_param(p: &Value, key: &str) -> Option<Vec<ShapeId>> {
     p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).filter_map(|v| u32::try_from(v).ok()).map(ShapeId).collect())
 }
