@@ -21,14 +21,22 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             new
         ),
-        cmd!("slide.duplicate", "Duplicate Slide", ["Insert"], None, "{index?}", has_slide, duplicate),
+        cmd!(
+            "slide.duplicate",
+            "Duplicate Slide",
+            ["Insert"],
+            None,
+            "{index?} → {ids, index, indices, placeholders: {title, body, …: id}, shapes: [id]} (the first copy's shapes; the copies follow the source)",
+            has_slide,
+            duplicate
+        ),
         cmd!("slide.delete", "Delete Slide", ["Edit"], None, "{index?, ids?: [slide id]}", has_slide, delete),
         cmd!(
             "slide.move",
             "Move Slide",
             [],
             None,
-            "{from?: index, ids?: [slide id], to: index (counted without the moved slides)}",
+            "{from?: index, ids?: [slide id], to: index (counted without the moved slides)} → {index, moved, ids, id (when one slide moves)}",
             has_slide,
             move_slide
         ),
@@ -151,25 +159,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let at = usize_param(p, "at").unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
         let id = slide.id;
-        // The placeholders by role, so the title or body can be addressed without an inspect.
-        let mut placeholders = serde_json::Map::new();
-        for sh in &slide.shapes {
-            if let Some(ph) = &sh.ph {
-                let role = match ph.kind {
-                    k if k.is_title() => "title",
-                    deckcraft_model::PhType::SubTitle => "subtitle",
-                    deckcraft_model::PhType::Body | deckcraft_model::PhType::Obj => "body",
-                    k => k.xml(),
-                };
-                placeholders.entry(role.to_string()).or_insert(json!(sh.id));
-            }
-        }
-        if let Some(t) = slide.shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())) {
-            placeholders.insert("title".into(), json!(t.id));
-        }
-        if let Some(b) = body_placeholder(&mut slide.shapes) {
-            placeholders.insert("body".into(), json!(b.id));
-        }
+        let placeholders = placeholders_json(&mut slide.shapes);
         // Inherit the section of the slide before.
         let section = at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|prev| doc.section_of(prev.id));
         doc.slides.insert(at, Arc::new(slide));
@@ -193,6 +183,30 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
         sel.target = Target::Slides;
         Ok(json!({"index": at, "id": id, "placeholders": placeholders}))
     })
+}
+
+/// The placeholders by role (`title`, `subtitle`, `body`, else the placeholder kind's XML name),
+/// so the title or body can be addressed without an inspect.
+fn placeholders_json(shapes: &mut [deckcraft_model::Shape]) -> serde_json::Map<String, Value> {
+    let mut placeholders = serde_json::Map::new();
+    for sh in shapes.iter() {
+        if let Some(ph) = &sh.ph {
+            let role = match ph.kind {
+                k if k.is_title() => "title",
+                deckcraft_model::PhType::SubTitle => "subtitle",
+                deckcraft_model::PhType::Body | deckcraft_model::PhType::Obj => "body",
+                k => k.xml(),
+            };
+            placeholders.entry(role.to_string()).or_insert(json!(sh.id));
+        }
+    }
+    if let Some(t) = shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())) {
+        placeholders.insert("title".into(), json!(t.id));
+    }
+    if let Some(b) = body_placeholder(shapes) {
+        placeholders.insert("body".into(), json!(b.id));
+    }
+    placeholders
 }
 
 /// The placeholder a new slide's `body` goes into: the layout's main content placeholder.
@@ -264,7 +278,17 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         sel.slides = new_ids.clone();
         sel.shapes.clear();
         sel.text = None;
-        Ok(json!({"ids": new_ids}))
+        // The first copy's place and shapes, so it can be edited without an inspect.
+        let indices: Vec<usize> = new_ids.iter().filter_map(|id| doc.slide_index(*id)).collect();
+        let first = new_ids.first().and_then(|id| doc.slide_index(*id)).and_then(|i| doc.slides.get_mut(i));
+        let (placeholders, shapes) = match first {
+            Some(sl) => {
+                let sl = Arc::make_mut(sl);
+                (placeholders_json(&mut sl.shapes), sl.shapes.iter().map(|x| x.id).collect::<Vec<_>>())
+            }
+            None => (serde_json::Map::new(), vec![]),
+        };
+        Ok(json!({"ids": new_ids, "index": indices.first(), "indices": indices, "placeholders": placeholders, "shapes": shapes}))
     })
 }
 
@@ -329,10 +353,14 @@ fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
         doc.slides = rest;
         reassign_sections(doc, &moved, to);
         sel.slide = to;
+        let mut r = json!({"index": to, "moved": moved.len(), "ids": &moved});
+        if let [id] = moved[..] {
+            r["id"] = json!(id);
+        }
         sel.slides = moved;
         sel.shapes.clear();
         sel.text = None;
-        Ok(json!({"index": to, "moved": moving.len()}))
+        Ok(r)
     })
 }
 
