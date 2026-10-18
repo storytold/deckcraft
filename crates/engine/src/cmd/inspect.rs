@@ -11,7 +11,7 @@ use crate::{Result, Session};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "document.inspect", "Inspect Presentation", [], None, "{} → slides with titles, layouts, shape counts; selection; size; theme", has_doc, document),
-        cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?, animations?: true (the full list; default a summary {count, clickSteps}, animation.get has the list)} → the slide's shapes with ids, kinds, boxes, text, fills, animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
+        cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?, animations?: true (the full list; default a summary {count, clickSteps}, animation.get has the list)} → the slide's shapes with ids, kinds, boxes, text, fills, and when present textColor (a scheme colour as its slot name, else hex), line {color, width}, a connector's from/to {id, site}, links [{text, url|slide}]; animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
         cmd!(query "slide.actions", "Inspect Slide Actions", [], None, "{index?} → {index, slideId, actions: [{owner, event, type, target, hyperlink}]}; lists shape click/hover actions and text-run links/hover actions (including table cells) without executing them", has_doc, actions),
         cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → {shape: full shape JSON, box: its effective box, slide: the index of the slide it is on} (any slide; moves nothing)", has_doc, shape),
         cmd!(query "commands.list", "List Commands", [], None, "{filter?: substring} → [{id, label, params, enabled}]", always, commands),
@@ -103,6 +103,35 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
         if let Some(f) = fill {
             o.insert("fill".into(), f);
         }
+        // What used to cost a render: the text colour, the line, a connector's ends and link
+        // targets, each only when present, so a plain shape grows by its text colour alone.
+        if let Some(c) = ctx {
+            if let Some(tc) = text_color(c, sh) {
+                o.insert("textColor".into(), tc);
+            }
+            if let (deckcraft_model::Fill::Solid { color }, ph) = {
+                let (l, ph) = resolve::line(c, sh);
+                (l.fill.clone().unwrap_or(deckcraft_model::Fill::None), (l, ph))
+            } {
+                let mut line = json!({"color": color_json(c, &color, ph.1)});
+                if let Some(w) = ph.0.width {
+                    line["width"] = json!(w);
+                }
+                o.insert("line".into(), line);
+            }
+            let links = links(c, sh);
+            if !links.is_empty() {
+                o.insert("links".into(), Value::Array(links));
+            }
+        }
+        if let ShapeKind::Connector { start, end } = &sh.kind {
+            if let Some((id, site)) = start {
+                o.insert("from".into(), json!({"id": id, "site": site}));
+            }
+            if let Some((id, site)) = end {
+                o.insert("to".into(), json!({"id": id, "site": site}));
+            }
+        }
         if sh.hidden {
             o.insert("hidden".into(), json!(true));
         }
@@ -130,6 +159,47 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
 
 fn round(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
+}
+
+/// A colour as an agent reads it: the theme slot's name for an unmodified scheme colour (so a
+/// theme change is seen as such), else the resolved `#RRGGBB`.
+fn color_json(c: &Ctx, color: &deckcraft_model::ColorRef, ph: Option<deckcraft_color::Rgba>) -> Value {
+    match &color.base {
+        deckcraft_model::ColorBase::Scheme { slot } if color.mods.is_empty() => json!(slot.xml_name()),
+        _ => json!(format!("#{}", c.color(color, ph).hex())),
+    }
+}
+
+/// The resolved colour of the shape's first text run, when it has text.
+fn text_color(c: &Ctx, sh: &Shape) -> Option<Value> {
+    let body = sh.text.as_ref().filter(|t| !t.is_empty())?;
+    let para = body.paragraphs.iter().find(|p| !p.runs.is_empty())?;
+    let run = para.runs.first()?;
+    let r = resolve::run(c, sh, para, &run.props);
+    Some(match &r.fill {
+        Some(deckcraft_model::Fill::Solid { color }) => color_json(c, color, None),
+        _ => json!(format!("#{}", resolve::text_color(c, &r).hex())),
+    })
+}
+
+/// The shape's hyperlinks: each linked run's text with its target, a `url` or the 0-based
+/// `slide` index.
+fn links(c: &Ctx, sh: &Shape) -> Vec<Value> {
+    use deckcraft_model::text::Action;
+    let mut out = vec![];
+    let target = |a: &Action| match a {
+        Action::Url { url } => Some(("url", json!(url))),
+        Action::Slide { slide } => c.pres.slide_index(*slide).map(|i| ("slide", json!(i))),
+        _ => None,
+    };
+    for run in sh.text.iter().flat_map(|t| t.paragraphs.iter()).flat_map(|p| p.runs.iter()) {
+        if let Some(link) = &run.props.link
+            && let Some((k, v)) = target(&link.action)
+        {
+            out.push(json!({"text": run.text, k: v}));
+        }
+    }
+    out
 }
 
 fn slide(s: &mut Session, p: &Value) -> Result<Value> {
