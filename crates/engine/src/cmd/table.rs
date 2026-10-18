@@ -12,25 +12,25 @@ use crate::{DocState, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("table.insertRowAbove", "Insert Above", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
+        cmd!("table.insertRowAbove", "Insert Above", ["Table Layout", "Rows & Columns"], None, "{row?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
             s,
             p,
             "rowAbove",
             "table.insertRowAbove"
         )),
-        cmd!("table.insertRowBelow", "Insert Below", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
+        cmd!("table.insertRowBelow", "Insert Below", ["Table Layout", "Rows & Columns"], None, "{row?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
             s,
             p,
             "rowBelow",
             "table.insertRowBelow"
         )),
-        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
+        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
             s,
             p,
             "colLeft",
             "table.insertColumnLeft"
         )),
-        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
+        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
             s,
             p,
             "colRight",
@@ -269,6 +269,11 @@ fn at(s: &Session, p: &Value, cmd: &str) -> Result<(usize, usize)> {
 }
 
 fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> Result<()>) -> Result<Value> {
+    with_table_id(s, p, cmd, f).map(|(r, _)| r)
+}
+
+/// [`with_table`] that also answers which table was edited.
+fn with_table_id(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> Result<()>) -> Result<(Value, ShapeId)> {
     let id = match id_param(p, "id", cmd)? {
         Some(i) => i,
         None => {
@@ -310,13 +315,14 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
             t.caret = (0, 0);
         }
     })?;
-    Ok(r)
+    Ok((r, id))
 }
 
 fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result<Value> {
     let (r, c) = at(s, p, name)?;
+    let grows = matches!(op, "rowAbove" | "rowBelow" | "colLeft" | "colRight");
     let op = op.to_string();
-    with_table(s, p, name, move |t| {
+    let (answer, id) = with_table_id(s, p, name, move |t| {
         match op.as_str() {
             "rowAbove" => t.insert_row(r),
             "rowBelow" => t.insert_row(r.saturating_add(1)),
@@ -334,7 +340,26 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
             }
         }
         Ok(())
-    })
+    })?;
+    if !grows {
+        return Ok(answer);
+    }
+    // The table grew: its box, size and whether it now runs off the slide, so no inspect is needed.
+    let st = s.doc()?;
+    let Some(sh) = super::current_shapes(&st.doc, &st.selection).and_then(|v| deckcraft_model::find_shape(v, id)) else { return Ok(answer) };
+    let ShapeKind::Table(t) = &sh.kind else { return Ok(answer) };
+    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let size = st.doc.slide_size;
+    let overflows = x.x < 0.0 || x.y < 0.0 || x.x + x.w > size.width || x.y + x.h > size.height;
+    let mut out = match answer {
+        Value::Object(o) => o,
+        n => serde_json::Map::from_iter([("changed".to_string(), n)]),
+    };
+    out.insert("rect".into(), rect_json(&x));
+    out.insert("rows".into(), json!(t.n_rows()));
+    out.insert("cols".into(), json!(t.n_cols()));
+    out.insert("overflows".into(), json!(overflows));
+    Ok(Value::Object(out))
 }
 
 fn merge(s: &mut Session, p: &Value) -> Result<Value> {

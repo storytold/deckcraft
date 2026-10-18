@@ -6530,6 +6530,31 @@ fn insert_table_chart_and_picture_answer_their_rect() {
     assert_eq!((p["id"].clone(), p["rect"].clone()), (body, json!([b["x"], b["y"], b["w"], b["h"]])), "{p}");
 }
 
+/// W3: the four table insert commands grow the table; the answer carries the table's resulting
+/// `rect`, `rows` and `cols`, and `overflows: true` when the box runs off the slide.
+#[test]
+fn table_inserts_answer_the_resulting_rect_and_flag_overflow() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.table", &json!({"rows": 2, "cols": 2, "rect": [600, 100, 300, 80]})).unwrap()["id"].clone();
+    let r = s.execute("table.insertRowBelow", &json!({"id": id, "row": 1})).unwrap();
+    assert_eq!((r["changed"].as_u64(), r["rows"].as_u64(), r["cols"].as_u64()), (Some(1), Some(3), Some(2)), "{r}");
+    assert_eq!(r["rect"], json!([600.0, 100.0, 300.0, 120.0]), "{r}");
+    assert_eq!(r["overflows"], false, "{r}");
+    // A third 150pt column takes the right edge to 1050 on a 960pt-wide slide.
+    let r = s.execute("table.insertColumnRight", &json!({"id": id, "col": 1})).unwrap();
+    assert_eq!((r["rows"].as_u64(), r["cols"].as_u64()), (Some(3), Some(3)), "{r}");
+    assert_eq!(r["rect"], json!([600.0, 100.0, 450.0, 120.0]), "{r}");
+    assert_eq!(r["overflows"], true, "{r}");
+    for cmd in ["table.insertRowAbove", "table.insertColumnLeft"] {
+        let r = s.execute(cmd, &json!({"id": id})).unwrap();
+        assert!(r["rect"].is_array() && r["rows"].is_u64() && r["cols"].is_u64() && r["overflows"].is_boolean(), "{cmd}: {r}");
+    }
+    // Delete and the other table edits answer as before.
+    let r = s.execute("table.deleteRow", &json!({"id": id, "row": 0})).unwrap();
+    assert_eq!(r, json!(1), "{r}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
