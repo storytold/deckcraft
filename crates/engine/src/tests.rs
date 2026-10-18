@@ -4140,3 +4140,21 @@ fn picture_crop_keeps_the_corner_of_a_rotated_picture() {
     assert_eq!((after.w, after.h, after.rot), (400.0, 400.0, 30.0), "{after:?}");
     assert!((c0 - c1).hypot() < 1e-6, "the top-left corner moved from {c0:?} to {c1:?}");
 }
+
+/// A picture without a pixel size (an SVG) keeps its box when cropped: there is no aspect to refit
+/// the frame to, and the answer is the unchanged box.
+#[test]
+fn picture_crop_leaves_the_box_of_a_picture_without_a_pixel_size() {
+    let mut s = session();
+    let svg =
+        cmd::base64_encode(br#"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>"#);
+    let id = s.execute("insert.picture", &json!({"name": "mark.svg", "data": svg, "rect": [100, 50, 400, 200]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("picture.crop", &json!({"id": id, "right": 0.5})).unwrap();
+    assert_eq!(r["rect"], json!([100.0, 50.0, 400.0, 200.0]), "{r}");
+    let st = s.doc().unwrap();
+    let sh = st.shape(ShapeId(id as u32)).unwrap();
+    let x = sh.xfrm.unwrap();
+    assert_eq!((x.x, x.y, x.w, x.h), (100.0, 50.0, 400.0, 200.0));
+    let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind else { panic!("not a picture: {:?}", sh.kind) };
+    assert_eq!(fill.crop, [0.0, 0.0, 0.5, 0.0], "the crop itself was applied");
+}
