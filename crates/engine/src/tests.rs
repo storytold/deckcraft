@@ -4724,3 +4724,45 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+#[test]
+fn table_insert_column_keeps_the_table_width_and_copies_the_neighbour_format() {
+    let mut s = session();
+    let id = table_at(&mut s, &[280.0, 280.0, 280.0], json!([["a", "b", "c"], ["d", "e", "f"]]));
+    s.execute("table.cellFill", &json!({"id": id.0, "color": "#FF0000", "cells": [[0, 2], [1, 2]]})).unwrap();
+    s.execute("table.cellMargins", &json!({"id": id.0, "left": 20, "right": 20, "top": 5, "bottom": 5, "cells": [[0, 2]]})).unwrap();
+    s.execute("table.cellAlign", &json!({"id": id.0, "anchor": "bottom", "cells": [[0, 2]]})).unwrap();
+    s.execute("edit.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("table.selectCells", &json!({"from": [0, 2], "to": [1, 2]})).unwrap();
+    s.execute("format.bold", &json!({"bold": true})).unwrap();
+    // Right of the last column: four columns in the same 840 pt, the new one as wide as its
+    // neighbour, the others shrunk to make room.
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 2})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.n_cols(), 4);
+    assert!((t.width() - 840.0).abs() < 1e-6, "width {}", t.width());
+    assert!(t.cols.iter().all(|w| (w - 210.0).abs() < 1e-6), "{:?}", t.cols);
+    let x = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+    assert!((x.w - 840.0).abs() < 1e-6, "frame {}", x.w);
+    // The new cells take the neighbour's explicit formatting.
+    let new = t.cell(0, 3).unwrap();
+    assert_eq!(new.fill, Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)))));
+    assert_eq!(new.margins, Some([20.0, 20.0, 5.0, 5.0]));
+    assert_eq!(new.anchor, Some(deckcraft_model::text::Anchor::Bottom));
+    assert_eq!(new.text.text(), "", "the new cell is empty");
+    let bold = new.text.paragraphs.first().map(|p| p.end_props.bold.or(p.def_props.bold));
+    assert_eq!(bold, Some(Some(true)), "the neighbour's bold carries over: {:?}", new.text);
+    assert_eq!(t.cell(1, 3).unwrap().fill, t.cell(1, 2).unwrap().fill);
+    // Left of the first column: the neighbour is the old first column.
+    s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": 0})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.n_cols(), 5);
+    assert!((t.width() - 840.0).abs() < 1e-6, "width {}", t.width());
+    assert_eq!(t.cell(0, 1).unwrap().text.text(), "a");
+    assert_eq!(t.cell(0, 0).unwrap().fill, None);
+    // keepWidth: false grows the table by the neighbour's width, as before.
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 4, "keepWidth": false})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.n_cols(), 6);
+    assert!((t.width() - 840.0 - 168.0).abs() < 1e-6, "width {}", t.width());
+}
