@@ -58,7 +58,7 @@ ready** (estimated), **10–16 h** to parity.
 | Feature | PowerPoint | DeckCraft |
 |---|---|---|
 | Rehearse Timings, keep timings | yes | yes |
-| Record Slide Show (narration, ink, laser, camera; Cameo) | yes | no |
+| Record Slide Show (narration, ink, laser, camera; Cameo) | yes | timings and pen ink; no narration audio, laser or camera |
 | Clear timing / narration | yes | timings only |
 | Export the recorded show to video | yes | no (see [file-format-parity.md](file-format-parity.md)) |
 
@@ -72,8 +72,8 @@ Reading View in a window with navigation: present (checklist row done).
 |---|---|
 | Highlighter, eraser, keep-annotations prompt, laser from presenter view | 2–4 |
 | Presenter view on the right display and a swap-displays command | 2–4 |
-| Record slide show with narration (no camera) | 5–8 |
-| **Total** | **~9–16** (the slide-show row of the feature table carries 10–16 h; recording overlaps the Media row) |
+| Record slide show narration audio (timings and pen ink are kept) | 4–6 |
+| **Total** | **~8–14** (the slide-show row of the feature table carries 10–16 h; recording overlaps the Media row) |
 
 ## Revision history
 
@@ -90,4 +90,5 @@ Reading View in a window with navigation: present (checklist row done).
 | 2026-10-14 | minor | A custom show plays only its slides, from the Custom Shows dialog, from Set Up Slide Show, or from a click action. Checklist breadth stays 66% |
 | 2026-10-14 | minor | Presenter view pauses and resets its timer (T, R) and changes notes size (A-/A+, brackets). The clock shows local time. Second-display placement and swap stay with #433. Checklist breadth stays 66% |
 | 2026-10-14 | minor | See All Slides (G) and click-to-zoom (Z) during the show. Presenter view opens that grid and sets black, white and zoom. Checklist breadth stays 66% |
+| 2026-10-14 | minor | Record Slide Show keeps timings and pen ink. Narration audio, laser and camera stay open |
 | 2026-10-10 | major | Created: show, presenter view, rehearse and record, compared with PowerPoint 16.113's Slide Show tab and menu |
