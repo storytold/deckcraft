@@ -166,7 +166,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "inspect_slide",
             "Inspect slide",
-            "One slide (`index`, or `slide`): its shapes with ids, kinds, boxes [x,y,w,h], placeholder types, text, fills, tables, charts; plus background, transition, notes, and animations as a summary {count, clickSteps} (animations: true for the full list, as run_command animation.get gives it with each one's click step).",
+            "One slide (`index`, or `slide`): its shapes with ids, kinds, boxes [x,y,w,h], placeholder types, text, fills, tables, charts, and when present textColor (a scheme colour as its slot name, else hex), line {color, width}, a connector's from/to {id, site} and links [{text, url|slide}]; plus background, transition, notes, and animations as a summary {count, clickSteps} (animations: true for the full list, as run_command animation.get gives it with each one's click step).",
             obj(
                 json!({"index": int("Slide index (or `slide`; default: current)"), "slide": int("The same as `index`"), "animations": boolean("Embed the full animation list instead of the {count, clickSteps} summary (default false)")}),
                 &[],
