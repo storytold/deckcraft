@@ -1271,6 +1271,16 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"text": t.text(), "paragraphs": t.paragraphs.iter().map(|p| json!({"level": p.level, "text": p.text()})).collect::<Vec<_>>()}))
 }
 
+/// Whether cell `(r, c)` of table `id` is one the shape-level formatters act on: when the
+/// selection is a cell range of this table (`table.selectCells`, a drag over cells) only the
+/// cells in that range are, otherwise every cell is.
+fn in_cell_range(cells: Option<(ShapeId, (usize, usize), (usize, usize))>, id: ShapeId, r: usize, c: usize) -> bool {
+    match cells {
+        Some((tid, a, b)) if tid == id => (a.0.min(b.0)..=a.0.max(b.0)).contains(&r) && (a.1.min(b.1)..=a.1.max(b.1)).contains(&c),
+        _ => true,
+    }
+}
+
 /// Apply run formatting to the text selection (or, when not editing, to all text of the
 /// selected shapes). A caret without a range formats the word it's in (PowerPoint behaviour),
 /// or sets the formatting for what is typed next at a word boundary.
@@ -1297,12 +1307,13 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
     if ids.is_empty() {
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
+    let cells = st.selection.cells;
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         match &mut sh.kind {
             ShapeKind::Table(t) => {
-                for row in &mut t.rows {
-                    for c in &mut row.cells {
-                        ed::format_all(&mut c.text, f);
+                for (r, row) in t.rows.iter_mut().enumerate() {
+                    for (_, cell) in row.cells.iter_mut().enumerate().filter(|(c, _)| in_cell_range(cells, sh.id, r, *c)) {
+                        ed::format_all(&mut cell.text, f);
                     }
                 }
             }
@@ -1388,12 +1399,13 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     if ids.is_empty() {
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
+    let cells = st.selection.cells;
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         match &mut sh.kind {
             ShapeKind::Table(t) => {
-                for row in &mut t.rows {
-                    for c in &mut row.cells {
-                        c.text.paragraphs.iter_mut().for_each(f);
+                for (r, row) in t.rows.iter_mut().enumerate() {
+                    for (_, cell) in row.cells.iter_mut().enumerate().filter(|(c, _)| in_cell_range(cells, sh.id, r, *c)) {
+                        cell.text.paragraphs.iter_mut().for_each(f);
                     }
                 }
             }

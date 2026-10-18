@@ -5071,3 +5071,52 @@ fn animation_errors_name_the_slide_they_looked_at() {
     let e = s.execute("animation.remove", &json!({"index": 3})).unwrap_err().to_string();
     assert!(e.contains("slide index 0") && e.contains("1 animation"), "{e}");
 }
+
+/// `table.selectCells` then a run or paragraph formatter formats the selected cells only; a
+/// table selected as a shape (no cell range) is formatted whole, as before.
+#[test]
+fn formatting_after_select_cells_touches_only_those_cells() {
+    use deckcraft_model::text::Align;
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    let data = json!([["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]]);
+    let id = s.execute("insert.table", &json!({"rows": 3, "cols": 3, "data": data})).unwrap()["id"].clone();
+    let table = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.shapes().iter().find(|sh| json!(sh.id) == id).unwrap().clone();
+        let deckcraft_model::ShapeKind::Table(t) = sh.kind else { panic!("not a table") };
+        t
+    };
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    // The header row.
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 2]})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
+    s.execute("format.align", &json!({"align": "center"})).unwrap();
+    let t = table(&s);
+    for c in 0..3 {
+        let p = &t.rows[0].cells[c].text.paragraphs[0];
+        assert_eq!(p.runs[0].props.bold, Some(true), "header cell {c} bold");
+        assert_eq!(p.runs[0].props.fill, red, "header cell {c} red");
+        assert_eq!(p.props.align, Some(Align::Center), "header cell {c} centred");
+    }
+    for r in 1..3 {
+        for c in 0..3 {
+            let p = &t.rows[r].cells[c].text.paragraphs[0];
+            assert_eq!(p.runs[0].props.bold, None, "body cell {r},{c} not bold");
+            assert_eq!(p.runs[0].props.fill, None, "body cell {r},{c} not coloured");
+            assert_eq!(p.props.align, None, "body cell {r},{c} not centred");
+        }
+    }
+    // The whole table (selected as a shape, no cell range) still changes everywhere.
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    assert!(s.doc().unwrap().selection.cells.is_none());
+    s.execute("format.italic", &json!({"on": true})).unwrap();
+    s.execute("format.align", &json!({"align": "right"})).unwrap();
+    let t = table(&s);
+    for cell in t.rows.iter().flat_map(|r| &r.cells) {
+        let p = &cell.text.paragraphs[0];
+        assert_eq!(p.runs[0].props.italic, Some(true));
+        assert_eq!(p.props.align, Some(Align::Right));
+    }
+}
