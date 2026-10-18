@@ -6845,6 +6845,41 @@ fn slide_duplicate_names_placeholders_by_their_kind() {
     assert!(d["placeholders"].get("ftr").is_some_and(Value::is_u64), "{d}");
 }
 
+/// Y2: `shape.connect {id, from, to, preset}` re-glues an existing connector *and* applies the
+/// preset; with `id`, `preset` was silently ignored, so a straight connector could never be made
+/// bent (it answered straightConnector1 to a bentConnector3 request).
+#[test]
+fn shape_connect_with_id_applies_the_preset() {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.connect", &json!({"from": a, "to": b})).unwrap()["id"].as_u64().unwrap();
+    let state = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.shape(ShapeId(c as u32)).unwrap();
+        let glued = match sh.kind {
+            ShapeKind::Connector { start: Some((f, _)), end: Some((t, _)) } => f.0 as u64 == a && t.0 as u64 == b,
+            _ => false,
+        };
+        (sh.geom.preset_name().unwrap_or_default().to_string(), glued)
+    };
+    assert_eq!(state(&s), ("straightConnector1".into(), true));
+    let r = s.execute("shape.connect", &json!({"id": c, "from": a, "to": b, "preset": "bentConnector3"})).unwrap();
+    assert_eq!(r["id"], c, "{r}");
+    assert_eq!(state(&s), ("bentConnector3".into(), true), "the preset is applied and the ends stay glued");
+    let r = s.execute("shape.connect", &json!({"id": c, "from": a, "to": b, "preset": "curvedConnector3"})).unwrap();
+    assert_eq!(r["id"], c, "{r}");
+    assert_eq!(state(&s), ("curvedConnector3".into(), true));
+    // Only a connector preset: a box is not a line, so it is refused and the connector is unchanged.
+    let e = s.execute("shape.connect", &json!({"id": c, "from": a, "to": b, "preset": "rect"})).unwrap_err().to_string();
+    assert!(e.contains("not a connector preset"), "{e}");
+    assert_eq!(state(&s), ("curvedConnector3".into(), true));
+    let doc = command_specs().iter().find(|cm| cm.id == "shape.connect").unwrap().params;
+    assert!(doc.contains("with id: changes the connector's kind"), "{doc}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
