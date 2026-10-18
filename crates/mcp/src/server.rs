@@ -28,7 +28,16 @@ inspect_slide to read back ids, boxes and text → render_slide to look at the r
 there, makes that slide current and says so in its answer ({changed, onSlides, currentSlide}); only commands \
 that need several shapes on one slide, such as shape.connect and arrange.*, work on the current slide. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
 the selected text or shapes; shape.fill, shape.line and the other shape commands whose parameters list `ids` act on \
-those shapes, else on the selected ones. Save with save_presentation (.deckcraft or .pptx).";
+those shapes, else on the selected ones. Save with save_presentation (.deckcraft or .pptx). Diagram recipe (no \
+list_commands needed): shape.insert {preset: rect|roundRect|ellipse|diamond|chevron…, rect: [x,y,w,h], text, fill, \
+line, size, color, bold, name} → {id} makes one styled box; shape.connect {from, to, fromSite?, toSite?, preset?: \
+straightConnector1|bentConnector3} → {id} draws an arrow between two shapes on the current slide (a box's sites are \
+0 top, 1 left, 2 bottom, 3 right; glued connectors follow later moves); animation.add {ids, effect: fade|wipe|zoom|fly, \
+start: onClick|withPrevious|afterPrevious, duration?: ms} → {indices} (one onClick per click step); slide.notes {text}; \
+transition.set {kind: fade|push|wipe|…, index?}; section.add {name, at: slide index}; insert.table {rows, cols, rect, \
+data: [[…]]} then set_text {id, cell: [r, c], text} and table.style; design.palette {} answers the theme's colours; \
+add_slide answers placeholders {title, body} ids; export {path, format: png|pdf, slide?|all?}. Put many commands in one \
+batch (tool names work inside it too).";
 
 /// Resource URIs.
 pub const DOC_URI: &str = "deckcraft://document";
