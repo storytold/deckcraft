@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Connect Shapes",
             [],
             None,
-            "{from: shape id, to: shape id (both on the current slide), fromSite?, toSite?: site index (default: the closest pair; shape.sites lists them, a box has 0 top, 1 left, 2 bottom, 3 right), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
+            "{from: shape id, to: shape id (both on the current slide), fromSite?, toSite?: site index (default: the closest pair; shape.sites lists them, a box has 0 top, 1 left, 2 bottom, 3 right), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3 (with id: changes the connector's kind as it is re-glued)} → {id, fromSite, toSite}",
             has_slide,
             connect
         ),
@@ -1219,8 +1219,23 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let (p0, p1) = (a[ia], b[ib]);
+    // With `id`, `preset` changes the connector's kind (straight → bent, say) as it is re-glued;
+    // without it the preset was silently kept.
+    let mut regeom = None;
     let id = match id_param(p, "id", "shape.connect")? {
-        Some(id) => id,
+        Some(id) => {
+            if let Some(name) = str_param(p, "preset") {
+                let info = deckcraft_geom::preset::info(name).ok_or_else(|| bad("shape.connect", format!("unknown preset `{name}`")))?;
+                if !deckcraft_geom::preset::is_line_like(info.name) {
+                    return Err(bad(
+                        "shape.connect",
+                        format!("`{name}` is not a connector preset (straightConnector1, bentConnector3, curvedConnector3)"),
+                    ));
+                }
+                regeom = Some(Geom::preset(info.name));
+            }
+            id
+        }
         None => {
             let preset = str_param(p, "preset").unwrap_or("straightConnector1");
             let r = s.execute("shape.insert", &json!({"preset": preset, "rect": [p0.x, p0.y, 1.0, 1.0]}))?;
@@ -1232,6 +1247,9 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         let sh = deckcraft_model::find_shape_mut(list, id).ok_or_else(|| bad("shape.connect", "no such line"))?;
         if !sh.is_line() {
             return Err(bad("shape.connect", "`id` is not a line or connector"));
+        }
+        if let Some(geom) = regeom {
+            sh.geom = geom;
         }
         sh.xfrm = Some(crate::tools::line_xfrm(p0, p1, 0.0));
         sh.kind = deckcraft_model::ShapeKind::Connector { start: Some((from, ia as u32)), end: Some((to, ib as u32)) };
