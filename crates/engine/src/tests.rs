@@ -6880,6 +6880,35 @@ fn shape_connect_with_id_applies_the_preset() {
     assert!(doc.contains("with id: changes the connector's kind"), "{doc}");
 }
 
+/// Y4: `file.export {all: true, path: "d.png"}` writes d1.png, d2.png… numbered from 1 (the
+/// displayed slide number) while `slide` is a 0-based index; the doc says so and the answer
+/// carries `indices`, the 0-based slide of each file, beside `files`.
+#[test]
+fn export_all_numbers_files_from_one_and_answers_their_slide_indices() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleOnly", "title": "Two"})).unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-all-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let r = s.execute("file.export", &json!({"path": dir.join("d.png").to_string_lossy(), "all": true, "scale": 0.25})).unwrap();
+    let expect: Vec<Value> = (1..=3).map(|n| json!(dir.join(format!("d{n}.png")).to_string_lossy())).collect();
+    assert_eq!(r["files"], json!(expect), "{r}");
+    assert_eq!(r["indices"], json!([0, 1, 2]), "{r}");
+    for f in &expect {
+        assert!(std::path::Path::new(f.as_str().unwrap()).is_file(), "{f}");
+    }
+    let one = dir.join("one.png");
+    let r = s.execute("file.export", &json!({"path": one.to_string_lossy(), "slide": 1, "scale": 0.25})).unwrap();
+    assert_eq!(r, json!({"files": [one.to_string_lossy()], "indices": [1]}), "{r}");
+    let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
+    assert!(doc.contains("numbered from 1") && doc.contains("indices"), "{doc}");
+    for (id, needle) in [("chart.data", "replaces all the series"), ("animation.timing", "as animation.get numbers them")] {
+        let doc = command_specs().iter().find(|c| c.id == id).unwrap().params;
+        assert!(doc.contains(needle), "{id}: {doc}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
