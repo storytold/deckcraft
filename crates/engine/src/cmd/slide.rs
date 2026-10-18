@@ -42,7 +42,15 @@ pub fn specs() -> Vec<CommandSpec> {
             notes
         ),
         cmd!("slide.rename", "Rename Slide", [], None, "{name, index?}", has_slide, rename),
-        cmd!("section.add", "Add Section", ["Home", "Slides", "Section"], None, "{name?, at?: slide index}", has_slide, section_add),
+        cmd!(
+            "section.add",
+            "Add Section",
+            ["Home", "Slides", "Section"],
+            None,
+            "{name?, at?: slide index (the section starts there; past the end is refused)} → {sections: [{name, start, slides}], count, index, name}",
+            has_slide,
+            section_add
+        ),
         cmd!("section.rename", "Rename Section", ["Home", "Slides", "Section"], None, "{index, name}", has_slide, section_rename),
         cmd!(
             "section.remove",
@@ -551,10 +559,13 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
     let at = opt_usize_param(p, "at", "section.add")?.unwrap_or(s.doc()?.selection.slide);
+    let n = s.doc()?.doc.slides.len();
+    if at >= n {
+        return Err(no_slide("section.add", at, n));
+    }
     let name = str_param(p, "name").unwrap_or("Untitled Section").to_string();
     let wanted = name.clone();
     s.edit(|doc, _| {
-        let at = at.min(doc.slides.len().saturating_sub(1));
         let ids: Vec<SlideId> = doc.slides.iter().map(|x| x.id).collect();
         if doc.sections.is_empty() {
             // The slides before `at` go into a "Default Section".
@@ -572,8 +583,25 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
             doc.sections.retain(|x| !x.slides.is_empty() || x.name != "Default Section");
         }
         let index = doc.sections.iter().rposition(|x| x.name == wanted).unwrap_or(0);
-        Ok(json!({"sections": doc.sections.len(), "index": index, "name": wanted}))
+        Ok(json!({"sections": sections_json(doc), "count": doc.sections.len(), "index": index, "name": wanted}))
     })
+}
+
+/// The sections as `[{name, start: first slide's index, slides: count}]`; `start` is left out of a
+/// section that has no slides.
+pub(crate) fn sections_json(doc: &Presentation) -> Vec<Value> {
+    doc.sections
+        .iter()
+        .map(|sec| {
+            let mut v = serde_json::Map::new();
+            v.insert("name".into(), json!(sec.name));
+            if let Some(start) = sec.slides.first().and_then(|id| doc.slide_index(*id)) {
+                v.insert("start".into(), json!(start));
+            }
+            v.insert("slides".into(), json!(sec.slides.len()));
+            Value::Object(v)
+        })
+        .collect()
 }
 
 fn section_rename(s: &mut Session, p: &Value) -> Result<Value> {
