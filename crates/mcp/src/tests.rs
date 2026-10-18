@@ -525,3 +525,27 @@ fn screenshot_with_a_path_answers_text_and_headless_refuses() {
     let shot = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "screenshot").unwrap();
     assert!(shot["inputSchema"]["properties"].get("path").is_some() && shot["description"].as_str().unwrap().contains("path"), "{shot}");
 }
+
+/// A batch item named with a hyphen (`as: "ui-egui"`) can never be referred to as `$ui-egui`
+/// (the reference stops at the hyphen), so the name is refused where it is declared, with the
+/// rule, instead of a later item failing on a `$ui-egui` sent on as text.
+#[test]
+fn batch_refuses_a_name_a_reference_cannot_spell() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let r = call(
+        &mut s,
+        9,
+        "tools/call",
+        json!({"name": "batch", "arguments": {"commands": [
+            {"command": "shape.insert", "params": {"preset": "rect", "rect": [10, 10, 100, 50]}, "as": "ui-egui"},
+            {"command": "shape.insert", "params": {"preset": "rect", "rect": [200, 10, 100, 50]}},
+        ]}}),
+    );
+    let text = r["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(r["result"]["isError"] == true && text.contains("ui-egui") && text.contains("letters, digits and `_`"), "{text}");
+    assert!(!text.contains("\"ok\":true"), "stops at the refused item: {text}");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    assert_eq!(sl["shapes"].as_array().map(|a| a.len()), Some(0), "nothing ran: {sl}");
+}
