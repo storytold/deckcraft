@@ -21,7 +21,13 @@ impl ToolResult {
         Self::text(serde_json::to_string_pretty(v).unwrap_or_default())
     }
     pub fn error(t: impl Into<String>) -> Self {
-        Self { content: vec![json!({"type": "text", "text": t.into()})], is_error: true }
+        let mut t = t.into();
+        // The engine names its own commands; here the tools that open a presentation are the
+        // ones a client calls.
+        if t.contains("no presentation open") {
+            t.push_str("; here: new_presentation or open_presentation");
+        }
+        Self { content: vec![json!({"type": "text", "text": t})], is_error: true }
     }
     pub fn image(png_base64: String, info: &Value) -> Self {
         Self {
@@ -74,7 +80,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "run_command",
             "Run a command",
-            "Run any command by id with JSON parameters. This is how everything is done: slide.new, shape.insert, text.set, format.bold, shape.fill, design.theme, transition.set, animation.add, table.merge, edit.undo…",
+            "Run any command by id with JSON parameters. This is how everything is done: slide.new, shape.insert, text.set, format.bold, shape.fill, design.theme, transition.set, animation.add, table.merge, edit.undo… A tool name (add_shape, go_to_slide…) works here too, with the tool's arguments as params.",
             obj(
                 json!({"command": string("Command id from list_commands"), "params": {"type": "object", "description": "Parameters (see the command's params summary)"}}),
                 &["command"],
@@ -84,7 +90,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "batch",
             "Run several commands",
-            "Run commands in order; stops at the first error unless keepGoing. Returns each result.",
+            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params.",
             obj(
                 json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
                 &["commands"],
@@ -294,8 +300,39 @@ fn exec(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<Value, String> 
     b.call("engine.execute", json!({"command": cmd, "params": params}))
 }
 
+/// A tool name where `run_command` and `batch` take a command id runs that tool, so add_shape,
+/// add_text_box or go_to_slide can sit in a batch beside commands (#298).
+fn is_tool(id: &str) -> bool {
+    tool_definitions().iter().any(|t| t["name"] == id)
+}
+
+/// A command id or a tool name, run either way, as a command's answer.
+fn run_either(b: &mut dyn Backend, id: &str, params: Value) -> Result<Value, String> {
+    if !is_tool(id) {
+        return exec(b, id, params);
+    }
+    let r = call_tool(b, id, &params);
+    let text = r.content.iter().filter_map(|c| c.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
+    if r.is_error { Err(text) } else { Ok(serde_json::from_str(&text).unwrap_or(Value::String(text))) }
+}
+
 fn f(a: &Value, k: &str) -> Option<f64> {
     a.get(k).and_then(Value::as_f64)
+}
+
+/// The tool's `x`, `y`, `w`, `h` as the command's `rect`; the four keys themselves are taken out,
+/// because the command refuses keys it doesn't take.
+fn with_rect(a: &Value) -> Value {
+    let mut p = a.clone();
+    if let Some(o) = p.as_object_mut() {
+        if let (Some(x), Some(y), Some(w), Some(h)) = (f(a, "x"), f(a, "y"), f(a, "w"), f(a, "h")) {
+            o.insert("rect".into(), json!([x, y, w, h]));
+        }
+        for k in ["x", "y", "w", "h"] {
+            o.remove(k);
+        }
+    }
+    p
 }
 
 fn wrap(r: Result<Value, String>) -> ToolResult {
@@ -354,14 +391,18 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         })),
         "run_command" => {
             let Some(c) = a.get("command").and_then(Value::as_str) else { return ToolResult::error("missing `command`") };
-            wrap(exec(b, c, a.get("params").cloned().unwrap_or(json!({}))))
+            let params = a.get("params").cloned().unwrap_or(json!({}));
+            if is_tool(c) {
+                return call_tool(b, c, &params);
+            }
+            wrap(exec(b, c, params))
         }
         "batch" => {
             let keep = a.get("keepGoing").and_then(Value::as_bool).unwrap_or(false);
             let mut out = vec![];
             for c in a.get("commands").and_then(Value::as_array).cloned().unwrap_or_default() {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
-                match exec(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
+                match run_either(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
                     Ok(v) => out.push(json!({"command": id, "ok": true, "result": v})),
                     Err(e) => {
                         out.push(json!({"command": id, "ok": false, "error": e}));
@@ -430,27 +471,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             ToolResult::json(&v)
         }
         "set_text" => wrap(exec(b, "text.set", a)),
-        "insert_picture" => {
-            let mut p = a.clone();
-            if let (Some(x), Some(y), Some(w), Some(h)) = (f(&a, "x"), f(&a, "y"), f(&a, "w"), f(&a, "h")) {
-                p["rect"] = json!([x, y, w, h]);
-            }
-            wrap(exec(b, "insert.picture", p))
-        }
-        "insert_table" => {
-            let mut p = a.clone();
-            if let (Some(x), Some(y), Some(w), Some(h)) = (f(&a, "x"), f(&a, "y"), f(&a, "w"), f(&a, "h")) {
-                p["rect"] = json!([x, y, w, h]);
-            }
-            wrap(exec(b, "insert.table", p))
-        }
-        "insert_chart" => {
-            let mut p = a.clone();
-            if let (Some(x), Some(y), Some(w), Some(h)) = (f(&a, "x"), f(&a, "y"), f(&a, "w"), f(&a, "h")) {
-                p["rect"] = json!([x, y, w, h]);
-            }
-            wrap(exec(b, "insert.chart", p))
-        }
+        "insert_picture" => wrap(exec(b, "insert.picture", with_rect(&a))),
+        "insert_table" => wrap(exec(b, "insert.table", with_rect(&a))),
+        "insert_chart" => wrap(exec(b, "insert.chart", with_rect(&a))),
         "select" => wrap(exec(b, "edit.select", a)),
         "pointer" => wrap(b.call("ui.pointer", a)),
         "select_tool" => wrap(b.call("ui.tool.select", a)),

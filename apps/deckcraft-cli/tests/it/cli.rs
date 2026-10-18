@@ -226,7 +226,7 @@ fn run_help_says_what_the_ids_do_not() {
         "COMMAND is a command id, then `=`, then the command's parameters as one JSON object.",
         "points on a 960×540 slide",
         "Slide indices start at 0.",
-        "Shape ids are looked up on the current slide only.",
+        "Shape ids are unique in the presentation;",
         "A command that adds a shape (shape.insert, insert.textBox, insert.table…) selects it.",
         "format.* acts on the selected text or shapes",
         "--cmd-file FILE reads the same commands from a UTF-8 text file, one per line",
@@ -244,11 +244,18 @@ fn describe_spells_out_a_command() {
         "shape.insert: Shapes, in Insert ▸ Illustrations.
 
 Parameters:
-  preset          rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets)
-  rect            [x,y,w,h] pt
-  text, optional  string
-  adj, optional   [adjustment values 0-1]
-  flip, optional  h|v|hv
+  preset           rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets)
+  rect             [x,y,w,h] pt
+  text, optional   string
+  fill, optional   color|none
+  line, optional   color|none
+  size, optional   pt (text)
+  color, optional  text colour
+  bold, optional   bool
+  name, optional
+  adj, optional    [adjustment values 0-1]
+  flip, optional   h|v|hv
+Answers with {id}.
 
 Run it with: deckcraft-cli run --cmd 'shape.insert={…}'
 "

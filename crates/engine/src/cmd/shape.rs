@@ -34,7 +34,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Connect Shapes",
             [],
             None,
-            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the closest pair), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
+            "{from: shape id, to: shape id (both on the current slide), fromSite?, toSite?: site index (default: the closest pair; shape.sites lists them, a box has 0 top, 1 left, 2 bottom, 3 right), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
             has_slide,
             connect
         ),
@@ -112,7 +112,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Outline",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
+            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow (at the start of the line), tail? (at the end), headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
             has_selection,
             line
         ),
