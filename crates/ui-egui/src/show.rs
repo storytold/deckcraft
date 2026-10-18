@@ -12,6 +12,80 @@ use serde_json::json;
 use crate::SlideApp;
 use crate::theme;
 
+/// One connected display, in the order `winit`'s `available_monitors()` returns.
+///
+/// [`ShowScreens`] uses that order: [`egui::ViewportCommand::SetMonitor`] addresses the same index.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DisplayInfo {
+    pub index: usize,
+    /// Top-left corner in physical pixels. A display to the left of the origin is negative.
+    pub origin: [i32; 2],
+    pub size_px: [u32; 2],
+    /// Physical pixels per point on this display (`MonitorHandle::scale_factor`).
+    pub scale: f32,
+    pub primary: bool,
+}
+
+/// Where a slide show goes when more than one display is connected.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum ShowScreens {
+    /// One display, or none reported: full screen on the current display, presenter window floats.
+    #[default]
+    Current,
+    /// The show fills `projector`; the presenter window opens on `presenter` (the primary).
+    Split { projector: usize, presenter: DisplayInfo },
+}
+
+/// The audience display is the first one that is not the presenter's.
+///
+/// The presenter's display is the one marked primary. When the platform names none, the first
+/// reported display is treated as the presenter's — that is the usual laptop-plus-projector order.
+pub fn show_screens(displays: &[DisplayInfo]) -> ShowScreens {
+    let (Some(first), Some(_)) = (displays.first(), displays.get(1)) else {
+        return ShowScreens::Current;
+    };
+    let presenter = displays.iter().find(|d| d.primary).unwrap_or(first);
+    let Some(projector) = displays.iter().find(|d| d.index != presenter.index) else {
+        return ShowScreens::Current;
+    };
+    ShowScreens::Split { projector: projector.index, presenter: presenter.clone() }
+}
+
+/// Presenter window frame in egui points, covering `display`.
+///
+/// egui turns these points back into physical pixels with the new window's own scale, which matches
+/// `display.scale` once the window is on that display.
+pub fn presenter_frame(display: &DisplayInfo) -> Option<PresenterFrame> {
+    let scale = display.scale;
+    if !scale.is_finite() || scale <= 0.0 || display.size_px[0] == 0 || display.size_px[1] == 0 {
+        return None;
+    }
+    let x = display.origin[0] as f32 / scale;
+    let y = display.origin[1] as f32 / scale;
+    let w = display.size_px[0] as f32 / scale;
+    let h = display.size_px[1] as f32 / scale;
+    if ![x, y, w, h].iter().all(|v| v.is_finite()) || w <= 1.0 || h <= 1.0 {
+        return None;
+    }
+    Some(PresenterFrame { x, y, w, h })
+}
+
+/// Top-left and size of the presenter window, in egui points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PresenterFrame {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+/// Editor window to restore when a show that moved to another display ends.
+struct SavedWindow {
+    pos: Pos2,
+    inner: egui::Vec2,
+    maximized: bool,
+}
+
 pub struct Show {
     pub state: ShowState,
     pub reading: bool,
@@ -67,6 +141,10 @@ pub struct Show {
     media_clock: Option<(usize, f64)>,
     /// Media effects set off and not yet carried out: (shape, effect id).
     media_cues: Vec<(ShapeId, String)>,
+    /// Decided once, when the show starts, from the displays connected then.
+    screens: ShowScreens,
+    /// Editor frame from before the show moved to another display.
+    restore: Option<SavedWindow>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -208,6 +286,8 @@ impl Show {
             links: None,
             media_clock: None,
             media_cues: vec![],
+            screens: ShowScreens::Current,
+            restore: None,
         }
     }
 
@@ -534,7 +614,15 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
         if !show.reading {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            show.screens = show_screens(&app.displays);
+            match &show.screens {
+                ShowScreens::Current => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true)),
+                ShowScreens::Split { projector, presenter } => {
+                    log::info!("slide show on display {projector}, presenter view on display {}", presenter.index);
+                    show.restore = saved_window(&ctx);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::SetMonitor(*projector));
+                }
+            }
         }
         show.after_enter(&doc, now);
     }
@@ -1041,7 +1129,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     } else {
         app.media.stop_owned(crate::media::Owner::Show);
         if !show.reading {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+            match show.restore.take() {
+                Some(saved) => restore_window(&ctx, saved),
+                None => ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false)),
+            }
         }
         if show.rehearse {
             if let Some((_, tl)) = &show.timeline {
@@ -1723,6 +1814,35 @@ fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usi
     Some(tex)
 }
 
+fn presenter_builder(screens: &ShowScreens) -> egui::ViewportBuilder {
+    let mut b = egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]);
+    if let ShowScreens::Split { presenter, .. } = screens
+        && let Some(frame) = presenter_frame(presenter)
+    {
+        b = b.with_position([frame.x, frame.y]).with_inner_size([frame.w, frame.h]).with_maximized(true);
+    }
+    b
+}
+
+fn saved_window(ctx: &egui::Context) -> Option<SavedWindow> {
+    ctx.input(|i| {
+        let v = i.viewport();
+        let outer = v.outer_rect?;
+        let inner = v.inner_rect.map(|r| r.size()).unwrap_or_else(|| outer.size());
+        Some(SavedWindow { pos: outer.min, inner, maximized: v.maximized.unwrap_or(false) })
+    })
+}
+
+fn restore_window(ctx: &egui::Context, saved: SavedWindow) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(saved.pos));
+    if saved.maximized {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(true));
+    } else if saved.inner.x > 1.0 && saved.inner.y > 1.0 && saved.inner.is_finite() {
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(saved.inner));
+    }
+}
+
 fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, keep: &mut bool) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
@@ -1752,122 +1872,117 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
-    ctx.show_viewport_immediate(
-        egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
-        |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now) {
-                *keep = false;
-            }
-            ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
-            let elapsed = show.timer.elapsed(now);
-            let paused = show.timer.paused();
-            egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
-                        Color32::from_gray(160)
-                    } else {
-                        Color32::WHITE
-                    }));
-                    ui.add_space(12.0);
-                    ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
-                    ui.add_space(20.0);
-                    ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "End Show").clicked() {
-                            *keep = false;
-                        }
-                        if button(ui, "Next ▶").clicked() {
-                            actions.push(show.state.next(doc));
-                        }
-                        if button(ui, "◀ Previous").clicked() {
-                            actions.push(show.state.prev(doc));
-                        }
-                    });
-                });
-                ui.horizontal(|ui| {
-                    if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
-                        show.timer.toggle(now);
+    let builder = presenter_builder(&show.screens);
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("deckcraft_presenter"), builder, |ui, _| {
+        if !keyboard(ui.ctx(), show, doc, now) {
+            *keep = false;
+        }
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+        let elapsed = show.timer.elapsed(now);
+        let paused = show.timer.paused();
+        egui::CentralPanel::default().frame(egui::Frame::NONE.fill(Color32::from_gray(24)).inner_margin(egui::Margin::same(16))).show(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(format_elapsed(elapsed)).size(22.0).color(if paused {
+                    Color32::from_gray(160)
+                } else {
+                    Color32::WHITE
+                }));
+                ui.add_space(12.0);
+                ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
+                ui.add_space(20.0);
+                ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if button(ui, "End Show").clicked() {
+                        *keep = false;
                     }
-                    if button(ui, "Reset").clicked() {
-                        show.timer.reset(now);
+                    if button(ui, "Next ▶").clicked() {
+                        actions.push(show.state.next(doc));
                     }
-                    if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
-                        toggle_blank(show, Color32::BLACK);
+                    if button(ui, "◀ Previous").clicked() {
+                        actions.push(show.state.prev(doc));
                     }
-                    if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
-                        toggle_blank(show, Color32::WHITE);
-                    }
-                    if button(ui, if show.grid { "All slides on" } else { "All slides" }).clicked() {
-                        show.grid = !show.grid;
-                    }
-                    if button(ui, show.zoom_label()).clicked() {
-                        show.zoom_key();
-                    }
-                });
-                ui.add_space(8.0);
-                let avail = ui.available_rect_before_wrap();
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
-                let cr = Rect::from_min_size(left.min, cr.size());
-                if let Some(t) = &cur_tex {
-                    ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                }
-                if let Some(z) = show.zoom {
-                    let mark = zoom_frame(cr, z.uv());
-                    ui.painter().rect_stroke(mark, CornerRadius::ZERO, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
-                }
-                if show.zoom_arm {
-                    let hit = ui.interact(cr, ui.id().with("presenter_zoom"), Sense::click());
-                    if hit.clicked()
-                        && let Some(p) = hit.interact_pointer_pos()
-                        && cr.width() > 1.0
-                        && cr.height() > 1.0
-                    {
-                        show.zoom = Some(Zoom::at((p.x - cr.min.x) / cr.width(), (p.y - cr.min.y) / cr.height()));
-                        show.zoom_arm = false;
-                    }
-                }
-                if let Some(c) = show.blank {
-                    ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
-                }
-                let nr = next_rect(right, doc);
-                ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
-                match &next_tex {
-                    Some(t) => {
-                        ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-                    }
-                    None => {
-                        ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
-                        ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
-                    }
-                }
-                let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
-                let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
-                head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
-                        show.nudge_notes(-NOTES_STEP);
-                    }
-                    ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
-                        show.nudge_notes(NOTES_STEP);
-                    }
-                });
-                let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
-                egui::ScrollArea::vertical().show(&mut child, |ui| {
-                    ui.label(
-                        egui::RichText::new(if notes.is_empty() { "No notes." } else { &notes }).size(show.notes_px).color(Color32::from_gray(230)),
-                    );
                 });
             });
-            if ui.input(|i| i.viewport().close_requested()) {
-                show.presenter = false;
+            ui.horizontal(|ui| {
+                if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
+                    show.timer.toggle(now);
+                }
+                if button(ui, "Reset").clicked() {
+                    show.timer.reset(now);
+                }
+                if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
+                    toggle_blank(show, Color32::BLACK);
+                }
+                if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
+                    toggle_blank(show, Color32::WHITE);
+                }
+                if button(ui, if show.grid { "All slides on" } else { "All slides" }).clicked() {
+                    show.grid = !show.grid;
+                }
+                if button(ui, show.zoom_label()).clicked() {
+                    show.zoom_key();
+                }
+            });
+            ui.add_space(8.0);
+            let avail = ui.available_rect_before_wrap();
+            let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
+            let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
+            let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
+            let cr = Rect::from_min_size(left.min, cr.size());
+            if let Some(t) = &cur_tex {
+                ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
             }
-        },
-    );
+            if let Some(z) = show.zoom {
+                let mark = zoom_frame(cr, z.uv());
+                ui.painter().rect_stroke(mark, CornerRadius::ZERO, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
+            }
+            if show.zoom_arm {
+                let hit = ui.interact(cr, ui.id().with("presenter_zoom"), Sense::click());
+                if hit.clicked()
+                    && let Some(p) = hit.interact_pointer_pos()
+                    && cr.width() > 1.0
+                    && cr.height() > 1.0
+                {
+                    show.zoom = Some(Zoom::at((p.x - cr.min.x) / cr.width(), (p.y - cr.min.y) / cr.height()));
+                    show.zoom_arm = false;
+                }
+            }
+            if let Some(c) = show.blank {
+                ui.painter().rect_filled(cr, CornerRadius::ZERO, c);
+            }
+            let nr = next_rect(right, doc);
+            ui.painter().text(right.min, Align2::LEFT_TOP, "Next", theme::font(13.0), Color32::from_gray(170));
+            match &next_tex {
+                Some(t) => {
+                    ui.painter().image(t.id(), nr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+                }
+                None => {
+                    ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
+                    ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                }
+            }
+            let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
+            let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
+            head.horizontal(|ui| {
+                ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
+                if ui.button("A-").clicked() {
+                    show.nudge_notes(-NOTES_STEP);
+                }
+                ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
+                if ui.button("A+").clicked() {
+                    show.nudge_notes(NOTES_STEP);
+                }
+            });
+            let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
+            let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
+            egui::ScrollArea::vertical().show(&mut child, |ui| {
+                ui.label(egui::RichText::new(if notes.is_empty() { "No notes." } else { &notes }).size(show.notes_px).color(Color32::from_gray(230)));
+            });
+        });
+        if ui.input(|i| i.viewport().close_requested()) {
+            show.presenter = false;
+        }
+    });
     for a in actions {
         if !show.apply(a, doc, now) {
             *keep = false;
@@ -2245,5 +2360,69 @@ mod tests {
         // 16:9 still takes the column's full width.
         let doc = s.active().unwrap().doc.clone();
         assert_eq!(next_rect(right, &doc).width(), 400.0);
+    }
+
+    fn display(index: usize, origin: [i32; 2], size_px: [u32; 2], scale: f32, primary: bool) -> DisplayInfo {
+        DisplayInfo { index, origin, size_px, scale, primary }
+    }
+
+    #[test]
+    fn one_display_keeps_the_show_on_the_current_screen() {
+        let laptop = display(0, [0, 0], [1512, 982], 2.0, true);
+        assert_eq!(show_screens(&[]), ShowScreens::Current);
+        assert_eq!(show_screens(&[laptop]), ShowScreens::Current);
+    }
+
+    #[test]
+    fn the_show_fills_the_other_display_and_presenter_view_the_primary() {
+        let laptop = display(0, [0, 0], [3024, 1964], 2.0, true);
+        let projector = display(1, [3024, 0], [1920, 1080], 1.0, false);
+        // Primary listed second: the show still leaves it for the presenter.
+        let swapped = [projector.clone(), laptop.clone()];
+        match show_screens(&swapped) {
+            ShowScreens::Split { projector: idx, presenter } => {
+                assert_eq!(idx, 1);
+                assert_eq!(presenter.index, 0);
+            }
+            ShowScreens::Current => panic!("two displays"),
+        }
+        match show_screens(&[laptop.clone(), projector]) {
+            ShowScreens::Split { projector: idx, presenter } => {
+                assert_eq!(idx, 1);
+                assert_eq!(presenter, laptop);
+            }
+            ShowScreens::Current => panic!("two displays"),
+        }
+    }
+
+    #[test]
+    fn a_display_left_of_the_origin_still_gets_the_show() {
+        let laptop = display(0, [0, 0], [1440, 900], 1.0, true);
+        let left = display(1, [-1920, 0], [1920, 1080], 1.0, false);
+        let ShowScreens::Split { projector, presenter } = show_screens(&[laptop, left]) else { panic!("two displays") };
+        assert_eq!(projector, 1);
+        let frame = presenter_frame(&presenter).expect("frame");
+        assert_eq!((frame.x, frame.y, frame.w, frame.h), (0.0, 0.0, 1440.0, 900.0));
+        let audience = display(1, [-1920, 0], [1920, 1080], 1.0, false);
+        let frame = presenter_frame(&audience).expect("frame");
+        assert_eq!((frame.x, frame.y), (-1920.0, 0.0));
+    }
+
+    #[test]
+    fn presenter_frame_uses_the_display_scale_and_refuses_an_empty_one() {
+        let laptop = display(0, [0, 0], [3024, 1964], 2.0, true);
+        let frame = presenter_frame(&laptop).expect("frame");
+        assert_eq!((frame.x, frame.y, frame.w, frame.h), (0.0, 0.0, 1512.0, 982.0));
+        assert!(presenter_frame(&display(0, [0, 0], [0, 100], 2.0, true)).is_none());
+        assert!(presenter_frame(&display(0, [0, 0], [100, 100], 0.0, true)).is_none());
+    }
+
+    #[test]
+    fn without_a_named_primary_the_first_display_stays_with_the_presenter() {
+        let a = display(0, [0, 0], [800, 600], 1.0, false);
+        let b = display(1, [800, 0], [1920, 1080], 1.0, false);
+        let ShowScreens::Split { projector, presenter } = show_screens(&[a, b]) else { panic!("two displays") };
+        assert_eq!(presenter.index, 0);
+        assert_eq!(projector, 1);
     }
 }

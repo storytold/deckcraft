@@ -35,7 +35,11 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(raw);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(window) = frame.winit_window() {
+            self.0.set_displays(connected_displays(window));
+        }
         self.0.ui(ui);
     }
     fn on_exit(&mut self) {
@@ -51,6 +55,32 @@ impl eframe::App for App {
         #[cfg(target_os = "macos")]
         std::process::exit(0);
     }
+}
+
+/// Displays in `available_monitors()` order, so a slide show can address one with `SetMonitor`.
+#[cfg(not(target_arch = "wasm32"))]
+fn connected_displays(window: &winit::window::Window) -> Vec<deckcraft_ui_egui::show::DisplayInfo> {
+    let primary = window.primary_monitor().map(|m| {
+        let p = m.position();
+        let s = m.size();
+        (p.x, p.y, s.width, s.height)
+    });
+    window
+        .available_monitors()
+        .enumerate()
+        .map(|(index, m)| {
+            let pos = m.position();
+            let size = m.size();
+            let key = (pos.x, pos.y, size.width, size.height);
+            deckcraft_ui_egui::show::DisplayInfo {
+                index,
+                origin: [pos.x, pos.y],
+                size_px: [size.width, size.height],
+                scale: m.scale_factor() as f32,
+                primary: primary == Some(key),
+            }
+        })
+        .collect()
 }
 
 /// The per-user settings directory: `ui.json`, `prefs.json` and `logs/` live here.

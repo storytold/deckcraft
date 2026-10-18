@@ -8,7 +8,7 @@ The summary between `<!-- SUMMARY -->
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 65 | 45 | 16 | 4 | 82% |
+| P1 | 65 | 45 | 17 | 3 | 82% |
 | P2 | 54 | 17 | 25 | 12 | 55% |
 
 | Area | Parity |
@@ -29,7 +29,7 @@ The summary between `<!-- SUMMARY -->
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
-| Slide show | 68% |
+| Slide show | 74% |
 | Review | 70% |
 | Draw | 50% |
 | Undo & clipboard | 100% |
@@ -218,7 +218,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Slide show | Custom shows | P2 | D |
 | Slide show | Set up show (loop, kiosk, without animation) | P1 | D |
 | Slide show | Record slide show (narration) | P2 | M |
-| Slide show | Multi-monitor presenting | P1 | M |
+| Slide show | Multi-monitor presenting (show on the other display, presenter view on the primary; no swap or manual choice) | P1 | P |
 | Review | Comments (add, reply, resolve, delete) | P1 | D |
 | Review | Accessibility checker | P2 | D |
 | Review | Compare presentations | P2 | P |
