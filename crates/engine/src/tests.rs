@@ -6064,3 +6064,57 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
+
+#[test]
+fn chart_options_axis_bounds_set_clear_and_refuse() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.chart",
+            &json!({"type": "bar", "rect": [40, 40, 400, 300], "categories": ["A", "B", "C"], "series": [{"name": "S", "values": [20, 45.5, 59.7]}]}),
+        )
+        .unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let bounds = |s: &Session| match &s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().kind {
+        deckcraft_model::ShapeKind::Chart(c) => (c.y_min, c.y_max),
+        k => panic!("not a chart: {k:?}"),
+    };
+    assert_eq!(bounds(&s), (None, None));
+    s.execute("chart.options", &json!({"id": id, "axisMax": 80})).unwrap();
+    assert_eq!(bounds(&s), (None, Some(80.0)));
+    s.execute("chart.options", &json!({"id": id, "axisMin": 10, "axisMax": 70.5})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), Some(70.5)));
+    // null clears a bound; other options are untouched.
+    s.execute("chart.options", &json!({"id": id, "axisMax": null})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    // Not a number, or a minimum at or above the maximum: refused, nothing changes.
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": "80"})).is_err());
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 5})).is_err(), "5 is below the minimum of 10");
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    // A chart with no value axis to bound is refused; a radar chart has one.
+    for kind in ["pie", "doughnut", "waterfall", "funnel"] {
+        let c = s.execute("insert.chart", &json!({ "type": kind })).unwrap()["id"].clone();
+        let e = s.execute("chart.options", &json!({"id": c, "axisMax": 80})).unwrap_err().to_string();
+        assert!(e.contains("axisMin` and `axisMax` are for"), "{kind}: {e}");
+    }
+    let radar = s.execute("insert.chart", &json!({"type": "radar"})).unwrap()["id"].clone();
+    s.execute("chart.options", &json!({"id": radar, "axisMax": 80})).unwrap();
+    // A logarithmic axis (as read from a file) takes only positive bounds.
+    for sl in &mut std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides {
+        if let Some(deckcraft_model::Shape { kind: deckcraft_model::ShapeKind::Chart(c), .. }) =
+            std::sync::Arc::make_mut(sl).shape_mut(ShapeId(id as u32))
+        {
+            c.y_log_base = Some(10.0);
+        }
+    }
+    for bad in [json!({"axisMin": 0}), json!({"axisMax": -5})] {
+        let mut p = bad.clone();
+        p["id"] = json!(id);
+        let e = s.execute("chart.options", &p).unwrap_err().to_string();
+        assert!(e.contains("logarithmic"), "{bad}: {e}");
+    }
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    s.execute("chart.options", &json!({"id": id, "axisMin": 1})).unwrap();
+    assert_eq!(bounds(&s), (Some(1.0), None));
+}
+

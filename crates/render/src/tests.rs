@@ -3034,3 +3034,63 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+/// How far the longest bar of a rendered bar or column chart reaches along its value axis, as a
+/// fraction of the plot's extent from the zero line to the outermost gridline. Bars are the
+/// coloured pixels; gridlines are the light grey lines that cross most of the plot.
+fn plot_fill_ratio(img: &Image, horiz: bool) -> f64 {
+    let coloured = |p: [u8; 4]| p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])).max(p[0].abs_diff(p[2])) > 40;
+    let grey = |p: [u8; 4]| p[0] == p[1] && p[1] == p[2] && p[0] > 150 && p[0] < 240;
+    let (w, h) = (img.width, img.height);
+    // Bar extent and the cross-axis range the bars occupy.
+    let (mut bar_lo, mut bar_hi, mut cross_lo, mut cross_hi) = (u32::MAX, 0u32, u32::MAX, 0u32);
+    for y in 0..h {
+        for x in 0..w {
+            if coloured(img.pixel(x, y)) {
+                let (a, c) = if horiz { (x, y) } else { (y, x) };
+                bar_lo = bar_lo.min(a);
+                bar_hi = bar_hi.max(a);
+                cross_lo = cross_lo.min(c);
+                cross_hi = cross_hi.max(c);
+            }
+        }
+    }
+    // Gridlines: along-axis positions where most of the cross range is grey.
+    let n = (cross_hi.saturating_sub(cross_lo)).max(1);
+    let is_grid = |a: u32| {
+        let hits = (cross_lo..=cross_hi).filter(|&c| grey(if horiz { img.pixel(a, c) } else { img.pixel(c, a) })).count() as u32;
+        hits * 10 >= n * 6
+    };
+    let along = if horiz { w } else { h };
+    let grids: Vec<u32> = (0..along).filter(|&a| is_grid(a)).collect();
+    let (Some(&g0), Some(&g1)) = (grids.first(), grids.last()) else { return f64::NAN };
+    if horiz {
+        // Bars start at the zero line (left gridline) and grow right.
+        (bar_hi as f64 - g0 as f64) / (g1 as f64 - g0 as f64)
+    } else {
+        // Bars stand on the zero line (bottom gridline) and grow up.
+        (g1 as f64 - bar_lo as f64) / (g1 as f64 - g0 as f64)
+    }
+}
+
+#[test]
+fn value_axis_ends_near_the_data_maximum() {
+    // A maximum of 59.7 drew its axis to 100 on a bar chart of this size (the step jumped from 10
+    // to 50 to fit three labels), leaving the bars in the left 60 % of the plot. The axis should
+    // end at the next tick of 10 past the data: 60 or 70.
+    for (kind, horiz) in [(ChartType::Bar, true), (ChartType::Column, false)] {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.gridlines = true;
+        c.categories = vec!["A".into(), "B".into(), "C".into()];
+        c.series.truncate(1);
+        c.series[0].values = vec![Some(20.0), Some(45.5), Some(59.7)];
+        let sh =
+            Shape { id: ShapeId(630), xfrm: Some(Xfrm::new(40.0, 40.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 2.0, ..Default::default() });
+        let ratio = plot_fill_ratio(&img, horiz);
+        assert!(ratio >= 0.8, "{kind:?}: the longest bar reaches {ratio:.3} of the plot (axis far past the data)");
+        assert!(ratio <= 1.0, "{kind:?}: the longest bar reaches {ratio:.3} of the plot");
+    }
+}

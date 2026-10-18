@@ -187,7 +187,42 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // Value axis bounds: a finite number, or null for automatic.
+    let axis_bound = |key: &str| -> Result<Option<Option<f64>>> {
+        match p.get(key) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(v) => v
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .map(|v| Some(Some(v)))
+                .ok_or_else(|| bad("chart.options", format!("{key} must be a number or null"))),
+        }
+    };
+    let (axis_min, axis_max) = (axis_bound("axisMin")?, axis_bound("axisMax")?);
     with_chart(s, p, "chart.options", |c| {
+        // Pie and doughnut charts have no value axis; the Office 2016 charts don't save its bounds yet.
+        if (axis_min.is_some() || axis_max.is_some()) && (c.kind.is_chartex() || matches!(c.kind, ChartType::Pie | ChartType::Doughnut)) {
+            return Err(bad(
+                "chart.options",
+                "`axisMin` and `axisMax` are for column, bar, line, area, scatter, bubble, stock, surface, radar and combo charts",
+            ));
+        }
+        // A logarithmic axis runs above zero; PowerPoint takes only positive bounds there.
+        if c.y_log_base.is_some() && [axis_min, axis_max].iter().any(|b| matches!(b, Some(Some(v)) if *v <= 0.0)) {
+            return Err(bad("chart.options", "a logarithmic value axis takes only positive `axisMin` and `axisMax`"));
+        }
+        if let Some(v) = axis_min {
+            c.y_min = v;
+        }
+        if let Some(v) = axis_max {
+            c.y_max = v;
+        }
+        if let (Some(lo), Some(hi)) = (c.y_min, c.y_max)
+            && lo >= hi
+        {
+            return Err(bad("chart.options", "axisMin must be below axisMax"));
+        }
         if let Some(t) = &text_color {
             c.text_color = t.clone();
         }
