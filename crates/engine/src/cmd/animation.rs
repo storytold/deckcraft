@@ -404,7 +404,18 @@ fn which(s: &mut Session, p: &Value) -> Result<Which> {
         return Ok(Which::All);
     }
     if let Some(a) = p.get("indices").and_then(Value::as_array) {
-        let v: Vec<usize> = a.iter().filter_map(Value::as_u64).filter_map(|x| usize::try_from(x).ok()).collect();
+        // An entry that is no position is refused naming it, not dropped (#298).
+        let v: Vec<usize> = a
+            .iter()
+            .map(|x| {
+                x.as_u64().and_then(|x| usize::try_from(x).ok()).ok_or_else(|| {
+                    bad(
+                        "animation",
+                        format!("`indices` entry {x} is not an animation position (a whole number from 0 up, as animation.get numbers them)"),
+                    )
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         if v.is_empty() {
             return Err(bad("animation", "`indices` is empty: pass the animations' positions as animation.get numbers them, or `all: true`"));
         }

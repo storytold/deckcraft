@@ -582,15 +582,17 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
-    if s.doc()?.selection.text.is_some() && p.get("ids").is_none() {
+    // `ids: null` is the same as no `ids`; an `id` names a target as `ids` does.
+    let no_ids = p.get("ids").is_none_or(Value::is_null) && p.get("id").is_none_or(Value::is_null);
+    if s.doc()?.selection.text.is_some() && no_ids {
         return super::text::delete_dir(s, "forward");
     }
-    if slides_scope(s, p) && p.get("ids").is_none() {
+    if slides_scope(s, p) && no_ids {
         return s.execute("slide.delete", &json!({}));
     }
     // With table cells selected, Delete clears their text and keeps the table, as in PowerPoint.
     let sel = &s.doc()?.selection;
-    if ids_param(p, "ids").is_none() && p.get("id").is_none() && sel.cells.is_some_and(|c| sel.shapes == [c.0]) {
+    if no_ids && sel.cells.is_some_and(|c| sel.shapes == [c.0]) {
         return super::table::clear_selected_cells(s);
     }
     let ids = targets(s, p)?;
