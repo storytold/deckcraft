@@ -6652,6 +6652,28 @@ fn comment_list_all_covers_every_slide() {
     assert!(all[0]["author"].is_string() && all[0]["resolved"].is_boolean(), "the comment's own fields stay: {all}");
 }
 
+/// W10: `transition.applyAll` copies kind, duration and options from the current slide to every
+/// slide and answers how many; the doc says what is copied.
+#[test]
+fn transition_apply_all_copies_everything_and_answers_the_slide_count() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "push", "option": "l", "duration": 1250})).unwrap();
+    let r = s.execute("transition.applyAll", &json!({})).unwrap();
+    assert_eq!(r, json!({"slides": 3}), "{r}");
+    let st = s.doc().unwrap();
+    let want = st.doc.slides[2].transition.clone().expect("set");
+    assert_eq!((want.kind.as_str(), want.option.as_str(), want.duration_ms), ("push", "l", 1250));
+    for sl in &st.doc.slides {
+        assert_eq!(sl.transition.as_ref(), Some(&want), "slide {} keeps kind, option and duration", sl.id);
+    }
+    let doc = command_specs().iter().find(|c| c.id == "transition.applyAll").unwrap().params;
+    assert!(doc.contains("duration") && doc.contains("option"), "{doc}");
+    let doc = command_specs().iter().find(|c| c.id == "animation.move").unwrap().params;
+    assert!(doc.contains("renumber") && doc.contains("step"), "{doc}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
