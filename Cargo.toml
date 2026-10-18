@@ -29,6 +29,7 @@ deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
 # codecs (ported from FilmCraft, same owner and licence)
 deckcraft-bitstream = { path = "crates/bitstream" }
+deckcraft-aac = { path = "crates/aac" }
 deckcraft-h264 = { path = "crates/h264" }
 deckcraft-hevc = { path = "crates/hevc" }
 deckcraft-vp9 = { path = "crates/vp9" }

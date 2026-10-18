@@ -346,6 +346,8 @@ fn writable_format_for_path_rejects_formats_deckcraft_does_not_write() {
     assert_eq!(f("a.jpg"), Some("jpeg"));
     assert_eq!(f("a.txt"), Some("outline"));
     assert_eq!(f("a.gif"), Some("gif"));
+    assert_eq!(f("a.mp4"), Some("mp4"));
+    assert_eq!(f("a.mov"), Some("mov"));
     for path in ["a.odp", "a.bmp", "a.svg", "a.outline", "a", "dir.v2/a"] {
         assert_eq!(f(path), None, "{path}");
     }
