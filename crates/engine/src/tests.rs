@@ -7018,6 +7018,31 @@ fn insert_smart_art_takes_a_rect_and_answers_it() {
     );
 }
 
+/// BB4: text.replace had no scope, so replacing a product name in body text hit titles, footers
+/// and notes. `scope: body|titles|notes|all` (default all) limits it, and the answer says which
+/// slides changed.
+#[test]
+fn text_replace_takes_a_scope_and_answers_the_slides() {
+    let mut s = session();
+    let r = s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "DeckCraft rocks", "body": "DeckCraft body"})).unwrap();
+    let title = r["placeholders"]["title"].as_u64().unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 300, 200, 100], "text": "DeckCraft box"})).unwrap();
+    s.execute("slide.notes", &json!({"text": "DeckCraft notes"})).unwrap();
+    s.execute("slide.new", &json!({"layout": "titleOnly", "title": "DeckCraft again"})).unwrap();
+    let r = s.execute("text.replace", &json!({"text": "DeckCraft", "with": "DC", "scope": "body"})).unwrap();
+    assert_eq!(r, json!({"replaced": 2, "slides": [1]}), "{r}");
+    assert_eq!(s.execute("text.get", &json!({"id": title})).unwrap()["text"], "DeckCraft rocks", "titles are untouched by scope body");
+    let r = s.execute("text.replace", &json!({"text": "DeckCraft", "with": "DC", "scope": "titles"})).unwrap();
+    assert_eq!(r, json!({"replaced": 2, "slides": [1, 2]}), "{r}");
+    assert_eq!(s.doc().unwrap().doc.slides[1].notes_text(), "DeckCraft notes", "notes are untouched by scope titles");
+    let r = s.execute("text.replace", &json!({"text": "DeckCraft", "with": "DC", "scope": "notes"})).unwrap();
+    assert_eq!(r, json!({"replaced": 1, "slides": [1]}), "{r}");
+    let e = s.execute("text.replace", &json!({"text": "DC", "with": "x", "scope": "footers"})).unwrap_err().to_string();
+    assert!(e.contains("footers") && e.contains("body|titles|notes|all"), "{e}");
+    let r = s.execute("text.replace", &json!({"text": "DC", "with": "DeckCraft"})).unwrap();
+    assert_eq!(r, json!({"replaced": 5, "slides": [1, 2]}), "the default is still everything: {r}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();

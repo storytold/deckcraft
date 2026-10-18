@@ -136,6 +136,9 @@ layouts, and `perPage` belongs to handouts. `file.export {all: true, path: "d.pn
 file per slide numbered from 1, the displayed slide number (`d1.png`, `d2.png`…), while `slide`
 is a 0-based index; it answers `{files, indices}`, `indices` being the 0-based slide of each file.
 `chart.data` replaces the whole `categories`/`series` it is given, so pass every series to keep.
+`text.replace {text, with, scope?: body|titles|notes|all}` answers `{replaced, slides}`; `body` is the
+text in non-title placeholders, text boxes, shapes and tables, so a product name in body text can be
+changed without touching titles or notes (the default is still everything).
 `animation.timing`'s `index` is the animation's position in the slide's list as `animation.get`
 numbers them; `indices: [..]` changes several and `all: true` every animation on the slide (one call
 retimes a slide), answering `{changed}`; `animation.get` reports each one's click `step`. `review.spelling` answers `{dictionary, lang, issues}`:
