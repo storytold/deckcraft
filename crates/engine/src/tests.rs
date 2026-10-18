@@ -6585,6 +6585,24 @@ fn table_style_refuses_an_unknown_style_naming_the_valid_ids() {
     assert!(e.contains("{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}"), "the file's style is named: {e}");
 }
 
+/// V4: `chart.options {palette}` takes a palette name; a list of colours (or any unknown value)
+/// is refused naming the palettes, instead of being accepted without effect.
+#[test]
+fn chart_options_palette_takes_a_name_and_refuses_a_colour_list() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.chart", &json!({"type": "pie"})).unwrap()["id"].clone();
+    let e = s.execute("chart.options", &json!({"id": id, "palette": ["#FF0000", "#00FF00"]})).unwrap_err().to_string();
+    assert!(e.contains("`palette`") && e.contains("colorful1") && e.contains("monochrome1"), "{e}");
+    let e = s.execute("chart.options", &json!({"id": id, "palette": "rainbow"})).unwrap_err().to_string();
+    assert!(e.contains("rainbow") && e.contains("colorful1"), "{e}");
+    s.execute("chart.options", &json!({"id": id, "palette": "monochrome3"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.shape(deckcraft_model::ShapeId(id.as_u64().unwrap() as u32)).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("not a chart") };
+    assert_eq!(c.palette, "monochrome3");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
@@ -6679,4 +6697,3 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
-
