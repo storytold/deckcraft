@@ -213,8 +213,11 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "set_text",
             "Set text",
-            "Replace a shape's text (keeps its first run's formatting). Leading tabs set bullet levels.",
-            obj(json!({"id": int("Shape id (from inspect_slide)"), "text": string("New text")}), &["id", "text"]),
+            "Replace a shape's text (keeps its first run's formatting), or one table cell's with `cell`. Leading tabs set bullet levels.",
+            obj(
+                json!({"id": int("Shape id (from inspect_slide)"), "text": string("New text"), "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "Table cell [row, col], 0-based, when id is a table"}}),
+                &["id", "text"],
+            ),
             false,
         ),
         tool(

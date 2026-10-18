@@ -67,6 +67,9 @@ pub struct CommandInfo {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_reason: Option<String>,
+    /// What the command acts on when its selection check fails but `ids`/`id` is given.
+    #[serde(rename = "actsOn", skip_serializing_if = "Option::is_none")]
+    pub acts_on: Option<String>,
 }
 
 impl CommandSpec {
@@ -102,8 +105,16 @@ impl CommandSpec {
             params: self.params,
             enabled: e.is_ok(),
             disabled_reason: e.err(),
+            acts_on: acts_on_cached(self.id),
         }
     }
+}
+
+/// [`CommandSpec::acts_on`] for every command, computed once: it needs a fresh session per
+/// command, which is too slow to redo on every list_commands.
+fn acts_on_cached(id: &str) -> Option<String> {
+    static ACTS: std::sync::OnceLock<std::collections::HashMap<&'static str, String>> = std::sync::OnceLock::new();
+    ACTS.get_or_init(|| command_specs().iter().filter_map(|c| c.acts_on().map(|a| (c.id, a))).collect()).get(id).cloned()
 }
 
 pub fn always(_: &Session) -> std::result::Result<(), String> {
