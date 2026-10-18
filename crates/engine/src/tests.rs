@@ -6555,6 +6555,36 @@ fn table_inserts_answer_the_resulting_rect_and_flag_overflow() {
     assert_eq!(r, json!(1), "{r}");
 }
 
+/// V3: `table.style` refuses an unknown style naming the valid ids (built-in, plus the ones the
+/// file defines) instead of storing it and answering 1.
+#[test]
+fn table_style_refuses_an_unknown_style_naming_the_valid_ids() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.table", &json!({"rows": 2, "cols": 2})).unwrap()["id"].clone();
+    let e = s.execute("table.style", &json!({"id": id, "style": "Medium Style 2"})).unwrap_err().to_string();
+    assert!(e.contains("no table style `Medium Style 2`"), "{e}");
+    for want in ["none", "grid", "medium2-accent1", "light1-accent2", "dark1-tx1"] {
+        assert!(e.contains(want), "{want} missing from {e}");
+    }
+    assert_eq!(table_of(&s, deckcraft_model::ShapeId(id.as_u64().unwrap() as u32)).style, "medium2-accent1", "unchanged");
+    s.execute("table.style", &json!({"id": id, "style": "dark1-tx1"})).unwrap();
+    assert_eq!(table_of(&s, deckcraft_model::ShapeId(id.as_u64().unwrap() as u32)).style, "dark1-tx1");
+    // A style the file defines is valid too.
+    {
+        let d = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut d.doc);
+        doc.table_styles.push(deckcraft_model::table::TableStyleDef {
+            id: "{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}".into(),
+            name: "File".into(),
+            ..Default::default()
+        });
+    }
+    s.execute("table.style", &json!({"id": id, "style": "{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}"})).unwrap();
+    let e = s.execute("table.style", &json!({"id": id, "style": "nope"})).unwrap_err().to_string();
+    assert!(e.contains("{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}"), "the file's style is named: {e}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
@@ -6649,3 +6679,4 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
+
