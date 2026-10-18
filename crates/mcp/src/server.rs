@@ -24,8 +24,10 @@ list_commands and run them with run_command (or several with batch). Typical flo
 {layout:\"titleAndContent\", title, body} → add_shape / add_text_box / insert_picture / insert_chart → \
 inspect_slide to read back ids, boxes and text → render_slide to look at the result (image content; a client that cannot read \
 images: export {path, format: \"png\", slide} and view the file). Shape ids are unique in the presentation: a shape or text command given an id on another slide edits it \
-there, makes that slide current and says so in its answer ({changed, onSlides, currentSlide}); only commands \
-that need several shapes on one slide, such as shape.connect and arrange.*, work on the current slide. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
+there, makes that slide current and says so in its answer ({changed, onSlides, currentSlide}); the read-only lookups \
+(shape.inspect, text.get, shape.sites) find it anywhere, move nothing and answer its `slide`. Only these work on the current \
+slide and need slide.go first: shape.connect, arrange.*, smartArt.* (an id on another slide is refused naming its slide), \
+and comment.* acts on the current slide. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
 the selected text or shapes; shape.fill, shape.line and the other shape commands whose parameters list `ids` act on \
 those shapes, else on the selected ones. Save with save_presentation (.deckcraft or .pptx). Diagram recipe (no \
 list_commands needed): shape.insert {preset: rect|roundRect|ellipse|diamond|chevron…, rect: [x,y,w,h], text, fill, \

@@ -4943,7 +4943,7 @@ fn animation_add_and_section_add_answer_what_they_made() {
     assert_eq!(r, json!({"count": 3, "indices": [2], "steps": [2]}), "{r}");
     s.execute("slide.new", &json!({})).unwrap();
     let r = s.execute("section.add", &json!({"name": "Part B", "at": 1})).unwrap();
-    assert_eq!((r["count"].as_u64(), r["index"].as_u64(), r["name"].as_str()), (Some(2), Some(1), Some("Part B")), "{r}");
+    assert_eq!(r["sections"], json!([{"name": "Default Section", "start": 0, "slides": 1}, {"name": "Part B", "start": 1, "slides": 1}]), "{r}");
 }
 
 #[test]
@@ -5658,4 +5658,25 @@ fn export_all_numbers_files_from_one_and_answers_their_slide_indices() {
         assert!(doc.contains(needle), "{id}: {doc}");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AA1: the read-only shape lookups (shape.inspect, text.get, shape.sites) find an id on any
+/// slide, as the edits do, without making that slide current, and shape.inspect and text.get say
+/// which slide the shape is on.
+#[test]
+fn read_only_shape_lookups_find_an_id_on_any_slide_and_say_where() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 100, 50], "text": "far"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [30, 40, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    let r = s.execute("shape.inspect", &json!({"id": a})).unwrap();
+    assert_eq!((r["slide"].clone(), r["box"]["x"].clone()), (json!(0), json!(10.0)), "{r}");
+    let r = s.execute("text.get", &json!({"id": a})).unwrap();
+    assert_eq!((r["slide"].clone(), r["text"].clone()), (json!(0), json!("far")), "{r}");
+    assert_eq!(s.execute("shape.sites", &json!({"id": a})).unwrap().as_array().map(Vec::len), Some(4));
+    assert_eq!(s.doc().unwrap().selection.slide, 1, "a read-only lookup moves nothing");
+    assert_eq!(s.execute("shape.inspect", &json!({"id": b})).unwrap()["slide"], json!(1));
+    let e = s.execute("shape.inspect", &json!({"id": 999})).unwrap_err().to_string();
+    assert!(e.contains("no shape 999"), "{e}");
 }
