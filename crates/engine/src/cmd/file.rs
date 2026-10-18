@@ -662,6 +662,10 @@ fn recovery_discard(s: &mut Session, p: &Value) -> Result<Value> {
 #[path = "color_at_tests.rs"]
 mod color_at_tests;
 
+#[cfg(test)]
+#[path = "recovery_tests.rs"]
+mod recovery_tests;
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]

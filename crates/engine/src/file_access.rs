@@ -459,7 +459,8 @@ mod tests {
         let mut offenders = vec![];
         for path in files {
             let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            // `io` and this module are the checked gateway; `tests*.rs` are test-only modules.
+            // `io` and this module are the checked gateway; `tests*.rs` and `*_tests.rs` (wired in
+            // with `#[path]` under `#[cfg(test)]`) are test-only modules.
             // `recovery` and `spell` touch only the app's own folders (AutoRecover files, the
             // system and user spelling dictionaries), never a path a command names. `control_auth`
             // is the same case: one file beside them, `control-<port>.token`, in a settings
@@ -467,6 +468,7 @@ mod tests {
             // steer it out of that directory.
             if path.parent() == Some(src.as_path()) && matches!(name, "io.rs" | "file_access.rs" | "recovery.rs" | "spell.rs" | "control_auth.rs")
                 || name.starts_with("tests")
+                || name.ends_with("_tests.rs")
             {
                 continue;
             }
