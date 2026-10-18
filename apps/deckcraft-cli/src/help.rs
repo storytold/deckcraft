@@ -94,7 +94,9 @@ What the ids don't say:
   [x, y, width, height].
 - Slide indices start at 0. slide.new inserts after the current slide and makes the new one current;
   slide.go {\"index\": N} makes slide N current.
-- Shape ids are looked up on the current slide only.
+- Shape ids are unique in the presentation; a shape or text command given an id on another slide edits
+  it there and makes that slide current (its answer says so). Commands that need several shapes on one
+  slide (shape.connect, arrange.*) work on the current slide.
 - A command that adds a shape (shape.insert, insert.textBox, insert.table…) selects it. format.* acts
   on the selected text or shapes; edit.select {\"ids\": [...]} selects others. Many shape commands
   take the ids directly; `deckcraft-cli describe COMMAND` says what a command acts on.

@@ -98,6 +98,15 @@ files it was given rather than guarding against other software on the computer.
 
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters, and a command refuses a key it doesn't take, naming the ones it does (`` `shape.insert` was given `shape`, which it doesn't take. `shape.insert` takes {preset: …, rect: …} ``). An unknown command id names the commands like it (`` unknown command `new`; commands named like it: file.new, slide.new ``), and a command that is not available says how to make it so (`` nothing selected: edit.select {"ids": […]} selects shapes, or pass `ids` ``).
 
+**Fewer turns.** `shape.insert {preset, rect, text, fill, line, size, color, bold, name}` makes a
+styled box in one command. `add_slide` (and `slide.new`) answer `placeholders: {title: id, body:
+id, …}` so the title or body can be set without an inspect. Shape ids are unique in the
+presentation: a shape or text command given an id on another slide edits it there, makes that
+slide current and answers `{"changed": 1, "onSlides": [4], "currentSlide": 4}`; commands that need
+several shapes on one slide (`shape.connect`, `arrange.*`) say where the shape is and the
+`slide.go` that gets there. `batch` items and `run_command` may name a tool (`add_shape`,
+`add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`.
+
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,
 rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, closed, smooth}`,
 `shape.merge {op, ids}`, `format.*`, `design.theme`, `transition.set`, `animation.set`,
