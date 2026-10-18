@@ -101,10 +101,12 @@ What the ids don't say:
   on the selected text or shapes; edit.select {\"ids\": [...]} selects others. Many shape commands
   take the ids directly; `deckcraft-cli describe COMMAND` says what a command acts on.
 
-Every --cmd is read before any runs: one that doesn't parse says how it was read, and nothing runs.
-If a command fails, run stops there and saves nothing. A parameter a command doesn't take is refused
-with the ones it does; an unknown id names the commands like it. --print shows each command's
-answer, such as the id of an inserted shape.",
+Every --cmd is read before the file is opened or any runs: one that doesn't parse says how it was
+read, and nothing runs. A --cmd-file line is read when its turn comes. If a command fails, run stops
+there and skips the --save and --export still pending; it does not undo files an earlier command
+wrote (a file.saveAs or file.export --cmd). A parameter a command doesn't take is refused with the
+ones it does; an unknown id names the commands like it. --print shows each command's answer, such
+as the id of an inserted shape.",
     },
     Subcommand {
         name: "commands",
