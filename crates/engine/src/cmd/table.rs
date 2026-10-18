@@ -623,3 +623,7 @@ fn erase_line(s: &mut Session, p: &Value) -> Result<Value> {
         if crate::drawtable::erase_at(t, q, tol) { Ok(()) } else { Err(bad("table.eraseLine", "no border to erase there")) }
     })
 }
+
+#[cfg(test)]
+#[path = "table_tests.rs"]
+mod table_tests;
