@@ -92,7 +92,9 @@ impl Remote {
     /// never sent.
     fn authenticate(&mut self) -> std::io::Result<()> {
         let hello = json!({"id": HELLO_ID, "method": HELLO, "params": {"token": self.token}}).to_string();
-        if let Err(e) = self.send(&hello) {
+        // Straight to the socket. This runs while the connection is being established, and `send`
+        // reads a fresh connection as a suspect one and reconnects — which authenticates again.
+        if let Err(e) = self.write_line(&hello) {
             self.conn = None;
             return Err(std::io::Error::new(
                 std::io::ErrorKind::ConnectionAborted,
@@ -121,6 +123,11 @@ impl Remote {
         if self.conn.as_ref().is_none_or(|(reader, writer)| !reader.buffer().is_empty() || is_closed(writer)) {
             self.reconnect()?;
         }
+        self.write_line(line)
+    }
+
+    /// Write `line` and its newline to the connection as it stands, checking nothing.
+    fn write_line(&mut self, line: &str) -> std::io::Result<()> {
         let Some((_, writer)) = self.conn.as_mut() else {
             return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected"));
         };
@@ -421,8 +428,14 @@ mod tests {
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
                     continue;
                 }
-                count.fetch_add(1, Ordering::SeqCst);
-                // The request is executed, then the connection drops without a reply.
+                let n = count.fetch_add(1, Ordering::SeqCst) + 1;
+                if n > 1 {
+                    // Only the first request is lost; the one after it is answered, so the test can
+                    // show that the client carries on over a fresh connection.
+                    let mut w = &stream;
+                    let _ = w.write_all(b"{\"id\":2,\"ok\":true,\"result\":null}\n");
+                }
+                // The first request is executed, then the connection drops without a reply.
             }
         });
         let mut remote = connect(&addr);
@@ -445,8 +458,11 @@ mod tests {
             let mut first = true;
             for stream in listener.incoming().flatten() {
                 if first {
-                    // The app restarts: the first connection closes before any request arrives.
+                    // The app restarts: it answers the handshake and then closes, so the request
+                    // that follows has to go out over a fresh connection. It has to answer the
+                    // handshake, because connecting now means being let in.
                     first = false;
+                    let _ = say_hello(&stream);
                     drop(stream);
                     let _ = closed_tx.send(());
                     continue;
@@ -462,9 +478,9 @@ mod tests {
             }
         });
         let mut remote = connect(&addr);
-        closed_rx.recv().expect("server closed the first connection");
+        closed_rx.recv().expect("the app closed the first connection");
         std::thread::sleep(Duration::from_millis(200));
-        assert!(remote.call("engine.execute", json!({})).is_ok(), "a request that never left must be sent on a fresh connection");
+        assert!(remote.call("engine.execute", json!({})).is_ok(), "a request that never left must be sent on a fresh connection, handshake and all");
         assert_eq!(executed.load(Ordering::SeqCst), 1);
     }
 }
