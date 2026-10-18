@@ -55,6 +55,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("design.variant", "Variants", ["Design", "Variants"], None, "{index: 0..3} (see design.variants)", has_doc, variant),
         cmd!(query "design.variants", "Variant Gallery", [], None, "{} → the current theme's four colour variants and which is applied", has_doc, variants),
+        cmd!(
+            query "design.palette",
+            "Theme Palette",
+            [],
+            None,
+            "{} → {theme, colors: {dk1, lt1, dk2, lt2, accent1…accent6, hlink, folHlink}, text, background, fonts: {major, minor}} — the active theme's colours as #RRGGBB; text/background are what tx1/bg1 resolve to on the current slide",
+            has_doc,
+            palette
+        ),
         cmd!("design.fonts", "Fonts", ["Design", "Variants"], None, "{} opens Create New Theme Fonts | {name} | {major, minor}", has_doc, fonts),
         cmd!("design.effects", "Effects", ["Design", "Variants"], None, "{name} (see design.themes)", has_doc, effects),
         cmd!(

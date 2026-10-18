@@ -111,5 +111,7 @@ Useful commands for building decks: `slide.new {layout, title, body}`, `shape.in
 rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, closed, smooth}`,
 `shape.merge {op, ids}`, `format.*`, `design.theme`, `transition.set`, `animation.set`,
 `chart.*` (`chart.options {textColor}` colours a chart's title, axes, legend and labels), `table.*`, `file.export {path, layout}` (PDF) or `{path, width, secondsPerSlide, loop}`
-(GIF). `deckcraft-cli describe COMMAND` prints any
-command's parameters.
+(GIF). `design.palette {}` answers the active theme's colours (`dk1`, `lt1`, `accent1`…`accent6`,
+`hlink`, `folHlink`, plus the resolved `text` and `background`) and fonts, so a diagram can use
+the scheme names `accent1`…`accent6` or those hex values instead of hard-coding colours.
+`deckcraft-cli describe COMMAND` prints any command's parameters.
