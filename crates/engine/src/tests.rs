@@ -6972,6 +6972,31 @@ fn a_nudge_answers_the_selected_boxes() {
     assert_eq!(s.execute("edit.selection", &json!({})).unwrap()["selected"], json!([]));
 }
 
+/// BB1: `edit.select {ids: ["$sl.placeholders.title"]}` answered `{selected: []}` ok because
+/// invalid `ids` entries were dropped. Every `ids` reader refuses an entry that is not an integer
+/// id, naming it.
+#[test]
+fn an_ids_entry_that_is_not_an_id_is_refused_naming_it() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    for (cmd, extra) in [
+        ("edit.select", json!({})),
+        ("shape.fill", json!({"color": "#FF0000"})),
+        ("selection.select", json!({})),
+        ("animation.add", json!({"effect": "fade"})),
+        ("edit.delete", json!({})),
+    ] {
+        let mut p = extra;
+        p["ids"] = json!(["$sl.placeholders.title"]);
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains("\"$sl.placeholders.title\"") && e.contains("not a shape id"), "{cmd}: {e}");
+    }
+    let e = s.execute("edit.select", &json!({"ids": [a, 1.5]})).unwrap_err().to_string();
+    assert!(e.contains("1.5") && e.contains("not a shape id"), "{e}");
+    assert_eq!(s.doc().unwrap().selection.shapes.len(), 1, "a refused select keeps the selection");
+    assert_eq!(s.execute("edit.select", &json!({"ids": [a]})).unwrap()["selected"], json!([a]));
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();

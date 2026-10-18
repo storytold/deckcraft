@@ -482,8 +482,21 @@ pub(crate) fn id_param(p: &Value, key: &str, cmd: &str) -> Result<Option<ShapeId
 pub(crate) fn rect_json(x: &Xfrm) -> Value {
     json!([x.x, x.y, x.w, x.h])
 }
-pub(crate) fn ids_param(p: &Value, key: &str) -> Option<Vec<ShapeId>> {
-    p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).filter_map(|v| u32::try_from(v).ok()).map(ShapeId).collect())
+/// A list of shape ids: `Ok(None)` when absent, `Err` naming the entry when one is not an integer
+/// id (a `$name` left unsubstituted, a float, a negative number), so `edit.select {ids:
+/// ["$sl.placeholders.title"]}` is refused instead of selecting nothing and answering ok.
+pub(crate) fn ids_param(p: &Value, key: &str) -> Result<Option<Vec<ShapeId>>> {
+    let Some(a) = p.get(key).filter(|v| !v.is_null()) else { return Ok(None) };
+    let a = a.as_array().ok_or_else(|| EngineError::Other(format!("`{key}` must be a list of shape ids, not {a}")))?;
+    a.iter()
+        .map(|v| {
+            v.as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .map(ShapeId)
+                .ok_or_else(|| EngineError::Other(format!("`{key}` entry {v} is not a shape id (an integer, as slide.inspect lists them)")))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
 }
 /// `[x, y, w, h]` in points.
 pub(crate) fn rect_param(p: &Value, key: &str) -> Option<Xfrm> {
@@ -504,7 +517,7 @@ pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<ShapeId>> {
     {
         return Err(bad("shape", format!("`ids` has an invalid shape id: {v}")));
     }
-    if let Some(ids) = ids_param(p, "ids") {
+    if let Some(ids) = ids_param(p, "ids")? {
         // An explicit empty list is a caller's mistake, not "the selection": acting on the
         // selection instead was a trap an agent fell into (#298).
         if ids.is_empty() {
