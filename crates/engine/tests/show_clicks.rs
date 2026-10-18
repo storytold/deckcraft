@@ -59,6 +59,34 @@ fn start(p: &mut Presentation) {
     p.slides.clear();
 }
 
+#[test]
+fn saved_trigger_reveals_then_hides_on_separate_clicks() {
+    let mut p = defaults::new_presentation(None);
+    start(&mut p);
+    let button = shape(&mut p, "Button", "Toggle", 20.0, 20.0, 100.0, 40.0);
+    let target = shape(&mut p, "Target", "Answer", 200.0, 100.0, 200.0, 80.0);
+    let animations = vec![
+        Animation {
+            shape: target.id,
+            trigger: Some(button.id),
+            effect: "appear".into(),
+            start: AnimStart::OnClick,
+            duration_ms: 0,
+            ..Default::default()
+        },
+        disappear_on_click(button.id, target.id),
+    ];
+    add_slide(&mut p, vec![button, target], animations, false);
+    let mut show = Show::open(&p);
+    assert!(!show.shown("Target"));
+    for _ in 0..2 {
+        assert_eq!(show.click("Button"), Click::Animated);
+        assert!(show.shown("Target"), "first click reveals the answer until the next click");
+        assert_eq!(show.click("Button"), Click::Animated);
+        assert!(!show.shown("Target"), "second click hides the answer");
+    }
+}
+
 /// The slide show window's click handling, on a deck read from a PPTX file.
 struct Show {
     pres: Presentation,

@@ -206,7 +206,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Animations | Effect options, start (on click/with/after), duration, delay | P0 | D |
 | Animations | Animation pane (reorder, timing) | P0 | P |
 | Animations | By-paragraph text builds | P1 | D |
-| Animations | Triggers | P2 | D |
+| Animations | Triggers (separate click steps and paragraph builds round-trip; `crates/pptx/tests/trigger_steps.rs`) | P2 | D |
 | Animations | Animation Painter | P2 | D |
 | Animations | Preview in editor | P1 | D |
 | Slide show | Full-screen show from start / current | P0 | D |
