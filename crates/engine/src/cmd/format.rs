@@ -1353,6 +1353,10 @@ fn tabs(s: &mut Session, p: &Value) -> Result<Value> {
 mod ruler_tests;
 
 #[cfg(test)]
+#[path = "format_tests.rs"]
+mod format_tests;
+
+#[cfg(test)]
 mod tests {
     use deckcraft_model::text::{Align, Caps, ParaProps, Spacing, Strike};
     use deckcraft_model::{ColorBase, Fill, SchemeSlot};
