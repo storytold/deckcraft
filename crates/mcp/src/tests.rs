@@ -362,6 +362,29 @@ fn tools_with_x_y_w_h_place_the_shape() {
     assert!(!text.contains("doesn't take"), "x/y/w/h must not reach the engine: {text}");
 }
 
+/// A batch answers one JSON array of text, so an item that answers an image (render_slide) would
+/// report ok with the image gone: it is refused and told to run on its own; the other items run.
+#[test]
+fn a_batch_refuses_an_item_that_answers_an_image() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let r =
+        call(&mut s, 5, "tools/call", json!({"name": "batch", "arguments": {"commands": [{"command": "render_slide"}, {"command": "add_slide"}]}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    let out: Value = serde_json::from_str(text).expect("a JSON array");
+    assert_eq!(out[0]["ok"], false, "{out}");
+    assert!(out[0]["error"].as_str().unwrap().contains("call render_slide on its own"), "{out}");
+    assert!(out[1].is_null(), "stopped at the refusal: {out}");
+    let out = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [{"command": "render_slide", "params": {"slide": 0}}, {"command": "add_slide"}], "keepGoing": true}),
+    );
+    assert_eq!(out[0]["ok"], false, "{out}");
+    assert_eq!(out[1]["ok"], true, "{out}");
+}
+
 /// `x`, `y`, `w`, `h` place the shape only together: some of them is refused by name rather than
 /// dropped for the default placement, and none of them keeps the default placement.
 #[test]
