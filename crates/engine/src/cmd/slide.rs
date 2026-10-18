@@ -178,16 +178,20 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
-/// The placeholders by role (`title`, `subtitle`, `body`, else the placeholder kind's XML name),
-/// so the title or body can be addressed without an inspect.
+/// The placeholders by role (`title`, `subtitle`, `body`, else the placeholder kind's XML name:
+/// `ftr`, `sldNum`, `dt`, `pic`…), so the title or body can be addressed without an inspect.
+/// Each role comes from the placeholder's own kind: `body` is the main content placeholder
+/// ([`body_placeholder`]) only when that is a body/content one, never a footer or slide number
+/// (a Title Only copy once answered `body` and `ftr` with the same id).
 fn placeholders_json(shapes: &mut [deckcraft_model::Shape]) -> serde_json::Map<String, Value> {
+    use deckcraft_model::PhType;
     let mut placeholders = serde_json::Map::new();
     for sh in shapes.iter() {
         if let Some(ph) = &sh.ph {
             let role = match ph.kind {
                 k if k.is_title() => "title",
-                deckcraft_model::PhType::SubTitle => "subtitle",
-                deckcraft_model::PhType::Body | deckcraft_model::PhType::Obj => "body",
+                PhType::SubTitle => "subtitle",
+                PhType::Body | PhType::Obj => "body",
                 k => k.xml(),
             };
             placeholders.entry(role.to_string()).or_insert(json!(sh.id));
@@ -196,7 +200,9 @@ fn placeholders_json(shapes: &mut [deckcraft_model::Shape]) -> serde_json::Map<S
     if let Some(t) = shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())) {
         placeholders.insert("title".into(), json!(t.id));
     }
-    if let Some(b) = body_placeholder(shapes) {
+    if let Some(b) = body_placeholder(shapes)
+        && matches!(b.ph_type(), Some(PhType::Body | PhType::Obj))
+    {
         placeholders.insert("body".into(), json!(b.id));
     }
     placeholders
