@@ -349,8 +349,10 @@ struct Style {
     size: f64,
     color: Rgba,
     alpha: f64,
-    fake_bold: bool,
-    fake_italic: bool,
+    /// Whether the run asks for bold/italic at all (`a:rPr/@b`, `@i`): the drawn face is
+    /// checked against these, not against the document face's own weight (#892).
+    bold: bool,
+    italic: bool,
     baseline: f64,
     spacing: f64,
     caps: Caps,
@@ -432,13 +434,20 @@ fn style_name(bold: bool, italic: bool) -> &'static str {
     }
 }
 
+/// Does the drawn `face` itself carry the run's bold or italic, so the renderer need not
+/// synthesize it? The same rule `make_style` applies to the document face: a face lighter
+/// than 550 does not draw bold, a non-italic face does not draw italic (#892). The flags live
+/// on the drawn face's run, not the document face's: a fallback face that really is bold must
+/// not also be stroked 2.5% wider, and a fallback face that is regular must still be.
+fn face_fake_style(face: &FontFace, bold: bool, italic: bool) -> (bool, bool) {
+    (bold && face.weight < 550.0, italic && !face.italic)
+}
+
 fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Style {
     let family = resolve::font_family(ctx, r);
     let bold = r.bold.unwrap_or(false);
     let italic = r.italic.unwrap_or(false);
     let face = FontDb::global().document_face(&family, style_name(bold, italic));
-    let fake_bold = bold && face.weight < 550.0;
-    let fake_italic = italic && !face.italic;
     let size = (r.size.unwrap_or(18.0) * scale).clamp(0.5, 4000.0);
     let (mut color, alpha, gradient) = match &r.fill {
         // The resolved colour carries the fill's transparency (`a:alpha`): it is applied once.
@@ -476,8 +485,6 @@ fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Styl
         size,
         color,
         alpha,
-        fake_bold,
-        fake_italic,
         baseline: r.baseline.unwrap_or(0.0),
         spacing: r.spacing.unwrap_or(0.0) * scale,
         caps: r.caps.unwrap_or(Caps::None),
@@ -489,6 +496,8 @@ fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Styl
         gradient,
         effects: run_effects(ctx, r, scale),
         style_name: style_name(bold, italic),
+        bold,
+        italic,
         lang: r.lang.clone().filter(|l| !l.is_empty()),
         ea,
         cs,
@@ -2231,14 +2240,18 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     out.runs.push(r);
                 }
                 let Some(face) = p.faces.get(cell.face) else { continue };
+                // The drawn face carries the flags, not the document face: a fallback face that
+                // really is bold must not be stroked again, and a regular fallback face of a
+                // bold run still must be (#892).
+                let (fake_bold, fake_italic) = face_fake_style(face, st.bold, st.italic);
                 cur = Some(GlyphRun {
                     face: face.clone(),
                     size,
                     color: st.color,
                     glyphs: vec![],
                     cells: vec![],
-                    fake_bold: st.fake_bold,
-                    fake_italic: st.fake_italic,
+                    fake_bold,
+                    fake_italic,
                     outline: st.outline,
                     para: line.para,
                     chars: (ci, ci + 1),
