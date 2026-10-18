@@ -20,7 +20,36 @@ fn chart_pptx() -> Vec<u8> {
     shape.kind = ShapeKind::Chart(Box::new(Chart::sample(ChartType::Pie)));
     slide.shapes.push(shape);
     p.slides.push(Arc::new(slide));
-    deckcraft_pptx::export(&p).expect("export")
+    export_bare(&p)
+}
+
+/// The export of `p` without the workbooks DeckCraft writes for the charts it makes, so the tests
+/// can add one the way PowerPoint writes it.
+fn export_bare(p: &deckcraft_model::Presentation) -> Vec<u8> {
+    let bytes = deckcraft_pptx::export(p).expect("export");
+    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let opts = zip::write::SimpleFileOptions::default();
+    for i in 0..zip.len() {
+        let mut f = zip.by_index(i).expect("entry");
+        let name = f.name().to_string();
+        if name.starts_with("ppt/charts/_rels/") || name.starts_with("ppt/embeddings/workbook") {
+            continue;
+        }
+        let mut data = vec![];
+        f.read_to_end(&mut data).expect("read");
+        if name.starts_with("ppt/charts/chart") && name.ends_with(".xml") {
+            let xml = String::from_utf8(data).expect("chart xml");
+            data = match (xml.find("<c:externalData"), xml.find("</c:externalData>")) {
+                (Some(a), Some(b)) => format!("{}{}", &xml[..a], &xml[b + "</c:externalData>".len()..]),
+                _ => xml,
+            }
+            .into_bytes();
+        }
+        out.start_file(&name, opts).expect("start");
+        out.write_all(&data).expect("write");
+    }
+    out.finish().expect("finish").into_inner()
 }
 
 /// Add an embedded workbook and point the chart part at it, the way PowerPoint writes a chart.
@@ -120,6 +149,8 @@ fn an_unchanged_chart_keeps_its_embedded_workbook() {
     assert!(xml.contains("externalData"), "{xml}");
 }
 
+/// An edited chart never writes the workbook it was read with as it was: its data would no longer
+/// match. It gets one holding its own data instead, which Edit Data opens.
 #[test]
 fn an_edited_chart_does_not_write_a_stale_workbook() {
     let src = with_workbook(&chart_pptx());
@@ -133,13 +164,15 @@ fn an_edited_chart_does_not_write_a_stale_workbook() {
     let value = chart.series.get_mut(0).and_then(|s| s.values.get_mut(0)).expect("value");
     *value = Some(99.0);
     let saved = parts(&deckcraft_pptx::export(&p).expect("export"));
-    assert!(saved.iter().all(|(n, _)| !n.starts_with("ppt/embeddings/")), "a stale workbook was written after the chart changed");
+    let books: Vec<&(String, Vec<u8>)> = saved.iter().filter(|(n, _)| n.starts_with("ppt/embeddings/")).collect();
+    assert!(books.iter().all(|(_, d)| d.as_slice() != WORKBOOK), "a stale workbook was written after the chart changed");
+    assert_eq!(books.len(), 1, "the chart gets a workbook of its own data");
     let xml = saved
         .iter()
         .find(|(n, _)| n.starts_with("ppt/charts/chart") && n.ends_with(".xml"))
         .map(|(_, d)| String::from_utf8_lossy(d).into_owned())
         .expect("chart xml");
-    assert!(!xml.contains("externalData"), "{xml}");
+    assert!(xml.contains("externalData"), "{xml}");
 }
 
 fn png(rgb: [u8; 3]) -> Vec<u8> {
@@ -204,7 +237,7 @@ fn kept_chart_parts_never_collide_with_written_parts() {
     pic.kind = ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: img, ..Default::default() } };
     slide.shapes.push(pic);
     p.slides.push(Arc::new(slide));
-    let base = deckcraft_pptx::export(&p).expect("export");
+    let base = export_bare(&p);
     assert!(parts(&base).iter().any(|(n, d)| n == "ppt/media/image1.png" && *d == picture));
 
     // The chart's own relationships reach the slide picture's part and a drawing whose
@@ -295,7 +328,7 @@ fn an_unchanged_chartex_keeps_its_embedded_workbook() {
     shape.kind = ShapeKind::Chart(Box::new(Chart::sample(ChartType::Waterfall)));
     slide.shapes.push(shape);
     p.slides.push(Arc::new(slide));
-    let base = deckcraft_pptx::export(&p).expect("export");
+    let base = export_bare(&p);
     assert!(parts(&base).iter().any(|(n, _)| n == "ppt/charts/chartEx1.xml"));
     let rels = format!(
         r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="{RT}/package" Target="../embeddings/Microsoft_Excel_Worksheet1.xlsx"/></Relationships>"#

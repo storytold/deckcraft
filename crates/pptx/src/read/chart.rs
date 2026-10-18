@@ -1,6 +1,7 @@
-//! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`.
+//! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`, and where
+//! each series reads its data in the chart's workbook in `Chart.source`.
 
-use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartSource, ChartType, ErrorBars, Series, SeriesSource, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::xml::El;
@@ -89,6 +90,15 @@ fn numbers(e: &El, budget: &mut usize) -> Vec<Option<f64>> {
     strings(e, budget).into_iter().map(|s| s.trim().parse::<f64>().ok().filter(|v| v.is_finite())).collect()
 }
 
+/// The workbook formula of `c:tx`, `c:cat`, `c:val`… (`Sheet1!$B$2:$B$5`). Multi-level category
+/// references span several columns: they are left out.
+fn formula(e: Option<&El>) -> Option<String> {
+    let r = e?.elements().find(|r| r.is("strRef") || r.is("numRef"))?;
+    let f = r.child("f")?.text();
+    let f = f.trim();
+    (!f.is_empty()).then(|| f.to_string())
+}
+
 /// Parse a chart part. Returns `None` for something that isn't a chart we can read.
 pub fn read_chart_xml(bytes: &[u8]) -> Option<Chart> {
     let doc = crate::xml::parse(bytes).ok()?;
@@ -143,6 +153,7 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         .find(|id| pa.children_named("valAx").find(|a| a.child_val("axId") == Some(id.as_str())).is_some_and(|a| !secondary_placed(a)))
         .or(used.first())
         .cloned();
+    let mut sources: Vec<SeriesSource> = vec![];
     for g in pa.elements() {
         let name = g.local();
         if !name.ends_with("Chart") {
@@ -283,6 +294,16 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
             if let Some(b) = s.child("bubbleSize") {
                 ser.sizes = numbers(b, &mut budget);
             }
+            sources.push(SeriesSource {
+                name: ser.name.clone(),
+                values: ser.values.clone(),
+                x_values: ser.x_values.clone(),
+                sizes: ser.sizes.clone(),
+                name_ref: formula(s.child("tx")),
+                categories_ref: formula(s.child("cat").or_else(|| s.child("xVal"))),
+                values_ref: formula(s.child("val").or_else(|| s.child("yVal"))),
+                sizes_ref: formula(s.child("bubbleSize")),
+            });
             c.series.push(ser);
         }
     }
@@ -297,6 +318,10 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
             s.kind = None;
             s.secondary_axis = false;
         }
+    }
+    if sources.iter().any(|s| s.name_ref.is_some() || s.categories_ref.is_some() || s.values_ref.is_some()) {
+        let xy = matches!(c.kind, ChartType::Scatter | ChartType::Bubble);
+        c.source = Some(ChartSource { xy, categories: c.categories.clone(), series: sources });
     }
     // Axes.
     c.lang = root.child_val("lang").map(str::to_string);

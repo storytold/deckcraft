@@ -52,6 +52,10 @@ sync_github_name = true
 [people.NikitkaRa]
 real_name = "Nikita Rakitin"
 
+[people.pierrevbc]
+display_name = "FBigTech"
+sync_github_name = false
+
 [people.RCShoemaker]
 real_name = "Ryan C. Shoemaker"
 

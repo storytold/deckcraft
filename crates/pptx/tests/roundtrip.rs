@@ -579,16 +579,98 @@ fn charts_round_trip() {
         }
         assert!(b.raw.is_some());
     }
-    // Second export reuses the kept chart XML unchanged.
+    // Second export reuses the kept chart XML unchanged, and the same workbook.
     let r = round(&q);
     for (sa, sb) in q.slides[4].shapes.iter().zip(r.slides[4].shapes.iter()) {
         if let (ShapeKind::Chart(a), ShapeKind::Chart(b)) = (&sa.kind, &sb.kind) {
             let (mut a, mut b) = (a.clone(), b.clone());
+            let bytes = |c: &Chart| c.kept.workbook().map(|w| w.bytes.clone());
+            assert!(bytes(&a).is_some(), "{}", sa.name);
+            assert_eq!(bytes(&a), bytes(&b), "{}", sa.name);
             a.raw = None;
             b.raw = None;
+            // Kept parts are renamed on each save.
+            a.kept = Default::default();
+            b.kept = Default::default();
             assert_eq!(a, b);
         }
     }
+}
+
+/// Entries of a zip package under `prefix`, with their bytes.
+fn entries(zip_bytes: &[u8], prefix: &str) -> Vec<(String, Vec<u8>)> {
+    use std::io::Read;
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).expect("zip");
+    let mut out = vec![];
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        if f.name().starts_with(prefix) {
+            let mut data = vec![];
+            f.read_to_end(&mut data).expect("read");
+            out.push((f.name().to_string(), data));
+        }
+    }
+    out
+}
+
+fn text_of(zip_bytes: &[u8], name: &str) -> String {
+    entries(zip_bytes, name).into_iter().next().map(|(_, d)| String::from_utf8(d).expect("utf-8")).unwrap_or_default()
+}
+
+fn only_chart(p: &Presentation) -> Chart {
+    let charts: Vec<Chart> = p
+        .slides
+        .iter()
+        .flat_map(|s| s.shapes.iter())
+        .filter_map(|sh| if let ShapeKind::Chart(c) = &sh.kind { Some(c.as_ref().clone()) } else { None })
+        .collect();
+    assert_eq!(charts.len(), 1);
+    charts.into_iter().next().expect("chart")
+}
+
+/// PowerPoint's Edit Data opens the workbook embedded with a chart: it is written, kept through a
+/// round trip, and updated with the chart data when that data changes (more in `chart_workbook.rs`).
+#[test]
+fn chart_workbook_round_trip() {
+    let mut p = defaults::new_presentation(None);
+    let mut s = new_slide(&mut p, "Chart");
+    let mut ch = shape(&mut p, "Chart", 40.0, 100.0, 400.0, 300.0);
+    ch.kind = ShapeKind::Chart(Box::new(Chart::sample(ChartType::Column)));
+    s.shapes.push(ch);
+    p.slides.push(Arc::new(s));
+
+    // A chart made in DeckCraft gets a workbook with its data, linked from the chart part.
+    let first = deckcraft_pptx::export(&p).expect("export");
+    let books = entries(&first, "ppt/embeddings/");
+    assert_eq!(books.len(), 1);
+    let rels = text_of(&first, "ppt/charts/_rels/chart1.xml.rels");
+    assert!(rels.contains("/relationships/package") && rels.contains("../embeddings/"), "{rels}");
+    assert!(text_of(&first, "ppt/charts/chart1.xml").contains("<c:externalData r:id=\"rId1\">"));
+    let sheet = text_of(&books[0].1, "xl/worksheets/sheet1.xml");
+    assert!(sheet.contains(r#"<c r="B2"><v>4.2</v></c>"#), "{sheet}");
+
+    // Import keeps it; an unchanged chart writes the very same workbook back.
+    let q = deckcraft_pptx::import(&first).expect("import");
+    let c = only_chart(&q);
+    let kept = c.kept.workbook().expect("workbook");
+    assert_eq!(kept.bytes.as_slice(), books[0].1.as_slice());
+    let second = deckcraft_pptx::export(&q).expect("export");
+    assert_eq!(entries(&second, "ppt/embeddings/")[0].1, books[0].1);
+
+    // New numbers: the workbook is updated so Edit Data shows them.
+    let mut r = q.clone();
+    for s in &mut r.slides {
+        for sh in &mut Arc::make_mut(s).shapes {
+            if let ShapeKind::Chart(c) = &mut sh.kind {
+                c.series[0].values[0] = Some(99.5);
+            }
+        }
+    }
+    let third = deckcraft_pptx::export(&r).expect("export");
+    let rebuilt = entries(&third, "ppt/embeddings/");
+    assert_eq!(rebuilt.len(), 1);
+    assert_ne!(rebuilt[0].1, books[0].1);
+    assert!(text_of(&rebuilt[0].1, "xl/worksheets/sheet1.xml").contains(r#"<c r="B2"><v>99.5</v></c>"#));
 }
 
 #[test]
