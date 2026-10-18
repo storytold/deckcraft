@@ -227,6 +227,8 @@ pub struct RenderOpts<'a> {
     pub editing_text: Option<ShapeId>,
     /// Animated GIF pictures and how far into their play they are (seconds); others show frame 1.
     pub gif_times: &'a [(ShapeId, f64)],
+    /// Video clips showing a decoded frame instead of their poster (video export).
+    pub video_frames: &'a [(ShapeId, VideoFrame<'a>)],
     /// Worker threads (0 = this thread; required when effects use filters).
     pub threads: u16,
     /// Translate the slide within the output (pixels) and output size override.
@@ -240,6 +242,14 @@ pub struct RenderOpts<'a> {
     pub now: Option<DateTime>,
 }
 
+/// A decoded video picture: straight RGBA, `width`×`height`.
+#[derive(Clone, Copy, Debug)]
+pub struct VideoFrame<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: &'a [u8],
+}
+
 impl Default for RenderOpts<'_> {
     fn default() -> Self {
         RenderOpts {
@@ -251,6 +261,7 @@ impl Default for RenderOpts<'_> {
             skip_text: None,
             editing_text: None,
             gif_times: &[],
+            video_frames: &[],
             threads: 0,
             offset: (0.0, 0.0),
             size: None,
@@ -1084,7 +1095,11 @@ impl Renderer {
             ShapeKind::Media(mc) => {
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
-                if let Some(p) = mc.poster {
+                let playing = if mc.video { f.opts.video_frames.iter().find(|v| v.0 == s.id).map(|v| v.1) } else { None };
+                if let Some(vf) = playing
+                    && paint::video_frame(ctx, vf, bounds, m)
+                {
+                } else if let Some(p) = mc.poster {
                     let pf = deckcraft_model::style::PictureFill { media: p, ..Default::default() };
                     paint::picture(ctx, f.pres, &pf, bounds, m, None);
                 } else if mc.video {

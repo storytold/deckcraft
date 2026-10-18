@@ -24,7 +24,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 | Ribbon tabs: Home, Insert, Draw, Design, Transitions, Animations, Slide Show, Record, Review, View | 10 | 10 | Record tab is a placeholder |
 | Colour menus: theme and standard colours, hex field, Eyedropper | yes (plus a More Colors dialog) | yes: theme and standard colours, hex field and an Eyedropper that takes the colour drawn under the pointer on the slide (#367) | More Colors dialog; Eyedropper only takes colours from the slide, not the rest of the screen |
 | Contextual tabs: Shape Format, Picture Format, Table Design, Table Layout, Chart Design, Chart Format, Video/Audio Format and Playback | yes | most; checklist P0 row partial | Chart Format, media tabs thinner |
-| File tab (Backstage): Home, New, Open, Info, Save, Save As, Print, Share, Export, Close, Account, Options | yes | yes (#76), see [File tab](#file-tab-backstage); no Share (cloud) | Video/GIF/CD exports, templates beyond the built-in themes |
+| File tab (Backstage): Home, New, Open, Info, Save, Save As, Print, Share, Export, Close, Account, Options | yes | yes (#76), see [File tab](#file-tab-backstage); no Share (cloud) | GIF/CD exports, templates beyond the built-in themes |
 | Start screen: new, themes, templates, recent, open | yes, the same page as File › Home | yes: File › Home with Home, New, Open, Account and Options (#76) | |
 | Status bar: slide counter, language, notes, comments, views, zoom slider | yes | yes | |
 | Command search (Tell Me) | yes | command palette | |
@@ -55,7 +55,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Save As | Places, folder, file name, type, Save, More options | Type (PowerPoint, DeckCraft, PDF, Outline, PNG, JPEG) and Save, which opens the system Save dialog (web: Download). .pptx/.deckcraft take the new file; the others are copies (`file.saveAs`, `file.export`) |
 | Print | Print and Copies, Printer, Print All / Selection / Current / Custom Range, Slides box, layout (Full Page Slides, Notes Pages, Outline, Handouts 1–9), sides, collation, colour, Edit Header & Footer; page preview with pager and zoom | Print, Print All Slides / Current Slide / Custom Range, Slides box (`1-3, 5`), Full Page Slides / Notes Pages / Handouts 1–9, Print Hidden Slides, Frame Slides, Edit Header & Footer; preview with pager. DeckCraft prints through a PDF (`file.export`) opened in the system viewer, which has the printers (web: downloaded). No printer list, copies, sides or colour |
 | Share | Cloud sharing | Not offered |
-| Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type. No video, GIF or CD package |
+| Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Create a Video (resolution, fps, seconds per slide and click, sound; progress and Cancel), Change File Type. No GIF or CD package |
 | Close | Closes; asks Save / Don't Save / Cancel about unsaved changes | Same (`file.close` after the prompt); Ctrl+W asks too |
 | Account | User information, sign-in, Office Background and Office Theme, product information, About | Appearance (light/dark, `view.dark`), product information, About DeckCraft. No accounts to sign in to |
 | Options | Opens the PowerPoint Options dialog | Opens Preferences |

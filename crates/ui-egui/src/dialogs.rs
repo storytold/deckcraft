@@ -1550,6 +1550,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ("PowerPoint Presentation (.pptx)", "pptx"),
                 ("Outline (.txt)", "outline"),
                 ("Animated GIF (.gif)", "gif"),
+                ("Video (.mp4, .mov)…", "video"),
             ] {
                 if ui.radio(fmt == f, l).clicked() {
                     d.fields.insert("fmt".into(), f.into());
@@ -1605,8 +1606,14 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 };
                 json!({"layout": layout, "perPage": per, "includeHidden": d.get("pdfHidden", "false") == "true"})
             };
+            if fmt == "video" {
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new("Sets the resolution, timings and sound on File › Export › Create a Video.").small());
+            }
             let (ok, cancel) = buttons(ui, "Export");
-            if ok {
+            if ok && fmt == "video" {
+                let _ = app.run("app.backstage", json!({"page": "export", "task": "video"}));
+            } else if ok {
                 let gif_params = match gif_params {
                     Ok(v) => v,
                     // Keep the dialog open so the range or width can be corrected.

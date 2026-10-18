@@ -27,6 +27,8 @@ mod cavlc;
 #[rustfmt::skip]
 mod cavlc_tables;
 mod deblock;
+mod encoder;
+pub use encoder::{ConfigError, EncodedPicture, Encoder, EncoderConfig};
 mod decoder;
 mod dpb;
 mod error;
