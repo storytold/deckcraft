@@ -91,7 +91,7 @@ files it was given rather than guarding against other software on the computer.
 | `add_shape`, `add_text_box`, `set_text` | Shapes and text |
 | `insert_picture`, `insert_table`, `insert_chart` | Content |
 | `select`, `pointer`, `select_tool`, `key`, `type_text` | The same selection, mouse and keyboard paths as the UI |
-| `screenshot` | The whole window, UI included (connected mode) |
+| `screenshot` | The whole window, UI included (connected mode); image content, or with `path` the PNG is written there and the answer is text `{path, width, height}` for a client that cannot read images |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
 
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, series, title, type)`). Keys inside `run_command`'s `params` are that command's parameters, and a command refuses a key it doesn't take, naming the ones it does (`` `shape.insert` was given `shape`, which it doesn't take. `shape.insert` takes {preset: …, rect: …} ``). An unknown command id names the commands like it (`` unknown command `new`; commands named like it: file.new, slide.new ``), and a command that is not available says how to make it so (`` nothing selected: edit.select {"ids": […]} selects shapes, or pass `ids` ``).
