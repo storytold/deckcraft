@@ -127,7 +127,10 @@ from slide `source`, the current slide) and is refused when the current slide ha
 since copying nothing would clear every slide; `{clear: true}` does that on purpose. `file.export`
 refuses `perPage` with the `notes` or `slides` PDF layout: as in PowerPoint's Print page, notes
 pages (one slide with its notes per page) and handouts (several slides per page) are separate
-layouts, and `perPage` belongs to handouts. An unknown
+layouts, and `perPage` belongs to handouts. `review.spelling` answers `{dictionary, lang, issues}`:
+with `dictionary: false` no Hunspell dictionary was installed for `lang` and only the built-in
+common-misspellings list ran, so an empty `issues` is not a clean deck (`review.dictionary` says
+which folders are searched). An unknown
 `table.style` id or a `chart.options` `palette` that is not a palette name (`colorful1`…`4`,
 `monochrome1`…`13`) is refused naming the valid values.
 
