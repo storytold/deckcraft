@@ -3634,6 +3634,44 @@ fn autocorrect_superscripts_ordinals_as_you_type() {
 }
 
 #[test]
+fn design_palette_answers_the_active_themes_colours_and_fonts() {
+    let mut s = session();
+    let hex = |v: &serde_json::Value| -> String {
+        let h = v.as_str().unwrap().to_string();
+        assert!(h.len() == 7 && h.starts_with('#') && h[1..].chars().all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c)), "{h}");
+        h
+    };
+    let lum = |h: &str| deckcraft_color::Rgba::from_hex(h).unwrap().luminance();
+    let check = |s: &mut Session| -> serde_json::Value {
+        let p = s.execute("design.palette", &json!({})).unwrap();
+        let colors = p["colors"].as_object().unwrap();
+        assert_eq!(colors.len(), 12);
+        for k in ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"] {
+            hex(&colors[k]);
+        }
+        hex(&p["text"]);
+        hex(&p["background"]);
+        assert!(!p["fonts"]["major"].as_str().unwrap().is_empty());
+        assert!(!p["fonts"]["minor"].as_str().unwrap().is_empty());
+        assert!(!p["theme"].as_str().unwrap().is_empty());
+        p
+    };
+    let first = check(&mut s);
+    s.execute("design.theme", &json!({"name": "Nocturne"})).unwrap();
+    let nocturne = check(&mut s);
+    assert_ne!(first["colors"], nocturne["colors"]);
+    assert_eq!(nocturne["theme"], "Nocturne");
+    assert!(lum(nocturne["background"].as_str().unwrap()) < 0.2, "Nocturne slides are dark: {nocturne}");
+    assert!(lum(nocturne["text"].as_str().unwrap()) > 0.8, "Nocturne text is light: {nocturne}");
+    s.execute("design.theme", &json!({"name": "Harbor"})).unwrap();
+    let harbor = check(&mut s);
+    assert_ne!(nocturne["colors"], harbor["colors"]);
+    assert!(lum(harbor["background"].as_str().unwrap()) > 0.8, "Harbor slides are light: {harbor}");
+    assert!(lum(harbor["text"].as_str().unwrap()) < 0.2, "Harbor text is dark: {harbor}");
+    assert_eq!(harbor["fonts"], json!({"major": "Merriweather", "minor": "Open Sans"}));
+}
+
+#[test]
 fn theme_variants_apply_and_report_the_current_one() {
     let mut s = session();
     let name = deckcraft_model::theme::builtin_themes()[1].name.clone();

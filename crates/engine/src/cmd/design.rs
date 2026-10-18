@@ -37,6 +37,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("design.variant", "Variants", ["Design", "Variants"], None, "{index: 0..3} (see design.variants)", has_doc, variant),
         cmd!(query "design.variants", "Variant Gallery", [], None, "{} → the current theme's four colour variants and which is applied", has_doc, variants),
+        cmd!(
+            query "design.palette",
+            "Theme Palette",
+            [],
+            None,
+            "{} → {theme, colors: {dk1, lt1, dk2, lt2, accent1…accent6, hlink, folHlink}, text, background, fonts: {major, minor}} — the active theme's colours as #RRGGBB; text/background are what tx1/bg1 resolve to on the current slide",
+            has_doc,
+            palette
+        ),
         cmd!("design.fonts", "Fonts", ["Design", "Variants"], None, "{} opens Create New Theme Fonts | {name} | {major, minor}", has_doc, fonts),
         cmd!("design.effects", "Effects", ["Design", "Variants"], None, "{name} (see design.themes)", has_doc, effects),
         cmd!(
@@ -342,6 +351,33 @@ fn variants(s: &mut Session, _p: &Value) -> Result<Value> {
         "theme": th.name,
         "current": current,
         "variants": v.iter().map(|c| json!({"name": c.name, "colors": c.colors.iter().map(|x| format!("#{}", x.hex())).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+    }))
+}
+
+/// The active theme's twelve colours and fonts, plus `text`/`background`: `tx1`/`bg1` resolved
+/// through the colour map in force on the current slide (a dark layout maps `bg1` to `dk1`), so
+/// agents can pick scheme names or hex values that match the theme instead of hard-coding them.
+fn palette(s: &mut Session, _p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    let mi = master_index(&st.doc, &st.selection);
+    let master = st.doc.masters.get(mi).ok_or_else(|| bad("design.palette", "no master"))?;
+    let map = st
+        .doc
+        .slides
+        .get(st.selection.slide)
+        .and_then(|sl| deckcraft_model::resolve::Ctx::for_slide(&st.doc, sl))
+        .map(|ctx| ctx.color_map)
+        .unwrap_or_else(|| master.color_map.clone());
+    let sc = &master.theme.colors;
+    let hex = |slot: deckcraft_color::SchemeSlot| format!("#{}", sc.get(deckcraft_model::map_slot(&map, slot)).hex());
+    let colors: serde_json::Map<String, Value> =
+        deckcraft_color::SchemeSlot::THEME.iter().map(|slot| (slot.xml_name().to_string(), Value::String(hex(*slot)))).collect();
+    Ok(json!({
+        "theme": master.theme.name,
+        "colors": colors,
+        "text": hex(deckcraft_color::SchemeSlot::Tx1),
+        "background": hex(deckcraft_color::SchemeSlot::Bg1),
+        "fonts": {"major": master.theme.fonts.major.latin, "minor": master.theme.fonts.minor.latin},
     }))
 }
 
