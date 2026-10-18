@@ -271,4 +271,88 @@ mod tests {
         assert_eq!(r["playable"], false);
         assert!(r["warning"].as_str().is_some_and(|w| w.contains("can't be played")), "{r}");
     }
+
+    #[test]
+    fn pause_toggle_and_stop_ask_the_host_with_the_clip_they_mean() {
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        let r = s.execute("insert.audio", &json!({"name": "tone.wav", "data": base64_encode(&wav())})).expect("insert");
+        let id = ShapeId(r["id"].as_u64().expect("id") as u32);
+        s.ui_requests.clear();
+        let before = s.active().unwrap().history.undo.len();
+        // Playback is a request to the host, about the selected clip, and never an edit.
+        for (cmd, action) in [("media.pause", "pause"), ("media.toggle", "toggle"), ("media.stop", "stop")] {
+            let r = s.execute(cmd, &json!({})).expect(cmd);
+            assert_eq!(r["id"].as_u64().expect("id") as u32, id.0, "{cmd} answers with the clip it acted on");
+            assert_eq!(s.ui_requests, vec![UiRequest::Media { action: action.into(), shape: id, ms: None }], "{cmd}");
+            s.ui_requests.clear();
+        }
+        assert_eq!(s.active().unwrap().history.undo.len(), before, "playback is not an edit");
+    }
+
+    #[test]
+    fn media_verbs_refuse_what_is_not_a_clip() {
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        let err = s.execute("media.pause", &json!({})).expect_err("nothing to pause");
+        assert!(err.to_string().contains("no audio or video on this slide"), "{err}");
+        let sh = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).expect("shape");
+        let err = s.execute("media.stop", &json!({"id": sh["id"]})).expect_err("a rectangle is not a clip");
+        assert!(err.to_string().contains("not a media shape"), "{err}");
+        // Two clips on the slide and nothing selected: the verb cannot know which.
+        s.execute("insert.audio", &json!({"name": "a.wav", "data": base64_encode(&wav())})).expect("insert");
+        s.execute("insert.audio", &json!({"name": "b.wav", "data": base64_encode(&wav())})).expect("insert");
+        s.select(|_, sel| sel.shapes.clear()).expect("clear selection");
+        let err = s.execute("media.toggle", &json!({})).expect_err("which clip?");
+        assert!(err.to_string().contains("select an audio or video, or pass `id`"), "{err}");
+    }
+
+    #[test]
+    fn media_options_land_on_the_clip_and_read_back_with_the_probe() {
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        let r = s.execute("insert.audio", &json!({"name": "tone.wav", "data": base64_encode(&wav())})).expect("insert");
+        let id = ShapeId(r["id"].as_u64().expect("id") as u32);
+        let switches = json!({
+            "autoplay": true, "loop": true, "rewind": true, "acrossSlides": true, "hide": true, "fullScreen": true,
+            "volume": 1.5, "trimStart": 100, "trimEnd": 400, "fadeIn": 50, "fadeOut": 75,
+        });
+        assert_eq!(s.execute("media.options", &switches).expect("options"), json!({}));
+        let i = s.execute("media.info", &json!({})).expect("info");
+        let o = &i["options"];
+        assert_eq!(o["autoplay"], true);
+        assert_eq!(o["loop"], true);
+        assert_eq!(o["rewind"], true);
+        assert_eq!(o["acrossSlides"], true);
+        assert_eq!(o["hide"], true);
+        assert_eq!(o["fullScreen"], true);
+        assert_eq!(o["volume"], 1.0, "volume clamps to 0..1");
+        assert_eq!(o["trimStart"], 100);
+        assert_eq!(o["trimEnd"], 400);
+        assert_eq!(o["fadeIn"], 50);
+        assert_eq!(o["fadeOut"], 75);
+
+        // Only what is passed changes; one undo puts everything back.
+        s.execute("media.options", &json!({"loop": false, "volume": -0.5})).expect("again");
+        let i = s.execute("media.info", &json!({})).expect("info");
+        assert_eq!(i["options"]["loop"], false);
+        assert_eq!(i["options"]["volume"], 0.0, "volume clamps from below too");
+        assert_eq!(i["options"]["autoplay"], true, "the other switches stay");
+        s.execute("edit.undo", &json!({})).expect("undo");
+        let i = s.execute("media.info", &json!({})).expect("info");
+        assert_eq!(i["options"]["loop"], true);
+        assert_eq!(i["options"]["volume"], 1.0);
+
+        // On a shape that is not a clip the switches have nothing to set; nothing changes.
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 10, 10]})).expect("shape");
+        assert_eq!(s.execute("media.options", &json!({"autoplay": true})).expect("no-op"), json!({}));
+        s.select(|_, sel| sel.shapes = vec![id]).expect("select the clip");
+        let i = s.execute("media.info", &json!({})).expect("info");
+        assert_eq!(i["options"]["volume"], 1.0, "the clip was not touched");
+
+        // With nothing selected the command refuses up front.
+        s.select(|_, sel| sel.shapes.clear()).expect("clear selection");
+        let err = s.execute("media.options", &json!({"autoplay": true})).expect_err("nothing selected");
+        assert!(err.to_string().contains("nothing selected"), "{err}");
+    }
 }
