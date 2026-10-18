@@ -1863,7 +1863,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let ignored = d.get("ignore", "");
             let ignore: Vec<&str> = ignored.lines().filter(|l| !l.is_empty()).collect();
             let v = app.session.execute("review.spelling", &json!({"ignore": ignore})).unwrap_or_default();
-            let list = v.as_array().cloned().unwrap_or_default();
+            let list = v["issues"].as_array().cloned().unwrap_or_default();
             let info = app.session.execute("review.dictionary", &json!({})).unwrap_or_default();
             let available = info.get("available").and_then(Value::as_bool).unwrap_or(false);
             match info.get("found").and_then(Value::as_str) {
