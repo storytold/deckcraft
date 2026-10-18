@@ -1426,7 +1426,10 @@ fn insert_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
         "chart" => PhType::Chart,
         "table" => PhType::Table,
         "media" => PhType::Media,
-        _ => PhType::Obj,
+        "content" => PhType::Obj,
+        other => {
+            return Err(bad("master.insertPlaceholder", format!("`kind` is one of content, text, picture, chart, table or media, not `{other}`")));
+        }
     };
     if !matches!(s.doc()?.selection.target, Target::Layout { .. }) {
         return Err(bad("master.insertPlaceholder", "select a layout in Slide Master view"));

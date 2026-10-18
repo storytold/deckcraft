@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family, eastAsia?: family, complexScript?: family}", has_text_or_shapes, font),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -303,7 +303,18 @@ fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    // The East Asian and complex-script faces too (#786); a Latin-only call leaves them alone.
+    let ea = str_param(p, "eastAsia").map(str::to_string);
+    let cs = str_param(p, "complexScript").map(str::to_string);
+    format_run(s, &move |r| {
+        r.font = Some(f.clone());
+        if let Some(ea) = &ea {
+            r.font_ea = Some(ea.clone());
+        }
+        if let Some(cs) = &cs {
+            r.font_cs = Some(cs.clone());
+        }
+    })
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
