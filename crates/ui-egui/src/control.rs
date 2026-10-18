@@ -282,6 +282,14 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             if let Some(ft) = s("formatTab") {
                 app.ui.format_tab = ft.to_string();
             }
+            if let Some(sh) = s("shell")
+                && let Err(e) = app.run("view.shell", json!({"shell": sh}))
+            {
+                return err(e);
+            }
+            if let Some(it) = s("inspectorTab") {
+                app.ui.inspector_tab = it.to_string();
+            }
             ok(serde_json::to_value(&app.ui).unwrap_or_default())
         }
         "ui.dialog.close" => {

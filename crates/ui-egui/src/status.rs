@@ -118,10 +118,27 @@ fn notes_lang(s: &deckcraft_model::Slide) -> Option<String> {
 /// The speaker notes editor under the slide.
 pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let Some(st) = app.session.active() else { return };
-    if st.selection.target != deckcraft_engine::Target::Slides {
+    if app.session.active().is_none_or(|st| st.selection.target != deckcraft_engine::Target::Slides) {
         return;
     }
+    egui::Panel::bottom("notes")
+        .resizable(true)
+        .default_size(app.ui.notes_height)
+        .size_range(36.0..=400.0)
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(8, 6)))
+        .show(ui, |ui| {
+            app.ui.notes_height = ui.available_height() + 12.0;
+            let rect = ui.max_rect();
+            ui.painter()
+                .line_segment([pos2(rect.min.x - 8.0, rect.min.y - 6.0), pos2(rect.max.x + 8.0, rect.min.y - 6.0)], Stroke::new(1.0, t.separator));
+            notes_editor(app, ui, "Click to add notes");
+        });
+}
+
+/// The notes field for the current slide: a formatted draft per slide, saved (`slide.notes`)
+/// when it loses focus or another slide is shown; misspelt words are underlined.
+pub fn notes_editor(app: &mut SlideApp, ui: &mut Ui, hint: &str) {
+    let Some(st) = app.session.active() else { return };
     let (idx, uid) = (st.selection.slide, st.uid);
     // Save an edited draft once the field has lost focus or another slide is shown (before
     // anything reloads it), to the slide it was written on.
@@ -134,117 +151,106 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
         }
     }
     let notes = app.session.active().and_then(|st| st.current_slide()).map(|s| s.notes.clone()).unwrap_or_default();
-    egui::Panel::bottom("notes")
-        .resizable(true)
-        .default_size(app.ui.notes_height)
-        .size_range(36.0..=400.0)
-        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(8, 6)))
+    // Keep a local draft per slide, following the notes while the field isn't focused.
+    if app.notes_buf.0 != uid || app.notes_buf.1 != idx || (!focused && app.notes_buf.2.body != notes) {
+        app.notes_buf = (uid, idx, crate::notes::Draft::new(&notes));
+    }
+    let mut draft = app.notes_buf.2.clone();
+    let look = crate::notes::Look { size: 13.0, color: None };
+    // Long notes scroll inside the pane instead of spilling over the slide (#221).
+    let out = egui::ScrollArea::vertical()
+        .max_height(ui.available_height())
+        .auto_shrink([false, false])
         .show(ui, |ui| {
-            app.ui.notes_height = ui.available_height() + 12.0;
-            let rect = ui.max_rect();
-            ui.painter()
-                .line_segment([pos2(rect.min.x - 8.0, rect.min.y - 6.0), pos2(rect.max.x + 8.0, rect.min.y - 6.0)], Stroke::new(1.0, t.separator));
-            // Keep a local draft per slide, following the notes while the field isn't focused.
-            if app.notes_buf.0 != uid || app.notes_buf.1 != idx || (!focused && app.notes_buf.2.body != notes) {
-                app.notes_buf = (uid, idx, crate::notes::Draft::new(&notes));
+            crate::notes::editor(ui, &mut draft, &look, |e| {
+                e.id(id).hint_text(hint).frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+            })
+        })
+        .inner;
+    let r = out.response.response.clone();
+    let mut buf = draft.text.clone();
+    // Spelling squiggles under misspelt words of the notes.
+    let lang = app.session.active().and_then(|d| d.doc.slides.get(idx)).and_then(|s| notes_lang(s)).unwrap_or_else(|| "en-US".into());
+    let caret = out.cursor_range.map(|c| c.primary.index.0);
+    for (a, b) in app.squiggles.notes(&buf, &lang, caret, Some(ui.ctx())) {
+        let (ra, rb) = (out.galley.pos_from_cursor(egui::text::CCursor::new(a)), out.galley.pos_from_cursor(egui::text::CCursor::new(b)));
+        // One underline per row the word is on (a word doesn't wrap, so normally one).
+        if (ra.bottom() - rb.bottom()).abs() < 1.0 {
+            let y = ra.bottom() - 1.0;
+            let o = out.galley_pos.to_vec2();
+            crate::squiggles::paint(ui.painter(), egui::pos2(ra.left(), y) + o, egui::pos2(rb.left(), y) + o, 1.0);
+        }
+    }
+    // Right-click on a flagged word: its corrections, Ignore All, Add to Dictionary.
+    if r.secondary_clicked()
+        && let Some(pos) = r.interact_pointer_pos()
+    {
+        let at = out.galley.cursor_from_pos(pos - out.galley_pos).index.0;
+        let hit = app.squiggles.notes(&buf, &lang, None, None).into_iter().find(|(a, b)| at >= *a && at <= *b);
+        app.squiggles.notes_menu = hit.and_then(|(a, _)| {
+            let before: String = buf.chars().take(a).collect();
+            let line_start = before.rfind('\n').map_or(0, |i| before[..i].chars().count() + 1);
+            let line = buf.chars().skip(line_start).take_while(|c| *c != '\n').collect::<String>();
+            crate::squiggles::menu_word(
+                &deckcraft_model::Paragraph::new(&line),
+                &lang,
+                crate::squiggles::Tag::Notes { start: line_start },
+                a - line_start,
+            )
+        });
+    }
+    let mut changed: Option<String> = None;
+    if app.squiggles.notes_menu.is_some() {
+        r.context_menu(|ui| {
+            let Some(w) = app.squiggles.notes_menu.clone() else { return };
+            let crate::squiggles::Tag::Notes { start: ls } = w.tag else { return };
+            let chars: Vec<char> = buf.chars().collect();
+            let end = ls + w.start + w.word.chars().count();
+            let splice = |from: usize, to: &str| -> String {
+                chars[..from.min(chars.len())]
+                    .iter()
+                    .chain(to.chars().collect::<Vec<_>>().iter())
+                    .chain(chars[end.min(chars.len())..].iter())
+                    .collect()
+            };
+            if let Some(from) = w.delete_from {
+                if ui.button(egui::RichText::new("Delete Repeated Word").strong()).clicked() {
+                    changed = Some(splice(ls + from, ""));
+                    ui.close();
+                }
+            } else if w.suggestions.is_empty() {
+                ui.label(egui::RichText::new("(no spelling suggestions)").weak());
             }
-            let mut draft = app.notes_buf.2.clone();
-            let look = crate::notes::Look { size: 13.0, color: None };
-            // Long notes scroll inside the pane instead of spilling over the slide (#221).
-            let out = egui::ScrollArea::vertical()
-                .max_height(ui.available_height())
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text("Click to add notes").frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
-                    })
-                })
-                .inner;
-            let r = out.response.response.clone();
-            let mut buf = draft.text.clone();
-            // Spelling squiggles under misspelt words of the notes.
-            let lang = app.session.active().and_then(|d| d.doc.slides.get(idx)).and_then(|s| notes_lang(s)).unwrap_or_else(|| "en-US".into());
-            let caret = out.cursor_range.map(|c| c.primary.index.0);
-            for (a, b) in app.squiggles.notes(&buf, &lang, caret, Some(ui.ctx())) {
-                let (ra, rb) = (out.galley.pos_from_cursor(egui::text::CCursor::new(a)), out.galley.pos_from_cursor(egui::text::CCursor::new(b)));
-                // One underline per row the word is on (a word doesn't wrap, so normally one).
-                if (ra.bottom() - rb.bottom()).abs() < 1.0 {
-                    let y = ra.bottom() - 1.0;
-                    let o = out.galley_pos.to_vec2();
-                    crate::squiggles::paint(ui.painter(), egui::pos2(ra.left(), y) + o, egui::pos2(rb.left(), y) + o, 1.0);
+            for to in &w.suggestions {
+                if ui.button(egui::RichText::new(to).strong()).clicked() {
+                    changed = Some(splice(ls + w.start, to));
+                    ui.close();
                 }
             }
-            // Right-click on a flagged word: its corrections, Ignore All, Add to Dictionary.
-            if r.secondary_clicked()
-                && let Some(pos) = r.interact_pointer_pos()
-            {
-                let at = out.galley.cursor_from_pos(pos - out.galley_pos).index.0;
-                let hit = app.squiggles.notes(&buf, &lang, None, None).into_iter().find(|(a, b)| at >= *a && at <= *b);
-                app.squiggles.notes_menu = hit.and_then(|(a, _)| {
-                    let before: String = buf.chars().take(a).collect();
-                    let line_start = before.rfind('\n').map_or(0, |i| before[..i].chars().count() + 1);
-                    let line = buf.chars().skip(line_start).take_while(|c| *c != '\n').collect::<String>();
-                    crate::squiggles::menu_word(
-                        &deckcraft_model::Paragraph::new(&line),
-                        &lang,
-                        crate::squiggles::Tag::Notes { start: line_start },
-                        a - line_start,
-                    )
-                });
+            if ui.button("Ignore All").clicked() {
+                app.squiggles.ignore(&w.word);
+                ui.close();
             }
-            let mut changed: Option<String> = None;
-            if app.squiggles.notes_menu.is_some() {
-                r.context_menu(|ui| {
-                    let Some(w) = app.squiggles.notes_menu.clone() else { return };
-                    let crate::squiggles::Tag::Notes { start: ls } = w.tag else { return };
-                    let chars: Vec<char> = buf.chars().collect();
-                    let end = ls + w.start + w.word.chars().count();
-                    let splice = |from: usize, to: &str| -> String {
-                        chars[..from.min(chars.len())]
-                            .iter()
-                            .chain(to.chars().collect::<Vec<_>>().iter())
-                            .chain(chars[end.min(chars.len())..].iter())
-                            .collect()
-                    };
-                    if let Some(from) = w.delete_from {
-                        if ui.button(egui::RichText::new("Delete Repeated Word").strong()).clicked() {
-                            changed = Some(splice(ls + from, ""));
-                            ui.close();
-                        }
-                    } else if w.suggestions.is_empty() {
-                        ui.label(egui::RichText::new("(no spelling suggestions)").weak());
-                    }
-                    for to in &w.suggestions {
-                        if ui.button(egui::RichText::new(to).strong()).clicked() {
-                            changed = Some(splice(ls + w.start, to));
-                            ui.close();
-                        }
-                    }
-                    if ui.button("Ignore All").clicked() {
-                        app.squiggles.ignore(&w.word);
-                        ui.close();
-                    }
-                    if w.delete_from.is_none() && ui.button("Add to Dictionary").clicked() {
-                        if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
-                            app.set_status(e.to_string());
-                        }
-                        ui.close();
-                    }
-                });
+            if w.delete_from.is_none() && ui.button("Add to Dictionary").clicked() {
+                if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
+                    app.set_status(e.to_string());
+                }
+                ui.close();
             }
-            if let Some(new) = changed {
-                // A correction is typed into the formatted draft, then saved.
-                buf = new;
-                app.squiggles.notes_menu = None;
-                draft.text = buf.clone();
-                deckcraft_model::edit::replace_text(&mut draft.body, &buf);
-                draft.edited = false;
-                let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
-            }
-            if r.lost_focus() && draft.edited {
-                draft.edited = false;
-                let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
-            }
-            app.notes_buf.2 = draft;
         });
+    }
+    if let Some(new) = changed {
+        // A correction is typed into the formatted draft, then saved.
+        buf = new;
+        app.squiggles.notes_menu = None;
+        draft.text = buf.clone();
+        deckcraft_model::edit::replace_text(&mut draft.body, &buf);
+        draft.edited = false;
+        let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
+    }
+    if r.lost_focus() && draft.edited {
+        draft.edited = false;
+        let _ = app.run("slide.notes", json!({"body": draft.body, "index": idx}));
+    }
+    app.notes_buf.2 = draft;
 }

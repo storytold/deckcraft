@@ -120,10 +120,7 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
-    app.selpane.bind(st.uid);
-    let rows = rows(st.shapes(), &app.selpane.collapsed);
-    let selected: Vec<u32> = st.selection.shapes.iter().map(|i| i.0).collect();
-    let has_sel = !selected.is_empty();
+    let has_sel = !st.selection.shapes.is_empty();
 
     ui.horizontal(|ui| {
         if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
@@ -142,6 +139,22 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     ui.add_space(6.0);
+    list(app, ui);
+}
+
+/// The rows alone, without the Show All / Hide All header.
+pub fn list(app: &mut SlideApp, ui: &mut Ui) {
+    list_marked(app, ui, &HashSet::new());
+}
+
+/// The rows, with an accent dot before the objects in `marked` (the canvas shell's Layers list
+/// marks the layers that change from the previous state).
+pub fn list_marked(app: &mut SlideApp, ui: &mut Ui, marked: &HashSet<u32>) {
+    let t = Tokens::get(ui.ctx());
+    let Some(st) = app.session.active() else { return };
+    app.selpane.bind(st.uid);
+    let rows = rows(st.shapes(), &app.selpane.collapsed);
+    let selected: Vec<u32> = st.selection.shapes.iter().map(|i| i.0).collect();
 
     // The list has the keyboard while one of its rows has focus.
     let focused_row = ui.memory(|m| m.focused()).and_then(|f| rows.iter().find(|r| row_id(r.id) == f).map(|r| r.id));
@@ -213,6 +226,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         } else {
             let color = if row.dimmed { t.text_faint } else { t.text };
             painter.text(pos2(name_x, r.center().y), Align2::LEFT_CENTER, &row.name, theme::font(12.5), color);
+            if marked.contains(&row.id) {
+                painter.circle_filled(pos2(name_x - 7.0, r.center().y), 2.5, t.accent);
+            }
         }
         // Eye and padlock.
         let ink = if row.dimmed { t.text_faint } else { t.text_dim };
