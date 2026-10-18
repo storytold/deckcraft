@@ -667,11 +667,13 @@ pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut
 }
 
 /// [`edit_shapes`] for edits a locked object refuses (move, size, rotate, flip, reshape, crop):
-/// locked targets are left out, and when every target is locked nothing changes.
+/// locked targets are left out, and when every target is locked nothing changes. The lock is
+/// looked up wherever the shape is, like the edit itself, so a locked shape on another slide
+/// stays put.
 pub(crate) fn edit_geometry(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
     let ids = targets(s, p)?;
     let st = s.doc()?;
-    let free: Vec<u32> = ids.iter().filter(|id| !st.shape(**id).is_some_and(|x| x.locked)).map(|id| id.0).collect();
+    let free: Vec<u32> = ids.iter().filter(|id| !st.shape_anywhere(**id).is_some_and(|(x, _)| x.locked)).map(|id| id.0).collect();
     if !ids.is_empty() && free.is_empty() {
         return Err(bad(cmd, "the object is locked"));
     }
