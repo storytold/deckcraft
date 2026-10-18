@@ -157,7 +157,8 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "animation.move", json!({"index": i, "to": i.saturating_sub(1)}));
                 ui.close();
             }
-            if ui.button("Move Down").clicked() {
+            // The last one cannot move down: animation.move refuses a `to` past the end.
+            if ui.add_enabled(i + 1 < anims.len(), egui::Button::new("Move Down")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i + 1}));
                 ui.close();

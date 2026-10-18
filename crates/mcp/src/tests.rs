@@ -304,3 +304,75 @@ fn export_tool_lists_gif_and_its_options() {
     assert_eq!(r["result"]["isError"], true, "{r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Agents read slide numbers off the editor, which counts from 1, while every index here counts
+/// from 0: the base is stated wherever an index is asked for, and in the server instructions.
+#[test]
+fn index_parameters_say_they_are_zero_based() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    assert!(init["result"]["instructions"].as_str().unwrap().contains("0-based"), "{}", init["result"]["instructions"]);
+    let tools = call(&mut s, 2, "tools/list", json!({}));
+    let tools = tools["result"]["tools"].as_array().unwrap();
+    for (tool, param) in [("go_to_slide", "index"), ("inspect_slide", "index"), ("render_slide", "slide"), ("export", "slide"), ("export", "slides")]
+    {
+        let t = tools.iter().find(|t| t["name"] == tool).unwrap();
+        let d = t["inputSchema"]["properties"][param]["description"].as_str().unwrap();
+        assert!(d.contains("0-based"), "{tool}.{param}: {d}");
+    }
+}
+
+/// `number` is what the editor shows for the slide, beside the 0-based `index`.
+#[test]
+fn inspect_reports_the_displayed_slide_number() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "titleOnly", "title": "Second"}));
+    let doc = tool(&mut s, "inspect_document", json!({}));
+    let slides = doc["slides"].as_array().unwrap();
+    assert_eq!((slides[0]["index"].as_u64(), slides[0]["number"].as_u64()), (Some(0), Some(1)), "{doc}");
+    assert_eq!((slides[1]["index"].as_u64(), slides[1]["number"].as_u64()), (Some(1), Some(2)), "{doc}");
+    let second = tool(&mut s, "inspect_slide", json!({"index": 1}));
+    assert_eq!((second["index"].as_u64(), second["number"].as_u64(), second["title"].as_str()), (Some(1), Some(2), Some("Second")));
+}
+
+/// An index past the end says what the valid indices are, so the agent learns the base from
+/// the first mistake rather than from the user.
+#[test]
+fn out_of_range_errors_name_the_indices() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "titleOnly", "title": "Second"}));
+    for (name, args) in [
+        ("go_to_slide", json!({"index": 2})),
+        ("inspect_slide", json!({"index": 2})),
+        ("render_slide", json!({"slide": 2})),
+        ("run_command", json!({"command": "slide.move", "params": {"from": 0, "to": 2}})),
+        ("run_command", json!({"command": "slide.move", "params": {"from": 2, "to": 0}})),
+        ("run_command", json!({"command": "slide.notes", "params": {"index": 2, "text": "x"}})),
+        ("run_command", json!({"command": "slide.hide", "params": {"index": 2, "hidden": true}})),
+    ] {
+        let r = call(&mut s, 1, "tools/call", json!({"name": name, "arguments": args}));
+        assert_eq!(r["result"]["isError"], true, "{name} {args}: {r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("indices run 0 through 1"), "{name} {args}: {text}");
+    }
+    let doc = tool(&mut s, "inspect_document", json!({}));
+    let titles: Vec<&str> = doc["slides"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap()).collect();
+    assert_eq!(titles[1], "Second", "a refused move must not reorder: {titles:?}");
+}
+
+/// `animation.move {to}` past the end is an error, not a quiet clamp.
+#[test]
+fn animation_move_past_the_end_is_refused() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let shape = tool(&mut s, "add_shape", json!({"preset": "rect", "x": 10, "y": 10, "w": 100, "h": 50}));
+    let id = shape["id"].as_u64().expect("shape id");
+    tool(&mut s, "run_command", json!({"command": "animation.add", "params": {"ids": [id], "effect": "fade"}}));
+    let r =
+        call(&mut s, 1, "tools/call", json!({"name": "run_command", "arguments": {"command": "animation.move", "params": {"index": 0, "to": 5}}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("indices run 0 through 0"), "{text}");
+}
