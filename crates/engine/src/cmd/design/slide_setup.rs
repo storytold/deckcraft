@@ -107,85 +107,89 @@ pub(super) fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
         let format_given = str_param(p, "dateFormat").is_some();
         let all = bool_or(p, "all", true);
         let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![sel.slide] };
+        let n = list.len();
         for i in list {
-            let Some(layout) = doc.slides.get(i).map(|x| x.layout) else { continue };
-            let lay = doc.layout(layout).map(|(_, l)| l.clone());
-            let is_title = lay.as_ref().is_some_and(|l| l.kind == deckcraft_model::LayoutType::Title);
-            let want = |k: PhType| {
-                !(hf.hide_on_title && is_title)
-                    && match k {
-                        PhType::Date => hf.date,
-                        PhType::SlideNum => hf.slide_number,
-                        PhType::Footer => hf.footer,
-                        _ => false,
-                    }
-            };
-            let mut new_ids = vec![];
-            for _ in 0..3 {
-                new_ids.push(ShapeId(doc.alloc_id().ok_or_else(|| bad("design.headerFooter", NO_ID_SPACE))?));
+            apply_header_footer(doc, i, &hf, date_given || format_given)?;
+        }
+        Ok(json!({"slides": n, "default": true}))
+    })
+}
+
+/// Give slide `i` the date, footer and slide-number placeholders `hf` asks for and take away the
+/// ones it doesn't; `date_given` (a text or a format was given) repoints an existing date placeholder. slide.new and
+/// slide.fromOutline call this too, so the flags are the presentation's default for later slides.
+pub(crate) fn apply_header_footer(doc: &mut Presentation, i: usize, hf: &deckcraft_model::HeaderFooter, date_given: bool) -> Result<()> {
+    let Some(layout) = doc.slides.get(i).map(|x| x.layout) else { return Ok(()) };
+    let lay = doc.layout(layout).map(|(_, l)| l.clone());
+    let is_title = lay.as_ref().is_some_and(|l| l.kind == deckcraft_model::LayoutType::Title);
+    let want = |k: PhType| {
+        !(hf.hide_on_title && is_title)
+            && match k {
+                PhType::Date => hf.date,
+                PhType::SlideNum => hf.slide_number,
+                PhType::Footer => hf.footer,
+                _ => false,
             }
-            let Some(sl) = doc.slides.get_mut(i) else { continue };
-            let sl = Arc::make_mut(sl);
-            for (n, k) in [PhType::Date, PhType::Footer, PhType::SlideNum].into_iter().enumerate() {
-                let has = sl.shapes.iter().position(|x| x.ph_type() == Some(k));
-                match (has, want(k)) {
-                    (Some(pos), false) => {
-                        sl.shapes.remove(pos);
-                    }
-                    (None, true) => {
-                        let lp = lay.as_ref().and_then(|l| l.shapes.iter().find(|x| x.ph_type() == Some(k)).cloned());
-                        let Some(lp) = lp else { continue };
-                        let body = match k {
-                            PhType::SlideNum => TextBody {
-                                paragraphs: vec![deckcraft_model::Paragraph {
-                                    runs: vec![Run {
-                                        text: "‹#›".into(),
-                                        props: Default::default(),
-                                        kind: RunKind::Field { field: "slidenum".into() },
-                                    }],
-                                    ..Default::default()
-                                }],
-                                ..Default::default()
-                            },
-                            PhType::Date if hf.date_text.is_empty() => TextBody {
-                                paragraphs: vec![deckcraft_model::Paragraph {
-                                    runs: vec![Run {
-                                        text: date_now(&hf.date_format),
-                                        props: Default::default(),
-                                        kind: RunKind::Field { field: date_kind(&hf.date_format).into() },
-                                    }],
-                                    ..Default::default()
-                                }],
-                                ..Default::default()
-                            },
-                            PhType::Date => TextBody::from_text(&hf.date_text),
-                            _ => TextBody::from_text(&hf.footer_text),
-                        };
-                        sl.shapes.push(Shape {
-                            id: new_ids.get(n).copied().unwrap_or_default(),
-                            name: lp.name.clone(),
-                            ph: lp.ph.clone(),
-                            text: Some(body),
+    };
+    let mut new_ids = vec![];
+    for _ in 0..3 {
+        new_ids.push(ShapeId(doc.alloc_id().ok_or_else(|| bad("design.headerFooter", NO_ID_SPACE))?));
+    }
+    let Some(sl) = doc.slides.get_mut(i) else { return Ok(()) };
+    let sl = Arc::make_mut(sl);
+    for (n, k) in [PhType::Date, PhType::Footer, PhType::SlideNum].into_iter().enumerate() {
+        let has = sl.shapes.iter().position(|x| x.ph_type() == Some(k));
+        match (has, want(k)) {
+            (Some(pos), false) => {
+                sl.shapes.remove(pos);
+            }
+            (None, true) => {
+                let lp = lay.as_ref().and_then(|l| l.shapes.iter().find(|x| x.ph_type() == Some(k)).cloned());
+                let Some(lp) = lp else { continue };
+                let body = match k {
+                    PhType::SlideNum => TextBody {
+                        paragraphs: vec![deckcraft_model::Paragraph {
+                            runs: vec![Run { text: "‹#›".into(), props: Default::default(), kind: RunKind::Field { field: "slidenum".into() } }],
                             ..Default::default()
-                        });
-                    }
-                    (Some(pos), true) if k == PhType::Footer => {
-                        if let Some(sh) = sl.shapes.get_mut(pos) {
-                            sh.text = Some(TextBody::from_text(&hf.footer_text));
-                        }
-                    }
-                    (Some(pos), true) if k == PhType::Date && (date_given || format_given) => {
-                        if let Some(sh) = sl.shapes.get_mut(pos) {
-                            set_date(sh, &hf.date_text, &hf.date_format);
-                        }
-                    }
-                    _ => {}
+                        }],
+                        ..Default::default()
+                    },
+                    PhType::Date if hf.date_text.is_empty() => TextBody {
+                        paragraphs: vec![deckcraft_model::Paragraph {
+                            runs: vec![Run {
+                                text: date_now(&hf.date_format),
+                                props: Default::default(),
+                                kind: RunKind::Field { field: date_kind(&hf.date_format).into() },
+                            }],
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    },
+                    PhType::Date => TextBody::from_text(&hf.date_text),
+                    _ => TextBody::from_text(&hf.footer_text),
+                };
+                sl.shapes.push(Shape {
+                    id: new_ids.get(n).copied().unwrap_or_default(),
+                    name: lp.name.clone(),
+                    ph: lp.ph.clone(),
+                    text: Some(body),
+                    ..Default::default()
+                });
+            }
+            (Some(pos), true) if k == PhType::Footer => {
+                if let Some(sh) = sl.shapes.get_mut(pos) {
+                    sh.text = Some(TextBody::from_text(&hf.footer_text));
                 }
             }
+            (Some(pos), true) if k == PhType::Date && date_given => {
+                if let Some(sh) = sl.shapes.get_mut(pos) {
+                    set_date(sh, &hf.date_text, &hf.date_format);
+                }
+            }
+            _ => {}
         }
-        Ok(())
-    })?;
-    ok()
+    }
+    Ok(())
 }
 
 /// The date field type `format` names, `datetime1` when it is empty or unknown.
