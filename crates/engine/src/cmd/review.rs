@@ -794,3 +794,7 @@ mod tests {
         assert!(s.active().unwrap().doc.show.custom_show.is_none());
     }
 }
+
+#[cfg(test)]
+#[path = "comment_tests.rs"]
+mod comment_tests;
