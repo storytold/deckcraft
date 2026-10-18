@@ -24,7 +24,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             resolve
         ),
-        cmd!(query "comment.list", "Comments", [], None, "{slide?} → comments", has_slide, list),
+        cmd!(
+            query "comment.list",
+            "Comments",
+            [],
+            None,
+            "{slide? (else the current slide only), all?: bool (every slide's comments, each with its slide and index)} → comments",
+            has_slide,
+            list
+        ),
         cmd!(
             noundo "comment.next",
             "Next Comment",
@@ -209,6 +217,21 @@ fn resolve(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
+    if bool_or(p, "all", false) {
+        // Every slide's comments, each saying which slide and index it is.
+        let mut out = vec![];
+        for (slide, sl) in st.doc.slides.iter().enumerate() {
+            for (index, c) in sl.comments.iter().enumerate() {
+                let mut v = serde_json::to_value(c).unwrap_or_default();
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("slide".into(), json!(slide));
+                    o.insert("index".into(), json!(index));
+                }
+                out.push(v);
+            }
+        }
+        return Ok(Value::Array(out));
+    }
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
     Ok(serde_json::to_value(st.doc.slides.get(i).map(|x| x.comments.clone()).unwrap_or_default()).unwrap_or_default())
 }
