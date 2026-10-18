@@ -73,8 +73,11 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "list_commands",
             "List commands",
-            "Every command (id, label, ribbon/menu place, shortcut, parameter summary, whether it is enabled now). Filter by a substring of id or label.",
-            obj(json!({"filter": string("Substring of the id or label, e.g. `format.` or `slide`")}), &[]),
+            "Every command (id, label, ribbon/menu place, shortcut, parameter summary, whether it is enabled now, what it acts on). Filter by a substring of id or label; brief answers only id and params. Families: slide., section., shape., text., format., insert., table., animation., transition., design., arrange., edit., file.",
+            obj(
+                json!({"filter": string("Substring of the id or label, e.g. `format.` or `slide`"), "brief": boolean("Only id and params (default false)")}),
+                &[],
+            ),
             true,
         ),
         tool(
@@ -379,6 +382,8 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
     match name {
         "list_commands" => wrap(b.call("engine.commands", json!({})).map(|v| {
             let f = a.get("filter").and_then(Value::as_str).unwrap_or("").to_lowercase();
+            let brief = a.get("brief").and_then(Value::as_bool).unwrap_or(false);
+            let trim = |c: Value| if brief { json!({"id": c.get("id"), "params": c.get("params")}) } else { c };
             Value::Array(
                 v.as_array()
                     .cloned()
@@ -389,6 +394,7 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
                             || c.get("id").and_then(Value::as_str).is_some_and(|i| i.to_lowercase().contains(&f))
                             || c.get("label").and_then(Value::as_str).is_some_and(|i| i.to_lowercase().contains(&f))
                     })
+                    .map(trim)
                     .collect(),
             )
         })),
@@ -501,6 +507,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "call_app" => {
             let Some(m) = a.get("method").and_then(Value::as_str) else { return ToolResult::error("missing `method`") };
             wrap(b.call(m, a.get("params").cloned().unwrap_or(json!({}))))
+        }
+        other if deckcraft_engine::find_command(other).is_some() => {
+            ToolResult::error(format!("`{other}` is a command, not a tool: run_command {{\"command\": \"{other}\", \"params\": {{…}}}}"))
         }
         other => ToolResult::error(format!("unknown tool `{other}`")),
     }
