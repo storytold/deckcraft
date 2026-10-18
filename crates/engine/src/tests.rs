@@ -6177,6 +6177,20 @@ fn an_explicit_empty_ids_list_is_refused() {
     s.execute("shape.fill", &json!({"ids": [a], "color": "#FF0000"})).unwrap();
 }
 
+/// An `ids` list whose entries are no shape ids (negative, strings, fractions) is not "empty": the
+/// refusal names the entry, so the caller sees what was wrong with it.
+#[test]
+fn an_ids_list_with_no_valid_id_is_refused_by_name() {
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap();
+    for ids in [json!([-1]), json!(["12"]), json!([1.5, null])] {
+        let e = s.execute("shape.fill", &json!({"ids": ids, "color": "#FF0000"})).unwrap_err().to_string();
+        assert!(e.contains("is not a shape id") && !e.contains("is empty"), "{ids}: {e}");
+    }
+    let e = s.execute("shape.fill", &json!({"ids": [], "color": "#FF0000"})).unwrap_err().to_string();
+    assert!(e.contains("`ids` is empty"), "{e}");
+}
+
 #[test]
 fn animation_add_and_section_add_answer_what_they_made() {
     let mut s = session();
