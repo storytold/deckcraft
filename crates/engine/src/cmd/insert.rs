@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Picture from File…",
             ["Insert", "Images", "Pictures"],
             None,
-            "{path? | data: base64, name?, rect?: [x,y,w,h]}",
+            "{path? | data: base64, name?, rect?: [x,y,w,h]} → {id, rect} (a selected empty content placeholder takes the picture and keeps its box)",
             has_slide,
             picture
         ),
@@ -61,13 +61,13 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             photo_album_edit
         ),
-        cmd!("insert.table", "Table…", ["Insert", "Tables"], None, "{rows, cols, rect?, data?: [[cell text]]}", has_slide, table),
+        cmd!("insert.table", "Table…", ["Insert", "Tables"], None, "{rows, cols, rect?, data?: [[cell text]]} → {id, rect}", has_slide, table),
         cmd!(
             "insert.chart",
             "Chart…",
             ["Insert", "Illustrations"],
             None,
-            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, title?, rect?, categories?: [..], series?: [{name, values}]}",
+            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, title?, rect?, categories?: [..], series?: [{name, values}]} → {id, rect}",
             has_slide,
             chart
         ),
@@ -474,10 +474,10 @@ fn picture(s: &mut Session, p: &Value) -> Result<Value> {
             sel.shapes = vec![ph_id];
             Ok(())
         })?;
-        return Ok(json!({"id": ph_id}));
+        return Ok(json!({"id": ph_id, "rect": rect_json(&rect)}));
     }
     let id = add_shape(s, "insert.picture", shape, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 const ALBUM_MAX_ITEMS: usize = 48;
@@ -1217,7 +1217,7 @@ fn table(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let id = add_shape(s, "insert.table", Shape { xfrm: Some(rect), kind: ShapeKind::Table(t), ..Default::default() }, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 pub fn chart_type(name: &str) -> ChartType {
@@ -1274,7 +1274,7 @@ fn chart(s: &mut Session, p: &Value) -> Result<Value> {
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or(Xfrm::new(size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7));
     let id = add_shape(s, "insert.chart", Shape { xfrm: Some(rect), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {

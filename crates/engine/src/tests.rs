@@ -5251,3 +5251,35 @@ fn thin_answers_carry_the_next_steps_facts() {
     let r = s.execute("edit.redo", &json!({})).unwrap();
     assert_eq!(r, json!({"label": "Resolve Thread", "slide": 0}), "{r}");
 }
+
+/// V14: `insert.table`, `insert.chart` and `insert.picture` answer the final box as
+/// `rect: [x, y, w, h]` beside the id, so the next layout step needs no inspect.
+#[test]
+fn insert_table_chart_and_picture_answer_their_rect() {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf,
+        0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+        0x82,
+    ];
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let t = s.execute("insert.table", &json!({"rows": 2, "cols": 3, "rect": [100, 200, 300, 80]})).unwrap();
+    assert_eq!(t["rect"], json!([100.0, 200.0, 300.0, 80.0]), "{t}");
+    let c = s.execute("insert.chart", &json!({"type": "pie"})).unwrap();
+    let size = s.doc().unwrap().doc.slide_size;
+    assert_eq!(c["rect"], json!([size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7]), "{c}");
+    let p = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png", "rect": [10, 20, 30, 40]})).unwrap();
+    assert_eq!(p["rect"], json!([10.0, 20.0, 30.0, 40.0]), "{p}");
+    for (r, id) in [(&t, t["id"].clone()), (&c, c["id"].clone()), (&p, p["id"].clone())] {
+        let b = s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone();
+        assert_eq!(r["rect"], json!([b["x"], b["y"], b["w"], b["h"]]), "{r}");
+    }
+    // Into a selected empty content placeholder the picture takes the placeholder's box.
+    let n = s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+    let body = n["placeholders"]["body"].clone();
+    s.execute("edit.select", &json!({"ids": [body]})).unwrap();
+    let p = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png"})).unwrap();
+    let b = s.execute("shape.inspect", &json!({"id": body})).unwrap()["box"].clone();
+    assert_eq!((p["id"].clone(), p["rect"].clone()), (body, json!([b["x"], b["y"], b["w"], b["h"]])), "{p}");
+}
