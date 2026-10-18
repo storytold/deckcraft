@@ -6366,6 +6366,44 @@ fn formatting_after_select_cells_touches_only_those_cells() {
     }
 }
 
+/// `edit.select` several shapes then `format.color` colours every one of them, however their
+/// text got there (styled insert, text.set afterwards, several paragraphs, selected from another
+/// slide), and the answer counts them.
+#[test]
+fn format_color_on_a_multi_selection_colours_every_shape() {
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, p: serde_json::Value| s.execute("shape.insert", &p).unwrap()["id"].as_u64().unwrap();
+    let a = ins(
+        &mut s,
+        json!({"preset": "roundRect", "rect": [20, 20, 200, 60], "text": "L1", "fill": "#1F3A5F", "size": 14, "color": "#FFFFFF", "bold": true}),
+    );
+    let b = ins(&mut s, json!({"preset": "roundRect", "rect": [20, 100, 200, 60], "text": "L2", "fill": "#1F3A5F", "size": 14, "color": "#222222"}));
+    s.execute("text.set", &json!({"id": b, "text": "L4 replaced"})).unwrap();
+    let c = ins(&mut s, json!({"preset": "roundRect", "rect": [20, 180, 200, 60], "fill": "#1F3A5F", "size": 14, "color": "#222222", "bold": true}));
+    s.execute("text.set", &json!({"id": c, "text": "L5 set later"})).unwrap();
+    let d = ins(&mut s, json!({"preset": "roundRect", "rect": [20, 260, 200, 60], "text": "L3\nsecond line", "fill": "#1F3A5F"}));
+    // Select them from the other slide: edit.select follows the ids to theirs.
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let r = s.execute("edit.select", &json!({"ids": [a, b, c, d]})).unwrap();
+    assert_eq!(r["selected"].as_array().map(Vec::len), Some(4), "{r}");
+    let r = s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    let st = s.doc().unwrap();
+    for id in [a, b, c, d] {
+        let sh = st.shape(ShapeId(id as u32)).unwrap();
+        let body = sh.text.as_ref().unwrap();
+        assert!(!body.paragraphs.is_empty() && body.paragraphs.iter().all(|p| !p.runs.is_empty()), "shape {id} has text");
+        for (pi, p) in body.paragraphs.iter().enumerate() {
+            for run in &p.runs {
+                assert_eq!(run.props.fill, red, "shape {id} paragraph {pi} run {:?}", run.text);
+            }
+        }
+    }
+    assert_eq!(r["changed"].as_u64().or_else(|| r.as_u64()), Some(4), "answer counts the shapes: {r}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
