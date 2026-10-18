@@ -106,7 +106,9 @@ lookups (`shape.inspect`, `text.get`, `shape.sites`) find it anywhere, move noth
 several shapes on one slide (`shape.connect`, `arrange.*`, `smartArt.*`) refuse an id on another
 slide, saying where the shape is and the `slide.go` that gets there; `comment.*` acts on the
 current slide. `batch` items and `run_command` may name a tool (`add_shape`,
-`add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`. A
+`add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`; a
+`batch` answers one text array, so an item naming a tool that answers an image (`render_slide`,
+`screenshot` without `path`) is refused and told to run on its own. A
 `batch` item with `"as": "a"` can be referred to by any later item's params as `"$a"` (its `id`,
 or its whole answer when it has none), so insert, connect and animate fit in one batch; a `$name`
 with no such earlier item is refused.
