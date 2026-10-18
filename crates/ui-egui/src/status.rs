@@ -13,16 +13,21 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
     egui::Panel::bottom("status").exact_size(28.0).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         let Some(st) = app.session.active() else { return };
+        let lang = app.lang();
         let n = st.doc.slides.len();
         let left = match st.selection.target {
-            deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
-            _ => "Slide Master".to_string(),
+            deckcraft_engine::Target::Slides => {
+                let current = ((st.selection.slide + 1).min(n.max(1))).to_string();
+                let total = n.to_string();
+                crate::i18n::fill(crate::i18n::text(lang, "status.slide_of"), &[("n", &current), ("m", &total)])
+            }
+            _ => crate::i18n::text(lang, "status.slide_master").to_string(),
         };
         let p = ui.painter();
         p.text(pos2(rect.min.x + 14.0, rect.center().y), Align2::LEFT_CENTER, &left, theme::font(12.0), t.text_dim);
         // The selection's proofing language; a click opens Review › Language.
-        let (lang, no_proof) = crate::dialogs::selected_language(app);
-        let name = crate::squiggles::lang_name(&lang) + if no_proof { " (not checked)" } else { "" };
+        let (proof_lang, no_proof) = crate::dialogs::selected_language(app);
+        let name = crate::squiggles::lang_name(&proof_lang) + if no_proof { " (not checked)" } else { "" };
         let lr = p.text(pos2(rect.min.x + 120.0, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
         if ui.interact(lr.expand(3.0), ui.id().with("status_lang"), Sense::click()).on_hover_text("Language").clicked() {
             app.dialog = Some(crate::dialogs::Dialog::new("language"));
@@ -38,7 +43,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 4.0;
-        if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
+        if small_icon(&mut right, Icon::FitSmall, crate::i18n::text(lang, "status.fit"), false).clicked() {
             app.ui.zoom = None;
         }
         let pct = (app.canvas_scale * 100.0).round();
@@ -46,7 +51,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         if lbl.clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
-        if small_icon(&mut right, Icon::ZoomIn, "Zoom In", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomIn, crate::i18n::text(lang, "status.zoom_in"), false).clicked() {
             let _ = app.run("view.zoomIn", json!({}));
         }
         // Slider 10%–400% (log scale).
@@ -57,31 +62,31 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
             z = lz.exp();
             app.ui.zoom = Some(z);
         }
-        if small_icon(&mut right, Icon::ZoomOut, "Zoom Out", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomOut, crate::i18n::text(lang, "status.zoom_out"), false).clicked() {
             let _ = app.run("view.zoomOut", json!({}));
         }
         right.add_space(8.0);
         let view = app.ui.view;
-        if small_icon(&mut right, Icon::ViewShowSmall, "Slide Show", false).clicked() {
+        if small_icon(&mut right, Icon::ViewShowSmall, crate::i18n::text(lang, "status.slideshow"), false).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             app.start_show(i, false);
         }
-        if small_icon(&mut right, Icon::ViewReadingSmall, "Reading View", false).clicked() {
+        if small_icon(&mut right, Icon::ViewReadingSmall, crate::i18n::text(lang, "status.reading"), false).clicked() {
             let _ = app.run("view.reading", json!({}));
         }
-        if small_icon(&mut right, Icon::ViewSorterSmall, "Slide Sorter", view == ViewMode::Sorter).clicked() {
+        if small_icon(&mut right, Icon::ViewSorterSmall, crate::i18n::text(lang, "status.sorter"), view == ViewMode::Sorter).clicked() {
             app.ui.view = ViewMode::Sorter;
         }
-        if small_icon(&mut right, Icon::ViewNormalSmall, "Normal", view == ViewMode::Normal).clicked() {
+        if small_icon(&mut right, Icon::ViewNormalSmall, crate::i18n::text(lang, "status.normal"), view == ViewMode::Normal).clicked() {
             app.ui.view = ViewMode::Normal;
         }
         right.add_space(8.0);
         let c_on = app.ui.pane.as_deref() == Some("comments");
-        if labeled(&mut right, Icon::CommentsSmall, "Comments", c_on).clicked() {
+        if labeled(&mut right, Icon::CommentsSmall, crate::i18n::text(lang, "status.comments"), c_on).clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));
         }
         let n_on = app.ui.notes;
-        if labeled(&mut right, Icon::NotesSmall, "Notes", n_on).clicked() {
+        if labeled(&mut right, Icon::NotesSmall, crate::i18n::text(lang, "status.notes"), n_on).clicked() {
             app.ui.notes = !n_on;
         }
         let _ = Stroke::NONE;
