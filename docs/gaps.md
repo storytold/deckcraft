@@ -23,15 +23,14 @@ revision history.
 | 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
-| 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
-| 8 | Image paste fails on Windows and Linux (#53) | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
-| 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
-| 10 | Animation Pane: preview plays the whole slide, not from the selected effect (timeline done); 64 of ~190 effects | Feature | B (pane) | 8–14 | [animation-parity.md](animation-parity.md) |
-| 11 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
-| 12 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
-| 13 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
-| 14 | PDF export rasterizes slide artwork | File format | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
-| 15 | Slides rasterize on the CPU; no performance baseline | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
+| 7 | Image paste fails on Windows and Linux (#53) | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
+| 8 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
+| 9 | Animation Pane: preview plays the whole slide, not from the selected effect (timeline done); 64 of ~190 effects | Feature | B (pane) | 8–14 | [animation-parity.md](animation-parity.md) |
+| 10 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
+| 11 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
+| 12 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
+| 13 | PDF export rasterizes slide artwork | File format | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
+| 14 | Slides rasterize on the CPU; no performance baseline | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
 
 ## Stability
 
@@ -152,11 +151,6 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 3–5 h.
 
 ## Features
-
-### Font weights beyond Regular, Bold and Italic (#69)
-- **Evidence:** #69; the font database maps a family to four faces.
-- **Impact:** Light, Medium and Semibold headings (common in modern templates) render wrong.
-- **Estimate:** 3–5 h. **Beta blocker.**
 
 ### Image paste fails on Windows and Linux (#53)
 - **Evidence:** #53 (v0.3.0, Fedora AppImage and Windows).
@@ -412,6 +406,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-13 | trivial | Chart workbook round-trip (#335) noted under the charts gap; editing chart data is still open |
 | 2026-10-13 | minor | Shape, picture and table rendering checked against PowerPoint on ~150 synthetic edge-case slides; 3-D bevels, cameras and face lighting now render approximately (gap narrowed to extrusion, rigs and the 3-D pane) |
 | 2026-10-13 | minor | Interactive decks: triggers, return-to-slide state and click rules landed in the slide show; the remaining pieces are one new entry under Features |
+| 2026-10-13 | minor | Named font faces (Light, Semibold, …) are selectable and round-trip in the typeface name (#69) |
 | 2026-10-12 | minor | IME composition in slide text and notes, and CJK interface text with real glyphs (#101): the IME gap is now Korean on the web and table-cell underlines |
 | 2026-10-12 | minor | EMF/WMF text, pattern and hatch brushes drawn; legacy OLE and ActiveX previews shown; the SVG gap keeps only EMF clip regions |
 | 2026-10-12 | minor | Text warps render (all 40 presets, adjusts round-trip); the warp gap is now the gallery, command and handles |

@@ -746,8 +746,8 @@ fn norm(s: &str) -> String {
     s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
 }
 
-/// Weight implied by a style name.
-fn style_weight(style: &str) -> f32 {
+/// Weight implied by a style name (Regular is 400, Semibold 600, Bold 700).
+pub fn style_weight(style: &str) -> f32 {
     let s = norm(style);
     const TABLE: &[(&str, f32)] = &[
         ("extralight", 200.0),
@@ -767,7 +767,8 @@ fn style_weight(style: &str) -> f32 {
     TABLE.iter().find(|(k, _)| s.contains(k)).map(|(_, w)| *w).unwrap_or(400.0)
 }
 
-fn style_italic(style: &str) -> bool {
+/// Does the style name ask for a slanted face?
+pub fn style_italic(style: &str) -> bool {
     let s = norm(style);
     s.contains("italic") || s.contains("oblique") || s == "it"
 }

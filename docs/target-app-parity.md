@@ -99,7 +99,7 @@ PowerPoint is taken out of the areas and charged once, as a discount.
 
 | Area (weekly use) | Weight | Depth | Evidence |
 |---|---:|---:|---|
-| Text: typing, fonts, paragraphs, bullets | 18 | 70 | Every Home-tab control; font weights (#69), Tab in text boxes (#78) |
+| Text: typing, fonts, paragraphs, bullets | 18 | 70 | Every Home-tab control, including the family's other faces; Tab in text boxes (#78) |
 | Slides, layouts, sections, views | 10 | 82 | Checklist 90% breadth in both areas |
 | Masters, themes, backgrounds | 8 | 75 | Slide Master view, 8 themes; Notes/Handout masters rarely used |
 | Shapes, format, arrange | 14 | 75 | Presets, connectors, smart guides; Format Shape pane thinner |
@@ -116,7 +116,7 @@ PowerPoint is taken out of the areas and charged once, as a discount.
 
 | Discount | Factor | Evidence |
 |---|---:|---|
-| Interaction fidelity | ×0.92 | No native macOS menu bar, thinner Format Shape pane, Tab ends text entry (#78), font faces (#69), window chrome (#71) |
+| Interaction fidelity | ×0.92 | No native macOS menu bar, thinner Format Shape pane, Tab ends text entry (#78), window chrome (#71) |
 | Stability on real machines | ×0.92 | Startup crashes on some Windows GPUs (#40, #59); Close discards edits (#60, fix in PR #75); video stalls in the editor on Ubuntu (#91); arrows reported dead in the show on Linux Mint (#17) |
 | File exchange with PowerPoint users | ×0.88 | Harsher than VectorCraft's ×0.92 because swapping `.pptx` is daily work for this user: never tested on real decks, EMF pictures blank, icons from PowerPoint don't come through (#56), comment threads, media options and rewind lost on save (#70, #74, #77) |
 
@@ -134,7 +134,7 @@ mainstream number leaves out.
 | Core feature | Weight | Depth | Evidence |
 |---|---:|---:|---|
 | Start a deck from a theme (start screen) | 8 | 70 | Works; layout problems on the start screen (#17, #76) |
-| Type titles and bullets, basic formatting | 20 | 78 | Works; #69, #78 |
+| Type titles and bullets, basic formatting | 20 | 78 | Works, including named font faces; #78 |
 | New slide, layout, reorder, duplicate | 12 | 88 | Works |
 | Insert a picture | 10 | 65 | From file yes; paste fails on Windows/Linux (#53) |
 | Basic shapes and text boxes | 8 | 85 | Works |
@@ -187,7 +187,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Shapes | 7 | 91% | ~75% | 8–14 | Edit points depth, WordArt depth (the Transform gallery and warp adjust handles are in) | [ui-parity.md](ui-parity.md) |
 | Format (fill, line, effects) | 6 | 83% | ~65% | 8–14 | Format Shape pane depth, bevel and 3-D, picture/texture fill options | [ui-parity.md](ui-parity.md) |
 | Arrange | 3 | 100% | ~90% | 1–2 | Align to slide vs selected as a menu choice, More Rotation Options | [ui-parity.md](ui-parity.md) |
-| Text | 15 | 83% | ~62% | 18–30 | Font weights beyond Regular/Bold/Italic (#69), true vertical CJK, dictionaries, AutoFormat as you type, thesaurus depth, equations (PR #55 open) | [localization-parity.md](localization-parity.md) |
+| Text | 15 | 86% | ~62% | 18–30 | true vertical CJK, dictionaries, AutoFormat as you type, thesaurus depth, equations (PR #55 open) | [localization-parity.md](localization-parity.md) |
 | Tables | 5 | 97% | ~75% | 3–6 | Draw table depth, borders and cell effects depth | [parity-checklist.md](parity-checklist.md) |
 | Charts | 7 | 65% | ~45% | 12–20 | Data grid editing, chart elements, the `chartex` types (waterfall, funnel, treemap, sunburst, histogram, box) | [parity-checklist.md](parity-checklist.md) |
 | SmartArt | 4 | 50% | ~35% | 8–14 | PowerPoint diagrams editable (read their data model), the data model on save, more layouts | [parity-checklist.md](parity-checklist.md) |
@@ -316,6 +316,7 @@ scored done (16 open issues).
 | 2026-10-13 | minor | Views: Grid Options dialog landed (spacing, snap, display). Remaining in that row: New Window. Percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed: yellow adjust handles drag; the gallery and command remain |
 | 2026-10-14 | trivial | Draw and hardware blurbs: pen pressure scales ink width when reported; percentages and hour ranges unchanged |
+| 2026-10-13 | trivial | Named font faces left the text shortfall lists (#69); the ready percentage is unchanged |
 | 2026-10-10 | minor | Added the readiness-by-audience table: each number gets its own hours to ~95% (full 340–600, mainstream 150–250, essentials 50–90). The full number stays an additive weighted sum; no change to the percentages |
 | 2026-10-10 | minor | Added the mainstream practitioner (~53%) and essentials user (~62%) numbers with written weights, discounts and user evidence. Features dimension recomputed from written area weights (66% judgement → 62.4% weighted mean), which moves ready for real work from ~56% to ~55%; stage unchanged |
 | 2026-10-10 | minor | Stage checked against the core-workflow gate (all six pass); stays alpha |

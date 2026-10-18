@@ -361,8 +361,8 @@ struct Style {
     link: bool,
     gradient: Option<deckcraft_model::style::Gradient>,
     effects: Option<RunEffects>,
-    /// "Regular", "Bold"… for the slot and fallback faces.
-    style_name: &'static str,
+    /// "Regular", "Light", "Semibold"… for the slot and fallback faces.
+    style_name: String,
     /// BCP 47 language (`a:rPr/@lang`), for shaping.
     lang: Option<String>,
     /// The `a:ea` and `a:cs` families (theme references resolved), if the document names one.
@@ -433,9 +433,11 @@ fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Styl
     let family = resolve::font_family(ctx, r);
     let bold = r.bold.unwrap_or(false);
     let italic = r.italic.unwrap_or(false);
-    let face = FontDb::global().document_face(&family, style_name(bold, italic));
-    let fake_bold = bold && face.weight < 550.0;
-    let fake_italic = italic && !face.italic;
+    // A named face (Light, Semibold) wins over the four Regular/Bold/Italic combinations.
+    let style_owned = r.font_style.clone().filter(|s| !s.is_empty()).unwrap_or_else(|| style_name(bold, italic).to_string());
+    let face = FontDb::global().document_face(&family, &style_owned);
+    let fake_bold = bold && face.weight < 550.0 && deckcraft_fonts::style_weight(&style_owned) < 600.0;
+    let fake_italic = italic && !face.italic && !deckcraft_fonts::style_italic(&style_owned);
     let size = (r.size.unwrap_or(18.0) * scale).clamp(0.5, 4000.0);
     let (mut color, alpha, gradient) = match &r.fill {
         // The resolved colour carries the fill's transparency (`a:alpha`): it is applied once.
@@ -485,7 +487,7 @@ fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Styl
         link: r.link.is_some(),
         gradient,
         effects: run_effects(ctx, r, scale),
-        style_name: style_name(bold, italic),
+        style_name: style_owned,
         lang: r.lang.clone().filter(|l| !l.is_empty()),
         ea,
         cs,
@@ -503,7 +505,7 @@ fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<ScriptTag>) 
     let mut push = |family: &str| {
         // Only families that exist: `FontDb::face` would substitute the default face.
         if db.has_family(family) {
-            let f = db.face(family, st.style_name);
+            let f = db.face(family, &st.style_name);
             if !chain.iter().any(|c| Arc::ptr_eq(c, &f)) {
                 chain.push(f);
             }
@@ -797,7 +799,7 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
 fn bullet_face(db: &FontDb, st: &mut Style, label: &str) {
     let chars: Vec<char> = label.chars().collect();
     if !chars.is_empty() && !deckcraft_fonts::covers_cluster(&st.face, &chars) {
-        st.face = db.cascade(&chars, std::slice::from_ref(&st.face), st.style_name);
+        st.face = db.cascade(&chars, std::slice::from_ref(&st.face), &st.style_name);
     }
 }
 
@@ -870,7 +872,7 @@ fn shape_cells(
             .as_deref()
             .filter(|_| cluster.first().is_some_and(|c| ('\u{F000}'..='\u{F0FF}').contains(c)))
             .filter(|f| db.has_family(f))
-            .map(|f| db.face(f, st.style_name))
+            .map(|f| db.face(f, &st.style_name))
             .filter(|f| deckcraft_fonts::covers_cluster(f, cluster));
         let face = match (sym_face, prev.as_ref()) {
             (Some(f), _) => f,
@@ -881,7 +883,7 @@ fn shape_cells(
             }
             (None, _) => {
                 let chain = chains.entry((si, slot, sc)).or_insert_with(|| face_chain(ctx, st, slot, sc));
-                db.cascade(cluster, chain, st.style_name)
+                db.cascade(cluster, chain, &st.style_name)
             }
         };
         let fi = face_index(faces, &face);

@@ -38,6 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
         cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.fontStyle", "Font Style", ["Home", "Font"], None, "{style}", has_text_or_shapes, font_style),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -266,12 +267,21 @@ fn current_para(s: &Session) -> ParaProps {
 }
 
 fn bold(s: &mut Session, p: &Value) -> Result<Value> {
-    let v = on_param(p, current_run(s).bold);
-    format_run(s, &move |r| r.bold = Some(v))
+    let cur = current_run(s);
+    let v = on_param(p, Some(face_is_bold(&cur)));
+    format_run(s, &move |r| {
+        // Bold selects the family's Bold face. A named weight (Light, Semibold) is set aside.
+        r.bold = Some(v);
+        r.font_style = None;
+    })
 }
 fn italic(s: &mut Session, p: &Value) -> Result<Value> {
-    let v = on_param(p, current_run(s).italic);
-    format_run(s, &move |r| r.italic = Some(v))
+    let cur = current_run(s);
+    let v = on_param(p, Some(face_is_italic(&cur)));
+    format_run(s, &move |r| {
+        r.italic = Some(v);
+        r.font_style = None;
+    })
 }
 fn underline(s: &mut Session, p: &Value) -> Result<Value> {
     let cur = current_run(s).underline.is_some_and(|u| u != "none");
@@ -304,6 +314,70 @@ fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
     format_run(s, &move |r| r.font = Some(f.clone()))
+}
+
+fn font_style(s: &mut Session, p: &Value) -> Result<Value> {
+    let style = str_param(p, "style").ok_or_else(|| bad("format.fontStyle", "missing `style`"))?.to_string();
+    let current = current_run(s);
+    // A theme reference (`+mn-lt`) cannot carry a face name. Pin the resolved family first.
+    let concrete = if current.font.as_deref().is_some_and(|f| f.starts_with('+')) {
+        let st = s.doc()?;
+        super::text::ctx_for(&st.doc, &st.selection).map(|c| resolve::font_family(&c, &current)).filter(|f| !f.is_empty())
+    } else {
+        None
+    };
+    format_run(s, &move |r| {
+        if let Some(fam) = &concrete {
+            r.font = Some(fam.clone());
+        }
+        apply_named_style(r, &style);
+    })
+}
+
+/// Regular, Bold, Italic and Bold Italic stay the `b`/`i` flags. Any other name is the face.
+fn apply_named_style(r: &mut RunProps, style: &str) {
+    if is_basic_style(style) {
+        r.font_style = None;
+        let n = norm_style(style);
+        r.bold = Some(n.contains("bold"));
+        r.italic = Some(n.contains("italic") || n.contains("oblique"));
+    } else {
+        r.font_style = Some(style.to_string());
+        r.bold = Some(deckcraft_fonts::style_weight(style) >= 600.0);
+        r.italic = Some(deckcraft_fonts::style_italic(style));
+    }
+}
+
+fn is_basic_style(style: &str) -> bool {
+    matches!(
+        norm_style(style).as_str(),
+        "" | "regular" | "normal" | "roman" | "bold" | "italic" | "oblique" | "bolditalic" | "italicbold" | "boldoblique"
+    )
+}
+
+fn norm_style(style: &str) -> String {
+    style.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+}
+
+fn face_is_bold(r: &RunProps) -> bool {
+    r.font_style.as_deref().filter(|s| !s.is_empty()).map(|s| deckcraft_fonts::style_weight(s) >= 600.0).unwrap_or_else(|| r.bold.unwrap_or(false))
+}
+
+fn face_is_italic(r: &RunProps) -> bool {
+    r.font_style.as_deref().filter(|s| !s.is_empty()).map(deckcraft_fonts::style_italic).unwrap_or_else(|| r.italic.unwrap_or(false))
+}
+
+fn display_style(r: &RunProps) -> String {
+    if let Some(s) = r.font_style.as_deref().filter(|s| !s.is_empty()) {
+        return s.to_string();
+    }
+    match (r.bold.unwrap_or(false), r.italic.unwrap_or(false)) {
+        (true, true) => "Bold Italic",
+        (true, false) => "Bold",
+        (false, true) => "Italic",
+        (false, false) => "Regular",
+    }
+    .to_string()
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
@@ -1188,9 +1262,10 @@ fn state(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({
         "font": family,
         "fontRef": r.font,
+        "fontStyle": display_style(&r),
         "size": r.size,
-        "bold": r.bold.unwrap_or(false),
-        "italic": r.italic.unwrap_or(false),
+        "bold": face_is_bold(&r),
+        "italic": face_is_italic(&r),
         "underline": r.underline.as_deref().is_some_and(|u| u != "none"),
         "strike": r.strike.is_some_and(|x| x != Strike::None),
         "superscript": r.baseline.unwrap_or(0.0) > 0.0,

@@ -77,6 +77,29 @@ fn insert_shape_and_format() {
 }
 
 #[test]
+fn a_named_font_style_is_stored_and_bold_returns_to_bold() {
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 40, 200, 80], "text": "Hi"})).unwrap();
+    s.execute("format.font", &json!({"family": "Inter"})).unwrap();
+    s.execute("format.fontStyle", &json!({"style": "Light"})).unwrap();
+    let v = s.execute("format.state", &json!({})).unwrap();
+    assert_eq!(v["fontStyle"], "Light");
+    assert_eq!(v["bold"], false);
+    assert_eq!(v["italic"], false);
+    s.execute("format.fontStyle", &json!({"style": "Semibold"})).unwrap();
+    let v = s.execute("format.state", &json!({})).unwrap();
+    assert_eq!(v["fontStyle"], "Semibold");
+    assert_eq!(v["bold"], true);
+    s.execute("format.bold", &json!({})).unwrap();
+    let v = s.execute("format.state", &json!({})).unwrap();
+    assert_eq!(v["fontStyle"], "Regular");
+    assert_eq!(v["bold"], false);
+    let inspected = s.execute("shape.inspect", &json!({})).unwrap();
+    let props = &inspected["shape"]["text"]["paragraphs"][0]["runs"][0]["props"];
+    assert!(props.get("fontStyle").is_none() || props["fontStyle"].is_null(), "{props}");
+}
+
+#[test]
 fn text_editing_flow() {
     let mut s = session();
     let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
