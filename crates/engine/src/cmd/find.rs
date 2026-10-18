@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Replace",
             ["Home", "Editing"],
             None,
-            "{text, with, matchCase?, wholeWords?, at?: a text.find match (replace just that one; default: replace all)} → {replaced}",
+            "{text, with, matchCase?, wholeWords?, scope?: body|titles|notes|all (body: text in non-title placeholders, text boxes, shapes and tables; titles: title placeholders; notes: the notes; default all), at?: a text.find match (replace just that one; default: replace all)} → {replaced, slides: the indices of the slides that changed}",
             has_doc,
             replace
         ),
@@ -39,22 +39,45 @@ struct Loc {
     cell: Option<(usize, usize)>,
 }
 
+/// What kind of text a body is, for `text.replace`'s `scope`: a title placeholder's, the notes',
+/// or any other (body placeholders, text boxes, shapes, table cells).
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Scope {
+    Titles,
+    Body,
+    Notes,
+}
+
+impl Scope {
+    /// `scope: body|titles|notes|all`; `None` is all.
+    fn from(p: &Value, cmd: &str) -> Result<Option<Self>> {
+        Ok(match str_param(p, "scope") {
+            None | Some("all") => None,
+            Some("body") => Some(Scope::Body),
+            Some("titles") | Some("title") => Some(Scope::Titles),
+            Some("notes") => Some(Scope::Notes),
+            Some(other) => return Err(bad(cmd, format!("`scope` is `{other}`; it takes body|titles|notes|all"))),
+        })
+    }
+}
+
 /// Visit every text body on a slide: shapes depth-first (groups, table cells), then the notes.
-fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody)) {
-    fn rec(shapes: &mut [Shape], depth: usize, f: &mut dyn FnMut(Loc, &mut TextBody)) {
+fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, Scope, &mut TextBody)) {
+    fn rec(shapes: &mut [Shape], depth: usize, f: &mut dyn FnMut(Loc, Scope, &mut TextBody)) {
         if depth > 64 {
             return;
         }
         for sh in shapes {
             let id = Some(u64::from(sh.id.0));
+            let scope = if sh.ph_type().is_some_and(deckcraft_model::PhType::is_title) { Scope::Titles } else { Scope::Body };
             if let Some(t) = &mut sh.text {
-                f(Loc { shape: id, cell: None }, t);
+                f(Loc { shape: id, cell: None }, scope, t);
             }
             match &mut sh.kind {
                 ShapeKind::Table(t) => {
                     for (r, row) in t.rows.iter_mut().enumerate() {
                         for (c, cell) in row.cells.iter_mut().enumerate() {
-                            f(Loc { shape: id, cell: Some((r, c)) }, &mut cell.text);
+                            f(Loc { shape: id, cell: Some((r, c)) }, Scope::Body, &mut cell.text);
                         }
                     }
                 }
@@ -64,7 +87,7 @@ fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody)) {
         }
     }
     rec(&mut slide.shapes, 0, f);
-    f(Loc { shape: None, cell: None }, &mut slide.notes);
+    f(Loc { shape: None, cell: None }, Scope::Notes, &mut slide.notes);
 }
 
 struct Opts {
@@ -147,7 +170,7 @@ fn find(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = vec![];
     for (i, sl) in st.doc.slides.iter().enumerate() {
         let mut sl = (**sl).clone();
-        bodies(&mut sl, &mut |loc, t| {
+        bodies(&mut sl, &mut |loc, _, t| {
             for (pi, para) in t.paragraphs.iter().enumerate() {
                 for (a, b) in para_matches(para, &o) {
                     out.push(json!({"slide": i, "shape": loc.shape, "cell": loc.cell.map(|(r, c)| [r, c]), "para": pi, "start": a, "end": b}));
@@ -167,16 +190,18 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
         Ok((n("slide")?, Loc { shape: v.get("shape").and_then(Value::as_u64), cell }, n("para")?, n("start")?))
     });
     let at = at.transpose()?;
-    let count = s.edit(|doc, _| {
+    let scope = Scope::from(p, "text.replace")?;
+    let (count, slides) = s.edit(|doc, _| {
         let mut count = 0;
+        let mut slides = vec![];
         for (i, slp) in doc.slides.iter_mut().enumerate() {
             if at.is_some_and(|a| a.0 != i) {
                 continue;
             }
             let mut sl = (**slp).clone();
             let mut changed = 0;
-            bodies(&mut sl, &mut |loc, t| {
-                if at.is_some_and(|a| a.1 != loc) {
+            bodies(&mut sl, &mut |loc, kind, t| {
+                if at.is_some_and(|a| a.1 != loc) || scope.is_some_and(|s| s != kind) {
                     return;
                 }
                 for (pi, para) in t.paragraphs.iter_mut().enumerate() {
@@ -195,14 +220,15 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
             if changed > 0 {
                 *slp = Arc::new(sl);
                 count += changed;
+                slides.push(i);
             }
         }
         if count == 0 {
             return Err(bad("text.replace", "no matches"));
         }
-        Ok(count)
+        Ok((count, slides))
     })?;
-    Ok(json!({"replaced": count}))
+    Ok(json!({"replaced": count, "slides": slides}))
 }
 
 #[cfg(test)]
