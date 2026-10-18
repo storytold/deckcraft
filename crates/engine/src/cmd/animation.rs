@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Timing",
             ["Animations", "Timing"],
             None,
-            "{index? (else selected shapes), start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, repeat?: n, rewind?: bool, trigger?: shape id | null}",
+            "{index?: the animation's position in the slide's list (as animation.get numbers them; else the selected shapes' animations), start?: onClick|withPrevious|afterPrevious (the click steps that follow are reported by animation.get as `step`), duration?: ms, delay?: ms, repeat?: n, rewind?: bool, trigger?: shape id | null}",
             has_slide,
             timing
         ),

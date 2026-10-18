@@ -127,7 +127,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Data",
             ["Chart Design", "Data"],
             None,
-            "{categories?: [..], levels?: [[..]] (outer category levels, innermost first), series?: [{name, values}], id?}",
+            "{categories?: [..] (replaces all the categories), levels?: [[..]] (outer category levels, innermost first), series?: [{name, values}] (replaces all the series: pass every one to keep), id?}",
             has_selection,
             chart_data
         ),

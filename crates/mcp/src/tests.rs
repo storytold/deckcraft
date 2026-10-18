@@ -549,3 +549,22 @@ fn batch_refuses_a_name_a_reference_cannot_spell() {
     let sl = tool(&mut s, "inspect_slide", json!({}));
     assert_eq!(sl["shapes"].as_array().map(|a| a.len()), Some(0), "nothing ran: {sl}");
 }
+
+/// Y4: the `export` tool says that `all: true` numbers the files from 1 (the displayed slide
+/// number) while `slide` is a 0-based index, and the answer carries `indices` beside `files`.
+#[test]
+fn export_all_says_files_are_numbered_from_one() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let export = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "export").unwrap().clone();
+    assert!(export["description"].as_str().unwrap().contains("numbered from 1"), "{export}");
+    assert!(export["inputSchema"]["properties"]["all"]["description"].as_str().unwrap().contains("numbered from 1"), "{export}");
+    let dir = std::env::temp_dir().join(format!("deckcraft-mcp-export-all-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    tool(&mut s, "new_presentation", json!({}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let v = tool(&mut s, "export", json!({"path": dir.join("d.png").to_string_lossy(), "all": true, "scale": 0.25}));
+    assert_eq!(v["indices"], json!([0, 1]), "{v}");
+    assert_eq!(v["files"], json!([dir.join("d1.png").to_string_lossy(), dir.join("d2.png").to_string_lossy()]), "{v}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
