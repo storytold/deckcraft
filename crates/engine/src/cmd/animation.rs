@@ -26,7 +26,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Animation",
             ["Animations", "Advanced Animation"],
             None,
-            "{effect, class?, option?, path?: [[x,y],…] or OOXML string, closed?: bool, start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, ids?} (several ids: the first takes `start`, the rest withPrevious, so one call is one click step) → {count, indices, path?}",
+            "{effect, class?, option?, path?: [[x,y],…] or OOXML string, closed?: bool, start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, ids?} (several ids: the first takes `start`, the rest withPrevious, so one call is one click step) → {count, indices, steps: the click step of each added animation, as animation.get reports step, path?}",
             has_selection,
             add
         ),
@@ -337,7 +337,8 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
             sl.animations.push(x);
         }
         let indices: Vec<usize> = (first..sl.animations.len()).collect();
-        let mut v = json!({"count": sl.animations.len(), "indices": indices});
+        let steps: Vec<usize> = steps(&sl.animations).get(first..).map(<[usize]>::to_vec).unwrap_or_default();
+        let mut v = json!({"count": sl.animations.len(), "indices": indices, "steps": steps});
         if let Some(path) = &path {
             v["path"] = json!(path);
         }

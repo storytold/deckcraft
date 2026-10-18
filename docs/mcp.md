@@ -119,7 +119,10 @@ current, so a following `slide.new` lands after it; `section.add` answers the re
 `sections: [{name, start, slides}]`, refusing an `at` past the end with the valid range;
 `design.theme` answers the palette as `design.palette {}` does; `design.headerFooter` answers
 `{slides, default: true}` and becomes the presentation's default, so slides added later carry the
-same footer and number; `comment.reply`/`comment.resolve` answer the thread's state and
+same footer and number; `comment.add` answers `{index, slide}`; `animation.add` answers `{count, indices, steps}`, `steps`
+being the click step of each added animation as `animation.get` reports `step` (and `path`, the
+OOXML path string, for a motion path);
+`comment.reply`/`comment.resolve` answer the thread's state and
 `comment.list {all: true}` lists every slide's comments with their slide index (without `all` it
 is the current slide only); `edit.undo`/`edit.redo` answer `{label, slide}`;
 `transition.applyAll` answers `{slides, source, kind}` (kind, duration and options are all copied
