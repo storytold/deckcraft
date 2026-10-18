@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Connect Shapes",
             [],
             None,
-            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the closest pair), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
+            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the sites facing each other along the dominant direction between the shapes; a box has 0 top, 1 left, 2 bottom, 3 right; shape.sites lists them), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
             has_slide,
             connect
         ),
@@ -1202,21 +1202,29 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
     }
     let pick = |v: &[deckcraft_geom::Point], key: &str| usize_param(p, key).filter(|i| *i < v.len());
-    let (ia, ib) = match (pick(&a, "fromSite"), pick(&b, "toSite")) {
-        (Some(i), Some(j)) => (i, j),
-        (fi, fj) => {
-            let mut best = (f64::MAX, 0, 0);
-            for (i, pa) in a.iter().enumerate().filter(|(i, _)| fi.is_none_or(|f| f == *i)) {
-                for (j, pb) in b.iter().enumerate().filter(|(j, _)| fj.is_none_or(|f| f == *j)) {
-                    let d = (*pa - *pb).hypot();
-                    if d < best.0 {
-                        best = (d, i, j);
-                    }
-                }
-            }
-            (best.1, best.2)
-        }
+    // A site left unsaid is the one facing the other shape along the dominant direction between
+    // the two (a box mostly below is left from the bottom), which is where a person glues an
+    // arrow; "the closest pair" chose a side site for a diagonal neighbour and crossed boxes.
+    let centre = |v: &[deckcraft_geom::Point]| {
+        let n = v.len().max(1) as f64;
+        deckcraft_geom::Point::new(v.iter().map(|q| q.x).sum::<f64>() / n, v.iter().map(|q| q.y).sum::<f64>() / n)
     };
+    let (ca, cb) = (centre(&a), centre(&b));
+    let facing = |v: &[deckcraft_geom::Point], c: deckcraft_geom::Point, dx: f64, dy: f64| {
+        let len = dx.hypot(dy).max(1e-9);
+        v.iter()
+            .enumerate()
+            .map(|(i, q)| {
+                let (sx, sy) = (q.x - c.x, q.y - c.y);
+                let sl = sx.hypot(sy).max(1e-9);
+                (i, (sx * dx + sy * dy) / (sl * len))
+            })
+            .max_by(|p, q| p.1.total_cmp(&q.1))
+            .map(|(i, _)| i)
+            .unwrap_or(0)
+    };
+    let ia = pick(&a, "fromSite").unwrap_or_else(|| facing(&a, ca, cb.x - ca.x, cb.y - ca.y));
+    let ib = pick(&b, "toSite").unwrap_or_else(|| facing(&b, cb, ca.x - cb.x, ca.y - cb.y));
     let (p0, p1) = (a[ia], b[ib]);
     let id = match id_param(p, "id", "shape.connect")? {
         Some(id) => id,

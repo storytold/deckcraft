@@ -4724,3 +4724,38 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+/// G6: with no sites given, shape.connect joins the sites that face each other along the
+/// dominant direction between the two shapes (a box mostly below leaves from the bottom), not
+/// "the closest pair", which for a diagonal neighbour picked a side site and crossed boxes.
+#[test]
+fn connector_default_sites_follow_the_dominant_direction() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let diag = s.execute("shape.insert", &json!({"preset": "rect", "rect": [150, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(0)), "mostly below: bottom → top, not right → left: {r}");
+    let r = s.execute("shape.connect", &json!({"from": diag, "to": a})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(0), Some(2)), "and back: top → bottom: {r}");
+}
+
+/// A size (or colour, bold…) set on a shape before it has any text survives the text that is
+/// then set: text.set keeps the first run's properties, and an empty paragraph keeps them on its
+/// end mark, which is what the agent's format.size then set_text sequence relies on.
+#[test]
+fn text_set_keeps_the_formatting_of_an_empty_shape() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("format.size", &json!({"size": 30})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("text.set", &json!({"id": id, "text": "Hello"})).unwrap();
+    let props =
+        |s: &Session| s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    let run = props(&s);
+    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "{run:?}");
+    // Emptied and filled again: the empty paragraph's end mark carried the formatting.
+    s.execute("text.set", &json!({"id": id, "text": ""})).unwrap();
+    s.execute("text.set", &json!({"id": id, "text": "Again"})).unwrap();
+    let run = props(&s);
+    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "after an empty text.set: {run:?}");
+}
