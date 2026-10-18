@@ -34,7 +34,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Connect Shapes",
             [],
             None,
-            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the closest pair), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
+            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the sites facing each other along the dominant direction between the shapes; a box has 0 top, 1 left, 2 bottom, 3 right; shape.sites lists them), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
             has_slide,
             connect
         ),
