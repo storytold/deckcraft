@@ -98,7 +98,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Header and Footer…",
             ["Insert", "Text"],
             None,
-            "{date?: bool, dateText?: fixed text, slideNumber?: bool, footer?: bool, footerText?, hideOnTitle?: bool, all?: bool (default true)}",
+            "{date?: bool, dateText?: fixed text, dateFormat?: datetime1…datetime13 (the automatic date's format), slideNumber?: bool, footer?: bool, footerText?, hideOnTitle?: bool, all?: bool (default true; false: only the current slide)} → {slides: n, default: true} (the flags become the presentation's default, so slides added later get the same footer and number)",
             has_doc,
             header_footer
         ),
