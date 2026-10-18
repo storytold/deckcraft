@@ -553,3 +553,7 @@ mod tests {
         assert!(s.execute("animation.painterApply", &json!({"ids": [id]})).is_err(), "and there is nothing left to apply");
     }
 }
+
+#[cfg(test)]
+#[path = "animation_tests.rs"]
+mod animation_tests;
