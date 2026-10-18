@@ -52,7 +52,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| neighbour(s, p, false)
         ),
         cmd!(query "review.accessibility", "Check Accessibility", ["Review", "Accessibility"], None, "{} → [{slide, shape, issue}]", has_doc, accessibility),
-        cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}] (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; Hunspell dictionaries installed on the system, else a built-in list of common misspellings)", has_doc, spelling),
+        cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → {dictionary: bool, lang, issues: [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}]} (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; dictionary: whether a Hunspell dictionary for lang is installed (review.dictionary says where) — without one only the built-in list of common misspellings runs, so empty issues then means little)", has_doc, spelling),
         cmd!(
             "review.spellingChange",
             "Change Spelling",
@@ -444,7 +444,10 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             check(para, json!({"slide": i, "notes": true, "para": pi}), &mut out);
         }
     }
-    Ok(Value::Array(out))
+    // Without a dictionary only the common-misspellings list ran: an empty list then is not a
+    // clean deck, so the answer says which it was.
+    let dictionary = dicts.get(&default).cloned().unwrap_or_else(|| crate::spell::dictionary(&default)).is_some();
+    Ok(json!({"dictionary": dictionary, "lang": default, "issues": out}))
 }
 
 fn add_to_dictionary(_s: &mut Session, p: &Value) -> Result<Value> {

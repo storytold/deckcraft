@@ -4624,21 +4624,21 @@ fn spelling_uses_a_dictionary_suggests_and_changes() {
     let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "Making sldie photos, sldie"})).unwrap();
     let id = r["id"].as_u64().unwrap();
     let v = s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap();
-    let list = v.as_array().unwrap();
+    let list = v["issues"].as_array().unwrap();
     assert_eq!(list.len(), 2, "{v}");
     assert_eq!(list[0]["word"], "sldie");
     assert_eq!(list[0]["suggestions"][0], "slide");
-    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST", "ignore": ["SLDIE"]})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST", "ignore": ["SLDIE"]})).unwrap()["issues"].as_array().unwrap().is_empty());
     let c = s.execute("review.spellingChange", &json!({"shape": id, "word": "sldie", "to": "slide"})).unwrap();
     assert_eq!(c["changed"], 1);
-    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap().as_array().unwrap().len(), 1);
+    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap()["issues"].as_array().unwrap().len(), 1);
     let c = s.execute("review.spellingChange", &json!({"word": "sldie", "to": "slide", "all": true})).unwrap();
     assert_eq!(c["changed"], 1);
-    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap()["issues"].as_array().unwrap().is_empty());
     // Whole words only, and one undo step per change.
     assert_eq!(s.execute("review.spellingChange", &json!({"word": "slid", "to": "x", "all": true})).unwrap()["changed"], 0);
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap().as_array().unwrap().len(), 1);
+    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap()["issues"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -4646,8 +4646,9 @@ fn spelling_without_a_dictionary_falls_back_to_common_misspellings() {
     let mut s = session();
     s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "Teh qzxv"})).unwrap();
     let v = s.execute("review.spelling", &json!({"lang": "zz-NONE"})).unwrap();
-    assert_eq!(v.as_array().map(Vec::len), Some(1));
-    assert_eq!(v[0]["word"], "Teh");
+    assert_eq!(v["issues"].as_array().map(Vec::len), Some(1));
+    assert_eq!(v["issues"][0]["word"], "Teh");
+    assert_eq!(v["dictionary"], false, "{v}");
     let d = s.execute("review.dictionary", &json!({"lang": "zz-NONE"})).unwrap();
     assert!(d["found"].is_null());
     assert_eq!(d["available"], false);
@@ -4678,7 +4679,7 @@ fn spelling_checks_each_run_in_its_language_and_learns_words() {
     })
     .unwrap();
     let v = s.execute("review.spelling", &json!({})).unwrap();
-    let words: Vec<_> = v
+    let words: Vec<_> = v["issues"]
         .as_array()
         .unwrap()
         .iter()
@@ -4686,7 +4687,7 @@ fn spelling_checks_each_run_in_its_language_and_learns_words() {
         .collect();
     assert_eq!(words, vec![("deckcraft".to_string(), "xx-ONE".to_string(), 12)]);
     s.execute("review.addToDictionary", &json!({"word": "deckcraft"})).unwrap();
-    assert!(s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({})).unwrap()["issues"].as_array().unwrap().is_empty());
     assert_eq!(std::fs::read_to_string(dir.join("user.dic")).unwrap(), "deckcraft\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4700,15 +4701,16 @@ fn language_marks_text_and_no_proof_and_repeats_are_reported() {
     s.execute("edit.select", &json!({"ids": [id]})).unwrap();
     s.execute("format.language", &json!({"lang": "xx-LN"})).unwrap();
     let v = s.execute("review.spelling", &json!({})).unwrap();
-    let got: Vec<(String, bool)> = v.as_array().unwrap().iter().map(|w| (w["word"].as_str().unwrap().to_string(), w["repeated"] == true)).collect();
+    let got: Vec<(String, bool)> =
+        v["issues"].as_array().unwrap().iter().map(|w| (w["word"].as_str().unwrap().to_string(), w["repeated"] == true)).collect();
     assert_eq!(got, vec![("the".to_string(), true), ("nigh".to_string(), false)]);
-    assert_eq!(v[0]["deleteFrom"], 3);
+    assert_eq!(v["issues"][0]["deleteFrom"], 3);
     // Deleting the repeat through the exact-occurrence change.
     s.execute("review.spellingChange", &json!({"shape": id, "para": 0, "start": 3, "word": " the", "to": ""})).unwrap();
     let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
     assert_eq!(v["shape"]["text"]["paragraphs"][0]["runs"][0]["text"], "the end is nigh");
     s.execute("format.language", &json!({"noProof": true})).unwrap();
-    assert!(s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({})).unwrap()["issues"].as_array().unwrap().is_empty());
     assert!(s.execute("format.language", &json!({"lang": "en US!"})).is_err());
 }
 
@@ -6741,6 +6743,25 @@ fn export_refuses_per_page_outside_the_handouts_layout() {
     let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
     assert!(doc.contains("handouts only") && doc.contains("separate"), "{doc}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// X5: `review.spelling` answers `{dictionary, lang, issues}`, so "no mistakes" and "no dictionary,
+/// only the common-misspellings list ran" are no longer the same empty list.
+#[test]
+fn spelling_answer_says_whether_a_dictionary_was_used() {
+    crate::spell::install("xx-DICT", crate::spell::Dictionary::parse(b"", b"2\nclean\ndeck\n"));
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "clean deck"})).unwrap();
+    let v = s.execute("review.spelling", &json!({"lang": "xx-DICT"})).unwrap();
+    assert_eq!(v, json!({"dictionary": true, "lang": "xx-DICT", "issues": []}), "{v}");
+    let v = s.execute("review.spelling", &json!({"lang": "zz-NONE"})).unwrap();
+    assert_eq!((v["dictionary"].as_bool(), v["lang"].as_str()), (Some(false), Some("zz-NONE")), "{v}");
+    assert_eq!(v["issues"].as_array().map(Vec::len), Some(0), "{v}");
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 300, 300, 100], "text": "Teh"})).unwrap();
+    let v = s.execute("review.spelling", &json!({"lang": "zz-NONE"})).unwrap();
+    assert_eq!(v["issues"][0]["word"], "Teh", "the common list still runs without a dictionary: {v}");
+    let doc = command_specs().iter().find(|c| c.id == "review.spelling").unwrap().params;
+    assert!(doc.contains("dictionary: bool") && doc.contains("issues") && doc.contains("common"), "{doc}");
 }
 
 #[test]
