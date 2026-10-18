@@ -211,3 +211,7 @@ fn apply_all(s: &mut Session, _p: &Value) -> Result<Value> {
 fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(Value::Array(TRANSITIONS.iter().map(|t| json!({"id": t.0, "label": t.1, "category": t.2, "duration": t.3, "options": t.4})).collect()))
 }
+
+#[cfg(test)]
+#[path = "transition_tests.rs"]
+mod transition_tests;

@@ -769,3 +769,7 @@ mod tests {
         st.doc.slides[st.selection.slide].shapes.iter().find(|x| x.id.0 == id).and_then(|x| x.xfrm)
     }
 }
+
+#[cfg(test)]
+#[path = "section_tests.rs"]
+mod section_tests;
