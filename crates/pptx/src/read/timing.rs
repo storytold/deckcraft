@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
-use deckcraft_model::Shape;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
+use deckcraft_model::{Shape, ShapeId};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -92,6 +92,47 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
         }
     }
     best
+}
+
+/// A slide-start media node (`p:audio` / `p:video` outside a click sequence).
+pub struct MediaCue {
+    pub shape: ShapeId,
+    pub video: bool,
+    pub interactive: bool,
+    pub volume: f64,
+}
+
+fn walk_media(e: &El, interactive: bool, ctx: &IdCtx, out: &mut Vec<MediaCue>, depth: usize) {
+    if depth > 64 || out.len() >= 64 {
+        return;
+    }
+    let interactive = interactive || (e.is("cTn") && e.attr("nodeType") == Some("interactiveSeq"));
+    if e.is("audio") || e.is("video") {
+        if let Some(node) = e.child("cMediaNode")
+            && let Some(spid) = node.path(&["tgtEl", "spTgt"]).and_then(|s| s.u32("spid"))
+            && let Some(shape) = ctx.lookup(spid)
+        {
+            let volume = node
+                .attr("vol")
+                .and_then(|v| v.trim().parse::<f64>().ok())
+                .filter(|v| v.is_finite())
+                .map(|v| (v / 100_000.0).clamp(0.0, 1.0))
+                .unwrap_or(1.0);
+            out.push(MediaCue { shape, video: e.is("video"), interactive, volume });
+        }
+        return;
+    }
+    for c in e.elements() {
+        walk_media(c, interactive, ctx, out, depth + 1);
+    }
+}
+
+/// Media nodes in the timing tree. Nodes without `presetClass` are not animations.
+pub fn media_cues(ctx: &IdCtx, timing: &El) -> Vec<MediaCue> {
+    let Some(tn) = timing.child("tnLst") else { return vec![] };
+    let mut out = Vec::new();
+    walk_media(tn, false, ctx, &mut out, 0);
+    out
 }
 
 /// Flatten the timing tree into the Animation Pane list.

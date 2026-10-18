@@ -9,7 +9,8 @@
 //! - [`clip::ClipParams`]: trim, fade in/out and volume.
 //! - [`player::Player`]: the playback mixer and clock the UI host drives, over an
 //!   [`player::AudioOut`] it injects (cpal on desktop; none on the web or in tests, where the clock
-//!   runs on wall time); [`feed::VideoFeed`] decodes video ahead of that clock.
+//!   runs on wall time); a [`player::MicIn`] captures narration. [`feed::VideoFeed`] decodes video
+//!   ahead of that clock. [`audio::wav_mono`] writes 16-bit mono WAV.
 //!
 //! Layer L2: depends only on the codec crates, never on the model or the UI. Builds for
 //! `wasm32-unknown-unknown` (no threads there: decoding runs inline).
@@ -27,10 +28,10 @@ mod yuv;
 
 use std::sync::Arc;
 
-pub use audio::Pcm;
+pub use audio::{Pcm, wav_mono};
 pub use clip::ClipParams;
 pub use feed::VideoFeed;
-pub use player::{AudioOut, PlayState, Player, VoiceSpec, VoiceStatus};
+pub use player::{AudioOut, MicIn, PlayState, Player, VoiceSpec, VoiceStatus};
 pub use probe::{AudioInfo, MediaInfo, VideoInfo, probe};
 pub use video::{Frame, VideoDecoder, poster_frame, poster_png};
 

@@ -97,7 +97,10 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
                 o.insert("children".into(), Value::Array(children.iter().map(|c| shape_summary(None, c, depth + 1)).collect()));
             }
             ShapeKind::Media(m) => {
-                o.insert("media".into(), json!({"id": m.media, "video": m.video, "autoplay": m.autoplay, "loop": m.loop_play}));
+                o.insert(
+                    "media".into(),
+                    json!({"id": m.media, "video": m.video, "autoplay": m.autoplay, "narration": m.narration, "loop": m.loop_play}),
+                );
             }
             _ => {}
         }
