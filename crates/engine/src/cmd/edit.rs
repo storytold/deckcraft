@@ -43,6 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "edit.selectAll", "Select All", ["Edit"], Some("Cmd+A"), "{scope?: slides}", has_slide, select_all),
         cmd!(noundo "edit.deselect", "Deselect", [], Some("Escape"), "{}", has_doc, deselect),
         cmd!(noundo "edit.select", "Select Objects", [], None, "{ids: [id], add?: bool, toggle?: bool}", has_slide, select),
+        cmd!(query "edit.selection", "Selection", [], None, "{} → {slide, ids, selected: [{id, rect: [x, y, w, h]}]} the selected shapes with their boxes", has_doc, selection),
     ]
 }
 
@@ -696,6 +697,11 @@ fn deselect(s: &mut Session, _p: &Value) -> Result<Value> {
         }
     })?;
     ok()
+}
+
+fn selection(s: &mut Session, _p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    Ok(json!({"slide": st.selection.slide, "ids": st.selection.shapes, "selected": st.selected_boxes()}))
 }
 
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
