@@ -1205,11 +1205,10 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     // A site left unsaid is the one facing the other shape along the dominant direction between
     // the two (a box mostly below is left from the bottom), which is where a person glues an
     // arrow; "the closest pair" chose a side site for a diagonal neighbour and crossed boxes.
-    let centre = |v: &[deckcraft_geom::Point]| {
-        let n = v.len().max(1) as f64;
-        deckcraft_geom::Point::new(v.iter().map(|q| q.x).sum::<f64>() / n, v.iter().map(|q| q.y).sum::<f64>() / n)
-    };
-    let (ca, cb) = (centre(&a), centre(&b));
+    // The direction runs between the shapes' box centres: the mean of the sites is off-centre
+    // for a shape whose sites are not symmetric (a triangle's lie mostly along its base).
+    let centre = |id| st.shape(id).map(|sh| xfrm_of(&st.doc, &st.selection, sh).center()).unwrap_or_default();
+    let (ca, cb) = (centre(from), centre(to));
     let facing = |v: &[deckcraft_geom::Point], c: deckcraft_geom::Point, dx: f64, dy: f64| {
         let len = dx.hypot(dy).max(1e-9);
         v.iter()

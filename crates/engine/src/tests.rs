@@ -4737,6 +4737,13 @@ fn connector_default_sites_follow_the_dominant_direction() {
     assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(0)), "mostly below: bottom → top, not right → left: {r}");
     let r = s.execute("shape.connect", &json!({"from": diag, "to": a})).unwrap();
     assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(0), Some(2)), "and back: top → bottom: {r}");
+    // The direction runs between the shapes' centres, not between the means of their sites: a
+    // triangle's sites lie mostly along its base, which pulled the direction sideways and chose
+    // the box's left site for a box that is mostly below.
+    let tri = s.execute("shape.insert", &json!({"preset": "triangle", "rect": [400, 0, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    let below = s.execute("shape.insert", &json!({"preset": "rect", "rect": [520, 155, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": tri, "to": below})).unwrap();
+    assert_eq!(r["toSite"].as_u64(), Some(0), "centre to centre is mostly down: the box's top, not its left: {r}");
 }
 
 /// A size (or colour, bold…) set on a shape before it has any text survives the text that is
