@@ -27,20 +27,24 @@ fn per_page(layout: &str) -> usize {
 /// The `file.export` / `app.print` params for the Print page's settings.
 pub fn print_params(bs: &Backstage, slides: &[usize]) -> Value {
     let (layout, per) = match bs.print_layout {
-        "notes" => ("notes", 0),
-        l if l.starts_with('h') => ("handouts", per_page(l)),
-        _ => ("slides", 0),
+        "notes" => ("notes", None),
+        l if l.starts_with('h') => ("handouts", Some(per_page(l))),
+        _ => ("slides", None),
     };
-    // The list is already filtered for hidden slides, so the PDF takes it as it is.
-    json!({
+    // The list is already filtered for hidden slides, so the PDF takes it as it is. `perPage` is
+    // a handouts setting; `file.export` refuses it with the other layouts.
+    let mut v = json!({
         "layout": layout,
-        "perPage": per,
         "slides": slides,
         "includeHidden": true,
         "frame": bs.print_frame,
         "paper": bs.print_paper,
         "orientation": if bs.print_landscape { "landscape" } else { "portrait" },
-    })
+    });
+    if let Some(per) = per {
+        v["perPage"] = json!(per);
+    }
+    v
 }
 
 /// The printed page size in points: the slide size for full-page slides, else the chosen paper.
