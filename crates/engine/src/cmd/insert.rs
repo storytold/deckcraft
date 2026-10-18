@@ -127,7 +127,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "SmartArt",
             ["Insert", "Illustrations"],
             None,
-            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}]} → {id}",
+            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}], rect?: [x, y, w, h] (default: the middle 80% of the slide)} → {id, rect}",
             has_slide,
             smart_art
         ),
@@ -1893,7 +1893,7 @@ fn smart_art(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("insert.smartArt", e.to_string()))?,
         None => super::smartart::nodes_from_lines(p.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)),
     };
-    super::smartart::insert(s, &kind, nodes)
+    super::smartart::insert(s, &kind, nodes, rect_param(p, "rect"))
 }
 
 #[cfg(test)]
