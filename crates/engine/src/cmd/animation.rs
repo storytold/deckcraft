@@ -29,7 +29,15 @@ pub fn specs() -> Vec<CommandSpec> {
             add
         ),
         cmd!("animation.remove", "Remove Animation", ["Animation Pane"], None, "{index} | {ids? (all of the shapes' animations)}", has_slide, remove),
-        cmd!("animation.move", "Reorder Animation", ["Animations", "Timing"], None, "{index, to}", has_slide, move_anim),
+        cmd!(
+            "animation.move",
+            "Reorder Animation",
+            ["Animations", "Timing"],
+            None,
+            "{index, to} (click steps renumber to follow the new order; animation.get shows each one's `step`)",
+            has_slide,
+            move_anim
+        ),
         cmd!(
             "animation.timing",
             "Timing",
