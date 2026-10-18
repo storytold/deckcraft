@@ -134,7 +134,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Crop",
             ["Picture Format", "Size"],
             None,
-            "{left?: fraction 0..1, top?: fraction 0..1, right?: fraction 0..1, bottom?: fraction 0..1, ids?}",
+            "{left?: fraction 0..1, top?: fraction 0..1, right?: fraction 0..1, bottom?: fraction 0..1, keepBox?: bool (default false: the frame keeps its width and takes the height of the cropped image's aspect, anchored top-left; true: the frame stays and the cropped image stretches to it), ids?} → {n, rect: [x, y, w, h] of the (first) cropped picture}",
             has_selection,
             crop
         ),
@@ -1051,18 +1051,57 @@ fn set_default(s: &mut Session, _p: &Value) -> Result<Value> {
     ok()
 }
 
+/// Crop. The frame keeps its width and takes the height of the cropped image's aspect (anchored
+/// at its top-left), so the picture isn't stretched into the old box; `keepBox` keeps the frame
+/// and lets the image stretch. Answers the (first) cropped picture's box.
 fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
-    edit_geometry(s, p, "picture.crop", |sh| {
+    let keep_box = bool_or(p, "keepBox", false);
+    let ids = targets(s, p)?;
+    // Each target picture's pixel size; a picture without one (an SVG) keeps its box.
+    let sizes: Vec<(ShapeId, (f64, f64))> = if keep_box {
+        vec![]
+    } else {
+        let st = s.doc()?;
+        ids.iter()
+            .filter_map(|id| {
+                let sh = st.shape(*id)?;
+                let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind else { return None };
+                let item = st.doc.media(fill.media)?;
+                let (w, h) =
+                    image::ImageReader::new(std::io::Cursor::new(item.data.as_slice())).with_guessed_format().ok()?.into_dimensions().ok()?;
+                (w > 0 && h > 0).then_some((*id, (f64::from(w), f64::from(h))))
+            })
+            .collect()
+    };
+    let n = edit_geometry(s, p, "picture.crop", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {
             for (i, v) in c.iter().enumerate() {
                 if let (Some(v), Some(slot)) = (v, fill.crop.get_mut(i)) {
                     *slot = v.clamp(-10.0, 0.95);
                 }
             }
+            if let Some((_, (pw, ph))) = sizes.iter().find(|(id, _)| *id == sh.id) {
+                let [l, t, r, b] = fill.crop;
+                let (vw, vh) = (pw * (1.0 - l - r), ph * (1.0 - t - b));
+                if let Some(x) = sh.xfrm.as_mut().filter(|_| vw > 1e-9 && vh > 1e-9) {
+                    let h = x.w * vh / vw;
+                    if h.is_finite() && h > 0.0 {
+                        x.h = h;
+                    }
+                }
+            }
         }
         Ok(())
-    })
+    })?;
+    let st = s.doc()?;
+    let rect = ids
+        .iter()
+        .filter_map(|id| st.shape(*id))
+        .find(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Picture { .. }))
+        .map(|sh| xfrm_of(&st.doc, &st.selection, sh))
+        .map(|x| json!([x.x, x.y, x.w, x.h]));
+    Ok(json!({"n": n, "rect": rect}))
 }
 
 fn picture_adjust(s: &mut Session, p: &Value) -> Result<Value> {

@@ -4072,3 +4072,32 @@ fn a_shape_in_front_of_edited_text_takes_the_click() {
     let st = s.doc().unwrap();
     assert!(st.selection.text.as_ref().is_none_or(|t| t.shape.0 as u64 != tb), "the click on the member in front left the text: {:?}", st.selection);
 }
+
+/// A 16x8 (2:1) solid PNG, base64, for picture commands that need a known aspect.
+fn wide_png_b64() -> String {
+    let img = image::RgbaImage::from_pixel(16, 8, image::Rgba([200, 30, 30, 255]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+    cmd::base64_encode(buf.get_ref())
+}
+
+#[test]
+fn picture_crop_refits_the_frame_to_the_cropped_aspect() {
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"name": "wide.png", "data": wide_png_b64(), "rect": [100, 50, 400, 200]})).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    // The left half of a 2:1 picture is 1:1: the frame keeps its width and doubles its height,
+    // anchored at its top-left, and the command answers the new box.
+    let r = s.execute("picture.crop", &json!({"id": id, "right": 0.5})).unwrap();
+    assert_eq!(r["rect"], json!([100.0, 50.0, 400.0, 400.0]), "{r}");
+    let st = s.doc().unwrap();
+    let x = st.shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
+    assert_eq!((x.x, x.y, x.w, x.h), (100.0, 50.0, 400.0, 400.0));
+    // keepBox leaves the frame as it is (the old behaviour) and still answers the box.
+    let r = s.execute("picture.crop", &json!({"id": id, "top": 0.5, "keepBox": true})).unwrap();
+    assert_eq!(r["rect"], json!([100.0, 50.0, 400.0, 400.0]), "{r}");
+    let st = s.doc().unwrap();
+    let x = st.shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
+    assert_eq!((x.w, x.h), (400.0, 400.0));
+}
