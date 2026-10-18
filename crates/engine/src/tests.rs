@@ -6191,6 +6191,23 @@ fn an_ids_list_with_no_valid_id_is_refused_by_name() {
     assert!(e.contains("`ids` is empty"), "{e}");
 }
 
+/// slide.new takes an id for the slide and one per placeholder it adds, and no more: with the
+/// footer, date and slide number off nothing is added, so the next shape's id follows on.
+#[test]
+fn slide_new_allocates_ids_only_for_what_it_adds() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(b, a + 2, "slide.new on a blank layout takes one id, the slide's");
+    // With a footer on, the slide gets one placeholder and one id for it.
+    s.execute("design.headerFooter", &json!({"footer": true, "footerText": "f"})).unwrap();
+    let c = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let d = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(d, c + 3, "slide.new with a footer takes the slide's id and the footer's");
+}
+
 #[test]
 fn animation_add_and_section_add_answer_what_they_made() {
     let mut s = session();
