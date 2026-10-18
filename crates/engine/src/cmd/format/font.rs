@@ -47,7 +47,18 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    // The East Asian and complex-script faces too (#786); a Latin-only call leaves them alone.
+    let ea = str_param(p, "eastAsia").map(str::to_string);
+    let cs = str_param(p, "complexScript").map(str::to_string);
+    format_run(s, &move |r| {
+        r.font = Some(f.clone());
+        if let Some(ea) = &ea {
+            r.font_ea = Some(ea.clone());
+        }
+        if let Some(cs) = &cs {
+            r.font_cs = Some(cs.clone());
+        }
+    })
 }
 
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
