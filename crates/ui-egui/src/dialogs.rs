@@ -1720,7 +1720,12 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     l if l.starts_with('h') => ("handouts", l[1..].parse().unwrap_or(6)),
                     _ => ("slides", 0),
                 };
-                json!({"layout": layout, "perPage": per, "includeHidden": d.get("pdfHidden", "false") == "true"})
+                let mut v = json!({"layout": layout, "includeHidden": d.get("pdfHidden", "false") == "true"});
+                // `perPage` is a handouts setting; `file.export` refuses it with the other layouts.
+                if layout == "handouts" {
+                    v["perPage"] = json!(per);
+                }
+                v
             };
             let (ok, cancel) = buttons(ui, "Export");
             if ok {

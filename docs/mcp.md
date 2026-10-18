@@ -122,7 +122,10 @@ same footer and number; `comment.reply`/`comment.resolve` answer the thread's st
 is the current slide only); `edit.undo`/`edit.redo` answer `{label, slide}`;
 `transition.applyAll` answers `{slides, source, kind}` (kind, duration and options are all copied
 from slide `source`, the current slide) and is refused when the current slide has no transition,
-since copying nothing would clear every slide; `{clear: true}` does that on purpose. An unknown
+since copying nothing would clear every slide; `{clear: true}` does that on purpose. `file.export`
+refuses `perPage` with the `notes` or `slides` PDF layout: as in PowerPoint's Print page, notes
+pages (one slide with its notes per page) and handouts (several slides per page) are separate
+layouts, and `perPage` belongs to handouts. An unknown
 `table.style` id or a `chart.options` `palette` that is not a palette name (`colorful1`…`4`,
 `monochrome1`…`13`) is refused naming the valid values.
 

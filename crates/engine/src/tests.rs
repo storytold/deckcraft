@@ -5469,3 +5469,27 @@ fn smartart_commands_say_what_a_wrong_id_is_and_name_the_graphic() {
     let e = s.execute("smartArt.colors", &json!({"id": ph, "colors": "accent3"})).unwrap_err().to_string();
     assert!(e.contains(&format!("id {ph} is a placeholder, not a SmartArt graphic")) && !e.contains("on this slide is"), "{e}");
 }
+
+/// X4: `perPage` belongs to the handouts layout; with notes (one slide per page) or slides it
+/// was silently ignored, now it is refused, and the doc says the layouts are separate.
+#[test]
+fn export_refuses_per_page_outside_the_handouts_layout() {
+    let mut s = session();
+    let dir = std::env::temp_dir().join(format!("deckcraft-x4-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("notes.pdf").to_string_lossy().to_string();
+    let e = s.execute("file.export", &json!({"path": path, "format": "pdf", "layout": "notes", "perPage": 3})).unwrap_err().to_string();
+    assert!(e.contains("`perPage` applies to the handouts layout; notes pages are one slide per page"), "{e}");
+    assert!(!std::path::Path::new(&path).exists(), "nothing written");
+    let e = s.execute("file.export", &json!({"path": path, "format": "pdf", "perPage": 3})).unwrap_err().to_string();
+    assert!(e.contains("`perPage` applies to the handouts layout"), "{e}");
+    let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": 3}), 1).unwrap();
+    assert_eq!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page: 3 });
+    let o = cmd::file::pdf_options(&json!({"layout": "notes"}), 1).unwrap();
+    assert_eq!(o.layout, deckcraft_pdf::PageLayout::Notes);
+    let r = s.execute("file.export", &json!({"path": path, "format": "pdf", "layout": "notes"})).unwrap();
+    assert_eq!(r["path"], path, "{r}");
+    let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
+    assert!(doc.contains("handouts only") && doc.contains("separate"), "{doc}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

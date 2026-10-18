@@ -195,11 +195,12 @@ fn export_tool_lists_pdf_and_its_options() {
     tool(&mut s, "new_presentation", json!({}));
     for layout in ["slides", "notes", "handouts"] {
         let path = dir.join(format!("{layout}.pdf"));
-        tool(
-            &mut s,
-            "export",
-            json!({"path": path.to_string_lossy(), "format": "pdf", "layout": layout, "perPage": 3, "paper": "a4", "orientation": "landscape"}),
-        );
+        let mut args = json!({"path": path.to_string_lossy(), "format": "pdf", "layout": layout, "paper": "a4", "orientation": "landscape"});
+        // `perPage` is a handouts setting; the other layouts refuse it.
+        if layout == "handouts" {
+            args["perPage"] = json!(3);
+        }
+        tool(&mut s, "export", args);
         assert!(std::fs::read(&path).unwrap().starts_with(b"%PDF"), "{layout}");
     }
     let _ = std::fs::remove_dir_all(&dir);
