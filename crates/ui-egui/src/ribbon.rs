@@ -168,23 +168,26 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let mut x = rect.min.x + 12.0;
         let y = rect.min.y + 2.0;
         {
-            let w = ui.fonts_mut(|f| f.layout_no_wrap("File".to_string(), theme::font(13.0), t.text).size().x) + 18.0;
+            let file = deckcraft_engine::i18n::tr("File");
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(file.to_string(), theme::font(13.0), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.id().with("tab_file"), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "File"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &file));
             if resp.hovered() {
                 ui.painter().rect_filled(r.shrink2(vec2(2.0, 2.0)), CornerRadius::same(4), t.hover);
             }
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, "File", theme::font(13.0), t.text);
-            if resp.on_hover_text("File (Alt+F)").clicked() {
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, &file, theme::font(13.0), t.text);
+            if resp.on_hover_text(&*deckcraft_engine::i18n::tr("File (Alt+F)")).clicked() {
                 app.open_backstage(crate::backstage::Page::Home);
             }
             x += w + 2.0;
         }
         let all: Vec<(&str, bool)> = TABS.iter().map(|s| (*s, false)).chain(ctx_tabs.iter().map(|s| (*s, true))).collect();
         for (name, contextual) in all {
+            // `name` stays the English identity (what `ui.tab` stores); only the drawing is translated.
+            let shown = deckcraft_engine::i18n::tr(name);
             let font = theme::font(13.0);
-            let w = ui.fonts_mut(|f| f.layout_no_wrap(name.to_string(), font.clone(), t.text).size().x) + 18.0;
+            let w = ui.fonts_mut(|f| f.layout_no_wrap(shown.to_string(), font.clone(), t.text).size().x) + 18.0;
             let r = Rect::from_min_size(pos2(x, y), vec2(w, 24.0));
             let resp = ui.interact(r, ui.id().with(("tab", name)), Sense::click());
             let active = app.ui.tab == name;
@@ -193,7 +196,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             }
             let col = if contextual { t.contextual } else { t.text };
             let f = if active { theme::bold(13.0) } else { font };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, name, f, col);
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, &shown, f, col);
             if active {
                 let uw = (w - 20.0).max(16.0);
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.center().x, r.max.y - 1.0), vec2(uw, 3.0)), CornerRadius::same(1), t.accent);
@@ -252,9 +255,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 
 fn big(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Value) {
     let en = enabled(app, id);
-    let r = big_button(ui, icon, label, en);
+    // The drawn text is id-keyed; `label` stays English for the Quick Access Toolbar's store.
+    let r = big_button(ui, icon, &deckcraft_engine::i18n::tr_id(id, label), en);
     if id == "insert.dateTime" {
-        let name = label.replace('\n', " ");
+        let name = deckcraft_engine::i18n::tr_id(id, label).replace('\n', " ");
         r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, en, &name));
     }
     let r = r.on_hover_text(tip(id, label));
@@ -287,7 +291,8 @@ fn photo_album_button(app: &mut SlideApp, ui: &mut Ui) {
 
 fn small(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Value) {
     let en = enabled(app, id);
-    let r = small_button(ui, icon, label, en, false).on_hover_text(tip(id, label));
+    // The drawn text is id-keyed; `label` stays English for the Quick Access Toolbar's store.
+    let r = small_button(ui, icon, &deckcraft_engine::i18n::tr_id(id, label), en, false).on_hover_text(tip(id, label));
     if r.clicked() {
         run(app, id, p.clone());
     }
@@ -303,6 +308,8 @@ fn toggle(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, on
 
 fn tip(id: &str, label: &str) -> String {
     let sc = deckcraft_engine::find_command(id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == id).and_then(|c| c.2));
+    // Id-keyed: two commands can share an English label but not a translation.
+    let label = deckcraft_engine::i18n::tr_id(id, label);
     match sc {
         Some(s) => format!("{label} ({})", pretty_shortcut(s)),
         None => label.to_string(),
@@ -1151,7 +1158,7 @@ pub fn align_menu(app: &mut SlideApp, ui: &mut Ui) {
 
 pub fn menu_item(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Value) {
     let en = enabled(app, id);
-    let r = small_button(ui, icon, label, en, false);
+    let r = small_button(ui, icon, &deckcraft_engine::i18n::tr_id(id, label), en, false);
     if r.clicked() {
         run(app, id, p);
         ui.close();
@@ -3395,6 +3402,26 @@ fn chart_menu_types() -> Vec<Option<deckcraft_model::chart::ChartType>> {
 mod tests {
     use super::*;
     use deckcraft_model::anim::TextBuild;
+
+    /// Every ribbon tab, main and contextual, has a Vietnamese name (English is the key).
+    #[test]
+    fn every_ribbon_tab_is_translated() {
+        const CONTEXTUAL: &[&str] = &[
+            "Handout Master",
+            "Notes Master",
+            "Slide Master",
+            "Shape Format",
+            "Picture Format",
+            "Table Design",
+            "Layout",
+            "SmartArt Design",
+            "Chart Design",
+            "Playback",
+        ];
+        for name in TABS.iter().chain(CONTEXTUAL.iter()) {
+            assert!(deckcraft_engine::i18n::has_text_translation(name), "no Vietnamese ribbon tab `{name}`");
+        }
+    }
 
     /// Paints one transition tile and one animation tile and returns the colour of every label.
     fn tile_label_colours(dark: bool) -> Vec<Color32> {

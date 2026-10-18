@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-18 · **Change:** minor (localization re-scored ~8% → ~20%: the string catalog, the language setting (#15) and a Vietnamese draft landed; Languages table, Upcoming item 3 and the progress log updated; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -49,7 +49,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | UI/UX fidelity | ~60% | 30–50 | [docs/ui-parity.md](docs/ui-parity.md) |
 | File formats (PPTX, PDF, legacy, export) | ~58% | 60–110 | [docs/file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (GPU raster, video decode, displays, pens) | ~40% | 25–45 | [docs/hardware-parity.md](docs/hardware-parity.md) |
-| Localization | ~8% | 55–90 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
+| Localization | ~20% | 40–73 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
 | Performance (unmeasured) | ~55% | 10–20 | [docs/hardware-parity.md](docs/hardware-parity.md#performance) |
 | Stability | ~60% | 10–20 | [docs/gaps.md](docs/gaps.md#stability) |
 | Platforms | ~80% | 5–10 | [Downloads in README](README.md#downloads) |
@@ -84,7 +84,9 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+English and Vietnamese: a string catalog translates at the UI's draw sites with English fallback,
+chosen in Preferences ▸ Language or followed from the system locale (#15). Vietnamese is a ~60%
+draft, unreviewed; Ukrainian PR #34 predates the catalog. Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
@@ -100,10 +102,10 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | Japanese | ja | 0% | none | 4–7 |
 | German | de | 0% | none | 3–5 |
 | Korean | ko | 0% | none | 4–7 |
-| Vietnamese | vi | 0% | none | 3–5 |
+| Vietnamese | vi | ~60% (draft) | shipped; native review open | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
-ships 26.
+The catalog infrastructure is in (`crates/engine/src/i18n`). Other languages shipped: Vietnamese
+(a ~60% draft awaiting native review). PowerPoint for Mac ships 26.
 
 ## Upcoming
 
@@ -116,7 +118,8 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
    and animation bounce end. Still open: a corpus of real decks, #70, #74, #77, EMF+ records,
    MicroType Express font subsets and SVG. 36–64 h.
-3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
+3. **Localization:** Vietnamese's remaining strings and native review, then zh-Hans, es, fr, de, ja
+   with IME on the landed catalog (#15 is in). 19–32 h plus review.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
    presenter view on the right display, native macOS menu bar, Format Shape pane. 33–56 h.
@@ -131,6 +134,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-18 | Interface localization: `crates/engine/src/i18n` translates command, dialog and Backstage ids and the English UI strings at the draw sites (a missing key stays English), Preferences ▸ Language picks English or Tiếng Việt, unset follows the system locale (#15), and coverage tests check every command label, ribbon tab, dialog title and side-menu page. Vietnamese ships with 653 translations, ~60% of the measured UI strings, unreviewed |
 | 2026-10-17 | The loopback control channel requires a token (`control.hello`) before it answers any method, so another process on the machine can no longer drive the app, quit it with unsaved work, or make it read and write files; `deckcraft-web` and `mcp` are in the wasm check; the slide show takes the prefetched frame without blocking; both painters disarm through commands |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
 | 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
@@ -228,6 +232,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Localization ~8% → ~20%: the catalog, the language setting (#15) and a Vietnamese draft landed; Languages table, Upcoming item 3, the beta plan and the progress log updated |
 | 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |

@@ -985,7 +985,7 @@ impl SlideApp {
                     None => backstage::Page::Home,
                 };
                 if page.needs_doc() && self.session.active().is_none() {
-                    return Err(format!("File › {} needs an open presentation", page.label()));
+                    return Err(format!("File › {} needs an open presentation", deckcraft_engine::i18n::tr_id(page.id(), page.label())));
                 }
                 self.open_backstage(page);
                 return Ok(json!({"page": page.id()}));

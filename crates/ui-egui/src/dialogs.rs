@@ -29,57 +29,60 @@ impl Dialog {
     }
 }
 
+/// Every titled dialog: id → English title. The Vietnamese title is keyed by the same id
+/// in `deckcraft_engine::i18n`, checked against this table by `dialog_titles_are_translated`.
+pub(crate) const DIALOG_TITLES: &[(&str, &str)] = &[
+    ("table", "Insert Table"),
+    ("slideSize", "Slide Size"),
+    ("sizePosition", "Size and Position"),
+    ("headerFooter", "Header and Footer"),
+    ("hyperlink", "Insert Hyperlink"),
+    ("setupShow", "Set Up Slide Show"),
+    ("zoom", "Zoom"),
+    ("comment", "New Comment"),
+    ("altText", "Alt Text"),
+    ("outline", "Slides from Outline"),
+    ("renameSection", "Rename Section"),
+    ("renameShape", "Rename"),
+    ("renameLayout", "Rename Layout"),
+    ("paragraph", "Paragraph"),
+    ("tabs", "Tabs"),
+    ("font", "Font"),
+    ("about", "About DeckCraft"),
+    ("preferences", "Preferences"),
+    ("autocorrect", "AutoCorrect"),
+    ("gridOptions", "Grid Options"),
+    ("export", "Export"),
+    ("symbol", "Symbol"),
+    ("photoAlbum", "Photo Album"),
+    ("replaceFonts", "Replace Font"),
+    ("equation", "Equation"),
+    ("dateTime", "Date and Time"),
+    ("spelling", "Spelling"),
+    ("pasteSpecial", "Paste Special"),
+    ("find", "Find and Replace"),
+    ("accessibility", "Accessibility Checker"),
+    ("language", "Language"),
+    ("customShow", "Custom Shows"),
+    ("chartData", "Chart Data"),
+    ("trim", "Trim Media"),
+    ("smartart", "Choose a SmartArt Graphic"),
+    ("bullets", "Bullets and Numbering"),
+    ("action", "Action Settings"),
+    ("quit", "DeckCraft"),
+    ("themeColors", "Create New Theme Colors"),
+    ("themeFonts", "Create New Theme Fonts"),
+];
+
 fn title(id: &str) -> &'static str {
-    match id {
-        "table" => "Insert Table",
-        "slideSize" => "Slide Size",
-        "sizePosition" => "Size and Position",
-        "headerFooter" => "Header and Footer",
-        "hyperlink" => "Insert Hyperlink",
-        "setupShow" => "Set Up Slide Show",
-        "zoom" => "Zoom",
-        "comment" => "New Comment",
-        "altText" => "Alt Text",
-        "outline" => "Slides from Outline",
-        "renameSection" => "Rename Section",
-        "renameShape" => "Rename",
-        "renameLayout" => "Rename Layout",
-        "paragraph" => "Paragraph",
-        "tabs" => "Tabs",
-        "font" => "Font",
-        "about" => "About DeckCraft",
-        "preferences" => "Preferences",
-        "autocorrect" => "AutoCorrect",
-        "gridOptions" => "Grid Options",
-        "export" => "Export",
-        "symbol" => "Symbol",
-        "photoAlbum" => "Photo Album",
-        "replaceFonts" => "Replace Font",
-        "equation" => "Equation",
-        "dateTime" => "Date and Time",
-        "spelling" => "Spelling",
-        "pasteSpecial" => "Paste Special",
-        "find" => "Find and Replace",
-        "accessibility" => "Accessibility Checker",
-        "language" => "Language",
-        "customShow" => "Custom Shows",
-        "chartData" => "Chart Data",
-        "trim" => "Trim Media",
-        "smartart" => "Choose a SmartArt Graphic",
-        "bullets" => "Bullets and Numbering",
-        "action" => "Action Settings",
-        "quit" => "DeckCraft",
-        "themeColors" => "Create New Theme Colors",
-        "themeFonts" => "Create New Theme Fonts",
-        _ => "DeckCraft",
-    }
+    DIALOG_TITLES.iter().find(|(k, _)| *k == id).map_or("DeckCraft", |(_, t)| t)
 }
 
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let mut window = egui::Window::new(&*deckcraft_engine::i18n::tr_id(&d.id, title(&d.id)))
         .id(egui::Id::new(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
@@ -123,17 +126,18 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
 }
 
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+    let ok_label = deckcraft_engine::i18n::tr(ok_label);
     let mut ok = false;
     let mut cancel = false;
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new(egui::RichText::new(ok_label).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0))).clicked()
+        if ui.add(egui::Button::new(egui::RichText::new(&*ok_label).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0))).clicked()
             || ui.input(|i| i.key_pressed(egui::Key::Enter))
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(&*deckcraft_engine::i18n::tr("Cancel")).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });
@@ -162,6 +166,8 @@ fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;
+        // The dialog's own setting was applied live; put the shown language back too.
+        deckcraft_engine::i18n::apply(app.session.prefs.language);
     }
 }
 
@@ -1086,7 +1092,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 apply_all = ui.button("Apply to All").clicked();
                 apply = ui.button("Apply").clicked();
-                if ui.button("Cancel").clicked() {
+                if ui.button(&*deckcraft_engine::i18n::tr("Cancel")).clicked() {
                     d.fields.insert("cancel".into(), "1".into());
                 }
             });
@@ -1217,7 +1223,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                         }
                         done = true;
                     }
-                    if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+                    if ui.add(egui::Button::new(&*deckcraft_engine::i18n::tr("Cancel")).min_size(vec2(72.0, 24.0))).clicked() {
                         done = true;
                     }
                 });
@@ -1248,7 +1254,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                         }
                         done = true;
                     }
-                    if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+                    if ui.add(egui::Button::new(&*deckcraft_engine::i18n::tr("Cancel")).min_size(vec2(72.0, 24.0))).clicked() {
                         done = true;
                     }
                 });
@@ -2120,7 +2126,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     for (k, v) in entries.iter().filter(|(k, _)| q.is_empty() || k.to_lowercase().starts_with(&q)) {
                         ui.label(k);
                         ui.label(v);
-                        if ui.small_button("Delete").clicked() {
+                        if ui.small_button(&*deckcraft_engine::i18n::tr("Delete")).clicked() {
                             run(app, "text.autocorrect", json!({"remove": k}));
                         }
                         ui.end_row();
@@ -2137,17 +2143,37 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             if d.params.get("before").is_none() {
                 d.params = json!({ "before": preferences_snapshot(app) });
             }
-            ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(deckcraft_engine::i18n::tr("General")).font(theme::bold(13.0)));
             let mut dark = app.ui.brightness == theme::Brightness::Dark;
-            if ui.checkbox(&mut dark, "Dark appearance").changed() {
-                let _ = app.run("view.dark", json!({"on": dark}));
+            if ui.checkbox(&mut dark, &*deckcraft_engine::i18n::tr("Dark appearance")).changed() {
+                let _ = app.run("view.dark", json!({ "on": dark }));
             }
+            ui.horizontal(|ui| {
+                ui.label(&*deckcraft_engine::i18n::tr("Language:"));
+                let current = app.session.prefs.language;
+                let mut chosen = current;
+                egui::ComboBox::from_id_salt("preferences_language")
+                    .selected_text(match current {
+                        Some(l) => l.native_name().to_string(),
+                        None => deckcraft_engine::i18n::tr("Follow the system").into_owned(),
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut chosen, None, deckcraft_engine::i18n::tr("Follow the system").into_owned());
+                        for l in deckcraft_engine::i18n::Language::ALL {
+                            ui.selectable_value(&mut chosen, Some(l), l.native_name());
+                        }
+                    });
+                if chosen != current {
+                    app.session.prefs.language = chosen;
+                    deckcraft_engine::i18n::apply(chosen);
+                }
+            });
             // While the pointer holds the slider its value only waits in the dialog: applying it
             // would rescale the slider under the pointer and run it to an end (#767). It applies
             // on release, and at once from the keyboard.
             let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
             let mut scale = pending.unwrap_or(app.ui.ui_scale);
-            let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text("Interface size"));
+            let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text(&*deckcraft_engine::i18n::tr("Interface size")));
             if r.is_pointer_button_down_on() {
                 if r.changed() || pending.is_some() {
                     d.fields.insert("uiScale".into(), scale.to_string());
@@ -2158,13 +2184,13 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
                 d.fields.remove("uiScale");
             }
-            ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-            ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-            ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-            ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+            ui.label(egui::RichText::new(deckcraft_engine::i18n::tr("Editing")).font(theme::bold(13.0)));
+            ui.checkbox(&mut app.session.prefs.smart_guides, &*deckcraft_engine::i18n::tr("Show smart guides"));
+            ui.checkbox(&mut app.session.prefs.snap_to_grid, &*deckcraft_engine::i18n::tr("Snap objects to grid"));
+            ui.checkbox(&mut app.session.prefs.smart_quotes, &*deckcraft_engine::i18n::tr("Replace straight quotes with smart quotes"));
             ui.horizontal(|ui| {
-                ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-                if ui.button("AutoCorrect Options…").clicked() {
+                ui.checkbox(&mut app.session.prefs.autocorrect, &*deckcraft_engine::i18n::tr("AutoCorrect as you type"));
+                if ui.button(&*deckcraft_engine::i18n::tr("AutoCorrect Options…")).clicked() {
                     *d = Dialog::new("autocorrect");
                 }
             });
@@ -2172,7 +2198,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 return false;
             }
             ui.horizontal(|ui| {
-                ui.label("Your name (comments):");
+                ui.label(&*deckcraft_engine::i18n::tr("Your name (comments):"));
                 ui.text_edit_singleline(&mut app.session.prefs.author);
             });
             let (ok, cancel) = buttons(ui, "Done");
@@ -3225,7 +3251,7 @@ fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         } else if ui.button("Replace…").clicked() {
             d.fields.insert("replace".into(), "1".into());
         }
-        if ui.button("Close").clicked() {
+        if ui.button(&*deckcraft_engine::i18n::tr("Close")).clicked() {
             close = true;
         }
     });
@@ -3359,6 +3385,14 @@ mod tests {
         CurrentLink, HyperlinkSeed, common_click, hyperlink_command, hyperlink_seed_of, hyperlink_should_apply, link_covering, seed_from,
         seed_of_link,
     };
+
+    /// Every titled dialog has a Vietnamese title, keyed by the same id.
+    #[test]
+    fn dialog_titles_are_translated() {
+        for (id, _) in super::DIALOG_TITLES {
+            assert!(deckcraft_engine::i18n::has_id_translation(id), "no Vietnamese title for dialog `{id}`");
+        }
+    }
 
     fn link(action: Action, tip: &str) -> Hyperlink {
         Hyperlink { action, tooltip: tip.into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }

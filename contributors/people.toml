@@ -54,3 +54,6 @@ real_name = "Nikita Rakitin"
 
 [people.RCShoemaker]
 real_name = "Ryan C. Shoemaker"
+
+[people.wiothemilo-lang]
+sync_github_name = true

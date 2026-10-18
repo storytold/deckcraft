@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-18 · **Change:** minor (localization re-scored with the string catalog and the Vietnamese draft landed: ~8% → ~20%, 55–90 h → 40–73 h; headline percentages unchanged; previous: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -71,7 +71,7 @@ The weights are what those users actually depend on, written down so the total c
 | Performance | 5% | ~55% | 10–20 | [hardware-parity.md](hardware-parity.md) | Unmeasured against PowerPoint. Slides rasterize on the CPU (`vello_cpu`); Morph re-aligns outlines every frame (#67) |
 | Hardware | 5% | ~40% | 25–45 | [hardware-parity.md](hardware-parity.md) | GPU-composited window (wgpu), but CPU slide raster, software-only video decode, presenter view not placed on the second display, no pen tilt, no pinch zoom |
 | Platforms | 5% | ~80% | 5–10 | [ROADMAP.md](../ROADMAP.md) | Ahead in reach: macOS, Windows x64/x86/arm64, Linux (5 formats), FreeBSD and the web, all from one release workflow. Held back by the Windows GPU crashes and Linux/Windows clipboard gaps |
-| Localization | 5% | ~8% | 55–90 + native review | [localization-parity.md](localization-parity.md) | English only; no string catalog. PowerPoint for Mac ships 26 languages. Bidi and Arabic shaping in slide text exist |
+| Localization | 5% | ~20% | 40–73 + native review | [localization-parity.md](localization-parity.md) | The string catalog, the language setting (Preferences ▸ Language, or the system locale on POSIX, #15) and a ~60% Vietnamese draft landed, unreviewed. PowerPoint for Mac ships 26 languages. Bidi and Arabic shaping in slide text exist |
 | Ecosystem (templates, add-ins) | 3% | ~25% | 10–20 | [gaps.md](gaps.md) | 8 original themes and 6 original starter decks; PowerPoint's large template gallery remains; no add-ins or VBA (out of scope by policy) |
 | AI features | 2% | ~10% | 20–40 (owner decision on models) | [gaps.md](gaps.md) | No Designer, Copilot, Speaker Coach, live subtitles or Translate (all Microsoft cloud services). Agents drive every command over MCP instead |
 | **Total** | 100% | **~55%** (Σ weight × ready = 55.3) | **~365–650** | | |
@@ -280,8 +280,9 @@ which the first 100 hours mostly skipped.
 
 **Why the full-parity estimate rose from ~190 h (2026-10-07) to ~365–650 h:** the old figure
 covered the checklist rows, ribbon depth and performance only (~135 h of it is comparable to this
-document's 140–240 h for features plus 30–50 h for UI). New in this measure: localization (55–90 h;
-there is none yet), hardware (25–45 h), legacy and missing formats including `.ppt`, `.odp`, EMF/WMF
+document's 140–240 h for features plus 30–50 h for UI). New in this measure: localization (55–90 h in
+that measure; now 40–73 h — the catalog, the language setting and a Vietnamese draft have landed),
+hardware (25–45 h), legacy and missing formats including `.ppt`, `.odp`, EMF/WMF
 and video export, a real-deck PPTX corpus, AI features, and the depth bugs users found in features
 scored done (16 open issues).
 
@@ -289,6 +290,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Localization row re-scored: the catalog, the language setting (#15) and a ~60% Vietnamese draft landed, so ready ~8% → ~20% and hours 55–90 → 40–73 plus native review. Headline percentages unchanged pending the next re-measure |
 | 2026-10-14 | minor | Community PR wave folded: one headline breadth row (84% over 191 features after `cargo xtask parity`; duplicate checklist rows removed), one row per feature area with the latest breadth and shortfalls, one Themes / Slide show / Views / Review / Automation bullet each (320 engine commands). SmartArt ready ~35% (Text Pane, 6e40335) moves the area mean to 62.8%; dimension and headline percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed to adjust handles: the Transform gallery applies a preset |
 | 2026-10-14 | minor | Media remainder: Insert › Icons places Lucide stroke icons. 3-D models and stock content remain. Headline percentages unchanged; the checklist row stays missing |

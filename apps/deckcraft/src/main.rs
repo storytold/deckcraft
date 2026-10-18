@@ -64,9 +64,13 @@ fn config_dir() -> Option<std::path::PathBuf> {
 
 fn load_prefs(app: &mut SlideApp) {
     if std::env::var_os("DECKCRAFT_NO_PREFS").is_some() {
+        deckcraft_engine::i18n::apply(None);
         return;
     }
-    let Some(dir) = config_dir() else { return };
+    let Some(dir) = config_dir() else {
+        deckcraft_engine::i18n::apply(None);
+        return;
+    };
     let (ui, prefs) = deckcraft_ui_egui::settings::load(&dir);
     if let Some(ui) = ui {
         app.ui = ui;
@@ -74,6 +78,8 @@ fn load_prefs(app: &mut SlideApp) {
     if let Some(prefs) = prefs {
         app.session.prefs = prefs;
     }
+    // The saved interface language, or the system's when none is chosen (issue #15).
+    deckcraft_engine::i18n::apply(app.session.prefs.language);
 }
 
 fn save_prefs(app: &SlideApp) {

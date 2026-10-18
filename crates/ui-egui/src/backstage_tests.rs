@@ -15,6 +15,17 @@ use serde_json::json;
 use super::*;
 use crate::{Services, SlideApp};
 
+/// Every side-menu page (id-keyed) and action (text-keyed) has a Vietnamese label.
+#[test]
+fn the_side_menu_is_translated() {
+    for page in Page::ALL {
+        assert!(deckcraft_engine::i18n::has_id_translation(page.id()), "no Vietnamese label for page `{}`", page.id());
+    }
+    for label in ["Save", "Close", "Options"] {
+        assert!(deckcraft_engine::i18n::has_text_translation(label), "no Vietnamese label `{label}`");
+    }
+}
+
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
     let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
         |ui, app: &mut SlideApp| {
