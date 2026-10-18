@@ -6186,7 +6186,7 @@ fn animation_add_and_section_add_answer_what_they_made() {
     assert_eq!(r, json!({"count": 3, "indices": [2]}), "{r}");
     s.execute("slide.new", &json!({})).unwrap();
     let r = s.execute("section.add", &json!({"name": "Part B", "at": 1})).unwrap();
-    assert_eq!(r, json!({"sections": 2, "index": 1, "name": "Part B"}), "{r}");
+    assert_eq!((r["count"].as_u64(), r["index"].as_u64(), r["name"].as_str()), (Some(2), Some(1), Some("Part B")), "{r}");
 }
 
 #[test]
@@ -6427,6 +6427,20 @@ fn format_color_on_a_multi_selection_colours_every_shape() {
         }
     }
     assert_eq!(r["changed"].as_u64().or_else(|| r.as_u64()), Some(4), "answer counts the shapes: {r}");
+}
+
+/// V1: `section.add` with `at` past the end is refused with the valid range instead of silently
+/// starting the section at the last slide, and the answer lists the resulting sections.
+#[test]
+fn section_add_refuses_an_index_past_the_end_and_lists_the_sections() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let e = s.execute("section.add", &json!({"name": "Late", "at": 2})).unwrap_err().to_string();
+    assert!(e.contains("no slide at index 2") && e.contains("2 slides") && e.contains("0 through 1"), "{e}");
+    assert!(s.doc().unwrap().doc.sections.is_empty(), "a refused section.add adds nothing");
+    let r = s.execute("section.add", &json!({"name": "Part B", "at": 1})).unwrap();
+    assert_eq!((r["index"].as_u64(), r["name"].as_str(), r["count"].as_u64()), (Some(1), Some("Part B"), Some(2)), "{r}");
+    assert_eq!(r["sections"], json!([{"name": "Default Section", "start": 0, "slides": 1}, {"name": "Part B", "start": 1, "slides": 1}]), "{r}");
 }
 
 #[test]
