@@ -1207,6 +1207,76 @@ fn home(app: &mut SlideApp, ui: &mut Ui) {
 
 // ---------- Insert ----------
 
+/// Insert ▸ Screenshot: thumbnails of open windows, and Screen Clipping where the host supports it.
+fn screenshot_button(app: &mut SlideApp, ui: &mut Ui) {
+    let can = app.services.capture_windows.is_some() || app.services.capture_screen_clip.is_some();
+    let r = big_button(ui, Icon::Screenshot, "Screenshot", can);
+    r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, can, "Screenshot"));
+    let _ = r.clone().on_hover_text(if can { "Insert a picture of an open window" } else { "Screenshot (not available yet)" });
+    if !can {
+        return;
+    }
+    if r.clicked() {
+        app.window_shots = None;
+        app.shot_rx = None;
+    }
+    egui::Popup::menu(&r).width(300.0).show(|ui| screenshot_menu(app, ui));
+}
+
+fn screenshot_menu(app: &mut SlideApp, ui: &mut Ui) {
+    ui.set_min_width(280.0);
+    if app.services.capture_screen_clip.is_some() {
+        if ui.button("Screen Clipping").clicked() {
+            app.start_screen_clip();
+            ui.close();
+            return;
+        }
+        ui.separator();
+    }
+    app.ensure_window_shots();
+    if app.shot_rx.is_some() {
+        app.poll_window_shots();
+        ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    }
+    if app.shot_rx.is_some() {
+        ui.label("Looking for windows…");
+        return;
+    }
+    let generation = app.shot_gen;
+    ui.label("Available Windows");
+    let shots = match app.window_shots.clone() {
+        Some(Ok(shots)) => shots,
+        Some(Err(e)) => {
+            ui.label(e);
+            return;
+        }
+        None => return,
+    };
+    if shots.is_empty() {
+        ui.label("No windows to capture");
+        return;
+    }
+    egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+        for (i, shot) in shots.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add(
+                    egui::Image::from_bytes(format!("bytes://window-shot/{generation}/{i}"), std::sync::Arc::clone(&shot.png))
+                        .max_size(egui::vec2(120.0, 68.0)),
+                );
+                let button = egui::Button::new(&shot.title).wrap_mode(egui::TextWrapMode::Truncate);
+                if ui.add(button).clicked() {
+                    let name = crate::shot_file_name(&shot.title);
+                    let png = std::sync::Arc::clone(&shot.png);
+                    if let Err(e) = app.insert_png(&name, &png) {
+                        app.set_status(e);
+                    }
+                    ui.close();
+                }
+            });
+        }
+    });
+}
+
 fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let (main, arrow) = big_button_ex(ui, Icon::NewSlide, "New\nSlide", enabled(app, "slide.new"), true, false);
@@ -1238,8 +1308,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::Picture, "Pictures", "app.insertPictureDialog", json!({}));
         photo_album_button(app, ui);
-        let r = big_button(ui, Icon::Screenshot, "Screenshot", false);
-        let _ = r.on_hover_text("Screenshot (not available yet)");
+        screenshot_button(app, ui);
     });
     group(ui, |ui| {
         let r = big_button(ui, Icon::Shapes, "Shapes", enabled(app, "shape.insert"));
