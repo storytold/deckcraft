@@ -6460,6 +6460,44 @@ fn from_outline_makes_its_last_slide_current_and_answers_indices_and_ids() {
     assert_eq!(n["index"], 3, "a new slide goes after the outline's slides: {n}");
 }
 
+/// W7: the thin answers carry what the next step needs. `slide.duplicate` answers the copy's
+/// index and its shapes (placeholders by role, as slide.new does); `slide.move` answers the slide
+/// id; `design.theme` answers the palette as `design.palette {}` does; `comment.reply` and
+/// `comment.resolve` answer the thread's state; `edit.undo` and `edit.redo` name the slide.
+#[test]
+fn thin_answers_carry_the_next_steps_facts() {
+    let mut s = session();
+    let title = s.execute("slide.inspect", &json!({})).unwrap()["shapes"][0]["id"].as_u64().unwrap();
+    let d = s.execute("slide.duplicate", &json!({})).unwrap();
+    assert_eq!(d["index"], 1, "{d}");
+    let st = s.doc().unwrap();
+    assert_eq!(d["ids"], json!([st.doc.slides[1].id]), "{d}");
+    let copy_ids: Vec<u64> = st.doc.slides[1].shapes.iter().map(|x| u64::from(x.id.0)).collect();
+    assert_eq!(d["shapes"], json!(copy_ids), "{d}");
+    assert!(d["placeholders"]["title"].is_u64() && d["placeholders"]["title"] != title, "fresh placeholder ids: {d}");
+
+    let m = s.execute("slide.move", &json!({"from": 1, "to": 0})).unwrap();
+    let st = s.doc().unwrap();
+    let id = st.doc.slides[0].id;
+    assert_eq!(m, json!({"index": 0, "moved": 1, "ids": [id], "id": id}), "{m}");
+
+    let t = s.execute("design.theme", &json!({"name": "Harbor"})).unwrap();
+    let p = s.execute("design.palette", &json!({})).unwrap();
+    assert_eq!(t, p, "design.theme answers the palette");
+    assert_eq!(t["theme"], "Harbor", "{t}");
+
+    s.execute("comment.add", &json!({"text": "first"})).unwrap();
+    let r = s.execute("comment.reply", &json!({"index": 0, "text": "yes"})).unwrap();
+    assert_eq!(r, json!({"index": 0, "slide": 0, "resolved": false, "replies": 1}), "{r}");
+    let r = s.execute("comment.resolve", &json!({"index": 0})).unwrap();
+    assert_eq!(r, json!({"index": 0, "slide": 0, "resolved": true, "replies": 1}), "{r}");
+
+    let u = s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(u, json!({"label": "Resolve Thread", "slide": 0}), "{u}");
+    let r = s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(r, json!({"label": "Resolve Thread", "slide": 0}), "{r}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
