@@ -112,7 +112,7 @@ impl Headless {
         let st = self.session.active().ok_or("no presentation open")?;
         let i = p.get("slide").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(st.selection.slide);
         if i >= st.doc.slides.len() {
-            return Err(format!("no slide {i}"));
+            return Err(deckcraft_engine::cmd::no_slide_message(i, st.doc.slides.len()));
         }
         let scale = p.get("scale").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.05, 8.0);
         let img = deckcraft_engine::render::render_slide(

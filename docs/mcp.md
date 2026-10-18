@@ -96,6 +96,15 @@ files it was given rather than guarding against other software on the computer.
 | `screenshot` | The whole window, UI included (connected mode) |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
 
+**Numbering.** Every index is 0-based: `index` and `slide` in the tools above, `slides` in `export`,
+and `from`, `to`, `at`, `indices`, `row` and `col` in the slide, section, animation and table
+commands. The editor counts slides from 1 ("Slide 3 of 8" is index 2), so `inspect_document` and
+`inspect_slide` return both: `index` to pass back, `number` as the editor shows it (index + 1; the
+number printed on the slide may start elsewhere). A slide, section or animation index past the end
+answers with the valid range (`no slide at index 8; indices run 0 through 7`) and changes nothing,
+and `slide.move`, `section.move` and `animation.move` refuse a `to` past the end instead of
+clamping it.
+
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
 
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,

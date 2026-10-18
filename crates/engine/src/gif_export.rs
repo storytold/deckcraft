@@ -139,7 +139,7 @@ impl GifOptions {
         let chosen: Vec<usize> = match &self.slides {
             Some(list) => {
                 if let Some(i) = list.iter().find(|i| **i >= n) {
-                    return Err(bad(CMD, format!("no slide {i} (the presentation has {n})")));
+                    return Err(bad(CMD, crate::cmd::no_slide_message(*i, n)));
                 }
                 list.clone()
             }

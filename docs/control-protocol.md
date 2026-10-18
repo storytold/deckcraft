@@ -47,7 +47,7 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 | `ui.set` | `{tab?, view?, pane?, notes?, zoom?, brightness?, ruler?, gridlines?, guides?, …}` | UI state (returns the full state) |
 | `ui.dialog.open` / `ui.dialog.close` | `{id, fields?}` | Open or close a dialog by id; `fields` pre-fills its fields (About: `{"tab": "contributors"}` or `"models"`) |
 | `ui.screenshot` | `{path?}` | PNG of the whole window (base64 when no path) |
-| `ui.render` | `{path?, slide?, scale?}` | Render a slide headlessly |
+| `ui.render` | `{path?, slide?, scale?}` | Render a slide headlessly (`slide`: 0-based index, like every slide index here; the editor shows index + 1) |
 | `ui.resize` / `ui.focus` | | Window control |
 | `show.start` / `show.end` | `{from?: slide index, custom?: name, reading?}` | Slide show. `custom` plays that custom show from its first slide and does not change Set Up. With no `from` and no `custom`, playback starts at the first slide of the show order. A `from` that is not a slide of the deck (negative, not a whole number, past the end) is refused; a hidden slide plays |
 | `app.open` / `app.save` / `app.export` / `app.quit` | `{path, …}` | Files (export takes the `file.export` params, e.g. `{"path": "deck.pdf", "layout": "handouts", "perPage": 3}` or `{"path": "deck.gif", "width": "large", "secondsPerSlide": 3, "loop": false}`, or `{"path": "slide.png", "transparentBackground": true}` for a PNG without the slide background) |
