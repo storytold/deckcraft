@@ -153,6 +153,9 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
         // Inherit the section of the slide before.
         let section = at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|prev| doc.section_of(prev.id));
         doc.slides.insert(at, Arc::new(slide));
+        // The presentation's footer, date and slide number, as design.headerFooter set them.
+        let hf = doc.header_footer.clone();
+        super::design::apply_header_footer(doc, at, &hf, false)?;
         if let Some(si) = section
             && let Some(sec) = doc.sections.get_mut(si)
         {
@@ -712,6 +715,10 @@ fn from_outline(s: &mut Session, p: &Value) -> Result<Value> {
             first.slides.splice(0..0, ids.clone());
         }
         let indices: Vec<usize> = (0..ids.len()).map(|k| at + k).collect();
+        let hf = doc.header_footer.clone();
+        for i in &indices {
+            super::design::apply_header_footer(doc, *i, &hf, false)?;
+        }
         // The last new slide becomes current, as after slide.new, so the next slide.new follows it.
         if let (Some(last), Some(id)) = (indices.last(), ids.last()) {
             sel.slide = *last;
