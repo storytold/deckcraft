@@ -6,6 +6,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+#[cfg(not(target_arch = "wasm32"))]
+mod ai_studio;
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
@@ -435,6 +437,8 @@ struct AnimPreview {
 pub struct SlideApp {
     /// Table Design's border pen (`color`, `width`, `dash` for `table.borders`).
     pub table_pen: serde_json::Value,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub ai_studio: ai_studio::Studio,
     pub session: Session,
     pub services: Services,
     pub ui: UiState,
@@ -532,6 +536,8 @@ impl SlideApp {
         let audio_out = services.audio_out.take();
         SlideApp {
             table_pen: serde_json::json!({"width": 1.0}),
+            #[cfg(not(target_arch = "wasm32"))]
+            ai_studio: Default::default(),
             session,
             services,
             ui: UiState::default(),
@@ -1792,6 +1798,8 @@ impl SlideApp {
         self.sync_backstage();
         self.keyboard(&ctx);
         self.sync_backstage();
+        #[cfg(not(target_arch = "wasm32"))]
+        ai_studio::show(self, ui);
         ribbon::title_bar(self, ui);
         if self.backstage.is_none() && self.session.active().is_some() {
             ribbon::show(self, ui);
