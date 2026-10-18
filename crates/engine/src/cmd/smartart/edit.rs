@@ -38,7 +38,46 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     let st = s.doc()?;
     let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(cmd, "no slide"))?;
     let ids = targets(s, p)?;
-    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a SmartArt graphic"))
+    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, not_smartart(shapes, &ids)))
+}
+
+/// Why `ids` name no SmartArt graphic: what the id is instead, and which SmartArt the slide has
+/// when there is exactly one ("id 367 is a placeholder, not a SmartArt graphic (the SmartArt on
+/// this slide is 382)").
+fn not_smartart(shapes: &[Shape], ids: &[ShapeId]) -> String {
+    let mut msg = match ids.first() {
+        None => "select a SmartArt graphic".to_string(),
+        Some(id) => match deckcraft_model::find_shape(shapes, *id) {
+            None => format!("id {} is not on this slide; select a SmartArt graphic", id.0),
+            Some(sh) => format!("id {} is {}, not a SmartArt graphic", id.0, describe(sh)),
+        },
+    };
+    let mut graphics = shapes.iter().filter(|sh| sh.diagram.is_some()).map(|sh| sh.id.0);
+    if let (Some(only), None) = (graphics.next(), graphics.next()) {
+        msg.push_str(&format!(" (the SmartArt on this slide is {only})"));
+    }
+    msg
+}
+
+/// What a shape is, for a refusal: "a placeholder", "a picture", "a table"…
+fn describe(sh: &Shape) -> &'static str {
+    if sh.ph.is_some() {
+        return "a placeholder";
+    }
+    match &sh.kind {
+        ShapeKind::Picture { .. } => "a picture",
+        ShapeKind::Group { .. } => "a group",
+        ShapeKind::Connector { .. } => "a connector",
+        ShapeKind::Table(_) => "a table",
+        ShapeKind::Chart(_) => "a chart",
+        ShapeKind::Media(m) if m.video => "a video",
+        ShapeKind::Media(_) => "an audio clip",
+        ShapeKind::Ink { .. } => "ink",
+        ShapeKind::Model3d { .. } => "a 3D model",
+        ShapeKind::Opaque { .. } => "an opaque object",
+        ShapeKind::Shape if sh.text_box => "a text box",
+        ShapeKind::Shape => "a shape",
+    }
 }
 
 /// Children with fresh ids for diagram `d` inside a group whose child space is `area`.
