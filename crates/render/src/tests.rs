@@ -3094,3 +3094,30 @@ fn value_axis_ends_near_the_data_maximum() {
         assert!(ratio <= 1.0, "{kind:?}: the longest bar reaches {ratio:.3} of the plot");
     }
 }
+
+/// A chart too short for four value labels takes fewer, so they don't sit on top of each other: a
+/// 400x60 chart with a maximum of 3.5 labels 0, 2 and 4, not 0 to 4 by ones 10 pt apart.
+#[test]
+fn a_short_value_axis_takes_fewer_than_four_labels() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.title = None;
+    c.legend = None;
+    c.gridlines = true;
+    c.categories = vec!["A".into(), "B".into(), "C".into()];
+    c.series.truncate(1);
+    c.series[0].values = vec![Some(1.0), Some(2.0), Some(3.5)];
+    let sh = Shape { id: ShapeId(631), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 60.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    // Rows with label ink (grey, darker than the gridlines) in the gutter left of the first bar;
+    // each label is one run of inked rows.
+    let coloured = |p: [u8; 4]| p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])) > 40;
+    let ink = |p: [u8; 4]| p[0] < 190 && p[1] < 190 && p[2] < 190 && p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])) < 12;
+    let first_bar = (0..400u32).find(|&x| (0..60u32).any(|y| coloured(img.pixel(x, y)))).unwrap_or(400);
+    let inked: Vec<bool> = (0..60u32).map(|y| (0..first_bar).any(|x| ink(img.pixel(x, y)))).collect();
+    let starts: Vec<usize> = inked.iter().enumerate().filter(|(y, on)| **on && (*y == 0 || !inked[*y - 1])).map(|(y, _)| y).collect();
+    let closest = starts.windows(2).map(|w| w[1] - w[0]).min().unwrap_or(60);
+    // Labels at least 1.9 base (13 pt at the 7 pt text of a chart this small) apart: 4 at most,
+    // where four intervals put 5 of them 10 pt apart.
+    assert!((2..=4).contains(&starts.len()), "{} value labels on a 60 pt tall chart (bars from x={first_bar}): {inked:?}", starts.len());
+    assert!(closest >= 13, "value labels {closest} pt apart: {starts:?}");
+}
