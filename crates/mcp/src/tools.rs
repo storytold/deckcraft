@@ -124,12 +124,13 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export slides: png/jpeg (one slide, or all with all:true: one file per slide, numbered from 1, the displayed slide number: d.png → d1.png, d2.png…; the answer's `indices` are the 0-based slide of each file), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
+            "Export slides: png/jpeg (one slide by `index` (or `slide`), or all with all:true: one file per slide, numbered from 1, the displayed slide number: d.png → d1.png, d2.png…; the answer's `indices` are the 0-based slide of each file), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
             obj(
                 json!({
                     "path": string("Output path"),
                     "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
-                    "slide": int("Slide index for images"),
+                    "slide": int("Slide index for images (`index` is the same)"),
+                    "index": int("Slide index for images (the same as `slide`)"),
                     "all": boolean("All slides (images): one file per slide, numbered from 1 (the displayed slide number), while `slide` is a 0-based index"),
                     "scale": num("Pixels per point for images (default 2)"),
                     "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
@@ -165,9 +166,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "inspect_slide",
             "Inspect slide",
-            "One slide's shapes with ids, kinds, boxes [x,y,w,h], placeholder types, text, fills, tables, charts; plus background, transition, notes, and animations as a summary {count, clickSteps} (animations: true for the full list, as run_command animation.get gives it with each one's click step).",
+            "One slide (`index`, or `slide`): its shapes with ids, kinds, boxes [x,y,w,h], placeholder types, text, fills, tables, charts; plus background, transition, notes, and animations as a summary {count, clickSteps} (animations: true for the full list, as run_command animation.get gives it with each one's click step).",
             obj(
-                json!({"index": int("Slide index (default: current)"), "animations": boolean("Embed the full animation list instead of the {count, clickSteps} summary (default false)")}),
+                json!({"index": int("Slide index (or `slide`; default: current)"), "slide": int("The same as `index`"), "animations": boolean("Embed the full animation list instead of the {count, clickSteps} summary (default false)")}),
                 &[],
             ),
             true,
@@ -175,9 +176,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "render_slide",
             "Render slide",
-            "Render a slide to a PNG image and return it, to check your work visually.",
+            "Render a slide (`index`, or `slide`) to a PNG image and return it, to check your work visually.",
             obj(
-                json!({"slide": int("Slide index (default: current)"), "scale": num("Pixels per point (default 1 = 960×540 for 16:9)"), "edit": boolean("Show placeholder prompts like the editor")}),
+                json!({"index": int("Slide index (or `slide`; default: current)"), "slide": int("The same as `index`"), "scale": num("Pixels per point (default 1 = 960×540 for 16:9)"), "edit": boolean("Show placeholder prompts like the editor")}),
                 &[],
             ),
             true,
@@ -387,6 +388,25 @@ fn with_rect(a: &Value) -> Value {
     p
 }
 
+/// `index` and `slide` name the same slide on every slide-taking tool: whichever the agent wrote
+/// is renamed to the key the engine takes (`to`). Both given with different values is a
+/// contradiction and is refused rather than one being picked.
+fn slide_alias(tool: &str, a: &Value, to: &str) -> Result<Value, String> {
+    let from = if to == "index" { "slide" } else { "index" };
+    let mut p = a.clone();
+    if let Some(o) = p.as_object_mut()
+        && let Some(v) = o.remove(from)
+    {
+        match o.get(to) {
+            Some(other) if *other != v => return Err(format!("{tool}: `index` ({other}) and `slide` ({v}) name different slides; give one")),
+            _ => {
+                o.insert(to.to_string(), v);
+            }
+        }
+    }
+    Ok(p)
+}
+
 fn wrap(r: Result<Value, String>) -> ToolResult {
     match r {
         Ok(v) => ToolResult::json(&v),
@@ -488,10 +508,10 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "new_presentation" => wrap(exec(b, "file.new", a)),
         "open_presentation" => wrap(exec(b, "file.open", a)),
         "save_presentation" => wrap(exec(b, "file.save", a)),
-        "export" => wrap(exec(b, "file.export", a)),
+        "export" => wrap(slide_alias(name, &a, "slide").and_then(|p| exec(b, "file.export", p))),
         "inspect_document" => wrap(b.call("document.inspect", json!({}))),
-        "inspect_slide" => wrap(exec(b, "slide.inspect", a)),
-        "render_slide" => match b.call("ui.render", a.clone()) {
+        "inspect_slide" => wrap(slide_alias(name, &a, "index").and_then(|p| exec(b, "slide.inspect", p))),
+        "render_slide" => match slide_alias(name, &a, "slide").and_then(|p| b.call("ui.render", p)) {
             Ok(v) => match v.get("png").and_then(Value::as_str) {
                 Some(png) => {
                     ToolResult::image(png.to_string(), &json!({"width": v.get("width"), "height": v.get("height"), "slide": v.get("slide")}))

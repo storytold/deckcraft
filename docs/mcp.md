@@ -85,8 +85,8 @@ files it was given rather than guarding against other software on the computer.
 | `run_command` | Run one command: `{command, params}` — every menu item, ribbon button and gesture is a command |
 | `batch` | Run several commands in order and stop at the first error |
 | `new_presentation`, `open_presentation`, `save_presentation`, `export` | Files: native `.deckcraft`, PowerPoint `.pptx`, PDF (slides, notes pages, handouts), PNG/JPEG, outline, animated GIF (size, seconds per slide, loop, slides) |
-| `inspect_document`, `inspect_slide` | Structure of the deck / one slide (shapes, text, placeholders; animations as `{count, clickSteps}`, the full list with `animations: true` or `animation.get`) |
-| `render_slide` | A slide as an image the model can look at (image content; a client that cannot read images: `export {path, format: png, slide}` and view the file) |
+| `inspect_document`, `inspect_slide` | Structure of the deck / one slide (`index` or `slide`; shapes, text, placeholders; animations as `{count, clickSteps}`, the full list with `animations: true` or `animation.get`) |
+| `render_slide` | A slide (`index` or `slide`, as `export` and `inspect_slide` take it too) as an image the model can look at (image content; a client that cannot read images: `export {path, format: png, slide}` and view the file) |
 | `add_slide`, `go_to_slide` | Slides by layout |
 | `add_shape`, `add_text_box`, `set_text` | Shapes and text |
 | `insert_picture`, `insert_table`, `insert_chart` | Content |
