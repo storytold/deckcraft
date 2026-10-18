@@ -6661,7 +6661,7 @@ fn transition_apply_all_copies_everything_and_answers_the_slide_count() {
     s.execute("slide.new", &json!({})).unwrap();
     s.execute("transition.set", &json!({"kind": "push", "option": "l", "duration": 1250})).unwrap();
     let r = s.execute("transition.applyAll", &json!({})).unwrap();
-    assert_eq!(r, json!({"slides": 3}), "{r}");
+    assert_eq!(r, json!({"slides": 3, "source": 2, "kind": "push"}), "{r}");
     let st = s.doc().unwrap();
     let want = st.doc.slides[2].transition.clone().expect("set");
     assert_eq!((want.kind.as_str(), want.option.as_str(), want.duration_ms), ("push", "l", 1250));
@@ -6672,6 +6672,30 @@ fn transition_apply_all_copies_everything_and_answers_the_slide_count() {
     assert!(doc.contains("duration") && doc.contains("option"), "{doc}");
     let doc = command_specs().iter().find(|c| c.id == "animation.move").unwrap().params;
     assert!(doc.contains("renumber") && doc.contains("step"), "{doc}");
+}
+
+/// X2: `transition.applyAll` refuses when the current slide has no transition (it used to clear
+/// every slide silently), unless `clear: true`; the answer names the source slide and kind.
+#[test]
+fn transition_apply_all_refuses_an_empty_source_unless_clearing() {
+    let mut s = session();
+    s.execute("transition.set", &json!({"kind": "fade", "duration": 700})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 2);
+    let e = s.execute("transition.applyAll", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("slide index 2 has no transition to copy") && e.contains("clear: true"), "{e}");
+    assert!(s.doc().unwrap().doc.slides[0].transition.is_some(), "refusing changed nothing");
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let r = s.execute("transition.applyAll", &json!({})).unwrap();
+    assert_eq!(r, json!({"slides": 3, "source": 0, "kind": "fade"}), "{r}");
+    assert!(s.doc().unwrap().doc.slides.iter().all(|sl| sl.transition.as_ref().is_some_and(|t| t.kind == "fade")));
+    s.execute("transition.set", &json!({"kind": "none"})).unwrap();
+    let r = s.execute("transition.applyAll", &json!({"clear": true})).unwrap();
+    assert_eq!(r, json!({"slides": 3, "source": 0, "kind": "none"}), "{r}");
+    assert!(s.doc().unwrap().doc.slides.iter().all(|sl| sl.transition.is_none()), "clear: true clears every slide");
+    let doc = command_specs().iter().find(|c| c.id == "transition.applyAll").unwrap().params;
+    assert!(doc.contains("clear?") && doc.contains("source"), "{doc}");
 }
 
 #[test]
