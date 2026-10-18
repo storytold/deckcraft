@@ -326,13 +326,16 @@ fn is_tool(id: &str) -> bool {
 /// Replaces every `"$name"` string in a batch item's params with the answer of the earlier item
 /// named `as: "name"` (its `id`, else the whole answer). A `$` followed by an identifier that
 /// names no earlier item is an error, so a typo is not sent on as text.
+/// A batch item name `$name` can refer to: letters, digits and `_`, not starting with a digit.
+fn is_ref_name(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !key.starts_with(|c: char| c.is_ascii_digit())
+}
+
 fn substitute(v: &mut Value, named: &std::collections::HashMap<String, Value>) -> Result<(), String> {
     match v {
         Value::String(s) => {
             if let Some(key) = s.strip_prefix('$')
-                && !key.is_empty()
-                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && !key.starts_with(|c: char| c.is_ascii_digit())
+                && is_ref_name(key)
             {
                 match named.get(key) {
                     Some(r) => *v = r.clone(),
@@ -456,7 +459,15 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             for c in a.get("commands").and_then(Value::as_array).cloned().unwrap_or_default() {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
                 let mut params = c.get("params").cloned().unwrap_or(json!({}));
-                let run = substitute(&mut params, &named).and_then(|()| run_either(b, id, params));
+                // A name that `$name` could never match (a hyphen, a space, a leading digit) is
+                // refused where it is declared, not left to fail as text two items later.
+                let name_ok = match c.get("as").and_then(Value::as_str) {
+                    Some(n) if !is_ref_name(n) => Err(format!(
+                        "`as: \"{n}\"` is not a usable name: use letters, digits and `_`, not starting with a digit, so that `${n}` can refer to it"
+                    )),
+                    _ => Ok(()),
+                };
+                let run = name_ok.and_then(|()| substitute(&mut params, &named)).and_then(|()| run_either(b, id, params));
                 match run {
                     Ok(v) => {
                         if let Some(name) = c.get("as").and_then(Value::as_str) {
