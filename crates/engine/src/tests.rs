@@ -5197,3 +5197,20 @@ fn section_add_refuses_an_index_past_the_end_and_lists_the_sections() {
     assert_eq!((r["index"].as_u64(), r["name"].as_str(), r["count"].as_u64()), (Some(1), Some("Part B"), Some(2)), "{r}");
     assert_eq!(r["sections"], json!([{"name": "Default Section", "start": 0, "slides": 1}, {"name": "Part B", "start": 1, "slides": 1}]), "{r}");
 }
+
+/// V8: `slide.fromOutline` makes its last new slide current (as `slide.new` does), so a following
+/// `slide.new` lands after the outline's slides, and it answers the indices and ids it made.
+#[test]
+fn from_outline_makes_its_last_slide_current_and_answers_indices_and_ids() {
+    let mut s = session();
+    let r = s.execute("slide.fromOutline", &json!({"text": "# One\n- a\n# Two\n- b", "markdown": true})).unwrap();
+    assert_eq!(r["slides"], 2, "{r}");
+    assert_eq!(r["indices"], json!([1, 2]), "{r}");
+    let st = s.doc().unwrap();
+    let ids: Vec<u64> = st.doc.slides.iter().skip(1).map(|x| u64::from(x.id.0)).collect();
+    assert_eq!(r["ids"], json!(ids), "{r}");
+    assert_eq!(st.selection.slide, 2, "the last outline slide is current");
+    assert_eq!(st.selection.slides, vec![st.doc.slides[2].id]);
+    let n = s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(n["index"], 3, "a new slide goes after the outline's slides: {n}");
+}
