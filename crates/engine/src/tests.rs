@@ -7131,6 +7131,63 @@ fn slide_inspect_answers_text_colour_line_connector_ends_and_links() {
     assert_eq!(st["textColor"], "hlink", "the first run is a link, drawn in the hyperlink colour: {st}");
 }
 
+/// The second review: `indices` entries, `ids: null` and a non-list `ids` are handled like
+/// `ids` entries are: refused naming the value, or treated as absent, never dropped or retargeted.
+#[test]
+fn indices_entries_null_ids_and_a_non_list_ids_are_not_dropped() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [a], "effect": "fade"})).unwrap();
+    let e = s.execute("animation.timing", &json!({"indices": [0, "x"], "duration": 50})).unwrap_err().to_string();
+    assert!(e.contains("`indices` entry \"x\" is not an animation position"), "{e}");
+    let e = s.execute("animation.timing", &json!({"indices": [-1], "duration": 50})).unwrap_err().to_string();
+    assert!(e.contains("entry -1"), "{e}");
+    // ids: null is the same as no ids: the selection is the target.
+    s.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    let r = s.execute("shape.fill", &json!({"ids": null, "color": "#FF0000"})).unwrap();
+    assert!(r.as_u64() == Some(1) || r["changed"] == 1, "{r}");
+    // A non-list ids is refused, not retargeted to the selection.
+    for ids in [json!(12), json!("$box")] {
+        let e = s.execute("shape.fill", &json!({"ids": ids, "color": "#00FF00"})).unwrap_err().to_string();
+        assert!(e.contains("`ids` must be a list of shape ids"), "{ids}: {e}");
+    }
+    let fill = s.doc().unwrap().shape(deckcraft_model::ShapeId(a as u32)).unwrap().fill.clone();
+    assert!(format!("{fill:?}").contains("r: 255, g: 0, b: 0"), "still red: {fill:?}");
+}
+
+/// `edit.delete {id}` deletes that shape even while text is being edited in another, or slides are
+/// selected: the `id` is the target, as `ids` would be.
+#[test]
+fn edit_delete_with_an_id_deletes_that_shape_not_the_text_or_the_slide() {
+    let mut s = session();
+    let ins = |s: &mut Session, y: f64| {
+        s.execute("insert.textBox", &json!({"rect": [10.0, y, 200.0, 40.0], "text": "keep me"})).unwrap()["id"].as_u64().unwrap()
+    };
+    let (a, b) = (ins(&mut s, 10.0), ins(&mut s, 100.0));
+    s.execute("text.edit", &json!({"id": a})).unwrap();
+    s.execute("edit.delete", &json!({"id": b})).unwrap();
+    let st = s.doc().unwrap();
+    let sl = &st.doc.slides[st.selection.slide];
+    assert!(sl.shapes.iter().all(|x| u64::from(x.id.0) != b), "b is deleted");
+    assert_eq!(
+        sl.shapes.iter().find(|x| u64::from(x.id.0) == a).and_then(|x| x.text.as_ref()).map(|t| t.text()),
+        Some("keep me".to_string()),
+        "a's text is untouched"
+    );
+    let c = ins(&mut s, 200.0);
+    let n = s.doc().unwrap().doc.slides.len();
+    s.execute("slide.selectSlides", &json!({"indices": [0]})).unwrap();
+    s.execute("edit.delete", &json!({"id": c})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.slides.len(), n, "the slide stays");
+    // `id: null` is no id: with table cells selected, Delete clears their text and keeps the table.
+    let t = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    s.execute("table.selectCells", &json!({"id": t, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("edit.delete", &json!({"id": null})).unwrap();
+    let table = table_of(&s, t);
+    assert_eq!(table.cell(0, 0).map(|c| c.text.text()), Some(String::new()), "the selected cells are cleared");
+    assert_eq!(table.cell(1, 0).map(|c| c.text.text()), Some("c".to_string()), "the others keep their text");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
@@ -7225,3 +7282,4 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
+
