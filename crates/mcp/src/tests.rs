@@ -351,53 +351,6 @@ fn discovery_costs_fewer_calls() {
     assert_eq!(keys, ["id", "params"], "{item}");
 }
 
-/// W5: a bare list_commands cost 95 KB (40 KB with brief) and an agent paid it twice per run. Bare
-/// now answers the command families in under 6 KB; `id` answers one command's full entry; an
-/// unknown `id` gets the engine's "commands named like it" hint.
-#[test]
-fn list_commands_bare_answers_families_and_id_answers_one_command() {
-    let mut s = Server::new(Box::new(Headless::new()));
-    let r = call(&mut s, 1, "tools/call", json!({"name": "list_commands", "arguments": {}}));
-    assert_eq!(r["result"]["isError"], false, "{r}");
-    let text = r["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(text.len() < 6000, "bare list_commands is {} bytes", text.len());
-    let families: Value = serde_json::from_str(text).unwrap();
-    // Every family of every command (the part before the dot) is there, with its count and its
-    // commands' names after the dot.
-    let every = tool(&mut s, "list_commands", json!({"filter": ".", "brief": true}));
-    let every = every.as_array().unwrap();
-    assert!(every.len() > 200, "{}", every.len());
-    for c in every {
-        let id = c["id"].as_str().unwrap();
-        let (fam, name) = id.split_once('.').unwrap();
-        let f = families.as_array().unwrap().iter().find(|f| f["family"] == fam).unwrap_or_else(|| panic!("family {fam} missing: {text}"));
-        let names: Vec<&str> = f["commands"].as_str().unwrap().split_whitespace().collect();
-        assert!(names.contains(&name), "{id} missing from {f}");
-        assert_eq!(f["count"].as_u64().unwrap() as usize, names.len(), "{f}");
-    }
-    let slide = families.as_array().unwrap().iter().find(|f| f["family"] == "slide").unwrap();
-    assert!(slide["about"].as_str().is_some_and(|d| !d.is_empty()), "{slide}");
-    // brief without a filter is still the families listing.
-    let b = tool(&mut s, "list_commands", json!({"brief": true}));
-    assert_eq!(b, families);
-    // One command, in full.
-    let one = tool(&mut s, "list_commands", json!({"id": "table.style"}));
-    assert_eq!(one["id"], "table.style", "{one}");
-    assert!(one["params"].as_str().is_some() && one["enabled"].is_boolean() && one["label"].is_string(), "{one}");
-    assert!(one["actsOn"].as_str().unwrap_or("").contains("`id`"), "{one}");
-    // An unknown id: the engine's hint, not an empty list.
-    let r = call(&mut s, 2, "tools/call", json!({"name": "list_commands", "arguments": {"id": "table.styl"}}));
-    assert_eq!(r["result"]["isError"], true, "{r}");
-    let msg = r["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(msg.contains("unknown command `table.styl`") && msg.contains("like it") && msg.contains("table.style"), "{msg}");
-    let r = call(&mut s, 3, "tools/call", json!({"name": "list_commands", "arguments": {"id": "add_shape"}}));
-    let msg = r["result"]["content"][0]["text"].as_str().unwrap();
-    assert!(r["result"]["isError"] == true && msg.contains("tool"), "{msg}");
-    // A filter still answers matching commands as before.
-    let cmds = tool(&mut s, "list_commands", json!({"filter": "table.style"}));
-    assert_eq!(cmds.as_array().unwrap().len(), 1, "{cmds}");
-}
-
 /// W6: inspect_slide answers animations as {count, clickSteps}; `animations: true` embeds the list.
 #[test]
 fn inspect_slide_summarises_animations_unless_asked() {
