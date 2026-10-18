@@ -245,7 +245,8 @@ mod tests {
     fn small() -> Limits {
         Limits {
             max_clients: 2,
-            max_line: 64,
+            // Room for the handshake line, which carries a token. The oversize test writes past it.
+            max_line: 512,
             queue: 1,
             idle_timeout: Duration::from_millis(300),
             write_timeout: Duration::from_millis(300),
@@ -363,9 +364,9 @@ mod tests {
         let (addr, rx) = server(small());
         ui(rx);
         let (mut r, mut w) = authed(addr);
-        w.write_all(&[b'x'; 200]).unwrap();
+        w.write_all(&[b'x'; 2000]).unwrap();
         let v = reply(&mut r).unwrap();
-        assert!(v["error"].as_str().unwrap().contains("longer than 64"));
+        assert!(v["error"].as_str().unwrap().contains("longer than 512"));
         assert!(reply(&mut r).is_none());
     }
 
@@ -393,13 +394,18 @@ mod tests {
         let v = reply(&mut cr).unwrap();
         assert!(v["error"].as_str().unwrap().starts_with("busy"));
         drop(a);
-        // The freed slot is reusable once the server notices the disconnect.
+        // The freed slot is reusable once the server notices the disconnect. Until it does, the
+        // handshake itself is answered `busy`, which is a reason to try again rather than a
+        // failure — so this loop talks to the server directly instead of through `authed`.
         let deadline = Instant::now() + Duration::from_secs(4);
         loop {
-            let (mut dr, mut dw) = authed(addr);
-            writeln!(dw, r#"{{"id":2,"method":"m"}}"#).unwrap();
+            let (mut dr, mut dw) = client(addr);
+            hello(&mut dw, TOKEN);
             if reply(&mut dr).is_some_and(|v| v["ok"] == true) {
-                break;
+                writeln!(dw, r#"{{"id":2,"method":"m"}}"#).unwrap();
+                if reply(&mut dr).is_some_and(|v| v["ok"] == true) {
+                    break;
+                }
             }
             assert!(Instant::now() < deadline, "slot never freed");
             std::thread::sleep(Duration::from_millis(50));
