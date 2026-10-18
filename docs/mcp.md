@@ -81,7 +81,7 @@ files it was given rather than guarding against other software on the computer.
 
 | Tool | What it does |
 |---|---|
-| `list_commands` | Every command (id, label, menu, shortcut, params doc), optionally filtered |
+| `list_commands` | Bare: the command families (name, one line, count, command names) in a few KB; `{filter}`: matching commands in full (id, label, menu, shortcut, params doc, enabled, actsOn), `brief` for id and params only; `{id}`: one command |
 | `run_command` | Run one command: `{command, params}` — every menu item, ribbon button and gesture is a command |
 | `batch` | Run several commands in order and stop at the first error |
 | `new_presentation`, `open_presentation`, `save_presentation`, `export` | Files: native `.deckcraft`, PowerPoint `.pptx`, PDF (slides, notes pages, handouts), PNG/JPEG, outline, animated GIF (size, seconds per slide, loop, slides) |
