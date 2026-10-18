@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family, eastAsia?: family, complexScript?: family}", has_text_or_shapes, font),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),

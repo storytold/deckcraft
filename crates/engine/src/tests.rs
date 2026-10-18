@@ -6278,6 +6278,39 @@ fn text_set_keeps_the_formatting_of_an_empty_shape() {
     assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "{run:?}");
 }
 
+/// #786: format.font sets the East Asian and complex-script faces too, not only the Latin one
+/// (with keys checked against the params doc, `eastAsia` used to be refused outright).
+#[test]
+fn format_font_sets_the_east_asian_and_complex_script_faces() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60], "text": "Mixed 日本語 text"})).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("format.font", &json!({"family": "Inter", "eastAsia": "BIZ UDPGothic", "complexScript": "Noto Sans Arabic"})).unwrap();
+    let props =
+        |s: &Session| s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    let r = props(&s);
+    assert_eq!((r.font.as_deref(), r.font_ea.as_deref(), r.font_cs.as_deref()), (Some("Inter"), Some("BIZ UDPGothic"), Some("Noto Sans Arabic")));
+    s.execute("format.font", &json!({"family": "Lato"})).unwrap();
+    let r = props(&s);
+    assert_eq!((r.font.as_deref(), r.font_ea.as_deref()), (Some("Lato"), Some("BIZ UDPGothic")), "a Latin-only call keeps the other faces");
+}
+
+/// #300 (item 4): master.insertPlaceholder refuses a kind it doesn't know instead of quietly
+/// inserting a content placeholder.
+#[test]
+fn master_insert_placeholder_refuses_an_unknown_kind() {
+    let mut s = session();
+    s.execute("view.slideMaster", &json!({"layout": 0})).unwrap();
+    let shapes = |s: &Session| s.doc().unwrap().doc.masters[0].layouts[0].shapes.len();
+    let before = shapes(&s);
+    let e = s.execute("master.insertPlaceholder", &json!({"kind": "footer", "rect": [10, 10, 100, 50]})).unwrap_err().to_string();
+    assert!(e.contains("`kind`") && e.contains("content, text, picture, chart, table or media") && e.contains("`footer`"), "{e}");
+    assert_eq!(shapes(&s), before, "nothing inserted");
+    s.execute("master.insertPlaceholder", &json!({"kind": "picture", "rect": [10, 10, 100, 50]})).unwrap();
+    assert_eq!(shapes(&s), before + 1);
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
