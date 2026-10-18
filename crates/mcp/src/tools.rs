@@ -73,9 +73,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "list_commands",
             "List commands",
-            "Every command (id, label, ribbon/menu place, shortcut, parameter summary, whether it is enabled now, what it acts on). Filter by a substring of id or label; brief answers only id and params. Families: slide., section., shape., text., format., insert., table., animation., transition., design., arrange., edit., file.",
+            "The commands, three ways. No arguments: the command families (family, about, count, commands: the names after the dot, space-separated; a command id is family.name), a few KB. `filter`: the commands whose id or label contains it, in full (id, label, ribbon/menu place, shortcut, params doc, enabled now, actsOn); `brief` trims these to id and params. `id`: one command's full entry. Typical: the families once, then {filter: \"table.\"} or {id: \"table.style\"}.",
             obj(
-                json!({"filter": string("Substring of the id or label, e.g. `format.` or `slide`"), "brief": boolean("Only id and params (default false)")}),
+                json!({"filter": string("Substring of the id or label, e.g. `format.` or `slide`"), "brief": boolean("With filter: only id and params (default false)"), "id": string("One command id, e.g. `table.style`: its full entry")}),
                 &[],
             ),
             true,
@@ -312,6 +312,70 @@ fn is_tool(id: &str) -> bool {
     tool_definitions().iter().any(|t| t["name"] == id)
 }
 
+/// One line on a command family (the part of the id before the dot), for the families listing.
+/// A family without a line here is listed without `about`.
+fn family_about(family: &str) -> Option<&'static str> {
+    Some(match family {
+        "file" => "New, open, save, export, info, recovery",
+        "slide" => "New, delete, move, go, layout, notes, inspect",
+        "section" => "Sections of slides",
+        "shape" => "Insert, connect, move, fill, line, effects, points",
+        "text" => "Edit mode, caret, set/get text, find",
+        "format" => "Font, size, colour, bold, align, bullets, spacing",
+        "insert" => "Text box, picture, table, chart, media, icon, link",
+        "table" => "Rows, columns, cells, merge, style, borders",
+        "chart" => "Chart type, data, options",
+        "picture" => "Crop, adjust, recolor, effects, compress",
+        "media" => "Audio/video playback and options",
+        "animation" => "Add, remove, move, timing, get (click steps)",
+        "transition" => "Set, options, timing, sound, apply to all",
+        "design" => "Theme, palette, fonts, background, slide size",
+        "arrange" => "Order, group, align, distribute, rotate, nudge",
+        "edit" => "Undo, redo, clipboard, delete, select",
+        "selection" => "Selection pane",
+        "review" => "Accessibility, spelling, thesaurus, compare",
+        "comment" => "Comments: add, reply, resolve, list",
+        "master" => "Slide master layouts and placeholders",
+        "guide" => "Drawing guides",
+        "notes" => "Notes master placeholders",
+        "handout" => "Handout master placeholders",
+        "show" => "Slide show: start, set up, custom shows",
+        "view" => "Master views",
+        "window" => "Next window",
+        "draw" => "Ink to shape",
+        "smartArt" => "Diagrams: nodes, layout, style, from text",
+        "font" => "Fonts used, replace, add",
+        "document" => "Inspect the presentation",
+        "commands" => "This list, from the engine",
+        _ => return None,
+    })
+}
+
+/// The commands grouped by family, compact: `{family, about?, count, commands}`, where `commands`
+/// is the names after the dot, space-separated (an array of 322 quoted ids would not fit the
+/// few-KB budget this listing exists for).
+fn families(all: &[Value]) -> Value {
+    let mut fams: Vec<(&str, Vec<&str>)> = vec![];
+    for id in all.iter().filter_map(|c| c.get("id").and_then(Value::as_str)) {
+        let (fam, name) = id.split_once('.').unwrap_or((id, id));
+        match fams.iter_mut().find(|(f, _)| *f == fam) {
+            Some((_, names)) => names.push(name),
+            None => fams.push((fam, vec![name])),
+        }
+    }
+    Value::Array(
+        fams.into_iter()
+            .map(|(fam, names)| {
+                let mut o = json!({"family": fam, "count": names.len(), "commands": names.join(" ")});
+                if let (Some(about), Some(obj)) = (family_about(fam), o.as_object_mut()) {
+                    obj.insert("about".into(), json!(about));
+                }
+                o
+            })
+            .collect(),
+    )
+}
+
 /// Replaces every `"$name"` string in a batch item's params with the answer of the earlier item
 /// named `as: "name"` (its `id`, else the whole answer). A `$` followed by an identifier that
 /// names no earlier item is an error, so a typo is not sent on as text.
@@ -412,24 +476,39 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         return ToolResult::error(msg);
     }
     match name {
-        "list_commands" => wrap(b.call("engine.commands", json!({})).map(|v| {
+        "list_commands" => {
+            let all = match b.call("engine.commands", json!({})) {
+                Ok(v) => v.as_array().cloned().unwrap_or_default(),
+                Err(e) => return ToolResult::error(e),
+            };
+            if let Some(id) = a.get("id").and_then(Value::as_str) {
+                return match all.iter().find(|c| c.get("id").and_then(Value::as_str) == Some(id)) {
+                    Some(c) => ToolResult::json(c),
+                    None if is_tool(id) => {
+                        ToolResult::error(format!("`{id}` is a tool, not a command: call it directly, or list_commands {{filter}} for commands"))
+                    }
+                    None => ToolResult::error(format!("unknown command `{id}`{}", deckcraft_engine::cmd::like_it(id))),
+                };
+            }
             let f = a.get("filter").and_then(Value::as_str).unwrap_or("").to_lowercase();
+            if f.is_empty() {
+                // A bare call used to answer every command (95 KB; 40 KB with brief), and agents
+                // made it twice per run. The families fit in a few KB, compact, and `filter` or
+                // `id` answer the rest.
+                return ToolResult::text(families(&all).to_string());
+            }
             let brief = a.get("brief").and_then(Value::as_bool).unwrap_or(false);
             let trim = |c: Value| if brief { json!({"id": c.get("id"), "params": c.get("params")}) } else { c };
-            Value::Array(
-                v.as_array()
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
+            ToolResult::json(&Value::Array(
+                all.into_iter()
                     .filter(|c| {
-                        f.is_empty()
-                            || c.get("id").and_then(Value::as_str).is_some_and(|i| i.to_lowercase().contains(&f))
+                        c.get("id").and_then(Value::as_str).is_some_and(|i| i.to_lowercase().contains(&f))
                             || c.get("label").and_then(Value::as_str).is_some_and(|i| i.to_lowercase().contains(&f))
                     })
                     .map(trim)
                     .collect(),
-            )
-        })),
+            ))
+        }
         "run_command" => {
             let Some(c) = a.get("command").and_then(Value::as_str) else { return ToolResult::error("missing `command`") };
             let params = a.get("params").cloned().unwrap_or(json!({}));
