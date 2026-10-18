@@ -1203,6 +1203,10 @@ fn home(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::DesignIdeas, "Design\nIdeas", "view.pane", json!({"pane": "designer"}));
     });
+    // Hands the selection to the agent the person connected (says how to connect one otherwise).
+    group(ui, |ui| {
+        big(app, ui, Icon::Sparkle, "Ask\nAgent", crate::ask_agent::COMMAND, json!({}));
+    });
 }
 
 // ---------- Insert ----------

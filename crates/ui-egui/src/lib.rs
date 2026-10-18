@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod animtimeline;
+pub mod ask_agent;
 pub mod backstage;
 pub mod canvas;
 pub mod control;
@@ -45,6 +46,7 @@ use deckcraft_model::{LayoutId, MasterId, SlideId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+pub use ask_agent::AgentHub;
 pub use control::{ControlRequest, ControlResponse};
 
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
@@ -412,6 +414,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
     ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
+    (
+        ask_agent::COMMAND,
+        "Ask Agent…",
+        Some(ask_agent::SHORTCUT),
+        "{instruction?: text (send without the bubble), scope?: slide|deck, cancel?: request id, close?: bool}",
+    ),
 ];
 
 pub struct Perf {
@@ -496,8 +504,11 @@ pub struct SlideApp {
     pub(crate) thumb_drag: Option<(usize, usize)>,
     /// Selection pane: folded groups, renaming, drag and drop.
     pub selpane: selpane::State,
+    /// Ask Agent: the queue shared with the control channel, the chip and the bubble.
+    pub ask_agent: ask_agent::AskAgent,
     /// Arrange ▸ Align: Align to Slide (`true`) or Align Selected Objects, ticked for that selection.
     pub(crate) align_to: Option<(Vec<deckcraft_model::ShapeId>, bool)>,
+
     /// View › New Window: a second window on one presentation. `None` when it is closed.
     pub doc_window: Option<doc_window::DocWindow>,
     /// Slide Sorter: folded sections, inline rename, dragging a whole section.
@@ -574,7 +585,9 @@ impl SlideApp {
             ui_fonts: uifonts::UiFonts::default(),
             thumb_drag: None,
             selpane: selpane::State::default(),
+            ask_agent: ask_agent::AskAgent::default(),
             align_to: None,
+
             doc_window: None,
             sorter: sorter::State::default(),
             slides_focused: false,
@@ -588,6 +601,12 @@ impl SlideApp {
 
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
+        self
+    }
+
+    /// Ask Agent's queue, shared with the control channel's connections.
+    pub fn with_agent_hub(mut self, hub: AgentHub) -> Self {
+        self.ask_agent.hub = Some(hub);
         self
     }
 
@@ -654,6 +673,10 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        if let Some(why) = ask_agent::held(self, id) {
+            self.set_status(why.clone());
+            return Err(why);
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -1052,6 +1075,7 @@ impl SlideApp {
                 let d = p.get("id").and_then(Value::as_str).ok_or("missing `id`")?;
                 self.dialog = Some(dialogs::Dialog::new(d));
             }
+            ask_agent::COMMAND => return ask_agent::command(self, p),
             "app.links" => {
                 use deckcraft_engine::links::*;
                 return Ok(json!({"discord": DISCORD, "website": WEBSITE, "apps": APPS, "appPage": APP_PAGE, "github": GITHUB}));
@@ -1707,6 +1731,7 @@ impl SlideApp {
             self.drain_requests();
             return;
         }
+        ask_agent::typed_on_slide(self, &events);
         let img = if image_paste { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
         if let Some(png) = img {
             let data = deckcraft_engine::cmd::base64_encode(&png);
@@ -1814,6 +1839,9 @@ impl SlideApp {
             return;
         }
         self.sync_backstage();
+        // The canvas sets it again if it draws a selection this frame.
+        self.ask_agent.anchor = None;
+        ask_agent::keyboard(self, &ctx);
         self.keyboard(&ctx);
         self.sync_backstage();
         ribbon::title_bar(self, ui);
@@ -1855,10 +1883,12 @@ impl SlideApp {
                 }
             }
         });
+        ask_agent::show(self, &ctx);
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);
         menus::palette(self, &ctx);
+        ask_agent::remember_focus(self, &ctx);
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }

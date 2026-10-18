@@ -3,9 +3,26 @@
 Start the app with `--control <port>`. The server listens on `127.0.0.1` only and speaks JSON
 lines: one request object per line, one reply per line.
 
-A line that is not a JSON object with a string `method` (an HTTP request, text that isn't JSON,
-bytes that aren't UTF-8) gets one error reply and the server closes the connection; nothing sent
-after it runs. Blank lines are skipped.
+## Authentication
+
+The first line on every connection must authenticate:
+
+```json
+{"id": 0, "method": "auth", "params": {"token": "…"}}
+{"id": 0, "ok": true, "result": {"authenticated": true}}
+```
+
+The token is `DECKCRAFT_CONTROL_TOKEN` when it is set where the app starts, else a random one the
+app writes on startup to `deckcraft-control-<port>.token` in `$XDG_RUNTIME_DIR` (when set) or the
+per-user temporary folder (`$TMPDIR` on macOS), readable by the user only. The app logs the
+file's path. `deckcraft-cli` (`mcp --connect` and the other commands that reach a running app)
+reads the token from `DECKCRAFT_CONTROL_TOKEN` or that file by itself.
+
+Any other first line, including one that isn't JSON (such as an HTTP request a web page sends to
+the port), gets an error reply and the connection is closed. Loopback alone doesn't keep other
+local programs, or a page in the user's browser, out of the control channel.
+
+## Requests
 
 The connected MCP client requires the reply's numeric `id` to match its request, `ok` to be a
 boolean, and exactly one of `result` (success) or a string `error` (failure). It caps each reply at
@@ -50,6 +67,19 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 | `ui.resize` / `ui.focus` | | Window control |
 | `show.start` / `show.end` | `{from?: slide index, custom?: name, reading?}` | Slide show. `custom` plays that custom show from its first slide and does not change Set Up. With no `from` and no `custom`, playback starts at the first slide of the show order |
 | `app.open` / `app.save` / `app.export` / `app.quit` | `{path, …}` | Files (export takes the `file.export` params, e.g. `{"path": "deck.pdf", "layout": "handouts", "perPage": 3}` or `{"path": "deck.gif", "width": "large", "secondsPerSlide": 3, "loop": false}`, or `{"path": "slide.png", "transparentBackground": true}` for a PNG without the slide background) |
+| `agent.listen` | `{timeoutMs?, agent?}` | Ask Agent: the next request from the window, or `{none: true}` (see [Ask Agent](#ask-agent)) |
+| `agent.reply` | `{id, text, done?, error?}` | Ask Agent: the agent's progress note (`done: false`), answer, or `error`, shown in the window |
 
 The MCP server (`deckcraft-cli mcp`, see [mcp.md](mcp.md)) wraps the same methods for Claude
 and other agents; `deckcraft-cli app --method METHOD [PARAMS]` sends one request from a shell.
+
+## Ask Agent
+
+The person selects shapes, text or a slide and sends an instruction from the Ask Agent chip or bubble;
+the agent they run receives it with `agent.listen` (waits up to `timeoutMs`, at most 60000; `agent`
+names it in the window and routes requests asked for that name) as
+`{id, instruction, history, selection, document, agent}`, edits with `engine.execute` passing
+`"request": id`, and answers with `agent.reply`. While a request is open only the connection working
+on it may change the presentation, and only for it (`errorCode` `HELD`, `NOT_OWNER`, `NO_REQUEST`,
+`READ_ONLY_REQUEST`); its edits are one undo step. Keep, Undo and follow-ups are the person's, in the
+window. A connection that closes puts its unanswered request back in the queue.

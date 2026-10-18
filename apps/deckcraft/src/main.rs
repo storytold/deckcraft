@@ -251,8 +251,11 @@ fn main() -> eframe::Result {
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
             if let Some(port) = control_port {
-                let rx = control_server::start(port, cc.egui_ctx.clone());
-                app = app.with_control(rx);
+                // Ask Agent's queue, shared by the window and the control channel's connections.
+                let agents = deckcraft_ui_egui::AgentHub::default();
+                if let Some(rx) = control_server::start(port, cc.egui_ctx.clone(), agents.clone()) {
+                    app = app.with_control(rx).with_agent_hub(agents);
+                }
             }
             if sample && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                 log::error!("sample: {e}");
