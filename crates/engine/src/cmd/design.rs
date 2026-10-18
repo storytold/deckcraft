@@ -1907,4 +1907,164 @@ mod browse_theme_tests {
         assert!((box_.x - 60.0).abs() < 0.01 && (box_.y - 29.0).abs() < 0.01);
         assert!((box_.w - 840.0).abs() < 0.01 && (box_.h - 104.0).abs() < 0.01);
     }
+
+    #[test]
+    fn insert_layout_starts_from_the_master_title_and_lands_after_the_open_layout() {
+        let mut s = Session::with_new();
+        let n = s.doc().unwrap().doc.masters[0].layouts.len();
+        s.execute("view.slideMaster", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().selection.target, Target::Layout { master: 0, layout: 0 }, "the view opens on the current slide's layout");
+
+        let r = s.execute("master.insertLayout", &json!({"name": "Mine"})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        {
+            let m = &s.doc().unwrap().doc.masters[0];
+            assert_eq!(m.layouts.len(), n + 1);
+            let l = &m.layouts[1];
+            assert_eq!(l.id.0 as u64, id);
+            assert_eq!(l.name, "Mine");
+            assert_eq!(l.kind, deckcraft_model::LayoutType::Custom);
+            assert!(l.preserve, "a new layout starts preserved");
+            assert_eq!(l.shapes.len(), 1, "it starts from the master's title placeholder");
+            assert_eq!(l.shapes[0].ph_type(), Some(PhType::Title));
+            assert!(l.shapes[0].text.as_ref().unwrap().paragraphs.iter().all(|p| p.runs.is_empty()), "with no text in it");
+        }
+        assert_eq!(s.doc().unwrap().selection.target, Target::Layout { master: 0, layout: 1 }, "the new layout is what is being edited");
+        assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Insert Layout");
+
+        // A second one lands after the layout being edited, not at the end.
+        let last = s.doc().unwrap().doc.masters[0].layouts.last().unwrap().id;
+        s.execute("master.insertLayout", &json!({})).unwrap();
+        let m = &s.doc().unwrap().doc.masters[0];
+        assert_eq!(m.layouts.len(), n + 2);
+        assert_eq!(m.layouts[2].name, "Custom Layout", "the name defaults");
+        assert_eq!(m.layouts.last().unwrap().id, last, "the other layouts keep their order");
+
+        // With the master itself open the layout is appended.
+        s.execute("view.slideMaster", &json!({"master": 0})).unwrap();
+        assert_eq!(s.doc().unwrap().selection.target, Target::Master { master: 0 });
+        s.execute("master.insertLayout", &json!({"name": "Last"})).unwrap();
+        let m = &s.doc().unwrap().doc.masters[0];
+        assert_eq!(m.layouts.len(), n + 3);
+        assert_eq!(m.layouts.last().unwrap().name, "Last");
+        assert_eq!(s.doc().unwrap().selection.target, Target::Layout { master: 0, layout: m.layouts.len() - 1 });
+    }
+
+    #[test]
+    fn rename_layout_names_the_open_layout_or_the_one_it_is_given() {
+        let mut s = Session::with_new();
+        let err = s.execute("master.renameLayout", &json!({"layout": 1})).unwrap_err();
+        assert!(err.to_string().contains("missing `name`"), "{err}");
+        let err = s.execute("master.renameLayout", &json!({"layout": 99, "name": "X"})).unwrap_err();
+        assert!(err.to_string().contains("no such layout"), "{err}");
+
+        // Explicit master/layout win, wherever the view is.
+        let old = s.doc().unwrap().doc.masters[0].layouts[1].name.clone();
+        assert_eq!(s.execute("master.renameLayout", &json!({"master": 0, "layout": 1, "name": "Mine"})).unwrap(), json!(null));
+        assert_eq!(s.doc().unwrap().doc.masters[0].layouts[1].name, "Mine");
+        assert_eq!(s.doc().unwrap().selection.target, Target::Slides, "renaming from the slides does not move the view");
+        assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Rename Layout");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.masters[0].layouts[1].name, old);
+
+        // With a layout open it defaults to that one.
+        s.execute("view.slideMaster", &json!({"master": 0, "layout": 2})).unwrap();
+        s.execute("master.renameLayout", &json!({"name": "Open"})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.masters[0].layouts[2].name, "Open");
+        assert_eq!(s.doc().unwrap().doc.masters[0].layouts[1].name, old);
+    }
+
+    #[test]
+    fn delete_layout_refuses_used_layouts_and_the_last_one() {
+        let mut s = Session::with_new();
+        let used = s.doc().unwrap().doc.slides[0].layout;
+        let li = s.doc().unwrap().doc.masters[0].layouts.iter().position(|l| l.id == used).unwrap();
+        let err = s.execute("master.deleteLayout", &json!({"layout": li})).unwrap_err();
+        assert!(err.to_string().contains("slides use this layout"), "{err}");
+        let err = s.execute("master.deleteLayout", &json!({"layout": 99})).unwrap_err();
+        assert!(err.to_string().contains("no such layout"), "{err}");
+
+        // An unused one goes; the view stays on the slot it left.
+        let n = s.doc().unwrap().doc.masters[0].layouts.len();
+        let gone = s.doc().unwrap().doc.masters[0].layouts[1].name.clone();
+        s.execute("view.slideMaster", &json!({"master": 0, "layout": 1})).unwrap();
+        assert_eq!(s.execute("master.deleteLayout", &json!({})).unwrap(), json!(null));
+        {
+            let st = s.doc().unwrap();
+            let m = &st.doc.masters[0];
+            assert_eq!(m.layouts.len(), n - 1);
+            assert!(!m.layouts.iter().any(|l| l.name == gone));
+            assert_eq!(st.selection.target, Target::Layout { master: 0, layout: 1 }, "on the layout that took its place");
+        }
+        assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Delete Layout");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.masters[0].layouts.len(), n);
+        assert_eq!(s.doc().unwrap().doc.masters[0].layouts[1].name, gone);
+
+        // A master must keep one layout (leaving one that no slide is on).
+        s.edit(|doc, _| {
+            let m = std::sync::Arc::make_mut(doc.masters.get_mut(0).unwrap());
+            let gone_id = m.layouts[1].id;
+            for sl in doc.slides.iter_mut() {
+                std::sync::Arc::make_mut(sl).layout = gone_id;
+            }
+            m.layouts.truncate(1);
+            Ok(())
+        })
+        .unwrap();
+        let n = s.doc().unwrap().history.undo.len();
+        let err = s.execute("master.deleteLayout", &json!({"layout": 0})).unwrap_err();
+        assert!(err.to_string().contains("a master needs at least one layout"), "{err}");
+        assert_eq!(s.doc().unwrap().history.undo.len(), n, "a refused delete is not an undo step");
+    }
+
+    #[test]
+    fn insert_placeholder_adds_the_kind_asked_for_to_the_open_layout() {
+        let mut s = Session::with_new();
+        let err = s.execute("master.insertPlaceholder", &json!({"kind": "picture"})).unwrap_err();
+        assert!(err.to_string().contains("select a layout in Slide Master view"), "{err}");
+
+        let blank = s.doc().unwrap().doc.masters[0].layouts.iter().position(|l| l.name == "Blank").unwrap();
+        s.execute("view.slideMaster", &json!({"master": 0, "layout": blank})).unwrap();
+        let before = s.doc().unwrap().shapes().iter().filter_map(|sh| sh.ph.as_ref().map(|p| p.idx)).max().unwrap_or(0);
+
+        let r = s.execute("master.insertPlaceholder", &json!({"kind": "media"})).unwrap();
+        let id = r["id"].as_u64().unwrap() as u32;
+        {
+            let st = s.doc().unwrap();
+            let sh = st.shapes().iter().find(|x| x.id.0 == id).cloned().unwrap();
+            assert_eq!(sh.ph.as_ref().map(|p| p.kind), Some(PhType::Media));
+            assert_eq!(sh.ph.as_ref().map(|p| p.idx), Some(before + 1), "a fresh placeholder id");
+            assert!(sh.text.is_some(), "a placeholder holds text");
+            let x = sh.xfrm.unwrap();
+            assert_eq!((x.x, x.y, x.w, x.h), (240.0, 162.0, 480.0, 216.0), "a quarter in, half the slide wide");
+            assert_eq!(st.selection.shapes, vec![deckcraft_model::ShapeId(id)], "the new placeholder is selected");
+        }
+
+        // The kinds map to the placeholder kinds PowerPoint uses; anything else is a content box.
+        for (kind, want) in [
+            ("text", PhType::Body),
+            ("picture", PhType::Picture),
+            ("chart", PhType::Chart),
+            ("table", PhType::Table),
+            ("media", PhType::Media),
+            ("content", PhType::Obj),
+            ("nonsense", PhType::Obj),
+        ] {
+            let r = s.execute("master.insertPlaceholder", &json!({"kind": kind, "rect": [10, 20, 30, 40]})).unwrap();
+            let id = r["id"].as_u64().unwrap();
+            let st = s.doc().unwrap();
+            let sh = st.shapes().iter().find(|x| x.id.0 as u64 == id).cloned().unwrap();
+            assert_eq!(sh.ph.as_ref().map(|p| p.kind), Some(want), "{kind}");
+            let x = sh.xfrm.unwrap();
+            assert_eq!((x.x, x.y, x.w, x.h), (10.0, 20.0, 30.0, 40.0), "{kind} takes the rect it is given");
+        }
+
+        // Placeholder ids stay unique on the layout.
+        let mut idxs: Vec<u32> = s.doc().unwrap().shapes().iter().filter_map(|sh| sh.ph.as_ref().map(|p| p.idx)).collect();
+        let all = idxs.len();
+        idxs.sort_unstable();
+        idxs.dedup();
+        assert_eq!(idxs.len(), all, "placeholder ids are unique");
+    }
 }
