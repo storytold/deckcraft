@@ -7063,6 +7063,43 @@ fn text_replace_takes_a_scope_and_answers_the_slides() {
     assert_eq!(r, json!({"replaced": 5, "slides": [1, 2]}), "the default is still everything: {r}");
 }
 
+/// Y3: slide.inspect showed only `fill` per shape, so text colour, line colour and width, a
+/// connector's ends and a link's target cost renders. Each is answered when present (a scheme
+/// colour as its slot name, else hex); a plain shape gains nothing but its text colour.
+#[test]
+fn slide_inspect_answers_text_colour_line_connector_ends_and_links() {
+    let mut s = session();
+    let a = s
+        .execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50], "text": "A", "color": "#FF0000", "line": "accent2"}))
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("shape.line", &json!({"ids": [a], "width": 3})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 10, 100, 50], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.connect", &json!({"from": a, "to": b})).unwrap()["id"].as_u64().unwrap();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    s.execute("text.insert", &json!({"text": " and "})).unwrap();
+    s.execute("insert.hyperlink", &json!({"slide": 0, "text": "start"})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    let v = s.execute("slide.inspect", &json!({})).unwrap();
+    let shape = |id: u64| v["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).cloned().unwrap();
+    let sa = shape(a);
+    assert_eq!(sa["textColor"], "#FF0000", "{sa}");
+    assert_eq!(sa["line"], json!({"color": "accent2", "width": 3.0}), "{sa}");
+    assert!(sa.get("from").is_none() && sa.get("links").is_none(), "absent fields are left out: {sa}");
+    let sb = shape(b);
+    assert_eq!(sb["textColor"], "lt1", "a scheme colour is its slot name: {sb}");
+    let sc = shape(c);
+    assert_eq!((sc["from"]["id"].clone(), sc["to"]["id"].clone(), sc["preset"].clone()), (json!(a), json!(b), json!("straightConnector1")), "{sc}");
+    assert!(sc["from"]["site"].is_u64() && sc["to"]["site"].is_u64(), "{sc}");
+    assert!(sc.get("textColor").is_none(), "no text, no text colour: {sc}");
+    let st = shape(u64::from(title));
+    assert_eq!(st["links"], json!([{"text": "https://example.org", "url": "https://example.org"}, {"text": "start", "slide": 0}]), "{st}");
+    assert_eq!(st["textColor"], "hlink", "the first run is a link, drawn in the hyperlink colour: {st}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
