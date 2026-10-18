@@ -266,7 +266,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "pointer",
             "Pointer gesture",
-            "Drive the active tool with pointer events in slide points: down/drag/up/move/doubleclick/contextclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret; contextclick selects like a right click).",
+            "Drive the active tool with pointer events in slide points (origin top-left, y down; 960×540 for 16:9): down/drag/up/move/doubleclick/contextclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret; contextclick selects like a right click).",
             obj(
                 json!({"events": {"type": "array", "items": obj(json!({"kind": string("down|drag|up|move|doubleclick|tripleclick|contextclick"), "x": num("x (pt)"), "y": num("y (pt)"), "mods": mods_schema()}), &["kind", "x", "y"])}, "mods": mods_schema()}),
                 &["events"],
@@ -283,7 +283,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "key",
             "Press key",
-            "Press a key as on the keyboard: text editing keys (arrows, Backspace, Enter, Tab), nudges, and shortcuts (cmd+B…).",
+            "Press a key as on the keyboard: text editing keys (arrows, Backspace, Enter, Tab), nudges (with shapes selected, an arrow key moves them 6 pt, alt+arrow 1 pt), and shortcuts (cmd+B…).",
             obj(json!({"key": string("Key name or character"), "mods": mods_schema()}), &["key"]),
             false,
         ),
