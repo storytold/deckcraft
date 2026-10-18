@@ -3,6 +3,7 @@
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (Korean for the application shell; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -84,7 +85,8 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+English, plus Korean for the application shell (ribbon tabs, File menu, title bar, status bar and
+Preferences). The rest of the UI has no catalog yet (Ukrainian is in review as PR #34). Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
@@ -99,10 +101,10 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | Indonesian | id | 0% | none | 3–5 |
 | Japanese | ja | 0% | none | 4–7 |
 | German | de | 0% | none | 3–5 |
-| Korean | ko | 0% | none | 4–7 |
+| Korean | ko | shell | partial | 4–7 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
+Plus 8–14 h once for the rest of the catalog. Other languages shipped: none. PowerPoint for Mac
 ships 26.
 
 ## Upcoming
@@ -206,6 +208,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | Saving a presentation keeps the embedded workbook behind an unchanged chart, and the chart part's relationships (#335). Editing the chart drops that workbook instead of writing numbers that no longer match it |
 | 2026-10-13 | A presentation whose object ids are used up refuses to grow instead of handing out duplicate ids (#407) |
 | 2026-10-13 | Slide transitions like PowerPoint: every transition and option measured frame by frame against PowerPoint's video export and retuned (curves, directions, soft edges, 3-D perspective, contents moving over backgrounds); PowerPoint's own XML elements and defaults read and written (diagonal Wipe, Zoom, Shape In/Out, Glitter Hexagons, Shred In/Out, Page Curl Single); `deckcraft-cli render-transition` renders frames headless |
+| 2026-10-13 | Interface language for the application shell: System, English or 한국어. A ko locale (or Preferences, or `app.language`) translates the ribbon tabs, File menu, title bar, status bar and Preferences; ribbon groups and the other dialogs stay English |
 | 2026-10-13 | Wild text cases measured against PowerPoint (102 synthetic slides): bidi by run language, East Asian vertical text upright, mongolianVert/wordArtVert/wordArtVertRtl, underline styles and strikethrough at the font's metrics, centre/right/decimal tabs, East Asian, Thai, Hindi, Arabic and Hebrew numbering, small caps, all-caps "ß", transparent text, soft hyphens, kinsoku, rtlCol and just/dist anchoring, emoji presentation, fallback faces that no longer move the baseline |
 | 2026-10-13 | Render matches PowerPoint more closely on wild shape, picture and table cases: even-odd custom paths, dashes and caps, arrowheads, radial and path gradients, tile rects, rotWithShape, gradient lines, shadows cast by what is drawn (group and perspective too), group fill, picture borders, tiles, reflection, recolour (biLevel, alphaInv, brightness/contrast), table borders and grid default, 20+ preset shapes by their ECMA formulas, default miter joins, and approximate 3-D bevels, cameras and face lighting |
 | 2026-10-13 | Slide show for interactive decks: click-triggered animations play (one step per click, repeating, applied in click order), a slide the show returns to keeps its state and its triggered animations go on where they stopped, shapes an animation has hidden cannot be clicked, a shape without an action blocks the one beneath it, hand cursor over clickable shapes, "advance on click" off respected |
@@ -293,6 +296,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | trivial | Progress log: Grid Options dialog |
 | 2026-10-14 | trivial | Progress log: pen pressure scales ink width |
 | 2026-10-13 | trivial | Progress log: chart workbook round-trip (#335) |
+| 2026-10-13 | trivial | Progress log: Korean for the application shell |
 | 2026-10-13 | trivial | Progress log: wild text cases |
 | 2026-10-13 | trivial | Progress log: slide show for interactive decks |
 | 2026-10-12 | minor | Progress log: table cell editing and border resizing |
