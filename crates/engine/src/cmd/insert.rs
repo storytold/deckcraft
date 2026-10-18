@@ -2256,3 +2256,7 @@ mod icon_and_picture_tests {
         assert!(mark.starts_with("deckcraft-album:"), "{mark}");
     }
 }
+
+#[cfg(test)]
+#[path = "insert_text_and_buttons_tests.rs"]
+mod insert_text_and_buttons_tests;
