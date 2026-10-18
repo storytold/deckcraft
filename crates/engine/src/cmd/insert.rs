@@ -118,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?: colorful1|colorful2|colorful3|colorful4|monochrome1…monochrome13 (a name; colorful* cycle the six accents, monochrome* shade accent1; a list of colours is refused), binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
         ),
@@ -1836,6 +1836,14 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // A palette is a name (colorful1…4, monochrome1…13); a list of colours was accepted and ignored.
+    let palette = match p.get("palette") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_str().filter(|n| is_palette_name(n)) {
+            Some(n) => Some(n.to_string()),
+            None => return Err(bad("chart.options", format!("`palette` is a name, one of {CHART_PALETTES}; not {v}"))),
+        },
+    };
     with_chart(s, p, "chart.options", |c| {
         if let Some(t) = &text_color {
             c.text_color = t.clone();
@@ -1861,12 +1869,20 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = bool_param(p, "gridlines") {
             c.gridlines = v;
         }
-        if let Some(v) = str_param(p, "palette") {
-            c.palette = v.to_string();
+        if let Some(v) = &palette {
+            c.palette.clone_from(v);
         }
         c.raw = None;
         Ok(())
     })
+}
+
+const CHART_PALETTES: &str = "colorful1, colorful2, colorful3, colorful4, monochrome1 … monochrome13";
+
+/// `colorful1`…`colorful4` or `monochrome1`…`monochrome13` (PowerPoint's chart colour sets).
+fn is_palette_name(n: &str) -> bool {
+    let num = |rest: &str, max: u32| rest.parse::<u32>().is_ok_and(|k| (1..=max).contains(&k));
+    n.strip_prefix("colorful").is_some_and(|r| num(r, 4)) || n.strip_prefix("monochrome").is_some_and(|r| num(r, 13))
 }
 
 /// A SmartArt graphic: a group regenerated from its outline (see [`super::smartart`]). Items with
