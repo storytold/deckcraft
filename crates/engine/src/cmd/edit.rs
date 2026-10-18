@@ -583,10 +583,12 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
-    if s.doc()?.selection.text.is_some() && p.get("ids").is_none() {
+    // `ids: null` is the same as no `ids`.
+    let no_ids = p.get("ids").is_none_or(Value::is_null);
+    if s.doc()?.selection.text.is_some() && no_ids {
         return super::text::delete_dir(s, "forward");
     }
-    if slides_scope(s, p) && p.get("ids").is_none() {
+    if slides_scope(s, p) && no_ids {
         return s.execute("slide.delete", &json!({}));
     }
     let ids = targets(s, p)?;

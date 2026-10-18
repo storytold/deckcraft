@@ -5861,3 +5861,27 @@ fn slide_inspect_answers_text_colour_line_connector_ends_and_links() {
     assert_eq!(st["links"], json!([{"text": "https://example.org", "url": "https://example.org"}, {"text": "start", "slide": 0}]), "{st}");
     assert_eq!(st["textColor"], "hlink", "the first run is a link, drawn in the hyperlink colour: {st}");
 }
+
+/// The second review: `indices` entries, `ids: null` and a non-list `ids` are handled like
+/// `ids` entries are: refused naming the value, or treated as absent, never dropped or retargeted.
+#[test]
+fn indices_entries_null_ids_and_a_non_list_ids_are_not_dropped() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [a], "effect": "fade"})).unwrap();
+    let e = s.execute("animation.timing", &json!({"indices": [0, "x"], "duration": 50})).unwrap_err().to_string();
+    assert!(e.contains("`indices` entry \"x\" is not an animation position"), "{e}");
+    let e = s.execute("animation.timing", &json!({"indices": [-1], "duration": 50})).unwrap_err().to_string();
+    assert!(e.contains("entry -1"), "{e}");
+    // ids: null is the same as no ids: the selection is the target.
+    s.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    let r = s.execute("shape.fill", &json!({"ids": null, "color": "#FF0000"})).unwrap();
+    assert!(r.as_u64() == Some(1) || r["changed"] == 1, "{r}");
+    // A non-list ids is refused, not retargeted to the selection.
+    for ids in [json!(12), json!("$box")] {
+        let e = s.execute("shape.fill", &json!({"ids": ids, "color": "#00FF00"})).unwrap_err().to_string();
+        assert!(e.contains("`ids` must be a list of shape ids"), "{ids}: {e}");
+    }
+    let fill = s.doc().unwrap().shape(deckcraft_model::ShapeId(a as u32)).unwrap().fill.clone();
+    assert!(format!("{fill:?}").contains("r: 255, g: 0, b: 0"), "still red: {fill:?}");
+}
