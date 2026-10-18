@@ -282,6 +282,16 @@ impl DocState {
     pub fn shape(&self, id: ShapeId) -> Option<&Shape> {
         deckcraft_model::find_shape(self.shapes(), id)
     }
+    /// The shape with `id` where the selection is, else on any slide, with the selection that
+    /// gives its context (for inherited boxes): ids are unique in the presentation.
+    pub fn shape_anywhere(&self, id: ShapeId) -> Option<(&Shape, Selection)> {
+        if let Some(sh) = self.shape(id) {
+            return Some((sh, self.selection.clone()));
+        }
+        self.doc.slides.iter().enumerate().find_map(|(i, sl)| {
+            deckcraft_model::find_shape(&sl.shapes, id).map(|sh| (sh, Selection { slide: i, target: Target::Slides, ..self.selection.clone() }))
+        })
+    }
     pub fn selected_shapes(&self) -> Vec<&Shape> {
         self.selection.shapes.iter().filter_map(|id| self.shape(*id)).collect()
     }

@@ -4777,3 +4777,80 @@ fn a_parameter_the_command_does_not_take_is_refused() {
         assert!(e.contains("was given `zzz`, which it doesn't take"), "{}: {e}", c.id);
     }
 }
+
+/// #298: shape ids are unique in the presentation, so an edit by id reaches a shape on another
+/// slide, makes that slide current (the window follows) and says so; read-only lookups move
+/// nothing; commands that need several shapes on one slide say where the shape is; an id that is
+/// nowhere says so.
+#[test]
+fn a_shape_on_another_slide_is_edited_where_it_is() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    let r = s.execute("text.set", &json!({"id": a, "text": "far away"})).unwrap();
+    assert_eq!(r, json!({"changed": 1, "onSlides": [0], "currentSlide": 0}), "{r}");
+    let sel = s.doc().unwrap().selection.clone();
+    assert_eq!(
+        (sel.slide, sel.shapes.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>()),
+        (0, vec![a]),
+        "the edited shape's slide is current and it is selected"
+    );
+    s.execute("slide.go", &json!({"index": 1})).unwrap();
+    let r = s.execute("shape.fill", &json!({"ids": [a, b], "color": "#FF0000"})).unwrap();
+    assert_eq!(r, json!({"changed": 2, "onSlides": [0], "currentSlide": 0}), "{r}");
+    s.execute("slide.go", &json!({"index": 1})).unwrap();
+    assert_eq!(s.execute("text.get", &json!({"id": a})).unwrap()["text"], "far away");
+    assert_eq!(s.execute("shape.sites", &json!({"id": a})).unwrap().as_array().map(Vec::len), Some(4));
+    assert_eq!(s.doc().unwrap().selection.slide, 1, "a read-only lookup moves nothing");
+    let e = s.execute("shape.connect", &json!({"from": a, "to": b})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {a} is on slide index 0")) && e.contains("slide.go {\"index\": 0}"), "{e}");
+    let e = s.execute("text.set", &json!({"id": 999, "text": "x"})).unwrap_err().to_string();
+    assert!(e.contains("no shape 999 on the current slide (index 1)"), "{e}");
+}
+
+/// #298: slide.new answers the ids of the new slide's placeholders, so the title or body can be
+/// addressed without an inspect (both agents guessed "slide id + 1").
+#[test]
+fn slide_new_answers_its_placeholder_ids() {
+    let mut s = session();
+    let r = s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T"})).unwrap();
+    let title = r["placeholders"]["title"].as_u64().expect("title id");
+    let body = r["placeholders"]["body"].as_u64().expect("body id");
+    assert_ne!(title, body);
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let shapes = sl["shapes"].as_array().unwrap();
+    assert!(shapes.iter().any(|x| x["id"] == title && x["placeholder"] == "title" && x["text"] == "T"), "{sl}");
+    assert!(shapes.iter().any(|x| x["id"] == body), "{sl}");
+    s.execute("text.set", &json!({"id": body, "text": "first point"})).unwrap();
+    let r = s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    assert_eq!(r["placeholders"], json!({}), "{r}");
+}
+
+/// #298: a diagram box is one command: shape.insert takes its fill, line, text size and colour,
+/// bold and name, instead of five follow-up commands that rely on the inserted shape being
+/// selected.
+#[test]
+fn shape_insert_takes_its_style_in_one_call() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "shape.insert",
+            &json!({"preset": "roundRect", "rect": [10, 10, 200, 80], "text": "Engine", "fill": "#112233", "line": "none", "size": 20, "color": "#FFFFFF", "bold": true, "name": "Engine box"}),
+        )
+        .unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.shape(deckcraft_model::ShapeId(id as u32)).unwrap();
+    assert_eq!(sh.name, "Engine box");
+    assert!(matches!(sh.fill, Some(deckcraft_model::Fill::Solid { .. })), "{:?}", sh.fill);
+    assert!(matches!(sh.line.as_ref().and_then(|l| l.fill.as_ref()), Some(deckcraft_model::Fill::None)), "{:?}", sh.line);
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0].props;
+    assert_eq!((run.size, run.bold, run.fill.is_some()), (Some(20.0), Some(true), true), "{run:?}");
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let shape = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap();
+    assert!(shape["fill"].as_str().unwrap_or("").to_uppercase().contains("112233"), "{shape}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).is_none(), "one undo step removes the styled shape");
+}

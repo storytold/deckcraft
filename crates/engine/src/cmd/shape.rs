@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Connect Shapes",
             [],
             None,
-            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the closest pair), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
+            "{from: shape id, to: shape id (both on the current slide), fromSite?, toSite?: site index (default: the closest pair; shape.sites lists them, a box has 0 top, 1 left, 2 bottom, 3 right), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
             has_slide,
             connect
         ),
@@ -96,7 +96,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Outline",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
+            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow (at the start of the line), tail? (at the end), headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
             has_selection,
             line
         ),
@@ -355,7 +355,7 @@ fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
         let (x, y, w, h, rot) = {
             let st = s.doc()?;
             let id = targets(s, p)?.first().copied().ok_or_else(|| bad(SIZE_POS, "nothing selected"))?;
-            let sh = st.shape(id).ok_or_else(|| bad(SIZE_POS, "no such shape"))?;
+            let sh = st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, SIZE_POS))?;
             let x = xfrm_of(&st.doc, &st.selection, sh);
             (x.x, x.y, x.w, x.h, x.rot)
         };
@@ -1187,8 +1187,8 @@ fn media_options(s: &mut Session, p: &Value) -> Result<Value> {
 fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;
     let st = s.doc()?;
-    let sh = st.shape(id).ok_or_else(|| bad("shape.sites", "no such shape"))?;
-    Ok(json!(crate::connect::sites(&st.doc, &st.selection, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.sites"))?;
+    Ok(json!(crate::connect::sites(&st.doc, &ctx, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
 }
 
 fn connect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1196,8 +1196,9 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    let site_list = |id| st.shape(id).map(|sh| crate::connect::sites(&st.doc, &st.selection, sh)).unwrap_or_default();
-    let (a, b) = (site_list(from), site_list(to));
+    let shape = |id| st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.connect"));
+    let (sa, sb) = (shape(from)?, shape(to)?);
+    let (a, b) = (crate::connect::sites(&st.doc, &st.selection, sa), crate::connect::sites(&st.doc, &st.selection, sb));
     if a.is_empty() || b.is_empty() {
         return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
     }

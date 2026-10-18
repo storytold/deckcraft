@@ -242,3 +242,57 @@ fn export_tool_lists_gif_and_its_options() {
     assert_eq!(r["result"]["isError"], true, "{r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// #298: a tool name where a command id goes (`run_command`, an item of `batch`) runs that tool,
+/// so add_shape with its fill and line can sit in a batch; and "no presentation open" names the
+/// tools that open one.
+#[test]
+fn a_tool_name_as_a_command_id_runs_the_tool() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let r = call(&mut s, 1, "tools/call", json!({"name": "inspect_document", "arguments": {}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(r["result"]["isError"] == true && text.contains("new_presentation") && text.contains("open_presentation"), "{text}");
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let r = tool(&mut s, "run_command", json!({"command": "go_to_slide", "params": {"index": 0}}));
+    assert_eq!(r["index"], 0, "{r}");
+    let out = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "go_to_slide", "params": {"index": 1}},
+            {"command": "add_shape", "params": {"preset": "roundRect", "x": 10, "y": 10, "w": 100, "h": 50, "fill": "#336699", "text": "A"}},
+            {"command": "shape.rename", "params": {"name": "Box A"}},
+        ]}),
+    );
+    let items = out.as_array().unwrap();
+    assert!(items.iter().all(|i| i["ok"] == true), "{out}");
+    let id = items[1]["result"]["id"].as_u64().expect("the inserted shape's id");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    assert_eq!(sl["index"], 1);
+    let shape = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).expect("shape on slide 1");
+    assert_eq!(shape["name"], "Box A", "{shape}");
+    assert_eq!(shape["text"], "A", "{shape}");
+}
+
+/// The tools that take `x`, `y`, `w`, `h` hand the engine a `rect`, not the four keys, which the
+/// engine refuses (it found this: `insert_table` advertised them and then failed).
+#[test]
+fn tools_with_x_y_w_h_place_the_shape() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let t = tool(&mut s, "insert_table", json!({"rows": 2, "cols": 2, "x": 100, "y": 200, "w": 300, "h": 80, "data": [["a", "b"], ["c", "d"]]}));
+    let id = t["id"].as_u64().expect("table id");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let table = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).expect("the table");
+    assert_eq!(table["box"], json!([100.0, 200.0, 300.0, 80.0]), "{table}");
+    let bad = call(
+        &mut s,
+        5,
+        "tools/call",
+        json!({"name": "insert_picture", "arguments": {"data": "AAAA", "name": "x.png", "x": 1, "y": 2, "w": 3, "h": 4}}),
+    );
+    let text = bad["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("doesn't take"), "x/y/w/h must not reach the engine: {text}");
+}

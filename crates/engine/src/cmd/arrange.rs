@@ -145,7 +145,7 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let to = usize_param(p, "index").ok_or_else(|| bad("arrange.reorder", "missing `index`"))?;
     let st = s.doc()?;
     let siblings: &[Shape] = match deckcraft_model::parent_of(st.shapes(), id) {
-        None => return Err(bad("arrange.reorder", "no such shape")),
+        None => return Err(super::no_such_shape(&st.doc, &st.selection, id, "arrange.reorder")),
         Some(None) => st.shapes(),
         Some(Some(g)) => st.shape(g).map(Shape::children).unwrap_or(&[]),
     };
