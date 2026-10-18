@@ -599,11 +599,10 @@ fn run(args: &[String]) -> Result<(), String> {
     for p in save.iter().chain(&export) {
         output_format(p)?;
     }
-    let mut s = Session::new();
-    open(&mut s, input.as_deref(), sample)?;
-    // Every --cmd is read before any runs, so a malformed one leaves nothing half done; a refusal
-    // mirrors how the text was read and shows the form that works (#298). A command file is read
-    // line by line as it runs.
+    // Every --cmd is read before the presentation is opened and before any runs (file.open and
+    // file.new included), so a malformed one leaves nothing half done and is reported ahead of an
+    // --in that cannot be opened; a refusal mirrors how the text was read and shows the form that
+    // works (#298). A command file is read line by line as it runs.
     let total = cmds.iter().filter(|c| matches!(c, CommandSource::Inline(_))).count();
     let mut ready = Vec::with_capacity(cmds.len());
     for source in cmds {
@@ -616,6 +615,8 @@ fn run(args: &[String]) -> Result<(), String> {
             CommandSource::File(path) => Ready::File(path),
         });
     }
+    let mut s = Session::new();
+    open(&mut s, input.as_deref(), sample)?;
     for r in &ready {
         match r {
             Ready::Cmd(n, id, p) => {
