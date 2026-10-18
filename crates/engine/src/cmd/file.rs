@@ -366,8 +366,12 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     o.slides = match p.get("slides") {
         Some(Value::Array(a)) => Some(
             a.iter()
-                .filter_map(|v| v.as_u64().map(|x| usize::try_from(x).unwrap_or(usize::MAX)))
-                .map(|i| if i < count { Ok(i) } else { Err(super::no_slide("file.export", i, count)) })
+                .map(|v| {
+                    v.as_u64().and_then(|x| usize::try_from(x).ok()).ok_or_else(|| {
+                        bad("file.export", format!("each entry of `slides` must be a non-negative integer (a 0-based index), not {v}"))
+                    })
+                })
+                .map(|i| i.and_then(|i| if i < count { Ok(i) } else { Err(super::no_slide("file.export", i, count)) }))
                 .collect::<Result<Vec<_>>>()?,
         ),
         Some(Value::String(text)) if !text.trim().is_empty() => Some(parse_slide_range(text, count)?),
@@ -541,7 +545,7 @@ fn picture_bytes(img: &deckcraft_render::Image, format: &str, scale: f64) -> Vec
 
 fn render(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = super::opt_usize_param(p, "slide", "file.render")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
         return Err(super::no_slide("file.render", i, st.doc.slides.len()));
     }
@@ -552,7 +556,7 @@ fn render(s: &mut Session, p: &Value) -> Result<Value> {
 /// The colour the slide is drawn with at one point: what the Eyedropper takes.
 fn color_at(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = super::opt_usize_param(p, "slide", "slide.colorAt")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
         return Err(super::no_slide("slide.colorAt", i, st.doc.slides.len()));
     }
@@ -583,7 +587,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
     match format.as_str() {
         "png" | "jpeg" | "jpg" => {
-            let slides: Vec<usize> = match usize_param(p, "slide") {
+            let slides: Vec<usize> = match super::opt_usize_param(p, "slide", "file.export")? {
                 Some(i) => vec![i],
                 None if bool_or(p, "all", false) => (0..st.doc.slides.len()).collect(),
                 None => vec![st.selection.slide],

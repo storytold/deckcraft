@@ -4773,6 +4773,52 @@ fn a_slide_index_past_the_end_is_refused_by_every_slide_command() {
     assert!(!dir.exists(), "a refused export writes nothing");
 }
 
+/// An `index` (or `from`, `to`, `slide`, an entry of `slides` or `indices`) that is present but
+/// not a non-negative integer is refused, never read as omitted: `-1` must not act on the
+/// current slide or be dropped from a list.
+#[test]
+fn a_malformed_index_is_refused_not_read_as_omitted() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-bad-index-{}", std::process::id()));
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [id], "effect": "fade"})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    for bad in [json!(-1), json!(1.5), json!("1")] {
+        for (cmd, params) in [
+            ("slide.go", json!({"index": bad})),
+            ("slide.reset", json!({"index": bad})),
+            ("slide.notes", json!({"index": bad, "text": "x"})),
+            ("slide.rename", json!({"index": bad, "name": "x"})),
+            ("slide.duplicate", json!({"index": bad})),
+            ("slide.hide", json!({"index": bad, "hidden": true})),
+            ("slide.layout", json!({"index": bad, "layout": "blank"})),
+            ("slide.delete", json!({"index": bad})),
+            ("slide.move", json!({"from": bad, "to": 0})),
+            ("slide.move", json!({"from": 0, "to": bad})),
+            ("slide.selectSlides", json!({"indices": [0, bad]})),
+            ("slide.inspect", json!({"index": bad})),
+            ("transition.set", json!({"index": bad, "kind": "fade"})),
+            ("animation.remove", json!({"index": bad})),
+            ("animation.timing", json!({"index": bad, "duration": 500})),
+            ("animation.clear", json!({"index": bad})),
+            ("animation.move", json!({"index": 0, "to": bad})),
+            ("animation.get", json!({"slide": bad})),
+            ("file.render", json!({"slide": bad})),
+            ("file.export", json!({"path": dir.join("d.png").to_string_lossy(), "format": "png", "slide": bad})),
+            ("file.export", json!({"path": dir.join("d.pdf").to_string_lossy(), "format": "pdf", "slides": [0, bad]})),
+            ("file.export", json!({"path": dir.join("d.gif").to_string_lossy(), "format": "gif", "slides": [0, bad]})),
+            ("section.rename", json!({"index": bad, "name": "x"})),
+            ("section.move", json!({"index": 0, "to": bad})),
+        ] {
+            let err = s.execute(cmd, &params).expect_err(&format!("{cmd} {params}")).to_string();
+            assert!(err.contains("is not a valid index") || err.contains("must be a non-negative integer"), "{cmd} {params}: {err}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().doc, before, "a refused command changes nothing");
+    assert!(!dir.exists(), "a refused export writes nothing");
+}
+
 /// Section indices too, and `section.move {to}` past the end is refused like `slide.move`'s.
 #[test]
 fn a_section_index_past_the_end_is_refused() {

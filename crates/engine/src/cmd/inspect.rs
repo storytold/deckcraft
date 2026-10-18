@@ -111,7 +111,7 @@ fn round(v: f64) -> f64 {
 
 fn slide(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let i = super::opt_usize_param(p, "index", "slide.inspect")?.unwrap_or(st.selection.slide);
     let sl = st.doc.slides.get(i).ok_or_else(|| super::no_slide("slide.inspect", i, st.doc.slides.len()))?;
     let ctx = Ctx::for_slide(&st.doc, sl);
     let shapes: Vec<Value> = sl.shapes.iter().map(|sh| shape_summary(ctx.as_ref(), sh, 0)).collect();

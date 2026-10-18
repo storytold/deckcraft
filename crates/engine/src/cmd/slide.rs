@@ -131,7 +131,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
             }
             sh.text = Some(body);
         }
-        let at = usize_param(p, "at").unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
+        let at = super::opt_usize_param(p, "at", "slide.new")?.unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
         let id = slide.id;
         // Inherit the section of the slide before.
         let section = at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|prev| doc.section_of(prev.id));
@@ -268,7 +268,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
     let from = opt_usize_param(p, "from", "slide.move")?.unwrap_or(s.doc()?.selection.slide);
-    let to = usize_param(p, "to").ok_or_else(|| bad("slide.move", "missing `to`"))?;
+    let to = opt_usize_param(p, "to", "slide.move")?.ok_or_else(|| bad("slide.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         // `to` is the final index, so it has the same range as `from`: refused, never clamped.
         let n = doc.slides.len();
@@ -311,7 +311,7 @@ fn go_to(s: &mut Session, i: usize) -> Result<Value> {
 }
 
 fn go(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = match (usize_param(p, "index"), p.get("id").and_then(Value::as_u64)) {
+    let i = match (super::opt_usize_param(p, "index", "slide.go")?, p.get("id").and_then(Value::as_u64)) {
         (Some(i), _) => i,
         (None, Some(id)) => s
             .doc()?
@@ -352,7 +352,10 @@ fn select_slides(s: &mut Session, p: &Value) -> Result<Value> {
             .map(|a| a.iter().filter_map(Value::as_u64).filter_map(|x| u32::try_from(x).ok()).map(SlideId).collect())
             .unwrap_or_default();
         if let Some(a) = p.get("indices").and_then(Value::as_array) {
-            for i in a.iter().filter_map(Value::as_u64).map(|i| usize::try_from(i).unwrap_or(usize::MAX)) {
+            for x in a {
+                let i = x.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| {
+                    bad("slide.selectSlides", format!("each entry of `indices` must be a non-negative integer (a 0-based index), not {x}"))
+                })?;
                 v.push(st.doc.slides.get(i).ok_or_else(|| super::no_slide("slide.selectSlides", i, st.doc.slides.len()))?.id);
             }
         }
@@ -561,7 +564,7 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_rename(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.rename", "missing `index`"))?;
+    let i = super::opt_usize_param(p, "index", "section.rename")?.ok_or_else(|| bad("section.rename", "missing `index`"))?;
     let name = str_param(p, "name").unwrap_or("").to_string();
     s.edit(|doc, _| {
         let n = doc.sections.len();
@@ -573,7 +576,7 @@ fn section_rename(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_remove(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.remove", "missing `index`"))?;
+    let i = super::opt_usize_param(p, "index", "section.remove")?.ok_or_else(|| bad("section.remove", "missing `index`"))?;
     let with_slides = bool_or(p, "slides", false);
     s.edit(|doc, sel| {
         if i >= doc.sections.len() {
@@ -604,8 +607,8 @@ fn section_remove_all(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn section_move(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.move", "missing `index`"))?;
-    let to = usize_param(p, "to").ok_or_else(|| bad("section.move", "missing `to`"))?;
+    let i = super::opt_usize_param(p, "index", "section.move")?.ok_or_else(|| bad("section.move", "missing `index`"))?;
+    let to = super::opt_usize_param(p, "to", "section.move")?.ok_or_else(|| bad("section.move", "missing `to`"))?;
     s.edit(|doc, _| {
         // `to` is the final index, so it has the same range as `index`: refused, never clamped.
         let n = doc.sections.len();
