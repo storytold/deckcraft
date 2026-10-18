@@ -6069,6 +6069,8 @@ fn slide_new_answers_its_placeholder_ids() {
     assert!(shapes.iter().any(|x| x["id"] == title && x["placeholder"] == "title" && x["text"] == "T"), "{sl}");
     assert!(shapes.iter().any(|x| x["id"] == body), "{sl}");
     s.execute("text.set", &json!({"id": body, "text": "first point"})).unwrap();
+    let keys: Vec<&str> = r["placeholders"].as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["body", "title"], "one key per role, no duplicate under the xml kind: {r}");
     let r = s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     assert_eq!(r["placeholders"], json!({}), "{r}");
 }
@@ -6136,6 +6138,28 @@ fn design_palette_answers_the_active_themes_colours_and_fonts() {
     assert!(lum(harbor["background"].as_str().unwrap()) > 0.8, "Harbor slides are light: {harbor}");
     assert!(lum(harbor["text"].as_str().unwrap()) < 0.2, "Harbor text is dark: {harbor}");
     assert_eq!(harbor["fonts"], json!({"major": "Merriweather", "minor": "Open Sans"}));
+}
+
+/// Like the shape commands, edit.select follows an id to its slide (the window shows it, the
+/// answer says so) instead of answering ok and selecting nothing; an id that is nowhere is
+/// refused; ids spread over two slides are refused rather than half-selected.
+#[test]
+fn edit_select_follows_an_id_to_its_slide() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    let r = s.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    assert_eq!(r, json!({"selected": [a], "currentSlide": 0}), "{r}");
+    let sel = s.doc().unwrap().selection.clone();
+    assert_eq!((sel.slide, sel.shapes.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>()), (0, vec![a]));
+    s.execute("format.size", &json!({"size": 30})).unwrap();
+    let e = s.execute("edit.select", &json!({"ids": [999]})).unwrap_err().to_string();
+    assert!(e.contains("no shape 999 on the current slide (index 0)"), "{e}");
+    let e = s.execute("edit.select", &json!({"ids": [a, b]})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {b} is on slide index 1")) && e.contains("one slide"), "{e}");
+    assert_eq!(s.doc().unwrap().selection.shapes.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>(), vec![a], "a refused select keeps the selection");
 }
 
 #[test]

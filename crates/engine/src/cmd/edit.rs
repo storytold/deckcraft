@@ -704,8 +704,43 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let add = bool_or(p, "add", false);
     let toggle = bool_or(p, "toggle", false);
-    let valid: Vec<ShapeId> = ids.into_iter().filter(|i| s.active().is_some_and(|d| d.shape(*i).is_some())).collect();
-    s.select(|_, sel| {
+    // Ids are unique in the presentation: ids on another slide select there (that slide becomes
+    // current, as for the shape commands); an id that is nowhere, or ids spread over two slides,
+    // are refused rather than quietly selecting nothing (#298).
+    let (valid, moved_to) = {
+        let st = s.doc()?;
+        let mut here = vec![];
+        let mut elsewhere: Vec<(ShapeId, usize)> = vec![];
+        for id in ids {
+            if st.shape(id).is_some() {
+                here.push(id);
+            } else if let Some(i) = st.doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, id).is_some()) {
+                elsewhere.push((id, i));
+            } else {
+                return Err(super::no_such_shape(&st.doc, &st.selection, id, "edit.select"));
+            }
+        }
+        match elsewhere.first().copied() {
+            None => (here, None),
+            Some((first, i)) => {
+                let stray = if here.is_empty() { elsewhere.iter().find(|(_, j)| *j != i).copied() } else { Some((first, i)) };
+                if let Some((id, j)) = stray {
+                    return Err(bad(
+                        "edit.select",
+                        format!("shape {id} is on slide index {j}; edit.select takes ids on one slide (slide.go {{\"index\": {j}}} first)"),
+                    ));
+                }
+                (elsewhere.iter().map(|(id, _)| *id).collect(), Some(i))
+            }
+        }
+    };
+    s.select(|doc, sel| {
+        if let Some(i) = moved_to {
+            sel.slide = i;
+            sel.target = crate::Target::Slides;
+            sel.slides = doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default();
+            sel.shapes.clear();
+        }
         sel.text = None;
         sel.cells = None;
         if toggle {
@@ -726,5 +761,8 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
             sel.shapes = valid.clone();
         }
     })?;
-    Ok(json!({"selected": s.doc()?.selection.shapes}))
+    Ok(match moved_to {
+        Some(i) => json!({"selected": s.doc()?.selection.shapes, "currentSlide": i}),
+        None => json!({"selected": s.doc()?.selection.shapes}),
+    })
 }
