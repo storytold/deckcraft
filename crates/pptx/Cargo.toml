@@ -18,6 +18,7 @@ thiserror = { workspace = true }
 log = { workspace = true }
 
 [dev-dependencies]
+deckcraft-anim = { workspace = true }
 deckcraft-engine = { workspace = true }
 serde_json = { workspace = true }
 deckcraft-color = { workspace = true }

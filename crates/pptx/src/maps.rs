@@ -1,7 +1,7 @@
 //! Mappings between our transition / animation ids and PresentationML elements and preset
 //! numbers, shared by the reader and the writer.
 
-use deckcraft_model::anim::{ANIMATIONS, AnimClass};
+use deckcraft_model::anim::{ANIMATIONS, AnimClass, AnimStart};
 
 use crate::xml::{A, El, W};
 
@@ -380,6 +380,30 @@ pub fn preset_for(a: &deckcraft_model::Animation) -> u32 {
             AnimClass::Media => 1,
         },
     }
+}
+
+/// The effects a by-paragraph build saves as, in paragraph order: each non-empty paragraph's index
+/// and start. Top-level paragraphs with text take turns (the first with the build's own `start`,
+/// the rest On Click after an On Click start, After Previous otherwise); sub-level and blank
+/// paragraphs come in with the paragraph before them, as the slide show plays them. Paragraphs
+/// before the first top-level one are not part of the build.
+pub fn paragraph_build(text: &deckcraft_model::text::TextBody, start: AnimStart) -> Vec<(u32, AnimStart)> {
+    let filled = |p: &deckcraft_model::text::Paragraph| p.runs.iter().any(|r| !r.text.trim().is_empty());
+    let Some(top) = text.paragraphs.iter().filter(|p| filled(p)).map(|p| p.level).min() else { return vec![] };
+    let later = if start == AnimStart::OnClick { AnimStart::OnClick } else { AnimStart::AfterPrevious };
+    let mut out: Vec<(u32, AnimStart)> = vec![];
+    for (i, p) in text.paragraphs.iter().enumerate().take(10_000) {
+        let Ok(i) = u32::try_from(i) else { break };
+        if p.is_empty() {
+            continue;
+        }
+        if filled(p) && p.level <= top {
+            out.push((i, if out.is_empty() { start } else { later }));
+        } else if !out.is_empty() {
+            out.push((i, AnimStart::WithPrevious));
+        }
+    }
+    out
 }
 
 #[cfg(test)]
