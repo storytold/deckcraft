@@ -27,6 +27,7 @@ pub mod ribbon;
 pub mod selpane;
 pub mod settings;
 pub mod show;
+pub mod show_ink;
 pub mod sorter;
 pub mod squiggles;
 pub mod status;
@@ -381,7 +382,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
     ("show.presenter", "Presenter View", None, "{on?: bool}"),
-    ("show.end", "End Show", None, "{}"),
+    ("show.end", "End Show", None, "{keep?: bool (answer the keep-ink prompt)}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool}"),
     ("app.home", "Home", None, "{on?}"),
     ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account, on?: bool}"),
@@ -957,8 +958,9 @@ impl SlideApp {
             }
             "show.presenter" => self.ui.presenter_view = self.flag(p, self.ui.presenter_view),
             "show.end" => {
-                self.show = None;
-                self.media.stop_owned(media::Owner::Show);
+                // Route through the show's own exit path (fullscreen off, keep-ink prompt),
+                // same as the control channel's `show.end`.
+                self.end_show(p.get("keep").and_then(Value::as_bool));
             }
             "animation.preview" => {
                 if p.get("on").and_then(Value::as_bool) == Some(false) {
@@ -1163,6 +1165,27 @@ impl SlideApp {
         self.anim_preview = Some(AnimPreview { uid, slide, slide_ptr: ptr, started: None, elapsed: 0.0, timeline });
         self.set_status("Previewing animations");
         Ok(json!({"playing": true, "slide": slide, "duration": duration}))
+    }
+
+    /// End the running show through its normal exit path (fullscreen off, keep-ink prompt).
+    /// `keep` answers the prompt in advance (automation): true = keep ink, false = discard.
+    pub fn end_show(&mut self, keep: Option<bool>) {
+        let Some(show) = self.show.as_mut() else { return };
+        if let Some(k) = keep
+            && show.ink().any()
+            && !show.preview_only
+        {
+            show.set_pending_keep(k);
+        }
+        if show.ask_keep() {
+            // The prompt is already open: the pending answer is enough, no extra Escape
+            // (which would mean Discard).
+            return;
+        }
+        let key =
+            |key: egui::Key, pressed: bool| egui::Event::Key { key, physical_key: None, pressed, repeat: false, modifiers: egui::Modifiers::NONE };
+        self.synthetic.push(key(egui::Key::Escape, true));
+        self.synthetic.push(key(egui::Key::Escape, false));
     }
 
     fn pick_and_open(&mut self) {

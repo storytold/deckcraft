@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use deckcraft_model::text::TextBody;
-use deckcraft_model::{LayoutId, LayoutType, Presentation, Section, SlideId, defaults};
+use deckcraft_model::{LayoutId, LayoutType, Presentation, Section, Shape, ShapeKind, SlideId, defaults};
 use serde_json::{Value, json};
 
 use super::*;
@@ -63,6 +63,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{text, markdown?: bool (headings are slides, list items bullets)}",
             has_doc,
             from_outline
+        ),
+        cmd!(
+            "slide.annotate",
+            "Add Ink Annotations",
+            [],
+            None,
+            "{index?, strokes: [{points: [[x,y],…], color: \"rrggbb\", width, highlighter?}]} — append ink to a slide (kept show annotations)",
+            has_slide,
+            annotate
         ),
     ]
 }
@@ -496,6 +505,90 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// Caps for hostile input: strokes per call, points per stroke.
+const ANNOTATE_MAX_STROKES: usize = 10_000;
+const ANNOTATE_MAX_POINTS: usize = 100_000;
+
+/// Append ink strokes to a slide's ink layer (kept show annotations; one ink shape per slide).
+fn annotate(s: &mut Session, p: &Value) -> Result<Value> {
+    let i = index_of(s, p)?;
+    let Some(list) = p.get("strokes").and_then(Value::as_array) else {
+        return Err(bad("slide.annotate", "missing `strokes`"));
+    };
+    if list.len() > ANNOTATE_MAX_STROKES {
+        return Err(bad("slide.annotate", "too many strokes"));
+    }
+    let mut parsed: Vec<deckcraft_model::InkStroke> = Vec::new();
+    for st in list.iter() {
+        let Some(points) = st.get("points").and_then(Value::as_array) else {
+            return Err(bad("slide.annotate", "stroke missing `points`"));
+        };
+        if points.len() > ANNOTATE_MAX_POINTS {
+            return Err(bad("slide.annotate", "too many points"));
+        }
+        let mut pts: Vec<(f64, f64, f32)> = Vec::with_capacity(points.len());
+        for pt in points.iter() {
+            let Some(a) = pt.as_array() else { return Err(bad("slide.annotate", "points are [x, y] pairs")) };
+            let (Some(x), Some(y)) = (a.first().and_then(Value::as_f64), a.get(1).and_then(Value::as_f64)) else {
+                return Err(bad("slide.annotate", "points are [x, y] pairs"));
+            };
+            if !x.is_finite() || !y.is_finite() {
+                return Err(bad("slide.annotate", "non-finite point"));
+            }
+            pts.push((x, y, 0.5));
+        }
+        if pts.is_empty() {
+            continue;
+        }
+        // A one-point "dot" stroke renders and exports as nothing; promote it to a
+        // zero-length segment (round caps make it a dot).
+        if let Some(&first) = pts.first()
+            && pts.len() == 1
+        {
+            pts.push(first);
+        }
+        let Some(color) = str_param(st, "color").and_then(deckcraft_color::Rgba::from_hex) else {
+            return Err(bad("slide.annotate", "bad `color` (want \"rrggbb\")"));
+        };
+        let Some(width) = f64_param(st, "width").filter(|w| *w > 0.0) else {
+            return Err(bad("slide.annotate", "bad `width`"));
+        };
+        parsed.push(deckcraft_model::InkStroke { points: pts, color, width, highlighter: bool_or(st, "highlighter", false) });
+    }
+    if parsed.is_empty() {
+        return Err(bad("slide.annotate", "no strokes"));
+    }
+    let added = parsed.len();
+    s.edit(|doc, _| {
+        let Some(slide) = doc.slides.get(i) else { return Err(bad("slide.annotate", "no such slide")) };
+        let existing = slide.shapes.iter().rev().find(|sh| matches!(sh.kind, ShapeKind::Ink { .. })).map(|sh| sh.id);
+        let id = match existing {
+            Some(id) => id,
+            None => {
+                let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("slide.annotate", NO_ID_SPACE))?);
+                let size = doc.slide_size;
+                let Some(sl) = doc.slides.get_mut(i) else { return Err(bad("slide.annotate", "no such slide")) };
+                Arc::make_mut(sl).shapes.push(Shape {
+                    id,
+                    name: "Ink".into(),
+                    xfrm: Some(Xfrm::new(0.0, 0.0, size.width, size.height)),
+                    kind: ShapeKind::Ink { strokes: vec![] },
+                    ..Default::default()
+                });
+                id
+            }
+        };
+        let Some(sl) = doc.slides.get_mut(i) else { return Err(bad("slide.annotate", "no such slide")) };
+        if let Some(sh) = deckcraft_model::find_shape_mut(&mut Arc::make_mut(sl).shapes, id)
+            && let ShapeKind::Ink { strokes } = &mut sh.kind
+        {
+            strokes.extend(parsed.iter().cloned());
+        }
+        Ok(())
+    })?;
+    Ok(json!({"slide": i, "added": added}))
+}
+
 fn notes(s: &mut Session, p: &Value) -> Result<Value> {
     let i = index_of(s, p)?;
     // Formatted notes as a whole (the notes editors), or text: then only what was retyped
@@ -633,9 +726,7 @@ fn from_outline(s: &mut Session, p: &Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
-    use crate::Session;
+    use super::*;
 
     #[test]
     fn duplicate_keeps_section_order_in_step_with_slides() {
@@ -666,5 +757,92 @@ mod tests {
         let got: Vec<(u8, String)> = paras.iter().map(|p| (p.level, p.text())).collect();
         let want = [(0, "Level one"), (1, "Level two"), (2, "Level three"), (0, "Level one again")];
         assert_eq!(got, want.iter().map(|(l, t)| (*l, t.to_string())).collect::<Vec<_>>());
+    }
+
+    fn ink_strokes(s: &Session, slide: usize) -> Vec<deckcraft_model::InkStroke> {
+        s.active()
+            .and_then(|st| st.doc.slides.get(slide))
+            .map(|sl| {
+                sl.shapes
+                    .iter()
+                    .filter_map(|sh| match &sh.kind {
+                        ShapeKind::Ink { strokes } => Some(strokes.clone()),
+                        _ => None,
+                    })
+                    .flatten()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn annotate_appends_to_one_ink_shape_per_slide() {
+        let mut s = Session::with_new();
+        let r = s
+            .execute(
+                "slide.annotate",
+                &json!({"index": 0, "strokes": [
+                    {"points": [[10.0, 10.0], [50.0, 40.0]], "color": "#e53935", "width": 2.5},
+                    {"points": [[100.0, 100.0]], "color": "#ffe000", "width": 14.0, "highlighter": true},
+                ]}),
+            )
+            .expect("annotate");
+        assert_eq!(r["added"], 2);
+        // A second call joins the same ink shape (no duplicate ink layers).
+        s.execute("slide.annotate", &json!({"strokes": [{"points": [[1.0, 1.0], [2.0, 2.0]], "color": "#000000", "width": 1.0}]}))
+            .expect("annotate again");
+        let st = s.active().expect("doc");
+        let ink_shapes = st.doc.slides[0].shapes.iter().filter(|sh| matches!(sh.kind, ShapeKind::Ink { .. })).count();
+        assert_eq!(ink_shapes, 1);
+        let strokes = ink_strokes(&s, 0);
+        assert_eq!(strokes.len(), 3);
+        assert_eq!(strokes[0].points[0], (10.0, 10.0, 0.5));
+        assert_eq!(strokes[0].color, deckcraft_color::Rgba::rgb(0xE5, 0x39, 0x35));
+        assert!(strokes[1].highlighter);
+        assert_eq!(strokes[2].width, 1.0);
+        // Undo removes the annotations again, one command at a time.
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(ink_strokes(&s, 0).len(), 2);
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(ink_strokes(&s, 0).len(), 0);
+    }
+
+    #[test]
+    fn annotate_validates_params() {
+        let mut s = Session::with_new();
+        assert!(s.execute("slide.annotate", &json!({})).is_err(), "missing strokes");
+        assert!(s.execute("slide.annotate", &json!({"strokes": []})).is_err(), "empty strokes");
+        assert!(s.execute("slide.annotate", &json!({"strokes": [{"points": [[0, 0]], "color": "oops", "width": 1.0}]})).is_err(), "bad color");
+        assert!(
+            s.execute("slide.annotate", &json!({"strokes": [{"points": [[0, 0]], "color": "#ffffff", "width": -1.0}]})).is_err(),
+            "negative width"
+        );
+        assert!(
+            s.execute("slide.annotate", &json!({"strokes": [{"points": [["a", 0]], "color": "#ffffff", "width": 1.0}]})).is_err(),
+            "non-numeric point"
+        );
+        assert!(
+            s.execute("slide.annotate", &json!({"index": 99, "strokes": [{"points": [[0, 0]], "color": "#ffffff", "width": 1.0}]})).is_err(),
+            "no such slide"
+        );
+        // Strokes with no points are skipped; if all are empty the command fails.
+        assert!(s.execute("slide.annotate", &json!({"strokes": [{"points": [], "color": "#ffffff", "width": 1.0}]})).is_err());
+        assert!(ink_strokes(&s, 0).is_empty());
+    }
+
+    #[test]
+    fn annotate_promotes_dots_and_rejects_overflow() {
+        let mut s = Session::with_new();
+        // A single-point stroke becomes a zero-length segment so it renders as a dot.
+        s.execute("slide.annotate", &json!({"strokes": [{"points": [[100.0, 50.0]], "color": "#e53935", "width": 3.0}]})).expect("dot");
+        let strokes = ink_strokes(&s, 0);
+        assert_eq!(strokes.len(), 1);
+        assert_eq!(strokes[0].points.len(), 2);
+        assert_eq!(strokes[0].points[0], strokes[0].points[1]);
+        // Over the caps is an error, not a silent truncation.
+        let many = vec![json!({"points": [[0, 0]], "color": "#ffffff", "width": 1.0}); ANNOTATE_MAX_STROKES + 1];
+        assert!(s.execute("slide.annotate", &json!({"strokes": many})).is_err());
+        let many_pts = vec![json!([0, 0]); ANNOTATE_MAX_POINTS + 1];
+        assert!(s.execute("slide.annotate", &json!({"strokes": [{"points": many_pts, "color": "#ffffff", "width": 1.0}]})).is_err());
     }
 }

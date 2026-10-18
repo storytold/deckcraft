@@ -169,12 +169,25 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 app.stop_anim_preview();
                 return ok(json!({"preview": false}));
             }
-            if let Some(show) = app.show.as_ref()
-                && !show.ended
+            // Keys reach the show whenever it is up — including the end screen and the modal
+            // keep-ink prompt (the show covers the whole window; the editor must not see them).
+            if app.show.is_some()
                 && let Some(key) = key_from(k)
             {
-                app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
-                app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE });
+                let b = |n: &str| p.get(n).and_then(Value::as_bool).unwrap_or(false);
+                let mut mods = egui::Modifiers::NONE;
+                mods.shift = b("shift");
+                mods.alt = b("alt");
+                if b("cmd") || b("ctrl") {
+                    mods.command = true;
+                    if cfg!(target_os = "macos") {
+                        mods.mac_cmd = true;
+                    } else {
+                        mods.ctrl = true;
+                    }
+                }
+                app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: mods });
+                app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: mods });
                 return ok(json!({"show": true}));
             }
             wrap(app.session.key(k, mods_from(p)).map_err(|e| e.to_string()))
@@ -344,15 +357,8 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             ok(Value::Null)
         }
         "show.end" => {
-            if app.show.is_some() {
-                app.synthetic.push(egui::Event::Key {
-                    key: egui::Key::Escape,
-                    physical_key: None,
-                    pressed: true,
-                    repeat: false,
-                    modifiers: egui::Modifiers::NONE,
-                });
-            }
+            // `keep` answers the keep-ink prompt in advance (otherwise it opens and waits).
+            app.end_show(p.get("keep").and_then(Value::as_bool));
             ok(Value::Null)
         }
         "app.open" => {

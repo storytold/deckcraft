@@ -8,8 +8,8 @@ The summary between `<!-- SUMMARY -->
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 17 | 25 | 12 | 55% |
+| P1 | 65 | 46 | 15 | 4 | 82% |
+| P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
 |---|---|
@@ -29,7 +29,7 @@ The summary between `<!-- SUMMARY -->
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
-| Slide show | 68% |
+| Slide show | 76% |
 | Review | 70% |
 | Draw | 50% |
 | Undo & clipboard | 100% |
@@ -212,8 +212,8 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Slide show | Full-screen show from start / current | P0 | D |
 | Slide show | Navigation (keys, click, go to slide, blank screen) | P0 | D |
 | Slide show | Presenter view (notes, next slide, timer) | P0 | P |
-| Slide show | Pen and highlighter ink during the show | P1 | P |
-| Slide show | Laser pointer | P2 | P |
+| Slide show | Pen and highlighter ink during the show | P1 | D |
+| Slide show | Laser pointer | P2 | D |
 | Slide show | Rehearse timings | P2 | D |
 | Slide show | Custom shows | P2 | D |
 | Slide show | Set up show (loop, kiosk, without animation) | P1 | D |
