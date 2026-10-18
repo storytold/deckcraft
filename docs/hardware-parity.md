@@ -26,7 +26,7 @@ because it mostly follows from hardware use.
 | Video decode | Hardware (AVFoundation/VideoToolbox, Media Foundation) | Software only: pure-Rust H.264, HEVC, VP9, AV1 (`crates/h264`, `hevc`, `vp9`, `av1`) |
 | 4K video in the show | smooth on hardware decode | unmeasured; likely CPU-bound |
 | Audio output | Core Audio / WASAPI | `cpal` (Core Audio, WASAPI, ALSA); browser Web Audio |
-| Microphone (record audio, narration) | yes | no |
+| Microphone (record audio, narration) | yes | yes during Record Slide Show (cpal default input, one clip per slide); no free-standing recorder |
 | Camera (Cameo, record with camera) | yes | no |
 | Screen recording | yes | no |
 
@@ -79,5 +79,6 @@ outlines every frame (#67, fix open), and the decoders run in software.
 | 2026-10-14 | minor | A two-finger twist on the trackpad rotates the selected shapes, as one undo step. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | A sideways trackpad swipe turns the page in Normal view (when the slide fits) and in the show. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | Pen pressure scales ink width; tilt, pinch zoom and trackpad gestures remain (estimate 3–6 h → 2–5 h) |
+| 2026-10-14 | minor | Record Slide Show captures the default microphone |
 | 2026-10-12 | minor | IME input methods (#101) |
 | 2026-10-10 | major | Created: rendering, media, displays, input and performance against PowerPoint 16.113 |

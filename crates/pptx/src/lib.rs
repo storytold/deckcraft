@@ -29,6 +29,9 @@ pub(crate) const SECTION_EXT_URI: &str = "{521415D9-36F7-43E2-AB2F-B90AF26B5E84}
 
 /// Extension URI of the modern-comments anchor in a slide (names the threaded comment part).
 pub(crate) const COMMENTS_EXT_URI: &str = "{6950BFC3-D8DA-4A85-94F7-54DA5524770B}";
+/// Private extension for a laser trace recorded in the show. PowerPoint ignores an extension it
+/// does not know; DeckCraft reads it back.
+pub(crate) const LASER_EXT_URI: &str = "{D3C4A571-1A5E-4E01-9C11-DEC0A7710001}";
 
 #[derive(Debug, thiserror::Error)]
 pub enum PptxError {

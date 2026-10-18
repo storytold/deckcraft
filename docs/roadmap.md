@@ -64,7 +64,7 @@ reference renders, a Windows tester with the affected GPUs, native speakers to r
 ## After beta: toward full parity (~245–440 h more)
 
 SmartArt depth, the remaining animation effects and motion paths, edit-point segment types and
-3-D depth, bundled proofing dictionaries, Zoom depth, recording, video export, legacy `.ppt` import
+3-D depth, bundled proofing dictionaries, Zoom depth, screen capture (Record Slide Show already keeps timings, narration, pen ink and a laser trace), video export, legacy `.ppt` import
 and `.odp` (owner decision), GPU rasterization, hardware video decode, pen tilt (pressure already
 scales ink width) and pinch zoom, the other 21 languages with RTL mirroring, a larger template
 gallery (six original starters ship), and local AI features (owner decision on models). Itemized
@@ -138,6 +138,8 @@ plan above.
 | 2026-10-13 | minor | M10: Grid Options dialog; New Window stays open |
 | 2026-10-13 | minor | M9: WordArt adjust handles drag; the Transform gallery and command stay open |
 | 2026-10-14 | trivial | After beta: pen pressure scales ink width; tilt and pinch zoom remain |
+| 2026-10-14 | trivial | Record Slide Show keeps narration and a laser trace; screen capture and camera stay after beta |
+| 2026-10-14 | trivial | Record Slide Show keeps timings and pen ink; narration audio and screen capture stay after beta |
 | 2026-10-10 | minor | Added the alpha gate (six core workflows): all pass, two with partial depth; stage stays alpha |
 | 2026-10-10 | major | Created: current focus, ranked beta plan with hours, milestones M0–M14 with status, the old alpha checklist as history |
 

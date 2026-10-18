@@ -569,6 +569,50 @@ fn para_count(s: &Shape) -> u32 {
     s.text.as_ref().map(|t| t.paragraphs.iter().filter(|p| !p.is_empty()).count()).unwrap_or(0).min(10_000) as u32
 }
 
+/// Slide-start audio: narration and other clips set to play automatically. `(spid, volume in
+/// thousandths of a percent)`.
+fn autoplay_audio(shapes: &[Shape], idmap: &IdMap) -> Vec<(u32, u32)> {
+    let mut out = Vec::new();
+    fn walk(shapes: &[Shape], idmap: &IdMap, out: &mut Vec<(u32, u32)>, depth: usize) {
+        if depth > 8 || out.len() >= 32 {
+            return;
+        }
+        for s in shapes.iter().take(20_000) {
+            match &s.kind {
+                ShapeKind::Media(m) if !m.video && (m.narration || m.autoplay) => {
+                    if let Some(spid) = idmap.get(s.id) {
+                        let vol =
+                            if m.volume.is_finite() { (m.volume.clamp(0.0, 1.0) * 100_000.0).round().clamp(0.0, 100_000.0) as u32 } else { 100_000 };
+                        out.push((spid, vol));
+                    }
+                }
+                ShapeKind::Group { children, .. } => walk(children, idmap, out, depth + 1),
+                _ => {}
+            }
+            if out.len() >= 32 {
+                return;
+            }
+        }
+    }
+    walk(shapes, idmap, &mut out, 0);
+    out
+}
+
+fn audio_node(w: &mut W, ids: &mut Ids, spid: u32, vol: u32) {
+    w.open0("p:audio");
+    w.open("p:cMediaNode", A::new().a("vol", vol.min(100_000)));
+    w.open("p:cTn", A::new().a("id", ids.next()).a("fill", "hold").a("display", "0"));
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", 0));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close("p:audio");
+}
+
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
@@ -621,7 +665,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    let audio = autoplay_audio(shapes, idmap);
+    if main.is_empty() && triggered.is_empty() && audio.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -691,6 +736,9 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         trig_cond(w);
         w.close("p:nextCondLst");
         w.close("p:seq");
+    }
+    for (spid, vol) in audio {
+        audio_node(w, &mut ids, spid, vol);
     }
     w.close("p:childTnLst");
     w.close("p:cTn");
