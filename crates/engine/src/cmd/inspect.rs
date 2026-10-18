@@ -121,7 +121,7 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
         (deckcraft_model::Fill::Solid { color }, ph) => json!(format!("#{}", c.color(&color, ph).hex())),
         (f, _) => serde_json::to_value(&f).ok().and_then(|v| v.get("kind").cloned()).unwrap_or_default(),
     });
-    Ok(json!({
+    let mut v = json!({
         "index": i,
         "id": sl.id,
         "layout": st.doc.layout(sl.layout).map(|(_, l)| l.name.clone()),
@@ -134,7 +134,14 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
         "notesBody": sl.notes,
         "comments": sl.comments.len(),
         "hidden": sl.hidden,
-    }))
+    });
+    // Empty notes are "", not a formatted body full of nulls.
+    if sl.notes_text().is_empty()
+        && let Some(o) = v.as_object_mut()
+    {
+        o.remove("notesBody");
+    }
+    Ok(v)
 }
 
 fn actions(s: &mut Session, p: &Value) -> Result<Value> {
