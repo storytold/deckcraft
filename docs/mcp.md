@@ -103,7 +103,10 @@ commands. The editor counts slides from 1 ("Slide 3 of 8" is index 2), so `inspe
 number printed on the slide may start elsewhere). A slide, section or animation index past the end
 answers with the valid range (`no slide at index 8; indices run 0 through 7`) and changes nothing,
 and `slide.move`, `section.move` and `animation.move` refuse a `to` past the end instead of
-clamping it.
+clamping it. `at` is an insertion position (`slide.new`, `section.add`, `slide.reuse`), so one past
+the end is clamped to the end. An index that is not a non-negative integer (`-1`, `1.5`, `"2"`)
+is refused, never read as omitted (`null` is the same as leaving the key out), and so is a table
+`cells` entry that is not `[row, col]` or names a cell outside the table.
 
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
 
