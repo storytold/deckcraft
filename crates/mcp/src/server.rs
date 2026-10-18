@@ -22,7 +22,8 @@ const INSTRUCTIONS: &str = "DeckCraft is a presentation app (a PowerPoint clone)
 current slide (y down; the default 16:9 slide is 960×540). Every action is a command: find ids and parameters with \
 list_commands and run them with run_command (or several with batch). Typical flow: new_presentation → add_slide \
 {layout:\"titleAndContent\", title, body} → add_shape / add_text_box / insert_picture / insert_chart → \
-inspect_slide to read back ids, boxes and text → render_slide to look at the result. Shape ids are unique in the presentation: a shape or text command given an id on another slide edits it \
+inspect_slide to read back ids, boxes and text → render_slide to look at the result (image content; a client that cannot read \
+images: export {path, format: \"png\", slide} and view the file). Shape ids are unique in the presentation: a shape or text command given an id on another slide edits it \
 there, makes that slide current and says so in its answer ({changed, onSlides, currentSlide}); only commands \
 that need several shapes on one slide, such as shape.connect and arrange.*, work on the current slide. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
 the selected text or shapes; shape.fill, shape.line and the other shape commands whose parameters list `ids` act on \
