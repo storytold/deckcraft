@@ -153,10 +153,13 @@ fn steps(default: usize) -> usize {
     std::env::var("DECKCRAFT_SOAK_STEPS").ok().and_then(|v| v.parse().ok()).unwrap_or(default)
 }
 
+/// 1000 steps a seed: at 400, seed 0xDEC0_C2AF sat on the 10% floor and one step that only
+/// bumped `next_id` (design.headerFooter adding nothing) decided it; at 1000 every seed edits
+/// 13% or more and the four run in about 1.5 s.
 #[test]
 fn soak_random_edits_keep_the_document_valid() {
     for seed in [1, 0xDEC0_C2AF, 42, 7_777_777] {
-        soak(seed, steps(400));
+        soak(seed, steps(1000));
     }
 }
 
