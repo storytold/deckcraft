@@ -13,7 +13,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "document.inspect", "Inspect Presentation", [], None, "{} → slides with titles, layouts, shape counts; selection; size; theme", has_doc, document),
         cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?, animations?: true (the full list; default a summary {count, clickSteps}, animation.get has the list)} → the slide's shapes with ids, kinds, boxes, text, fills, animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
         cmd!(query "slide.actions", "Inspect Slide Actions", [], None, "{index?} → {index, slideId, actions: [{owner, event, type, target, hyperlink}]}; lists shape click/hover actions and text-run links/hover actions (including table cells) without executing them", has_doc, actions),
-        cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → full shape JSON plus its effective box", has_doc, shape),
+        cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → {shape: full shape JSON, box: its effective box, slide: the index of the slide it is on} (any slide; moves nothing)", has_doc, shape),
         cmd!(query "commands.list", "List Commands", [], None, "{filter?: substring} → [{id, label, params, enabled}]", always, commands),
     ]
 }
@@ -254,9 +254,20 @@ fn shape(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let id =
         id_param(p, "id", "shape.inspect")?.or_else(|| st.selection.shapes.first().copied()).ok_or_else(|| bad("shape.inspect", "missing `id`"))?;
-    let sh = st.shape(id).ok_or_else(|| bad("shape.inspect", format!("no shape {id}")))?;
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    Ok(json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x}))
+    // Ids are unique in the presentation: a read-only lookup finds the shape on any slide
+    // without making that slide current, and says which slide it is on.
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.inspect"))?;
+    let x = xfrm_of(&st.doc, &ctx, sh);
+    let mut v = json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x});
+    if let Some(i) = slide_of(&ctx) {
+        v["slide"] = json!(i);
+    }
+    Ok(v)
+}
+
+/// The slide index of a lookup's context when the shape is on a slide (not a master or layout).
+pub(crate) fn slide_of(ctx: &crate::Selection) -> Option<usize> {
+    matches!(ctx.target, crate::Target::Slides).then_some(ctx.slide)
 }
 
 fn commands(s: &mut Session, p: &Value) -> Result<Value> {
