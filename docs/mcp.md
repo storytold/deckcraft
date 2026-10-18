@@ -120,7 +120,9 @@ current, so a following `slide.new` lands after it; `section.add` answers the re
 same footer and number; `comment.reply`/`comment.resolve` answer the thread's state and
 `comment.list {all: true}` lists every slide's comments with their slide index (without `all` it
 is the current slide only); `edit.undo`/`edit.redo` answer `{label, slide}`;
-`transition.applyAll` answers `{slides}` (kind, duration and options are all copied). An unknown
+`transition.applyAll` answers `{slides, source, kind}` (kind, duration and options are all copied
+from slide `source`, the current slide) and is refused when the current slide has no transition,
+since copying nothing would clear every slide; `{clear: true}` does that on purpose. An unknown
 `table.style` id or a `chart.options` `palette` that is not a palette name (`colorful1`…`4`,
 `monochrome1`…`13`) is refused naming the valid values.
 

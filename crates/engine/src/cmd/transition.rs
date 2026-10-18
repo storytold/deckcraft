@@ -44,7 +44,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Apply To All",
             ["Transitions", "Timing"],
             None,
-            "{} (copies the current slide's transition, kind, duration and options alike, to every slide) → {slides: n}",
+            "{clear?: true} (copies the current slide's transition, kind, duration and options alike, to every slide; refused when the current slide has none unless clear: true, which removes every slide's transition) → {slides: n, source: index of the slide copied from, kind: its transition kind, none when clearing}",
             has_slide,
             apply_all
         ),
@@ -205,13 +205,23 @@ fn sound(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"sound": name, "media": media.0, "playable": audible, "loop": lp}))
 }
 
-fn apply_all(s: &mut Session, _p: &Value) -> Result<Value> {
-    s.edit(|doc, sel| {
-        let t = doc.slides.get(sel.slide).and_then(|x| x.transition.clone());
+fn apply_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let clear = bool_param(p, "clear") == Some(true);
+    let st = s.doc()?;
+    let source = st.selection.slide;
+    let t = st.doc.slides.get(source).and_then(|x| x.transition.clone());
+    if t.is_none() && !clear {
+        return Err(bad(
+            "transition.applyAll",
+            format!("slide index {source} has no transition to copy; go to the slide whose transition you want, or pass clear: true"),
+        ));
+    }
+    let kind = t.as_ref().map_or_else(|| "none".to_string(), |t| t.kind.clone());
+    s.edit(|doc, _| {
         for sl in &mut doc.slides {
             Arc::make_mut(sl).transition.clone_from(&t);
         }
-        Ok(json!({"slides": doc.slides.len()}))
+        Ok(json!({"slides": doc.slides.len(), "source": source, "kind": kind}))
     })
 }
 
