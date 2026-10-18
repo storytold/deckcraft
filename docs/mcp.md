@@ -113,8 +113,8 @@ current slide. `batch` items and `run_command` may name a tool (`add_shape`,
 or its whole answer when it has none), so insert, connect and animate fit in one batch; a `$name`
 with no such earlier item is refused.
 
-Answers carry what the next step needs, so it costs no inspect: `insert.table`, `insert.chart` and
-`insert.picture` answer `{id, rect}`; the `table.insertRow*`/`insertColumn*` commands answer the
+Answers carry what the next step needs, so it costs no inspect: `insert.table`, `insert.chart`,
+`insert.picture` and `insert.smartArt` (which takes a `rect` too) answer `{id, rect}`; the `table.insertRow*`/`insertColumn*` commands answer the
 table's `rect`, `rows`, `cols` and `overflows` (true when the box runs off the slide);
 `slide.duplicate` answers the copy's `index`, `placeholders` and `shapes`; `slide.move` answers
 `{index, id}`; `slide.fromOutline` answers `{slides, indices, ids}` and leaves its last new slide
