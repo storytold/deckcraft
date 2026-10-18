@@ -267,7 +267,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "pointer",
             "Pointer gesture",
-            "Drive the active tool with pointer events in slide points (origin top-left, y down; 960×540 for 16:9): down/drag/up/move/doubleclick/contextclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret; contextclick selects like a right click).",
+            "Drive the active tool with pointer events in slide points (origin top-left, y down; 960×540 for 16:9): down/drag/up/move/doubleclick/contextclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret; contextclick selects like a right click). Answers `selected: [{id, rect}]`, the selection's boxes after the gesture, so no inspect is needed after a drag.",
             obj(
                 json!({"events": {"type": "array", "items": obj(json!({"kind": string("down|drag|up|move|doubleclick|tripleclick|contextclick"), "x": num("x (pt)"), "y": num("y (pt)"), "mods": mods_schema()}), &["kind", "x", "y"])}, "mods": mods_schema()}),
                 &["events"],
@@ -284,7 +284,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "key",
             "Press key",
-            "Press a key as on the keyboard: text editing keys (arrows, Backspace, Enter, Tab), nudges (with shapes selected, an arrow key moves them 6 pt, alt+arrow 1 pt), and shortcuts (cmd+B…).",
+            "Press a key as on the keyboard: text editing keys (arrows, Backspace, Enter, Tab), nudges (with shapes selected, an arrow key moves them 6 pt, alt+arrow 1 pt; the answer carries `selected: [{id, rect}]`, the moved boxes), and shortcuts (cmd+B…).",
             obj(json!({"key": string("Key name or character"), "mods": mods_schema()}), &["key"]),
             false,
         ),
@@ -405,6 +405,21 @@ fn slide_alias(tool: &str, a: &Value, to: &str) -> Result<Value, String> {
         }
     }
     Ok(p)
+}
+
+/// A `key` or `pointer` answer with `selected: [{id, rect}]`, the selection's boxes after the
+/// action: the engine answers it itself for a nudge or a gesture; an app whose answer lacks it
+/// (an older build) gets one follow-up `edit.selection`, so the agent still spends one call.
+fn with_selected(b: &mut dyn Backend, mut v: Value, want: bool) -> Value {
+    if want
+        && let Some(o) = v.as_object_mut()
+        && !o.contains_key("selected")
+        && let Ok(sel) = exec(b, "edit.selection", json!({}))
+        && let Some(s) = sel.get("selected")
+    {
+        o.insert("selected".into(), s.clone());
+    }
+    v
 }
 
 fn wrap(r: Result<Value, String>) -> ToolResult {
@@ -566,12 +581,16 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "insert_table" => wrap(exec(b, "insert.table", with_rect(&a))),
         "insert_chart" => wrap(exec(b, "insert.chart", with_rect(&a))),
         "select" => wrap(exec(b, "edit.select", a)),
-        "pointer" => wrap(b.call("ui.pointer", a)),
+        "pointer" => wrap(b.call("ui.pointer", a).map(|v| with_selected(b, v, true))),
         "select_tool" => wrap(b.call("ui.tool.select", a)),
         "key" => {
             let mut p = a.get("mods").cloned().filter(Value::is_object).unwrap_or(json!({}));
             p["key"] = a.get("key").cloned().unwrap_or_default();
-            wrap(b.call("ui.key", p))
+            let nudge = matches!(
+                a.get("key").and_then(Value::as_str).map(str::to_ascii_lowercase).as_deref(),
+                Some("arrowleft" | "arrowright" | "arrowup" | "arrowdown" | "left" | "right" | "up" | "down")
+            );
+            wrap(b.call("ui.key", p).map(|v| with_selected(b, v, nudge)))
         }
         "type_text" => wrap(b.call("ui.text", a)),
         "screenshot" => {
