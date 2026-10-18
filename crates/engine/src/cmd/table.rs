@@ -296,7 +296,15 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
 
 fn rows_cols(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
     let (r, c) = at(s, p);
-    let keep_width = bool_or(p, "keepWidth", true);
+    // Absent: keep the table's width; present, it must be a bool, so a mistyped value is refused
+    // rather than silently taken as the default.
+    let keep_width = match (op, p.get("keepWidth")) {
+        (_, None) | (_, Some(Value::Null)) => true,
+        (_, Some(Value::Bool(b))) => *b,
+        ("colLeft", Some(_)) => return Err(bad("table.insertColumnLeft", "`keepWidth` must be true or false")),
+        ("colRight", Some(_)) => return Err(bad("table.insertColumnRight", "`keepWidth` must be true or false")),
+        _ => true,
+    };
     let op = op.to_string();
     with_table(s, p, "table", move |t| {
         match op.as_str() {

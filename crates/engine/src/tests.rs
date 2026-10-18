@@ -4766,3 +4766,18 @@ fn table_insert_column_keeps_the_table_width_and_copies_the_neighbour_format() {
     assert_eq!(t.n_cols(), 6);
     assert!((t.width() - 840.0 - 168.0).abs() < 1e-6, "width {}", t.width());
 }
+
+/// A `keepWidth` that is not a bool is refused, naming it, and the table is left alone; it used
+/// to be read as absent and the columns shrunk as if `true` had been asked.
+#[test]
+fn table_insert_column_refuses_a_keep_width_that_is_not_a_bool() {
+    let mut s = session();
+    let id = table_at(&mut s, &[280.0, 280.0, 280.0], json!([["a", "b", "c"]]));
+    for (cmd, bad) in [("table.insertColumnRight", json!("false")), ("table.insertColumnLeft", json!(0))] {
+        let err = s.execute(cmd, &json!({"id": id.0, "col": 1, "keepWidth": bad})).unwrap_err().to_string();
+        assert!(err.contains("keepWidth") && err.contains(cmd), "{err}");
+        let t = table_of(&s, id);
+        assert_eq!(t.n_cols(), 3, "{cmd} changed the table: {:?}", t.cols);
+        assert!((t.width() - 840.0).abs() < 1e-6, "width {}", t.width());
+    }
+}
