@@ -231,6 +231,17 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// An animation index past the end, naming the slide it looked at: the current slide is often
+/// not the one the agent meant.
+fn no_animation(i: usize, slide: usize, n: usize) -> String {
+    let has = match n {
+        0 => "no animations".to_string(),
+        1 => "1 animation (index 0)".to_string(),
+        n => format!("{n} animations (indices 0 through {})", n - 1),
+    };
+    format!("no animation at index {i}: slide index {slide} has {has}")
+}
+
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
     let index = usize_param(p, "index");
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
@@ -240,7 +251,7 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
             Some(i) if i < sl.animations.len() => {
                 sl.animations.remove(i);
             }
-            Some(_) => return Err(bad("animation.remove", "no such animation")),
+            Some(i) => return Err(bad("animation.remove", no_animation(i, sel.slide, sl.animations.len()))),
             None => sl.animations.retain(|a| !ids.contains(&a.shape)),
         }
         Ok(())
@@ -253,8 +264,9 @@ fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
     let to = usize_param(p, "to").ok_or_else(|| bad("animation.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.move", "no slide"))?);
-        if i >= sl.animations.len() {
-            return Err(bad("animation.move", "no such animation"));
+        let n = sl.animations.len();
+        if let Some(j) = [i, to].into_iter().find(|j| *j >= n) {
+            return Err(bad("animation.move", no_animation(j, sel.slide, n)));
         }
         let a = sl.animations.remove(i);
         let to = to.min(sl.animations.len());
@@ -277,7 +289,13 @@ fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result
             }
         }
         if n == 0 {
-            return Err(bad("animation", "no animation to change (select an animated object or give `index`)"));
+            return Err(bad(
+                "animation",
+                match index {
+                    Some(i) => no_animation(i, sel.slide, sl.animations.len()),
+                    None => format!("no animation to change on slide index {} (select an animated object or give `index`)", sel.slide),
+                },
+            ));
         }
         Ok(json!({"changed": n}))
     })

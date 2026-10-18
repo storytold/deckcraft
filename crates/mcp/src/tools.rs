@@ -93,9 +93,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "batch",
             "Run several commands",
-            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params.",
+            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params. An item with `as: \"box\"` can be referred to by a later item's params as \"$box\" (its id), so insert, connect and animate fit in one batch.",
             obj(
-                json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
+                json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}, "as": string("Name for this item's answer, for \"$name\" in later params")}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
                 &["commands"],
             ),
             false,
@@ -312,6 +312,38 @@ fn is_tool(id: &str) -> bool {
     tool_definitions().iter().any(|t| t["name"] == id)
 }
 
+/// Replaces every `"$name"` string in a batch item's params with the answer of the earlier item
+/// named `as: "name"` (its `id`, else the whole answer). A `$` followed by an identifier that
+/// names no earlier item is an error, so a typo is not sent on as text.
+fn substitute(v: &mut Value, named: &std::collections::HashMap<String, Value>) -> Result<(), String> {
+    match v {
+        Value::String(s) => {
+            if let Some(key) = s.strip_prefix('$')
+                && !key.is_empty()
+                && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && !key.starts_with(|c: char| c.is_ascii_digit())
+            {
+                match named.get(key) {
+                    Some(r) => *v = r.clone(),
+                    None => return Err(format!("`${key}` names no earlier item of this batch (give an item `\"as\": \"{key}\"` before it)")),
+                }
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                substitute(x, named)?;
+            }
+        }
+        Value::Object(o) => {
+            for x in o.values_mut() {
+                substitute(x, named)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// A command id or a tool name, run either way, as a command's answer.
 fn run_either(b: &mut dyn Backend, id: &str, params: Value) -> Result<Value, String> {
     if !is_tool(id) {
@@ -409,10 +441,18 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "batch" => {
             let keep = a.get("keepGoing").and_then(Value::as_bool).unwrap_or(false);
             let mut out = vec![];
+            let mut named: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
             for c in a.get("commands").and_then(Value::as_array).cloned().unwrap_or_default() {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
-                match run_either(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
-                    Ok(v) => out.push(json!({"command": id, "ok": true, "result": v})),
+                let mut params = c.get("params").cloned().unwrap_or(json!({}));
+                let run = substitute(&mut params, &named).and_then(|()| run_either(b, id, params));
+                match run {
+                    Ok(v) => {
+                        if let Some(name) = c.get("as").and_then(Value::as_str) {
+                            named.insert(name.to_string(), v.get("id").cloned().unwrap_or_else(|| v.clone()));
+                        }
+                        out.push(json!({"command": id, "ok": true, "result": v}));
+                    }
                     Err(e) => {
                         out.push(json!({"command": id, "ok": false, "error": e}));
                         if !keep {

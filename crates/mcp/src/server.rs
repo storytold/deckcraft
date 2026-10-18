@@ -35,7 +35,8 @@ start: onClick|withPrevious|afterPrevious, duration?: ms} → {indices} (one onC
 transition.set {kind: fade|push|wipe|…, index?}; section.add {name, at: slide index}; insert.table {rows, cols, rect, \
 data: [[…]]} then set_text {id, cell: [r, c], text} and table.style; design.palette {} answers the theme's colours; \
 add_slide answers placeholders {title, body} ids; export {path, format: png|pdf, slide?|all?}. Put many commands in one \
-batch (tool names work inside it too).";
+batch (tool names work inside it too); an item with as:\"a\" is referred to by later items as \"$a\" (its id), so a \
+diagram is one batch: insert the boxes, connect $a to $b, animate [$a, $b, $ab].";
 
 /// Resource URIs.
 pub const DOC_URI: &str = "deckcraft://document";

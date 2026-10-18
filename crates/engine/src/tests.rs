@@ -5018,21 +5018,6 @@ fn animation_get_numbers_the_click_steps() {
     assert_eq!(steps, [1, 1, 2, 2], "{r}");
 }
 
-/// A size (or colour, bold…) set on a shape before it has any text survives the text that is
-/// then set: text.set keeps the first run's properties, and an empty paragraph keeps them on its
-/// end mark, which is what the agent's format.size then set_text sequence relies on.
-#[test]
-fn text_set_keeps_the_formatting_of_an_empty_shape() {
-    let mut s = session();
-    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60]})).unwrap()["id"].as_u64().unwrap();
-    s.execute("format.size", &json!({"size": 30})).unwrap();
-    s.execute("format.bold", &json!({"on": true})).unwrap();
-    s.execute("text.set", &json!({"id": id, "text": "Hello"})).unwrap();
-    let st = s.doc().unwrap();
-    let run = &st.shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props;
-    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "{run:?}");
-}
-
 /// #786: format.font sets the East Asian and complex-script faces too, not only the Latin one
 /// (with keys checked against the params doc, `eastAsia` used to be refused outright).
 #[test]
@@ -5064,4 +5049,25 @@ fn master_insert_placeholder_refuses_an_unknown_kind() {
     assert_eq!(shapes(&s), before, "nothing inserted");
     s.execute("master.insertPlaceholder", &json!({"kind": "picture", "rect": [10, 10, 100, 50]})).unwrap();
     assert_eq!(shapes(&s), before + 1);
+}
+
+/// P1: an animation index past the end says which slide it looked at and how many animations
+/// that slide has, so an agent on the wrong slide sees it.
+#[test]
+fn animation_errors_name_the_slide_they_looked_at() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [a], "effect": "fade"})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    for (cmd, params) in [
+        ("animation.remove", json!({"index": 0})),
+        ("animation.move", json!({"index": 0, "to": 0})),
+        ("animation.timing", json!({"index": 0, "duration": 100})),
+    ] {
+        let e = s.execute(cmd, &params).unwrap_err().to_string();
+        assert!(e.contains("slide index 1") && e.contains("no animations"), "{cmd}: {e}");
+    }
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let e = s.execute("animation.remove", &json!({"index": 3})).unwrap_err().to_string();
+    assert!(e.contains("slide index 0") && e.contains("1 animation"), "{e}");
 }

@@ -349,3 +349,41 @@ fn discovery_costs_fewer_calls() {
     keys.sort_unstable();
     assert_eq!(keys, ["id", "params"], "{item}");
 }
+
+/// E5: a batch item can be named with `as`, and a later item's params can refer to its answer
+/// with "$name" (its id) wherever an id goes, so a diagram is one batch: insert, connect, animate.
+#[test]
+fn batch_items_can_reference_earlier_results() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let out = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "shape.insert", "params": {"preset": "roundRect", "rect": [50, 50, 150, 60], "text": "A", "fill": "accent1"}, "as": "a"},
+            {"command": "shape.insert", "params": {"preset": "roundRect", "rect": [400, 50, 150, 60], "text": "B", "fill": "accent2"}, "as": "b"},
+            {"command": "shape.connect", "params": {"from": "$a", "to": "$b"}, "as": "ab"},
+            {"command": "animation.add", "params": {"ids": ["$a", "$b", "$ab"], "effect": "fade", "start": "onClick"}},
+            {"command": "set_text", "params": {"id": "$b", "text": "B!"}},
+        ]}),
+    );
+    let items = out.as_array().unwrap();
+    assert!(items.iter().all(|i| i["ok"] == true), "{out}");
+    let a = items[0]["result"]["id"].as_u64().unwrap();
+    let b = items[1]["result"]["id"].as_u64().unwrap();
+    assert!(items[2]["result"]["id"].as_u64().is_some(), "{out}");
+    assert_eq!(items[3]["result"]["indices"], json!([0, 1, 2]), "{out}");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let shapes = sl["shapes"].as_array().unwrap();
+    assert!(shapes.iter().any(|x| x["id"] == b && x["text"] == "B!"), "{sl}");
+    assert!(shapes.iter().any(|x| x["id"] == a), "{sl}");
+    let bad = call(
+        &mut s,
+        7,
+        "tools/call",
+        json!({"name": "batch", "arguments": {"commands": [{"command": "set_text", "params": {"id": "$nope", "text": "x"}}]}}),
+    );
+    let text = bad["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(bad["result"]["isError"] == true && text.contains("$nope"), "{text}");
+}
