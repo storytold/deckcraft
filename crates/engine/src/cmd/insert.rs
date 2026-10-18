@@ -57,7 +57,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Picture from File…",
             ["Insert", "Images", "Pictures"],
             None,
-            "{path? | data: base64, name?, rect?: [x,y,w,h]}",
+            "{path? | data: base64, name?, rect?: [x,y,w,h]} → {id, rect} (a selected empty content placeholder takes the picture and keeps its box)",
             has_slide,
             picture
         ),
@@ -79,13 +79,13 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             photo_album_edit
         ),
-        cmd!("insert.table", "Table…", ["Insert", "Tables"], None, "{rows, cols, rect?, data?: [[cell text]]}", has_slide, table),
+        cmd!("insert.table", "Table…", ["Insert", "Tables"], None, "{rows, cols, rect?, data?: [[cell text]]} → {id, rect}", has_slide, table),
         cmd!(
             "insert.chart",
             "Chart…",
             ["Insert", "Illustrations"],
             None,
-            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, title?, rect?, categories?: [..], series?: [{name, values}]}",
+            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, title?, rect?, categories?: [..], series?: [{name, values}]} → {id, rect}",
             has_slide,
             chart
         ),
@@ -373,7 +373,7 @@ fn table(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let id = add_shape(s, "insert.table", Shape { xfrm: Some(rect), kind: ShapeKind::Table(t), ..Default::default() }, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 /// A SmartArt graphic: a group regenerated from its outline (see [`super::smartart`]). Items with

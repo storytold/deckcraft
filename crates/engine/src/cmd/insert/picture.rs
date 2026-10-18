@@ -152,10 +152,10 @@ pub(super) fn picture(s: &mut Session, p: &Value) -> Result<Value> {
             sel.shapes = vec![ph_id];
             Ok(())
         })?;
-        return Ok(json!({"id": ph_id}));
+        return Ok(json!({"id": ph_id, "rect": rect_json(&rect)}));
     }
     let id = add_shape(s, "insert.picture", shape, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
