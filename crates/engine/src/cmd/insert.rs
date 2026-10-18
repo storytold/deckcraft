@@ -36,7 +36,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shapes",
             ["Insert", "Illustrations"],
             None,
-            "{preset: rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets), rect: [x,y,w,h] pt, text?: string, adj?: [adjustment values 0-1], flip?: h|v|hv}",
+            "{preset: rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets), rect: [x,y,w,h] pt, text?: string, fill?: color|none, line?: color|none, size?: pt (text), color?: text colour, bold?: bool, name?, adj?: [adjustment values 0-1], flip?: h|v|hv} → {id}",
             has_slide,
             insert_shape
         ),
@@ -253,6 +253,29 @@ fn insert_shape(s: &mut Session, p: &Value) -> Result<Value> {
         super::format::apply_painted(&mut shape, look);
     }
     let id = add_shape(s, "shape.insert", shape, true)?;
+    // Its look in the same call, so a diagram box is one command rather than six (#298). The
+    // inserted shape is selected, which is what format.* act on.
+    let colour_or_none = |c: &str| if c == "none" { json!({"id": id, "none": true}) } else { json!({"id": id, "color": c}) };
+    if let Some(c) = str_param(p, "fill") {
+        s.execute("shape.fill", &colour_or_none(c))?;
+    }
+    if let Some(c) = str_param(p, "line") {
+        s.execute("shape.line", &colour_or_none(c))?;
+    }
+    if !line_like {
+        if let Some(size) = f64_param(p, "size") {
+            s.execute("format.size", &json!({"size": size}))?;
+        }
+        if let Some(c) = str_param(p, "color") {
+            s.execute("format.color", &json!({"color": c}))?;
+        }
+        if bool_or(p, "bold", false) {
+            s.execute("format.bold", &json!({"on": true}))?;
+        }
+    }
+    if let Some(name) = str_param(p, "name") {
+        s.execute("shape.rename", &json!({"id": id, "name": name}))?;
+    }
     Ok(json!({"id": id}))
 }
 

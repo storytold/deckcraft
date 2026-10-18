@@ -39,7 +39,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             sound
         ),
-        cmd!("transition.applyAll", "Apply To All", ["Transitions", "Timing"], None, "{}", has_slide, apply_all),
+        cmd!(
+            "transition.applyAll",
+            "Apply To All",
+            ["Transitions", "Timing"],
+            None,
+            "{} (copies the current slide's transition to every slide)",
+            has_slide,
+            apply_all
+        ),
         cmd!(query "transition.list", "Transition Gallery", [], None, "{} → [{id, label, category, duration, options}]", always, list),
     ]
 }

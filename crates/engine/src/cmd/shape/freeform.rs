@@ -3,8 +3,10 @@ use super::{ColorRef, Fill, Geom, Line, NO_ID_SPACE, Result, Session, Value, bad
 pub(super) fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;
     let st = s.doc()?;
-    // In slide space, as shape.connect uses them, for a shape inside a group too.
-    let v = crate::connect::sites_of(&st.doc, &st.selection, st.shapes(), id).ok_or_else(|| bad("shape.sites", "no such shape"))?;
+    // In slide space, as shape.connect uses them, for a shape inside a group too, on any slide.
+    let (_, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.sites"))?;
+    let shapes = if st.shape(id).is_some() { st.shapes() } else { st.doc.slides.get(ctx.slide).map(|sl| sl.shapes.as_slice()).unwrap_or(&[]) };
+    let v = crate::connect::sites_of(&st.doc, &ctx, shapes, id).unwrap_or_default();
     Ok(json!(v.iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
 }
 
@@ -17,7 +19,7 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     // glues to grouped shapes), its sites where the group draws them.
     let site_list = |id| {
         crate::connect::sites_of(&st.doc, &st.selection, st.shapes(), id)
-            .ok_or_else(|| bad("shape.connect", format!("no shape {} on the current slide", id.0)))
+            .ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.connect"))
     };
     let (a, b) = (site_list(from)?, site_list(to)?);
     if a.is_empty() || b.is_empty() {

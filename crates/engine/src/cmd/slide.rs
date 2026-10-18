@@ -143,6 +143,19 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let at = usize_param(p, "at").unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
         let id = slide.id;
+        // The placeholders by role, so the title or body can be addressed without an inspect.
+        let mut placeholders = serde_json::Map::new();
+        for sh in &slide.shapes {
+            if let Some(ph) = &sh.ph {
+                placeholders.entry(ph.kind.xml().to_string()).or_insert(json!(sh.id));
+            }
+        }
+        if let Some(t) = slide.shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())) {
+            placeholders.insert("title".into(), json!(t.id));
+        }
+        if let Some(b) = body_placeholder(&mut slide.shapes) {
+            placeholders.insert("body".into(), json!(b.id));
+        }
         // Inherit the section of the slide before.
         let section = at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|prev| doc.section_of(prev.id));
         doc.slides.insert(at, Arc::new(slide));
@@ -164,7 +177,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
         sel.shapes.clear();
         sel.text = None;
         sel.target = Target::Slides;
-        Ok(json!({"index": at, "id": id}))
+        Ok(json!({"index": at, "id": id, "placeholders": placeholders}))
     })
 }
 

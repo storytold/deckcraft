@@ -34,7 +34,7 @@ pub mod zoom;
 use deckcraft_geom::Xfrm;
 use deckcraft_model::ShapeId;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{EngineError, Result, Session};
 
@@ -271,6 +271,22 @@ pub(crate) fn how_to_enable(spec: &CommandSpec, reason: &str) -> String {
         "no slides" => format!("{reason}: slide.new adds one"),
         _ => reason.to_string(),
     }
+}
+
+/// The refusal for a shape id that isn't on the current slide: where it is when it is on another
+/// slide, with the call that gets there, because ids are looked up on the current slide only (#298).
+pub(crate) fn no_such_shape(doc: &deckcraft_model::Presentation, sel: &crate::Selection, id: ShapeId, cmd: &str) -> EngineError {
+    let cur = sel.slide;
+    let elsewhere = doc.slides.iter().enumerate().find(|(i, sl)| *i != cur && deckcraft_model::find_shape(&sl.shapes, id).is_some()).map(|(i, _)| i);
+    bad(
+        cmd,
+        match elsewhere {
+            Some(i) => format!(
+                "shape {id} is on slide index {i}, but shape ids are looked up on the current slide (index {cur}); slide.go {{\"index\": {i}}} switches to it"
+            ),
+            None => format!("no shape {id} on the current slide (index {cur}); slide.inspect lists its shapes and their ids"),
+        },
+    )
 }
 
 /// The refusal for keys a command doesn't take, with the parameters it does (#298).
@@ -575,26 +591,56 @@ pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut
         return Err(bad(cmd, "no shapes selected"));
     }
     s.edit(|doc, sel| {
-        let boxes: Vec<(ShapeId, Xfrm)> = {
-            let st_shapes: Vec<deckcraft_model::Shape> =
-                ids.iter().filter_map(|id| current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)).cloned()).collect();
-            st_shapes.iter().map(|sh| (sh.id, xfrm_of(doc, sel, sh))).collect()
-        };
-        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
+        // Each id is looked for where the selection is (the current slide, or the layout or
+        // master being edited) first, then on every slide: ids are unique in the presentation,
+        // so an id from slide.inspect works from anywhere (#298). The edit makes the shape's
+        // slide current, so the window shows the change and later commands act there, and the
+        // answer says so.
         let mut n = 0;
+        let mut elsewhere: Vec<usize> = vec![];
+        let mut missing: Option<ShapeId> = None;
         for id in &ids {
+            let here = current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)).is_some();
+            let on_slide = if here { None } else { doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, *id).is_some()) };
+            if !here && on_slide.is_none() {
+                missing.get_or_insert(*id);
+                continue;
+            }
+            let ctx = match on_slide {
+                Some(i) => crate::Selection { slide: i, target: crate::Target::Slides, ..sel.clone() },
+                None => sel.clone(),
+            };
+            let xfrm = current_shapes(doc, &ctx).and_then(|v| deckcraft_model::find_shape(v, *id)).map(|sh| xfrm_of(doc, &ctx, sh));
+            let shapes = crate::shapes_mut(doc, &ctx).ok_or_else(|| bad(cmd, "no slide"))?;
             if let Some(sh) = deckcraft_model::find_shape_mut(shapes, *id) {
                 if sh.xfrm.is_none() {
-                    sh.xfrm = boxes.iter().find(|(i, _)| i == id).map(|(_, x)| *x);
+                    sh.xfrm = xfrm;
                 }
                 f(sh)?;
                 n += 1;
+                if let Some(i) = on_slide
+                    && !elsewhere.contains(&i)
+                {
+                    elsewhere.push(i);
+                }
             }
         }
         if n == 0 {
-            return Err(bad(cmd, "no such shape"));
+            return Err(no_such_shape(doc, sel, missing.or(ids.first().copied()).unwrap_or_default(), cmd));
         }
-        Ok(Value::from(n))
+        if let Some(&i) = elsewhere.last() {
+            sel.slide = i;
+            sel.target = crate::Target::Slides;
+            sel.slides = doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default();
+            sel.shapes = ids
+                .iter()
+                .filter(|id| doc.slides.get(i).is_some_and(|sl| deckcraft_model::find_shape(&sl.shapes, **id).is_some()))
+                .copied()
+                .collect();
+            sel.text = None;
+            sel.cells = None;
+        }
+        Ok(if elsewhere.is_empty() { Value::from(n) } else { json!({"changed": n, "onSlides": elsewhere, "currentSlide": sel.slide}) })
     })
 }
 
