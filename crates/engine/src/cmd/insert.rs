@@ -118,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, axisMin?: n|null, axisMax?: n|null (the value axis' bounds; null: automatic), palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
         ),
@@ -1813,7 +1813,31 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // Value axis bounds: a finite number, or null for automatic.
+    let axis_bound = |key: &str| -> Result<Option<Option<f64>>> {
+        match p.get(key) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(v) => v
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .map(|v| Some(Some(v)))
+                .ok_or_else(|| bad("chart.options", format!("{key} must be a number or null"))),
+        }
+    };
+    let (axis_min, axis_max) = (axis_bound("axisMin")?, axis_bound("axisMax")?);
     with_chart(s, p, "chart.options", |c| {
+        if let Some(v) = axis_min {
+            c.y_min = v;
+        }
+        if let Some(v) = axis_max {
+            c.y_max = v;
+        }
+        if let (Some(lo), Some(hi)) = (c.y_min, c.y_max)
+            && lo >= hi
+        {
+            return Err(bad("chart.options", "axisMin must be below axisMax"));
+        }
         if let Some(t) = &text_color {
             c.text_color = t.clone();
         }

@@ -442,9 +442,20 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         label(ctx, rctx, turned, t, Rect::new(-half, -band_h / 2.0, half, band_h / 2.0), base, Align::Center, Anchor::Middle, text_col, true);
         area.x0 += band_h + base * 0.3;
     }
-    // As many major units as the value axis has room for labels (PowerPoint's automatic unit).
+    // As many major units as the value axis has room for labels (PowerPoint's automatic unit),
+    // never fewer than four. A horizontal axis measures the widest label of the scale the data
+    // asks for instead of assuming a long one, so short labels keep the step the data needs: a
+    // maximum of 59.7 ends at 70 by tens, not at 100 by fifties.
     let axis_len = if horiz { area.width() - base * 4.5 } else { area.height() - base * 1.8 };
-    let max_intervals = (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize;
+    let fit = |room: f64| (axis_len / room.max(1e-9)).floor().clamp(4.0, 12.0) as usize;
+    let max_intervals = if horiz {
+        let (lo, hi, st) = c.axis_scale(false, 12).unwrap_or((0.0, 1.0, 0.2));
+        let n = (((hi - lo) / st.max(1e-12)).round() as i64).clamp(1, 50);
+        let widest = (0..=n).map(|k| c.axis_label(false, lo + k as f64 * st).chars().count()).max().unwrap_or(1) as f64;
+        fit(widest * base * 0.55 + base * 0.8)
+    } else {
+        fit(base * 1.9)
+    };
     // A logarithmic axis is scaled in exponents of its base.
     let log = c.log_axis_scale(max_intervals).map(|sc| (c.y_log_base.unwrap_or(10.0), sc));
     let (min, max, step) = match log {

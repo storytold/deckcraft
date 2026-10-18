@@ -4724,3 +4724,31 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+#[test]
+fn chart_options_axis_bounds_set_clear_and_refuse() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.chart",
+            &json!({"type": "bar", "rect": [40, 40, 400, 300], "categories": ["A", "B", "C"], "series": [{"name": "S", "values": [20, 45.5, 59.7]}]}),
+        )
+        .unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let bounds = |s: &Session| match &s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().kind {
+        deckcraft_model::ShapeKind::Chart(c) => (c.y_min, c.y_max),
+        k => panic!("not a chart: {k:?}"),
+    };
+    assert_eq!(bounds(&s), (None, None));
+    s.execute("chart.options", &json!({"id": id, "axisMax": 80})).unwrap();
+    assert_eq!(bounds(&s), (None, Some(80.0)));
+    s.execute("chart.options", &json!({"id": id, "axisMin": 10, "axisMax": 70.5})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), Some(70.5)));
+    // null clears a bound; other options are untouched.
+    s.execute("chart.options", &json!({"id": id, "axisMax": null})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    // Not a number, or a minimum at or above the maximum: refused, nothing changes.
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": "80"})).is_err());
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 5})).is_err(), "5 is below the minimum of 10");
+    assert_eq!(bounds(&s), (Some(10.0), None));
+}
