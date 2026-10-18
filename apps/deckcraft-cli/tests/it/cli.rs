@@ -231,7 +231,7 @@ fn run_help_says_what_the_ids_do_not() {
         "format.* acts on the selected text or shapes",
         "--cmd-file FILE reads the same commands from a UTF-8 text file, one per line",
         "commands execute in the order those options appear.",
-        "If a command fails, run stops there and saves nothing.",
+        "skips the --save and --export still pending; it does not undo files an earlier command wrote",
     ] {
         assert!(out.contains(fact), "{fact}: {out}");
     }
