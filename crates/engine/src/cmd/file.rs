@@ -364,7 +364,12 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     };
     o.dpi = f64_or(p, "dpi", o.dpi).clamp(36.0, 600.0);
     o.slides = match p.get("slides") {
-        Some(Value::Array(a)) => Some(a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).filter(|i| *i < count).collect()),
+        Some(Value::Array(a)) => Some(
+            a.iter()
+                .filter_map(|v| v.as_u64().map(|x| usize::try_from(x).unwrap_or(usize::MAX)))
+                .map(|i| if i < count { Ok(i) } else { Err(super::no_slide("file.export", i, count)) })
+                .collect::<Result<Vec<_>>>()?,
+        ),
         Some(Value::String(text)) if !text.trim().is_empty() => Some(parse_slide_range(text, count)?),
         _ => None,
     };
@@ -538,7 +543,7 @@ fn render(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
-        return Err(bad("file.render", format!("no slide {i}")));
+        return Err(super::no_slide("file.render", i, st.doc.slides.len()));
     }
     let (png, w, h) = render_png_with(&st.doc, i, f64_or(p, "scale", 1.0), bool_or(p, "edit", false), bool_or(p, "transparentBackground", false));
     Ok(json!({"png": base64_encode(&png), "width": w, "height": h}))
@@ -549,7 +554,7 @@ fn color_at(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
-        return Err(bad("slide.colorAt", format!("no slide {i}")));
+        return Err(super::no_slide("slide.colorAt", i, st.doc.slides.len()));
     }
     let coord = |key: &str| {
         p.get(key)
@@ -585,7 +590,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             };
             // Every slide checked before any file is written, so a bad index leaves nothing behind.
             if let Some(i) = slides.iter().find(|i| **i >= st.doc.slides.len()) {
-                return Err(bad("file.export", format!("no slide {i}")));
+                return Err(super::no_slide("file.export", *i, st.doc.slides.len()));
             }
             let scale = image_scale(&st.doc, scale);
             let mut written = vec![];

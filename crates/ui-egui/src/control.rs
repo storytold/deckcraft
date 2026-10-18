@@ -305,7 +305,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let Some(d) = app.session.active() else { return err("no presentation open") };
             let i = p.get("slide").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(d.selection.slide);
             if i >= d.doc.slides.len() {
-                return err(format!("no slide {i}"));
+                return err(deckcraft_engine::cmd::no_slide_message(i, d.doc.slides.len()));
             }
             let (png, w, h) = deckcraft_engine::cmd::file::render_png(
                 &d.doc,

@@ -9,25 +9,25 @@ use crate::{DocState, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("table.insertRowAbove", "Insert Above", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "rowAbove"
-        )),
-        cmd!("table.insertRowBelow", "Insert Below", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "rowBelow"
-        )),
-        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "colLeft"
-        )),
-        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "colRight"
-        )),
-        cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
+        cmd!("table.insertRowAbove", "Insert Above", ["Table Layout", "Rows & Columns"], None, "{row? (0-based), id?}", has_selection, |s, p| {
+            rows_cols(s, p, "rowAbove")
+        }),
+        cmd!("table.insertRowBelow", "Insert Below", ["Table Layout", "Rows & Columns"], None, "{row? (0-based), id?}", has_selection, |s, p| {
+            rows_cols(s, p, "rowBelow")
+        }),
+        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col? (0-based), id?}", has_selection, |s, p| {
+            rows_cols(s, p, "colLeft")
+        }),
+        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col? (0-based), id?}", has_selection, |s, p| {
+            rows_cols(s, p, "colRight")
+        }),
+        cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row? (0-based), id?}", has_selection, |s, p| rows_cols(
             s, p, "delRow"
         )),
-        cmd!("table.deleteColumn", "Delete Columns", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "delCol"
-        )),
-        cmd!("table.merge", "Merge Cells", ["Table Layout", "Merge"], None, "{from: [r, c], to: [r, c], id?}", has_selection, merge),
+        cmd!("table.deleteColumn", "Delete Columns", ["Table Layout", "Rows & Columns"], None, "{col? (0-based), id?}", has_selection, |s, p| {
+            rows_cols(s, p, "delCol")
+        }),
+        cmd!("table.merge", "Merge Cells", ["Table Layout", "Merge"], None, "{from: [r, c], to: [r, c], id?} (0-based)", has_selection, merge),
         cmd!(
             "table.split",
             "Split Cells",
