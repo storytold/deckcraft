@@ -1008,21 +1008,31 @@ pub(crate) fn apply_header_footer(doc: &mut Presentation, i: usize, hf: &deckcra
                 _ => false,
             }
     };
-    let mut new_ids = vec![];
-    for _ in 0..3 {
-        new_ids.push(ShapeId(doc.alloc_id().ok_or_else(|| bad("design.headerFooter", NO_ID_SPACE))?));
+    // An id is taken only for a placeholder that is really added (wanted, not there yet, and on
+    // the layout), so slide.new with the footers off uses none of the id space.
+    let kinds = [PhType::Date, PhType::Footer, PhType::SlideNum];
+    let mut new_ids: Vec<(PhType, Shape, ShapeId)> = vec![];
+    for k in kinds {
+        let has = doc.slides.get(i).is_some_and(|sl| sl.shapes.iter().any(|x| x.ph_type() == Some(k)));
+        let lp = lay.as_ref().and_then(|l| l.shapes.iter().find(|x| x.ph_type() == Some(k)).cloned());
+        if let Some(lp) = lp
+            && !has
+            && want(k)
+        {
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("design.headerFooter", NO_ID_SPACE))?);
+            new_ids.push((k, lp, id));
+        }
     }
     let Some(sl) = doc.slides.get_mut(i) else { return Ok(()) };
     let sl = Arc::make_mut(sl);
-    for (n, k) in [PhType::Date, PhType::Footer, PhType::SlideNum].into_iter().enumerate() {
+    for k in kinds {
         let has = sl.shapes.iter().position(|x| x.ph_type() == Some(k));
         match (has, want(k)) {
             (Some(pos), false) => {
                 sl.shapes.remove(pos);
             }
             (None, true) => {
-                let lp = lay.as_ref().and_then(|l| l.shapes.iter().find(|x| x.ph_type() == Some(k)).cloned());
-                let Some(lp) = lp else { continue };
+                let Some((_, lp, id)) = new_ids.iter().find(|(kk, _, _)| *kk == k) else { continue };
                 let body = match k {
                     PhType::SlideNum => TextBody {
                         paragraphs: vec![deckcraft_model::Paragraph {
@@ -1045,13 +1055,7 @@ pub(crate) fn apply_header_footer(doc: &mut Presentation, i: usize, hf: &deckcra
                     PhType::Date => TextBody::from_text(&hf.date_text),
                     _ => TextBody::from_text(&hf.footer_text),
                 };
-                sl.shapes.push(Shape {
-                    id: new_ids.get(n).copied().unwrap_or_default(),
-                    name: lp.name.clone(),
-                    ph: lp.ph.clone(),
-                    text: Some(body),
-                    ..Default::default()
-                });
+                sl.shapes.push(Shape { id: *id, name: lp.name.clone(), ph: lp.ph.clone(), text: Some(body), ..Default::default() });
             }
             (Some(pos), true) if k == PhType::Footer => {
                 if let Some(sh) = sl.shapes.get_mut(pos) {
