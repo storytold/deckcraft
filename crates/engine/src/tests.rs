@@ -6105,6 +6105,23 @@ fn table_insert_column_keeps_the_table_width_and_copies_the_neighbour_format() {
     let t = table_of(&s, id);
     assert_eq!(t.n_cols(), 6);
     assert!((t.width() - 840.0 - 168.0).abs() < 1e-6, "width {}", t.width());
+    // The insertion is journaled as called, and each one is a single undo step back to the table
+    // as it was: the columns, their widths and the frame.
+    let (jid, jp) = s.journal.last().cloned().unwrap();
+    assert_eq!(jid, "table.insertColumnRight");
+    assert_eq!(jp["keepWidth"], json!(false), "{jp}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.n_cols(), 5);
+    assert!((t.width() - 840.0).abs() < 1e-6, "width {}", t.width());
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.n_cols(), 3);
+    assert!(t.cols.iter().all(|w| (w - 280.0).abs() < 1e-6), "{:?}", t.cols);
+    assert_eq!(t.cell(0, 2).unwrap().text.text(), "c");
+    let x = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+    assert!((x.w - 840.0).abs() < 1e-6, "frame {}", x.w);
 }
 
 /// A `keepWidth` that is not a bool is refused, naming it, and the table is left alone; it used
