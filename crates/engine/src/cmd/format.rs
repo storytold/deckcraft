@@ -37,7 +37,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!(
+            "format.font",
+            "Font",
+            ["Home", "Font"],
+            None,
+            "{family, eastAsia?: family, complexScript?: family} — `family` is the Latin typeface (`a:latin`); the other two set              the East Asian (`a:ea`) and complex-script (`a:cs`) typefaces, which are left alone when not given",
+            has_text_or_shapes,
+            font
+        ),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -301,9 +309,37 @@ fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
     let v = on_param(p, Some(current_run(s).baseline.unwrap_or(0.0) < 0.0));
     format_run(s, &move |r| r.baseline = Some(if v { -0.25 } else { 0.0 }))
 }
+/// A typeface name from `key`: trimmed, and the length `format.fontDialog` allows.
+fn typeface_param(p: &Value, key: &str) -> Result<Option<String>> {
+    match str_param(p, key) {
+        None => Ok(None),
+        Some(v) => {
+            let t = v.trim();
+            if t.is_empty() || t.chars().count() > 200 {
+                return Err(bad("format.font", format!("`{key}` must be 1–200 characters")));
+            }
+            Ok(Some(t.to_string()))
+        }
+    }
+}
+
 fn font(s: &mut Session, p: &Value) -> Result<Value> {
-    let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    let f = typeface_param(p, "family")?.ok_or_else(|| bad("format.font", "missing `family`"))?;
+    // A run carries a typeface per script (ECMA-376 §21.1.2.3): `a:latin`, `a:ea` and `a:cs`.
+    // Setting only the Latin one leaves a CJK run drawing -- and saving -- in whatever `a:ea`
+    // named before, so the two are settable (#786). Left out, they keep their value, which is
+    // what `format.font` has always done.
+    let ea = typeface_param(p, "eastAsia")?;
+    let cs = typeface_param(p, "complexScript")?;
+    format_run(s, &move |r| {
+        r.font = Some(f.clone());
+        if let Some(v) = &ea {
+            r.font_ea = Some(v.clone());
+        }
+        if let Some(v) = &cs {
+            r.font_cs = Some(v.clone());
+        }
+    })
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
