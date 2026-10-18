@@ -45,7 +45,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Timing",
             ["Animations", "Timing"],
             None,
-            "{index?: the animation's position in the slide's list (as animation.get numbers them; else the selected shapes' animations), start?: onClick|withPrevious|afterPrevious (the click steps that follow are reported by animation.get as `step`), duration?: ms, delay?: ms, repeat?: n, rewind?: bool, trigger?: shape id | null}",
+            "{index?: the animation's position in the slide's list (as animation.get numbers them), indices?: [index], all?: true (every animation on the slide; else the selected shapes' animations; at most one of all, indices or index), start?: onClick|withPrevious|afterPrevious (the click steps that follow are reported by animation.get as `step`), duration?: ms, delay?: ms, repeat?: n, rewind?: bool, trigger?: shape id | null}",
             has_slide,
             timing
         ),
@@ -54,7 +54,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Effect Options",
             ["Animations", "Animation"],
             None,
-            "{option?, textBuild?: asOne|byParagraph|byWord|byLetter, path?: [[x,y],…] or OOXML string, closed?: bool, index?}",
+            "{option?, textBuild?: asOne|byParagraph|byWord|byLetter, path?: [[x,y],…] or OOXML string, closed?: bool, index?, indices?: [index], all?: true (at most one of all, indices or index; none: the selected shapes' animations)}",
             has_slide,
             options
         ),
@@ -391,19 +391,68 @@ fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// Which animations of the slide a timing/options call changes: `all: true` every one, `indices`
+/// a chosen set, `index` one, else the selected shapes' (or `ids`').
+enum Which {
+    All,
+    Indices(Vec<usize>),
+    Shapes(Vec<ShapeId>),
+}
+
+fn which(s: &mut Session, p: &Value) -> Result<Which> {
+    let all = match p.get("all") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(v) => return Err(bad("animation", format!("`all` is true or false, not {v}"))),
+    };
+    // One way of naming the animations: with two, one of them would be ignored in silence (#298).
+    let given = |k: &str| p.get(k).is_some_and(|v| !v.is_null());
+    let named: Vec<&str> =
+        [("all: true", all), ("indices", given("indices")), ("index", given("index"))].into_iter().filter_map(|(k, on)| on.then_some(k)).collect();
+    if named.len() > 1 {
+        let given = named.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ");
+        return Err(bad("animation", format!("give at most one of `all: true`, `indices` or `index`, not {given}")));
+    }
+    if all {
+        return Ok(Which::All);
+    }
+    if let Some(a) = p.get("indices").and_then(Value::as_array) {
+        let v: Vec<usize> = a.iter().filter_map(Value::as_u64).filter_map(|x| usize::try_from(x).ok()).collect();
+        if v.is_empty() {
+            return Err(bad("animation", "`indices` is empty: pass the animations' positions as animation.get numbers them, or `all: true`"));
+        }
+        return Ok(Which::Indices(v));
+    }
+    if let Some(i) = opt_usize_param(p, "index", "animation")? {
+        return Ok(Which::Indices(vec![i]));
+    }
+    Ok(Which::Shapes(targets(s, p)?))
+}
+
 fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result<Value> {
-    let index = opt_usize_param(p, "index", "animation")?;
-    let ids = if index.is_none() { targets(s, p)? } else { vec![] };
+    let which = which(s, p)?;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?);
+        // An index past the end is refused before anything changes.
+        if let Which::Indices(v) = &which
+            && let Some(&i) = v.iter().find(|i| **i >= sl.animations.len())
+        {
+            return Err(bad("animation", no_animation(i, sel.slide, sl.animations.len())));
+        }
         let mut n = 0;
         for (k, a) in sl.animations.iter_mut().enumerate() {
-            if index == Some(k) || (index.is_none() && ids.contains(&a.shape)) {
+            let hit = match &which {
+                Which::All => true,
+                Which::Indices(v) => v.contains(&k),
+                Which::Shapes(ids) => ids.contains(&a.shape),
+            };
+            if hit {
                 f(a);
                 n += 1;
             }
         }
         if n == 0 {
+            let index = if let Which::Indices(v) = &which { v.first().copied() } else { None };
             return Err(bad(
                 "animation",
                 match index {

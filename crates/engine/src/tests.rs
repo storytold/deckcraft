@@ -6930,6 +6930,52 @@ fn read_only_shape_lookups_find_an_id_on_any_slide_and_say_where() {
     assert!(e.contains("no shape 999"), "{e}");
 }
 
+/// AA3: speeding up a whole slide cost one animation.timing call per animation. `all: true`
+/// changes every animation on the slide and `indices` a chosen set, answering `{changed}`.
+#[test]
+fn animation_timing_takes_all_or_indices() {
+    let mut s = session();
+    let mut ids = vec![];
+    for k in 0..3 {
+        ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [10 + 120 * k, 10, 100, 50]})).unwrap()["id"].clone());
+    }
+    for id in &ids {
+        s.execute("animation.add", &json!({"ids": [id], "effect": "fade", "duration": 1000})).unwrap();
+    }
+    let r = s.execute("animation.timing", &json!({"all": true, "duration": 200})).unwrap();
+    assert_eq!(r, json!({"changed": 3}), "{r}");
+    let r = s.execute("animation.timing", &json!({"indices": [0, 2], "delay": 50})).unwrap();
+    assert_eq!(r, json!({"changed": 2}), "{r}");
+    let anims = s.execute("animation.get", &json!({})).unwrap();
+    let a = anims.as_array().unwrap();
+    assert!(a.iter().all(|x| x["durationMs"] == 200), "{anims}");
+    assert_eq!((a[0]["delayMs"].clone(), a[1]["delayMs"].clone(), a[2]["delayMs"].clone()), (json!(50), json!(0), json!(50)), "{anims}");
+    let e = s.execute("animation.timing", &json!({"indices": [0, 7], "delay": 1})).unwrap_err().to_string();
+    assert!(e.contains("no animation at index 7"), "{e}");
+    let e = s.execute("animation.timing", &json!({"indices": [], "delay": 1})).unwrap_err().to_string();
+    assert!(e.contains("`indices` is empty"), "{e}");
+    // Two ways of naming the animations are refused, not one of them ignored; nothing changes.
+    let before = s.execute("animation.get", &json!({})).unwrap();
+    for (cmd, p) in [
+        ("animation.timing", json!({"all": true, "index": 2, "delay": 9})),
+        ("animation.timing", json!({"indices": [0], "index": 1, "delay": 9})),
+        ("animation.timing", json!({"indices": [], "index": 0, "delay": 9})),
+        ("animation.options", json!({"all": true, "indices": [1], "textBuild": "byWord"})),
+        ("animation.timing", json!({"all": true, "indices": [0], "index": 1, "delay": 9})),
+    ] {
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains("give at most one of `all: true`, `indices` or `index`"), "{cmd} {p}: {e}");
+    }
+    let e = s.execute("animation.timing", &json!({"all": true, "indices": [0], "index": 1, "delay": 9})).unwrap_err().to_string();
+    assert!(e.contains("not `all: true`, `indices`, `index`"), "every selector given is named: {e}");
+    let e = s.execute("animation.timing", &json!({"all": "yes", "delay": 9})).unwrap_err().to_string();
+    assert!(e.contains("`all` is true or false"), "{e}");
+    assert_eq!(s.execute("animation.get", &json!({})).unwrap(), before, "a refused call changes nothing");
+    // `all: false` names nothing, so `index` alone picks the animation.
+    let r = s.execute("animation.timing", &json!({"all": false, "index": 1, "delay": 9})).unwrap();
+    assert_eq!(r, json!({"changed": 1}), "{r}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();

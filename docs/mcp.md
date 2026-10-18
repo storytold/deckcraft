@@ -138,7 +138,9 @@ file per slide numbered from 1, the displayed slide number (`d1.png`, `d2.png`â€
 is a 0-based index; it answers `{files, indices}`, `indices` being the 0-based slide of each file.
 `chart.data` replaces the whole `categories`/`series` it is given, so pass every series to keep.
 `animation.timing`'s `index` is the animation's position in the slide's list as `animation.get`
-numbers them; `animation.get` reports each one's click `step`. `review.spelling` answers `{dictionary, lang, issues}`:
+numbers them; `indices: [..]` changes several and `all: true` every animation on the slide (one call
+retimes a slide), answering `{changed}`; give one of the three (two are refused, as in
+`animation.options`); `animation.get` reports each one's click `step`. `review.spelling` answers `{dictionary, lang, issues}`:
 with `dictionary: false` no Hunspell dictionary was installed for `lang` and only the built-in
 common-misspellings list ran, so an empty `issues` is not a clean deck (`review.dictionary` says
 which folders are searched). An unknown
