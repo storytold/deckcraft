@@ -74,6 +74,7 @@ fn run_help_says_what_the_ids_do_not() {
         "Shape ids are unique in the presentation;",
         "A command that adds a shape (shape.insert, insert.textBox, insert.table…) selects it.",
         "format.* acts on the selected text or shapes",
+        "skips the --save and --export still pending; it does not undo files an earlier command wrote",
     ] {
         assert!(out.contains(fact), "{fact}: {out}");
     }
