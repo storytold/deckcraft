@@ -583,10 +583,10 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
-    if s.doc()?.selection.text.is_some() && ids_param(p, "ids").is_none() {
+    if s.doc()?.selection.text.is_some() && p.get("ids").is_none() {
         return super::text::delete_dir(s, "forward");
     }
-    if slides_scope(s, p) && ids_param(p, "ids").is_none() {
+    if slides_scope(s, p) && p.get("ids").is_none() {
         return s.execute("slide.delete", &json!({}));
     }
     let ids = targets(s, p)?;
@@ -701,7 +701,7 @@ fn selection(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = match ids_param(p, "ids") {
+    let ids = match ids_param(p, "ids")? {
         Some(v) => v,
         None => id_param(p, "id", "edit.select")?.map(|i| vec![i]).unwrap_or_default(),
     };
