@@ -94,6 +94,12 @@ fn soak(seed: u64, steps: usize) {
     for step in 0..steps {
         let id = *r.pick(&ids).unwrap();
         let p = params(&mut r, &s);
+        // A key the command doesn't take is refused before it runs (#298): keep the hostile
+        // values, but on keys the command reads, so its handler still sees them.
+        let p = match (crate::cmd::find_command(id).and_then(|c| crate::cmd::accepted_keys(c).ok()), p) {
+            (Some(keys), Value::Object(o)) => Value::Object(o.into_iter().filter(|(k, _)| keys.contains(&k.as_str())).collect()),
+            (_, p) => p,
+        };
         log.push_back(format!("{id} {p}"));
         if log.len() > 20 {
             log.pop_front();

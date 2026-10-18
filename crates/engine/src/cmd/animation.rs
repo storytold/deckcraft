@@ -17,7 +17,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Animation Styles",
             ["Animations", "Animation"],
             None,
-            "{effect: fade|fly|zoom|wipe|appear|spin|pulse|fadeOut|lines|… (animation.list), class?: entrance|emphasis|exit|path, option?, path?: [[x,y],…] or OOXML string, closed?: bool, ids?} — replaces the shapes' animations. path (motion paths): points in slide points, as offsets from where the shape sits, or the OOXML path string (slide fractions) animation.get answers",
+            "{effect: fade|fly|zoom|wipe|appear|spin|pulse|fadeOut|lines|… (animation.list), class?: entrance|emphasis|exit|path, option?, path?: [[x,y],…] or OOXML string, closed?: bool, start?: onClick|withPrevious|afterPrevious (shapes already animated keep theirs), duration?: ms, delay?: ms, ids?} — replaces the shapes' animations. path (motion paths): points in slide points, as offsets from where the shape sits, or the OOXML path string (slide fractions) animation.get answers",
             has_selection,
             set
         ),

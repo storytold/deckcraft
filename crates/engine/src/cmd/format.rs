@@ -199,7 +199,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph…",
             ["Format"],
             None,
-            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines}",
+            "{align?, indentLeft?: pt, indentRight?: pt, indentFirst?: pt (negative = hanging), special?: none|firstLine|hanging, specialBy?: pt, spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines, lineSpacingPt?: pt}",
             has_text_or_shapes,
             paragraph
         ),
