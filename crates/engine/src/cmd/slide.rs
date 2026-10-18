@@ -7,7 +7,7 @@ use deckcraft_model::text::TextBody;
 use deckcraft_model::{LayoutId, LayoutType, Presentation, Section, SlideId, defaults};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, has_doc, has_slide, ok, opt_usize_param, str_param, usize_param};
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, has_doc, has_slide, ok, opt_usize_param, str_param};
 use crate::{Result, Session, Target};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -141,7 +141,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
             }
             sh.text = Some(body);
         }
-        let at = usize_param(p, "at").unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
+        let at = super::opt_usize_param(p, "at", "slide.new")?.unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
         let id = slide.id;
         // Inherit the section of the slide before.
         let section = at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|prev| doc.section_of(prev.id));
@@ -286,7 +286,7 @@ fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
         None => opt_usize_param(p, "from", "slide.move")?.unwrap_or(s.doc()?.selection.slide),
         Some(_) => 0,
     };
-    let to = usize_param(p, "to").ok_or_else(|| bad("slide.move", "missing `to`"))?;
+    let to = opt_usize_param(p, "to", "slide.move")?.ok_or_else(|| bad("slide.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         let n = doc.slides.len();
         let moving: HashSet<SlideId> = match ids {
@@ -364,7 +364,7 @@ fn go_to(s: &mut Session, i: usize) -> Result<Value> {
 }
 
 fn go(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = match (usize_param(p, "index"), p.get("id").and_then(Value::as_u64)) {
+    let i = match (super::opt_usize_param(p, "index", "slide.go")?, p.get("id").and_then(Value::as_u64)) {
         (Some(i), _) => i,
         (None, Some(id)) => s
             .doc()?
@@ -404,8 +404,16 @@ fn select_slides(s: &mut Session, p: &Value) -> Result<Value> {
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(Value::as_u64).filter_map(|x| u32::try_from(x).ok()).map(SlideId).collect())
             .unwrap_or_default();
-        if let Some(a) = p.get("indices").and_then(Value::as_array) {
-            for i in a.iter().filter_map(Value::as_u64).map(|i| usize::try_from(i).unwrap_or(usize::MAX)) {
+        let indices = match p.get("indices") {
+            None | Some(Value::Null) => None,
+            Some(Value::Array(a)) => Some(a),
+            Some(v) => return Err(bad("slide.selectSlides", format!("`indices` is a list of 0-based slide indices, not {v}"))),
+        };
+        if let Some(a) = indices {
+            for x in a {
+                let i = x.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| {
+                    bad("slide.selectSlides", format!("each entry of `indices` must be a non-negative integer (a 0-based index), not {x}"))
+                })?;
                 v.push(st.doc.slides.get(i).ok_or_else(|| super::no_slide("slide.selectSlides", i, st.doc.slides.len()))?.id);
             }
         }
@@ -436,7 +444,7 @@ fn select_slides(s: &mut Session, p: &Value) -> Result<Value> {
 /// slide, as in PowerPoint), else at the current slide.
 /// With `add` the slides already selected stay selected (Ctrl+Shift-click).
 fn select_range(s: &mut Session, p: &Value) -> Result<Value> {
-    let to = usize_param(p, "to").ok_or_else(|| bad("slide.selectRange", "missing `to`"))?;
+    let to = opt_usize_param(p, "to", "slide.selectRange")?.ok_or_else(|| bad("slide.selectRange", "missing `to`"))?;
     let given = opt_usize_param(p, "from", "slide.selectRange")?;
     let add = bool_or(p, "add", false);
     let (from, count) = {
@@ -446,8 +454,8 @@ fn select_range(s: &mut Session, p: &Value) -> Result<Value> {
         let anchor = sel.range_anchor.filter(|(_, end)| Some(*end) == current).and_then(|(a, _)| st.doc.slide_index(a));
         (given.or(anchor).unwrap_or(sel.slide), st.doc.slides.len())
     };
-    if to >= count || from >= count {
-        return Err(bad("slide.selectRange", "no such slide"));
+    if let Some(i) = [from, to].into_iter().find(|i| *i >= count) {
+        return Err(super::no_slide("slide.selectRange", i, count));
     }
     let (a, b) = (from.min(to), from.max(to));
     s.select(|doc, sel| {
@@ -655,7 +663,7 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_rename(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.rename", "missing `index`"))?;
+    let i = super::opt_usize_param(p, "index", "section.rename")?.ok_or_else(|| bad("section.rename", "missing `index`"))?;
     let name = str_param(p, "name").unwrap_or("").to_string();
     s.edit(|doc, _| {
         let n = doc.sections.len();
@@ -667,7 +675,7 @@ fn section_rename(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_remove(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.remove", "missing `index`"))?;
+    let i = super::opt_usize_param(p, "index", "section.remove")?.ok_or_else(|| bad("section.remove", "missing `index`"))?;
     let with_slides = bool_or(p, "slides", false);
     s.edit(|doc, sel| {
         if i >= doc.sections.len() {
@@ -698,8 +706,8 @@ fn section_remove_all(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn section_move(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.move", "missing `index`"))?;
-    let to = usize_param(p, "to").ok_or_else(|| bad("section.move", "missing `to`"))?;
+    let i = super::opt_usize_param(p, "index", "section.move")?.ok_or_else(|| bad("section.move", "missing `index`"))?;
+    let to = super::opt_usize_param(p, "to", "section.move")?.ok_or_else(|| bad("section.move", "missing `to`"))?;
     s.edit(|doc, _| {
         // `to` is the final index, so it has the same range as `index`: refused, never clamped.
         let n = doc.sections.len();
@@ -974,7 +982,8 @@ mod tests {
     #[test]
     fn select_range_rejects_out_of_range_slides() {
         let mut s = deck_of(3);
-        assert!(s.execute("slide.selectRange", &json!({"to": 3})).is_err());
+        let e = s.execute("slide.selectRange", &json!({"to": 3})).unwrap_err().to_string();
+        assert!(e.contains("indices run 0 through 2"), "{e}");
         assert!(s.execute("slide.selectRange", &json!({"from": 9, "to": 1})).is_err());
         assert!(s.execute("slide.selectRange", &json!({})).is_err());
     }

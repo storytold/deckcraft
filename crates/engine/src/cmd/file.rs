@@ -366,8 +366,12 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     o.slides = match p.get("slides") {
         Some(Value::Array(a)) => Some(
             a.iter()
-                .filter_map(|v| v.as_u64().map(|x| usize::try_from(x).unwrap_or(usize::MAX)))
-                .map(|i| if i < count { Ok(i) } else { Err(super::no_slide("file.export", i, count)) })
+                .map(|v| {
+                    v.as_u64().and_then(|x| usize::try_from(x).ok()).ok_or_else(|| {
+                        bad("file.export", format!("each entry of `slides` must be a non-negative integer (a 0-based index), not {v}"))
+                    })
+                })
+                .map(|i| i.and_then(|i| if i < count { Ok(i) } else { Err(super::no_slide("file.export", i, count)) }))
                 .collect::<Result<Vec<_>>>()?,
         ),
         Some(Value::String(text)) if !text.trim().is_empty() => Some(parse_slide_range(text, count)?),

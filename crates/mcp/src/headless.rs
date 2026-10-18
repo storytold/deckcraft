@@ -110,7 +110,13 @@ impl Headless {
 
     fn render(&mut self, p: &Value) -> Result<Value, String> {
         let st = self.session.active().ok_or("no presentation open")?;
-        let i = p.get("slide").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(st.selection.slide);
+        let i = match p.get("slide") {
+            None | Some(Value::Null) => st.selection.slide,
+            Some(v) => v
+                .as_u64()
+                .and_then(|v| usize::try_from(v).ok())
+                .ok_or_else(|| format!("`slide` must be a non-negative integer (a 0-based index), not {v}"))?,
+        };
         if i >= st.doc.slides.len() {
             return Err(deckcraft_engine::cmd::no_slide_message(i, st.doc.slides.len()));
         }
