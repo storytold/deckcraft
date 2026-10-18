@@ -294,7 +294,15 @@ pub fn tool_definitions() -> Vec<Value> {
             obj(json!({"text": string("Text")}), &["text"]),
             false,
         ),
-        tool("screenshot", "Screenshot", &format!("Screenshot of the whole DeckCraft window (UI included).{APP_ONLY}"), obj(json!({}), &[]), true),
+        tool(
+            "screenshot",
+            "Screenshot",
+            &format!(
+                "Screenshot of the whole DeckCraft window (UI included), as image content; with `path` the PNG is written there and the answer is text {{path, width, height}}, for a client that cannot read images.{APP_ONLY}"
+            ),
+            obj(json!({"path": string("Write the PNG to this file and answer {path, width, height} as text")}), &[]),
+            true,
+        ),
         tool(
             "call_app",
             "Call app method",
@@ -616,9 +624,17 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "type_text" => wrap(b.call("ui.text", a)),
         "screenshot" => {
             if !b.has_ui() {
-                return ToolResult::error(format!("screenshot: {NEEDS_APP}. Use render_slide to see a slide headlessly."));
+                return ToolResult::error(format!(
+                    "screenshot: {NEEDS_APP}. Headless, render_slide shows a slide, and export {{path, format: \"png\", slide}} writes one to a file."
+                ));
             }
-            match b.call("ui.screenshot", json!({"base64": true})) {
+            // With a path the app writes the file and answers {path, width, height}: text an agent
+            // behind a text-only bridge can read (it used to have to guess call_app ui.screenshot).
+            let params = match a.get("path").and_then(Value::as_str) {
+                Some(path) => json!({"path": path}),
+                None => json!({"base64": true}),
+            };
+            match b.call("ui.screenshot", params) {
                 Ok(v) => match v.get("png").and_then(Value::as_str) {
                     Some(png) => ToolResult::image(png.to_string(), &json!({"width": v.get("width"), "height": v.get("height")})),
                     None => ToolResult::json(&v),
