@@ -4916,3 +4916,54 @@ fn edit_select_follows_an_id_to_its_slide() {
     assert!(e.contains(&format!("shape {b} is on slide index 1")) && e.contains("one slide"), "{e}");
     assert_eq!(s.doc().unwrap().selection.shapes.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>(), vec![a], "a refused select keeps the selection");
 }
+
+/// Final-run findings: an explicit empty `ids` is refused instead of quietly acting on the
+/// selection; animation.add and section.add answer what they made; slide.inspect leaves out an
+/// empty notesBody; and shape.connect's default sites face each other (right→left for shapes
+/// side by side, bottom→top for stacked ones) instead of "the closest pair", which crossed boxes.
+#[test]
+fn an_explicit_empty_ids_list_is_refused() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("shape.fill", &json!({"ids": [], "color": "#FF0000"})).unwrap_err().to_string();
+    assert!(e.contains("`ids` is empty"), "{e}");
+    s.execute("shape.fill", &json!({"ids": [a], "color": "#FF0000"})).unwrap();
+}
+
+#[test]
+fn animation_add_and_section_add_answer_what_they_made() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("animation.add", &json!({"ids": [a, b], "effect": "fade"})).unwrap();
+    assert_eq!(r, json!({"count": 2, "indices": [0, 1]}), "{r}");
+    let r = s.execute("animation.add", &json!({"ids": [a], "effect": "zoom", "class": "exit"})).unwrap();
+    assert_eq!(r, json!({"count": 3, "indices": [2]}), "{r}");
+    s.execute("slide.new", &json!({})).unwrap();
+    let r = s.execute("section.add", &json!({"name": "Part B", "at": 1})).unwrap();
+    assert_eq!(r, json!({"sections": 2, "index": 1, "name": "Part B"}), "{r}");
+}
+
+#[test]
+fn slide_inspect_leaves_out_an_empty_notes_body() {
+    let mut s = session();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert!(r.get("notesBody").is_none() && r["notes"] == "", "{r}");
+    s.execute("slide.notes", &json!({"text": "Say hello"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert!(r.get("notesBody").is_some() && r["notes"] == "Say hello", "{r}");
+}
+
+#[test]
+fn connector_default_sites_face_each_other() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 200, 120, 60]})).unwrap()["id"].as_u64().unwrap();
+    let right = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [500, 220, 120, 60]})).unwrap()["id"].as_u64().unwrap();
+    let below = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [120, 400, 120, 60]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": a, "to": right})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(3), Some(1)), "side by side: right → left: {r}");
+    let r = s.execute("shape.connect", &json!({"from": a, "to": below})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(0)), "stacked: bottom → top: {r}");
+    let r = s.execute("shape.connect", &json!({"from": below, "to": right})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(3), Some(1)), "more sideways than up: right → left: {r}");
+}

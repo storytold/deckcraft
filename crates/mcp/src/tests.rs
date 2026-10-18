@@ -317,3 +317,35 @@ fn set_text_takes_a_cell_and_list_commands_says_what_acts_on_what() {
     let style = cmds.as_array().unwrap().iter().find(|c| c["id"] == "table.style").unwrap();
     assert!(style["actsOn"].as_str().unwrap_or("").contains("`id`"), "{style}");
 }
+
+/// Final-run findings: a command id given as a tool name is told to use run_command; the
+/// instructions carry the diagram recipe so the common path needs no list_commands; and
+/// list_commands {brief} answers ids and params only.
+#[test]
+fn discovery_costs_fewer_calls() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    let instr = init["result"]["instructions"].as_str().unwrap();
+    for needle in [
+        "shape.insert",
+        "shape.connect",
+        "animation.add",
+        "slide.notes",
+        "transition.set",
+        "section.add",
+        "insert.table",
+        "design.palette",
+        "placeholders",
+    ] {
+        assert!(instr.contains(needle), "instructions should mention {needle}");
+    }
+    let r = call(&mut s, 2, "tools/call", json!({"name": "design.palette", "arguments": {}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(r["result"]["isError"] == true && text.contains("is a command") && text.contains("run_command"), "{text}");
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let brief = tool(&mut s, "list_commands", json!({"filter": "shape.connect", "brief": true}));
+    let item = brief.as_array().unwrap().iter().find(|c| c["id"] == "shape.connect").unwrap();
+    let mut keys: Vec<&str> = item.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["id", "params"], "{item}");
+}

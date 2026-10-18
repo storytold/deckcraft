@@ -552,6 +552,7 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
 fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
     let at = opt_usize_param(p, "at", "section.add")?.unwrap_or(s.doc()?.selection.slide);
     let name = str_param(p, "name").unwrap_or("Untitled Section").to_string();
+    let wanted = name.clone();
     s.edit(|doc, _| {
         let at = at.min(doc.slides.len().saturating_sub(1));
         let ids: Vec<SlideId> = doc.slides.iter().map(|x| x.id).collect();
@@ -570,7 +571,8 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
             doc.sections.insert(si + 1, Section { name, slides: tail });
             doc.sections.retain(|x| !x.slides.is_empty() || x.name != "Default Section");
         }
-        Ok(json!({"sections": doc.sections.len()}))
+        let index = doc.sections.iter().rposition(|x| x.name == wanted).unwrap_or(0);
+        Ok(json!({"sections": doc.sections.len(), "index": index, "name": wanted}))
     })
 }
 

@@ -218,6 +218,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
     let a = build(p)?;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.add", "no slide"))?);
+        let first = sl.animations.len();
         for (k, id) in ids.iter().enumerate() {
             let mut x = Animation { shape: *id, ..a.clone() };
             if k > 0 {
@@ -225,7 +226,8 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
             }
             sl.animations.push(x);
         }
-        Ok(json!({"count": sl.animations.len()}))
+        let indices: Vec<usize> = (first..sl.animations.len()).collect();
+        Ok(json!({"count": sl.animations.len(), "indices": indices}))
     })
 }
 
