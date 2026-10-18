@@ -1453,6 +1453,45 @@ fn file_info_reports_the_presentation() {
     assert!(empty.execute("file.info", &json!({})).is_err());
 }
 
+/// Save As writes the new file and leaves the one already on disk byte for byte as it was.
+#[test]
+fn save_as_leaves_the_original_file_byte_for_byte() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-saveas-engine-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let original = dir.join("Talk.pptx").to_string_lossy().into_owned();
+    let copy = dir.join("Talk copy.pptx").to_string_lossy().into_owned();
+    let mut s = session();
+    s.execute("file.saveAs", &json!({"path": original})).unwrap();
+    let before = std::fs::read(&original).unwrap();
+    s.execute("slide.new", &json!({"title": "Kept aside"})).unwrap();
+    s.execute("file.saveAs", &json!({"path": copy})).unwrap();
+    assert_eq!(std::fs::read(&original).unwrap(), before, "the original file is not rewritten");
+    assert_eq!(s.active().unwrap().path.as_deref(), Some(copy.as_str()));
+    assert!(!s.active().unwrap().is_dirty());
+    let mut old = Session::new();
+    old.execute("file.open", &json!({"path": original})).unwrap();
+    assert_eq!(old.doc().unwrap().doc.slides.len(), 1, "the original presentation still has its saved slides");
+    assert!(!doc_text(&old).contains("Kept aside"));
+    let mut saved = Session::new();
+    saved.execute("file.open", &json!({"path": copy})).unwrap();
+    assert_eq!(saved.doc().unwrap().doc.slides.len(), 2);
+    assert!(doc_text(&saved).contains("Kept aside"));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+fn doc_text(s: &Session) -> String {
+    s.doc()
+        .unwrap()
+        .doc
+        .slides
+        .iter()
+        .flat_map(|sl| sl.shapes.iter())
+        .filter_map(|sh| sh.text.as_ref().map(|t| t.text()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// The Print page's Slides box (#76): PowerPoint-style ranges, 1-based.
 #[test]
 fn slide_ranges_parse_like_powerpoints_print_box() {

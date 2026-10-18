@@ -18,7 +18,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 
 | Element | PowerPoint for Mac | DeckCraft | Gap |
 |---|---|---|---|
-| Title bar: AutoSave, Home, Save, Undo/Redo, document title, Share, search | yes | yes, plus Export; no Share (cloud) | #71 macOS window controls misaligned |
+| Title bar: AutoSave, Home, Save, Undo/Redo, document title, Share, search | yes | yes, plus Save As beside Save (#363) and Export; no Share (cloud) | #71 macOS window controls misaligned |
 | Native macOS menu bar (File, Edit, View, Insert, Format, Arrange, Tools, Slide Show, Window, Help) | yes | **no** (`menus::menu_tree()` is defined but not installed) | 3–5 h |
 | Menu-bar items with a DeckCraft equivalent | 217 app-specific items | 128 matched by name (59%, heuristic lower bound) | See [target-app-parity.md](target-app-parity.md) |
 | Ribbon tabs: Home, Insert, Draw, Design, Transitions, Animations, Slide Show, Record, Review, View | 10 | 10 | Record tab is a placeholder |
@@ -52,7 +52,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Open | Recent, Shared with Me, OneDrive, This PC, Add a Place, Browse; Presentations / Folders; Recover Unsaved Presentations | Recent and Browse (`app.openDialog`), recent presentations with a search box (`file.open`), Recover Unsaved Presentations (`file.recovery.open`). No cloud places or Folders tab |
 | Info | Name and path, Upload / Share / Copy path / Open file location; Protect, Inspect, Version History, Manage Presentation; Properties, Related Dates, Related People | Name and path, Copy path, Open file location; Inspect Presentation (Accessibility Checker), Manage Presentation (Revert); Size, Slides, Hidden slides and editable Title, Subject, Tags, Categories, Company, Comments, Author (`file.info`, `file.properties`). No Protect, Version History or dates |
 | Save | Saves; a presentation never saved goes to Save As | Same (`file.save`) |
-| Save As | Places, folder, file name, type, Save, More options | Type (PowerPoint, DeckCraft, PDF, Outline, PNG, JPEG) and Save, which opens the system Save dialog (web: Download). .pptx/.deckcraft take the new file; the others are copies (`file.saveAs`, `file.export`) |
+| Save As | Places, folder, file name, type, Save, More options | Type (PowerPoint, DeckCraft, PDF, Outline, PNG, JPEG) and Save, which opens the system Save dialog (web: Download). .pptx/.deckcraft take the new file; the others are copies (`file.saveAs`, `file.export`). The title bar and ⇧⌘S (Ctrl+Shift+S) save a copy in the presentation's own format — PowerPoint, if it has never been saved — and leave the file already on disk as it was (#363) |
 | Print | Print and Copies, Printer, Print All / Selection / Current / Custom Range, Slides box, layout (Full Page Slides, Notes Pages, Outline, Handouts 1–9), sides, collation, colour, Edit Header & Footer; page preview with pager and zoom | Print, Print All Slides / Current Slide / Custom Range, Slides box (`1-3, 5`), Full Page Slides / Notes Pages / Handouts 1–9, Print Hidden Slides, Frame Slides, Edit Header & Footer; preview with pager. DeckCraft prints through a PDF (`file.export`) opened in the system viewer, which has the printers (web: downloaded). No printer list, copies, sides or colour |
 | Share | Cloud sharing | Not offered |
 | Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type (PNG with an optional transparent background, #784). No video, GIF or CD package |
@@ -105,7 +105,8 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 
 Every common PowerPoint for Mac shortcut is bound (checklist row done): new slide, duplicate,
 group/ungroup, bold/italic/underline, alignment, font size, list levels, Format Painter, the Font
-dialog (Cmd+T), show from start/current, view switching. Not yet: Cmd+F Find opening a find bar on the slide, Option+drag
+dialog (Cmd+T), show from start/current, view switching. Save As is ⇧⌘S (Ctrl+Shift+S on Windows and Linux) and a title-bar
+button (#363): a new file, and the one already saved left untouched. Not yet: Cmd+F Find opening a find bar on the slide, Option+drag
 precision without snapping, F6 pane cycling, ribbon KeyTips (Windows).
 
 ### Text editing keys
@@ -201,6 +202,7 @@ consistency is open (#73, #56).
 | 2026-10-14 | minor | Font dialog from Home › Font, the shape menu and Cmd+T |
 | 2026-10-13 | minor | Grid Options dialog: spacing, snap, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
 | 2026-10-13 | minor | WordArt adjust handles on a selected text warp; dragging one sets that `prstTxWarp` adjust |
+| 2026-10-13 | minor | Save As on the title bar and ⇧⌘S / Ctrl+Shift+S: a copy in the presentation's own format, previous file left as it was (#363) |
 | 2026-10-12 | minor | File tab (Backstage) observed in PowerPoint for Windows and matched (#76); the start screen is File › Home |
 | 2026-10-12 | minor | Off-slide objects drawn and editable around the slide in Normal view (#270) |
 | 2026-10-12 | minor | Selection Pane matched to PowerPoint (#133): drag and drop, arrows, groups, eye, Lock |

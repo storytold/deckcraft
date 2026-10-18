@@ -45,6 +45,7 @@ pub fn common() -> Vec<QatItem> {
         QatItem::new("file.new", "New", Icon::File),
         QatItem::new("app.openDialog", "Open", Icon::Folder),
         QatItem::new("file.save", "Save", Icon::Save),
+        QatItem::new("app.saveAsDialog", "Save As…", Icon::SaveAs),
         QatItem::new("app.print", "Print", Icon::Print),
         QatItem::new("edit.undo", "Undo", Icon::Undo),
         QatItem::new("edit.redo", "Redo", Icon::Redo),
@@ -57,9 +58,9 @@ pub fn common() -> Vec<QatItem> {
 
 /// The toolbar a new install starts with.
 pub fn defaults() -> Vec<QatItem> {
-    // Home, Save, Export, Undo, Redo, Start from Beginning: the title bar's buttons before it was customizable.
+    // Home, Save, Save As, Export, Undo, Redo, Start from Beginning: the title bar's buttons before it was customizable.
     let all = common();
-    ["app.home", "file.save", "app.exportDialog", "edit.undo", "edit.redo", "show.fromStart"]
+    ["app.home", "file.save", "app.saveAsDialog", "app.exportDialog", "edit.undo", "edit.redo", "show.fromStart"]
         .iter()
         .filter_map(|id| all.iter().find(|q| q.id == *id).cloned())
         .collect()
@@ -121,6 +122,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             id => crate::ribbon::enabled(app, id),
         };
         let r = crate::widgets::icon_toggle(ui, q.icon(), &tip(q), en, on);
+        if q.id == "app.saveAsDialog" {
+            // The ellipsis keeps this off Export's "Save As" button, which writes the chosen type.
+            r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, en, "Save As…"));
+        }
         if r.clicked() {
             run(app, q);
         }
