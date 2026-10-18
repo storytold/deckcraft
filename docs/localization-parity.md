@@ -1,18 +1,24 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-18 · **Change:** major (the string catalog, the language setting (#15) and Vietnamese land; dimension ~8% → ~20%; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+DeckCraft has a string catalog and a language switch. English is the source language: strings are
+looked up at the UI's draw sites (`crates/engine/src/i18n`, `tr`/`tr_id` — stable ids for commands,
+dialogs and Backstage pages, and the English strings as drawn for the rest), and a missing key is
+the key itself, so anything untranslated simply stays English. The language is chosen in
+Preferences ▸ Language or follows the system (`LC_ALL`, `LC_MESSAGES`, `LANG` on POSIX) when
+unset — #15. Vietnamese is the first catalog, a draft without native review. #30 and PR #34
+(Ukrainian) predate the catalog and should be redone as catalog entries. Dimension score:
+**~20% ready** (estimated: infrastructure complete, one draft language, slide-text script support
+partly there), **40–73 h** to parity plus native-speaker review.
 
 ## How the numbers are measured
 
 - **UI strings:** ~1,050 user-visible string literals (measured 2026-10-10: distinct
   capitalized literals in `crates/ui-egui/src`, `crates/engine/src/cmd` and `crates/model/src`,
-  including the 226 command labels). A catalog will refine the count; until then percentages are
-  against this figure.
+  including the 226 command labels). The catalog is counted directly too: 653 keys as of
+  2026-10-18 (418 id keys, 235 text keys). Percentages stay against the ~1,050 figure until the
+  next re-measure.
 - **Script support** is about slide text (what users type and import), separately from the UI:
   bidi and shaping live in `crates/text` (UAX #9, HarfRust, UAX #14 line breaking).
 - **PowerPoint's languages:** `Contents/Resources/*.lproj` in PowerPoint 16.113.4: ar, cs, da, de,
@@ -35,18 +41,21 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
-| Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
+| Vietnamese | vi | ~650 / ~1,050 (~60%) | yes (titles, buttons) / partial / no help | stacked diacritics through HarfRust | no | **draft**, no native review | **no** (Windows only) | 3–5 |
 
-Other languages shipped: **0** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
+Other languages shipped: **1** (Vietnamese, a ~60% draft; Ukrainian PR #34 is in review and was
+written before this catalog). PowerPoint for Mac ships 16 more
 than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
 Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
 
-Per-language hours assume the infrastructure exists: **8–14 h** once for a string catalog (copy a
-sibling app's approach, e.g. EffectCraft's menu and panel catalogs), a language setting that follows
-the system (#15), plural and number formatting, and an `xtask` check that every key has a
-translation. IME composition landed with #101 (slide text, table cells, notes and text fields;
-one undo step per composition, underlined in place); the hours that included it are kept until
-the next re-measure.
+The infrastructure the hours assumed landed 2026-10-18: the catalog and `tr`/`tr_id` at the draw
+sites, a language setting in Preferences that follows the system on POSIX (#15; Windows and the
+web pick the language in Preferences), and coverage tests that fail when a command label, ribbon
+tab, dialog title or Backstage page has no translation. Each per-language estimate still covers
+translating the catalog, the strings that fall back to English, and native-speaker review — no
+language has been reviewed yet. IME composition landed with #101 (slide text, table cells, notes
+and text fields; one undo step per composition, underlined in place); the hours that included it
+are kept until the next re-measure.
 
 ## Proofing languages
 
@@ -58,6 +67,7 @@ common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#p
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | major | The catalog lands: `crates/engine/src/i18n` (ids and English strings, English fallback), Preferences ▸ Language, follow the system on POSIX (#15), the Vietnamese catalog (653 translations, ~60%, unreviewed) and coverage tests. Dimension ~8% → ~20% |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
 | 2026-10-10 | major | Created: twelve-language table, ~1,050 UI strings measured, PowerPoint for Mac's 26 languages from its bundle |

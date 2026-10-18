@@ -16,6 +16,7 @@ pub mod file_access;
 pub mod fonts;
 pub mod gif_export;
 pub mod guard;
+pub mod i18n;
 pub mod icons;
 pub mod inkshape;
 pub mod io;
@@ -339,6 +340,10 @@ pub struct Prefs {
     pub undo_limit: usize,
     /// Minutes between AutoRecover saves of unsaved presentations.
     pub recovery_minutes: f64,
+    /// The interface language: `None` follows the system (issue #15); see [`i18n`].
+    /// Written as a plain code (`"vi"`); a value no language understands stays `None`.
+    #[serde(deserialize_with = "crate::i18n::de_language")]
+    pub language: Option<i18n::Language>,
 }
 
 impl Default for Prefs {
@@ -360,6 +365,7 @@ impl Default for Prefs {
             author: "Presenter".into(),
             undo_limit: 500,
             recovery_minutes: 1.0,
+            language: None,
         }
     }
 }

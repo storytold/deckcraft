@@ -1,6 +1,6 @@
 # DeckCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-18 · **Last updated:** 2026-10-18 · **Change:** minor (localization: the string catalog, the language setting (#15) and Vietnamese landed; beta item 6 narrows to five languages at 19–32 h, M14 and the after-beta count updated; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
 [ROADMAP.md](../ROADMAP.md); every shortfall is in [gaps.md](gaps.md); numbers are in
@@ -34,7 +34,7 @@ points and lead the beta plan.
    this repo, media options and rewind on save (#74, #77), relationship-bearing SmartArt and OLE
    (#203), EMF+ records and SVG. 31–55 h.
 3. **Review the open PRs:** equations (#55), browser print (#66), Morph alignment (#67), macOS
-   open-with (#68), font lookup (#80), Ukrainian (#34, after the catalog exists). 4–8 h.
+   open-with (#68), font lookup (#80), Ukrainian (#34, redone against the catalog). 4–8 h.
 
 ## Plan to beta (~120–210 h; ~40–70 h wall clock with 3–4 agents)
 
@@ -48,7 +48,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 3 | PPTX round-trip losses (#70, #74, #77), `.potx`/`.ppsx`/`.pptm` content types, MicroType embedded-font subsets | 8–15 | File formats → 80% |
 | 4 | EMF/WMF and SVG pictures | 8–14 | File formats, Pictures |
 | 5 | Vector PDF, printing | 10–16 | File formats, Files |
-| 6 | Localization infrastructure + zh-Hans, es, fr, de, ja (with IME) | 27–46 | Localization 8 → ~40% |
+| 6 | zh-Hans, es, fr, de, ja (with IME) on the landed catalog | 19–32 | Localization ~20 → ~45% |
 | 7 | Font weights (#69), image paste (#53), Tab in text (#78) | 6–11 | Features |
 | 8 | Charts: data grid, elements | 6–10 | Features |
 | 10 | Presenter view on the right display, swap displays | 2–4 | Hardware, Slide show |
@@ -57,7 +57,7 @@ Beta means ~75% ready for real work and opening and saving PowerPoint's `.pptx` 
 | 12 | Performance baseline and the obvious fixes | 4–8 | Performance |
 | **Total** | | **~120–210** | Ready ~55% → ~75% |
 
-Parallelizes well: 1 (engine/app), 2–5 (pptx, render, pdf), 6 (ui-egui catalogs), 8–11 (UI)
+Parallelizes well: 1 (engine/app), 2–5 (pptx, render, pdf), 6 (the language catalogs), 8–11 (UI)
 touch different crates. Needs a human: the owner opening PPTX outputs in PowerPoint and making
 reference renders, a Windows tester with the affected GPUs, native speakers to review translations.
 
@@ -66,7 +66,7 @@ reference renders, a Windows tester with the affected GPUs, native speakers to r
 SmartArt depth, the remaining animation effects and motion paths, edit-point segment types and
 3-D depth, bundled proofing dictionaries, Zoom depth, recording, video export, legacy `.ppt` import
 and `.odp` (owner decision), GPU rasterization, hardware video decode, pen tilt (pressure already
-scales ink width) and pinch zoom, the other 21 languages with RTL mirroring, a larger template
+scales ink width) and pinch zoom, the other 20 languages with RTL mirroring, a larger template
 gallery (six original starters ship), and local AI features (owner decision on models). Itemized
 with hours in [gaps.md](gaps.md).
 
@@ -90,7 +90,7 @@ From the local execution plan (`plan/execution-plan.md`, gitignored). Status as 
 | M11 | Output | partly | vector PDF, SVG, GIF, MP4, print |
 | M12 | Review | partly | dictionaries, AutoCorrect, find/replace dialog, compare |
 | M13 | Automation and CLI parity | done | |
-| M14 | 1.0 polish and release | partly | i18n, native menu bar, signed releases done (v0.4.0) |
+| M14 | 1.0 polish and release | partly | localization beyond Vietnamese, native menu bar; signed releases done (v0.4.0) |
 
 ## History: the 2026-10-07 alpha checklist
 
@@ -115,6 +115,7 @@ plan above.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Localization: the string catalog, the language setting and Vietnamese landed (#15); beta item 6 narrows to five languages (19–32 h) and the dimension reads ~20% |
 | 2026-10-14 | trivial | M13 reliability: remote MCP validates IDs and envelopes, caps replies and rejects incomplete frames; #718 |
 | 2026-10-14 | minor | Community PR wave folded: one Review gate row, one Current focus item 2, one beta row each for items 9 and 10 (timeline and timer controls are in), one after-beta paragraph, one M9 and M10 row, one corpus row in the 2026-10-07 history |
 | 2026-10-13 | trivial | Beta item 3: embedded fonts are in, except MicroType Express subsets |
