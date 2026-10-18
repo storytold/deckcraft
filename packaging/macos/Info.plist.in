@@ -90,6 +90,36 @@
       </dict>
     </dict>
   </array>
+  <!-- Documents DeckCraft opens (system type declarations). -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>DeckCraft Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>ai.storyteller.deckcraft.presentation</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>Open XML Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.openxmlformats.presentationml.presentation</string>
+        <string>org.openxmlformats.presentationml.template</string>
+        <string>org.openxmlformats.presentationml.slideshow</string>
+      </array>
+    </dict>
+  </array>
 
 </dict>
 </plist>
