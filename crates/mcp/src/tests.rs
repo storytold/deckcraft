@@ -459,6 +459,24 @@ fn list_commands_bare_answers_families_and_id_answers_one_command() {
     assert_eq!(cmds.as_array().unwrap().len(), 1, "{cmds}");
 }
 
+/// W6: inspect_slide answers animations as {count, clickSteps}; `animations: true` embeds the list.
+#[test]
+fn inspect_slide_summarises_animations_unless_asked() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let id = tool(&mut s, "add_shape", json!({"preset": "rect", "x": 10, "y": 10, "w": 100, "h": 50}))["id"].as_u64().unwrap();
+    tool(&mut s, "run_command", json!({"command": "animation.add", "params": {"ids": [id], "effect": "fade", "start": "onClick"}}));
+    tool(
+        &mut s,
+        "run_command",
+        json!({"command": "animation.add", "params": {"ids": [id], "effect": "zoom", "class": "exit", "start": "afterPrevious"}}),
+    );
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    assert_eq!(sl["animations"], json!({"count": 2, "clickSteps": 1}), "{sl}");
+    let full = tool(&mut s, "inspect_slide", json!({"animations": true}));
+    assert_eq!(full["animations"].as_array().map(Vec::len), Some(2), "{full}");
+}
+
 /// E5: a batch item can be named with `as`, and a later item's params can refer to its answer
 /// with "$name" (its id) wherever an id goes, so a diagram is one batch: insert, connect, animate.
 #[test]
