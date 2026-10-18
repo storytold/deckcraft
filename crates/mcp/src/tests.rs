@@ -514,3 +514,59 @@ fn batch_items_can_reference_earlier_results() {
     let text = bad["result"]["content"][0]["text"].as_str().unwrap();
     assert!(bad["result"]["isError"] == true && text.contains("$nope"), "{text}");
 }
+
+/// A stand-in for the desktop app: records the control-channel calls and answers `ui.screenshot`
+/// as the app does (a base64 PNG, or `{path, width, height}` once a path is given).
+struct FakeApp {
+    calls: std::rc::Rc<std::cell::RefCell<Vec<(String, Value)>>>,
+}
+
+impl crate::backend::Backend for FakeApp {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.calls.borrow_mut().push((method.to_string(), params.clone()));
+        match method {
+            "ui.screenshot" => Ok(match params.get("path").and_then(Value::as_str) {
+                Some(p) => json!({"path": p, "width": 1280, "height": 800}),
+                None => json!({"png": "iVBORw0KGgo=", "width": 1280, "height": 800}),
+            }),
+            other => Err(format!("unknown method `{other}`")),
+        }
+    }
+    fn has_ui(&self) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "stand-in app".into()
+    }
+}
+
+/// W4: `screenshot` answered image content only, which an agent behind a text bridge cannot see.
+/// With `path` the PNG is written there and the answer is text `{path, width, height}`; headless
+/// still refuses clearly and writes nothing. (The connected backend is a loopback socket; the
+/// stand-in checks the argument plumbing and the answer shape.)
+#[test]
+fn screenshot_with_a_path_answers_text_and_headless_refuses() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let path = std::env::temp_dir().join(format!("deckcraft-mcp-shot-{}.png", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let r = call(&mut s, 1, "tools/call", json!({"name": "screenshot", "arguments": {"path": path.to_string_lossy()}}));
+    let msg = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(r["result"]["isError"] == true && msg.contains("desktop app") && msg.contains("export"), "{msg}");
+    assert!(!path.exists(), "headless must write nothing");
+    let calls = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let mut s = Server::new(Box::new(FakeApp { calls: calls.clone() }));
+    let r = call(&mut s, 2, "tools/call", json!({"name": "screenshot", "arguments": {"path": "shots/window.png"}}));
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    let content = r["result"]["content"].as_array().unwrap();
+    assert!(content.iter().all(|c| c["type"] == "text"), "text, not an image: {r}");
+    let v: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(v, json!({"path": "shots/window.png", "width": 1280, "height": 800}));
+    assert_eq!(calls.borrow().last().unwrap(), &("ui.screenshot".to_string(), json!({"path": "shots/window.png"})));
+    // Without a path: image content, as before.
+    let r = call(&mut s, 3, "tools/call", json!({"name": "screenshot", "arguments": {}}));
+    assert_eq!(r["result"]["content"][0]["type"], "image", "{r}");
+    assert_eq!(calls.borrow().last().unwrap().1, json!({"base64": true}));
+    let tools = call(&mut s, 4, "tools/list", json!({}));
+    let shot = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "screenshot").unwrap();
+    assert!(shot["inputSchema"]["properties"].get("path").is_some() && shot["description"].as_str().unwrap().contains("path"), "{shot}");
+}
