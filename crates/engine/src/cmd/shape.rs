@@ -1057,12 +1057,14 @@ fn set_default(s: &mut Session, _p: &Value) -> Result<Value> {
 fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
     let keep_box = bool_or(p, "keepBox", false);
-    let ids = targets(s, p)?;
+    let st = s.doc()?;
+    // The pictures the crop edits: edit_geometry leaves a locked one alone, so the answered `rect`
+    // must be one that was cropped, not a locked one listed first.
+    let ids: Vec<ShapeId> = targets(s, p)?.into_iter().filter(|id| !st.shape(*id).is_some_and(|x| x.locked)).collect();
     // Each target picture's pixel size; a picture without one (an SVG) keeps its box.
     let sizes: Vec<(ShapeId, (f64, f64))> = if keep_box {
         vec![]
     } else {
-        let st = s.doc()?;
         ids.iter()
             .filter_map(|id| {
                 let sh = st.shape(*id)?;

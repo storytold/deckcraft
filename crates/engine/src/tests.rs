@@ -4101,3 +4101,21 @@ fn picture_crop_refits_the_frame_to_the_cropped_aspect() {
     let x = st.shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
     assert_eq!((x.w, x.h), (400.0, 400.0));
 }
+
+/// A locked picture listed first is left alone, and the answered `rect` is the box of a picture
+/// that was cropped, not the locked one's.
+#[test]
+fn picture_crop_answers_the_box_of_a_picture_it_cropped_not_a_locked_one() {
+    let mut s = session();
+    let insert = |s: &mut Session, rect: [f64; 4]| {
+        s.execute("insert.picture", &json!({"name": "wide.png", "data": wide_png_b64(), "rect": rect})).unwrap()["id"].as_u64().unwrap()
+    };
+    let locked = insert(&mut s, [0.0, 0.0, 200.0, 100.0]);
+    let free = insert(&mut s, [300.0, 0.0, 200.0, 100.0]);
+    s.execute("shape.lock", &json!({"id": locked, "locked": true})).unwrap();
+    let r = s.execute("picture.crop", &json!({"ids": [locked, free], "right": 0.5})).unwrap();
+    assert_eq!(r["rect"], json!([300.0, 0.0, 200.0, 200.0]), "the cropped picture's box, not the locked one's: {r}");
+    let st = s.doc().unwrap();
+    let x = st.shape(ShapeId(locked as u32)).unwrap().xfrm.unwrap();
+    assert_eq!((x.w, x.h), (200.0, 100.0), "the locked picture kept its box");
+}
