@@ -5018,6 +5018,31 @@ fn animation_get_numbers_the_click_steps() {
     assert_eq!(steps, [1, 1, 2, 2], "{r}");
 }
 
+/// W6: slide.inspect used to embed every animation (10-15 KB on an animated slide, read 14 times
+/// in one agent run). It now answers a summary {count, clickSteps}; `animations: true` embeds
+/// the list as before, and animation.get still answers it with click steps.
+#[test]
+fn slide_inspect_summarises_animations_unless_asked() {
+    let mut s = session();
+    let ids: Vec<u64> = (0..3)
+        .map(|k| s.execute("shape.insert", &json!({"preset": "rect", "rect": [10 + 150 * k, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap())
+        .collect();
+    s.execute("animation.add", &json!({"ids": [ids[0]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[1]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[2]], "effect": "zoom", "class": "exit", "start": "afterPrevious"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert_eq!(r["animations"], json!({"count": 3, "clickSteps": 2}), "{r}");
+    assert!(!r.to_string().contains("\"effect\""), "no per-animation entries: {r}");
+    let full = s.execute("slide.inspect", &json!({"animations": true})).unwrap();
+    let list = full["animations"].as_array().expect("the full list");
+    assert_eq!(list.len(), 3, "{full}");
+    assert!(list.iter().all(|a| a["effect"].is_string() && a["shape"].is_u64()), "{full}");
+    // A slide without animations still says so, cheaply.
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert_eq!(r["animations"], json!({"count": 0, "clickSteps": 0}), "{r}");
+}
+
 /// #786: format.font sets the East Asian and complex-script faces too, not only the Latin one
 /// (with keys checked against the params doc, `eastAsia` used to be refused outright).
 #[test]
