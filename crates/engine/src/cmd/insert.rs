@@ -67,7 +67,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart…",
             ["Insert", "Illustrations"],
             None,
-            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, rect?, categories?: [..], series?: [{name, values}]}",
+            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, rect?, categories?: [..], series?: [{name, values}], title?: string, editData?: bool}",
             has_slide,
             chart
         ),
@@ -109,10 +109,11 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Data",
             ["Chart Design", "Data"],
             None,
-            "{categories?: [..], levels?: [[..]] (outer category levels, innermost first), series?: [{name, values}], id?}",
+            "{categories?: [..], levels?: [[..]] (outer category levels, innermost first), series?: [{name, values}], title?: string, id?}",
             has_selection,
             chart_data
         ),
+        cmd!("chart.title", "Chart Title", ["Chart Design", "Chart Layouts"], None, "{title: string|null, id?}", has_selection, chart_title_cmd),
         cmd!(
             "chart.options",
             "Chart Elements",
@@ -1251,6 +1252,9 @@ fn chart(s: &mut Session, p: &Value) -> Result<Value> {
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or(Xfrm::new(size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7));
     let id = add_shape(s, "insert.chart", Shape { xfrm: Some(rect), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }, true)?;
+    if bool_param(p, "editData").unwrap_or(false) {
+        s.ui_requests.push(crate::UiRequest::Dialog { id: "chartData".into(), params: json!({"id": id}) });
+    }
     Ok(json!({"id": id}))
 }
 
@@ -1736,6 +1740,9 @@ fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
             .collect()
     });
     with_chart(s, p, "chart.data", |c| {
+        if let Some(t) = p.get("title").and_then(Value::as_str) {
+            c.title = Some(t.to_string());
+        }
         if let Some(cs) = &cats {
             c.categories = cs.clone();
         }
@@ -1756,6 +1763,14 @@ fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
                 })
                 .collect();
         }
+        c.raw = None;
+        Ok(())
+    })
+}
+
+fn chart_title_cmd(s: &mut Session, p: &Value) -> Result<Value> {
+    with_chart(s, p, "chart.title", |c| {
+        c.title = p.get("title").and_then(Value::as_str).map(String::from);
         c.raw = None;
         Ok(())
     })

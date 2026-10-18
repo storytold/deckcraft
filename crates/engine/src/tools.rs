@@ -1153,6 +1153,10 @@ impl Session {
                             _ => Ok(Value::Null),
                         }
                     }
+                    ShapeKind::Chart(_) => {
+                        self.ui_requests.push(crate::UiRequest::Dialog { id: "chartData".into(), params: json!({"id": id.0}) });
+                        Ok(Value::Null)
+                    }
                     _ => {
                         self.ui_requests.push(crate::UiRequest::Pane { id: "format".into() });
                         Ok(Value::Null)

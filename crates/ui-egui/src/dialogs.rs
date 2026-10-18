@@ -79,12 +79,13 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
-        .id(egui::Id::new(("dialog", d.id.clone())))
-        .collapsible(false)
-        .resizable(false)
-        .anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0))
-        .open(&mut open);
+    let is_chart = d.id == "chartData";
+    let mut window = egui::Window::new(title(&d.id)).id(egui::Id::new(("dialog", d.id.clone()))).collapsible(false).open(&mut open);
+    if is_chart {
+        window = window.resizable(true).default_size(vec2(580.0, 420.0)).min_size(vec2(440.0, 280.0));
+    } else {
+        window = window.resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, -40.0));
+    }
     // Two columns of colour rows plus Save must fit the first frame (Theme Colors), as must Save
     // in Theme Fonts. A later resize clips the buttons (the window size sticks) and clicks miss them.
     if d.id == "themeColors" {
@@ -94,6 +95,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     }
     window.show(ctx, |ui| {
         ui.set_min_width(match d.id.as_str() {
+            "chartData" => 460.0,
             "themeColors" => 700.0,
             "themeFonts" => 400.0,
             _ => 340.0,
@@ -1967,56 +1969,194 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ok || cancel
         }
         "chartData" => {
+            let target_id = d.params.get("id").and_then(Value::as_u64).map(|v| deckcraft_model::ShapeId(v as u32));
             let ch = app.session.active().and_then(|s| {
-                s.selected_shapes()
-                    .into_iter()
-                    .find_map(|x| if let deckcraft_model::ShapeKind::Chart(c) = &x.kind { Some(((**c).clone(), x.id)) } else { None })
+                let shape = if let Some(tid) = target_id {
+                    s.shape(tid).cloned()
+                } else {
+                    s.selected_shapes().into_iter().find(|x| matches!(x.kind, deckcraft_model::ShapeKind::Chart(_))).cloned()
+                };
+                shape.and_then(|x| if let deckcraft_model::ShapeKind::Chart(c) = &x.kind { Some(((**c).clone(), x.id)) } else { None })
             });
             let Some((c, id)) = ch else {
                 ui.label("Select a chart first.");
                 let (ok, cancel) = buttons(ui, "Close");
                 return ok || cancel;
             };
-            ui.label("Edit the data: first row = series names, first column = categories.");
-            let mut grid: Vec<Vec<String>> = d.params.get("grid").and_then(|g| serde_json::from_value(g.clone()).ok()).unwrap_or_else(|| {
+
+            // GridCraft header banner
+            let gc_green = Color32::from_rgb(0x10, 0x7C, 0x41);
+            egui::Frame::NONE.fill(gc_green).corner_radius(CornerRadius::same(4)).inner_margin(egui::Margin::symmetric(10, 6)).show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("📊 GridCraft Spreadsheet Data").color(Color32::WHITE).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.label(egui::RichText::new("Live chart sync").color(Color32::from_rgb(0xD0, 0xF0, 0xDD)).small());
+                    });
+                });
+            });
+            ui.add_space(6.0);
+
+            // Chart Title editor
+            let mut cur_title = c.title.clone().unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Chart Title:").strong());
+                let te = ui.add(egui::TextEdit::singleline(&mut cur_title).hint_text("Enter title…").desired_width(ui.available_width() - 80.0));
+                if te.changed() {
+                    let _ = app.run("chart.title", json!({"id": id.0, "title": cur_title}));
+                    d.params["revision"] = json!(app.session.active().map(|s| s.revision).unwrap_or(0));
+                }
+            });
+            ui.add_space(4.0);
+
+            // Chart Type quick selector (first 5 primary types)
+            ui.horizontal_wrapped(|ui| {
+                ui.label(egui::RichText::new("Type:").strong());
+                for (lbl, kind) in [
+                    ("Clustered Column", deckcraft_model::chart::ChartType::Column),
+                    ("Clustered Bar", deckcraft_model::chart::ChartType::Bar),
+                    ("Line", deckcraft_model::chart::ChartType::Line),
+                    ("Area", deckcraft_model::chart::ChartType::Area),
+                    ("Pie", deckcraft_model::chart::ChartType::Pie),
+                ] {
+                    let sel = c.kind == kind;
+                    if ui.selectable_label(sel, lbl).clicked() {
+                        let _ = app.run("chart.type", json!({"id": id.0, "type": format!("{kind:?}")}));
+                        d.params["revision"] = json!(app.session.active().map(|s| s.revision).unwrap_or(0));
+                    }
+                }
+            });
+            ui.separator();
+
+            // Spreadsheet data grid with two-way undo sync
+            let cur_rev = app.session.active().map(|s| s.revision).unwrap_or(0);
+            let last_rev = d.params.get("revision").and_then(Value::as_u64);
+            let mut grid: Vec<Vec<String>> = if last_rev != Some(cur_rev) || d.params.get("grid").is_none() {
                 let mut g = vec![std::iter::once(String::new()).chain(c.series.iter().map(|s| s.name.clone())).collect::<Vec<_>>()];
                 for (i, cat) in c.categories.iter().enumerate() {
                     let mut row = vec![cat.clone()];
                     for s in &c.series {
-                        row.push(s.values.get(i).copied().flatten().map(|v| v.to_string()).unwrap_or_default());
+                        let v_str = s
+                            .values
+                            .get(i)
+                            .copied()
+                            .flatten()
+                            .map(|v| if (v - v.round()).abs() < 1e-9 && v.abs() < 1e15 { format!("{}", v.round() as i64) } else { format!("{v}") })
+                            .unwrap_or_default();
+                        row.push(v_str);
                     }
                     g.push(row);
                 }
+                d.params["grid"] = json!(g);
+                d.params["revision"] = json!(cur_rev);
                 g
-            });
-            egui::Grid::new("chartdata").striped(true).show(ui, |ui| {
-                for row in grid.iter_mut() {
-                    for cell in row.iter_mut() {
-                        ui.add(egui::TextEdit::singleline(cell).desired_width(70.0));
+            } else {
+                serde_json::from_value(d.params["grid"].clone()).unwrap_or_default()
+            };
+
+            let num_cols = grid.first().map(|r| r.len()).unwrap_or(2);
+            let mut cell_changed = false;
+
+            egui::ScrollArea::both().max_height(200.0).show(ui, |ui| {
+                egui::Grid::new("gridcraft_chart_table").striped(true).spacing(vec2(2.0, 2.0)).show(ui, |ui| {
+                    // Header row with column letters (Corner, A, B, C...)
+                    ui.label(egui::RichText::new("").small());
+                    for col_idx in 0..num_cols {
+                        let col_letter = (b'A' + (col_idx as u8).min(25)) as char;
+                        let hdr_txt = if col_idx == 0 { format!("{col_letter} (Categories)") } else { format!("{col_letter}") };
+                        let hdr_color = if col_idx == 0 { Color32::from_rgb(0x70, 0x30, 0xA0) } else { Color32::from_rgb(0x10, 0x7C, 0x41) };
+                        ui.label(egui::RichText::new(hdr_txt).color(hdr_color).small().strong());
                     }
                     ui.end_row();
-                }
-            });
-            ui.horizontal(|ui| {
-                if ui.button("+ Row").clicked() {
-                    let n = grid.first().map(|r| r.len()).unwrap_or(2);
-                    grid.push(vec![String::new(); n]);
-                }
-                if ui.button("+ Series").clicked() {
-                    for r in grid.iter_mut() {
-                        r.push(String::new());
+
+                    // Data rows with row numbers (1, 2, 3...)
+                    for (r_idx, row) in grid.iter_mut().enumerate() {
+                        let row_num = format!("{}", r_idx + 1);
+                        ui.label(egui::RichText::new(row_num).color(Color32::from_gray(120)).small().strong());
+
+                        for (c_idx, cell) in row.iter_mut().enumerate() {
+                            let width = if c_idx == 0 { 95.0 } else { 75.0 };
+                            let is_header = r_idx == 0 || c_idx == 0;
+                            let te = ui.add(egui::TextEdit::singleline(cell).desired_width(width).text_color(if is_header {
+                                Color32::from_gray(20)
+                            } else {
+                                Color32::BLACK
+                            }));
+                            if te.changed() {
+                                cell_changed = true;
+                            }
+                        }
+                        ui.end_row();
                     }
+                });
+            });
+
+            if cell_changed {
+                apply_chart_grid(app, id, &grid);
+                d.params["grid"] = json!(grid);
+                d.params["revision"] = json!(app.session.active().map(|s| s.revision).unwrap_or(0));
+            }
+
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button("+ Add Row (Category)").clicked() {
+                    let n = grid.first().map(|r| r.len()).unwrap_or(2);
+                    let cat_num = grid.len();
+                    let mut new_row = vec![format!("Q{cat_num}")];
+                    new_row.resize(n, "0".to_string());
+                    grid.push(new_row);
+                    apply_chart_grid(app, id, &grid);
+                    d.params["grid"] = json!(grid);
+                    d.params["revision"] = json!(app.session.active().map(|s| s.revision).unwrap_or(0));
+                }
+                if grid.len() > 2 && ui.button("- Remove Row").clicked() {
+                    grid.pop();
+                    apply_chart_grid(app, id, &grid);
+                    d.params["grid"] = json!(grid);
+                    d.params["revision"] = json!(app.session.active().map(|s| s.revision).unwrap_or(0));
+                }
+                ui.separator();
+                if ui.button("+ Add Series").clicked() {
+                    let s_num = grid.first().map(|r| r.len()).unwrap_or(1);
+                    for (r_idx, r) in grid.iter_mut().enumerate() {
+                        if r_idx == 0 {
+                            r.push(format!("Series {s_num}"));
+                        } else {
+                            r.push("1.0".to_string());
+                        }
+                    }
+                    apply_chart_grid(app, id, &grid);
+                    d.params["grid"] = json!(grid);
+                    d.params["revision"] = json!(app.session.active().map(|s| s.revision).unwrap_or(0));
+                }
+                if num_cols > 2 && ui.button("- Remove Series").clicked() {
+                    for r in grid.iter_mut() {
+                        r.pop();
+                    }
+                    apply_chart_grid(app, id, &grid);
+                    d.params["grid"] = json!(grid);
+                    d.params["revision"] = json!(app.session.active().map(|s| s.revision).unwrap_or(0));
                 }
             });
-            d.params = json!({"grid": grid});
-            let (ok, cancel) = buttons(ui, "OK");
-            if ok {
-                let names: Vec<String> = grid.first().map(|r| r.iter().skip(1).cloned().collect()).unwrap_or_default();
-                let cats: Vec<String> = grid.iter().skip(1).map(|r| r.first().cloned().unwrap_or_default()).collect();
-                let series: Vec<Value> = names.iter().enumerate().map(|(k, n)| json!({"name": n, "values": grid.iter().skip(1).map(|r| r.get(k + 1).and_then(|v| v.trim().parse::<f64>().ok())).collect::<Vec<_>>()})).collect();
-                run(app, "chart.data", json!({"id": id.0, "categories": cats, "series": series}));
-            }
-            ok || cancel
+
+            ui.separator();
+            let mut close_dialog = false;
+            ui.horizontal(|ui| {
+                if ui.button("📋 Copy Table (TSV)").on_hover_text("Copy data to clipboard as tab-separated values for spreadsheets").clicked() {
+                    let mut tsv = String::new();
+                    for row in &grid {
+                        tsv.push_str(&row.join("\t"));
+                        tsv.push('\n');
+                    }
+                    ui.ctx().copy_text(tsv);
+                    app.set_status("Chart data copied to clipboard (TSV)");
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Close").clicked() {
+                        close_dialog = true;
+                    }
+                });
+            });
+            close_dialog
         }
         "trim" => {
             let seed = trim_seed(app.session.active());
@@ -2600,6 +2740,22 @@ fn pretty_equation(s: &str) -> String {
         }
     }
     out.replace("sqrt", "√").replace("<=", "≤").replace(">=", "≥").replace("!=", "≠").replace("pi", "π").replace("+-", "±")
+}
+
+fn apply_chart_grid(app: &mut SlideApp, id: deckcraft_model::ShapeId, grid: &[Vec<String>]) {
+    let names: Vec<String> = grid.first().map(|r| r.iter().skip(1).cloned().collect()).unwrap_or_default();
+    let cats: Vec<String> = grid.iter().skip(1).map(|r| r.first().cloned().unwrap_or_default()).collect();
+    let series: Vec<Value> = names
+        .iter()
+        .enumerate()
+        .map(|(k, n)| {
+            json!({
+                "name": n,
+                "values": grid.iter().skip(1).map(|r| r.get(k + 1).and_then(|v| v.trim().parse::<f64>().ok())).collect::<Vec<_>>()
+            })
+        })
+        .collect();
+    let _ = app.run("chart.data", json!({"id": id.0, "categories": cats, "series": series}));
 }
 
 pub fn about(_app: &mut SlideApp, ui: &mut Ui) {

@@ -185,6 +185,27 @@ fn effects_tables_charts_render() {
 }
 
 #[test]
+fn first_five_charts_render_with_data_labels() {
+    for kind in ChartType::FIRST_FIVE {
+        let mut chart = Chart::sample(kind);
+        chart.title = Some(format!("Test {}", kind.label()));
+        chart.data_labels = true;
+        chart.gridlines = true;
+        let sh = Shape {
+            id: ShapeId(800),
+            xfrm: Some(Xfrm::new(50.0, 50.0, 400.0, 300.0)),
+            kind: ShapeKind::Chart(Box::new(chart)),
+            ..Default::default()
+        };
+        let p = deck_with(vec![sh]);
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        assert_eq!((img.width, img.height), (960, 540));
+        let non_white = img.pixels.as_chunks::<4>().0.iter().filter(|px| px[0] < 250 || px[1] < 250 || px[2] < 250).count();
+        assert!(non_white > 100, "chart {kind:?} should draw visible ink: {non_white}");
+    }
+}
+
+#[test]
 fn combo_chart_draws_columns_and_a_line_on_its_own_axis() {
     // Columns in the hundreds of thousands, a green line in the thousands on the secondary axis:
     // the line must sit up in the plot, not flat along the bottom of the primary scale.

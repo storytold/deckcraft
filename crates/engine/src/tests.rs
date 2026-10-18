@@ -3576,3 +3576,87 @@ fn shape_ids_beyond_u32_are_rejected_not_wrapped() {
     assert!(s.execute("shape.sites", &json!({"id": a.0})).is_ok());
     assert!(s.execute("shape.connect", &json!({"from": a.0, "to": b.0})).is_ok());
 }
+
+#[test]
+fn chart_first_five_types_and_title_data_flow() {
+    let mut s = session();
+
+    // 1. Test inserting chart with editData: true vs false
+    s.ui_requests.clear();
+    let r_default = s.execute("insert.chart", &json!({"type": "column"})).unwrap();
+    let id_default = r_default["id"].as_u64().unwrap();
+    assert!(id_default > 0);
+    assert!(
+        !s.ui_requests.iter().any(|req| matches!(req, UiRequest::Dialog { id: d_id, .. } if d_id == "chartData")),
+        "programmatic insert.chart should NOT open chartData dialog by default"
+    );
+
+    s.ui_requests.clear();
+    let r_ui = s.execute("insert.chart", &json!({"type": "column", "editData": true})).unwrap();
+    let id_ui = r_ui["id"].as_u64().unwrap();
+    assert!(
+        s.ui_requests.iter().any(|req| matches!(req, UiRequest::Dialog { id: d_id, .. } if d_id == "chartData")),
+        "insert.chart with editData: true should open chartData dialog"
+    );
+
+    // 2. Test chart.title command
+    s.execute("chart.title", &json!({"id": id_ui, "title": "Quarterly Performance"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.shape(deckcraft_model::ShapeId(id_ui as u32)).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("not chart") };
+    assert_eq!(c.title.as_deref(), Some("Quarterly Performance"));
+
+    // Clear title
+    s.execute("chart.title", &json!({"id": id_ui, "title": null})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.shape(deckcraft_model::ShapeId(id_ui as u32)).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("not chart") };
+    assert_eq!(c.title, None);
+
+    // 3. Test chart.data with title, categories, and series
+    let new_cats = vec!["Jan", "Feb", "Mar"];
+    let new_series = vec![json!({"name": "Product A", "values": [12.5, 18.0, 24.3]}), json!({"name": "Product B", "values": [8.0, 14.2, 19.5]})];
+    s.execute(
+        "chart.data",
+        &json!({
+            "id": id_ui,
+            "title": "Q1 Product Sales",
+            "categories": new_cats,
+            "series": new_series
+        }),
+    )
+    .unwrap();
+
+    let st = s.doc().unwrap();
+    let sh = st.shape(deckcraft_model::ShapeId(id_ui as u32)).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("not chart") };
+    assert_eq!(c.title.as_deref(), Some("Q1 Product Sales"));
+    assert_eq!(c.categories, vec!["Jan", "Feb", "Mar"]);
+    assert_eq!(c.series[0].name, "Product A");
+    assert_eq!(c.series[0].values, vec![Some(12.5), Some(18.0), Some(24.3)]);
+
+    // 4. Test switching between all FIRST_FIVE chart types via chart.type
+    for (t_name, expected_kind) in [
+        ("bar", deckcraft_model::chart::ChartType::Bar),
+        ("line", deckcraft_model::chart::ChartType::Line),
+        ("area", deckcraft_model::chart::ChartType::Area),
+        ("pie", deckcraft_model::chart::ChartType::Pie),
+        ("column", deckcraft_model::chart::ChartType::Column),
+    ] {
+        s.execute("chart.type", &json!({"id": id_ui, "type": t_name})).unwrap();
+        let st = s.doc().unwrap();
+        let sh = st.shape(deckcraft_model::ShapeId(id_ui as u32)).unwrap();
+        let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("not chart") };
+        assert_eq!(c.kind, expected_kind, "chart type should match {t_name}");
+    }
+
+    // 5. Test double click on chart opens chartData dialog
+    s.ui_requests.clear();
+    let xfrm = s.doc().unwrap().shape(deckcraft_model::ShapeId(id_ui as u32)).unwrap().xfrm.unwrap();
+    let ev = |kind, x: f64, y: f64| tools::PointerEvent { kind, x, y, mods: Default::default(), tol: 3.0, pressure: None };
+    s.pointer(ev(tools::PointerKind::DoubleClick, xfrm.x + 20.0, xfrm.y + 20.0)).unwrap();
+    assert!(
+        s.ui_requests.iter().any(|req| matches!(req, UiRequest::Dialog { id: d_id, .. } if d_id == "chartData")),
+        "double clicking chart must trigger chartData dialog"
+    );
+}

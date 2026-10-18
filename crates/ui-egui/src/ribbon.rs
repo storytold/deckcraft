@@ -1240,7 +1240,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
                 if let Some(k) = k
                     && ui.button(k.label()).clicked()
                 {
-                    run(app, "insert.chart", json!({"type": format!("{k:?}")}));
+                    run(app, "insert.chart", json!({"type": format!("{k:?}"), "editData": true}));
                 }
             }
         });
@@ -3037,8 +3037,11 @@ fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 fn chart_design(app: &mut SlideApp, ui: &mut Ui) {
+    let ch = app.session.active().and_then(|d| {
+        d.selected_shapes().into_iter().find_map(|s| if let ShapeKind::Chart(c) = &s.kind { Some(((**c).clone(), s.id)) } else { None })
+    });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::ChangeChartType, "Change\nChart Type", true);
+        let r = big_button(ui, Icon::ChangeChartType, "Change\nChart Type", ch.is_some());
         egui::Popup::menu(&r).show(|ui| {
             for k in chart_menu_types() {
                 let Some(k) = k else {
@@ -3047,7 +3050,7 @@ fn chart_design(app: &mut SlideApp, ui: &mut Ui) {
                 };
                 if ui.button(k.label()).clicked() {
                     // Replace the chart's type keeping its data.
-                    if let Some(id) = app.session.active().and_then(|d| d.selection.shapes.first().copied()) {
+                    if let Some((_, id)) = &ch {
                         let _ = app.run("chart.type", json!({"id": id.0, "type": format!("{k:?}")}));
                     }
                 }
@@ -3055,6 +3058,34 @@ fn chart_design(app: &mut SlideApp, ui: &mut Ui) {
         });
         big(app, ui, Icon::EditData, "Edit\nData", "app.dialog", json!({"id": "chartData"}));
     });
+    if let Some((c, id)) = ch {
+        group(ui, |ui| {
+            rows(ui, |ui| {
+                ui.horizontal(|ui| {
+                    let mut dl = c.data_labels;
+                    if ui.checkbox(&mut dl, "Data Labels").changed() {
+                        let _ = app.run("chart.options", json!({"id": id.0, "dataLabels": dl}));
+                    }
+                    let mut gl = c.gridlines;
+                    if ui.checkbox(&mut gl, "Gridlines").changed() {
+                        let _ = app.run("chart.options", json!({"id": id.0, "gridlines": gl}));
+                    }
+                    let mut has_legend = c.legend.is_some();
+                    if ui.checkbox(&mut has_legend, "Legend").changed() {
+                        let _ = app.run("chart.options", json!({"id": id.0, "legend": if has_legend { json!("b") } else { Value::Null }}));
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Title:");
+                    let mut title_txt = c.title.clone().unwrap_or_default();
+                    let te = ui.add(egui::TextEdit::singleline(&mut title_txt).desired_width(140.0));
+                    if te.changed() {
+                        let _ = app.run("chart.title", json!({"id": id.0, "title": title_txt}));
+                    }
+                });
+            });
+        });
+    }
     arrange_group(app, ui);
 }
 

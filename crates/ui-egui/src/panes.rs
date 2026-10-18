@@ -231,6 +231,11 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         {
             app.ui.format_tab = "picture".into();
         }
+        if matches!(sh.kind, ShapeKind::Chart(_))
+            && widgets::icon_toggle(ui, Icon::Chart, "Chart Options", true, app.ui.format_tab == "chart").clicked()
+        {
+            app.ui.format_tab = "chart".into();
+        }
     });
     ui.separator();
     match app.ui.format_tab.as_str() {
@@ -438,6 +443,42 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             }
             if ui.button("Reset Picture").clicked() {
                 run(app, "picture.reset", json!({}));
+            }
+        }
+        "chart" => {
+            if let ShapeKind::Chart(c) = &sh.kind {
+                let c = (**c).clone();
+                let id = sh.id;
+                ui.label(egui::RichText::new("Chart Title").font(theme::bold(13.0)));
+                let mut cur_title = c.title.clone().unwrap_or_default();
+                if ui.text_edit_singleline(&mut cur_title).changed() {
+                    run(app, "chart.title", json!({"id": id.0, "title": cur_title}));
+                }
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Chart Type").font(theme::bold(13.0)));
+                for k in deckcraft_model::chart::ChartType::FIRST_FIVE {
+                    if ui.selectable_label(c.kind == k, k.label()).clicked() {
+                        run(app, "chart.type", json!({"id": id.0, "type": format!("{k:?}")}));
+                    }
+                }
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new("Chart Elements").font(theme::bold(13.0)));
+                let mut dl = c.data_labels;
+                if ui.checkbox(&mut dl, "Data Labels").changed() {
+                    run(app, "chart.options", json!({"id": id.0, "dataLabels": dl}));
+                }
+                let mut gl = c.gridlines;
+                if ui.checkbox(&mut gl, "Gridlines").changed() {
+                    run(app, "chart.options", json!({"id": id.0, "gridlines": gl}));
+                }
+                let mut has_legend = c.legend.is_some();
+                if ui.checkbox(&mut has_legend, "Show Legend").changed() {
+                    run(app, "chart.options", json!({"id": id.0, "legend": if has_legend { json!("b") } else { Value::Null }}));
+                }
+                ui.add_space(8.0);
+                if ui.button("📊 Edit Data in GridCraft").clicked() {
+                    run(app, "app.dialog", json!({"id": "chartData", "id_param": id.0}));
+                }
             }
         }
         _ => {

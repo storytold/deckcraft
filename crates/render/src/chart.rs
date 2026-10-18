@@ -750,6 +750,24 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
             }
         }
+        if c.data_labels {
+            for (i, q) in pts.iter().enumerate() {
+                if let Some(Some(v)) = s.values.get(i) {
+                    label(
+                        ctx,
+                        rctx,
+                        m,
+                        &c.data_label(s, *v),
+                        Rect::new(q.x - 25.0, q.y - base * 1.4, q.x + 25.0, q.y),
+                        base * 0.85,
+                        Align::Center,
+                        Anchor::Bottom,
+                        text_col,
+                        false,
+                    );
+                }
+            }
+        }
     }
     // A category position (0-based, fractional) as a slot, the way `slot` places the bars.
     let slot_at = |x: f64| if backwards { ncat as f64 - 1.0 - x + fwd } else { x + back };

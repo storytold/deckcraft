@@ -57,6 +57,9 @@ impl ChartType {
         Self::OFFICE_2016.contains(&self) || self == ChartType::RegionMap
     }
 
+    /// The first five primary chart types: Clustered Column, Clustered Bar, Line, Area, Pie.
+    pub const FIRST_FIVE: [ChartType; 5] = [ChartType::Column, ChartType::Bar, ChartType::Line, ChartType::Area, ChartType::Pie];
+
     pub const MAIN: [ChartType; 12] = [
         ChartType::Column,
         ChartType::Bar,
