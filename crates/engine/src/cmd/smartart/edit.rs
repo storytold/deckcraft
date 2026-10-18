@@ -115,7 +115,7 @@ fn index(p: &Value, cmd: &str) -> Result<usize> {
 }
 
 /// Insert a new SmartArt graphic (`insert.smartArt`).
-pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Result<Value> {
+pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>, rect: Option<Xfrm>) -> Result<Value> {
     let kind = if is_kind(kind) { kind } else { "process" };
     if nodes.is_empty() {
         nodes = (0..3).map(|_| DiagramNode { text: "Text".into(), level: 0, picture: None, assistant: false, title: String::new() }).collect();
@@ -123,7 +123,10 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
     normalize(&mut nodes);
     let d = Diagram { kind: kind.into(), nodes, ..Default::default() };
     let size = s.doc()?.doc.slide_size;
-    let area = Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6);
+    // A degenerate `rect` (zero width or height) falls back to the default area.
+    let area = rect
+        .filter(|r| r.w > 0.0 && r.h > 0.0)
+        .unwrap_or_else(|| Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6));
     let id = s.edit(|doc, sel| {
         let children = regenerate("insert.smartArt", doc, &d, area)?;
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
@@ -140,7 +143,7 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
         sel.text = None;
         Ok(id)
     })?;
-    Ok(json!({"id": id.0}))
+    Ok(json!({"id": id.0, "rect": rect_json(&area)}))
 }
 
 pub(super) fn nodes(s: &mut Session, p: &Value) -> Result<Value> {

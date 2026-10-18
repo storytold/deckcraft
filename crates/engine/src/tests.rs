@@ -7017,6 +7017,27 @@ fn an_ids_entry_that_is_not_an_id_is_refused_naming_it() {
     assert_eq!(s.execute("edit.select", &json!({"ids": [a]})).unwrap()["selected"], json!([a]));
 }
 
+/// BB3: insert.smartArt took no `rect` and landed small mid-slide; it takes one and answers the
+/// final `rect`, as insert.table/chart/picture do.
+#[test]
+fn insert_smart_art_takes_a_rect_and_answers_it() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "process", "items": ["A", "B", "C"], "rect": [40, 60, 880, 400]})).unwrap();
+    assert_eq!(r["rect"], json!([40.0, 60.0, 880.0, 400.0]), "{r}");
+    let id = r["id"].as_u64().unwrap();
+    let st = s.doc().unwrap();
+    let g = st.shape(deckcraft_model::ShapeId(id as u32)).unwrap();
+    assert_eq!(g.xfrm.map(|x| (x.x, x.y, x.w, x.h)), Some((40.0, 60.0, 880.0, 400.0)));
+    let kids = g.children();
+    assert!(kids.iter().all(|c| c.xfrm.is_some_and(|x| x.x >= 40.0 && x.x + x.w <= 920.0 + 0.01 && x.y >= 60.0)), "children inside the rect");
+    let r = s.execute("insert.smartArt", &json!({"kind": "cycle", "items": ["A", "B"]})).unwrap();
+    let d: Vec<f64> = r["rect"].as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert!(
+        d.len() == 4 && (d[0] - 96.0).abs() < 0.01 && (d[1] - 151.2).abs() < 0.01 && d[2] == 768.0 && d[3] == 324.0,
+        "the default area, answered too: {r}"
+    );
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
