@@ -298,6 +298,30 @@ fn tools_with_x_y_w_h_place_the_shape() {
     assert!(!text.contains("doesn't take"), "x/y/w/h must not reach the engine: {text}");
 }
 
+/// `x`, `y`, `w`, `h` place the shape only together: some of them is refused by name rather than
+/// dropped for the default placement, and none of them keeps the default placement.
+#[test]
+fn a_partial_x_y_w_h_is_refused_not_dropped() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let before = tool(&mut s, "inspect_slide", json!({}))["shapes"].as_array().map_or(0, Vec::len);
+    for args in [json!({"rows": 2, "cols": 2, "x": 100, "y": 200}), json!({"rows": 2, "cols": 2, "x": 100, "y": 200, "w": "300", "h": 80})] {
+        let r = call(&mut s, 5, "tools/call", json!({"name": "insert_table", "arguments": args}));
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("x, y, w and h go together") && text.contains("all four or none"), "{text}");
+    }
+    let r = call(&mut s, 6, "tools/call", json!({"name": "insert_picture", "arguments": {"data": "AAAA", "name": "x.png", "x": 1, "y": 2}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("x, y, w and h go together"), "{text}");
+    let after = tool(&mut s, "inspect_slide", json!({}))["shapes"].as_array().map_or(0, Vec::len);
+    assert_eq!(after, before, "a refused placement inserts nothing");
+    // None of the four: the default placement.
+    let t = tool(&mut s, "insert_table", json!({"rows": 2, "cols": 2}));
+    assert!(t["id"].as_u64().is_some() && t["rect"].is_array(), "{t}");
+}
+
 /// Phase-2 findings: `set_text` reaches a table cell with `cell`, and `list_commands` says what a
 /// command acts on, so "disabled: nothing selected" no longer hides that `ids`/`id` work.
 #[test]

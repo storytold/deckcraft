@@ -230,7 +230,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "insert_picture",
             "Insert picture",
-            "Insert a picture from a file path or base64 data, optionally at a box.",
+            "Insert a picture from a file path or base64 data, optionally at a box (x, y, w and h together; none for the default placement).",
             obj(
                 json!({"path": string("Image file path"), "data": string("Base64 image data (instead of path)"), "name": string("File name for data"), "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height")}),
                 &[],
@@ -240,7 +240,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "insert_table",
             "Insert table",
-            "Insert a table with rows×cols and optional cell text (data: rows of strings).",
+            "Insert a table with rows×cols and optional cell text (data: rows of strings), optionally at a box (x, y, w and h together; none for the default placement).",
             obj(
                 json!({"rows": int("Rows"), "cols": int("Columns"), "data": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}, "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height")}),
                 &["rows", "cols"],
@@ -374,18 +374,30 @@ fn f(a: &Value, k: &str) -> Option<f64> {
 }
 
 /// The tool's `x`, `y`, `w`, `h` as the command's `rect`; the four keys themselves are taken out,
-/// because the command refuses keys it doesn't take.
-fn with_rect(a: &Value) -> Value {
+/// because the command refuses keys it doesn't take. Some of the four but not all (or one that is
+/// not a finite number) is refused, not dropped for the default placement; none keeps it.
+fn with_rect(a: &Value) -> Result<Value, String> {
+    const KEYS: [&str; 4] = ["x", "y", "w", "h"];
+    let given: Vec<&str> = KEYS.into_iter().filter(|k| a.get(k).is_some_and(|v| !v.is_null())).collect();
+    let nums: Vec<f64> = KEYS.into_iter().filter_map(|k| f(a, k)).filter(|v| v.is_finite()).collect();
     let mut p = a.clone();
-    if let Some(o) = p.as_object_mut() {
-        if let (Some(x), Some(y), Some(w), Some(h)) = (f(a, "x"), f(a, "y"), f(a, "w"), f(a, "h")) {
-            o.insert("rect".into(), json!([x, y, w, h]));
-        }
-        for k in ["x", "y", "w", "h"] {
-            o.remove(k);
-        }
+    let Some(o) = p.as_object_mut() else { return Ok(p) };
+    for k in KEYS {
+        o.remove(k);
     }
-    p
+    if given.is_empty() {
+        return Ok(p);
+    }
+    match nums.as_slice() {
+        [x, y, w, h] => {
+            o.insert("rect".into(), json!([x, y, w, h]));
+            Ok(p)
+        }
+        _ => Err(format!(
+            "x, y, w and h go together: give all four or none (got {}, as finite numbers in points); with none the shape takes the default placement",
+            given.join(", ")
+        )),
+    }
 }
 
 /// `index` and `slide` name the same slide on every slide-taking tool: whichever the agent wrote
@@ -577,8 +589,8 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             ToolResult::json(&v)
         }
         "set_text" => wrap(exec(b, "text.set", a)),
-        "insert_picture" => wrap(exec(b, "insert.picture", with_rect(&a))),
-        "insert_table" => wrap(exec(b, "insert.table", with_rect(&a))),
+        "insert_picture" => wrap(with_rect(&a).and_then(|p| exec(b, "insert.picture", p))),
+        "insert_table" => wrap(with_rect(&a).and_then(|p| exec(b, "insert.table", p))),
         "insert_chart" => wrap(exec(b, "insert.chart", a)),
         "select" => wrap(exec(b, "edit.select", a)),
         "pointer" => wrap(b.call("ui.pointer", a).map(|v| with_selected(b, v, true))),
