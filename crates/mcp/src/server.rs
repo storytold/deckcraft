@@ -35,7 +35,8 @@ line, size, color, bold, name} → {id} makes one styled box; shape.connect {fro
 straightConnector1|bentConnector3} → {id} draws an arrow between two shapes on the current slide (a box's sites are \
 0 top, 1 left, 2 bottom, 3 right; glued connectors follow later moves); animation.add {ids, effect: fade|wipe|zoom|fly, \
 start: onClick|withPrevious|afterPrevious, duration?: ms} → {indices} (one onClick per click step); slide.notes {text}; \
-transition.set {kind: fade|push|wipe|…, index?}; section.add {name, at: slide index}; insert.table {rows, cols, rect, \
+transition.set {kind: fade|push|wipe|…, index?}; section.add {name, at: slide index}; design.headerFooter {slideNumber, \
+footer, footerText} once, early: slides added later inherit it; insert.table {rows, cols, rect, \
 data: [[…]]} then set_text {id, cell: [r, c], text} and table.style; design.palette {} answers the theme's colours; \
 add_slide answers placeholders {title, body} ids; export {path, format: png|pdf, slide?|all?}. Put many commands in one \
 batch (tool names work inside it too); an item with as:\"a\" is referred to by later items as \"$a\" (its id), so a \
