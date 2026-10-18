@@ -5706,3 +5706,19 @@ fn animation_timing_takes_all_or_indices() {
     let e = s.execute("animation.timing", &json!({"indices": [], "delay": 1})).unwrap_err().to_string();
     assert!(e.contains("`indices` is empty"), "{e}");
 }
+
+/// AA5: an arrow-key nudge answers the moved shapes' boxes, and `edit.selection` answers the
+/// selection with its boxes, so an agent needs no inspect after each nudge or drag.
+#[test]
+fn a_nudge_answers_the_selected_boxes() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.key("ArrowRight", Mods::default()).unwrap();
+    assert_eq!(r, json!({"handled": true, "selected": [{"id": a, "rect": [16.0, 20.0, 100.0, 50.0]}]}), "{r}");
+    let r = s.key("ArrowDown", Mods { alt: true, ..Mods::default() }).unwrap();
+    assert_eq!(r["selected"][0]["rect"], json!([16.0, 21.0, 100.0, 50.0]), "{r}");
+    let r = s.execute("edit.selection", &json!({})).unwrap();
+    assert_eq!(r, json!({"slide": 0, "ids": [a], "selected": [{"id": a, "rect": [16.0, 21.0, 100.0, 50.0]}]}), "{r}");
+    s.execute("edit.deselect", &json!({})).unwrap();
+    assert_eq!(s.execute("edit.selection", &json!({})).unwrap()["selected"], json!([]));
+}

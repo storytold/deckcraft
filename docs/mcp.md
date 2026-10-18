@@ -90,7 +90,7 @@ files it was given rather than guarding against other software on the computer.
 | `add_slide`, `go_to_slide` | Slides by layout |
 | `add_shape`, `add_text_box`, `set_text` | Shapes and text |
 | `insert_picture`, `insert_table`, `insert_chart` | Content |
-| `select`, `pointer`, `select_tool`, `key`, `type_text` | The same selection, mouse and keyboard paths as the UI |
+| `select`, `pointer`, `select_tool`, `key`, `type_text` | The same selection, mouse and keyboard paths as the UI; a `pointer` gesture and an arrow-key nudge answer `selected: [{id, rect}]`, the selection's boxes afterwards (`edit.selection {}` answers the same at any time) |
 | `screenshot` | The whole window, UI included (connected mode); image content, or with `path` the PNG is written there and the answer is text `{path, width, height}` for a client that cannot read images |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
 
