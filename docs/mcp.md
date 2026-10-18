@@ -108,6 +108,22 @@ several shapes on one slide (`shape.connect`, `arrange.*`) say where the shape i
 or its whole answer when it has none), so insert, connect and animate fit in one batch; a `$name`
 with no such earlier item is refused.
 
+Answers carry what the next step needs, so it costs no inspect: `insert.table`, `insert.chart` and
+`insert.picture` answer `{id, rect}`; the `table.insertRow*`/`insertColumn*` commands answer the
+table's `rect`, `rows`, `cols` and `overflows` (true when the box runs off the slide);
+`slide.duplicate` answers the copy's `index`, `placeholders` and `shapes`; `slide.move` answers
+`{index, id}`; `slide.fromOutline` answers `{slides, indices, ids}` and leaves its last new slide
+current, so a following `slide.new` lands after it; `section.add` answers the resulting
+`sections: [{name, start, slides}]`, refusing an `at` past the end with the valid range;
+`design.theme` answers the palette as `design.palette {}` does; `design.headerFooter` answers
+`{slides, default: true}` and becomes the presentation's default, so slides added later carry the
+same footer and number; `comment.reply`/`comment.resolve` answer the thread's state and
+`comment.list {all: true}` lists every slide's comments with their slide index (without `all` it
+is the current slide only); `edit.undo`/`edit.redo` answer `{label, slide}`;
+`transition.applyAll` answers `{slides}` (kind, duration and options are all copied). An unknown
+`table.style` id or a `chart.options` `palette` that is not a palette name (`colorful1`…`4`,
+`monochrome1`…`13`) is refused naming the valid values.
+
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,
 rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, closed, smooth}`,
 `shape.merge {op, ids}`, `format.*`, `design.theme`, `transition.set`, `animation.set`,
