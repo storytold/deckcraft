@@ -568,3 +568,37 @@ fn export_all_says_files_are_numbered_from_one() {
     assert_eq!(v["files"], json!([dir.join("d1.png").to_string_lossy(), dir.join("d2.png").to_string_lossy()]), "{v}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// AA2: `inspect_slide` took `index` and `export`/`render_slide` took `slide` for the same thing,
+/// and agents hit refusals switching between them. Both spellings work on all three.
+#[test]
+fn index_and_slide_name_the_same_slide_on_every_tool() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    assert_eq!(tool(&mut s, "inspect_slide", json!({"index": 0}))["index"], 0);
+    assert_eq!(tool(&mut s, "inspect_slide", json!({"slide": 0}))["index"], 0);
+    assert_eq!(tool(&mut s, "inspect_slide", json!({}))["index"], 1, "the default is still the current slide");
+    for args in [json!({"index": 0, "scale": 0.25}), json!({"slide": 0, "scale": 0.25})] {
+        let r = call(&mut s, 3, "tools/call", json!({"name": "render_slide", "arguments": args}));
+        assert_eq!(r["result"]["isError"], false, "{r}");
+        let info: Value = serde_json::from_str(r["result"]["content"][1]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(info["slide"], 0, "{info}");
+    }
+    let dir = std::env::temp_dir().join(format!("deckcraft-mcp-index-alias-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (k, name) in [("slide", "a.png"), ("index", "b.png")] {
+        tool(&mut s, "export", json!({"path": dir.join(name).to_string_lossy(), k: 0, "scale": 0.25}));
+        assert!(dir.join(name).exists(), "{name} written via `{k}`");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    // Both given and different is a contradiction, not a silent pick.
+    let r = call(&mut s, 4, "tools/call", json!({"name": "inspect_slide", "arguments": {"index": 0, "slide": 1}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let tools = call(&mut s, 5, "tools/list", json!({}));
+    for name in ["inspect_slide", "export", "render_slide"] {
+        let t = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
+        let props = t["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("index") && props.contains_key("slide"), "{name}: {t}");
+    }
+}
