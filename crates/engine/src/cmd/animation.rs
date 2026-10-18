@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Animation",
             ["Animations", "Advanced Animation"],
             None,
-            "{effect, class?, option?, start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, ids?}",
+            "{effect, class?, option?, start?: onClick|withPrevious|afterPrevious, duration?: ms, delay?: ms, ids?} (several ids: the first takes `start`, the rest withPrevious, so one call is one click step) → {count, indices}",
             has_selection,
             add
         ),
@@ -60,7 +60,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("animation.painterApply", "Apply Animation", [], Some("Alt+Shift+V"), "{ids?}", has_selection, painter_apply),
         cmd!(query "animation.list", "Animation Gallery", [], None, "{} → [{id, label, class, options}]", always, list),
-        cmd!(query "animation.get", "Animations on Slide", [], None, "{slide?} → [animation]", has_slide, get),
+        cmd!(query "animation.get", "Animations on Slide", [], None, "{slide?} → [animation + step: its click step, counted from 1]", has_slide, get),
     ]
 }
 
@@ -357,7 +357,24 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
     let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
-    Ok(serde_json::to_value(&sl.animations).unwrap_or_default())
+    let mut step = 0usize;
+    let list: Vec<Value> = sl
+        .animations
+        .iter()
+        .enumerate()
+        .map(|(k, a)| {
+            if k == 0 || a.start == AnimStart::OnClick {
+                step += 1;
+            }
+            let mut v = serde_json::to_value(a).unwrap_or_default();
+            if let Some(o) = v.as_object_mut() {
+                o.retain(|_, x| !x.is_null());
+                o.insert("step".into(), json!(step));
+            }
+            v
+        })
+        .collect();
+    Ok(Value::Array(list))
 }
 
 fn painter_pick(s: &mut Session, p: &Value) -> Result<Value> {

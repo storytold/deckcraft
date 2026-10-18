@@ -1234,7 +1234,10 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
             _ => Some(sh.text.get_or_insert_with(TextBody::default)),
         };
         let Some(body) = target else { return Err(bad("text.set", "no text here (tables need `cell`)")) };
-        let keep = body.paragraphs.first().and_then(|p| p.runs.first()).map(|r| r.props.clone()).unwrap_or_default();
+        // The first run's formatting, or for text that is still empty the formatting its end
+        // mark holds (format.* before any text lands there), so a size set before text.set survives.
+        let keep =
+            body.paragraphs.first().map(|p| p.runs.first().map(|r| r.props.clone()).unwrap_or_else(|| p.end_props.clone())).unwrap_or_default();
         let levels: Vec<(u8, deckcraft_model::text::ParaProps)> = body.paragraphs.iter().map(|p| (p.level, p.props.clone())).collect();
         let mut nb = TextBody::from_text(&text);
         for (i, para) in nb.paragraphs.iter_mut().enumerate() {
@@ -1308,6 +1311,11 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
             }
             _ => {
                 let body = sh.text.get_or_insert_with(TextBody::default);
+                // Text that is still empty keeps the formatting on an end mark, so a size set
+                // before the text lands survives it; a body with no paragraph has none.
+                if body.paragraphs.is_empty() {
+                    body.paragraphs.push(Default::default());
+                }
                 ed::format_all(body, f);
             }
         }
