@@ -6698,6 +6698,27 @@ fn transition_apply_all_refuses_an_empty_source_unless_clearing() {
     assert!(doc.contains("clear?") && doc.contains("source"), "{doc}");
 }
 
+/// X3: a `smartArt.*` command given an id that is not a SmartArt graphic says what the id is and,
+/// when the slide has exactly one SmartArt graphic, which id that is.
+#[test]
+fn smartart_commands_say_what_a_wrong_id_is_and_name_the_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "title"})).unwrap();
+    let ph = s.doc().unwrap().doc.slides[1].shapes.iter().find(|sh| sh.ph.is_some()).map(|sh| sh.id.0).expect("a placeholder");
+    let g = s.execute("insert.smartArt", &json!({"kind": "list", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("smartArt.colors", &json!({"id": ph, "colors": "accent3"})).unwrap_err().to_string();
+    assert!(e.ends_with(&format!("id {ph} is a placeholder, not a SmartArt graphic (the SmartArt on this slide is {g})")), "{e}");
+    let pic = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("smartArt.style", &json!({"id": pic, "style": "intense"})).unwrap_err().to_string();
+    assert!(e.contains(&format!("id {pic} is a shape, not a SmartArt graphic (the SmartArt on this slide is {g})")), "{e}");
+    let e = s.execute("smartArt.colors", &json!({"id": 999_999, "colors": "accent3"})).unwrap_err().to_string();
+    assert!(e.contains("id 999999 is not on this slide") && e.contains(&format!("is {g})")), "{e}");
+    // A second graphic: no single one to name.
+    s.execute("insert.smartArt", &json!({"kind": "list", "items": ["C"]})).unwrap();
+    let e = s.execute("smartArt.colors", &json!({"id": ph, "colors": "accent3"})).unwrap_err().to_string();
+    assert!(e.contains(&format!("id {ph} is a placeholder, not a SmartArt graphic")) && !e.contains("on this slide is"), "{e}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
