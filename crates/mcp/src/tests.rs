@@ -80,13 +80,15 @@ fn insert_chart_takes_a_box() {
     }
     let placed = tool(&mut s, "insert_chart", args)["id"].as_u64().unwrap();
     assert_eq!(box_of(&mut s, placed), json!([50.0, 60.0, 300.0, 200.0]));
-    // without a full box the chart keeps its default place, as for pictures and tables
-    let plain = tool(&mut s, "insert_chart", chart.clone())["id"].as_u64().unwrap();
-    let default_box = box_of(&mut s, plain);
+    // without a box the chart takes its default place; part of a box is refused, as for pictures
+    // and tables, and inserts nothing
+    tool(&mut s, "insert_chart", chart.clone())["id"].as_u64().unwrap();
     let mut partial = chart.clone();
     partial["x"] = json!(50);
-    let partial_id = tool(&mut s, "insert_chart", partial)["id"].as_u64().unwrap();
-    assert_eq!(box_of(&mut s, partial_id), default_box);
+    let r = call(&mut s, 10, "tools/call", json!({"name": "insert_chart", "arguments": partial}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    assert!(r.to_string().contains("go together"), "{r}");
+    assert_eq!(tool(&mut s, "inspect_slide", json!({}))["shapes"].as_array().unwrap().iter().filter(|x| x["kind"] == "chart").count(), 2);
     // a hostile box is answered, not a panic
     let mut odd = chart;
     for (k, v) in [("x", json!(-1e300)), ("y", json!(1e300)), ("w", json!(-5)), ("h", json!(0))] {
@@ -358,6 +360,30 @@ fn tools_with_x_y_w_h_place_the_shape() {
     );
     let text = bad["result"]["content"][0]["text"].as_str().unwrap();
     assert!(!text.contains("doesn't take"), "x/y/w/h must not reach the engine: {text}");
+}
+
+/// `x`, `y`, `w`, `h` place the shape only together: some of them is refused by name rather than
+/// dropped for the default placement, and none of them keeps the default placement.
+#[test]
+fn a_partial_x_y_w_h_is_refused_not_dropped() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let before = tool(&mut s, "inspect_slide", json!({}))["shapes"].as_array().map_or(0, Vec::len);
+    for args in [json!({"rows": 2, "cols": 2, "x": 100, "y": 200}), json!({"rows": 2, "cols": 2, "x": 100, "y": 200, "w": "300", "h": 80})] {
+        let r = call(&mut s, 5, "tools/call", json!({"name": "insert_table", "arguments": args}));
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("x, y, w and h go together") && text.contains("all four or none"), "{text}");
+    }
+    let r = call(&mut s, 6, "tools/call", json!({"name": "insert_picture", "arguments": {"data": "AAAA", "name": "x.png", "x": 1, "y": 2}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("x, y, w and h go together"), "{text}");
+    let after = tool(&mut s, "inspect_slide", json!({}))["shapes"].as_array().map_or(0, Vec::len);
+    assert_eq!(after, before, "a refused placement inserts nothing");
+    // None of the four: the default placement.
+    let t = tool(&mut s, "insert_table", json!({"rows": 2, "cols": 2}));
+    assert!(t["id"].as_u64().is_some() && t["rect"].is_array(), "{t}");
 }
 
 /// Phase-2 findings: `set_text` reaches a table cell with `cell`, and `list_commands` says what a
