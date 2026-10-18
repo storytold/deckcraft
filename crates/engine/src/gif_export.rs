@@ -123,7 +123,7 @@ impl GifOptions {
                 .iter()
                 .map(|x| x.as_u64().and_then(|i| usize::try_from(i).ok()))
                 .collect::<Option<Vec<usize>>>()
-                .ok_or_else(|| bad(CMD, "`slides` must be a list of slide indices (0, 1, 2…)"))?;
+                .ok_or_else(|| bad(CMD, "each entry of `slides` must be a non-negative integer (a 0-based index)"))?;
             o.slides = Some(list);
         }
         if let Some(v) = given(p, "includeHidden") {

@@ -238,9 +238,10 @@ fn cell_param(p: &Value, key: &str, cmd: &str) -> Result<Option<(usize, usize)>>
         None | Some(Value::Null) => return Ok(None),
         Some(v) => v,
     };
-    let idx = |i: usize| v.as_array().and_then(|a| a.get(i)).and_then(Value::as_u64).and_then(|x| usize::try_from(x).ok());
-    match (idx(0), idx(1)) {
-        (Some(r), Some(c)) => Ok(Some((r, c))),
+    // Exactly [row, col]: an entry with more is as malformed as one with less.
+    let idx = |x: &Value| x.as_u64().and_then(|x| usize::try_from(x).ok());
+    match v.as_array().map(Vec::as_slice) {
+        Some([r, c]) if let (Some(r), Some(c)) = (idx(r), idx(c)) => Ok(Some((r, c))),
         _ => Err(bad(cmd, format!("`{key}` is not a valid cell: {v}"))),
     }
 }
@@ -374,33 +375,54 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// At most this many `cells` in one table cell command.
+const MAX_CELLS: usize = 100_000;
+
 /// The cells a command acts on: `cells`, else the selected cell range, else the cell holding the
 /// caret, else every cell.
-fn target_cells(s: &Session, p: &Value) -> Result<impl Fn(&Table) -> Vec<(usize, usize)> + use<>> {
-    let cells: Option<Vec<(usize, usize)>> = p
-        .get("cells")
-        .and_then(Value::as_array)
-        .map(|a| a.iter().take(100_000).filter_map(|c| Some((c.get(0)?.as_u64()? as usize, c.get(1)?.as_u64()? as usize))).collect());
+fn target_cells(s: &Session, p: &Value, cmd: &str) -> Result<impl Fn(&Table) -> Result<Vec<(usize, usize)>> + use<>> {
+    // `cells` is a list of [row, col]: anything else, or an entry that is not one, is refused, never
+    // dropped or read as absent (which would act on the selection or the whole table).
+    let cells: Option<Vec<(usize, usize)>> = match p.get("cells") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(a)) if a.len() > MAX_CELLS => {
+            return Err(bad(cmd, format!("`cells` lists {} cells; at most {MAX_CELLS}", a.len())));
+        }
+        Some(Value::Array(a)) => Some(
+            a.iter()
+                .map(|c| {
+                    cell_param(&json!({ "cell": c }), "cell", cmd)?.ok_or_else(|| bad(cmd, format!("`cells` entry {c} is not a [row, col] cell")))
+                })
+                .collect::<Result<_>>()?,
+        ),
+        Some(v) => return Err(bad(cmd, format!("`cells` is a list of [row, col] cells, not {v}"))),
+    };
     let st = s.doc()?;
     // A selected range grows over the merged cells it touches; with only a caret, the caret's cell is used.
     let sel = st.selection.cells.map(|(_, a, b)| (a, b, true)).or_else(|| st.selection.text.as_ref().and_then(|t| t.cell).map(|c| (c, c, false)));
+    let cmd = cmd.to_string();
     Ok(move |t: &Table| match (&cells, sel) {
-        (Some(c), _) => c.clone(),
+        // Each listed cell must be in the table, so a command never reports success for a cell
+        // it could not edit.
+        (Some(c), _) => match c.iter().find(|(r, c)| *r >= t.n_rows() || *c >= t.n_cols()) {
+            Some((r, c)) => Err(bad(&cmd, format!("no cell [{r}, {c}]: the table has {} rows and {} columns", t.n_rows(), t.n_cols()))),
+            None => Ok(c.clone()),
+        },
         (None, Some((a, b, range))) => {
             let (a, b) = if range { cell_block(t, a, b) } else { (a, b) };
             // The selection can name cells outside the table; only walk the ones that exist.
             let (r1, c1) = (a.0.max(b.0).min(t.n_rows().saturating_sub(1)), a.1.max(b.1).min(t.n_cols().saturating_sub(1)));
-            (a.0.min(b.0)..=r1).flat_map(|r| (a.1.min(b.1)..=c1).map(move |c| (r, c))).collect()
+            Ok((a.0.min(b.0)..=r1).flat_map(|r| (a.1.min(b.1)..=c1).map(move |c| (r, c))).collect())
         }
-        _ => (0..t.n_rows()).flat_map(|r| (0..t.n_cols()).map(move |c| (r, c))).collect(),
+        _ => Ok((0..t.n_rows()).flat_map(|r| (0..t.n_cols()).map(move |c| (r, c))).collect()),
     })
 }
 
 fn cell_fill(s: &mut Session, p: &Value) -> Result<Value> {
     let fill = if bool_or(p, "none", false) { Some(deckcraft_model::Fill::None) } else { color_param(p, "color").map(deckcraft_model::Fill::solid) };
-    let targets = target_cells(s, p)?;
+    let targets = target_cells(s, p, "table.cellFill")?;
     with_table(s, p, "table.cellFill", move |t| {
-        for (r, c) in targets(t) {
+        for (r, c) in targets(t)? {
             if let Some(cell) = t.cell_mut(r, c) {
                 cell.fill.clone_from(&fill);
             }
@@ -432,9 +454,9 @@ fn borders(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // "none" clears to no line, so the table style's own lines don't show through either.
     let line = if which == "none" { Line::none() } else { line };
-    let targets = target_cells(s, p)?;
+    let targets = target_cells(s, p, "table.borders")?;
     with_table(s, p, "table.borders", move |t| {
-        let list = targets(t);
+        let list = targets(t)?;
         let (Some(r0), Some(r1), Some(c0), Some(c1)) =
             (list.iter().map(|x| x.0).min(), list.iter().map(|x| x.0).max(), list.iter().map(|x| x.1).min(), list.iter().map(|x| x.1).max())
         else {
@@ -448,9 +470,9 @@ fn borders(s: &mut Session, p: &Value) -> Result<Value> {
             }
             let n = match side {
                 LEFT => c.checked_sub(1).map(|c| (r, c, RIGHT)),
-                RIGHT => (c + 1 < cols).then_some((r, c + 1, LEFT)),
+                RIGHT => c.checked_add(1).filter(|c| *c < cols).map(|c| (r, c, LEFT)),
                 TOP => r.checked_sub(1).map(|r| (r, c, BOTTOM)),
-                _ => (r + 1 < rows).then_some((r + 1, c, TOP)),
+                _ => r.checked_add(1).filter(|r| *r < rows).map(|r| (r, c, TOP)),
             };
             if let Some((r, c, side)) = n
                 && let Some(cell) = t.cell_mut(r, c)
@@ -508,9 +530,9 @@ fn cell_margins(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let side = |k: &str, i: usize| f64_param(p, k).filter(|v| v.is_finite()).map_or(base[i], |v| v.clamp(0.0, 400.0));
     let m = [side("left", 0), side("right", 1), side("top", 2), side("bottom", 3)];
-    let targets = target_cells(s, p)?;
+    let targets = target_cells(s, p, "table.cellMargins")?;
     with_table(s, p, "table.cellMargins", move |t| {
-        for (r, c) in targets(t) {
+        for (r, c) in targets(t)? {
             if let Some(cell) = t.cell_mut(r, c) {
                 cell.margins = Some(m);
             }
@@ -545,9 +567,9 @@ fn cell_align(s: &mut Session, p: &Value) -> Result<Value> {
             o => return Err(bad("table.cellAlign", format!("unknown anchor {o:?}; one of top, middle, bottom"))),
         }),
     };
-    let targets = target_cells(s, p)?;
+    let targets = target_cells(s, p, "table.cellAlign")?;
     with_table(s, p, "table.cellAlign", move |t| {
-        for (r, c) in targets(t) {
+        for (r, c) in targets(t)? {
             if let Some(cell) = t.cell_mut(r, c) {
                 if anchor.is_some() {
                     cell.anchor = anchor;
