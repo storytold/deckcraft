@@ -8,7 +8,7 @@
 //! socket may sit idle or blocked on a write.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
@@ -123,6 +123,25 @@ fn read_line(r: &mut impl BufRead, max: usize) -> Line {
     }
 }
 
+/// Close for good after an error reply. The peer may have pipelined more bytes behind the line
+/// that was rejected (an HTTP body, a JSON line, stray junk); dropping a socket with unread data
+/// pending makes the kernel send RST instead of FIN, and an RST destroys the reply stored in the
+/// peer's receive buffer — the peer sees "connection reset" instead of the reason. Shut the write
+/// side down first (FIN, the peer reads the reply) and then drain the read side until peer stops.
+fn close_after_error(out: &mut TcpStream, reader: &mut impl Read, limits: Limits) {
+    let _ = out.shutdown(Shutdown::Write);
+    let _ = out.set_read_timeout(Some(limits.write_timeout));
+    // 1 MiB: a well-behaved peer stops as soon as it reads the FIN; one that keeps streaming
+    // after an error loses the connection after a burst, which is what the plain close did.
+    let mut discarded = [0u8; 4096];
+    for _ in 0..256 {
+        match reader.read(&mut discarded) {
+            Ok(0) | Err(_) => break,
+            Ok(_) => continue,
+        }
+    }
+}
+
 /// One request line, parsed.
 enum Parsed {
     Request {
@@ -182,6 +201,7 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
             Line::Text(t) => t,
             Line::TooLong => {
                 let _ = writeln!(out, "{}", json!({"ok": false, "error": format!("request line longer than {} bytes", limits.max_line)}));
+                close_after_error(&mut out, &mut reader, limits);
                 break;
             }
             Line::Closed => break,
@@ -191,6 +211,7 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
             Parsed::Reject(e) => {
                 // The connection closes either way; a peer that can't read the reason loses nothing.
                 let _ = writeln!(out, "{}", json!({"ok": false, "error": e}));
+                close_after_error(&mut out, &mut reader, limits);
                 break;
             }
             Parsed::Request { id, method, params } => {
