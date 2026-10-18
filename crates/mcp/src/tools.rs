@@ -302,7 +302,8 @@ pub fn tool_definitions() -> Vec<Value> {
                 "Screenshot of the whole DeckCraft window (UI included), as image content; with `path` the PNG is written there and the answer is text {{path, width, height}}, for a client that cannot read images.{APP_ONLY}"
             ),
             obj(json!({"path": string("Write the PNG to this file and answer {path, width, height} as text")}), &[]),
-            true,
+            // With `path` it writes a file, so it is not read-only (like export).
+            false,
         ),
         tool(
             "call_app",

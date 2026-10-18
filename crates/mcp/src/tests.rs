@@ -62,6 +62,25 @@ fn handshake_and_tool_list() {
     assert!(s.handle_line("{}").is_some());
 }
 
+/// readOnlyHint is true only for tools that never write: screenshot writes a PNG when given
+/// `path`, like export, while render_slide and the inspectors only answer.
+#[test]
+fn read_only_hints_match_what_the_tools_write() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let tools = call(&mut s, 2, "tools/list", json!({}));
+    let hint = |name: &str| {
+        tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("{name}"))["annotations"]
+            ["readOnlyHint"]
+            .clone()
+    };
+    for n in ["screenshot", "export", "save_presentation", "batch"] {
+        assert_eq!(hint(n), false, "{n} writes");
+    }
+    for n in ["render_slide", "inspect_slide", "inspect_document", "list_commands"] {
+        assert_eq!(hint(n), true, "{n} only answers");
+    }
+}
+
 /// #1151: `insert_chart` takes x, y, w and h like `insert_picture` and `insert_table`.
 #[test]
 fn insert_chart_takes_a_box() {
