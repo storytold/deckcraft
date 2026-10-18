@@ -45,7 +45,7 @@ pub use tools::{Mods, PointerEvent, PointerKind, ToolKind};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("unknown command `{0}`")]
+    #[error("unknown command `{0}`{like}", like = cmd::like_it(.0))]
     UnknownCommand(String),
     #[error("command `{0}` is not available right now: {1}")]
     Disabled(String, String),
@@ -628,6 +628,17 @@ impl Session {
     /// failed outer command, and committing the resulting undo entry or journal record.
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // A key the command doesn't take is refused, not dropped: dropped, the call "succeeds"
+        // and does something else (#298).
+        if let Some(given) = params.as_object()
+            && let Ok(keys) = cmd::accepted_keys(spec)
+        {
+            let mut unknown: Vec<&str> = given.keys().map(String::as_str).filter(|k| !keys.contains(k)).collect();
+            if !unknown.is_empty() {
+                unknown.sort_unstable();
+                return Err(cmd::bad(id, cmd::not_taken(spec, &unknown)));
+            }
+        }
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
             self.settle_composition();
@@ -635,7 +646,7 @@ impl Session {
         if let Err(e) = (spec.enabled)(self) {
             let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
             if !named {
-                return Err(EngineError::Disabled(id.into(), e));
+                return Err(EngineError::Disabled(id.into(), cmd::how_to_enable(spec, &e)));
             }
         }
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));

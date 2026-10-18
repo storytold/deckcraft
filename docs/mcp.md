@@ -96,7 +96,7 @@ files it was given rather than guarding against other software on the computer.
 | `screenshot` | The whole window, UI included (connected mode) |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
 
-A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
+A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters, and a command refuses a key it doesn't take, naming the ones it does (`` `shape.insert` was given `shape`, which it doesn't take. `shape.insert` takes {preset: …, rect: …} ``). An unknown command id names the commands like it (`` unknown command `new`; commands named like it: file.new, slide.new ``), and a command that is not available says how to make it so (`` nothing selected: edit.select {"ids": […]} selects shapes, or pass `ids` ``).
 
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,
 rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, closed, smooth}`,
