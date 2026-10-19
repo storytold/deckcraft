@@ -4768,3 +4768,68 @@ fn smartart_font_size_is_one_value_for_every_node() {
     assert!(s.execute("smartArt.fontSize", &json!({"id": gid})).is_err());
     assert!(s.execute("smartArt.fontSize", &json!({"id": gid, "size": -3})).is_err());
 }
+
+/// AA4: Font Color on a SmartArt graphic colours every node's text (it answered ok and changed
+/// nothing).
+#[test]
+fn format_color_on_a_smartart_graphic_colours_every_node() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).unwrap();
+    let gid = r["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+    let want = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
+    let runs = smartart_runs(&s, gid);
+    assert!(runs.len() >= 3 && runs.iter().all(|r| r.1 == want), "{runs:?}");
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "Ship"})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.1 == want), "the colour survives a regenerate");
+}
+
+/// AA4: a picture has no fill of its own; the refusal names Recolor.
+#[test]
+fn shape_fill_on_a_picture_is_refused_naming_recolor() {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf,
+        0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+        0x82,
+    ];
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png"})).unwrap()["id"].clone();
+    let e = s.execute("shape.fill", &json!({"id": id, "color": "#FF0000"})).unwrap_err().to_string();
+    assert!(e.contains("picture.recolor"), "{e}");
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 50, 50]})).unwrap();
+    s.execute("shape.fill", &json!({"id": r["id"], "color": "#FF0000"})).unwrap();
+    // A mixed selection fills the shape and leaves the picture alone.
+    s.execute("shape.fill", &json!({"ids": [id.clone(), r["id"].clone()], "color": "#00FF00"})).unwrap();
+    let pic = s.doc().unwrap().shape(ShapeId(id.as_u64().unwrap() as u32)).unwrap().clone();
+    assert!(pic.fill.is_none(), "the picture keeps no fill of its own: {:?}", pic.fill);
+    // Grouped with the shape, the picture is left alone when the group is filled.
+    s.execute("edit.select", &json!({"ids": [id.clone(), r["id"].clone()]})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#0000FF"})).unwrap();
+    let st = s.doc().unwrap();
+    let pic = st.shape(ShapeId(id.as_u64().unwrap() as u32)).unwrap();
+    assert!(pic.fill.is_none(), "a picture in a filled group keeps no fill: {:?}", pic.fill);
+    let rect = st.shape(ShapeId(r["id"].as_u64().unwrap() as u32)).unwrap();
+    assert!(format!("{:?}", rect.fill).contains("b: 255"), "the shape in the group took the blue fill: {:?}", rect.fill);
+}
+
+/// A SmartArt graphic selected together with a text box: `format.size` sizes the graphic's nodes
+/// and the text box, and the selection stays as it was (regenerating the graphic used to collapse
+/// it to the graphic alone, so the other shapes were skipped).
+#[test]
+fn format_size_on_a_mixed_selection_reaches_the_other_shapes_and_keeps_the_selection() {
+    let mut s = session();
+    let g = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "Build"]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 400, 200, 60], "text": "Note"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [g, b]})).unwrap();
+    s.execute("format.size", &json!({"size": 40})).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![ShapeId(g as u32), ShapeId(b as u32)], "the selection is as it was");
+    let run = &st.shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props;
+    assert_eq!(run.size, Some(40.0), "the text box was sized too: {run:?}");
+    let graphic = st.shape(ShapeId(g as u32)).unwrap();
+    assert_eq!(graphic.diagram.as_ref().unwrap().font_size, Some(40.0));
+    assert!(graphic.text.is_none(), "the run formatting skipped the graphic itself, which has no text of its own");
+}

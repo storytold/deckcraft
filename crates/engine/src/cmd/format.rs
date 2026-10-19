@@ -41,7 +41,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
-        cmd!("format.color", "Font Color", ["Home", "Font"], None, "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}}", has_text_or_shapes, color),
+        cmd!(
+            "format.color",
+            "Font Color",
+            ["Home", "Font"],
+            None,
+            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}} (with a SmartArt graphic selected it colours all its nodes' text)",
+            has_text_or_shapes,
+            color
+        ),
         cmd!(
             "format.textTransparency",
             "Text Transparency",
@@ -305,16 +313,39 @@ fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
     format_run(s, &move |r| r.font = Some(f.clone()))
 }
+/// Runs `f` and puts the selection back as it was: regenerating a SmartArt graphic selects the
+/// graphic alone, which must not drop the other selected shapes or the text range from a format
+/// command that goes on to format them.
+fn keeping_selection<T>(s: &mut Session, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+    let (shapes, text, cells) = {
+        let st = s.doc()?;
+        (st.selection.shapes.clone(), st.selection.text.clone(), st.selection.cells)
+    };
+    let r = f(s);
+    if let Ok(st) = s.doc_mut() {
+        st.selection.shapes = shapes;
+        st.selection.text = text;
+        st.selection.cells = cells;
+    }
+    r
+}
+
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
     // A selected SmartArt graphic: one size for all its nodes (like smartArt.fontSize).
     if s.doc()?.selection.text.is_none() {
         let graphics = super::smartart::selected_graphics(s);
-        for gid in &graphics {
-            super::smartart::set_font_size(s, *gid, Some(v), "format.size")?;
-        }
-        if !graphics.is_empty() && graphics.len() == s.doc()?.selection.shapes.len() {
-            return ok();
+        let selected = s.doc()?.selection.shapes.len();
+        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| super::smartart::set_font_size(s, *gid, Some(v), "format.size")))?;
+        if !graphics.is_empty() {
+            if graphics.len() == selected {
+                return ok();
+            }
+            // The other selected shapes take the size; the graphics were sized above.
+            return keeping_selection(s, |s| {
+                s.doc_mut()?.selection.shapes.retain(|id| !graphics.contains(id));
+                format_run(s, &move |r| r.size = Some(v))
+            });
         }
     }
     format_run(s, &move |r| r.size = Some(v))
@@ -369,6 +400,21 @@ fn color(s: &mut Session, p: &Value) -> Result<Value> {
             if only_charts {
                 return ok();
             }
+        }
+        // A selected SmartArt graphic: the colour of all its nodes' text.
+        let graphics = super::smartart::selected_graphics(s);
+        let selected = s.doc()?.selection.shapes.len();
+        let tc = c.clone();
+        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| super::smartart::set_text_color(s, *gid, tc.clone(), "format.color")))?;
+        if !graphics.is_empty() {
+            if graphics.len() == selected {
+                return ok();
+            }
+            // The other selected shapes take the colour; the graphics were coloured above.
+            return keeping_selection(s, |s| {
+                s.doc_mut()?.selection.shapes.retain(|id| !graphics.contains(id));
+                format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
+            });
         }
     }
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))

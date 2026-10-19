@@ -616,6 +616,9 @@ fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
         if let Some(size) = d.font_size.filter(|z| z.is_finite() && *z > 0.0) {
             set_size(sh, size);
         }
+        if let Some(c) = &d.text_color {
+            set_color(sh, c);
+        }
     }
     v
 }
@@ -631,6 +634,16 @@ fn set_size(sh: &mut Shape, size: f64) {
         p.end_props.size = Some(size);
     }
     body.body.autofit = Some(AutoFit::None);
+}
+
+fn set_color(sh: &mut Shape, c: &ColorRef) {
+    let Some(body) = &mut sh.text else { return };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            r.props.fill = Some(Fill::solid(c.clone()));
+        }
+        p.end_props.fill = Some(Fill::solid(c.clone()));
+    }
 }
 
 /// Rough advance of a character as a fraction of the font size (a sans text face).
@@ -2041,6 +2054,14 @@ pub(crate) fn selected_graphics(s: &Session) -> Vec<ShapeId> {
 pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cmd: &str) -> Result<()> {
     edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
         d.font_size = size;
+        Ok(())
+    })
+}
+
+/// Colour every node's text of graphic `gid`.
+pub(crate) fn set_text_color(s: &mut Session, gid: ShapeId, color: ColorRef, cmd: &str) -> Result<()> {
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.text_color = Some(color);
         Ok(())
     })
 }

@@ -604,7 +604,29 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
         }
         fills
     };
-    edit_group_appearance(s, p, "shape.fill", |sh| {
+    // A picture has no fill of its own (Picture Format has Recolor, not Shape Fill).
+    let st = s.doc()?;
+    let ids = targets(s, p)?;
+    if !ids.is_empty() && ids.iter().all(|id| st.shape(*id).is_some_and(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Picture { .. }))) {
+        return Err(bad("shape.fill", "a picture has no fill of its own: use picture.recolor to recolour it"));
+    }
+    // Pictures in a mixed selection are left out of the edit, so `changed` and `ids` name only the
+    // shapes that were filled.
+    let fillable: Vec<u32> = ids
+        .iter()
+        .filter(|id| !st.shape(**id).is_some_and(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Picture { .. })))
+        .map(|id| id.0)
+        .collect();
+    let mut np = p.clone();
+    if let Some(o) = np.as_object_mut() {
+        o.remove("id");
+        o.insert("ids".into(), json!(fillable));
+    }
+    edit_group_appearance(s, &np, "shape.fill", |sh| {
+        // A picture inside a selected group has no fill of its own either.
+        if matches!(sh.kind, deckcraft_model::ShapeKind::Picture { .. }) {
+            return Ok(());
+        }
         if let Some(f) = &new_fill {
             sh.fill.clone_from(f);
         }
