@@ -5,7 +5,7 @@
 use deckcraft_anim::{Click, HitShape, Layer, LinkJump, ShowAction, ShowState, Source, StepStamp, Timeline, TriggerPlay};
 use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Presentation, ShapeId};
-use deckcraft_render::{ParaState, PlacedLink, PlacedShape, RenderOpts, ShapeState};
+use deckcraft_render::{PlacedLink, PlacedShape, RenderOpts, ShapeState};
 use egui::{Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, pos2, vec2};
 use serde_json::json;
 
@@ -163,7 +163,7 @@ fn render_frame(
     backdrop: Option<&deckcraft_render::Image>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
-        let mut st = state_for(&tl, id, step, t, plays, stamps);
+        let mut st = ShapeState::from(deckcraft_anim::state_for(&tl, id, step, t, plays, stamps));
         if hidden.contains(&id) {
             st.visible = false;
         }
@@ -201,7 +201,7 @@ fn render_overlay(
     stamps: &[StepStamp],
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
-        let mut st = state_for(&tl, id, step, t, plays, stamps);
+        let mut st = ShapeState::from(deckcraft_anim::state_for(&tl, id, step, t, plays, stamps));
         if hidden.contains(&id) {
             st.visible = false;
         }
@@ -484,27 +484,6 @@ impl Show {
             cues.iter().filter_map(|e| doc.slides.get(slide).and_then(|s| s.animations.get(e.anim)).map(|a| (e.shape, a.effect.clone()))).collect();
         self.media_cues.extend(effects);
         self.media_clock = if t.is_finite() { Some((k, t)) } else { None };
-    }
-}
-
-fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPlay], stamps: &[StepStamp]) -> ShapeState {
-    let a = tl.state_ordered(id, None, step, t, plays, stamps);
-    ShapeState {
-        visible: a.visible,
-        opacity: a.opacity,
-        offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y),
-        scale: (a.scale_x, a.scale_y),
-        rotate: a.rotate,
-        clip: a.clip,
-        tint: a.tint,
-        paras: tl
-            .paragraph_targets(id)
-            .into_iter()
-            .map(|p| {
-                let a = tl.state(id, Some(p), step, t);
-                (p, ParaState { visible: a.visible, opacity: a.opacity, offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y) })
-            })
-            .collect(),
     }
 }
 
@@ -922,7 +901,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             (Some(tr), Some(tl)) => {
                 let p = ((now - tr.start) / tr.dur.max(0.01)).clamp(0.0, 1.0);
                 let hidden_b = |id: ShapeId| {
-                    let st = state_for(&tl, id, 0, 0.0, &[], &[]);
+                    let st = deckcraft_anim::state_for(&tl, id, 0, 0.0, &[], &[]).state;
                     !st.visible || st.opacity <= 0.0 || hidden.contains(&id)
                 };
                 tr.from

@@ -194,6 +194,27 @@ impl Default for ShapeState {
     }
 }
 
+impl From<deckcraft_anim::ShapeFrame> for ShapeState {
+    /// The show's per-shape state ([`deckcraft_anim::state_for`]) as the renderer takes it.
+    fn from(f: deckcraft_anim::ShapeFrame) -> Self {
+        let a = f.state;
+        ShapeState {
+            visible: a.visible,
+            opacity: a.opacity,
+            offset: Vec2::new(a.offset_x, a.offset_y),
+            scale: (a.scale_x, a.scale_y),
+            rotate: a.rotate,
+            clip: a.clip,
+            tint: a.tint,
+            paras: f
+                .paras
+                .into_iter()
+                .map(|(p, a)| (p, ParaState { visible: a.visible, opacity: a.opacity, offset: Vec2::new(a.offset_x, a.offset_y) }))
+                .collect(),
+        }
+    }
+}
+
 /// Animation state of one paragraph, relative to its shape.
 #[derive(Clone, Copy, Debug)]
 pub struct ParaState {
