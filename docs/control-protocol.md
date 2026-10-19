@@ -33,6 +33,10 @@ to the file.
 
 ## Framing
 
+A line that is not a JSON object with a string `method` (an HTTP request, text that isn't JSON,
+bytes that aren't UTF-8) gets one error reply and the server closes the connection; nothing sent
+after it runs. Blank lines are skipped.
+
 The connected MCP client requires the reply's numeric `id` to match its request, `ok` to be a
 boolean, and exactly one of `result` (success) or a string `error` (failure). It caps each reply at
 16 MiB including its terminating newline, accepts CRLF, and rejects EOF inside a frame. Invalid

@@ -213,11 +213,10 @@ of the effect gallery. Detail in [animation-parity.md](animation-parity.md). 8�
   counters): a click on a shape whose action is "play sound" (`ppaction://media`, 126 and 486
   shapes in two decks) does nothing; triggers that start on `onStopAudio` or `begin` conditions are
   not read as triggers; click boxes are the shape's bounding box (a hexagon's corners count) and do
-  not follow a shape that a motion path has moved; the PPTX writer turns every "on click" after the
-  first effect of a trigger into "after previous", so a trigger with several click steps saved from
-  DeckCraft plays all of them at once.
-- **Impact:** games built around sound effects on buttons, or around a button that counts up with
-  repeated clicks, lose that part when they are saved from DeckCraft or played in it.
+  not follow a shape that a motion path has moved. Trigger sequences now keep their separate
+  click steps on PPTX save, including paragraph builds (`crates/pptx/tests/trigger_steps.rs`).
+- **Impact:** games built around sound effects on buttons, audio-triggered effects or moving
+  clickable shapes do not play as authored.
 - **Estimate:** 4–8 h.
 
 ### Notes and Handout masters
@@ -361,6 +360,7 @@ Detail in [localization-parity.md](localization-parity.md).
 |---|---|---|
 | 2026-10-18 | minor | Localization: the string catalog, the language setting (#15) and a ~60% Vietnamese draft landed; row 5 narrows and the remaining estimate drops to 40–73 h plus native review |
 | 2026-10-17 | trivial | Soak entry corrected: the long runs are `#[ignore]`d, so `cargo xtask ci` samples only the short seeded ones |
+| 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |
