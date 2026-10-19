@@ -4750,3 +4750,29 @@ fn picture_reset_keeps_the_frame_shape() {
     let doc = command_specs().iter().find(|c| c.id == "picture.reset").unwrap().params;
     assert!(doc.contains("frame shape"), "{doc}");
 }
+
+/// HH12: exporting the same slide twice to one PNG path after an edit overwrites the file with
+/// the new picture (not a bug: the second file differs).
+#[test]
+fn exporting_a_slide_again_overwrites_the_png_with_the_edit() {
+    /// Removes the folder when the test ends, a failed assertion included.
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("deckcraft-hh12-{}", std::process::id()));
+    let _cleanup = Cleanup(dir.clone());
+    let png = dir.join("slide.png");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = session();
+    let path = png.to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "png", "slide": 0, "scale": 0.5})).unwrap();
+    let first = std::fs::read(&png).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 400, 300]})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#FF0000"})).unwrap();
+    s.execute("file.export", &json!({"path": path, "format": "png", "slide": 0, "scale": 0.5})).unwrap();
+    let second = std::fs::read(&png).unwrap();
+    assert_ne!(first, second, "the second export replaced the file with the edited slide");
+}
