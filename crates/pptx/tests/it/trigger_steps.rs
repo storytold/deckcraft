@@ -93,3 +93,37 @@ fn triggered_paragraph_build_keeps_a_click_for_each_paragraph() {
         assert_eq!(back.slides[0].animations[0].trigger, Some(ids[0]));
     }
 }
+
+/// A sequence that starts at a media bookmark (`onMediaBookmark`, #362) is not a click on the
+/// media shape. Reading it as one made a save turn the bookmark effects into click effects, so
+/// they are left out instead of being given the wrong trigger.
+#[test]
+fn a_media_bookmark_sequence_is_not_read_as_a_click_trigger() {
+    use std::io::Write;
+    let mut p = deck();
+    let ids: Vec<_> = p.slides[0].shapes.iter().map(|s| s.id).collect();
+    Arc::make_mut(&mut p.slides[0]).animations.push(Animation {
+        shape: ids[2],
+        trigger: Some(ids[0]),
+        effect: "appear".into(),
+        text_build: TextBuild::AsOne,
+        ..Default::default()
+    });
+    assert_eq!(round(&p).slides[0].animations.len(), 1, "a click trigger still round-trips");
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let mut z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
+    let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).expect("read");
+        if f.name() == "ppt/slides/slide1.xml" {
+            let xml = String::from_utf8(data).expect("utf8").replace(r#"evt="onClick""#, r#"evt="onMediaBookmark""#);
+            data = xml.into_bytes();
+        }
+        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
+        out.write_all(&data).expect("write");
+    }
+    let q = deckcraft_pptx::import(&out.finish().expect("finish").into_inner()).expect("import");
+    assert!(q.slides[0].animations.is_empty(), "{:?}", q.slides[0].animations);
+}
