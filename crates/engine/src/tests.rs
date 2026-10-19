@@ -6056,6 +6056,66 @@ fn smartart_font_size_is_one_value_for_every_node() {
     assert!(s.execute("smartArt.fontSize", &json!({"id": gid, "size": -3})).is_err());
 }
 
+/// AA4: Font Color on a SmartArt graphic colours every node's text (it answered ok and changed
+/// nothing).
+#[test]
+fn format_color_on_a_smartart_graphic_colours_every_node() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).unwrap();
+    let gid = r["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+    let want = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
+    let runs = smartart_runs(&s, gid);
+    assert!(runs.len() >= 3 && runs.iter().all(|r| r.1 == want), "{runs:?}");
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "Ship"})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.1 == want), "the colour survives a regenerate");
+}
+
+/// A picture's own fill shows behind its transparent pixels, as PowerPoint's Format Picture ▸ Fill
+/// sets it: `shape.fill` sets it on a picture and the .pptx keeps it.
+#[test]
+fn shape_fill_on_a_picture_sets_the_fill_behind_it() {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf,
+        0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+        0x82,
+    ];
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png"})).unwrap()["id"].clone();
+    let sid = ShapeId(id.as_u64().unwrap() as u32);
+    s.execute("shape.fill", &json!({"id": id, "color": "#FF0000"})).unwrap();
+    let pic = s.doc().unwrap().shape(sid).unwrap().clone();
+    assert!(format!("{:?}", pic.fill).contains("r: 255"), "{:?}", pic.fill);
+    let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+    let back = deckcraft_pptx::import(&bytes).unwrap();
+    let pic = back.slides.iter().flat_map(|sl| sl.shapes.iter()).find(|x| matches!(x.kind, deckcraft_model::ShapeKind::Picture { .. })).unwrap();
+    assert!(format!("{:?}", pic.fill).contains("r: 255"), "the fill survives a save: {:?}", pic.fill);
+    // No Fill takes it away again.
+    s.execute("shape.fill", &json!({"id": id, "none": true})).unwrap();
+    assert!(s.doc().unwrap().shape(sid).unwrap().fill.as_ref().is_none_or(|f| f.is_none()));
+}
+
+/// A SmartArt graphic selected together with a text box: `format.size` sizes the graphic's nodes
+/// and the text box, and the selection stays as it was (regenerating the graphic used to collapse
+/// it to the graphic alone, so the other shapes were skipped).
+#[test]
+fn format_size_on_a_mixed_selection_reaches_the_other_shapes_and_keeps_the_selection() {
+    let mut s = session();
+    let g = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "Build"]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 400, 200, 60], "text": "Note"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [g, b]})).unwrap();
+    s.execute("format.size", &json!({"size": 40})).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![ShapeId(g as u32), ShapeId(b as u32)], "the selection is as it was");
+    let run = &st.shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props;
+    assert_eq!(run.size, Some(40.0), "the text box was sized too: {run:?}");
+    let graphic = st.shape(ShapeId(g as u32)).unwrap();
+    assert_eq!(graphic.diagram.as_ref().unwrap().font_size, Some(40.0));
+    assert!(graphic.text.is_none(), "the run formatting skipped the graphic itself, which has no text of its own");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();

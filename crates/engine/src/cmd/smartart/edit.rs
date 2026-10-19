@@ -357,6 +357,14 @@ pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cm
     })
 }
 
+/// Colour every node's text of graphic `gid`.
+pub(crate) fn set_text_color(s: &mut Session, gid: ShapeId, color: ColorRef, cmd: &str) -> Result<()> {
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.text_color = Some(color);
+        Ok(())
+    })
+}
+
 fn font_size(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.fontSize";
     let size = match p.get("size") {

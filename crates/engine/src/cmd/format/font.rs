@@ -50,16 +50,39 @@ pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.font = Some(f.clone()))
 }
 
+/// Runs `f` and puts the selection back as it was: regenerating a SmartArt graphic selects the
+/// graphic alone, which must not drop the other selected shapes or the text range from a format
+/// command that goes on to format them.
+fn keeping_selection<T>(s: &mut Session, f: impl FnOnce(&mut Session) -> Result<T>) -> Result<T> {
+    let (shapes, text, cells) = {
+        let st = s.doc()?;
+        (st.selection.shapes.clone(), st.selection.text.clone(), st.selection.cells)
+    };
+    let r = f(s);
+    if let Ok(st) = s.doc_mut() {
+        st.selection.shapes = shapes;
+        st.selection.text = text;
+        st.selection.cells = cells;
+    }
+    r
+}
+
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
     // A selected SmartArt graphic: one size for all its nodes (like smartArt.fontSize).
     if s.doc()?.selection.text.is_none() {
         let graphics = super::smartart::selected_graphics(s);
-        for gid in &graphics {
-            super::smartart::set_font_size(s, *gid, Some(v), "format.size")?;
-        }
-        if !graphics.is_empty() && graphics.len() == s.doc()?.selection.shapes.len() {
-            return ok();
+        let selected = s.doc()?.selection.shapes.len();
+        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| super::smartart::set_font_size(s, *gid, Some(v), "format.size")))?;
+        if !graphics.is_empty() {
+            if graphics.len() == selected {
+                return ok();
+            }
+            // The other selected shapes take the size; the graphics were sized above.
+            return keeping_selection(s, |s| {
+                s.doc_mut()?.selection.shapes.retain(|id| !graphics.contains(id));
+                format_run(s, &move |r| r.size = Some(v))
+            });
         }
     }
     format_run(s, &move |r| r.size = Some(v))
@@ -125,6 +148,21 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
             if only_charts {
                 return ok();
             }
+        }
+        // A selected SmartArt graphic: the colour of all its nodes' text.
+        let graphics = super::smartart::selected_graphics(s);
+        let selected = s.doc()?.selection.shapes.len();
+        let tc = c.clone();
+        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| super::smartart::set_text_color(s, *gid, tc.clone(), "format.color")))?;
+        if !graphics.is_empty() {
+            if graphics.len() == selected {
+                return ok();
+            }
+            // The other selected shapes take the colour; the graphics were coloured above.
+            return keeping_selection(s, |s| {
+                s.doc_mut()?.selection.shapes.retain(|id| !graphics.contains(id));
+                format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
+            });
         }
     }
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))

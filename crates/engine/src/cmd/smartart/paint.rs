@@ -209,6 +209,9 @@ pub(super) fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
             Some(size) => set_size(sh, size),
             None => apply_scale(sh, scale),
         }
+        if let Some(c) = &d.text_color {
+            set_color(sh, c);
+        }
     }
     v
 }
@@ -250,6 +253,16 @@ fn set_size(sh: &mut Shape, size: f64) {
         p.end_props.size = Some(size);
     }
     body.body.autofit = Some(AutoFit::None);
+}
+
+fn set_color(sh: &mut Shape, c: &ColorRef) {
+    let Some(body) = &mut sh.text else { return };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            r.props.fill = Some(Fill::solid(c.clone()));
+        }
+        p.end_props.fill = Some(Fill::solid(c.clone()));
+    }
 }
 
 /// Rough advance of a character as a fraction of the font size (a sans text face).
