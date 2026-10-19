@@ -115,19 +115,19 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
+            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), an animated gif of the deck (one frame per slide), or frames: the slide show as a PNG frame sequence for a video encoder (`path` is a folder that receives frame-000001.png… at `fps`; builds play step by step with holds, transitions play between slides; the answer maps frame numbers back to slides).",
             obj(
                 json!({
                     "path": string("Output path"),
-                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
+                    "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif", "frames"], "description": "Output format (default: from the path's extension; frames must be named)"},
                     "slide": int("Slide index for images"),
                     "all": boolean("All slides (images)"),
                     "scale": num("Pixels per point for images (default 2)"),
                     "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
                     "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
                     "dpi": num("PDF: raster resolution of slide artwork, 36-600 (default 200)"),
-                    "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF and GIF: slide indices to export, in order (default all)"},
-                    "includeHidden": boolean("PDF and GIF: include hidden slides (default false)"),
+                    "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF, GIF and frames: slide indices to export, in order (default all)"},
+                    "includeHidden": boolean("PDF, GIF and frames: include hidden slides (default false)"),
                     "textLayer": boolean("PDF: invisible text layer for search, select and copy (default true)"),
                     "frame": boolean("PDF notes/handouts: thin frame around each slide (default true)"),
                     "paper": {"type": "string", "enum": ["letter", "a4", "legal", "a3"], "description": "PDF notes/handouts: paper size (default letter)"},
@@ -137,10 +137,13 @@ pub fn tool_definitions() -> Vec<Value> {
                             {"type": "integer", "minimum": 16, "maximum": 3840},
                             {"type": "string", "enum": ["small", "medium", "large", "extraLarge"]}
                         ],
-                        "description": "GIF: frame width in pixels, or a size: small 640, medium 960 (default), large 1280, extraLarge 1920; the height follows the slide's shape"
+                        "description": "GIF: frame width in pixels, or a size: small 640, medium 960 (default), large 1280, extraLarge 1920; frames: a width in pixels (default 1920); the height follows the slide's shape"
                     },
-                    "secondsPerSlide": {"type": "number", "minimum": 0.1, "maximum": 600, "description": "GIF: seconds each slide shows (default 5)"},
-                    "loop": boolean("GIF: loop forever (true, default) or play once (false)")
+                    "secondsPerSlide": {"type": "number", "minimum": 0, "maximum": 600, "description": "GIF: seconds each slide shows, 0.1-600 (default 5); frames: hold after a slide's last build step and the whole time of a slide without animations, 0-60 (default 3)"},
+                    "loop": boolean("GIF: loop forever (true, default) or play once (false)"),
+                    "fps": {"type": "integer", "minimum": 1, "maximum": 60, "description": "frames: frames per second (default 30)"},
+                    "secondsPerStep": {"type": "number", "minimum": 0, "maximum": 30, "description": "frames: hold after each click step settles (default 1); automatic steps run on"},
+                    "transitions": boolean("frames: play each slide's transition from the previous slide (default true; false cuts)")
                 }),
                 &["path"],
             ),
