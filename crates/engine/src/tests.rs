@@ -6259,6 +6259,93 @@ fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
     assert_eq!(s.execute("arrange.flipHorizontal", &json!({"ids": [id]})).unwrap(), json!(1));
 }
 
+/// ZZ5: the paragraph and text formatters that acted only on the selection take `ids` too: the
+/// named shapes change with nothing selected, an unnamed shape and the selection stay as they were,
+/// and a refused call restores the selection.
+#[test]
+fn paragraph_and_text_formatters_take_ids() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, y: u32| {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, y, 200, 60], "text": "Alpha beta"})).unwrap()["id"].as_u64().unwrap()
+    };
+    let (a, b, c) = (ins(&mut s, 20), ins(&mut s, 100), ins(&mut s, 180));
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(c as u32)];
+    s.doc_mut().unwrap().selection.text = None;
+    let shape = |s: &Session, id: u64| serde_json::to_value(s.doc().unwrap().shape(ShapeId(id as u32)).unwrap()).unwrap();
+    let (a0, c0) = (shape(&s, a), shape(&s, c));
+    s.execute("format.columns", &json!({"ids": [a, b], "count": 2})).unwrap();
+    s.execute("format.lineSpacing", &json!({"ids": [a], "lines": 1.5})).unwrap();
+    s.execute("format.align", &json!({"ids": [a], "align": "right"})).unwrap();
+    s.execute("format.bold", &json!({"ids": [a], "on": true})).unwrap();
+    s.execute("format.indent", &json!({"ids": [b]})).unwrap();
+    s.execute("format.bullets", &json!({"ids": [b], "on": true})).unwrap();
+    let sh = s.doc().unwrap().shape(ShapeId(a as u32)).unwrap().clone();
+    let body = sh.text.as_ref().unwrap();
+    assert_eq!(body.paragraphs[0].props.align, Some(deckcraft_model::text::Align::Right));
+    assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true));
+    assert_ne!(shape(&s, a), a0);
+    assert_eq!(s.doc().unwrap().shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].level, 1);
+    assert_eq!(shape(&s, c), c0, "an unnamed shape is untouched");
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(c as u32)], "the selection is left alone");
+    assert!(s.execute("format.size", &json!({"ids": [a]})).is_err());
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(c as u32)], "a refusal restores the selection");
+    // With nothing selected, a named shape is enough; an empty or null list names nothing, so the
+    // command stays disabled.
+    s.doc_mut().unwrap().selection.shapes.clear();
+    s.execute("format.italic", &json!({"ids": [a], "on": true})).unwrap();
+    for ids in [json!([]), json!(null)] {
+        let e = s.execute("format.italic", &json!({"ids": ids, "on": true})).unwrap_err();
+        assert!(matches!(e, crate::EngineError::Disabled(..)), "{ids}: {e:?}");
+    }
+    // Group takes its members from `ids` too, with nothing selected.
+    let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    assert!(matches!(s.doc().unwrap().shape(ShapeId(g as u32)).unwrap().kind, deckcraft_model::ShapeKind::Group { .. }));
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.doc_mut().unwrap().selection.shapes.clear();
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(c as u32)];
+    for id in [
+        "bold",
+        "italic",
+        "underline",
+        "strikethrough",
+        "superscript",
+        "subscript",
+        "size",
+        "grow",
+        "shrink",
+        "case",
+        "caps",
+        "spacing",
+        "clear",
+        "textShadow",
+        "textOutline",
+        "textWarp",
+        "align",
+        "rtl",
+        "alignLeft",
+        "alignCenter",
+        "alignRight",
+        "justify",
+        "bullets",
+        "numbering",
+        "indent",
+        "outdent",
+        "lineSpacing",
+        "paragraph",
+        "anchor",
+        "direction",
+        "columns",
+        "autofit",
+        "wrap",
+        "margins",
+        "language",
+    ] {
+        let doc = command_specs().iter().find(|x| x.id == format!("format.{id}")).unwrap().params;
+        assert!(doc.contains("ids?: [shape ids] (default: the selection)"), "format.{id}: {doc}");
+    }
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();

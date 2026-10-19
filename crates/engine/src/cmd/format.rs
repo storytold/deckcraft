@@ -40,32 +40,88 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "font.add", "Add Font", [], None, "{data: base64 TTF/OTF/TTC} → {faces} added for this session", always, font_add),
         cmd!(noundo "font.rescan", "Rescan Installed Fonts", ["Home", "Font"], None, "{} → {faces, families} (fonts installed since start-up)", always, font_rescan),
-        cmd!("format.bold", "Bold", ["Home", "Font"], Some("Cmd+B"), "{on?: bool}", has_text_or_shapes, bold),
-        cmd!("format.italic", "Italic", ["Home", "Font"], Some("Cmd+I"), "{on?: bool}", has_text_or_shapes, italic),
+        cmd!(
+            "format.bold",
+            "Bold",
+            ["Home", "Font"],
+            Some("Cmd+B"),
+            "{on?: bool, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| bold(s, p))
+        ),
+        cmd!(
+            "format.italic",
+            "Italic",
+            ["Home", "Font"],
+            Some("Cmd+I"),
+            "{on?: bool, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| italic(s, p))
+        ),
         cmd!(
             "format.underline",
             "Underline",
             ["Home", "Font"],
             Some("Cmd+U"),
-            "{on?: bool, style?: sng|dbl|heavy|dotted|dash|wavy}",
+            "{on?: bool, style?: sng|dbl|heavy|dotted|dash|wavy, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            underline
+            |s, p| on_named(s, p, |s| underline(s, p))
         ),
         cmd!(
             "format.strikethrough",
             "Strikethrough",
             ["Home", "Font"],
             Some("Cmd+Shift+X"),
-            "{on?: bool, double?: bool}",
+            "{on?: bool, double?: bool, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            strike
+            |s, p| on_named(s, p, |s| strike(s, p))
         ),
-        cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
-        cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
+        cmd!(
+            "format.superscript",
+            "Superscript",
+            ["Home", "Font"],
+            Some("Cmd+Shift+="),
+            "{on?: bool, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| superscript(s, p))
+        ),
+        cmd!(
+            "format.subscript",
+            "Subscript",
+            ["Home", "Font"],
+            Some("Cmd+="),
+            "{on?: bool, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| subscript(s, p))
+        ),
         cmd!("format.font", "Font", ["Home", "Font"], None, "{family, ids?: [shape ids] (default: the selection)}", has_text_or_shapes, font),
-        cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
-        cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
-        cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
+        cmd!(
+            "format.size",
+            "Font Size",
+            ["Home", "Font"],
+            None,
+            "{size: pt, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| size(s, p))
+        ),
+        cmd!(
+            "format.grow",
+            "Increase Font Size",
+            ["Home", "Font"],
+            Some("Cmd+Shift+."),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| grow(s, p))
+        ),
+        cmd!(
+            "format.shrink",
+            "Decrease Font Size",
+            ["Home", "Font"],
+            Some("Cmd+Shift+,"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| shrink(s, p))
+        ),
         cmd!(
             "format.color",
             "Font Color",
@@ -89,9 +145,9 @@ pub fn specs() -> Vec<CommandSpec> {
             "Language",
             ["Review", "Language"],
             None,
-            "{lang?, noProof?: bool} (proofing language of the selected text, and Do Not Check Spelling)",
+            "{lang?, noProof?: bool, ids?: [shape ids] (default: the selection)} (proofing language of the selected text, and Do Not Check Spelling)",
             has_text_or_shapes,
-            language
+            |s, p| on_named(s, p, |s| language(s, p))
         ),
         cmd!(
             "format.languageAll",
@@ -116,21 +172,31 @@ pub fn specs() -> Vec<CommandSpec> {
             "Change Case",
             ["Home", "Font"],
             Some("Shift+F3"),
-            "{mode?: cycle|sentence|lower|upper|title|toggle} — cycle (Shift+F3, the default) goes lowercase → Capitalize Each Word → UPPERCASE; a caret in a word changes that word",
+            "{mode?: cycle|sentence|lower|upper|title|toggle, ids?: [shape ids] (default: the selection)} — cycle (Shift+F3, the default) goes lowercase → Capitalize Each Word → UPPERCASE; a caret in a word changes that word",
             has_text_or_shapes,
-            case
+            |s, p| on_named(s, p, |s| case(s, p))
         ),
-        cmd!("format.caps", "Caps", [], None, "{caps: none|small|all}", has_text_or_shapes, caps),
+        cmd!("format.caps", "Caps", [], None, "{caps: none|small|all, ids?: [shape ids] (default: the selection)}", has_text_or_shapes, |s, p| {
+            on_named(s, p, |s| caps(s, p))
+        }),
         cmd!(
             "format.spacing",
             "Character Spacing",
             ["Home", "Font"],
             None,
-            "{pt} (veryTight -3, tight -1.5, normal 0, loose 3, veryLoose 6)",
+            "{pt, ids?: [shape ids] (default: the selection)} (veryTight -3, tight -1.5, normal 0, loose 3, veryLoose 6)",
             has_text_or_shapes,
-            spacing
+            |s, p| on_named(s, p, |s| spacing(s, p))
         ),
-        cmd!("format.clear", "Clear All Formatting", ["Home", "Font"], Some("Cmd+Space"), "{}", has_text_or_shapes, clear),
+        cmd!(
+            "format.clear",
+            "Clear All Formatting",
+            ["Home", "Font"],
+            Some("Cmd+Space"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| clear(s, p))
+        ),
         cmd!(
             "format.fontDialog",
             "Font…",
@@ -140,84 +206,140 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             font_dialog
         ),
-        cmd!("format.textShadow", "Text Shadow", ["Home", "Font"], None, "{on?: bool}", has_text_or_shapes, text_shadow),
+        cmd!(
+            "format.textShadow",
+            "Text Shadow",
+            ["Home", "Font"],
+            None,
+            "{on?: bool, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| text_shadow(s, p))
+        ),
         cmd!(
             "format.textOutline",
             "Text Outline",
             ["Shape Format", "WordArt Styles"],
             None,
-            "{color?, width?: pt} (no color = none)",
+            "{color?, width?: pt, ids?: [shape ids] (default: the selection)} (no color = none)",
             has_text_or_shapes,
-            text_outline
+            |s, p| on_named(s, p, |s| text_outline(s, p))
         ),
         cmd!(
             "format.textWarp",
             "Text Transform",
             ["Shape Format", "WordArt Styles"],
             None,
-            "{preset: a prstTxWarp name or none, adj?: [finite raw guide values, at most 8]} — none clears the transform; omitted adj uses the preset's defaults",
+            "{preset: a prstTxWarp name or none, adj?: [finite raw guide values, at most 8], ids?: [shape ids] (default: the selection)} — none clears the transform; omitted adj uses the preset's defaults",
             has_text_or_shapes,
-            text_warp
+            |s, p| on_named(s, p, |s| text_warp(s, p))
         ),
         cmd!(
             "format.align",
             "Align",
             ["Home", "Paragraph"],
             None,
-            "{align: left|center|right|justify|justifyLow|distributed}",
+            "{align: left|center|right|justify|justifyLow|distributed, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            align
+            |s, p| on_named(s, p, |s| align(s, p))
         ),
         cmd!(
             "format.rtl",
             "Right-to-Left Text Direction",
             ["Home", "Paragraph"],
             None,
-            "{on?: bool} (off = left-to-right; switching mirrors left/right alignment)",
+            "{on?: bool, ids?: [shape ids] (default: the selection)} (off = left-to-right; switching mirrors left/right alignment)",
             has_text_or_shapes,
-            rtl
+            |s, p| on_named(s, p, |s| rtl(s, p))
         ),
-        cmd!("format.alignLeft", "Align Left", ["Home", "Paragraph"], Some("Cmd+L"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Left)),
-        cmd!("format.alignCenter", "Center", ["Home", "Paragraph"], Some("Cmd+E"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Center)),
-        cmd!("format.alignRight", "Align Right", ["Home", "Paragraph"], Some("Cmd+R"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Right)),
-        cmd!("format.justify", "Justify", ["Home", "Paragraph"], Some("Cmd+J"), "{}", has_text_or_shapes, |s, _| align_to(s, Align::Justify)),
+        cmd!(
+            "format.alignLeft",
+            "Align Left",
+            ["Home", "Paragraph"],
+            Some("Cmd+L"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| align_to(s, Align::Left))
+        ),
+        cmd!(
+            "format.alignCenter",
+            "Center",
+            ["Home", "Paragraph"],
+            Some("Cmd+E"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| align_to(s, Align::Center))
+        ),
+        cmd!(
+            "format.alignRight",
+            "Align Right",
+            ["Home", "Paragraph"],
+            Some("Cmd+R"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| align_to(s, Align::Right))
+        ),
+        cmd!(
+            "format.justify",
+            "Justify",
+            ["Home", "Paragraph"],
+            Some("Cmd+J"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| align_to(s, Align::Justify))
+        ),
         cmd!(
             "format.bullets",
             "Bullets",
             ["Home", "Paragraph"],
             None,
-            "{on?: bool, char?: •|○|■|□|◆|➢|✓|–, color?, size?: % of text}",
+            "{on?: bool, char?: •|○|■|□|◆|➢|✓|–, color?, size?: % of text, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            bullets
+            |s, p| on_named(s, p, |s| bullets(s, p))
         ),
         cmd!(
             "format.numbering",
             "Numbering",
             ["Home", "Paragraph"],
             None,
-            "{on?: bool, scheme?: arabicPeriod|arabicParenR|romanUcPeriod|romanLcPeriod|alphaUcPeriod|alphaLcParenR|alphaLcPeriod, start?: n (a numbered paragraph whose start differs from that of the last numbered paragraph at its level begins a new run of numbers at n, as PowerPoint's Start at does), color?, size?: % of text}",
+            "{on?: bool, scheme?: arabicPeriod|arabicParenR|romanUcPeriod|romanLcPeriod|alphaUcPeriod|alphaLcParenR|alphaLcPeriod, start?: n (a numbered paragraph whose start differs from that of the last numbered paragraph at its level begins a new run of numbers at n, as PowerPoint's Start at does), color?, size?: % of text, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            numbering
+            |s, p| on_named(s, p, |s| numbering(s, p))
         ),
-        cmd!("format.indent", "Increase List Level", ["Home", "Paragraph"], Some("Tab"), "{}", has_text_or_shapes, |s, _| level(s, 1)),
-        cmd!("format.outdent", "Decrease List Level", ["Home", "Paragraph"], Some("Shift+Tab"), "{}", has_text_or_shapes, |s, _| level(s, -1)),
+        cmd!(
+            "format.indent",
+            "Increase List Level",
+            ["Home", "Paragraph"],
+            Some("Tab"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| level(s, 1))
+        ),
+        cmd!(
+            "format.outdent",
+            "Decrease List Level",
+            ["Home", "Paragraph"],
+            Some("Shift+Tab"),
+            "{ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| level(s, -1))
+        ),
         cmd!(
             "format.lineSpacing",
             "Line Spacing",
             ["Home", "Paragraph"],
             None,
-            "{lines?: 1.0|1.5|2.0…, pt?: exactly}",
+            "{lines?: 1.0|1.5|2.0…, pt?: exactly, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            line_spacing
+            |s, p| on_named(s, p, |s| line_spacing(s, p))
         ),
         cmd!(
             "format.paragraph",
             "Paragraph…",
             ["Format"],
             None,
-            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines}",
+            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            paragraph
+            |s, p| on_named(s, p, |s| paragraph(s, p))
         ),
         cmd!(query "format.ruler", "Ruler", [], None, "{} → {x, y, width, rotated, marginLeft, indent, tabs: [{pos, align}], defaultTab} for the paragraph with the caret (x, y: the text area's top-left in slide pt)", has_text, ruler),
         cmd!(
@@ -238,15 +360,50 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             tabs
         ),
-        cmd!("format.anchor", "Align Text", ["Home", "Paragraph"], None, "{anchor: top|middle|bottom}", has_text_or_shapes, anchor),
+        cmd!(
+            "format.anchor",
+            "Align Text",
+            ["Home", "Paragraph"],
+            None,
+            "{anchor: top|middle|bottom, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| anchor(s, p))
+        ),
         cmd!(
             "format.direction",
             "Text Direction",
             ["Home", "Paragraph"],
             None,
-            "{dir: horizontal|rotate90|rotate270|stacked}",
+            "{dir: horizontal|rotate90|rotate270|stacked, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            direction
+            |s, p| on_named(s, p, |s| direction(s, p))
+        ),
+        cmd!(
+            "format.columns",
+            "Columns",
+            ["Home", "Paragraph"],
+            None,
+            "{count, spacing?: pt, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| columns(s, p))
+        ),
+        cmd!(
+            "format.autofit",
+            "Autofit",
+            ["Format Shape", "Text Box"],
+            None,
+            "{mode: none|shrink|resize, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| autofit(s, p))
+        ),
+        cmd!(
+            "format.wrap",
+            "Wrap Text in Shape",
+            ["Format Shape", "Text Box"],
+            None,
+            "{on: bool, ids?: [shape ids] (default: the selection)}",
+            has_text_or_shapes,
+            |s, p| on_named(s, p, |s| wrap(s, p))
         ),
         cmd!(
             "format.columns",
@@ -264,9 +421,9 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Box Margins",
             ["Format Shape", "Text Box"],
             None,
-            "{left?: pt, top?: pt, right?: pt, bottom?: pt}",
+            "{left?: pt, top?: pt, right?: pt, bottom?: pt, ids?: [shape ids] (default: the selection)}",
             has_text_or_shapes,
-            margins
+            |s, p| on_named(s, p, |s| margins(s, p))
         ),
         cmd!(noundo "format.painter", "Format Painter", ["Home", "Clipboard"], Some("Cmd+Shift+C"), "{sticky?: bool}", has_text_or_shapes, painter_pick),
         cmd!("format.painterApply", "Paste Formatting", [], Some("Cmd+Shift+V"), "{ids?}", has_text_or_shapes, painter_apply),
