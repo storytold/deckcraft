@@ -1,7 +1,7 @@
 use super::{
     ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PictureFill, PictureMode,
     Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value, edit_geometry,
-    edit_shapes, f64_param, inherited_fills, json, requested_fill, str_param, targets, usize_param,
+    edit_shapes, f64_param, inherited_fills, json, requested_fill, require_any, str_param, targets, usize_param,
 };
 
 pub(super) fn adjust(s: &mut Session, p: &Value) -> Result<Value> {
@@ -236,6 +236,7 @@ fn line_end(v: &str) -> Option<LineEnd> {
 }
 
 pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(p, "shape.line", &["color", "none", "width", "dash", "cap", "join", "compound", "head", "tail", "headSize", "tailSize", "reset"])?;
     let reset = bool_or(p, "reset", false);
     let none = bool_or(p, "none", false);
     let color = color_param(p, "color");
@@ -355,6 +356,15 @@ fn shadow_preset(v: &Value) -> Option<Option<Shadow>> {
 }
 
 pub(super) fn effects(s: &mut Session, p: &Value) -> Result<Value> {
+    // `glow: null` and `softEdges: null` clear those effects (No Glow, No Soft Edges), so a null
+    // counts as something to set for them.
+    if !["glow", "softEdges"].iter().any(|k| p.get(*k).is_some()) {
+        require_any(
+            p,
+            "shape.effects",
+            &["shadow", "glow", "softEdges", "reflection", "bevel", "threeD", "shadowProps", "glowProps", "reflectionProps", "reset"],
+        )?;
+    }
     let reset = bool_or(p, "reset", false);
     let shadow = p.get("shadow").and_then(shadow_preset);
     let glow: Option<Option<Glow>> = p.get("glow").map(|g| match g {
