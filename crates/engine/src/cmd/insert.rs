@@ -1944,6 +1944,17 @@ mod tests {
     }
 
     #[test]
+    fn a_long_british_date_puts_the_day_first() {
+        let mut s = session();
+        edit_title(&mut s);
+        let v = s.execute("insert.dateTime", &json!({"format": "datetime4", "update": false, "language": "en-GB"})).unwrap();
+        let text = v["text"].as_str().unwrap().to_string();
+        assert!(text.chars().next().is_some_and(|c| c.is_ascii_digit()) && !text.contains(','), "{text}");
+        let v = s.execute("insert.dateTime", &json!({"format": "datetime4", "update": false, "language": "en-US"})).unwrap();
+        assert!(v["text"].as_str().is_some_and(|t| t.contains(',')), "{v}");
+    }
+
+    #[test]
     fn a_named_format_in_french_and_a_bad_value_change_nothing() {
         let mut s = session();
         edit_title(&mut s);

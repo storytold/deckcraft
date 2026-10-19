@@ -104,11 +104,15 @@ pub fn field_text(kind: &str, lang: Option<&str>, now: DateTime) -> Option<Strin
     let ampm = if now.hour < 12 { "AM" } else { "PM" };
     let (mi, s) = (now.minute, now.second);
     let short = short_date(&lang, now);
+    // British-style English writes the day before the month ("9 October 2026").
+    let day_first = matches!(lang.as_str(), "en-gb" | "en-au" | "en-nz" | "en-ie" | "en-in");
     let named = |text: String| english.then_some(text);
     match kind {
         "datetime" | "datetimeFigureOut" | "datetime1" => Some(short),
+        "datetime2" if day_first => named(format!("{day}, {d} {month} {y}")),
         "datetime2" => named(format!("{day}, {month} {d}, {y}")),
         "datetime3" => named(format!("{d} {month} {y}")),
+        "datetime4" if day_first => named(format!("{d} {month} {y}")),
         "datetime4" => named(format!("{month} {d}, {y}")),
         "datetime5" => named(format!("{d}-{mon}-{yy:02}")),
         "datetime6" => named(format!("{month} {yy:02}")),
@@ -183,7 +187,10 @@ mod tests {
         // Month names in another language: not computed (the field keeps its saved text).
         assert_eq!(field_text("datetime2", Some("de-DE"), FRI), None);
         assert_eq!(field_text("datetime12", Some("fr-FR"), FRI), None);
-        assert_eq!(field_text("datetime4", Some("en-GB"), FRI).as_deref(), Some("October 9, 2026"));
+        assert_eq!(field_text("datetime4", Some("en-GB"), FRI).as_deref(), Some("9 October 2026"));
+        assert_eq!(field_text("datetime2", Some("en-GB"), FRI).as_deref(), Some("Friday, 9 October 2026"));
+        assert_eq!(field_text("datetime4", Some("en-AU"), FRI).as_deref(), Some("9 October 2026"));
+        assert_eq!(field_text("datetime4", Some("en-US"), FRI).as_deref(), Some("October 9, 2026"));
     }
 
     #[test]
