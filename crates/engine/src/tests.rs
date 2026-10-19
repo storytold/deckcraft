@@ -4752,3 +4752,27 @@ fn chart_options_axis_bounds_set_clear_and_refuse() {
     assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 5})).is_err(), "5 is below the minimum of 10");
     assert_eq!(bounds(&s), (Some(10.0), None));
 }
+
+#[test]
+fn chart_axis_title_sets_clears_and_draws() {
+    let mut s = session();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    let draw = |s: &Session| {
+        let st = s.doc().unwrap();
+        deckcraft_render::render_slide(&st.doc, 0, &deckcraft_render::RenderOpts { scale: 0.5, ..Default::default() }).pixels
+    };
+    let before = draw(&s);
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": "Quarter"})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": "Quarter", "value": null}), "{r}");
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    let with = draw(&s);
+    assert_ne!(before, with, "the titles are drawn");
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides[0].shapes.iter().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("chart") };
+    assert_eq!(c.axis_titles, (Some("Quarter".into()), Some("Revenue".into())));
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": null})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": null, "value": "Revenue"}), "{r}");
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "depth", "text": "x"})).is_err());
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "value"})).is_err(), "text is required (null removes)");
+}

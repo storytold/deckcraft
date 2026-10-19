@@ -123,6 +123,15 @@ pub fn specs() -> Vec<CommandSpec> {
             chart_options
         ),
         cmd!(
+            "chart.axisTitle",
+            "Axis Titles",
+            ["Chart Design", "Chart Layouts"],
+            None,
+            "{axis: category|value, text: string|null (null removes the title), id?} → {changed, ids, axisTitles: {category, value}} (Chart Elements > Axis Titles: PowerPoint adds the text \"Axis Title\"; a bar chart draws its category axis vertically)",
+            has_selection,
+            chart_axis_title
+        ),
+        cmd!(
             "insert.smartArt",
             "SmartArt",
             ["Insert", "Illustrations"],
@@ -1711,6 +1720,39 @@ fn chart_type_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         c.raw = None;
         Ok(())
     })
+}
+
+fn chart_axis_title(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "chart.axisTitle";
+    let category = match str_param(p, "axis") {
+        Some("category") => true,
+        Some("value") => false,
+        _ => return Err(bad(CMD, "`axis` is `category` or `value`")),
+    };
+    let text = match p.get("text") {
+        Some(Value::Null) => None,
+        Some(Value::String(t)) => Some(t.clone()),
+        _ => return Err(bad(CMD, "`text` is the title, or null to remove it")),
+    };
+    let changed = with_chart(s, p, CMD, |c| {
+        if category {
+            c.axis_titles.0.clone_from(&text);
+        } else {
+            c.axis_titles.1.clone_from(&text);
+        }
+        c.raw = None;
+        Ok(())
+    })?;
+    let ids: Vec<u32> = match p.get("id").and_then(Value::as_u64) {
+        Some(id) => vec![u32::try_from(id).unwrap_or(0)],
+        None => s.doc()?.selection.shapes.iter().map(|i| i.0).collect(),
+    };
+    let titles = ids.first().and_then(|id| s.doc().ok()?.shape(ShapeId(*id)).cloned()).and_then(|sh| match sh.kind {
+        ShapeKind::Chart(c) => Some(c.axis_titles),
+        _ => None,
+    });
+    let (cat, val) = titles.unwrap_or_default();
+    Ok(json!({"changed": changed, "ids": ids, "axisTitles": {"category": cat, "value": val}}))
 }
 
 fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
