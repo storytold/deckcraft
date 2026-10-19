@@ -4798,3 +4798,41 @@ fn table_insert_column_refuses_a_keep_width_that_is_not_a_bool() {
         assert!((t.width() - 840.0).abs() < 1e-6, "width {}", t.width());
     }
 }
+
+#[test]
+fn table_insert_column_extends_a_merge_that_spans_the_neighbour() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0, 100.0], json!([["title", "", ""], ["a", "b", "c"]]));
+    s.execute("table.merge", &json!({"id": id.0, "from": [0, 0], "to": [0, 2]})).unwrap();
+    s.execute("table.insertColumnRight", &json!({"id": id.0, "col": 2})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.cell(0, 0).unwrap().grid_span, 4, "the title now spans the new column");
+    assert!(t.cell(0, 3).unwrap().h_merge);
+    assert_eq!(t.cell(1, 0).unwrap().grid_span, 1);
+    s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": 0})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.cell(0, 0).unwrap().grid_span, 5, "left of the first column too");
+    assert_eq!(t.cell(0, 0).unwrap().text.text(), "title");
+}
+
+/// A span a file lets run past the last column is no merge to the model, so inserting left of
+/// that cell adds a plain column: the cell keeps its text and the new one gets its formatting.
+#[test]
+fn table_insert_column_left_of_an_overflowing_span_keeps_the_text() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0, 100.0], json!([["a", "b", "wide"], ["d", "e", "f"]]));
+    {
+        let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        let sh = deckcraft_model::find_shape_mut(&mut slide.shapes, id).unwrap();
+        let deckcraft_model::ShapeKind::Table(t) = &mut sh.kind else { panic!("a table") };
+        t.cell_mut(0, 2).unwrap().grid_span = 4;
+    }
+    s.execute("table.cellFill", &json!({"id": id.0, "color": "#FF0000", "cells": [[0, 2]]})).unwrap();
+    s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": 2})).unwrap();
+    let t = table_of(&s, id);
+    assert_eq!(t.n_cols(), 4);
+    assert_eq!(t.cell(0, 3).unwrap().text.text(), "wide", "the cell keeps its text");
+    assert_eq!(t.cell(0, 2).unwrap().text.text(), "");
+    assert_eq!(t.cell(0, 2).unwrap().fill, t.cell(0, 3).unwrap().fill, "the new cell takes the neighbour's fill");
+}
