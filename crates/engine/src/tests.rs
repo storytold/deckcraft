@@ -6118,3 +6118,46 @@ fn chart_options_axis_bounds_set_clear_and_refuse() {
     assert_eq!(bounds(&s), (Some(1.0), None));
 }
 
+#[test]
+fn chart_axis_title_sets_clears_and_draws() {
+    let mut s = session();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    let draw = |s: &Session| {
+        let st = s.doc().unwrap();
+        deckcraft_render::render_slide(&st.doc, 0, &deckcraft_render::RenderOpts { scale: 0.5, ..Default::default() }).pixels
+    };
+    let before = draw(&s);
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": "Quarter"})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": "Quarter", "value": null}), "{r}");
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    let with = draw(&s);
+    assert_ne!(before, with, "the titles are drawn");
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides[0].shapes.iter().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("chart") };
+    assert_eq!(c.axis_titles, (Some("Quarter".into()), Some("Revenue".into())));
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": null})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": null, "value": "Revenue"}), "{r}");
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "depth", "text": "x"})).is_err());
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "value"})).is_err(), "text is required (null removes)");
+    // Named by `ids` with nothing selected, the answer names the chart it edited and its titles.
+    s.doc_mut().unwrap().selection.shapes.clear();
+    let r = s.execute("chart.axisTitle", &json!({"ids": [id], "axis": "category", "text": "Year"})).unwrap();
+    assert_eq!(r["ids"], json!([id]), "{r}");
+    assert_eq!(r["axisTitles"], json!({"category": "Year", "value": "Revenue"}), "{r}");
+    // A chart without axes has no axis titles, as in PowerPoint; nothing changes.
+    let pie = s.execute("insert.chart", &json!({"type": "pie"})).unwrap()["id"].clone();
+    let rev = s.doc().unwrap().revision;
+    let e = s.execute("chart.axisTitle", &json!({"id": pie, "axis": "value", "text": "x"})).unwrap_err().to_string();
+    assert!(e.contains("axis titles are for"), "{e}");
+    assert_eq!(s.doc().unwrap().revision, rev);
+    for kind in ["radar", "funnel", "waterfall", "treemap"] {
+        let c = s.execute("insert.chart", &json!({ "type": kind })).unwrap()["id"].clone();
+        assert!(s.execute("chart.axisTitle", &json!({"id": c, "axis": "category", "text": "x"})).is_err(), "{kind}");
+    }
+    // A missing id before the chart is skipped, in the answer too.
+    let r = s.execute("chart.axisTitle", &json!({"ids": [999_999, id], "axis": "category", "text": "Y"})).unwrap();
+    assert_eq!(r["ids"], json!([id]), "{r}");
+    assert_eq!(r["axisTitles"]["category"], "Y", "{r}");
+}
+

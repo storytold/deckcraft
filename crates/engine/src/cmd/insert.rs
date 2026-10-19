@@ -22,7 +22,7 @@ mod text_fields;
 
 use album::{photo_album, photo_album_edit};
 pub use chart::chart_type;
-use chart::{chart, chart_data, chart_options, chart_type_cmd};
+use chart::{chart, chart_axis_title, chart_data, chart_options, chart_type_cmd};
 use links::{action_button, hyperlink, shape_action};
 pub use picture::content_type;
 pub(crate) use picture::media_bytes;
@@ -139,6 +139,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, axisMin?: n|null, axisMax?: n|null (the value axis' bounds; null: automatic), palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
+        ),
+        cmd!(
+            "chart.axisTitle",
+            "Axis Titles",
+            ["Chart Design", "Chart Layouts"],
+            None,
+            "{axis: category|value, text: string|null (null removes the title), id?} → {changed, ids, axisTitles: {category, value}} (Chart Elements > Axis Titles: PowerPoint adds the text \"Axis Title\"; a bar chart draws its category axis vertically)",
+            has_selection,
+            chart_axis_title
         ),
         cmd!(
             "insert.smartArt",
