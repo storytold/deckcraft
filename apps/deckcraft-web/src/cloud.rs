@@ -4,8 +4,8 @@
 //! client is async and the session rides the cookie the service set at
 //! sign-in. There is no device flow and no token file.
 
-use std::cell::Cell;
-use std::sync::{Arc, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::OnceLock;
 
 use craft_cloud_client::{Client, Error};
 use deckcraft_ui_egui::cloud::{Account, CloudBackend, Event, Fault, Job, Post};
@@ -13,14 +13,14 @@ use wasm_bindgen::JsCast as _;
 use wasm_bindgen_futures::spawn_local;
 
 /// When true, an unauthenticated account answer must not navigate to login (unsaved edits).
-static DEFER_LOGIN: OnceLock<Arc<Cell<bool>>> = OnceLock::new();
+static DEFER_LOGIN: OnceLock<AtomicBool> = OnceLock::new();
 
-fn defer_login() -> Arc<Cell<bool>> {
-    DEFER_LOGIN.get_or_init(|| Arc::new(Cell::new(false))).clone()
+fn defer_login() -> &'static AtomicBool {
+    DEFER_LOGIN.get_or_init(|| AtomicBool::new(false))
 }
 
 pub fn set_defer_login(defer: bool) {
-    defer_login().set(defer);
+    defer_login().store(defer, Ordering::Relaxed);
 }
 
 /// Hands cloud jobs to async tasks. Cheap to clone.
@@ -59,7 +59,12 @@ impl Service {
                 let answer =
                     self.me().await.map(|me| Account { display: me.display, capabilities: me.capabilities, provider_linked: me.provider_linked });
                 post(Event::Account(answer.clone()));
-                if matches!(answer, Err(Fault::Unauthenticated)) && !defer_login().get() {
+                if matches!(answer, Err(Fault::Unauthenticated)) && !defer_login().load(Ordering::Relaxed) {
+                    offer_login();
+                }
+            }
+            Job::SignIn => {
+                if !defer_login().load(Ordering::Relaxed) {
                     offer_login();
                 }
             }

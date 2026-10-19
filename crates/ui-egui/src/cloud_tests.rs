@@ -61,9 +61,10 @@ impl State {
             self.linked = false;
             return Vec::new();
         }
-        if !self.linked && !matches!(job, Job::LinkStart | Job::LinkPoll(_)) {
+        if !self.linked && !matches!(job, Job::LinkStart | Job::LinkPoll(_) | Job::SignIn) {
             return vec![match job {
                 Job::Account => Event::Account(Err(Fault::NotLinked)),
+                Job::SignIn => Event::Account(Err(Fault::NotLinked)),
                 Job::List(path) => Event::Listed { path, entries: Err(Fault::NotLinked) },
                 Job::SharedWithMe => Event::Shared(Err(Fault::NotLinked)),
                 Job::Read { entry, into, .. } => Event::Read { entry, into, bytes: Err(Fault::NotLinked) },
@@ -85,6 +86,7 @@ impl State {
                 vec![Event::Conversation(Ok(room))]
             }
             Job::Account => vec![Event::Account(self.account())],
+            Job::SignIn => vec![Event::Browser { url: "https://cloud.example/sign-in".to_owned(), handle: None }, Event::Linked(Ok(true)), Event::Account(self.account())],
             Job::LinkStart => {
                 vec![Event::Browser { url: "https://cloud.example/link/abc".to_owned(), handle: Some("abc".to_owned()) }]
             }

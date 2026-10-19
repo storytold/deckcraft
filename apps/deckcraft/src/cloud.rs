@@ -108,6 +108,11 @@ impl Worker {
                 });
                 self.post(Event::Account(answer));
             }
+            Job::SignIn => {
+                if let Err(fault) = self.sign_in() {
+                    self.post(Event::Account(Err(fault)));
+                }
+            }
             Job::LinkStart => {
                 if let Err(fault) = self.sign_in() {
                     self.post(Event::Linked(Err(fault)));
