@@ -10,7 +10,7 @@ use super::zoom::{
 };
 use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
-    SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -345,7 +345,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
         (Some(tr), Some(tl)) => {
             let p = ((now - tr.start) / tr.dur.max(0.01)).clamp(0.0, 1.0);
             let hidden_b = |id: ShapeId| {
-                let st = state_for(&tl, id, 0, 0.0, &[], &[]);
+                let st = deckcraft_anim::state_for(&tl, id, 0, 0.0, &[], &[]).state;
                 !st.visible || st.opacity <= 0.0 || sl.hidden.contains(&id)
             };
             tr.from
