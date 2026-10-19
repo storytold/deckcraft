@@ -226,6 +226,94 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// After an edit: refit every group whose children's geometry changed to the union of its
+/// children (PowerPoint keeps a group's box on its children, so moving one child grows or
+/// shrinks the group). The children keep their place on the slide: the group's box and its child
+/// space change together. `old` is the presentation before the edit; only slides the edit
+/// touched are looked at, and a group whose own box changed (it was moved or resized) is left to
+/// that edit.
+pub(crate) fn refit_groups(old: &deckcraft_model::Presentation, new: &mut deckcraft_model::Presentation) {
+    for (i, slide) in new.slides.iter_mut().enumerate() {
+        let Some(before) = old.slides.get(i) else { continue };
+        if std::sync::Arc::ptr_eq(before, slide) {
+            continue;
+        }
+        let shapes = &mut std::sync::Arc::make_mut(slide).shapes;
+        refit_list(Some(&before.shapes), shapes);
+    }
+    // A child edited in Slide Master, layout, notes or handout view refits its group there too.
+    for (i, master) in new.masters.iter_mut().enumerate() {
+        if let Some(before) = old.masters.get(i)
+            && !std::sync::Arc::ptr_eq(before, master)
+        {
+            refit_master(before, std::sync::Arc::make_mut(master));
+        }
+    }
+    for (before, after) in [(old.notes_master.as_ref(), new.notes_master.as_mut()), (old.handout_master.as_ref(), new.handout_master.as_mut())] {
+        if let (Some(before), Some(after)) = (before, after)
+            && !std::sync::Arc::ptr_eq(before, after)
+        {
+            refit_master(before, std::sync::Arc::make_mut(after));
+        }
+    }
+}
+
+fn refit_master(old: &deckcraft_model::Master, new: &mut deckcraft_model::Master) {
+    refit_list(Some(&old.shapes), &mut new.shapes);
+    for (i, layout) in new.layouts.iter_mut().enumerate() {
+        refit_list(old.layouts.get(i).map(|l| &l.shapes), &mut layout.shapes);
+    }
+}
+
+fn refit_list(old: Option<&Vec<Shape>>, list: &mut [Shape]) {
+    // Most edits touch a slide without groups: nothing to refit, and no per-shape lookup.
+    if !list.iter().any(|sh| matches!(sh.kind, ShapeKind::Group { .. })) {
+        return;
+    }
+    let by_id: std::collections::HashMap<ShapeId, &Shape> = old.map(|o| o.iter().map(|x| (x.id, x)).collect()).unwrap_or_default();
+    for sh in list.iter_mut() {
+        let before = by_id.get(&sh.id).copied();
+        let old_children = before.and_then(|b| match &b.kind {
+            ShapeKind::Group { children, .. } => Some(children),
+            _ => None,
+        });
+        let own_before = before.map(|b| {
+            (
+                b.xfrm,
+                match &b.kind {
+                    ShapeKind::Group { child, .. } => Some(*child),
+                    _ => None,
+                },
+            )
+        });
+        let smart = sh.diagram.is_some();
+        let ShapeKind::Group { children, child } = &mut sh.kind else { continue };
+        refit_list(old_children, children);
+        if smart {
+            // A SmartArt graphic's box is its own; its shapes are regenerated inside it.
+            continue;
+        }
+        let (Some(old_children), Some((old_x, old_child))) = (old_children, own_before) else { continue };
+        if old_x != sh.xfrm || old_child != Some(*child) || children.is_empty() {
+            continue;
+        }
+        let same = old_children.len() == children.len() && old_children.iter().zip(children.iter()).all(|(a, b)| a.id == b.id && a.xfrm == b.xfrm);
+        if same {
+            continue;
+        }
+        let Some(group) = sh.xfrm else { continue };
+        let xs: Vec<Xfrm> = children.iter().filter_map(|c| c.xfrm).collect();
+        let Some(u) = union_bounds(&xs) else { continue };
+        if ![u.x0, u.y0, u.x1, u.y1].iter().all(|v| v.is_finite()) {
+            continue;
+        }
+        let union = Xfrm::new(u.x0, u.y0, u.width(), u.height());
+        let placed = child_to_parent(&group, child, &union);
+        sh.xfrm = Some(Xfrm { x: placed.x, y: placed.y, w: placed.w, h: placed.h, rot: group.rot, flip_h: group.flip_h, flip_v: group.flip_v });
+        *child = union;
+    }
+}
+
 /// A child's xfrm in slide space, given its group.
 pub fn child_to_parent(group: &Xfrm, ch: &Xfrm, c: &Xfrm) -> Xfrm {
     let sx = if ch.w.abs() > 1e-9 { group.w / ch.w } else { 1.0 };

@@ -651,6 +651,7 @@ impl Session {
         let mut doc = (*st.doc).clone();
         let mut sel = st.selection.clone();
         let r = f(&mut doc, &mut sel)?;
+        cmd::arrange::refit_groups(&st.doc, &mut doc);
         connect::reroute(&mut doc, &sel);
         st.doc = Arc::new(doc);
         st.selection = sel;
