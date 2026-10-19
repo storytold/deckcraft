@@ -4818,6 +4818,23 @@ fn shape_fill_on_a_picture_is_refused_naming_recolor() {
 /// A SmartArt graphic selected together with a text box: `format.size` sizes the graphic's nodes
 /// and the text box, and the selection stays as it was (regenerating the graphic used to collapse
 /// it to the graphic alone, so the other shapes were skipped).
+/// `ids: []` names nothing: a formatter given it acts on the selection, the selected text range
+/// included, instead of dropping the range and formatting the whole shape.
+#[test]
+fn an_empty_ids_list_formats_the_selected_text_range_like_no_ids() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60], "text": "Hello world"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 5]})).unwrap();
+    s.execute("format.bold", &json!({"on": true, "ids": []})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.selection.text.as_ref().is_some_and(|t| t.is_range()), "the text range stays selected");
+    let runs = &st.shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs;
+    assert!(runs.len() >= 2, "the range was split off: {runs:?}");
+    assert_eq!(runs[0].props.bold, Some(true), "{runs:?}");
+    assert_ne!(runs.last().unwrap().props.bold, Some(true), "the rest of the text is not bold: {runs:?}");
+}
+
 #[test]
 fn format_size_on_a_mixed_selection_reaches_the_other_shapes_and_keeps_the_selection() {
     let mut s = session();
@@ -4832,4 +4849,45 @@ fn format_size_on_a_mixed_selection_reaches_the_other_shapes_and_keeps_the_selec
     let graphic = st.shape(ShapeId(g as u32)).unwrap();
     assert_eq!(graphic.diagram.as_ref().unwrap().font_size, Some(40.0));
     assert!(graphic.text.is_none(), "the run formatting skipped the graphic itself, which has no text of its own");
+}
+
+/// MM1: the text formatters that took only the selection take `ids` too, like `shape.fill`: the
+/// named shapes are formatted with nothing selected, and the selection is left as it was.
+#[test]
+fn format_color_and_friends_take_ids() {
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, p: serde_json::Value| s.execute("shape.insert", &p).unwrap()["id"].as_u64().unwrap();
+    let a = ins(&mut s, json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"}));
+    let b = ins(&mut s, json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"}));
+    let c = ins(&mut s, json!({"preset": "rect", "rect": [20, 180, 200, 60], "text": "C"}));
+    s.doc_mut().unwrap().selection.shapes.clear();
+    s.doc_mut().unwrap().selection.text = None;
+    s.execute("format.color", &json!({"ids": [a, b], "color": "#FF0000"})).unwrap();
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    let fill_of =
+        |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.fill.clone();
+    assert_eq!(fill_of(&s, a), red);
+    assert_eq!(fill_of(&s, b), red);
+    assert_ne!(fill_of(&s, c), red, "an unnamed shape is untouched");
+    assert!(s.doc().unwrap().selection.shapes.is_empty(), "the selection is left alone");
+    s.execute("format.font", &json!({"ids": [c], "family": "Lato"})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(ShapeId(c as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.font.as_deref(), Some("Lato"));
+    s.execute("format.highlight", &json!({"ids": [a], "color": "#FFFF00"})).unwrap();
+    s.execute("format.textTransparency", &json!({"ids": [b], "value": 0.5})).unwrap();
+}
+
+/// MM1: a refused named `format.color` leaves the selection as it was.
+#[test]
+fn a_refused_named_format_color_restores_the_selection() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(b as u32)];
+    let before = s.doc().unwrap().selection.shapes.clone();
+    assert!(!before.is_empty());
+    assert!(s.execute("format.color", &json!({"ids": [a], "color": "nope"})).is_err());
+    assert_eq!(s.doc().unwrap().selection.shapes, before, "the refusal left the selection replaced");
 }

@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family, ids?: [shape ids] (default: the selection)}", has_text_or_shapes, font),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -46,7 +46,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font Color",
             ["Home", "Font"],
             None,
-            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}} (with a SmartArt graphic selected it colours all its nodes' text)",
+            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}, ids?: [shape ids] (default: the selection)} (with a SmartArt graphic selected it colours all its nodes' text)",
             has_text_or_shapes,
             color
         ),
@@ -55,7 +55,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Transparency",
             ["Shape Format", "WordArt Styles"],
             None,
-            "{value: 0..1} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
+            "{value: 0..1, ids?: [shape ids]} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
             text_transparency
         ),
@@ -68,7 +68,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             language
         ),
-        cmd!("format.highlight", "Text Highlight Color", ["Home", "Font"], None, "{color? (absent = none)}", has_text_or_shapes, highlight),
+        cmd!(
+            "format.highlight",
+            "Text Highlight Color",
+            ["Home", "Font"],
+            None,
+            "{color? (absent = none), ids?: [shape ids]}",
+            has_text_or_shapes,
+            highlight
+        ),
         cmd!(
             "format.case",
             "Change Case",
@@ -224,6 +232,30 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// Run `f` on the shapes `ids`/`id` name instead of the selection, as `shape.fill` does; without
+/// either, on the selection. The selection is put back after, also when the edit is refused (unless the edit went to another slide).
+fn on_named(s: &mut Session, p: &Value, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+    // An empty `ids` names nothing and means the selection, as `targets` reads it.
+    let named = |k: &str| p.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+    if !named("ids") && !named("id") {
+        return f(s);
+    }
+    let ids = super::targets(s, p)?;
+    let (shapes, text, cells, slide) = {
+        let st = s.doc_mut()?;
+        (std::mem::replace(&mut st.selection.shapes, ids), st.selection.text.take(), st.selection.cells.take(), st.selection.slide)
+    };
+    let r = f(s);
+    if let Ok(st) = s.doc_mut()
+        && st.selection.slide == slide
+    {
+        st.selection.shapes = shapes;
+        st.selection.text = text;
+        st.selection.cells = cells;
+    }
+    r
+}
+
 fn on_param(p: &Value, current: Option<bool>) -> bool {
     bool_param(p, "on").unwrap_or(!current.unwrap_or(false))
 }
@@ -310,6 +342,9 @@ fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
     format_run(s, &move |r| r.baseline = Some(if v { -0.25 } else { 0.0 }))
 }
 fn font(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, |s| font_selected(s, p))
+}
+fn font_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
     format_run(s, &move |r| r.font = Some(f.clone()))
 }
@@ -380,6 +415,9 @@ fn shrink(s: &mut Session, _p: &Value) -> Result<Value> {
     grow_shrink(s, false)
 }
 fn color(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, |s| color_selected(s, p))
+}
+fn color_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
     // A selected chart has no runs: Font Color colours its text (title, axes, legend, labels),
     // which used to answer and change nothing.
@@ -431,6 +469,9 @@ fn with_transparency(c: &mut ColorRef, transparency: f64) {
 /// fill takes the colour it shows now (from the placeholder, master or theme) so only its
 /// opacity changes.
 fn text_transparency(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, |s| text_transparency_selected(s, p))
+}
+fn text_transparency_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "value").ok_or_else(|| bad("format.textTransparency", "missing `value` (0–1)"))?;
     if !v.is_finite() {
         return Err(bad("format.textTransparency", "`value` must be a number from 0 to 1"));
@@ -473,6 +514,9 @@ fn language(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 fn highlight(s: &mut Session, p: &Value) -> Result<Value> {
+    on_named(s, p, |s| highlight_selected(s, p))
+}
+fn highlight_selected(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color");
     format_run(s, &move |r| r.highlight = c.clone())
 }
