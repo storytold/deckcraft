@@ -4799,3 +4799,21 @@ fn moving_a_group_child_refits_the_group() {
     let x = gb(&s);
     assert_eq!((x.x, x.y, x.w), (20.0, 20.0, 480.0), "{x:?}");
 }
+
+#[test]
+fn action_button_fill_follows_the_theme() {
+    let mut s = session();
+    let id = s.execute("insert.actionButton", &json!({"kind": "next"})).unwrap()["id"].clone();
+    let fill = |s: &mut Session| {
+        let r = s.execute("slide.inspect", &json!({})).unwrap();
+        r["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap()["fill"].clone()
+    };
+    let before = fill(&mut s);
+    assert!(before.as_str().is_some_and(|f| f.starts_with('#')), "{before}");
+    s.execute("design.theme", &json!({"name": "Ember"})).unwrap();
+    let after = fill(&mut s);
+    assert_ne!(before, after, "the button takes the new theme's accent1");
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides[0].shapes.iter().find(|x| x.fill.is_none() && x.style.is_some()).unwrap();
+    assert!(sh.fill.is_none(), "no explicit fill: the style binds it to accent1");
+}
