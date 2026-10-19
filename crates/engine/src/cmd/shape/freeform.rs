@@ -12,8 +12,14 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    let site_list = |id| st.shape(id).map(|sh| crate::connect::sites(&st.doc, &st.selection, sh)).unwrap_or_default();
-    let (a, b) = (site_list(from), site_list(to));
+    // Anywhere in the slide's tree: a shape inside a group takes a connector too (PowerPoint
+    // glues to grouped shapes), its sites where the group draws them.
+    let shape = |id| {
+        crate::connect::locate(&st.doc, &st.selection, st.shapes(), id)
+            .ok_or_else(|| bad("shape.connect", format!("no shape {} on the current slide", id.0)))
+    };
+    let ((sa, ta), (sb, tb)) = (shape(from)?, shape(to)?);
+    let (a, b) = (crate::connect::sites_in(&st.doc, &st.selection, sa, ta), crate::connect::sites_in(&st.doc, &st.selection, sb, tb));
     if a.is_empty() || b.is_empty() {
         return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
     }
@@ -23,8 +29,8 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
     // arrow; "the closest pair" chose a side site for a diagonal neighbour and crossed boxes.
     // The direction runs between the shapes' box centres: the mean of the sites is off-centre
     // for a shape whose sites are not symmetric (a triangle's lie mostly along its base).
-    let centre = |id| st.shape(id).map(|sh| xfrm_of(&st.doc, &st.selection, sh).center()).unwrap_or_default();
-    let (ca, cb) = (centre(from), centre(to));
+    let centre = |sh, to_abs: deckcraft_geom::Affine| to_abs * xfrm_of(&st.doc, &st.selection, sh).center();
+    let (ca, cb) = (centre(sa, ta), centre(sb, tb));
     let facing = |v: &[deckcraft_geom::Point], c: deckcraft_geom::Point, dx: f64, dy: f64| {
         let len = dx.hypot(dy).max(1e-9);
         v.iter()
