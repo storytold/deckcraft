@@ -1840,3 +1840,28 @@ fn an_empty_paragraph_keeps_its_paragraph_mark_height() {
     let h = l.lines[1].bottom - l.lines[1].top;
     assert!((h - h10).abs() < 0.5, "a 10pt empty paragraph should give {h10}, got {h}");
 }
+
+#[test]
+fn a_paragraph_with_its_own_start_at_restarts_the_count_there() {
+    // PowerPoint's "Start at" on a paragraph begins a new run of numbers at that value, so setting
+    // start k on paragraph k reads 1, 2, 3, not 1, 3, 5.
+    // The bullets' glyph ids next to those of the expected labels, as pairs (drawn, expected).
+    let check = |starts: &[u32], expect: &[u32]| {
+        let (p, mut sh) = setup("a\nb\nc\nd", 600.0, 300.0);
+        for (para, st) in sh.text.as_mut().unwrap().paragraphs.iter_mut().zip(starts) {
+            para.props.bullet = Some(Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: *st });
+        }
+        let l = lay(&p, &sh, 600.0, 300.0);
+        let bullets: Vec<_> = l.runs.iter().filter(|r| r.cells.is_empty()).collect();
+        assert_eq!(bullets.len(), expect.len());
+        for (b, n) in bullets.iter().zip(expect) {
+            let want = measure_str(&b.face, b.size, &format!("{n}.")).1.iter().map(|g| g.0).collect::<Vec<_>>();
+            assert_eq!(b.glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), want, "expected {n}. for starts {starts:?}");
+        }
+    };
+    check(&[1, 2, 3, 4], &[1, 2, 3, 4]);
+    // The same start on every paragraph still counts on from it (a whole box numbered at once).
+    check(&[3, 3, 3, 3], &[3, 4, 5, 6]);
+    // A later paragraph with a new start begins a fresh run.
+    check(&[1, 1, 7, 7], &[1, 2, 7, 8]);
+}

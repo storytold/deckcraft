@@ -145,7 +145,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Numbering",
             ["Home", "Paragraph"],
             None,
-            "{on?: bool, scheme?: arabicPeriod|arabicParenR|romanUcPeriod|romanLcPeriod|alphaUcPeriod|alphaLcParenR|alphaLcPeriod, start?: n, color?, size?: % of text}",
+            "{on?: bool, scheme?: arabicPeriod|arabicParenR|romanUcPeriod|romanLcPeriod|alphaUcPeriod|alphaLcParenR|alphaLcPeriod, start?: n (a paragraph whose start differs from the one before begins a new run of numbers at n, as PowerPoint's Start at does), color?, size?: % of text}",
             has_text_or_shapes,
             numbering
         ),

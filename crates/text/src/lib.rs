@@ -1871,6 +1871,9 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
     let mut out = TextLayout { inner, font_scale: scale, line_reduction: reduce, rotation, ..Default::default() };
     let mut y = 0.0;
     let mut numbering: Vec<u32> = vec![0; 9];
+    // The `start_at` each level's current run of numbers began with: a paragraph that changes it
+    // starts a new run (PowerPoint's "Start at").
+    let mut run_start: Vec<u32> = vec![0; 9];
     let mut all_lines: Vec<(LineInfo, LinePlace, f64, Option<(String, f64, f64)>)> = vec![];
     let mut prev_after = 0.0;
     // How far the last line's full pitch reaches past the text (exact spacing; see below).
@@ -1881,6 +1884,12 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
         let lvl = para.level.min(8) as usize;
         let pp = resolve::para(ctx, shape, para);
         let number = if matches!(pp.bullet, Some(Bullet::AutoNum { .. })) && !para.is_empty() {
+            if let (Some(Bullet::AutoNum { start_at, .. }), Some(rs), Some(n)) = (&pp.bullet, run_start.get_mut(lvl), numbering.get_mut(lvl))
+                && *rs != *start_at
+            {
+                *rs = *start_at;
+                *n = 0;
+            }
             if let Some(n) = numbering.get_mut(lvl) {
                 *n += 1;
             }
@@ -1888,10 +1897,11 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                 *deeper = 0;
             }
             numbering.get(lvl).copied()
-        } else if matches!(pp.bullet, Some(Bullet::AutoNum { .. })) {
+        } else if let Some(Bullet::AutoNum { start_at, .. }) = &pp.bullet {
             // Preview the next number without consuming it: empty paragraphs do not advance
-            // numbering in the saved document or affect later populated paragraphs.
-            numbering.get(lvl).map(|n| n.saturating_add(1))
+            // numbering in the saved document or affect later populated paragraphs. A paragraph
+            // with its own start would begin a new run, so it previews that run's first number.
+            if run_start.get(lvl).is_some_and(|rs| *rs != *start_at) { Some(1) } else { numbering.get(lvl).map(|n| n.saturating_add(1)) }
         } else {
             if !para.is_empty() {
                 for n in numbering.iter_mut().skip(lvl) {
