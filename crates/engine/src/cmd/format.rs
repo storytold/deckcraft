@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family, ids?: [shape ids] (default: the selection)}", has_text_or_shapes, font),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -71,7 +71,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Font Color",
             ["Home", "Font"],
             None,
-            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}} (with a SmartArt graphic selected it colours all its nodes' text)",
+            "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}, ids?: [shape ids] (default: the selection)} (with a SmartArt graphic selected it colours all its nodes' text)",
             has_text_or_shapes,
             color
         ),
@@ -80,7 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Transparency",
             ["Shape Format", "WordArt Styles"],
             None,
-            "{value: 0..1} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
+            "{value: 0..1, ids?: [shape ids]} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
             text_transparency
         ),
@@ -102,7 +102,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             language_all
         ),
-        cmd!("format.highlight", "Text Highlight Color", ["Home", "Font"], None, "{color? (absent = none)}", has_text_or_shapes, highlight),
+        cmd!(
+            "format.highlight",
+            "Text Highlight Color",
+            ["Home", "Font"],
+            None,
+            "{color? (absent = none), ids?: [shape ids]}",
+            has_text_or_shapes,
+            highlight
+        ),
         cmd!(
             "format.case",
             "Change Case",
@@ -264,6 +272,30 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!("format.painterApply", "Paste Formatting", [], Some("Cmd+Shift+V"), "{ids?}", has_text_or_shapes, painter_apply),
         cmd!(query "format.state", "Formatting State", [], None, "{} → the effective formatting at the selection (font, size, bold, …)", has_doc, state),
     ]
+}
+
+/// Run `f` on the shapes `ids`/`id` name instead of the selection, as `shape.fill` does; without
+/// either, on the selection. The selection is put back after, also when the edit is refused (unless the edit went to another slide).
+fn on_named(s: &mut Session, p: &Value, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
+    // An empty `ids` names nothing and means the selection, as `targets` reads it.
+    let named = |k: &str| p.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+    if !named("ids") && !named("id") {
+        return f(s);
+    }
+    let ids = super::targets(s, p)?;
+    let (shapes, text, cells, slide) = {
+        let st = s.doc_mut()?;
+        (std::mem::replace(&mut st.selection.shapes, ids), st.selection.text.take(), st.selection.cells.take(), st.selection.slide)
+    };
+    let r = f(s);
+    if let Ok(st) = s.doc_mut()
+        && st.selection.slide == slide
+    {
+        st.selection.shapes = shapes;
+        st.selection.text = text;
+        st.selection.cells = cells;
+    }
+    r
 }
 
 fn on_param(p: &Value, current: Option<bool>) -> bool {
