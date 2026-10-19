@@ -56,9 +56,17 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text,
             insert_synonym
         ),
-        cmd!(noundo "review.compare", "Compare", ["Review", "Compare"], None, "{path} | {name, data: base64} — compare with a revised copy → {name, changes}", has_doc, compare),
-        cmd!(query "review.revisions", "Revisions", [], None, "{} → {name, changes: [{kind: inserted|deleted|changed, slide, revised, details}]}", has_doc, revisions),
-        cmd!("review.accept", "Accept Revision", ["Review", "Compare"], None, "{index} | {all: true}", comparing, accept),
+        cmd!(noundo "review.compare", "Compare", ["Review", "Compare"], None, "{path} | {name, data: base64} — compare the open deck with another file → {name, changes: [{kind, slide, number, onlyIn?, revised, details}]}; each change is described from the open deck: `onlyIn: \"deck\"` is in the deck and not in the file, `onlyIn: \"file\"` is in the file and not in the deck, `changed` is in both and differs; `slide` is 0-based, `number` the editor's slide number; review.accept takes the FILE's side, so it deletes what is only in the deck (Accept All keeps the deck's last remaining slide rather than deleting it)", has_doc, compare),
+        cmd!(query "review.revisions", "Revisions", [], None, "{} → {name, changes: [{kind: inserted|deleted|changed, slide (0-based), number (editor's), onlyIn?: deck|file, revised, details}]}; `onlyIn: deck` = only in the open deck, `file` = only in the compared file; accepting takes the file's side", has_doc, revisions),
+        cmd!(
+            "review.accept",
+            "Accept Revision",
+            ["Review", "Compare"],
+            None,
+            "{index} | {all: true} — accept the compared file's side of a change (or all): what is only in the file is added, what is only in the open deck is deleted (all: true leaves the deck's last remaining slide in place), a changed slide becomes the file's",
+            comparing,
+            accept
+        ),
         cmd!(
             noundo "review.reject",
             "Reject Revision",
