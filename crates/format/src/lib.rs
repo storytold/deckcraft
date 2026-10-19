@@ -197,12 +197,64 @@ pub fn repair(p: &mut Presentation) {
             }
         }
     }
+    reid_duplicate_shapes(p);
     p.slide_size = sane_slide_size(p.slide_size);
     // The notes page only lays out notes, but its size divides too.
     if !(p.notes_size.width.is_finite() && p.notes_size.width > 0.0 && p.notes_size.height.is_finite() && p.notes_size.height > 0.0) {
         p.notes_size = Presentation::default().notes_size;
     }
     sane_numbers(p);
+}
+
+/// Give a shape that repeats an id already used on its slide, layout or master (groups included)
+/// a fresh one, so edits, selection and the Selection Pane find one shape per id. The first keeps
+/// its id, and with it what animations and connectors point at. An exhausted id space leaves the
+/// rest as they are (#407).
+fn reid_duplicate_shapes(p: &mut Presentation) {
+    fn has_duplicates(shapes: &[deckcraft_model::Shape]) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut dup = false;
+        deckcraft_model::walk(shapes, &mut |sh, _| dup |= !seen.insert(sh.id));
+        dup
+    }
+    fn reid(shapes: &mut [deckcraft_model::Shape], seen: &mut std::collections::HashSet<deckcraft_model::ShapeId>, next: &mut u32, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for sh in shapes {
+            if !seen.insert(sh.id)
+                && let Some(id) = (*next).max(1).checked_add(1)
+            {
+                *next = id;
+                sh.id = deckcraft_model::ShapeId(id);
+                seen.insert(sh.id);
+            }
+            if let deckcraft_model::ShapeKind::Group { children, .. } = &mut sh.kind {
+                reid(children, seen, next, depth + 1);
+            }
+        }
+    }
+    let mut next = p.next_id;
+    let mut fix = |shapes: &mut Vec<deckcraft_model::Shape>| {
+        if has_duplicates(shapes) {
+            reid(shapes, &mut std::collections::HashSet::new(), &mut next, 0);
+        }
+    };
+    for s in &mut p.slides {
+        if has_duplicates(&s.shapes) {
+            fix(&mut Arc::make_mut(s).shapes);
+        }
+    }
+    for m in p.masters.iter_mut().chain(p.notes_master.iter_mut()).chain(p.handout_master.iter_mut()) {
+        if has_duplicates(&m.shapes) || m.layouts.iter().any(|l| has_duplicates(&l.shapes)) {
+            let m = Arc::make_mut(m);
+            fix(&mut m.shapes);
+            for l in &mut m.layouts {
+                fix(&mut l.shapes);
+            }
+        }
+    }
+    p.next_id = next;
 }
 
 /// Smallest and largest slide side, in points: PowerPoint's 1–56 in, as Design › Slide Size allows.
@@ -350,6 +402,66 @@ fn sane_xfrm(x: &mut deckcraft_model::Xfrm) {
 
 fn sane_run(p: &mut deckcraft_model::text::RunProps) {
     p.size = p.size.filter(|v| v.is_finite() && *v > 0.0).map(|v| v.clamp(1.0, 4000.0));
+    for s in p.shadow.iter_mut().chain(p.inner_shadow.iter_mut()) {
+        sane_shadow(s);
+    }
+    if let Some(g) = p.glow.as_mut() {
+        g.radius = effect_size(g.radius, MAX_GLOW);
+    }
+    if let Some(r) = p.reflection.as_mut() {
+        sane_reflection(r);
+    }
+    p.soft_edge = p.soft_edge.map(|v| effect_size(v, MAX_SOFT_EDGE));
+}
+
+/// The largest effect sizes, in points: what Format Shape and `shape.effects` allow. A file can
+/// say anything, and the renderer's memory grows with these (a glow of 10^18 pt asked for 34 GB).
+const MAX_GLOW: f64 = 150.0;
+const MAX_SOFT_EDGE: f64 = 100.0;
+const MAX_SHADOW: f64 = 200.0;
+const MAX_REFLECTION: f64 = 100.0;
+
+/// `v` within 0..=`max`; not a number is 0.
+fn effect_size(v: f64, max: f64) -> f64 {
+    if v.is_finite() { v.clamp(0.0, max) } else { 0.0 }
+}
+
+fn sane_shadow(s: &mut deckcraft_model::style::Shadow) {
+    s.blur = effect_size(s.blur, MAX_SHADOW);
+    s.dist = effect_size(s.dist, MAX_SHADOW);
+    s.dir = if s.dir.is_finite() { s.dir.rem_euclid(360.0) } else { 0.0 };
+    // Perspective scale (1 = 100%) and skew (degrees).
+    for v in [&mut s.sx, &mut s.sy] {
+        *v = if v.is_finite() { v.clamp(-10.0, 10.0) } else { 1.0 };
+    }
+    for v in [&mut s.kx, &mut s.ky] {
+        *v = if v.is_finite() { v.clamp(-89.0, 89.0) } else { 0.0 };
+    }
+}
+
+fn sane_reflection(r: &mut deckcraft_model::style::Reflection) {
+    r.blur = effect_size(r.blur, MAX_REFLECTION);
+    r.dist = effect_size(r.dist, MAX_REFLECTION);
+}
+
+/// Run properties a list style hands down to the text that inherits it.
+fn sane_list_style(ls: &mut deckcraft_model::text::ListStyle) {
+    for level in ls.levels.iter_mut().flatten() {
+        sane_run(&mut level.run);
+    }
+}
+
+fn sane_effects(e: &mut deckcraft_model::Effects) {
+    for s in e.outer_shadow.iter_mut().chain(e.inner_shadow.iter_mut()) {
+        sane_shadow(s);
+    }
+    if let Some(g) = e.glow.as_mut() {
+        g.radius = effect_size(g.radius, MAX_GLOW);
+    }
+    e.soft_edge = e.soft_edge.map(|v| effect_size(v, MAX_SOFT_EDGE));
+    if let Some(r) = e.reflection.as_mut() {
+        sane_reflection(r);
+    }
 }
 
 fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
@@ -363,7 +475,11 @@ fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
         if let Some(l) = sh.line.as_mut() {
             l.width = l.width.filter(|v| v.is_finite() && *v >= 0.0).map(|v| v.min(1584.0));
         }
+        if let Some(e) = sh.effects.as_mut() {
+            sane_effects(e);
+        }
         if let Some(t) = sh.text.as_mut() {
+            sane_list_style(&mut t.list_style);
             for para in &mut t.paragraphs {
                 sane_run(&mut para.end_props);
                 for r in &mut para.runs {
@@ -381,6 +497,17 @@ fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
                 sane_xfrm(child);
                 sane_shapes(children, depth + 1);
             }
+            deckcraft_model::ShapeKind::Table(t) => {
+                for cell in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                    sane_list_style(&mut cell.text.list_style);
+                }
+                for para in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()).flat_map(|c| c.text.paragraphs.iter_mut()) {
+                    sane_run(&mut para.end_props);
+                    for r in &mut para.runs {
+                        sane_run(&mut r.props);
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -395,11 +522,20 @@ pub fn sane_numbers(p: &mut Presentation) {
             *slide = Arc::new(fixed);
         }
     }
+    // What text and shapes inherit: the deck's default text style, each master's title, body and
+    // other styles, and the theme's effect styles that shape styles point at.
+    sane_list_style(&mut p.default_text_style);
     for m in p.masters.iter_mut().chain(p.notes_master.iter_mut()).chain(p.handout_master.iter_mut()) {
         let mut fixed = (**m).clone();
         sane_shapes(&mut fixed.shapes, 0);
         for l in &mut fixed.layouts {
             sane_shapes(&mut l.shapes, 0);
+        }
+        for ls in [&mut fixed.title_style, &mut fixed.body_style, &mut fixed.other_style] {
+            sane_list_style(ls);
+        }
+        for e in &mut fixed.theme.format.effects {
+            sane_effects(e);
         }
         if fixed != **m {
             *m = Arc::new(fixed);
@@ -492,7 +628,8 @@ pub fn markdown_to_slides(p: &mut Presentation, text: &str) -> usize {
 pub fn slides_to_outline(p: &Presentation) -> String {
     let mut out = String::new();
     for s in &p.slides {
-        out.push_str(&s.title());
+        // One line per title: a newline would start another slide on re-import.
+        out.push_str(&s.title().replace('\n', " "));
         out.push('\n');
         for sh in &s.shapes {
             if sh.ph_type().is_some_and(|k| k.is_title()) {
@@ -830,6 +967,18 @@ mod tests {
         assert_eq!(n, 2);
         let o = slides_to_outline(&p);
         assert!(o.contains("-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\nBullets\n\tPoint\n\tOther"), "{o}");
+    }
+
+    #[test]
+    fn outline_export_keeps_multi_paragraph_title_on_one_line() {
+        let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut p, "Intro\n\tPoint one\nSecond\n\tMore"), 2);
+        let title = Arc::make_mut(&mut p.slides[0]).shapes.iter_mut().find(|s| s.ph_type().is_some_and(|k| k.is_title())).expect("title placeholder");
+        title.text = Some(TextBody::from_text("Line one\nLine two"));
+        let o = slides_to_outline(&p);
+        assert_eq!(o, "Line one Line two\n\tPoint one\nSecond\n\tMore\n");
+        let mut q = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut q, &o), 2);
     }
 
     #[test]

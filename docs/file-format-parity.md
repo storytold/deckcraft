@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-15 · **Change:** major (community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -18,7 +18,7 @@ PowerPoint opens and saves; Viewer = opens only).
 |---|---|---|---|---|---|
 | `.pptx` presentation | Editor | yes | yes | Broad (see below); an owned corpus of decks we author round-trips tables, charts, animations, media, sections, masters and layouts, comments, links and actions, custom shows, rotated groups, inherited placeholders, text effects and body layout, theme effects, fills, bevels, connectors, 3-D models and animation bounce end. Not measured against PowerPoint renders or decks from outside this repo | `crates/pptx/tests/corpus.rs`, `corpus_kinds.rs`, `corpus_elements.rs`, `corpus_style.rs`, `corpus_themes.rs`, `corpus_charts.rs`, `corpus_media.rs`, `roundtrip.rs`, `sample.rs`, `malformed.rs`, `sniff.rs`; opened in PowerPoint by hand 2026-10-06 |
 | `.potx` template | Editor | yes (as a presentation) | no: written with the `.pptx` content type | `file.saveTemplate` is Save As under another name | none |
-| `.ppsx` slide show | Editor | yes (as a presentation) | no: written as `.pptx` content | Doesn't start in show mode | none |
+| `.ppsx` slide show | Editor | yes (as a presentation) | no: written as `.pptx` content | Handed over by the system (command line, file association) it starts the slide show, as in PowerPoint; File › Open opens it for editing. The macOS Finder event arrives with #432 | `crates/ui-egui/src/opening.rs` tests |
 | `.pptm` / `.potm` / `.ppsm` macro-enabled | Editor | no | no | Should open and keep `vbaProject.bin` without running it | none |
 | `.ppt` / `.pot` / `.pps` 97–2003 binary | Editor | no | no | Owner decision; import only would be enough | none |
 | `.odp` OpenDocument | Editor | no | no | | none |
@@ -26,7 +26,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible | `crates/format` tests |
 | PDF | export | no | yes | Slides, notes pages, handouts (1–9); real-text layer with embedded subsets, links, bookmarks. Slide artwork is a raster image at print resolution, not vector | `crates/pdf` tests |
 | Outline `.rtf` / `.txt` | export (RTF), import (outline) | `.txt` outline; `.md` as Markdown (headings are slides, list items bullets) (`slide.fromOutline`) | `.txt` outline | No RTF | engine tests |
-| PNG / JPEG slide images | export | n/a | yes (`file.export`, `deckcraft-cli render`) | Matches the editor's renderer. PNG `pHYs` and JPEG JFIF density are `scale` × 72 dpi (default scale 2 is 144 dpi), so Preview shows the slide's real size | render and engine tests |
+| PNG / JPEG slide images | export | n/a | yes (`file.export`, `deckcraft-cli render`) | Matches the editor's renderer. PNG `pHYs` and JPEG JFIF density are `scale` × 72 dpi (default scale 2 is 144 dpi), so Preview shows the slide's real size. PNG can leave the slide background out (`transparentBackground`, Export… “Transparent background”, `deckcraft-cli render --transparent`), so only the slide's content is opaque (#784) | render, engine, UI and CLI tests |
 | TIFF / BMP / GIF slide images | export | n/a | no | Easy (the `image` crate writes them) | none |
 | Animated GIF of the deck | export | n/a | yes (`file.export` format `gif`, Export…, `deckcraft-cli`, MCP `export`) | One frame per slide from the slide renderer; size small/medium/large/extra large or 16–3840 px wide, 0.1–600 s per slide, loop forever or play once, slide range, hidden slides skipped; a 256-colour palette per frame (exact, or NeuQuant above 256 colours). Transitions and build animations are not animated | `crates/engine/src/gif_export.rs` tests (decoded frames, size, delay, loop, hidden slides, hostile params), MCP, CLI and export dialog tests |
 | MP4 / MOV video of the deck | export | n/a | no | Needs timeline render + H.264 encode | none |
@@ -104,6 +104,9 @@ the round trip even though DeckCraft doesn't model it.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |
+| 2026-10-15 | minor | A `.pptx` slide that can't be read is reported instead of dropped in silence: `file.open` and `file.openBytes` return `lostSlides`, the app shows a message and opens a repaired copy (Save asks for a new name), and `deckcraft-cli` warns on stderr (#203) |
+| 2026-10-16 | minor | PNG slide export with a transparent background (#784) |
+| 2026-10-16 | trivial | A `.ppsx` opened from the command line or the file association starts the slide show (#862) |
 | 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |

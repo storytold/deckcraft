@@ -993,6 +993,33 @@ fn a_background_is_laid_over_white() {
 }
 
 #[test]
+fn a_transparent_background_leaves_the_slide_background_out() {
+    // #784: PNG export with a transparent background draws only what is on the slide. The
+    // background (a solid colour here) and its white underlay are left out; the shapes, and a
+    // shape filled with the background (`useBgFill`), still draw.
+    use deckcraft_model::style::Fill;
+    let blue = ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 200));
+    let red = Shape {
+        id: ShapeId(784),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        fill: Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(220, 0, 0)))),
+        ..Default::default()
+    };
+    let bg_filled = Shape { id: ShapeId(785), xfrm: Some(Xfrm::new(500.0, 100.0, 200.0, 100.0)), fill: Some(Fill::Background), ..Default::default() };
+    let mut p = deck_with(vec![red, bg_filled]);
+    std::sync::Arc::make_mut(&mut p.slides[0]).background = Some(deckcraft_model::Background::Fill { fill: Fill::solid(blue) });
+    let opaque = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    assert_eq!(opaque.pixel(20, 20), [0, 0, 200, 255], "without the option the background draws");
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, transparent_background: true, ..Default::default() });
+    assert_eq!(img.pixel(20, 20), [0, 0, 0, 0], "no background, no white underlay");
+    assert_eq!(img.pixel(200, 150), [220, 0, 0, 255], "the slide's shapes still draw");
+    assert_eq!(img.pixel(600, 150), [0, 0, 200, 255], "a background-filled shape still shows the background");
+    // The default theme background (a style reference) is left out too.
+    let img = render_slide(&deck_with(vec![]), 0, &RenderOpts { scale: 0.25, transparent_background: true, ..Default::default() });
+    assert!(img.pixels.as_chunks::<4>().0.iter().all(|px| px[3] == 0), "a blank slide is fully transparent");
+}
+
+#[test]
 fn colour_glyphs_paint_their_layers() {
     // A COLRv0 test font (crates/render/tests/fixtures): U+E000 is a red square with a blue
     // square in its middle, U+E001 a square in the text colour.

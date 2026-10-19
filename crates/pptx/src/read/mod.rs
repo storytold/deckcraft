@@ -387,6 +387,13 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
 }
 
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
+    import_checked(bytes).map(|(p, _)| p)
+}
+
+/// [`import`], plus the parts of the slide list the file names but that couldn't be read (a
+/// missing or truncated slide): those slides are left out, so a caller can say so (#203).
+pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
+    let mut lost_slides: Vec<String> = vec![];
     let pkg = Package::open(bytes)?;
     let root_rels = pkg.rels("");
     let pres_path = root_rels.first_of("officeDocument").map(|r| r.target.clone()).unwrap_or_else(|| "ppt/presentation.xml".into());
@@ -447,6 +454,7 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     for (file_id, path) in &slide_entries {
         if !docs.contains_key(&opc::norm(path)) {
             log::warn!("pptx: slide {path} is missing or unreadable; skipped");
+            lost_slides.push(path.clone());
             continue;
         }
         let id = SlideId(imp.alloc());
@@ -677,7 +685,7 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     p.media = std::mem::take(&mut imp.media);
     p.next_id = imp.next;
     p.fix_next_id();
-    Ok(p)
+    Ok((p, lost_slides))
 }
 
 /// Embedded font faces in one file. Past this, further typefaces are dropped.

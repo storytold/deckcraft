@@ -63,6 +63,12 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     read::import(bytes)
 }
 
+/// [`import`], plus the part names of slides the file lists but that couldn't be read and were
+/// left out.
+pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
+    read::import_checked(bytes)
+}
+
 /// Read the theme of a `.thmx` file, or of a `.pptx` / `.potx`'s first master, with its media.
 pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<deckcraft_model::MediaItem>), PptxError> {
     read::import_theme(bytes)

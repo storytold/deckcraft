@@ -432,6 +432,95 @@ fn master_text_wraps_and_keeps_mixed_formatting() {
     assert!(export(&p, &PdfOptions { layout: PageLayout::Notes, ..Default::default() }).unwrap().starts_with(b"%PDF"));
 }
 
+/// Slides that share their layout store their backdrop raster once in the exported PDF, over which
+/// each slide's own shapes draw as their own raster (#845).
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn slides_share_one_backdrop_raster_and_keep_their_pixels() {
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+    use hayro_syntax::object::{Dict, Number, Stream};
+
+    /// The image XObjects the export stores, one entry per distinct object: the pages that draw
+    /// it, its filters, color channel, alpha channel (the SMask) and pixel size.
+    fn images(p: &Presentation) -> Vec<(Vec<usize>, Vec<hayro_syntax::Filter>, Vec<u8>, Option<Vec<u8>>, (u32, u32))> {
+        let bytes = export(p, &opts(PageLayout::Slides)).expect("export");
+        let pdf = hayro_syntax::Pdf::new(bytes).expect("pdf");
+        let mut out: Vec<(String, Vec<usize>, Vec<hayro_syntax::Filter>, Vec<u8>, Option<Vec<u8>>, (u32, u32))> = Vec::new();
+        for (n, page) in pdf.pages().iter().enumerate() {
+            let resources = page.raw().get::<Dict>(b"Resources").expect("resources");
+            let xobjects = resources.get::<Dict>(b"XObject").expect("xobjects");
+            for key in xobjects.keys() {
+                let stream = xobjects.get::<Stream>(key).expect("stream");
+                let id = format!("{:?}", stream.obj_id());
+                match out.iter_mut().find(|(seen, ..)| *seen == id) {
+                    Some(entry) => entry.1.push(n),
+                    None => {
+                        let dict = stream.dict();
+                        let alpha = dict.get::<Stream>(b"SMask").map(|mask| mask.decoded().expect("decoded").into_owned());
+                        let size = (
+                            dict.get::<Number>(b"Width").expect("width").as_f64() as u32,
+                            dict.get::<Number>(b"Height").expect("height").as_f64() as u32,
+                        );
+                        out.push((id, vec![n], stream.filters().into_vec(), stream.decoded().expect("decoded").into_owned(), alpha, size));
+                    }
+                }
+            }
+        }
+        out.into_iter().map(|(_, pages, filters, rgb, alpha, size)| (pages, filters, rgb, alpha, size)).collect()
+    }
+
+    // The raster scale the exporter uses for one slide per page.
+    let scale = |p: &Presentation| (p.slide_size.width / 72.0 * opts(PageLayout::Slides).dpi) / p.slide_size.width;
+
+    // Three slides without shapes: every page is pure backdrop and shares one raster, which is
+    // exactly what the renderer draws.
+    let mut p = deck(3);
+    for slide in &mut p.slides {
+        Arc::make_mut(slide).shapes.clear();
+    }
+    let stored = images(&p);
+    assert_eq!(stored.len(), 1, "all three pages must share one backdrop raster");
+    let (pages, filters, rgb, alpha, size) = stored.into_iter().next().expect("one image");
+    assert_eq!(pages, [0, 1, 2]);
+    assert_eq!(filters, [hayro_syntax::Filter::FlateDecode], "backdrop artwork stays lossless");
+    assert!(alpha.is_none(), "the backdrop is opaque and needs no alpha mask");
+    let expect = deckcraft_render::render_slide(&p, 0, &RenderOpts { scale: scale(&p), threads: 4, ..Default::default() });
+    assert_eq!(size, (expect.width, expect.height));
+    let want: Vec<u8> = expect.pixels.as_chunks::<4>().0.iter().flat_map(|px| px[..3].iter().copied()).collect();
+    assert_eq!(rgb, want, "the shared raster is exactly what the renderer draws");
+
+    // Slides with different text still share the backdrop: one raster on every page plus one per
+    // slide's own shapes.
+    let stored = images(&deck(3));
+    assert_eq!(stored.len(), 4, "one shared backdrop plus three content rasters");
+    assert_eq!(stored.iter().filter(|(pages, ..)| pages.len() == 3).count(), 1, "the backdrop is the only raster every page draws");
+
+    // A slide's own shapes draw over the shared backdrop as a second raster, stored as straight
+    // RGBA (color channel plus alpha mask), never the renderer's premultiplied pixels.
+    let mut p = deck(1);
+    Arc::make_mut(&mut p.slides[0]).shapes.push(Shape {
+        id: ShapeId(9002),
+        xfrm: Some(Xfrm::new(20.0, 20.0, 400.0, 300.0)),
+        fill: Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(200, 30, 30)))),
+        ..Default::default()
+    });
+    let stored = images(&p);
+    assert_eq!(stored.len(), 2, "shared backdrop plus the slide's content");
+    let (_, filters, rgb, alpha, _) = stored.into_iter().find(|(_, _, _, alpha, _)| alpha.is_some()).expect("content raster");
+    assert_eq!(filters, [hayro_syntax::Filter::FlateDecode]);
+    let expect = deckcraft_render::render_slide_part(
+        &p,
+        0,
+        deckcraft_render::SlidePart::Content,
+        &RenderOpts { scale: scale(&p), threads: 4, ..Default::default() },
+    );
+    let straight = expect.to_straight();
+    let want_rgb: Vec<u8> = straight.as_chunks::<4>().0.iter().flat_map(|px| px[..3].iter().copied()).collect();
+    let want_alpha: Vec<u8> = straight.as_chunks::<4>().0.iter().map(|px| px[3]).collect();
+    assert_eq!(rgb, want_rgb, "content colors are straight, not premultiplied");
+    assert_eq!(alpha, Some(want_alpha), "content alpha keeps the shape's coverage");
+}
+
 #[test]
 fn glyph_ranges_follow_shaping_clusters() {
     // "fl" ligature: its glyph maps to both characters, the rest stay one to one (#164).

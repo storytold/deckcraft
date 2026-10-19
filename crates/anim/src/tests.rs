@@ -809,6 +809,30 @@ fn show_steps_through_builds() {
 }
 
 #[test]
+fn show_back_leaves_a_slide_whose_first_step_is_automatic() {
+    // #844: undoing the automatic first step left the slide as before it appeared, and the show
+    // played that step again at once, so Back never reached the slide before.
+    for start in [AnimStart::WithPrevious, AnimStart::AfterPrevious] {
+        let mut p = pres(2);
+        Arc::make_mut(&mut p.slides[1]).shapes = vec![shape(1, "A"), shape(2, "B")];
+        Arc::make_mut(&mut p.slides[1]).animations =
+            vec![anim(1, AnimClass::Entrance, "fade", start), anim(2, AnimClass::Entrance, "fade", AnimStart::OnClick)];
+        let mut s = ShowState::new(&p);
+        assert_eq!(s.next(&p), ShowAction::Slide(1));
+        assert!(s.playing, "{start:?}");
+        // While the automatic step plays.
+        assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
+        assert_eq!(s.next(&p), ShowAction::Slide(1));
+        // Once it has played, the click step is undone first, then Back leaves the slide.
+        assert_eq!(s.next(&p), ShowAction::PlayStep(1));
+        assert_eq!(s.step_done(&p), ShowAction::FinishStep(1));
+        assert_eq!(s.prev(&p), ShowAction::StepBack(1), "{start:?}");
+        assert_eq!(s.prev(&p), ShowAction::Slide(0), "{start:?}");
+        assert_eq!((s.step, s.playing), (0, false));
+    }
+}
+
+#[test]
 fn show_auto_advance() {
     let mut p = pres(2);
     Arc::make_mut(&mut p.slides[0]).transition = Some(Transition { advance_after_ms: Some(2000), ..Default::default() });

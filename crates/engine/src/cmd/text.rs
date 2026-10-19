@@ -31,7 +31,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "AutoCorrect Options",
             ["Tools"],
             None,
-            "{on?, twoInitials?, sentenceCaps?, days?, capsLock?, fractions?: bool, add?: [from, to], remove?: from} → the options and the replacement list",
+            "{on?, twoInitials?, sentenceCaps?, days?, capsLock?, fractions?, ordinals?: bool, add?: [from, to], remove?: from} → the options and the replacement list",
             always,
             autocorrect_options
         ),
@@ -655,7 +655,12 @@ fn autocorrect(s: &mut Session, typing: bool) -> Result<()> {
     } else {
         correct_word(&s.prefs, &word, sentence_start, typing)
     };
-    let Some(rep) = rep else { return Ok(()) };
+    let Some(rep) = rep else {
+        if typing && s.prefs.ac_ordinals && is_ordinal(&word) {
+            return superscript_suffix(s, &t, word_end);
+        }
+        return Ok(());
+    };
     let delta = rep.chars().count() as isize - word.chars().count() as isize;
     let st = s.doc_mut()?;
     let mut d = (*st.doc).clone();
@@ -674,6 +679,43 @@ fn autocorrect(s: &mut Session, typing: bool) -> Result<()> {
     Ok(())
 }
 
+/// `word` is a number with the ordinal suffix it takes (1st, 22nd, 103rd, 11th), as AutoFormat
+/// superscripts it.
+fn is_ordinal(word: &str) -> bool {
+    let digits = word.trim_end_matches(|c: char| c.is_ascii_lowercase());
+    let suffix = word.get(digits.len()..).unwrap_or_default();
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) || suffix.len() != 2 {
+        return false;
+    }
+    let d = digits.as_bytes();
+    let teen = d.len() >= 2 && d.get(d.len() - 2) == Some(&b'1');
+    let want = match d.last() {
+        _ if teen => "th",
+        Some(b'1') => "st",
+        Some(b'2') => "nd",
+        Some(b'3') => "rd",
+        _ => "th",
+    };
+    suffix == want
+}
+
+/// Superscript the two letters before `end` in the caret's paragraph (an ordinal's suffix).
+fn superscript_suffix(s: &mut Session, t: &crate::TextSel, end: usize) -> Result<()> {
+    let (a, b) = ((t.caret.0, end.saturating_sub(2)), (t.caret.0, end));
+    let st = s.doc_mut()?;
+    if body_of(st, t).is_none_or(|body| ed::props_at(body, b).baseline.unwrap_or(0.0) > 0.0) {
+        return Ok(());
+    }
+    let mut d = (*st.doc).clone();
+    let sel = st.selection.clone();
+    if let Some(body) = body_mut(&mut d, &sel, t) {
+        ed::format(body, a, b, &|r| r.baseline = Some(0.3));
+    }
+    st.doc = Arc::new(d);
+    st.revision += 1;
+    Ok(())
+}
+
 fn autocorrect_options(s: &mut Session, p: &Value) -> Result<Value> {
     let pr = &mut s.prefs;
     for (key, slot) in [
@@ -683,6 +725,7 @@ fn autocorrect_options(s: &mut Session, p: &Value) -> Result<Value> {
         ("days", &mut pr.ac_days),
         ("capsLock", &mut pr.ac_caps_lock),
         ("fractions", &mut pr.ac_fractions),
+        ("ordinals", &mut pr.ac_ordinals),
     ] {
         if let Some(v) = p.get(key).and_then(Value::as_bool) {
             *slot = v;
@@ -729,7 +772,7 @@ fn autocorrect_options(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({
         "on": pr.autocorrect, "twoInitials": pr.ac_two_initials, "sentenceCaps": pr.ac_sentence_caps,
         "days": pr.ac_days, "capsLock": pr.ac_caps_lock, "fractions": pr.ac_fractions,
-        "entries": list,
+        "ordinals": pr.ac_ordinals, "entries": list,
     }))
 }
 
