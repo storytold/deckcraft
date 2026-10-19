@@ -4,10 +4,24 @@
 //! client is async and the session rides the cookie the service set at
 //! sign-in. There is no device flow and no token file.
 
+use std::cell::Cell;
+use std::sync::{Arc, OnceLock};
+
 use craft_cloud_client::{Client, Error};
 use deckcraft_ui_egui::cloud::{Account, CloudBackend, Event, Fault, Job, Post};
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen_futures::spawn_local;
+
+/// When true, an unauthenticated account answer must not navigate to login (unsaved edits).
+static DEFER_LOGIN: OnceLock<Arc<Cell<bool>>> = OnceLock::new();
+
+fn defer_login() -> Arc<Cell<bool>> {
+    DEFER_LOGIN.get_or_init(|| Arc::new(Cell::new(false))).clone()
+}
+
+pub fn set_defer_login(defer: bool) {
+    defer_login().set(defer);
+}
 
 /// Hands cloud jobs to async tasks. Cheap to clone.
 #[derive(Clone)]
@@ -44,10 +58,10 @@ impl Service {
             Job::Account => {
                 let answer =
                     self.me().await.map(|me| Account { display: me.display, capabilities: me.capabilities, provider_linked: me.provider_linked });
-                if matches!(&answer, Err(Fault::Unauthenticated)) {
+                post(Event::Account(answer.clone()));
+                if matches!(answer, Err(Fault::Unauthenticated)) && !defer_login().get() {
                     offer_login();
                 }
-                post(Event::Account(answer));
             }
             Job::LinkStart => match self.client.link_start().await.map_err(fault) {
                 Ok(start) => post(Event::Browser { url: start.login_url, handle: Some(start.handle) }),
@@ -58,7 +72,10 @@ impl Service {
                 post(Event::Linked(answer));
             }
             Job::SignOut => {
-                let _ = fetch_logout().await;
+                if let Err(error) = fetch_logout().await {
+                    log::error!("cloud logout failed: {error}");
+                    return;
+                }
                 let _ = web_sys::window().and_then(|w| w.location().reload().ok());
             }
             Job::List(path) => {
@@ -132,6 +149,10 @@ async fn fetch_logout() -> Result<(), String> {
     let req = web_sys::Request::new_with_str_and_init("/auth/logout", &init).map_err(|e| format!("{e:?}"))?;
     let promised = fetch.call1(global.as_ref(), req.as_ref()).map_err(|e| format!("{e:?}"))?;
     let promised: js_sys::Promise = promised.dyn_into().map_err(|_| "not a promise".to_owned())?;
-    wasm_bindgen_futures::JsFuture::from(promised).await.map_err(|e| format!("{e:?}"))?;
+    let response = wasm_bindgen_futures::JsFuture::from(promised).await.map_err(|e| format!("{e:?}"))?;
+    let response: web_sys::Response = response.dyn_into().map_err(|_| "not a Response".to_owned())?;
+    if !response.ok() {
+        return Err(format!("logout HTTP {}", response.status()));
+    }
     Ok(())
 }

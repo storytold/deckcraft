@@ -778,15 +778,18 @@ fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
 /// right, and the cloud's own file lists under both.
 fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
-    // What is left of the page beside the places column and the rule between them. A column
-    // inside a horizontal row is offered the window's width rather than the page's, so the cloud
-    // lists would otherwise run off the right edge.
-    let rest = (ui.available_width() - 270.0).max(420.0);
-    ui.horizontal_top(|ui| {
+    const PLACES_W: f32 = 230.0;
+    const BETWEEN: f32 = 24.0;
+    let page_w = ui.available_width();
+    // Side-by-side needs room for the places column, rule, and a usable list column. Below that,
+    // stack so cloud content is not given a 420-point minimum on a 320-point page.
+    let side_by_side = page_w >= PLACES_W + BETWEEN + 1.0 + BETWEEN + 280.0;
+    let open_places = |ui: &mut Ui| {
         ui.vertical(|ui| {
-            ui.set_width(230.0);
-            place_row(ui, Icon::Recent, "Recent", true, 220.0);
-            if place_row(ui, Icon::OpenFolder, "Browse", false, 220.0).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
+            let row_w = if side_by_side { 220.0 } else { ui.available_width().min(420.0) };
+            ui.set_width(row_w.max(180.0));
+            place_row(ui, Icon::Recent, "Recent", true, row_w);
+            if place_row(ui, Icon::OpenFolder, "Browse", false, row_w).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
                 let _ = app.run("app.openDialog", json!({}));
             }
             if app.session.recovery_dir.is_some() {
@@ -801,20 +804,15 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 }
             }
         });
-        let h = ui.available_height().max(320.0);
-        let (r, _) = ui.allocate_exact_size(vec2(1.0, h), Sense::hover());
-        ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
-        ui.add_space(24.0);
+    };
+    let open_lists = |ui: &mut Ui| {
         ui.vertical(|ui| {
-            ui.set_max_width(rest);
+            ui.set_max_width(ui.available_width());
             search(ui, &mut bs.query, "Search for a file", 380.0);
             ui.add_space(12.0);
             heading(ui, "Presentations");
             let q = bs.query.clone();
             recent_list(app, ui, &q, usize::MAX);
-            // Cloud storage sits beside the local picker and never in place of it. Inside this
-            // column, because the rule to its left is allocated the whole page height and
-            // anything after the row would start below the fold.
             if crate::cloud::available(app) {
                 ui.add_space(26.0);
                 heading(ui, "Cloud");
@@ -822,7 +820,26 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 crate::cloud::open_page(app, ui);
             }
         });
-    });
+    };
+    if side_by_side {
+        let rest = page_w - PLACES_W - BETWEEN - 1.0 - BETWEEN;
+        ui.horizontal_top(|ui| {
+            ui.set_width(PLACES_W);
+            open_places(ui);
+            let h = ui.available_height().max(320.0);
+            let (r, _) = ui.allocate_exact_size(vec2(1.0, h), Sense::hover());
+            ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
+            ui.add_space(BETWEEN);
+            ui.vertical(|ui| {
+                ui.set_max_width(rest);
+                open_lists(ui);
+            });
+        });
+    } else {
+        open_places(ui);
+        ui.add_space(18.0);
+        open_lists(ui);
+    }
 }
 
 /// Info: the presentation's name and location, Inspect and Manage on the left, its properties

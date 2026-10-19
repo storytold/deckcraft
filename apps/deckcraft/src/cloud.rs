@@ -108,10 +108,16 @@ impl Worker {
                 });
                 self.post(Event::Account(answer));
             }
-            Job::LinkStart => match self.call(|client| client.link_start()) {
-                Ok(start) => self.post(Event::Browser { url: start.login_url, handle: Some(start.handle) }),
-                Err(fault) => self.post(Event::Linked(Err(fault))),
-            },
+            Job::LinkStart => {
+                if let Err(fault) = self.sign_in() {
+                    self.post(Event::Linked(Err(fault)));
+                    return;
+                }
+                match self.call(|client| client.link_start()) {
+                    Ok(start) => self.post(Event::Browser { url: start.login_url, handle: Some(start.handle) }),
+                    Err(fault) => self.post(Event::Linked(Err(fault))),
+                }
+            }
             Job::Conversation(id) => {
                 let answer = self.call(|client| client.conversation(&id));
                 self.post(Event::Conversation(answer));
@@ -159,15 +165,16 @@ impl Worker {
     /// A rejected token is worth exactly one retry. The saved one has been revoked or has
     /// expired. A fresh sign-in is the only recovery. A second rejection is reported.
     fn call<T>(&mut self, work: impl Fn(&Client) -> craft_cloud_client::Result<T>) -> Result<T, Fault> {
-        self.sign_in()?;
+        if !self.client.is_signed_in() {
+            return Err(Fault::NotLinked);
+        }
         match work(&self.client) {
             Ok(value) => Ok(value),
             Err(Error::Unauthenticated) => {
-                log::info!("the saved cloud session was rejected; signing in again");
+                log::info!("the saved cloud session was rejected");
                 forget_token();
                 self.client = Client::new(&self.base);
-                self.sign_in()?;
-                work(&self.client).map_err(fault)
+                Err(Fault::Unauthenticated)
             }
             Err(e) => Err(fault(e)),
         }
@@ -184,11 +191,6 @@ impl Worker {
             return Ok(());
         }
         let start = self.client.sign_in_start().map_err(fault)?;
-        if let Err(e) = open_browser(&start.verify_url) {
-            // Not fatal. The interface shows the URL as a link. The user can still follow it by
-            // hand.
-            log::warn!("could not open a browser: {e}");
-        }
         self.post(Event::Browser { url: start.verify_url.clone(), handle: None });
         let interval = Duration::from_secs(start.interval.clamp(1, 10));
         let deadline = Instant::now() + SIGN_IN_WAIT.min(Duration::from_secs(start.expires_in));
@@ -288,7 +290,15 @@ fn remember_account(subject: &str, display: &str) {
 fn write_session(value: serde_json::Value) {
     let Some(path) = token_path() else { return };
     let Ok(text) = serde_json::to_vec(&value) else { return };
-    if let Err(e) = std::fs::write(&path, text) {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let written = options.open(&path).and_then(|mut file| std::io::Write::write_all(&mut file, &text));
+    if let Err(e) = written {
         log::warn!("could not save the cloud session: {e}");
         return;
     }
@@ -311,33 +321,3 @@ fn restrict(path: &Path) {
 /// a Win32 call this application makes nowhere else.
 #[cfg(not(unix))]
 fn restrict(_path: &Path) {}
-
-fn open_browser(url: &str) -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    // `cmd` splits its command line on `&` before anything else sees it. An authorize URL is
-    // mostly `&`. Passed unquoted the browser receives the query up to the first one. The
-    // identity provider then reports that the client identifier is missing. By then it is.
-    //
-    // The quotes have to survive Rust's own argument escaping. The command line therefore goes
-    // through raw. The empty pair is the window title. `start` would otherwise take the URL to
-    // be one. A quote inside the URL would end the quoting early. It is percent-encoded first.
-    let mut command = {
-        use std::os::windows::process::CommandExt as _;
-        let mut c = std::process::Command::new("cmd");
-        c.raw_arg(format!("/C start \"\" \"{}\"", url.replace('"', "%22")));
-        c
-    };
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut c = std::process::Command::new("open");
-        c.arg(url);
-        c
-    };
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let mut command = {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(url);
-        c
-    };
-    command.spawn().map(|_| ())
-}

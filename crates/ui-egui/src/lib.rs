@@ -1116,13 +1116,14 @@ impl SlideApp {
                 }
                 let path = p.get("path").and_then(Value::as_str).unwrap_or("");
                 cloud::browse(self, path);
-                return Ok(json!({"folder": path}));
+                return Ok(cloud::status(self));
             }
             "cloud.shared" => {
                 if !cloud::available(self) {
                     return Err(cloud::UNAVAILABLE.to_owned());
                 }
                 cloud::load_shared(self);
+                return Ok(cloud::status(self));
             }
             "cloud.link" => {
                 if !cloud::available(self) {

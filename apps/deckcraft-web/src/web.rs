@@ -134,6 +134,8 @@ impl eframe::App for WebShell {
                 }
             });
         }
+        let dirty = self.app.session.documents().iter().any(|d| d.is_dirty());
+        crate::cloud::set_defer_login(dirty);
         self.app.logic(ctx);
     }
 
