@@ -1210,6 +1210,7 @@ fn read_show(sp: &El, shows: &HashMap<String, String>) -> ShowSettings {
         without_narration: sp.bool("showNarration") == Some(false),
         without_animation: sp.bool("showAnimation") == Some(false),
         use_timings: sp.bool("useTimings").unwrap_or(true),
+        show_media_controls: sp.find("showMediaCtrls").and_then(|e| e.bool("val")).unwrap_or(true),
         ..Default::default()
     };
     if sp.child("browse").is_some() {
