@@ -4927,3 +4927,28 @@ fn a_theme_change_recolours_a_smartart_graphic() {
     assert!(!before.is_empty(), "the graphic is drawn: {before:?}");
     assert_ne!(before, after, "the graphic keeps its old colours after a theme change");
 }
+
+#[test]
+fn smartart_colors_layout_and_style_answer_the_regenerated_ids() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "process"})).unwrap();
+    let gid = r["id"].clone();
+    for (cmd, params) in [
+        ("smartArt.colors", json!({"id": gid, "colors": "colorful"})),
+        ("smartArt.layout", json!({"id": gid, "kind": "cycle"})),
+        ("smartArt.style", json!({"id": gid, "style": "intense"})),
+    ] {
+        let a = s.execute(cmd, &params).unwrap();
+        assert_eq!(a["id"], gid, "{cmd}: {a}");
+        let st = s.doc().unwrap();
+        let g = st
+            .doc
+            .slides
+            .iter()
+            .find_map(|sl| deckcraft_model::find_shape(&sl.shapes, deckcraft_model::ShapeId(gid.as_u64().unwrap() as u32)))
+            .unwrap();
+        let deckcraft_model::ShapeKind::Group { children, .. } = &g.kind else { panic!("group") };
+        let kids: Vec<u32> = children.iter().map(|c| c.id.0).collect();
+        assert_eq!(a["ids"], json!(kids), "{cmd}: {a}");
+    }
+}
