@@ -244,6 +244,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set_picture
         ),
         cmd!(
+            "smartArt.fontSize",
+            "Font Size",
+            ["SmartArt Design", "Create Graphic"],
+            None,
+            "{id?, size: pt|null} → {id, fontSize} (one size for every node's text, as PowerPoint sizes a graphic's text alike; null sizes it automatically again, all nodes alike; format.size with the graphic selected does the same)",
+            has_selection,
+            font_size
+        ),
+        cmd!(
             "smartArt.style",
             "SmartArt Styles",
             ["SmartArt Design", "SmartArt Styles"],
@@ -596,14 +605,32 @@ pub fn layout(d: &Diagram, area: Xfrm) -> Vec<Shape> {
     layout_items(d, area).into_iter().map(|(s, _)| s).collect()
 }
 
-/// Lay out `d`, painted with its style and colours, each shape with the nodes it shows; text is
-/// shrunk per shape so its longest word fits on a line.
+/// Lay out `d`, painted with its style and colours, each shape with the nodes it shows. All the
+/// text of a graphic is sized alike, as PowerPoint does: the one scale that lets every shape's
+/// longest word fit on a line, or the size the user set (`Diagram::font_size`) for every node.
 fn layout_items(d: &Diagram, area: Xfrm) -> Vec<Item> {
     let mut v = layout_raw(d, area);
+    let scale = v.iter().map(|(sh, _)| word_scale(sh)).fold(1.0_f64, f64::min);
     for (sh, _) in &mut v {
-        fit_words(sh);
+        apply_scale(sh, scale);
+        if let Some(size) = d.font_size.filter(|z| z.is_finite() && *z > 0.0) {
+            set_size(sh, size);
+        }
     }
     v
+}
+
+/// Every run of the shape's text at `size`; a fixed size turns shrink-on-overflow off, so no node
+/// is fitted to a size of its own.
+fn set_size(sh: &mut Shape, size: f64) {
+    let Some(body) = &mut sh.text else { return };
+    for p in &mut body.paragraphs {
+        for r in &mut p.runs {
+            r.props.size = Some(size);
+        }
+        p.end_props.size = Some(size);
+    }
+    body.body.autofit = Some(AutoFit::None);
 }
 
 /// Rough advance of a character as a fraction of the font size (a sans text face).
@@ -611,17 +638,16 @@ const CHAR_W: f64 = 0.6;
 /// Smallest font scale shrinking to fit goes to.
 const MIN_SCALE: f64 = 0.25;
 
-/// Shrink the shape's text (all paragraphs together, as PowerPoint's per-shape font size does) so
-/// no word is wider than its line and would break mid-word. Overflow in height is left to the
-/// body's shrink-on-overflow autofit.
-fn fit_words(sh: &mut Shape) {
-    let Some(w) = sh.xfrm.map(|x| x.w) else { return };
+/// The scale (`MIN_SCALE..=1`) at which no word of the shape's text is wider than its line and
+/// would break mid-word. Overflow in height is left to the body's shrink-on-overflow autofit.
+fn word_scale(sh: &Shape) -> f64 {
+    let Some(w) = sh.xfrm.map(|x| x.w) else { return 1.0 };
     // Round shapes keep their text in the inscribed rectangle (about 71% of the width).
     let text_w = match sh.geom.preset_name() {
         Some("ellipse" | "gear6" | "gear9") => w * 0.71,
         _ => w,
     };
-    let Some(body) = &mut sh.text else { return };
+    let Some(body) = &sh.text else { return 1.0 };
     let avail = text_w - body.body.inset_l.unwrap_or(7.2) - body.body.inset_r.unwrap_or(7.2);
     let mut scale: f64 = 1.0;
     for p in &body.paragraphs {
@@ -635,10 +661,15 @@ fn fit_words(sh: &mut Shape) {
             }
         }
     }
-    let scale = scale.max(MIN_SCALE);
+    scale.max(MIN_SCALE)
+}
+
+/// Shrink the shape's text (all paragraphs together, as PowerPoint's per-shape font size does).
+fn apply_scale(sh: &mut Shape, scale: f64) {
     if scale >= 0.999 {
         return;
     }
+    let Some(body) = &mut sh.text else { return };
     let shrink = |v: &mut Option<f64>| {
         if let Some(x) = v {
             *x = (*x * scale * 2.0).floor() / 2.0;
@@ -2000,6 +2031,37 @@ fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// The SmartArt graphics among the selected shapes (top level), for Home › Font on a graphic.
+pub(crate) fn selected_graphics(s: &Session) -> Vec<ShapeId> {
+    let Ok(st) = s.doc() else { return vec![] };
+    st.selection.shapes.iter().copied().filter(|id| st.shape(*id).is_some_and(|sh| sh.diagram.is_some())).collect()
+}
+
+/// Set the size of every node's text of graphic `gid` (`None`: automatic).
+pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cmd: &str) -> Result<()> {
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.font_size = size;
+        Ok(())
+    })
+}
+
+fn font_size(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.fontSize";
+    let size = match p.get("size") {
+        Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|z| z.is_finite() && *z > 0.0)
+                .ok_or_else(|| bad(CMD, "`size` is a font size in points (or null for automatic)"))?
+                .clamp(1.0, 4000.0),
+        ),
+        None => return Err(bad(CMD, "missing `size` (points, or null for automatic)")),
+    };
+    let gid = target_group(s, p, CMD)?;
+    set_font_size(s, gid, size, CMD)?;
+    Ok(json!({"id": gid.0, "fontSize": size}))
+}
+
 fn change_style(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.style";
     let v = str_param(p, "style").filter(|k| STYLES.iter().any(|(id, _)| id == k)).ok_or_else(|| bad(CMD, "unknown style"))?.to_string();
@@ -2134,7 +2196,7 @@ mod tests {
         let items = layout_items(&d, Xfrm::new(0.0, 0.0, 600.0, 300.0));
         let size = |k: usize| items[k].0.text.as_ref().and_then(|b| b.paragraphs[0].runs[0].props.size).unwrap_or(0.0);
         assert!(size(0) < 20.0 && size(0) >= 20.0 * MIN_SCALE - 0.5, "the tip's long word shrinks: {}", size(0));
-        assert!((size(1) - 20.0).abs() < 1e-9, "short words keep their size");
+        assert!((size(1) - size(0)).abs() < 1e-9, "the other shapes follow: every node's text is sized alike");
     }
 
     #[test]

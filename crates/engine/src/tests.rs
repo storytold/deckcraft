@@ -4724,3 +4724,47 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+fn smartart_runs(s: &Session, gid: u64) -> Vec<(Option<f64>, Option<deckcraft_model::Fill>)> {
+    match s.doc().unwrap().shape(deckcraft_model::ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+            .iter()
+            .filter_map(|c| c.text.as_ref())
+            .flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| (r.props.size, r.props.fill.clone()))))
+            .collect(),
+        _ => panic!("not a group"),
+    }
+}
+
+/// HH7: SmartArt text is sized alike for every node, and the user can set that size.
+#[test]
+fn smartart_font_size_is_one_value_for_every_node() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.smartArt",
+            &json!({"kind": "blockList", "items": ["Internationalisationinternationalisationinternationalisation", "\tScope", "Build", "\tTest"]}),
+        )
+        .unwrap();
+    let gid = r["id"].as_u64().unwrap();
+    // Automatic: the long word shrinks the whole graphic, titles and bullets by the same factor.
+    let auto = smartart_runs(&s, gid);
+    let (title, bullet) = (auto[0].0.unwrap(), auto[1].0.unwrap());
+    assert!(title < 20.0, "the long word shrinks the text: {title}");
+    assert_eq!(auto[2].0.unwrap(), title, "the other node's title is sized alike");
+    assert_eq!(auto[3].0.unwrap(), bullet, "and its bullet");
+    // Set: one size for every node.
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": 18})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.0 == Some(18.0)));
+    // format.size with the graphic selected does the same, and it survives an edit.
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.size", &json!({"size": 26})).unwrap();
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "More"})).unwrap();
+    let runs = smartart_runs(&s, gid);
+    assert!(runs.len() >= 5 && runs.iter().all(|r| r.0 == Some(26.0)), "{runs:?}");
+    // Back to automatic.
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": null})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().any(|r| r.0 != Some(26.0)));
+    assert!(s.execute("smartArt.fontSize", &json!({"id": gid})).is_err());
+    assert!(s.execute("smartArt.fontSize", &json!({"id": gid, "size": -3})).is_err());
+}

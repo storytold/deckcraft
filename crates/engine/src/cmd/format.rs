@@ -307,6 +307,16 @@ fn font(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
+    // A selected SmartArt graphic: one size for all its nodes (like smartArt.fontSize).
+    if s.doc()?.selection.text.is_none() {
+        let graphics = super::smartart::selected_graphics(s);
+        for gid in &graphics {
+            super::smartart::set_font_size(s, *gid, Some(v), "format.size")?;
+        }
+        if !graphics.is_empty() && graphics.len() == s.doc()?.selection.shapes.len() {
+            return ok();
+        }
+    }
     format_run(s, &move |r| r.size = Some(v))
 }
 
