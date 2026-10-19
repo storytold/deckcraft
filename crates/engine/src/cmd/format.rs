@@ -883,6 +883,7 @@ fn line_spacing(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(p, "format.paragraph", &["align", "indentLeft", "indentFirst", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"])?;
     let a = str_param(p, "align").map(|a| match a {
         "center" => Align::Center,
         "right" => Align::Right,
@@ -1132,6 +1133,7 @@ fn wrap(s: &mut Session, p: &Value) -> Result<Value> {
     format_body(s, &move |b| b.wrap = Some(on))
 }
 fn margins(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(p, "format.margins", &["left", "top", "right", "bottom"])?;
     let (l, t, r, b) = (f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom"));
     format_body(s, &move |bp| {
         if l.is_some() {
