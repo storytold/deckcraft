@@ -382,33 +382,47 @@ fn font_size(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"id": gid.0, "fontSize": size}))
 }
 
+/// The answer of a command that regenerated a graphic's shapes: `{id, ids}` as `insert.smartArt`.
+fn regenerated(s: &Session, gid: ShapeId) -> Value {
+    let kids: Vec<u32> = match s.doc().ok().and_then(|st| st.shape(gid).map(|g| g.kind.clone())) {
+        Some(ShapeKind::Group { children, .. }) => children.iter().map(|c| c.id.0).collect(),
+        _ => vec![],
+    };
+    json!({"id": gid.0, "ids": kids})
+}
+
 pub(super) fn change_style(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.style";
     let v = str_param(p, "style").filter(|k| STYLES.iter().any(|(id, _)| id == k)).ok_or_else(|| bad(CMD, "unknown style"))?.to_string();
+    let gid = target_group(s, p, CMD)?;
     edit_diagram(s, p, CMD, |d| {
         if d.style != v {
             d.style_xml = None;
         }
         d.style = v;
         Ok(Value::Null)
-    })
+    })?;
+    Ok(regenerated(s, gid))
 }
 
 pub(super) fn change_colors(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.colors";
     let v = str_param(p, "colors").filter(|k| COLORS.iter().any(|(id, _)| id == k)).ok_or_else(|| bad(CMD, "unknown colours"))?.to_string();
+    let gid = target_group(s, p, CMD)?;
     edit_diagram(s, p, CMD, |d| {
         if d.colors != v {
             d.colors_xml = None;
         }
         d.colors = v;
         Ok(Value::Null)
-    })
+    })?;
+    Ok(regenerated(s, gid))
 }
 
 pub(super) fn change_layout(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.layout";
     let kind = str_param(p, "kind").filter(|k| is_kind(k)).ok_or_else(|| bad(CMD, "unknown layout"))?.to_string();
+    let gid = target_group(s, p, CMD)?;
     edit_diagram(s, p, CMD, |d| {
         if d.kind != kind {
             // PowerPoint's own layout no longer applies.
@@ -417,5 +431,6 @@ pub(super) fn change_layout(s: &mut Session, p: &Value) -> Result<Value> {
         }
         d.kind = kind;
         Ok(Value::Null)
-    })
+    })?;
+    Ok(regenerated(s, gid))
 }
