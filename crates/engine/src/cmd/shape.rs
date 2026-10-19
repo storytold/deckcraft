@@ -415,6 +415,13 @@ fn rotate(s: &mut Session, p: &Value) -> Result<Value> {
 fn flip(s: &mut Session, p: &Value) -> Result<Value> {
     let v = str_param(p, "axis").unwrap_or("horizontal").starts_with('v');
     edit_geometry(s, p, "shape.flip", |sh| {
+        // PowerPoint greys Flip out for a SmartArt graphic (SmartArt Design > Right to Left mirrors it).
+        if sh.diagram.is_some() {
+            return Err(bad(
+                "shape.flip",
+                "Flip is not available for a SmartArt graphic (it would turn it into a plain group); use `smartArt.layout` to change how it is laid out",
+            ));
+        }
         if let Some(x) = sh.xfrm.as_mut() {
             if v {
                 x.flip_v = !x.flip_v;
