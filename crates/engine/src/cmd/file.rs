@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|rtf|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path: file to write (frames: a folder that receives frame-000001.png…; its earlier frame-NNNNNN.png files are removed), format?: png|jpeg|pptx|deckcraft|outline|rtf|pdf|gif|frames (else by path; frames needs it), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif: 960; frames: a number, 1920), secondsPerSlide?: 0.1-600 (gif; 5) or 0-60 (frames; 3: hold after a slide's last build step, the whole time of a slide without animations), loop?: bool (gif; true: forever), fps?: 1-60 (frames; 30), secondsPerStep?: 0-30 (frames; 1: hold before the first click step and after each click step settles; automatic steps run on), transitions?: bool (frames; true: play each slide's transition from the previous slide, frame by frame; false cuts)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide; frames (the slide show as a PNG frame sequence for a video encoder: every build step plays at fps, then holds; at most 18000 frames) answers {folder, frames, fps, width, height, seconds, slides: [{index, from, to}]: the first and last frame number (from 1) of each slide, its transition is included}", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -635,6 +635,30 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
                 "width": out.width,
                 "height": out.height,
                 "secondsPerSlide": f64::from(out.delay_cs) / 100.0,
+            }))
+        }
+        "frames" => {
+            // `path` is a folder; `slides` may be a range, as for PDF ("1-3,5").
+            let mut fp = p.clone();
+            if let Some(text) = p.get("slides").and_then(Value::as_str) {
+                fp["slides"] = json!(parse_slide_range(text, st.doc.slides.len())?);
+            } else if p.get("slides").is_none_or(Value::is_null)
+                && let Some(i) = opt_usize_param(p, "slide", "file.export")?
+            {
+                // `slide` narrows the export to that one slide, as it does for the images; one that
+                // is not an index is refused, not read as the whole deck.
+                fp["slides"] = json!([i]);
+            }
+            let opts = crate::frames_export::FramesOptions::from_params(&fp)?;
+            let out = crate::frames_export::export(&st.doc, &opts, &path)?;
+            Ok(json!({
+                "folder": out.folder,
+                "frames": out.frames,
+                "fps": out.fps,
+                "width": out.width,
+                "height": out.height,
+                "seconds": out.seconds(),
+                "slides": out.slides.iter().map(|r| json!({"index": r.index, "from": r.from, "to": r.to})).collect::<Vec<_>>(),
             }))
         }
         "pptx" | "potx" | "ppsx" | "deckcraft" | "outline" | "txt" | "rtf" => {
