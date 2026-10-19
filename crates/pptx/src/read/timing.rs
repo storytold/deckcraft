@@ -1,6 +1,6 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
-use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
+use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, KeptSequence, TextBuild, Transition, build_filled, paragraph_build_roles};
 use deckcraft_model::{Shape, ShapeKind, TextBody, find_shape, find_shape_mut};
 
 use super::shapes::IdCtx;
@@ -50,6 +50,56 @@ pub fn transition(imp: &mut Imp, part: &Part, t: &El) -> Option<Transition> {
     Some(tr)
 }
 
+/// Whether an interactive sequence starts at something other than a click on a shape.
+fn other_start(ctn: &El) -> bool {
+    ctn.child("stCondLst").is_some_and(|l| l.children_named("cond").any(|c| c.attr("evt").is_some_and(|evt| evt != "onClick")))
+}
+
+/// The slide's interactive sequences that start at something other than a click, such as a media
+/// bookmark (`onMediaBookmark`, #362). The model has no trigger for them, so each is kept verbatim
+/// with its `p:bldLst` entries and its shape ids turned into model ids, for the writer to put back.
+/// One naming a shape the slide does not have is left out.
+pub fn kept_sequences(part: &Part, ctx: &IdCtx, timing: &El) -> Vec<KeptSequence> {
+    let Some(list) = timing.path(&["tnLst", "par", "cTn", "childTnLst"]) else { return vec![] };
+    let mut out = vec![];
+    for seq in list.children_named("seq").take(1000) {
+        if !seq.child("cTn").is_some_and(|c| c.attr("nodeType") == Some("interactiveSeq") && other_start(c)) {
+            continue;
+        }
+        let mut to_model = |id: u32| ctx.lookup(id).map(|s| s.0);
+        let mut el = seq.clone();
+        if !el.map_attr(None, "spid", &mut to_model) {
+            log::warn!("pptx: an animation sequence naming a missing shape was left out");
+            continue;
+        }
+        // The build entries of its effects: the same shape and group (`grpId`) as one of them.
+        let mut effects = vec![];
+        seq.find_all("cTn", &mut effects);
+        let groups: Vec<(u32, &str)> = effects.iter().filter_map(|c| Some((c.find("spTgt")?.u32("spid")?, c.attr("grpId")?))).collect();
+        let builds: Vec<&El> = timing
+            .child("bldLst")
+            .into_iter()
+            .flat_map(|b| b.elements())
+            .filter(|b| b.u32("spid").zip(b.attr("grpId")).is_some_and(|(s, g)| groups.contains(&(s, g))))
+            .collect();
+        // Written back verbatim, it cannot carry a relationship id (a sound's `r:embed`): the
+        // slide's relationships are rebuilt on save and would not hold it.
+        if super::has_rel_refs(seq) || builds.iter().any(|b| super::has_rel_refs(b)) {
+            log::warn!("pptx: an animation sequence with a sound or other linked part was left out");
+            continue;
+        }
+        let builds = builds
+            .into_iter()
+            .filter_map(|b| {
+                let mut b = b.clone();
+                b.map_attr(None, "spid", &mut to_model).then(|| part.keep(&b))
+            })
+            .collect();
+        out.push(KeptSequence { xml: part.keep(&el), builds });
+    }
+    out
+}
+
 struct Found<'a> {
     ctn: &'a El,
     trigger: Option<u32>,
@@ -69,6 +119,12 @@ fn collect<'a>(e: &'a El, trigger: Option<u32>, out: &mut Vec<Found<'a>>, depth:
             && let Some(ctn) = c.child("cTn")
             && ctn.attr("nodeType") == Some("interactiveSeq")
         {
+            // Only a click starts a button sequence the model has. A media bookmark
+            // (`onMediaBookmark`) or other start is kept verbatim instead ([`kept_sequences`]),
+            // not read as clicks on the media shape (#362).
+            if other_start(ctn) {
+                continue;
+            }
             trig = ctn.path(&["stCondLst", "cond", "tgtEl", "spTgt"]).and_then(|s| s.u32("spid"));
         }
         collect(c, trig, out, depth + 1);

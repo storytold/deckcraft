@@ -2385,6 +2385,47 @@ mod copy_remap {
             }
         }
     }
+
+    /// A media-bookmark sequence kept from a file (#362) follows a duplicated or pasted slide's
+    /// new shape ids, so a save writes it for the copy too.
+    #[test]
+    fn duplicated_and_pasted_slides_retarget_kept_sequences() {
+        let mut s = Session::with_new();
+        let (p, b, _) = populate(&mut s, b"x");
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        Arc::make_mut(&mut doc.slides[0]).kept_sequences.push(deckcraft_model::KeptSequence {
+            xml: format!(
+                r#"<p:seq><p:cTn id="2"><p:tgtEl><p:spTgt spid="{}"/></p:tgtEl><p:tgtEl><p:spTgt spid="{}"/></p:tgtEl></p:cTn></p:seq>"#,
+                b.0, p.0
+            ),
+            builds: vec![format!(r#"<p:bldP spid="{}" grpId="0"/>"#, p.0)],
+        });
+        let names = |s: &Session, slide: usize| {
+            let d = s.doc().unwrap();
+            let sl = &d.doc.slides[slide];
+            let k = &sl.kept_sequences[0];
+            let ids: Vec<u32> = sl.shapes.iter().map(|x| x.id.0).collect();
+            let spids: Vec<u32> = k
+                .xml
+                .split("spid=\"")
+                .skip(1)
+                .chain(k.builds[0].split("spid=\"").skip(1))
+                .map(|t| t[..t.find('"').unwrap()].parse().unwrap())
+                .collect();
+            assert_eq!(spids.len(), 3);
+            assert!(spids.iter().all(|i| ids.contains(i)), "{spids:?} not among {ids:?}");
+            spids
+        };
+        let first = names(&s, 0);
+        s.execute("slide.duplicate", &json!({"index": 0})).unwrap();
+        let copy = names(&s, 1);
+        assert!(copy.iter().zip(&first).all(|(a, b)| a != b), "{copy:?} {first:?}");
+        s.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        s.execute("edit.paste", &json!({"scope": "slides"})).unwrap();
+        let n = s.doc().unwrap().doc.slides.len();
+        names(&s, n - 1);
+    }
 }
 
 #[test]
