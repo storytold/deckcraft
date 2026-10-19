@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Left",
             ["Table Layout", "Rows & Columns"],
             None,
-            "{col?, keepWidth?: bool (default true: the other columns shrink in proportion so the table keeps its width; false: the table grows by the new column), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
+            "{col?, keepWidth?: bool (default false, as in PowerPoint: the table grows by the new column and the other widths stay; true: the other columns shrink in proportion so the table keeps its width), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
             has_selection,
             |s, p| rows_cols(s, p, "colLeft", "table.insertColumnLeft")
         ),
@@ -38,7 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Right",
             ["Table Layout", "Rows & Columns"],
             None,
-            "{col?, keepWidth?: bool (default true: the other columns shrink in proportion so the table keeps its width; false: the table grows by the new column), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
+            "{col?, keepWidth?: bool (default false, as in PowerPoint: the table grows by the new column and the other widths stay; true: the other columns shrink in proportion so the table keeps its width), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
             has_selection,
             |s, p| rows_cols(s, p, "colRight", "table.insertColumnRight")
         ),
@@ -321,14 +321,14 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
 
 fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result<Value> {
     let (r, c) = at(s, p, name)?;
-    // Absent: keep the table's width; present, it must be a bool, so a mistyped value is refused
+    // Absent: the table grows, as in PowerPoint; present, it must be a bool, so a mistyped value is refused
     // rather than silently taken as the default.
     let keep_width = match (op, p.get("keepWidth")) {
-        (_, None) | (_, Some(Value::Null)) => true,
+        (_, None) | (_, Some(Value::Null)) => false,
         (_, Some(Value::Bool(b))) => *b,
         ("colLeft", Some(_)) => return Err(bad("table.insertColumnLeft", "`keepWidth` must be true or false")),
         ("colRight", Some(_)) => return Err(bad("table.insertColumnRight", "`keepWidth` must be true or false")),
-        _ => true,
+        _ => false,
     };
     let op = op.to_string();
     with_table(s, p, name, move |t| {
@@ -355,7 +355,7 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
 /// Insert a column before `at` that looks like column `neighbour` (the one it is inserted beside):
 /// its width, and in every row the neighbour cell's explicit formatting with no text. With
 /// `keep_width` the columns then shrink in proportion so the table keeps its total width;
-/// otherwise the table grows by the new column.
+/// otherwise (PowerPoint's behaviour) the table grows by the new column and the widths stay.
 fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool) {
     let total = t.width();
     let neighbour = neighbour.min(t.cols.len().saturating_sub(1));
