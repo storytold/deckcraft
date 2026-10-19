@@ -304,3 +304,29 @@ fn export_tool_lists_gif_and_its_options() {
     assert_eq!(r["result"]["isError"], true, "{r}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// The export tool offers the frame sequence for videos: the format, its options, and that `path`
+/// is a folder; through the tool it writes numbered PNGs and answers the slide map.
+#[test]
+fn export_tool_lists_frames_and_writes_a_folder() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let export = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "export").unwrap().clone();
+    let desc = export["description"].as_str().unwrap();
+    assert!(desc.contains("frames") && desc.contains("folder"), "{export}");
+    let props = &export["inputSchema"]["properties"];
+    assert!(props["format"]["enum"].as_array().unwrap().iter().any(|x| x == "frames"), "{export}");
+    for p in ["fps", "secondsPerStep", "secondsPerSlide", "transitions", "width", "slides", "includeHidden"] {
+        assert!(props.get(p).is_some(), "{p}: {export}");
+    }
+    let dir = std::env::temp_dir().join(format!("deckcraft-mcp-frames-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    tool(&mut s, "new_presentation", json!({}));
+    let r = tool(&mut s, "export", json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 5, "secondsPerSlide": 1, "width": 64}));
+    assert_eq!(r["frames"], 5, "{r}");
+    assert_eq!(r["slides"], json!([{"index": 0, "from": 1, "to": 5}]), "{r}");
+    assert!(dir.join("frame-000005.png").is_file());
+    let r = call(&mut s, 9, "tools/call", json!({"name": "export", "arguments": {"format": "frames", "path": dir.to_string_lossy(), "fps": 0}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
