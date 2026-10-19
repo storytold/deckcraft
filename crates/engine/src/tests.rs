@@ -6174,6 +6174,42 @@ fn a_refused_named_format_color_restores_the_selection() {
     assert_eq!(s.doc().unwrap().selection.shapes, before, "the refusal left the selection replaced");
 }
 
+/// OO2: SmartArt colours are theme references (accent slots), so a theme change recolours the
+/// graphic, as in PowerPoint where Change Colors sets are theme-bound.
+#[test]
+fn a_theme_change_recolours_a_smartart_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "Scope", "Build"]})).unwrap();
+    let id = r["id"].clone();
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let b = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap()["box"].clone();
+    let (x0, y0, w, h) = (b[0].as_f64().unwrap(), b[1].as_f64().unwrap(), b[2].as_f64().unwrap(), b[3].as_f64().unwrap());
+    let sample = |s: &mut Session| -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for i in 0..12 {
+            for j in 0..8 {
+                let v = s
+                    .execute(
+                        "slide.colorAt",
+                        &json!({"x": x0 + w * (f64::from(i) + 0.5) / 12.0, "y": y0 + h * (f64::from(j) + 0.5) / 8.0, "scale": 1}),
+                    )
+                    .unwrap();
+                out.insert(v["color"].as_str().unwrap().to_string());
+            }
+        }
+        out
+    };
+    let bg = |s: &mut Session| s.execute("slide.colorAt", &json!({"x": 1, "y": 1, "scale": 1})).unwrap()["color"].as_str().unwrap().to_string();
+    let (bg_before, mut before) = (bg(&mut s), sample(&mut s));
+    s.execute("design.theme", &json!({"name": "Ember"})).unwrap();
+    let (bg_after, mut after) = (bg(&mut s), sample(&mut s));
+    before.remove(&bg_before);
+    after.remove(&bg_after);
+    assert!(!before.is_empty(), "the graphic is drawn: {before:?}");
+    assert_ne!(before, after, "the graphic keeps its old colours after a theme change");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
