@@ -4809,3 +4809,101 @@ fn outline_export_skips_footer_date_and_slide_number() {
     assert!(!text.contains("‹#›"), "the slide-number field is not a body line: {text:?}");
     assert!(!text.contains("1 May 2026"), "the date is not a body line: {text:?}");
 }
+
+/// The state before the first click is held for `secondsPerStep`; after an automatic first step
+/// the click step that follows is preceded by that pause, and an automatic step is not.
+#[test]
+fn frames_export_holds_the_pre_click_state_and_pauses_before_click_steps() {
+    let frames = |first: &str| {
+        let mut s = session();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 200]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 100, 600, 200]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("animation.add", &json!({"ids": [a], "effect": "fade", "class": "entrance", "start": first, "duration": 500})).unwrap();
+        s.execute("animation.add", &json!({"ids": [b], "effect": "fade", "class": "entrance", "start": "onClick", "duration": 500})).unwrap();
+        let dir = frames_dir(first);
+        let r = s
+            .execute(
+                "file.export",
+                &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 160, "slides": [0]}),
+            )
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        r["frames"].as_u64().unwrap()
+    };
+    // Click, click: 10 pre-click + 5 + 10 + 5 + 20 hold.
+    assert_eq!(frames("onClick"), 50);
+    // Automatic, click: no pre-click hold, 5 + 10 (pause before the click step) + 5 + 20.
+    assert_eq!(frames("afterPrevious"), 40);
+}
+
+/// `file.export {format: "frames"}` writes one PNG per video frame: slide 0's fade step (5 frames
+/// at 10 fps for 500 ms) after the 1 s hold of its state before the click (10), then its 2 s hold
+/// (20), the 700 ms fade into slide 1 (7), and slide 1's 2 s hold (20): 62 frames, numbered from 1, mapped back to the slides by the answer.
+#[test]
+fn frames_export_counts_build_steps_holds_and_transitions() {
+    let (mut s, _) = frames_deck();
+    let dir = frames_dir("count");
+    let r = s
+        .execute(
+            "file.export",
+            &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 320}),
+        )
+        .unwrap();
+    assert_eq!(r["frames"], 62, "{r}");
+    assert_eq!(r["fps"], 10, "{r}");
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(320), Some(180)), "{r}");
+    assert!((r["seconds"].as_f64().unwrap() - 6.2).abs() < 1e-9, "{r}");
+    assert_eq!(r["folder"], json!(dir.to_string_lossy()), "{r}");
+    assert_eq!(r["slides"], json!([{"index": 0, "from": 1, "to": 35}, {"index": 1, "from": 36, "to": 62}]), "{r}");
+    let files = png_files(&dir);
+    assert_eq!(files.len(), 62);
+    assert_eq!(files.first().map(String::as_str), Some("frame-000001.png"));
+    assert_eq!(files.last().map(String::as_str), Some("frame-000062.png"));
+    // Without transitions the fade's 7 frames go away; a slide without animations is one still.
+    let dir2 = frames_dir("cut");
+    let r = s
+        .execute(
+            "file.export",
+            &json!({"format": "frames", "path": dir2.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 320, "transitions": false}),
+        )
+        .unwrap();
+    assert_eq!(r["frames"], 55, "{r}");
+    assert_eq!(r["slides"], json!([{"index": 0, "from": 1, "to": 35}, {"index": 1, "from": 36, "to": 55}]), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dir2);
+}
+
+/// Frames are the show's frames: half-way through the fade the rectangle is translucent (the frame
+/// differs from the settled one), and the settled frame is exactly what `render_slide` draws.
+#[test]
+fn frames_export_draws_the_build_and_settles_on_the_plain_slide() {
+    let (mut s, _) = frames_deck();
+    let dir = frames_dir("pixels");
+    s.execute(
+        "file.export",
+        &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 320}),
+    )
+    .unwrap();
+    let frame = |n: usize| std::fs::read(dir.join(format!("frame-{n:06}.png"))).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    let settled = deckcraft_render::render_slide(
+        doc,
+        0,
+        &deckcraft_render::RenderOpts { scale: 320.0 / doc.slide_size.width, size: Some((320, 180)), ..Default::default() },
+    );
+    assert_eq!(frame(35), settled.to_png(), "the hold frame is the slide with its builds done");
+    assert_ne!(frame(13), frame(35), "200 ms into the fade the rectangle is still translucent");
+    assert_ne!(frame(1), frame(35), "before the click the rectangle is hidden");
+    // The transition's first frame is still slide 0, its last one nearly slide 1.
+    assert_eq!(frame(10), frame(1), "the state before the click is held");
+    assert_eq!(frame(36), frame(35));
+    let blank = deckcraft_render::render_slide(
+        doc,
+        1,
+        &deckcraft_render::RenderOpts { scale: 320.0 / doc.slide_size.width, size: Some((320, 180)), ..Default::default() },
+    );
+    assert_eq!(frame(62), blank.to_png());
+    assert_ne!(frame(39), frame(35));
+    assert_ne!(frame(39), frame(62));
+    let _ = std::fs::remove_dir_all(&dir);
+}
