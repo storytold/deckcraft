@@ -4724,3 +4724,29 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+/// HH9: Reset Picture discards the picture's formatting (adjustments, artistic effect, picture
+/// style effects and outline) but not the frame's shape (Change Shape / Crop to Shape).
+#[test]
+fn picture_reset_keeps_the_frame_shape() {
+    let mut img = image::RgbaImage::new(40, 30);
+    img.pixels_mut().for_each(|p| *p = image::Rgba([200, 30, 30, 255]));
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.picture", &json!({"name": "a.png", "data": cmd::base64_encode(&png)})).unwrap();
+    s.execute("shape.change", &json!({"preset": "roundRect"})).unwrap();
+    s.execute("picture.adjust", &json!({"brightness": 0.3})).unwrap();
+    let geom = s.doc().unwrap().selected_shapes()[0].geom.clone();
+    assert_ne!(geom, deckcraft_model::Geom::preset("rect"));
+    s.execute("picture.reset", &json!({})).unwrap();
+    let sh = s.doc().unwrap().selected_shapes()[0].clone();
+    assert_eq!(sh.geom, geom, "the frame shape stays");
+    match &sh.kind {
+        deckcraft_model::ShapeKind::Picture { fill } => assert_eq!(fill.adjust, Default::default()),
+        _ => panic!("not a picture"),
+    }
+    let doc = command_specs().iter().find(|c| c.id == "picture.reset").unwrap().params;
+    assert!(doc.contains("frame shape"), "{doc}");
+}

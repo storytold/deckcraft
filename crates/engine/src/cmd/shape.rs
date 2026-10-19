@@ -149,7 +149,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             picture_adjust
         ),
-        cmd!("picture.reset", "Reset Picture", ["Picture Format", "Adjust"], None, "{ids?}", has_selection, picture_reset),
+        cmd!(
+            "picture.reset",
+            "Reset Picture",
+            ["Picture Format", "Adjust"],
+            None,
+            "{ids?} (discards the picture's formatting: adjustments, artistic effect, crop, transparency, picture-style effects and outline; the frame shape from Change Shape or Crop to Shape, the size and the position stay)",
+            has_selection,
+            picture_reset
+        ),
         cmd!(
             "picture.change",
             "Change Picture",
