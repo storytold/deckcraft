@@ -443,7 +443,9 @@ pub enum RunKind {
     Field {
         field: String,
     },
-    /// An inline equation (OMML kept as XML; `text` is its linear form).
+    /// An inline equation. `text` is its linear form, which is what is typed and edited; `omml` is
+    /// the imported OMML, written back unchanged until the equation is changed here (then it is
+    /// empty and the equation is built from `text`).
     Math {
         omml: String,
     },
@@ -476,6 +478,11 @@ impl Run {
     }
     pub fn with(text: impl Into<String>, props: RunProps) -> Self {
         Run { text: text.into(), props, kind: RunKind::Text }
+    }
+    /// An imported equation: its OMML, with its linear form (on one line) as the text.
+    pub fn math(omml: String, props: RunProps) -> Self {
+        let linear = equashion_math::to_linear(&equashion_math::from_omml(&omml));
+        Run { text: linear.chars().map(|c| if c.is_control() { ' ' } else { c }).collect(), props, kind: RunKind::Math { omml } }
     }
     /// The characters this run contributes to the paragraph (a break is one `\u{b}`).
     pub fn content(&self) -> &str {
@@ -531,6 +538,19 @@ impl Paragraph {
     }
     pub fn text(&self) -> String {
         self.runs.iter().map(|r| r.content()).collect()
+    }
+    /// The tree of equation run `i`: its imported OMML, else its linear text, where one typed
+    /// alone in its paragraph is a display equation. `None` for other runs.
+    pub fn equation(&self, i: usize) -> Option<equashion_math::Math> {
+        match &self.runs.get(i)?.kind {
+            RunKind::Math { omml } if omml.is_empty() => {
+                let mut m = equashion_math::from_linear(&self.runs.get(i)?.text);
+                m.para = self.runs.iter().filter(|r| !r.text.is_empty()).count() == 1;
+                Some(m)
+            }
+            RunKind::Math { omml } => Some(equashion_math::from_omml(omml)),
+            _ => None,
+        }
     }
     pub fn char_len(&self) -> usize {
         self.runs.iter().map(Run::char_len).sum()

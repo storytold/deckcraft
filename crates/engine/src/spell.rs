@@ -719,8 +719,8 @@ pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Wor
             if !part.is_empty()
                 && let Some(c) = chars.get(k)
             {
-                if p.runs.get(c.1).is_some_and(|r| r.props.no_proof == Some(true)) {
-                    // Marked "do not check spelling".
+                if p.runs.get(c.1).is_some_and(|r| r.props.no_proof == Some(true) || matches!(r.kind, deckcraft_model::text::RunKind::Math { .. })) {
+                    // Marked "do not check spelling", or an equation.
                 } else {
                     out.push(Word { start: k, end: k + n, text: part.to_string(), lang: lang_of(c.1), repeated: None });
                 }
@@ -882,6 +882,10 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         };
         let w: Vec<String> = paragraph_words(&p, "en-US").into_iter().map(|w| w.text).collect();
         assert_eq!(w, vec!["check", "done"]);
+        // Nor are equations.
+        let eq = Run { text: "sqrt(x)".into(), props: RunProps::default(), kind: deckcraft_model::text::RunKind::Math { omml: String::new() } };
+        let p = Paragraph { runs: vec![Run::new("root "), eq], ..Default::default() };
+        assert_eq!(paragraph_words(&p, "en-US").into_iter().map(|w| w.text).collect::<Vec<_>>(), vec!["root"]);
     }
 
     #[test]

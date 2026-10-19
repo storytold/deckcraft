@@ -85,6 +85,10 @@ pub struct TextSel {
     /// start of the next line. Ignored once the caret moves anywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_end: Option<(usize, usize)>,
+    /// Where the caret left the equation that ends there (Right Arrow): text typed there goes
+    /// after the equation. Ignored once the caret is anywhere else.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub left_math: Option<(usize, usize)>,
 }
 
 impl TextSel {

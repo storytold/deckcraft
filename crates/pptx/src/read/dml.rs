@@ -599,15 +599,15 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
                 para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
             }
             "m" => {
-                // Office Math (a14:m) — keep the OMML and its plain text.
-                let mut text = String::new();
-                let mut ts = vec![];
-                e.find_all("t", &mut ts);
-                for t in ts {
-                    text.push_str(&t.text());
-                }
+                // Office Math (a14:m): keep the OMML; the run's properties are the first math run's
+                // `a:rPr`, where PowerPoint keeps an equation's font, size and colour (its italics
+                // are the equation's own).
                 let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
-                para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
+                let mut rprs = vec![];
+                e.find_all("rPr", &mut rprs);
+                let mut props = rprs.into_iter().find(|r| r.prefix() == "a").map(|r| rpr(imp, part, r)).unwrap_or_default();
+                props.italic = None;
+                para.runs.push(Run::math(omml, props));
             }
             "endParaRPr" => para.end_props = rpr(imp, part, e),
             _ => {}

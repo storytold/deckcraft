@@ -490,22 +490,37 @@ impl Exporter<'_> {
             if run.glyphs.is_empty() || run.size <= 0.0 {
                 continue;
             }
-            let text: String = pt
-                .body
-                .paragraphs
-                .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
-                .unwrap_or_default()
-                .chars()
-                .skip(run.chars.0)
-                .take(run.chars.1.saturating_sub(run.chars.0))
-                .collect();
+            let para = pt.body.paragraphs.get(run.para);
+            // An equation's text is its linear form, not what it draws: its glyphs stand for the
+            // characters they draw.
+            let math = para.is_some_and(|p| {
+                let mut start = 0;
+                p.runs.iter().any(|r| {
+                    let s = start;
+                    start += r.char_len();
+                    matches!(r.kind, deckcraft_model::text::RunKind::Math { .. }) && (s..start).contains(&run.chars.0)
+                })
+            });
+            let text: String = if math {
+                run.cells.iter().map(|c| c.1).collect()
+            } else {
+                para.map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                    .unwrap_or_default()
+                    .chars()
+                    .skip(run.chars.0)
+                    .take(run.chars.1.saturating_sub(run.chars.0))
+                    .collect()
+            };
             if text.trim().is_empty() {
                 continue;
             }
             let font = self.font(&run.face)?;
             let n = run.glyphs.len();
-            let ranges = glyph_text_ranges(&text, run.chars, &run.cells, n);
+            let ranges = if math {
+                text.char_indices().map(|(b, c)| b..b + c.len_utf8()).collect()
+            } else {
+                glyph_text_ranges(&text, run.chars, &run.cells, n)
+            };
             let (x0, y0) = (run.glyphs[0].1, run.glyphs[0].2);
             let kg: Vec<KrillaGlyph> = run
                 .glyphs

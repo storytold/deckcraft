@@ -147,7 +147,7 @@ fn ligatures_stay_for_scripts_that_need_them() {
     let has = |f: &[deckcraft_fonts::Feature], tag: &str| f.iter().any(|x| Some(*x) == deckcraft_fonts::feature(tag));
     let cells = |s: &str| {
         s.chars()
-            .map(|ch| Cell { ch, style: 0, face: 0, level: 0, glyphs: vec![], adv: 0.0, head: 0, boundary: true, upright: false })
+            .map(|ch| Cell { ch, style: 0, face: 0, level: 0, glyphs: vec![], adv: 0.0, head: 0, boundary: true, upright: false, atom: None })
             .collect::<Vec<_>>()
     };
     let latin = shaping_features(&cells("office"), &[], Some(*b"Latn"));
@@ -1466,4 +1466,56 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     let l = lay(&p, &sh, 600.0, 300.0);
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
+}
+
+/// "Area " + equation `linear` + " ok", 28 pt, no bullet.
+fn with_equation(linear: &str) -> (Presentation, Shape) {
+    let (p, mut sh) = setup("", 800.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.props.bullet = Some(Bullet::None);
+    let props = RunProps { size: Some(28.0), ..Default::default() };
+    para.runs = vec![
+        Run::with("Area ", props.clone()),
+        Run { text: linear.into(), props: props.clone(), kind: RunKind::Math { omml: String::new() } },
+        Run::with(" ok", props),
+    ];
+    (p, sh)
+}
+
+#[test]
+fn an_equation_is_laid_out_in_two_dimensions_as_one_character() {
+    let (p, sh) = with_equation("a/b");
+    let l = lay(&p, &sh, 800.0, 300.0);
+    let line = &l.lines[0];
+    // "Area " is 5 characters; the equation's three are one caret stop wide, then " ok".
+    assert_eq!(line.end - line.start, 11);
+    assert!(line.boundary[5] && !line.boundary[6] && !line.boundary[7] && line.boundary[8]);
+    let (x0, x1) = line.span(5, 8).unwrap();
+    assert!(x1 - x0 > 5.0);
+    assert_eq!(l.hit(Point::new(x1 - 1.0, line.baseline)), Pos { para: 0, ch: 8 });
+    // The fraction bar, and the numerator above the denominator.
+    assert!(l.decos.iter().any(|d| d.rect.x0 >= x0 && d.rect.x1 <= x1 && d.rect.height() < 3.0));
+    let math: Vec<_> = l.runs.iter().filter(|r| r.chars == (5, 8)).collect();
+    let ys: Vec<f64> = math.iter().flat_map(|r| r.glyphs.iter().map(|g| g.2)).collect();
+    assert!(ys.iter().any(|y| *y < line.baseline - 5.0) && ys.iter().any(|y| *y > line.baseline + 5.0), "{ys:?}");
+    // Each glyph carries the character it draws.
+    assert!(math.iter().all(|r| r.cells.len() == r.glyphs.len()));
+    assert_eq!(math.iter().flat_map(|r| r.cells.iter().map(|c| c.1)).collect::<String>(), "ab");
+    // A tall equation makes its line taller.
+    let flat = lay(&with_equation("ab").0, &with_equation("ab").1, 800.0, 300.0);
+    assert!(line.bottom - line.top > flat.lines[0].bottom - flat.lines[0].top);
+}
+
+#[test]
+fn the_equation_being_typed_shows_its_linear_text_on_a_field() {
+    let (p, mut sh) = with_equation("a/b");
+    let body = with_linear_math(sh.text.as_ref().unwrap(), (0, 5));
+    assert_eq!(body.paragraphs[0].runs[1].kind, RunKind::Text);
+    sh.text = Some(body);
+    let l = lay(&p, &sh, 800.0, 300.0);
+    assert_eq!(l.lines[0].boundary.iter().filter(|b| **b).count(), 11, "every character is a caret stop");
+    assert!(l.decos.iter().any(|d| d.behind), "the gray field");
+    // Anything else is left alone.
+    let (_, other) = with_equation("a/b");
+    assert_eq!(&with_linear_math(other.text.as_ref().unwrap(), (0, 4)), other.text.as_ref().unwrap());
 }

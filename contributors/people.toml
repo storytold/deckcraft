@@ -59,3 +59,6 @@ real_name = "Ryan C. Shoemaker"
 real_name = "Marco Arnulfo"
 display_name = "Marco Arnulfo"
 sync_github_name = false
+
+[people.hajdukste]
+sync_github_name = true

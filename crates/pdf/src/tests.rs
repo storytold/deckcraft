@@ -278,6 +278,47 @@ fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
     assert_eq!(extracted, text);
 }
 
+/// An equation's invisible text is what it draws, glyph by glyph: no glyph stands for its whole
+/// linear text (a long one made a ToUnicode entry readers drop).
+#[test]
+fn an_equation_s_text_layer_maps_each_glyph_to_its_own_character() {
+    use deckcraft_model::text::{Paragraph, Run, RunKind, RunProps};
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+    use hayro_syntax::object::{Dict, Stream};
+
+    let linear = "\\int_0^1 x^2 dx = 1/3, (a+b)/(c+d), lim_(x->0) sin(x)/x = 1, sqrt(x^2+y^2)";
+    let eq = Run { text: linear.into(), props: RunProps { size: Some(20.0), ..Default::default() }, kind: RunKind::Math { omml: String::new() } };
+    let body = TextBody { paragraphs: vec![Paragraph { runs: vec![eq], ..Default::default() }], ..Default::default() };
+    let mut p = deck(1);
+    Arc::make_mut(&mut p.slides[0]).shapes =
+        vec![Shape { id: ShapeId(9002), xfrm: Some(Xfrm::new(20.0, 20.0, 920.0, 200.0)), text: Some(body), ..Default::default() }];
+    let pdf = hayro_syntax::Pdf::new(export(&p, &opts(PageLayout::Slides)).unwrap()).unwrap();
+    let fonts = pdf.pages()[0].raw().get::<Dict<'_>>(b"Resources").unwrap().get::<Dict<'_>>(b"Font").unwrap();
+    let mut mapped = String::new();
+    for key in fonts.keys() {
+        let font = fonts.get::<Dict<'_>>(key).unwrap();
+        let cmap = font.get::<Stream<'_>>(b"ToUnicode").unwrap().decoded().unwrap().into_owned();
+        let mut in_char_map = false;
+        for line in std::str::from_utf8(&cmap).unwrap().lines() {
+            if line.ends_with("beginbfchar") {
+                in_char_map = true;
+            } else if line == "endbfchar" {
+                in_char_map = false;
+            } else if in_char_map {
+                let value = line.split_whitespace().nth(1).unwrap().trim_matches(['<', '>']);
+                let units: Vec<u16> =
+                    value.as_bytes().as_chunks::<4>().0.iter().map(|c| u16::from_str_radix(std::str::from_utf8(c).unwrap(), 16).unwrap()).collect();
+                let text = String::from_utf16(&units).unwrap();
+                assert_eq!(text.chars().count(), 1, "a glyph maps to {text:?}");
+                mapped.push_str(&text);
+            }
+        }
+    }
+    for c in ['∫', 'x', '2', '√'] {
+        assert!(mapped.contains(c), "{c} in {mapped:?}");
+    }
+}
+
 /// Notes pages and handouts print on the chosen paper, landscape included, with every slide box
 /// on the page and room left for the notes.
 #[test]

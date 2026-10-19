@@ -769,12 +769,21 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
                 w.close("a:fld");
             }
             RunKind::Math { omml } => {
-                if math && !omml.is_empty() {
+                if !math {
+                    run_text(w, x, o, &r.text, &r.props);
+                } else if !omml.is_empty() {
                     w.open("a14:m", A::new().a("xmlns:a14", crate::opc::NS_A14));
                     w.raw(omml);
                     w.close("a14:m");
-                } else {
-                    run_text(w, x, o, &r.text, &r.props);
+                } else if let Some(mut m) = p.equation(ri) {
+                    // Typed or changed here: built from its text, with the run's properties in
+                    // every math run, as PowerPoint keeps them.
+                    let mut f = W::frag();
+                    rpr(&mut f, x, o, "a:rPr", &r.props);
+                    with_run_props(&mut m.body, &f.s);
+                    w.open("a14:m", A::new().a("xmlns:a14", crate::opc::NS_A14));
+                    w.raw(&equashion_math::to_omml(&m));
+                    w.close("a14:m");
                 }
             }
         }
@@ -785,6 +794,21 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
     w.close("a:p");
 }
 
+/// Give every math run in `s` the DrawingML run properties `rpr` (after its `m:rPr`).
+fn with_run_props(s: &mut equashion_math::Seq, rpr: &str) {
+    use equashion_math::{Extra, Node};
+    for n in s.iter_mut() {
+        if matches!(n, Node::Text(_) | Node::Styled { .. }) {
+            let node = std::mem::replace(n, Node::Raw(String::new()));
+            *n = Node::Props { extra: Extra { side: vec![rpr.to_string()], ..Default::default() }, node: Box::new(node) };
+        } else {
+            for c in equashion_math::children_mut(n) {
+                with_run_props(c, rpr);
+            }
+        }
+    }
+}
+
 pub fn has_math(tb: &TextBody) -> bool {
-    tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty()))
+    tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty() || !r.text.is_empty()))
 }

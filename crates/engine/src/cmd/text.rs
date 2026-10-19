@@ -144,7 +144,8 @@ pub fn fit_text_box(s: &mut Session, id: ShapeId) -> Result<()> {
     fit_shrink_scale(s, id)?;
     let st = s.doc()?;
     let Some(sh) = st.shape(id).cloned() else { return Ok(()) };
-    let Some(body) = sh.text.clone() else { return Ok(()) };
+    // The text as the editor draws it (an equation being typed shows as its text).
+    let Some(body) = sh.text.as_ref().map(|b| as_edited(st, &TextSel { shape: id, ..Default::default() }, b).into_owned()) else { return Ok(()) };
     let doc = st.doc.clone();
     let sel = st.selection.clone();
     let Some(ctx) = ctx_for(&doc, &sel) else { return Ok(()) };
@@ -235,6 +236,14 @@ pub(crate) fn ctx_for<'a>(doc: &'a Presentation, sel: &Selection) -> Option<Ctx<
     }
 }
 
+/// `body` (text `t` edits) as the editor draws it: the equation being typed shows as its text.
+fn as_edited<'a>(st: &DocState, t: &TextSel, body: &'a TextBody) -> std::borrow::Cow<'a, TextBody> {
+    match super::equation::shown(st, t) {
+        Some(at) => std::borrow::Cow::Owned(deckcraft_text::with_linear_math(body, at)),
+        None => std::borrow::Cow::Borrowed(body),
+    }
+}
+
 /// Lay out the text being edited (for vertical caret movement and hit testing).
 pub fn layout_for(st: &DocState, t: &TextSel) -> Option<deckcraft_text::TextLayout> {
     text_frame(st, t).map(|f| f.0)
@@ -258,10 +267,10 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
         let placed = cell_on_slide(st, t.shape, r, c)?;
         return Some((placed.layout, placed.to_slide));
     }
-    let body = sh.text.as_ref()?;
+    let body = as_edited(st, t, sh.text.as_ref()?);
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let l = lay(sh, body, tr);
+    let l = lay(sh, &body, tr);
     let m = deckcraft_render::text_transform(x.affine(), tr, l.rotation);
     Some((l, m))
 }
@@ -270,8 +279,18 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
 pub fn text_pos_at(st: &DocState, t: &TextSel, p: Point) -> Pos {
     match text_frame(st, t) {
         Some((l, m)) => {
-            let h = l.hit(m.inverse() * p);
-            (h.para, h.ch)
+            let q = m.inverse() * p;
+            let h = l.hit(q);
+            // A click on an equation (not the one shown as text) goes into it, at its end.
+            let shown = super::equation::shown(st, t);
+            let under = |ahead: bool| {
+                let (_, s, e) = ed::math_at(body_of(st, t)?, (h.para, h.ch), ahead)?;
+                let hit = |li: &deckcraft_text::LineInfo| {
+                    li.para == h.para && (li.top..li.bottom).contains(&q.y) && li.span(s, e).is_some_and(|x| (x.0..=x.1).contains(&q.x))
+                };
+                (shown != Some((h.para, s)) && l.lines.iter().any(hit)).then_some(e)
+            };
+            (h.para, under(true).or_else(|| under(false)).unwrap_or(h.ch))
         }
         None => (0, 0),
     }
@@ -295,7 +314,7 @@ pub fn caret_line(st: &DocState, t: &TextSel) -> Option<(deckcraft_geom::Point, 
     let ctx = ctx_for(&st.doc, &st.selection)?;
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
-    let mut body = sh.text.clone().unwrap_or_default();
+    let mut body = as_edited(st, t, sh.text.as_ref().unwrap_or(&TextBody::default())).into_owned();
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
     }
@@ -368,7 +387,7 @@ fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.select(|_, sel| {
         sel.shapes = vec![id];
-        sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, notes: false, line_end: None });
+        sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, ..Default::default() });
     })?;
     Ok(json!({"id": id, "at": [at.0, at.1]}))
 }
@@ -400,20 +419,41 @@ fn typed(s: &Session, body: &TextBody, at: Pos, text: &str) -> String {
 
 pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) -> Result<Value> {
     let inherited = inherited_aligns_for_edit(s);
-    let text = {
+    let (text, math) = {
         let st = s.doc()?;
         match &st.selection.text {
             Some(t) => {
                 let body = body_of(st, t).cloned().unwrap_or_default();
-                typed(s, &body, t.ordered().0, text)
+                // An equation is typed as it is: no smart quotes, no AutoCorrect.
+                match super::equation::at(&body, t) {
+                    Some(m) if !text.contains(['\n', '\u{b}']) => (text.to_string(), Some(m)),
+                    _ => (typed(s, &body, t.ordered().0, text), None),
+                }
             }
-            None => text.to_string(),
+            None => (text.to_string(), None),
         }
     };
     let pos = edit_text(s, |body, t| {
+        if let Some(m) = math {
+            let c = super::equation::type_in(body, t, m, &text);
+            t.anchor = c;
+            t.caret = c;
+            return c;
+        }
+        // A new paragraph or line typed in an equation starts after it.
+        if let Some((_, _, e)) = super::equation::at(body, t) {
+            t.anchor = (t.caret.0, e);
+            t.caret = t.anchor;
+        }
         let (a, b) = t.ordered();
         let at = ed::delete(body, a, b);
-        let props = props.clone().or_else(|| if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) });
+        // Beside an equation (just left, or before one), text takes the text's formatting.
+        let beside = a == b && (t.left_math == Some(at) || ed::math_at(body, at, true).is_some_and(|m| m.1 == at.1));
+        let props = props.clone().or_else(|| match (a != b, beside) {
+            (true, _) => Some(ed::props_at(body, at)),
+            (_, true) => Some(super::equation::text_props(body, at)),
+            _ => unlinked_at_link_end(body, at),
+        });
         let c = ed::insert(body, at, &text, props);
         t.anchor = c;
         t.caret = c;
@@ -424,7 +464,9 @@ pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) 
         }
         c
     })?;
-    autocorrect(s, text.chars().count() == 1)?;
+    if math.is_none() {
+        autocorrect(s, text.chars().count() == 1)?;
+    }
     Ok(json!({"caret": [pos.0, pos.1]}))
 }
 
@@ -779,6 +821,13 @@ fn autocorrect_options(s: &mut Session, p: &Value) -> Result<Value> {
 pub(crate) fn paste_body(s: &mut Session, src: &TextBody) -> Result<Value> {
     let inherited = inherited_aligns_for_edit(s);
     let pos = edit_text(s, |body, t| {
+        // Into an equation: as text on one line.
+        if let Some(m) = super::equation::at(body, t) {
+            let c = super::equation::type_in(body, t, m, &src.text().replace('\n', " "));
+            t.anchor = c;
+            t.caret = c;
+            return c;
+        }
         let (a, b) = t.ordered();
         let at = ed::delete(body, a, b);
         let c = ed::insert_body(body, at, src);
@@ -853,6 +902,12 @@ fn compose(s: &mut Session, p: &Value) -> Result<Value> {
             let (before, before_selection) = (st.doc.clone(), st.selection.clone());
             let (start, props) = edit_text(s, |body, t| {
                 let (a, b) = t.ordered();
+                if let Some((ri, ..)) = super::equation::at(body, t) {
+                    let c = ed::math_replace(body, a.0, ri, a.1, b.1, &text);
+                    t.anchor = c;
+                    t.caret = c;
+                    return (a, None);
+                }
                 let at = ed::delete(body, a, b);
                 let props = if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) };
                 let c = ed::insert(body, at, &text, props.clone());
@@ -874,8 +929,13 @@ fn compose(s: &mut Session, p: &Value) -> Result<Value> {
         Some(c) => {
             let (start, len, props) = (c.start, c.len, c.props.clone());
             edit_text(s, |body, t| {
-                ed::delete(body, start, (start.0, start.1 + len));
-                let e = ed::insert(body, start, &text, props);
+                let e = match ed::math_at(body, start, true).filter(|m| start.1 + len <= m.2) {
+                    Some((ri, ..)) => ed::math_replace(body, start.0, ri, start.1, start.1 + len, &text),
+                    None => {
+                        ed::delete(body, start, (start.0, start.1 + len));
+                        ed::insert(body, start, &text, props)
+                    }
+                };
                 t.anchor = e;
                 t.caret = e;
             })?;
@@ -1000,6 +1060,9 @@ fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) -> Option<C
     let heights = super::table_drawn_heights(&st.doc, &st.selection, tb);
     let rect = deckcraft_render::table_cell_rects(tb, &heights).into_iter().find(|(r, c, _)| *r == row && *c == col)?.2;
     let mut body = deckcraft_render::table_cell_body(&ctx, tb, row, col, cell);
+    if let Some(at) = super::equation::shown(st, &TextSel { shape: id, cell: Some((row, col)), ..Default::default() }) {
+        body = deckcraft_text::with_linear_math(&body, at);
+    }
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
     }
@@ -1029,6 +1092,23 @@ pub(crate) fn delete_dir(s: &mut Session, dir: &str) -> Result<Value> {
     let dir = dir.to_string();
     edit_text(s, move |body, t| {
         let (a, b) = t.ordered();
+        // In an equation, deleting edits its text: Backspace the character before the caret,
+        // Delete the one after it.
+        let math = if a != b {
+            super::equation::at(body, t).map(|m| (m.0, a.1, b.1))
+        } else if dir == "backward" || dir == "wordBackward" {
+            let from = |s: usize| if dir == "wordBackward" { ed::word_move(body, a, false).1.max(s) } else { a.1 - 1 };
+            ed::math_at(body, a, false).filter(|m| a.1 > m.1).map(|(ri, s, _)| (ri, from(s), a.1))
+        } else {
+            let to = |e: usize| if dir == "wordForward" { ed::word_move(body, a, true).1.min(e) } else { a.1 + 1 };
+            ed::math_at(body, a, true).map(|(ri, _, e)| (ri, a.1, to(e)))
+        };
+        if let Some((ri, x, y)) = math {
+            let c = ed::math_replace(body, a.0, ri, x, y, "");
+            t.anchor = c;
+            t.caret = c;
+            return;
+        }
         let at = if dir == "wordBackward" || dir == "wordForward" {
             // Ctrl+Backspace/Delete work from the start of a selection and leave the rest of it
             // (PowerPoint for Windows).
@@ -1093,6 +1173,19 @@ fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
         (x, _) => x,
     }
     .to_string();
+    // Right Arrow at an equation's end leaves it without moving; Left Arrow there goes back in.
+    if !extend && !t.is_range() {
+        let leave = to == "right" && super::equation::at(&body, &t).is_some_and(|m| m.2 == caret.1);
+        let back = to == "left" && t.left_math == Some(caret);
+        if leave || back {
+            s.select(|_, sel| {
+                if let Some(tt) = sel.text.as_mut() {
+                    tt.left_math = leave.then_some(caret);
+                }
+            })?;
+            return Ok(json!({"caret": [caret.0, caret.1], "inEquation": back}));
+        }
+    }
     let collapse_to = |left: bool| if left { t.ordered().0 } else { t.ordered().1 };
     let mut upstream = false;
     let new = match to.as_str() {
@@ -1136,6 +1229,7 @@ fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(tt) = sel.text.as_mut() {
             tt.caret = new;
             tt.line_end = if upstream { Some(new) } else { None };
+            tt.left_math = None;
             if !extend {
                 tt.anchor = new;
             }
@@ -1320,6 +1414,10 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
 /// edits this same span, so the dialog reads it too.
 pub fn format_range(st: &DocState, t: &TextSel) -> (Pos, Pos) {
     let body = body_of(st, t).cloned().unwrap_or_default();
+    // In an equation: all of it.
+    if let Some((_, s, e)) = super::equation::at(&body, t) {
+        return ((t.caret.0, s), (t.caret.0, e));
+    }
     let (mut a, mut b) = t.ordered();
     if a == b {
         let (wa, wb) = ed::word_at(&body, a);

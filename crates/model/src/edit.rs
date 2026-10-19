@@ -194,7 +194,7 @@ pub fn format(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(&mut RunProps)) {
         let i0 = split_at(p, from);
         let i1 = split_at(p, to);
         for r in p.runs.iter_mut().take(i1).skip(i0) {
-            f(&mut r.props);
+            format_run(r, f);
         }
         if to == p.char_len() {
             f(&mut p.end_props);
@@ -203,11 +203,19 @@ pub fn format(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(&mut RunProps)) {
     }
 }
 
+fn format_run(r: &mut Run, f: &dyn Fn(&mut RunProps)) {
+    f(&mut r.props);
+    // A reformatted equation is saved from its text, in its new formatting.
+    if let RunKind::Math { omml } = &mut r.kind {
+        omml.clear();
+    }
+}
+
 /// Apply `f` to every run in the body (and end marks).
 pub fn format_all(body: &mut TextBody, f: &dyn Fn(&mut RunProps)) {
     for p in &mut body.paragraphs {
         for r in &mut p.runs {
-            f(&mut r.props);
+            format_run(r, f);
         }
         f(&mut p.end_props);
         p.normalize();
@@ -378,6 +386,54 @@ fn smart_space(body: &mut TextBody, at: Pos) -> Pos {
         }
     }
     at
+}
+
+/// The equation at `pos`: (run index, first character, end character). A caret belongs to the run
+/// on its left, so a caret before an equation is outside it; `ahead` takes the run on its right
+/// (where a selection starts, what Delete removes).
+pub fn math_at(body: &TextBody, pos: Pos, ahead: bool) -> Option<(usize, usize, usize)> {
+    let p = body.paragraphs.get(pos.0)?;
+    let mut start = 0;
+    for (i, r) in p.runs.iter().enumerate() {
+        let end = start + r.char_len();
+        let inside = if ahead { start <= pos.1 && pos.1 < end } else { start < pos.1 && pos.1 <= end };
+        if inside {
+            return matches!(r.kind, RunKind::Math { .. }).then_some((i, start, end));
+        }
+        start = end;
+    }
+    None
+}
+
+/// Replace characters `a..b` of paragraph `para`, inside equation run `ri`, with `text` typed into
+/// the equation's linear form (its imported OMML goes: it is rebuilt from the text). An equation
+/// left empty is removed. Returns the caret after the new text.
+pub fn math_replace(body: &mut TextBody, para: usize, ri: usize, a: usize, b: usize, text: &str) -> Pos {
+    let Some(p) = body.paragraphs.get_mut(para) else { return (para, a) };
+    let start: usize = p.runs.iter().take(ri).map(Run::char_len).sum();
+    let Some(r) = p.runs.get_mut(ri) else { return (para, a) };
+    let chars: Vec<char> = r.text.chars().collect();
+    let (a, b) = (a.saturating_sub(start).min(chars.len()), b.saturating_sub(start).min(chars.len()));
+    let (a, b) = (a.min(b), a.max(b));
+    let typed: Vec<char> = text.chars().filter(|c| !c.is_control()).collect();
+    r.text = chars.get(..a).unwrap_or(&[]).iter().chain(&typed).chain(chars.get(b..).unwrap_or(&[])).collect();
+    if let RunKind::Math { omml } = &mut r.kind {
+        omml.clear();
+    }
+    if r.text.is_empty() {
+        p.runs.remove(ri);
+        p.normalize();
+    }
+    (para, start + a + typed.len())
+}
+
+/// The symbol a `\name` typed in an equation stands for (`\alpha` → α, `\leq` → ≤); `None` for
+/// structures (`\frac`) and unknown names.
+pub fn math_symbol(command: &str) -> Option<String> {
+    match equashion_math::from_linear(command).body.as_slice() {
+        [equashion_math::Node::Text(t)] if t != command && t.chars().count() == 1 => Some(t.clone()),
+        _ => None,
+    }
 }
 
 /// One character left/right across paragraph boundaries.
@@ -757,5 +813,63 @@ mod tests {
         let mut e = TextBody::default();
         replace_text(&mut e, "a\nb");
         assert_eq!(e.text(), "a\nb");
+    }
+
+    /// "a" + equation "x/2" + "b".
+    fn with_math() -> TextBody {
+        let mut b = body("ab");
+        let p = &mut b.paragraphs[0];
+        p.runs = vec![
+            Run::new("a"),
+            Run { text: "x/2".into(), props: RunProps::default(), kind: RunKind::Math { omml: "<m:oMath/>".into() } },
+            Run::new("b"),
+        ];
+        b
+    }
+
+    #[test]
+    fn a_caret_is_in_the_equation_on_its_left() {
+        let b = with_math();
+        assert_eq!(math_at(&b, (0, 1), false), None);
+        assert_eq!(math_at(&b, (0, 1), true), Some((1, 1, 4)));
+        assert_eq!(math_at(&b, (0, 4), false), Some((1, 1, 4)));
+        assert_eq!(math_at(&b, (0, 4), true), None);
+        assert_eq!(math_at(&b, (9, 0), false), None);
+        // Also before an equation that starts the paragraph.
+        let mut b = with_math();
+        b.paragraphs[0].runs.remove(0);
+        assert_eq!(math_at(&b, (0, 0), false), None);
+        assert_eq!(math_at(&b, (0, 0), true), Some((0, 0, 3)));
+    }
+
+    #[test]
+    fn typing_in_an_equation_edits_its_linear_text() {
+        let mut b = with_math();
+        assert_eq!(math_replace(&mut b, 0, 1, 4, 4, "+y\n"), (0, 6));
+        let r = &b.paragraphs[0].runs[1];
+        assert_eq!((r.text.as_str(), &r.kind), ("x/2+y", &RunKind::Math { omml: String::new() }));
+        assert_eq!(b.paragraphs[0].equation(1).map(|m| (equashion_math::to_linear(&m), m.para)), Some(("x/2+y".to_string(), false)));
+        // Emptied, the equation goes.
+        assert_eq!(math_replace(&mut b, 0, 1, 1, 6, ""), (0, 1));
+        assert_eq!(b.paragraphs[0].runs.len(), 1);
+        assert_eq!(b.text(), "ab");
+        // Hostile offsets.
+        math_replace(&mut b, 7, 7, 99, 0, "x");
+    }
+
+    #[test]
+    fn reformatting_an_equation_drops_its_imported_omml() {
+        let mut b = with_math();
+        format(&mut b, (0, 0), (0, 5), &|p| p.font = Some("Latin Modern Math".into()));
+        assert_eq!(b.paragraphs[0].runs[1].kind, RunKind::Math { omml: String::new() });
+        assert_eq!(b.paragraphs[0].runs[1].props.font.as_deref(), Some("Latin Modern Math"));
+    }
+
+    #[test]
+    fn backslash_names_become_symbols() {
+        assert_eq!(math_symbol("\\alpha").as_deref(), Some("α"));
+        assert_eq!(math_symbol("\\leq").as_deref(), Some("≤"));
+        assert_eq!(math_symbol("\\frac"), None);
+        assert_eq!(math_symbol("\\nosuch"), None);
     }
 }

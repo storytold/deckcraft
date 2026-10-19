@@ -131,6 +131,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-18 | Equations: OMML equations from PowerPoint are drawn in two dimensions (fractions, scripts, radicals, big operators, brackets, matrices). Insert ▸ Equation turns the selected text into an equation or types a new one in place, in its linear form (`a/b`, `x^2`, `\alpha`), shown as text while the caret is in it; Right Arrow at its end leaves it. Home ▸ Font sets an equation's font, kept in .deckcraft and .pptx files (#148, #296, #604) |
 | 2026-10-17 | Opening a file caps absurd effect sizes (glow, soft edges, shadows, reflections, on shapes, text and table text) at what Format Shape allows: a glow of 10^18 pt in a .pptx made rendering ask for 34 GB and abort |
 | 2026-10-17 | Opening a .deckcraft file whose shapes repeat an id gives the repeats fresh ids (groups, layouts and masters too), so the deck validates and edits by id find one shape |
 | 2026-10-17 | Edit Points: turning a shape into a freeform is one undo step, so Undo brings the original shape back (it used to stay a freeform) |

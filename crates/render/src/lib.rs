@@ -225,6 +225,9 @@ pub struct RenderOpts<'a> {
     /// Text being edited: replace its prompt with gray markers on empty list paragraphs.
     /// Ignored outside editor rendering.
     pub editing_text: Option<ShapeId>,
+    /// The equation being typed in `editing_text` (its table cell, paragraph and first
+    /// character): drawn as its linear text.
+    pub editing_math: Option<(Option<(usize, usize)>, usize, usize)>,
     /// Animated GIF pictures and how far into their play they are (seconds); others show frame 1.
     pub gif_times: &'a [(ShapeId, f64)],
     /// Worker threads (0 = this thread; required when effects use filters).
@@ -254,6 +257,7 @@ impl Default for RenderOpts<'_> {
             skip: &[],
             skip_text: None,
             editing_text: None,
+            editing_math: None,
             gif_times: &[],
             threads: 0,
             offset: (0.0, 0.0),
@@ -934,7 +938,9 @@ impl Renderer {
             }
             ShapeKind::Table(t) => {
                 // Rows grow with their text: what the cells cover, borders included.
-                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, f.opts.edit && f.opts.editing_text == Some(s.id));
+                let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
+                let math = f.opts.editing_math.filter(|_| editing).and_then(|(cell, p, c)| Some((cell?, p, c)));
+                let cells = table::draw(ctx, f.pres, rctx, t, m, x.w, x.h, &f.fields, editing, math);
                 self.track(m, cells.unwrap_or(Rect::new(0.0, 0.0, x.w, x.h)).inflate(2.0, 2.0));
             }
             ShapeKind::Chart(c) => {
@@ -1316,11 +1322,14 @@ impl Renderer {
             let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
             if !body.is_empty() || editing {
                 // Imported placeholders can have no paragraph until the first keystroke.
-                let mut empty;
+                let mut edited;
                 let body = if editing && body.paragraphs.is_empty() {
-                    empty = body.clone();
-                    empty.paragraphs.push(Default::default());
-                    &empty
+                    edited = body.clone();
+                    edited.paragraphs.push(Default::default());
+                    &edited
+                } else if let Some((None, p, c)) = f.opts.editing_math.filter(|_| editing) {
+                    edited = deckcraft_text::with_linear_math(body, (p, c));
+                    &edited
                 } else {
                     body
                 };

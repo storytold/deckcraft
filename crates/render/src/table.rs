@@ -328,6 +328,7 @@ pub fn draw(
     _h: f64,
     fields: &dyn deckcraft_text::Fields,
     editing: bool,
+    math: Option<((usize, usize), usize, usize)>,
 ) -> Option<kurbo::Rect> {
     let _ = pres;
     let rects = cell_rects(t, &row_heights(rctx, t, fields));
@@ -422,7 +423,10 @@ pub fn draw(
         if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
             continue;
         }
-        let body = cell_body(rctx, t, *r, *c, cell);
+        let mut body = cell_body(rctx, t, *r, *c, cell);
+        if let Some((_, p, ch)) = math.filter(|m| m.0 == (*r, *c)) {
+            body = deckcraft_text::with_linear_math(&body, (p, ch));
+        }
         let tmp = Shape { text: Some(body.clone()), ..Default::default() };
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));

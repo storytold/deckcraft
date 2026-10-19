@@ -262,8 +262,10 @@ of the effect gallery. Detail in [animation-parity.md](animation-parity.md). 8�
 - **Estimate:** 1–2 h (bundle openly licensed dictionaries); 2–4 h (AutoFormat as you type).
 
 ### Equations
-- **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
-- **Estimate:** 3–6 h to review, land and round-trip.
+- **Evidence:** OMML equations are drawn in two dimensions and round-trip; Insert ▸ Equation types
+  one in place in its linear form. There is no Equation tab (structure galleries, symbols,
+  Professional/Linear switch), and an equation is not edited in its built-up form.
+- **Estimate:** 4–8 h for the Equation tab and built-up editing.
 
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
@@ -354,6 +356,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Equations: drawn in two dimensions, typed in place in linear form, round-trip through PPTX; the remaining gap is the Equation tab and built-up editing |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |
 | 2026-10-16 | trivial | AutoFormat superscripts ordinals (1st, 22nd) as you type, with an AutoCorrect option to turn it off; automatic bulleted lists remain |
 | 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |

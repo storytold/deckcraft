@@ -59,6 +59,8 @@ vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8", version = "=0.1.0", default-features = false, features = ["write"] }
 i_overlay = "9"
+# Equations: the OMML tree and its linear (typed) form. No fonts or other assets.
+equashion-math = { git = "https://github.com/shuff57/equaSHion", rev = "3d3b840c65d7b6e0e7933c6cd95e171384fdfb54" }
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
 

@@ -1080,6 +1080,7 @@ version = "0.8.0"
 dependencies = [
  "deckcraft-color",
  "deckcraft-geom",
+ "equashion-math",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -1120,9 +1121,10 @@ dependencies = [
  "deckcraft-engine",
  "deckcraft-geom",
  "deckcraft-model",
+ "equashion-math",
  "image",
  "log",
- "quick-xml",
+ "quick-xml 0.41.0",
  "serde_json",
  "thiserror 2.0.21",
  "zip",
@@ -1156,6 +1158,7 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
+ "equashion-math",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-segmentation",
@@ -1520,6 +1523,16 @@ name = "epaint_default_fonts"
 version = "0.36.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773fa9c96dd0dbef887e39d0ed6177f141cce4d68e6041df77570aa3702dfa13"
+
+[[package]]
+name = "equashion-math"
+version = "0.1.0"
+source = "git+https://github.com/shuff57/equaSHion?rev=3d3b840c65d7b6e0e7933c6cd95e171384fdfb54#3d3b840c65d7b6e0e7933c6cd95e171384fdfb54"
+dependencies = [
+ "quick-xml 0.38.4",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "equivalent"
@@ -3464,6 +3477,15 @@ checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
 
 [[package]]
 name = "quick-xml"
+version = "0.38.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
+name = "quick-xml"
 version = "0.41.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e660451e55124f798a69a5af3f49ccfbefbd41910eefd25caf2393e1f3473ec1"
@@ -4935,7 +4957,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "338e30461b3a2b67d70eb30a6d89f8e0c93a833e07d2ae89085cd070c4a00ac0"
 dependencies = [
  "proc-macro2",
- "quick-xml",
+ "quick-xml 0.41.0",
  "quote",
 ]
 
