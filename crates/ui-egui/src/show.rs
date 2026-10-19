@@ -5,7 +5,7 @@
 use deckcraft_anim::{Click, HitShape, Layer, LinkJump, ShowAction, ShowState, Source, StepStamp, Timeline, TriggerPlay};
 use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Presentation, ShapeId};
-use deckcraft_render::{ParaState, PlacedLink, PlacedShape, RenderOpts, ShapeState};
+use deckcraft_render::{PlacedLink, PlacedShape, RenderOpts, ShapeState};
 use egui::{Align2, Color32, CornerRadius, Mesh, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, pos2, vec2};
 use serde_json::json;
 
@@ -554,27 +554,6 @@ impl Show {
             cues.iter().filter_map(|e| doc.slides.get(slide).and_then(|s| s.animations.get(e.anim)).map(|a| (e.shape, a.effect.clone()))).collect();
         self.media_cues.extend(effects);
         self.media_clock = if t.is_finite() { Some((k, t)) } else { None };
-    }
-}
-
-fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPlay], stamps: &[StepStamp]) -> ShapeState {
-    let a = tl.state_ordered(id, None, step, t, plays, stamps);
-    ShapeState {
-        visible: a.visible,
-        opacity: a.opacity,
-        offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y),
-        scale: (a.scale_x, a.scale_y),
-        rotate: a.rotate,
-        clip: a.clip,
-        tint: a.tint,
-        paras: tl
-            .paragraph_targets(id)
-            .into_iter()
-            .map(|p| {
-                let a = tl.state(id, Some(p), step, t);
-                (p, ParaState { visible: a.visible, opacity: a.opacity, offset: deckcraft_geom::Vec2::new(a.offset_x, a.offset_y) })
-            })
-            .collect(),
     }
 }
 
