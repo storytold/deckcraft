@@ -245,6 +245,18 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let (axis_min, axis_max) = (axis_bound("axisMin")?, axis_bound("axisMax")?);
+    // Gap width in percent (0 to 500, as Format Data Series takes it) for bar and column charts.
+    let gap_width = match p.get("gapWidth") {
+        None => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|g| g.is_finite() && (0.0..=500.0).contains(g))
+                .ok_or_else(|| bad("chart.options", format!("`gapWidth` is a percentage from 0 to 500; not {v}")))?
+                // Whole percentages, as PowerPoint's Gap Width box takes them and the file stores them.
+                .round()
+                / 100.0,
+        ),
+    };
     with_chart(s, p, "chart.options", |c| {
         // Pie and doughnut charts have no value axis; the Office 2016 charts don't save its bounds yet.
         if (axis_min.is_some() || axis_max.is_some()) && (c.kind.is_chartex() || matches!(c.kind, ChartType::Pie | ChartType::Doughnut)) {
@@ -267,6 +279,13 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             && lo >= hi
         {
             return Err(bad("chart.options", "axisMin must be below axisMax"));
+        }
+        if let Some(g) = gap_width {
+            use deckcraft_model::chart::ChartType as T;
+            if !matches!(c.kind, T::Column | T::StackedColumn | T::PercentColumn | T::Bar | T::StackedBar | T::PercentBar) {
+                return Err(bad("chart.options", "`gapWidth` is for bar and column charts"));
+            }
+            c.gap_width = g;
         }
         if let Some(t) = &text_color {
             c.text_color = t.clone();
