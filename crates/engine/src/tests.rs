@@ -5970,6 +5970,74 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A scratch folder for the frame-sequence export tests, empty.
+fn frames_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("deckcraft-frames-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// Two slides: slide 0 holds a rectangle that fades in on click (500 ms), slide 1 is blank and
+/// comes in with a 700 ms fade. Returns the session and the rectangle's id.
+fn frames_deck() -> (Session, u64) {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 200]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("shape.fill", &json!({"ids": [id], "color": "#2040E0"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [id], "effect": "fade", "class": "entrance", "start": "onClick", "duration": 500})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "fade", "duration": 700, "index": 1})).unwrap();
+    (s, id)
+}
+
+fn png_files(dir: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    v.sort();
+    v
+}
+
+/// Hidden slides are skipped unless `includeHidden`, and a folder that isn't there yet is created.
+/// `slide` narrows a frame export to that slide, as it narrows a PNG export.
+#[test]
+fn frames_export_of_one_slide_takes_the_slide_parameter() {
+    let (mut s, _) = frames_deck();
+    let dir = frames_dir("one-slide");
+    let r = s
+        .execute(
+            "file.export",
+            &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerSlide": 1, "width": 320, "slide": 1}),
+        )
+        .unwrap();
+    assert_eq!(r["slides"].as_array().map(Vec::len), Some(1), "{r}");
+    assert_eq!(r["slides"][0]["index"], 1, "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+    // A `slide` that is not an index is refused before anything is written.
+    for slide in [json!(-1), json!(1.5), json!("1")] {
+        let bad = frames_dir("bad-slide");
+        let r = s.execute("file.export", &json!({"format": "frames", "path": bad.to_string_lossy(), "fps": 10, "width": 320, "slide": slide}));
+        assert!(r.is_err(), "slide {slide} gave {r:?}");
+        assert!(!bad.exists(), "slide {slide} wrote frames");
+    }
+}
+
+#[test]
+fn frames_export_skips_hidden_slides_and_creates_the_folder() {
+    let (mut s, _) = frames_deck();
+    s.execute("slide.hide", &json!({"index": 0, "hidden": true})).unwrap();
+    let dir = frames_dir("hidden").join("deeper").join("still");
+    assert!(!dir.exists());
+    let p = json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerSlide": 2, "width": 320});
+    let r = s.execute("file.export", &p).unwrap();
+    assert_eq!(r["frames"], 20, "{r}");
+    assert_eq!(r["slides"], json!([{"index": 1, "from": 1, "to": 20}]), "{r}");
+    assert!(dir.is_dir());
+    assert_eq!(png_files(&dir).len(), 20);
+    let mut p2 = p.clone();
+    p2["includeHidden"] = json!(true);
+    let r = s.execute("file.export", &p2).unwrap();
+    assert_eq!(r["frames"], 62, "{r}");
+    let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
