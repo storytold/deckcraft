@@ -29,7 +29,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Left",
             ["Table Layout", "Rows & Columns"],
             None,
-            "{col?, keepWidth?: bool (default true: the other columns shrink in proportion so the table keeps its width; false: the table grows by the new column), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside",
+            "{col?, keepWidth?: bool (default true: the other columns shrink in proportion so the table keeps its width; false: the table grows by the new column), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
             has_selection,
             |s, p| rows_cols(s, p, "colLeft", "table.insertColumnLeft")
         ),
@@ -38,7 +38,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Insert Right",
             ["Table Layout", "Rows & Columns"],
             None,
-            "{col?, keepWidth?: bool (default true: the other columns shrink in proportion so the table keeps its width; false: the table grows by the new column), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside",
+            "{col?, keepWidth?: bool (default true: the other columns shrink in proportion so the table keeps its width; false: the table grows by the new column), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
             has_selection,
             |s, p| rows_cols(s, p, "colRight", "table.insertColumnRight")
         ),
@@ -361,13 +361,19 @@ fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool)
     let neighbour = neighbour.min(t.cols.len().saturating_sub(1));
     let w = t.cols.get(neighbour).copied();
     let templates: Vec<Option<Cell>> = t.rows.iter().map(|r| r.cells.get(neighbour).cloned()).collect();
-    t.insert_col(at);
+    t.insert_col_beside(at, Some(neighbour));
     let at = at.min(t.cols.len().saturating_sub(1));
     if let (Some(w), Some(slot)) = (w, t.cols.get_mut(at)) {
         *slot = w;
     }
     for (row, tpl) in t.rows.iter_mut().zip(templates) {
-        if let (Some(cell), Some(tpl)) = (row.cells.get_mut(at), tpl) {
+        let Some(tpl) = tpl else { continue };
+        // Inserted left of a merge's anchor, the merge now starts at the new cell, which took the
+        // anchor's cell whole, text and formatting (Table::insert_col_beside); the old anchor,
+        // covered now, is the empty cell that gets the neighbour's formatting. Read off the table
+        // as it is now: a span the file lets run past the last column is no merge to the model.
+        let anchor_moved = row.cells.get(at).is_some_and(|c| c.grid_span > 1 && !c.is_covered());
+        if let Some(cell) = row.cells.get_mut(if anchor_moved { at + 1 } else { at }) {
             copy_cell_format(cell, &tpl);
         }
     }
