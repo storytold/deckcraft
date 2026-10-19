@@ -6038,6 +6038,30 @@ fn frames_export_skips_hidden_slides_and_creates_the_folder() {
     let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
 }
 
+/// HH4: the outline export (PowerPoint's outline view) holds titles and body text only: footer,
+/// date and slide-number placeholders are not body lines.
+#[test]
+fn outline_export_skips_footer_date_and_slide_number() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "First point\nSecond point"})).unwrap();
+    s.execute(
+        "design.headerFooter",
+        &json!({"footer": true, "footerText": "Company Confidential", "slideNumber": true, "date": true, "dateText": "1 May 2026"}),
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-outline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.md");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "outline"})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(text.contains("Agenda") && text.contains("First point") && text.contains("Second point"), "{text:?}");
+    assert!(!text.contains("Company Confidential"), "footer text is not a body line: {text:?}");
+    assert!(!text.contains("‹#›"), "the slide-number field is not a body line: {text:?}");
+    assert!(!text.contains("1 May 2026"), "the date is not a body line: {text:?}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
