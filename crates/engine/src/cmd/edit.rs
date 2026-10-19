@@ -206,6 +206,12 @@ pub(crate) fn reid(cmd: &str, doc: &mut deckcraft_model::Presentation, shapes: &
     Ok(map)
 }
 
+/// Give a copied slide's kept animation sequences (media bookmark triggers) their new shape ids;
+/// one naming a shape the copy does not have is dropped.
+pub(crate) fn remap_kept_sequences(kept: &mut Vec<deckcraft_model::KeptSequence>, map: &HashMap<ShapeId, ShapeId>) {
+    kept.retain_mut(|k| k.remap_shapes(&|id| map.get(&id).copied()));
+}
+
 /// Point copied animations at the copies: targets and triggers in `map` follow it; an animation
 /// whose target wasn't copied is dropped, and a trigger that wasn't copied is cleared.
 pub(crate) fn remap_animations(anims: &mut Vec<deckcraft_model::Animation>, map: &HashMap<ShapeId, ShapeId>) {
@@ -296,6 +302,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                 sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("edit.paste", NO_ID_SPACE))?);
                 let map = reid("edit.paste", doc, &mut sl.shapes)?;
                 remap_animations(&mut sl.animations, &map);
+                remap_kept_sequences(&mut sl.kept_sequences, &map);
                 crate::media_refs::visit_mut::slide(&mut sl, &mut remap_media(&media));
                 if doc.layout(sl.layout).is_none() {
                     sl.layout = doc.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();

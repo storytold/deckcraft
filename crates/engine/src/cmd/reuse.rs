@@ -208,6 +208,7 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
                 a.shape = map.get(&a.shape).copied().unwrap_or(a.shape);
                 a.trigger = a.trigger.map(|t| map.get(&t).copied().unwrap_or(t));
             }
+            super::edit::remap_kept_sequences(&mut sl.kept_sequences, &map);
             sl.layout = match layout_map.get(&sl.layout) {
                 Some(l) => *l,
                 None => {
