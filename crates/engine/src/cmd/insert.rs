@@ -118,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, axisMin?: n|null, axisMax?: n|null (the value axis' bounds; null: automatic), palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, axisMin?: n|null, axisMax?: n|null (the value axis' bounds; null: automatic), palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), gapWidth?: 0-500 (percent of a bar's width between the bars of neighbouring categories), id?}",
             has_selection,
             chart_options
         ),
@@ -1868,6 +1868,16 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let (axis_min, axis_max) = (axis_bound("axisMin")?, axis_bound("axisMax")?);
+    // Gap width in percent (0 to 500, as Format Data Series takes it) for bar and column charts.
+    let gap_width = match p.get("gapWidth") {
+        None => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|g| g.is_finite() && (0.0..=500.0).contains(g))
+                .ok_or_else(|| bad("chart.options", format!("`gapWidth` is a percentage from 0 to 500; not {v}")))?
+                / 100.0,
+        ),
+    };
     with_chart(s, p, "chart.options", |c| {
         if let Some(v) = axis_min {
             c.y_min = v;
@@ -1879,6 +1889,13 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             && lo >= hi
         {
             return Err(bad("chart.options", "axisMin must be below axisMax"));
+        }
+        if let Some(g) = gap_width {
+            use deckcraft_model::chart::ChartType as T;
+            if !matches!(c.kind, T::Column | T::StackedColumn | T::PercentColumn | T::Bar | T::StackedBar | T::PercentBar) {
+                return Err(bad("chart.options", "`gapWidth` is for bar and column charts"));
+            }
+            c.gap_width = g;
         }
         if let Some(t) = &text_color {
             c.text_color = t.clone();
