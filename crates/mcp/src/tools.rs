@@ -142,7 +142,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "secondsPerSlide": {"type": "number", "minimum": 0, "maximum": 600, "description": "GIF: seconds each slide shows, 0.1-600 (default 5); frames: hold after a slide's last build step and the whole time of a slide without animations, 0-60 (default 3)"},
                     "loop": boolean("GIF: loop forever (true, default) or play once (false)"),
                     "fps": {"type": "integer", "minimum": 1, "maximum": 60, "description": "frames: frames per second (default 30)"},
-                    "secondsPerStep": {"type": "number", "minimum": 0, "maximum": 30, "description": "frames: hold after each click step settles (default 1); automatic steps run on"},
+                    "secondsPerStep": {"type": "number", "minimum": 0, "maximum": 30, "description": "frames: hold before the first click step and after each click step settles (default 1); automatic steps run on"},
                     "transitions": boolean("frames: play each slide's transition from the previous slide (default true; false cuts)")
                 }),
                 &["path"],

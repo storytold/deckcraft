@@ -244,12 +244,18 @@ pub fn plan(doc: &Presentation, opts: &FramesOptions) -> Result<Plan> {
         if steps == 0 {
             frames.extend(std::iter::repeat_n(Frame::Build { slide, step: 0, t: 0.0 }, hold_slide));
         }
+        // What the slide shows before its first click is held like any settled state; an automatic
+        // first step plays at once, so there is nothing to hold.
+        if steps > 0 && !tl.step_is_auto(0) {
+            frames.extend(std::iter::repeat_n(Frame::Build { slide, step: 0, t: 0.0 }, hold_step));
+        }
         for step in 0..steps {
             let n = playing(tl.step_duration(step));
             frames.extend((0..n).map(|j| Frame::Build { slide, step, t: j as f64 / fps }));
             let hold = if step + 1 == steps {
                 hold_slide
-            } else if tl.step_is_auto(step) {
+            } else if tl.step_is_auto(step + 1) {
+                // The pause before a step depends on that step: an automatic one runs on.
                 0
             } else {
                 hold_step
