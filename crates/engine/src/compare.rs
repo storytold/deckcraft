@@ -204,8 +204,14 @@ fn shape_details(cp: &Presentation, a: &Shape, rp: &Presentation, b: &Shape, out
     match (&a.xfrm, &b.xfrm) {
         (Some(x), Some(y)) if (x.x, x.y) != (y.x, y.y) && (x.w, x.h) == (y.w, y.h) => what.push("moved"),
         (Some(x), Some(y)) if (x.w, x.h) != (y.w, y.h) => what.push("resized"),
-        (x, y) if x.as_ref().map(|x| x.rot) != y.as_ref().map(|y| y.rot) => what.push("rotated"),
+        // No stored box means the layout's: unrotated and unflipped, the same as a stored 0.
+        (x, y) if x.as_ref().map_or(0.0, |x| x.rot) != y.as_ref().map_or(0.0, |y| y.rot) => what.push("rotated"),
         _ => {}
+    }
+    // A flip is reported alongside a move, resize or rotation, not hidden behind it.
+    let flips = |x: &Option<deckcraft_model::Xfrm>| x.as_ref().map_or((false, false), |x| (x.flip_h, x.flip_v));
+    if flips(&a.xfrm) != flips(&b.xfrm) {
+        what.push("flipped");
     }
     if a.fill != b.fill || a.line != b.line || a.style != b.style || a.effects != b.effects {
         what.push("formatting");
@@ -478,6 +484,23 @@ mod tests {
         let at = ins["slide"].as_u64().unwrap() as usize;
         assert_eq!(at, n, "after the open slide matching the revised one before it");
         assert_eq!(s.doc().unwrap().doc.slides.len(), n, "comparing alone changes nothing");
+    }
+
+    /// NN6: a slide reset drops the placeholders' stored boxes; comparing it with the copy from
+    /// before the reset must not call that a rotation (no stored box is rotation 0).
+    #[test]
+    fn a_reset_slide_is_not_rotated_against_its_earlier_copy() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "b"})).unwrap();
+        let ids: Vec<u32> = s.doc().unwrap().doc.slides[1].shapes.iter().map(|x| x.id.0).collect();
+        for id in &ids {
+            s.execute("shape.move", &json!({"ids": [id], "dx": 10, "dy": 0})).unwrap();
+            s.execute("shape.move", &json!({"ids": [id], "dx": -10, "dy": 0})).unwrap();
+        }
+        let before = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        s.execute("slide.reset", &json!({"index": 1})).unwrap();
+        let v = s.execute("review.compare", &json!({"name": "before.deckcraft", "data": before})).unwrap();
+        assert!(!v.to_string().contains("rotated"), "{v}");
     }
 
     #[test]
