@@ -54,3 +54,8 @@ real_name = "Nikita Rakitin"
 
 [people.RCShoemaker]
 real_name = "Ryan C. Shoemaker"
+
+[people.marcoarnulfo]
+real_name = "Marco Arnulfo"
+display_name = "Marco Arnulfo"
+sync_github_name = false

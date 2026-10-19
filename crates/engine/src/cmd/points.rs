@@ -16,7 +16,7 @@ use crate::{Result, Session};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
-            noundo "shape.editPoints",
+            "shape.editPoints",
             "Edit Points",
             ["Shape Format", "Insert Shapes", "Edit Shape"],
             None,

@@ -54,7 +54,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Application shell | Multiple open presentations | P1 | P |
 | Application shell | Preferences (autosave, units, defaults) | P2 | P |
 | Files | New blank presentation | P0 | D |
-| Files | Native file format (open/save) | P0 | D |
+| Files | Native file format (open/save; chart package parts retained, `crates/engine/tests/chart_native.rs`) | P0 | D |
 | Files | Open PowerPoint .pptx | P0 | D |
 | Files | Save as PowerPoint .pptx | P0 | D |
 | Files | Open/save .potx/.ppsx/.pptm variants (.potx/.ppsx open; saved with the .pptx content type; no .pptm) | P2 | P |
@@ -206,7 +206,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Animations | Effect options, start (on click/with/after), duration, delay | P0 | D |
 | Animations | Animation pane (reorder, timing) | P0 | P |
 | Animations | By-paragraph text builds | P1 | D |
-| Animations | Triggers | P2 | D |
+| Animations | Triggers (separate click steps and paragraph builds round-trip; `crates/pptx/tests/trigger_steps.rs`) | P2 | D |
 | Animations | Animation Painter | P2 | D |
 | Animations | Preview in editor | P1 | D |
 | Slide show | Full-screen show from start / current | P0 | D |

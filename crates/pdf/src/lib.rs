@@ -398,6 +398,31 @@ fn grey(v: u8, opacity: f32) -> Fill {
     }
 }
 
+/// Premultiplied RGBA (the renderer's pixels) to the straight RGBA the writer stores.
+fn straight(rgba: &mut [u8]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = px[3] as u32;
+        if a != 0 && a != 255 {
+            for c in &mut px[..3] {
+                *c = (((*c as u32 * 255 + a / 2) / a).min(255)) as u8;
+            }
+        }
+    }
+}
+
+/// A backdrop raster as one PDF image, composited onto white (slides are normally opaque). Equal
+/// backdrops become equal images, which the writer stores once.
+fn backdrop(mut img: deckcraft_render::Image) -> Image {
+    for px in img.pixels.as_chunks_mut::<4>().0 {
+        let a = px[3] as u32;
+        for c in &mut px[..3] {
+            *c = (*c as u32 + (255 - a)).min(255) as u8;
+        }
+        px[3] = 255;
+    }
+    Image::from_rgba8(img.pixels, img.width, img.height)
+}
+
 impl Exporter<'_> {
     fn font(&mut self, face: &deckcraft_fonts::FontFace) -> Result<Font> {
         if let Some(font) = self.fonts.get(&face.id()) {
@@ -415,25 +440,26 @@ impl Exporter<'_> {
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
         let scale = (b.width() / 72.0 * self.opts.dpi.clamp(36.0, 600.0)) / sw;
-        let img = deckcraft_render::render_slide(pres, i, &RenderOpts { scale, threads: 4, ..Default::default() });
-        if img.width > 0 && img.height > 0 {
-            let (w, h) = (img.width, img.height);
+        let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
+        // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
+        // on every slide that shares its layout, so the writer stores it once, and the slide's own
+        // shapes draw over it (#845).
+        let back = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Backdrop, &ropts);
+        let front = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Content, &ropts);
+        let (w, h) = (back.width, back.height);
+        if w > 0
+            && h > 0
+            && let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32)
+        {
+            s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
+            s.draw_image(backdrop(back), size);
             // Taken, not copied: a print-resolution slide is ~16 MB.
-            let mut rgba = img.pixels;
-            for px in rgba.as_chunks_mut::<4>().0 {
-                // Composite onto white (slides are normally opaque).
-                let a = px[3] as u32;
-                for c in &mut px[..3] {
-                    *c = (*c as u32 + (255 - a)).min(255) as u8;
-                }
-                px[3] = 255;
+            let mut rgba = front.pixels;
+            if rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0) {
+                straight(&mut rgba);
+                s.draw_image(Image::from_rgba8(rgba, w, h), size);
             }
-            let image = Image::from_rgba8(rgba, w, h);
-            if let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32) {
-                s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
-                s.draw_image(image, size);
-                s.pop();
-            }
+            s.pop();
         }
         if self.opts.frame_slides && self.opts.layout != PageLayout::Slides {
             let p = kurbo::Shape::to_path(&b, 0.1);

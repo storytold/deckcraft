@@ -33,7 +33,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -43,7 +43,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             info
         ),
-        cmd!(query "file.render", "Render Slide", [], None, "{slide?: index, scale?, edit?: bool} → {png: base64, width, height}", has_doc, render),
+        cmd!(query "file.render", "Render Slide", [], None, "{slide?: index, scale?, edit?: bool, transparentBackground?: bool} → {png: base64, width, height}", has_doc, render),
         cmd!(
             query "slide.colorAt",
             "Color At",
@@ -128,19 +128,35 @@ pub fn open_presentation(name: &str, bytes: &[u8]) -> Result<Presentation> {
     open_checked(name, bytes).map(|(p, _)| p)
 }
 
-/// [`open_presentation`], plus the embedded media a `.deckcraft` file had lost or damaged.
-pub fn open_checked(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
-    if deckcraft_format::sniff(bytes) {
-        return deckcraft_format::load_checked(bytes).map_err(|e| EngineError::Other(e.to_string()));
-    }
-    open_other(name, bytes).map(|p| (p, vec![]))
+/// What a file lost on opening.
+#[derive(Debug, Default, Clone)]
+pub struct Damage {
+    /// Pictures and media a `.deckcraft` file had lost or damaged.
+    pub media: Vec<String>,
+    /// Slides a `.pptx` lists but that couldn't be read, so they are not in the presentation.
+    pub slides: Vec<String>,
 }
 
-fn open_other(name: &str, bytes: &[u8]) -> Result<Presentation> {
+impl Damage {
+    pub fn is_empty(&self) -> bool {
+        self.media.is_empty() && self.slides.is_empty()
+    }
+}
+
+/// [`open_presentation`], plus what the file had lost or damaged.
+pub fn open_checked(name: &str, bytes: &[u8]) -> Result<(Presentation, Damage)> {
+    if deckcraft_format::sniff(bytes) {
+        let (p, media) = deckcraft_format::load_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+        return Ok((p, Damage { media, slides: vec![] }));
+    }
+    open_other(name, bytes).map(|(p, slides)| (p, Damage { media: vec![], slides }))
+}
+
+fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     if deckcraft_pptx::sniff(bytes) {
-        let mut p = deckcraft_pptx::import(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
+        let (mut p, lost_slides) = deckcraft_pptx::import_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
         deckcraft_format::repair(&mut p);
-        return Ok(p);
+        return Ok((p, lost_slides));
     }
     if deckcraft_pptx::is_encrypted(bytes) {
         return Err(EngineError::Other(format!("{name} is password-protected. DeckCraft can't open password-protected presentations yet.")));
@@ -157,7 +173,7 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<Presentation> {
         if p.slides.is_empty() {
             p = defaults::new_presentation(None);
         }
-        return Ok(p);
+        return Ok((p, vec![]));
     }
     Err(EngineError::Other(format!("{name}: not a presentation DeckCraft can read")))
 }
@@ -180,8 +196,8 @@ pub struct LoadedFile {
     pub doc: Presentation,
     /// A native or PPTX file (saving goes back to it); an outline import has no file to save to.
     pub native: bool,
-    /// Pictures and media a `.deckcraft` file had lost or damaged.
-    pub damaged: Vec<String>,
+    /// What the file had lost or damaged.
+    pub damaged: Damage,
 }
 
 /// Read and parse the presentation at `path`.
@@ -202,7 +218,10 @@ fn adopt_loaded(s: &mut Session, f: LoadedFile) -> Result<Value> {
     let i = add_opened(s, &path, keep_path.then(|| path.clone()), doc);
     report_damage(s, &damaged)?;
     let st = s.doc()?;
-    Ok(json!({"document": i, "slides": st.doc.slides.len(), "missingFonts": st.missing_fonts, "damagedMedia": damaged}))
+    Ok(json!({
+        "document": i, "slides": st.doc.slides.len(), "missingFonts": st.missing_fonts,
+        "damagedMedia": damaged.media, "lostSlides": damaged.slides,
+    }))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -236,23 +255,35 @@ fn open_bytes(s: &mut Session, p: &Value) -> Result<Value> {
     let (doc, damaged) = open_checked(name, &data)?;
     let i = add_opened(s, name, None, doc);
     report_damage(s, &damaged)?;
-    Ok(json!({"document": i, "missingFonts": s.doc()?.missing_fonts, "damagedMedia": damaged}))
+    Ok(json!({"document": i, "missingFonts": s.doc()?.missing_fonts, "damagedMedia": damaged.media, "lostSlides": damaged.slides}))
 }
 
-/// Tell the user which pictures and media a damaged file lost, and mark the copy repaired.
-fn report_damage(s: &mut Session, damaged: &[String]) -> Result<()> {
+/// Tell the user which pictures, media and slides a damaged file lost, and mark the copy repaired.
+fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
     if damaged.is_empty() {
         return Ok(());
     }
     let st = s.doc_mut()?;
     st.title = format!("{} (Repaired)", st.title);
-    let n = damaged.len();
-    let text = format!(
-        "{n} picture{} or media file{} in this presentation couldn't be read and {} empty. It was opened as a repaired copy; save it under a new name to keep the original file.",
-        if n == 1 { "" } else { "s" },
-        if n == 1 { "" } else { "s" },
-        if n == 1 { "is" } else { "are" },
-    );
+    let mut text = String::new();
+    let n = damaged.media.len();
+    if n > 0 {
+        text = format!(
+            "{n} picture{} or media file{} in this presentation couldn't be read and {} empty. ",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "is" } else { "are" },
+        );
+    }
+    let n = damaged.slides.len();
+    if n > 0 {
+        text.push_str(&format!(
+            "{n} slide{} in this file couldn't be read and {} left out. ",
+            if n == 1 { "" } else { "s" },
+            if n == 1 { "was" } else { "were" },
+        ));
+    }
+    text.push_str("It was opened as a repaired copy; save it under a new name to keep the original file.");
     s.ui_requests.push(crate::UiRequest::Message { text });
     Ok(())
 }
@@ -431,8 +462,14 @@ pub fn image_scale(doc: &Presentation, scale: f64) -> f64 {
 
 /// Render slide `index` (current when absent) to PNG bytes.
 pub fn render_png(doc: &Presentation, index: usize, scale: f64, edit: bool) -> (Vec<u8>, u32, u32) {
+    render_png_with(doc, index, scale, edit, false)
+}
+
+/// [`render_png`]; `transparent` leaves the slide background out (#784).
+pub fn render_png_with(doc: &Presentation, index: usize, scale: f64, edit: bool, transparent: bool) -> (Vec<u8>, u32, u32) {
     let scale = image_scale(doc, scale);
-    let img = deckcraft_render::render_slide(doc, index, &deckcraft_render::RenderOpts { scale, edit, ..Default::default() });
+    let opts = deckcraft_render::RenderOpts { scale, edit, transparent_background: transparent, ..Default::default() };
+    let img = deckcraft_render::render_slide(doc, index, &opts);
     (img.to_png_at(deckcraft_render::dpi_for_scale(scale)), img.width, img.height)
 }
 
@@ -451,7 +488,7 @@ fn render(s: &mut Session, p: &Value) -> Result<Value> {
     if i >= st.doc.slides.len() {
         return Err(bad("file.render", format!("no slide {i}")));
     }
-    let (png, w, h) = render_png(&st.doc, i, f64_or(p, "scale", 1.0), bool_or(p, "edit", false));
+    let (png, w, h) = render_png_with(&st.doc, i, f64_or(p, "scale", 1.0), bool_or(p, "edit", false), bool_or(p, "transparentBackground", false));
     Ok(json!({"png": base64_encode(&png), "width": w, "height": h}))
 }
 
@@ -483,6 +520,10 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     let format = str_param(p, "format").unwrap_or(format_for_path(&path)).to_string();
     let st = s.doc()?;
     let scale = finite_scale(f64_or(p, "scale", 2.0));
+    let transparent = bool_or(p, "transparentBackground", false);
+    if transparent && format != "png" {
+        return Err(bad("file.export", format!("a transparent background is for PNG export, not {format}")));
+    }
     match format.as_str() {
         "png" | "jpeg" | "jpg" => {
             let slides: Vec<usize> = match usize_param(p, "slide") {
@@ -497,7 +538,11 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
             let scale = image_scale(&st.doc, scale);
             let mut written = vec![];
             for (k, i) in slides.iter().enumerate() {
-                let img = deckcraft_render::render_slide(&st.doc, *i, &deckcraft_render::RenderOpts { scale, ..Default::default() });
+                let img = deckcraft_render::render_slide(
+                    &st.doc,
+                    *i,
+                    &deckcraft_render::RenderOpts { scale, transparent_background: transparent, ..Default::default() },
+                );
                 let bytes = picture_bytes(&img, &format, scale);
                 let out = if slides.len() == 1 {
                     path.clone()

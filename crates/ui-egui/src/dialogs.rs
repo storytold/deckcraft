@@ -1593,6 +1593,18 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     d.fields.insert("pdfHidden".into(), hidden.to_string());
                 }
             }
+            let png = matches!(fmt.as_str(), "png" | "pngAll");
+            if png {
+                ui.add_space(4.0);
+                let mut clear = d.get("pngTransparent", "false") == "true";
+                if ui
+                    .checkbox(&mut clear, "Transparent background")
+                    .on_hover_text("Leave the slide background out: only what is on the slide is drawn")
+                    .changed()
+                {
+                    d.fields.insert("pngTransparent".into(), clear.to_string());
+                }
+            }
             let gif_params = if fmt == "gif" { gif_options(app, ui, d) } else { Ok(Value::Null) };
             if let Err(e) = &gif_params {
                 ui.label(egui::RichText::new(e).color(Tokens::get(ui.ctx()).text_dim));
@@ -1618,6 +1630,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 let extra = match fmt.as_str() {
                     "pdf" => pdf_params,
                     "gif" => gif_params,
+                    _ if png && d.get("pngTransparent", "false") == "true" => json!({"transparentBackground": true}),
                     _ => json!({}),
                 };
                 app.export_as(&fmt, extra);
@@ -2095,6 +2108,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.checkbox(&mut pr.ac_days, "Capitalize names of days");
             ui.checkbox(&mut pr.ac_caps_lock, "Correct accidental use of cAPS LOCK key");
             ui.checkbox(&mut pr.ac_fractions, "Replace fractions (1/2) with fraction characters (½)");
+            ui.checkbox(&mut pr.ac_ordinals, "Ordinals (1st) with superscript");
             ui.checkbox(&mut pr.autocorrect, "Replace text as you type");
             ui.add_space(4.0);
             let mut from = d.get("from", "");
@@ -3429,6 +3443,47 @@ mod tests {
         assert!(bytes.starts_with(b"GIF89a"));
         assert_eq!(u16::from_le_bytes([bytes[6], bytes[7]]), 960, "medium by default");
         assert!(!bytes.windows(11).any(|w| w == b"NETSCAPE2.0"), "Loop forever unticked: plays once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The Export… dialog offers "Transparent background" for PNG only, and the picture it
+    /// writes then leaves the slide background out (#784).
+    #[test]
+    fn export_dialog_writes_a_png_with_a_transparent_background() {
+        use egui::vec2;
+        use egui_kittest::kittest::Queryable as _;
+        use serde_json::json;
+
+        use crate::SlideApp;
+        let dir = std::env::temp_dir().join(format!("deckcraft-ui-png-clear-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("slide.png");
+        let picked = path.to_string_lossy().to_string();
+        let services = crate::Services { pick_save: Some(Box::new(move |_: &str| Some(picked.clone()))), ..Default::default() };
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(deckcraft_engine::Session::with_new(), services),
+        );
+        harness.run_steps(2);
+        harness.state_mut().run("app.exportDialog", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Transparent background").is_none(), "PDF has no transparent background");
+        harness.get_by_label("JPEG image (current slide)").click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Transparent background").is_none(), "nor has JPEG");
+        harness.get_by_label("PNG images (current slide)").click_accesskit();
+        harness.run_steps(2);
+        harness.get_by_label("Transparent background").click_accesskit();
+        harness.run_steps(2);
+        assert_eq!(harness.state().dialog.as_ref().and_then(|d| d.fields.get("pngTransparent")).map(String::as_str), Some("true"));
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "the dialog closes after exporting");
+        let img = deckcraft_render::decode_image(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(img.get_pixel(2, 2).0[3], 0, "the background is left out");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

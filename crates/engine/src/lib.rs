@@ -324,12 +324,13 @@ pub struct Prefs {
     pub smart_quotes: bool,
     /// AutoCorrect options (Tools ▸ AutoCorrect): fix TWo INitial CApitals, capitalize the first
     /// letter of sentences and the names of days, fix accidental cAPS lOCK, and replace 1/2, 1/4
-    /// and 3/4 with fraction characters.
+    /// and 3/4 with fraction characters; AutoFormat superscripts ordinals (1st) as you type.
     pub ac_two_initials: bool,
     pub ac_sentence_caps: bool,
     pub ac_days: bool,
     pub ac_caps_lock: bool,
     pub ac_fractions: bool,
+    pub ac_ordinals: bool,
     /// Your own "replace … with …" entries; they win over the built-in list.
     pub ac_entries: Vec<(String, String)>,
     /// Built-in entries you deleted.
@@ -354,6 +355,7 @@ impl Default for Prefs {
             ac_days: true,
             ac_caps_lock: true,
             ac_fractions: true,
+            ac_ordinals: true,
             ac_entries: Vec::new(),
             ac_removed: Vec::new(),
             author: "Presenter".into(),
