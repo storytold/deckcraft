@@ -4141,6 +4141,27 @@ fn picture_crop_keeps_the_corner_of_a_rotated_picture() {
     assert!((c0 - c1).hypot() < 1e-6, "the top-left corner moved from {c0:?} to {c1:?}");
 }
 
+/// A vertically flipped (unrotated) picture is drawn about its centre too, so the new height
+/// would move the corner it hangs from; the frame is shifted back, as for a rotated one.
+#[test]
+fn picture_crop_keeps_the_corner_of_a_flipped_picture() {
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"name": "wide.png", "data": wide_png_b64(), "rect": [100, 50, 400, 200]})).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("shape.flip", &json!({"axis": "vertical", "ids": [id]})).unwrap();
+    let corner = |s: &Session| {
+        let x = s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().xfrm.unwrap();
+        (x, x.affine() * deckcraft_geom::Point::ZERO)
+    };
+    let (before, c0) = corner(&s);
+    assert!(before.flip_v && before.rot == 0.0, "{before:?}");
+    s.execute("picture.crop", &json!({"id": id, "right": 0.5})).unwrap();
+    let (after, c1) = corner(&s);
+    assert_eq!((after.w, after.h), (400.0, 400.0), "{after:?}");
+    assert!((c0 - c1).hypot() < 1e-6, "the hanging corner moved from {c0:?} to {c1:?}");
+}
+
 /// A picture without a pixel size (an SVG) keeps its box when cropped: there is no aspect to refit
 /// the frame to, and the answer is the unchanged box.
 #[test]

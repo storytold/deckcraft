@@ -1089,17 +1089,16 @@ fn crop(s: &mut Session, p: &Value) -> Result<Value> {
                 if let Some(x) = sh.xfrm.as_mut().filter(|_| vw > 1e-9 && vh > 1e-9) {
                     let h = x.w * vh / vw;
                     if h.is_finite() && h > 0.0 {
-                        // A rotated frame turns about its centre, which the new height moves:
-                        // shift it back so the corner the picture hangs from stays where it was.
+                        // A rotated or flipped frame turns about its centre, which the new
+                        // height moves: shift it back so the corner the picture hangs from stays
+                        // where it was (an unrotated, unflipped frame moves nothing).
                         let corner = x.affine() * deckcraft_geom::Point::ZERO;
                         // A sliver of a tall picture asks for a frame taller than any slide;
                         // the frame stays within the size limits every other command keeps.
                         x.h = h.clamp(MIN_PT, MAX_PT);
-                        if x.rot != 0.0 {
-                            let moved = x.affine() * deckcraft_geom::Point::ZERO;
-                            x.x += corner.x - moved.x;
-                            x.y += corner.y - moved.y;
-                        }
+                        let moved = x.affine() * deckcraft_geom::Point::ZERO;
+                        x.x += corner.x - moved.x;
+                        x.y += corner.y - moved.y;
                     }
                 }
             }
