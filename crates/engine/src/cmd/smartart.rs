@@ -259,6 +259,15 @@ pub fn specs() -> Vec<CommandSpec> {
             set_picture
         ),
         cmd!(
+            "smartArt.fontSize",
+            "Font Size",
+            ["SmartArt Design", "Create Graphic"],
+            None,
+            "{id?, size: pt|null} → {id, fontSize} (one size for every node's text, as PowerPoint sizes a graphic's text alike; null sizes it automatically again, all nodes alike; format.size with the graphic selected does the same)",
+            has_selection,
+            font_size
+        ),
+        cmd!(
             "smartArt.style",
             "SmartArt Styles",
             ["SmartArt Design", "SmartArt Styles"],
@@ -375,7 +384,7 @@ mod tests {
         let items = layout_items(&d, Xfrm::new(0.0, 0.0, 600.0, 300.0));
         let size = |k: usize| items[k].0.text.as_ref().and_then(|b| b.paragraphs[0].runs[0].props.size).unwrap_or(0.0);
         assert!(size(0) < 20.0 && size(0) >= 20.0 * MIN_SCALE - 0.5, "the tip's long word shrinks: {}", size(0));
-        assert!((size(1) - 20.0).abs() < 1e-9, "short words keep their size");
+        assert!((size(1) - size(0)).abs() < 1e-9, "the other shapes follow: every node's text is sized alike");
     }
 
     #[test]

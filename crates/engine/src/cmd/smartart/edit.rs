@@ -41,9 +41,13 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a SmartArt graphic"))
 }
 
-/// Children with fresh ids for diagram `d` inside a group whose child space is `area`.
-fn regenerate(cmd: &str, doc: &mut Presentation, d: &Diagram, area: Xfrm) -> Result<Vec<Shape>> {
+/// Children with fresh ids for diagram `d` inside a group whose child space is `area`, their text
+/// fitted at one shared size on the slide `sel` edits.
+fn regenerate(cmd: &str, doc: &mut Presentation, sel: &crate::Selection, d: &Diagram, area: Xfrm) -> Result<Vec<Shape>> {
     let mut v = layout(d, area);
+    if let Some(ctx) = crate::cmd::text::ctx_for(doc, sel) {
+        super::paint::share_shrink(&ctx, &mut v);
+    }
     for sh in &mut v {
         sh.id = ShapeId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
     }
@@ -60,7 +64,7 @@ fn edit_diagram<T>(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Di
         let out = f(&mut d)?;
         normalize(&mut d.nodes);
         d.imported = false;
-        let kids = regenerate(cmd, doc, &d, child)?;
+        let kids = regenerate(cmd, doc, sel, &d, child)?;
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         let sh = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))?;
         sh.kind = ShapeKind::Group { children: kids, child };
@@ -86,7 +90,7 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
     let size = s.doc()?.doc.slide_size;
     let area = Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6);
     let id = s.edit(|doc, sel| {
-        let children = regenerate("insert.smartArt", doc, &d, area)?;
+        let children = regenerate("insert.smartArt", doc, sel, &d, area)?;
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
         let g = Shape {
             id,
@@ -197,7 +201,7 @@ pub(super) fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let d = Diagram { kind: kind.clone(), nodes, ..Default::default() };
     let gid = s.edit(|doc, sel| {
-        let children = regenerate(CMD, doc, &d, area)?;
+        let children = regenerate(CMD, doc, sel, &d, area)?;
         let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let g = Shape {
             id: gid,
@@ -337,6 +341,37 @@ pub(super) fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
         n.picture = media;
         Ok(Value::Null)
     })
+}
+
+/// The SmartArt graphics among the selected shapes (top level), for Home › Font on a graphic.
+pub(crate) fn selected_graphics(s: &Session) -> Vec<ShapeId> {
+    let Ok(st) = s.doc() else { return vec![] };
+    st.selection.shapes.iter().copied().filter(|id| st.shape(*id).is_some_and(|sh| sh.diagram.is_some())).collect()
+}
+
+/// Set the size of every node's text of graphic `gid` (`None`: automatic).
+pub(crate) fn set_font_size(s: &mut Session, gid: ShapeId, size: Option<f64>, cmd: &str) -> Result<()> {
+    edit_diagram(s, &json!({"id": gid.0}), cmd, |d| {
+        d.font_size = size;
+        Ok(())
+    })
+}
+
+fn font_size(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "smartArt.fontSize";
+    let size = match p.get("size") {
+        Some(Value::Null) => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|z| z.is_finite() && *z > 0.0)
+                .ok_or_else(|| bad(CMD, "`size` is a font size in points (or null for automatic)"))?
+                .clamp(1.0, 4000.0),
+        ),
+        None => return Err(bad(CMD, "missing `size` (points, or null for automatic)")),
+    };
+    let gid = target_group(s, p, CMD)?;
+    set_font_size(s, gid, size, CMD)?;
+    Ok(json!({"id": gid.0, "fontSize": size}))
 }
 
 pub(super) fn change_style(s: &mut Session, p: &Value) -> Result<Value> {
