@@ -650,12 +650,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             show.step_end = now;
         }
     } else if show.trans.is_none() {
-        // Auto-advance (After: timings) or autoplay preview.
+        // Auto-advance (After: timings) or autoplay preview. An automatic first step is started
+        // by `ShowState` as the slide appears; starting it here too replayed it after Back (#844).
         let idle = now - show.step_end.max(show.slide_start);
         let cur_step = show.state.step;
-        let next_auto = show.timeline(&doc).step_is_auto(cur_step);
         let n_steps = show.timeline(&doc).steps();
-        let step_due = cur_step < n_steps && ((show.autoplay && idle > 0.3) || next_auto);
+        let step_due = show.autoplay && cur_step < n_steps && idle > 0.3;
         let holding = show.grid || show.zoom.is_some() || show.zoom_arm;
         if !holding && (step_due || (!show.rehearse && show.state.auto_advance_due(&doc, idle) && !show.ended)) {
             actions.push(show.state.next(&doc));
@@ -918,10 +918,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         ctx.set_cursor_icon(egui::CursorIcon::None);
     } else if show.zoom_arm || show.grid {
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+    } else if now - show.last_move > 2.5 && !show.reading {
+        // Idle first: a still pointer hides also over a clickable shape, such as a playing clip.
+        ctx.set_cursor_icon(egui::CursorIcon::None);
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
     } else if pointing {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-    } else if now - show.last_move > 2.5 && !show.reading {
-        ctx.set_cursor_icon(egui::CursorIcon::None);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
     let pen_col = theme::to_color32(doc.show.pen_color);
@@ -1881,6 +1883,32 @@ mod tests {
 
     use super::*;
 
+    /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
+    /// never gave way to the idle hide, so a still pointer stayed on the playing video.
+    #[test]
+    fn a_still_cursor_hides_over_a_clickable_shape() {
+        let mut session = deckcraft_engine::Session::with_new();
+        let size = session.active().unwrap().doc.slide_size;
+        let r = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, size.width, size.height]})).unwrap();
+        session.execute("insert.hyperlink", &json!({"url": "https://example.org", "ids": [r["id"]]})).unwrap();
+        let app = SlideApp::new(session, crate::Services::default());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        harness.hover_at(pos2(500.0, 350.0));
+        harness.run_steps(2);
+        assert_eq!(harness.output().platform_output.cursor_icon, egui::CursorIcon::PointingHand);
+        harness.run_steps(12);
+        assert_eq!(harness.output().platform_output.cursor_icon, egui::CursorIcon::None, "still for 3 s: hidden");
+    }
+
     /// Send real egui key events to the presenter UI, without the audience window's handler.
     #[test]
     fn presenter_navigation_uses_its_own_keyboard_events() {
@@ -2245,5 +2273,39 @@ mod tests {
         // 16:9 still takes the column's full width.
         let doc = s.active().unwrap().doc.clone();
         assert_eq!(next_rect(right, &doc).width(), 400.0);
+    }
+
+    #[test]
+    fn back_leaves_a_slide_whose_first_animation_is_with_previous() {
+        // #844: Back on such a slide undid its first step, and the next frame played that step
+        // again by itself, so Back never reached the slide before.
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let id = session.active().unwrap().doc.slides[1].shapes[0].id;
+        session
+            .execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "withPrevious", "duration": 500}))
+            .unwrap();
+        let app = SlideApp::new(session, crate::Services::default());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        harness.key_press(egui::Key::ArrowRight);
+        // The first step plays by itself and ends (0.5 s; a frame is 0.25 s).
+        harness.run_steps(8);
+        let st = &harness.state().show.as_ref().unwrap().state;
+        assert_eq!((st.slide, st.step, st.playing), (1, 1, false), "on slide 2, fully built");
+        for _ in 0..5 {
+            harness.key_press(egui::Key::ArrowLeft);
+            harness.run_steps(2);
+        }
+        let st = &harness.state().show.as_ref().unwrap().state;
+        assert_eq!(st.slide, 0, "five Backs leave slide 2 (step {}, playing {})", st.step, st.playing);
     }
 }

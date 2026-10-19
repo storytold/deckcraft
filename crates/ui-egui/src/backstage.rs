@@ -175,6 +175,8 @@ pub struct Backstage {
     pub file_type: &'static str,
     pub handouts_per_page: u8,
     pub pdf_hidden: bool,
+    /// Export › Change File Type › PNG: leave the slide background out (#784).
+    pub png_transparent: bool,
 }
 
 impl Backstage {
@@ -197,6 +199,7 @@ impl Backstage {
             file_type: "pptx",
             handouts_per_page: 3,
             pdf_hidden: false,
+            png_transparent: false,
         }
     }
 
@@ -1310,8 +1313,15 @@ fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                         }
                     }
                     ui.add_space(12.0);
+                    let png = bs.file_type == "png";
+                    if png {
+                        ui.checkbox(&mut bs.png_transparent, "Transparent background")
+                            .on_hover_text("Leave the slide background out: only what is on the slide is drawn");
+                        ui.add_space(8.0);
+                    }
                     if square_button(ui, Icon::SaveAs, "Save As", true).clicked() {
-                        app.export_as(bs.file_type, json!({}));
+                        let extra = if png && bs.png_transparent { json!({"transparentBackground": true}) } else { json!({}) };
+                        app.export_as(bs.file_type, extra);
                     }
                 }
             }

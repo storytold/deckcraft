@@ -152,6 +152,25 @@ pub fn small_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, sele
     (if split { main_resp } else { resp }, arrow_resp)
 }
 
+/// A menu choice ticked in the icon column (Align to Slide…), its text lined up with the
+/// [`small_button`] items around it.
+pub fn check_item(ui: &mut Ui, label: &str, enabled: bool, on: bool) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let font = theme::font(12.0);
+    let tw = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(24.0 + tw, 22.0), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, enabled, on, label));
+    let painter = ui.painter_at(rect);
+    if let Some(c) = bg(ui, &resp, false, &t) {
+        painter.rect_filled(rect, CornerRadius::same(4), c);
+    }
+    if on {
+        icons::paint(&painter, Rect::from_center_size(pos2(rect.min.x + 12.0, rect.center().y), vec2(17.0, 17.0)), Icon::Check, t.text, !enabled);
+    }
+    painter.text(pos2(rect.min.x + 24.0, rect.center().y), Align2::LEFT_CENTER, label, font, if enabled { t.text } else { t.text_faint });
+    resp
+}
+
 /// A square icon toggle (B, I, U, alignment…).
 pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) -> Response {
     let t = Tokens::get(ui.ctx());

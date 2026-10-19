@@ -473,7 +473,7 @@ fn copy_part(
         return false;
     }
     let content_type = pkg.content_type(part).unwrap_or_default();
-    out.push(ChartPart { name, content_type, bytes: bytes.to_vec() });
+    out.push(ChartPart { name, content_type, bytes: bytes.to_vec(), native_entry: None });
     seen.insert(key, true);
     let rels_name = crate::opc::rels_path(part);
     if crate::opc::sidecar_part(&rels_name)
@@ -482,7 +482,12 @@ fn copy_part(
     {
         seen.insert(crate::opc::norm(&rels_name), true);
         let name = pkg.original_name(&rels_name).unwrap_or(&rels_name).trim_start_matches('/').to_string();
-        out.push(ChartPart { name, content_type: "application/vnd.openxmlformats-package.relationships+xml".into(), bytes: rels_bytes.to_vec() });
+        out.push(ChartPart {
+            name,
+            content_type: "application/vnd.openxmlformats-package.relationships+xml".into(),
+            bytes: rels_bytes.to_vec(),
+            native_entry: None,
+        });
         let targets: Vec<String> = pkg.rels(part).items.into_iter().filter(|r| !r.external).map(|r| r.target).collect();
         for target in targets {
             copy_part(pkg, &target, out, seen, depth + 1);

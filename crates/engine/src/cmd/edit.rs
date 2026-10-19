@@ -175,7 +175,11 @@ fn copied_html(s: &Session) -> String {
 fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let caret = copying_caret(s);
     let t = copy_inner(s, p)?;
-    let html = if caret { String::new() } else { copied_html(s) };
+    if caret {
+        // Nothing is selected, so there is nothing to cut; `delete` would remove the next character.
+        return Ok(json!({"text": t, "html": ""}));
+    }
+    let html = copied_html(s);
     delete(s, p)?;
     Ok(json!({"text": t, "html": html}))
 }

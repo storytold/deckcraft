@@ -655,21 +655,10 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:seq");
     }
     for (trig, effs) in triggered {
-        // Everything a trigger starts plays from its click.
-        let effs: Vec<Eff> = effs
-            .into_iter()
-            .enumerate()
-            .map(|(i, e)| Eff {
-                start: if i == 0 {
-                    AnimStart::OnClick
-                } else if e.start == AnimStart::OnClick {
-                    AnimStart::AfterPrevious
-                } else {
-                    e.start
-                },
-                ..e
-            })
-            .collect();
+        // The first step starts with the button's click. Later On Click effects must remain
+        // separate steps; With/After Previous effects still belong to their preceding step.
+        let effs: Vec<Eff> =
+            effs.into_iter().enumerate().map(|(i, e)| Eff { start: if i == 0 { AnimStart::OnClick } else { e.start }, ..e }).collect();
         let clicks = group(effs);
         let trig_cond = |w: &mut W| {
             w.open("p:cond", A::new().a("evt", "onClick").a("delay", 0));

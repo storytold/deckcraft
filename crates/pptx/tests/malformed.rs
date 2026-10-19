@@ -264,3 +264,26 @@ fn export_of_odd_models_is_valid() {
     let q = deckcraft_pptx::import(&deckcraft_pptx::export(&empty).expect("export")).expect("import");
     assert!(!q.masters.is_empty());
 }
+
+/// A slide the file lists but that can't be read is left out, and `import_checked` names it
+/// where `import` would have said nothing (#203).
+#[test]
+fn unreadable_slide_is_reported() {
+    let mut p = defaults::new_presentation(None);
+    let mut second = p.slides.first().expect("a slide").as_ref().clone();
+    second.id = deckcraft_model::SlideId(second.id.0 + 1000);
+    p.slides.push(std::sync::Arc::new(second));
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+
+    let (q, lost) = deckcraft_pptx::import_checked(&bytes).expect("import");
+    assert_eq!((q.slides.len(), lost.len()), (2, 0), "{lost:?}");
+
+    let mut es = entries(&bytes);
+    let slide2 = es.iter_mut().find(|(n, _)| n == "ppt/slides/slide2.xml").expect("slide2");
+    slide2.1 = b"<p:sld".to_vec();
+    let broken = rezip(&es);
+    let (q, lost) = deckcraft_pptx::import_checked(&broken).expect("import");
+    assert_eq!(q.slides.len(), 1);
+    assert_eq!(lost, vec!["ppt/slides/slide2.xml".to_string()]);
+    assert_eq!(deckcraft_pptx::import(&broken).expect("import").slides.len(), 1);
+}

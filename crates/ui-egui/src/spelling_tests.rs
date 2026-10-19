@@ -233,7 +233,9 @@ fn notes_menu_language_dialog_and_repeated_words() {
     if let (Ok(path), Ok(img)) = (std::env::var("DECKCRAFT_PNG_OUT_NOTES"), h.render()) {
         let _ = img.save(path);
     }
-    // Right-click the notes' first word.
+    // Right-click the notes' first word, once the (background) notes check is in.
+    assert_eq!(h.state_mut().squiggles.settle_notes("Remmeber the the plan", "xx-NM"), vec![(0, 8), (13, 16)]);
+    h.run_steps(2);
     let notes = h.query_all_by_role(Role::MultilineTextInput).next().map(|n| n.rect()).unwrap();
     right_click(&mut h, egui::pos2(notes.left() + 14.0, notes.top() + 8.0));
     if let (Ok(path), Ok(img)) = (std::env::var("DECKCRAFT_PNG_OUT_NOTES_MENU"), h.render()) {
@@ -245,6 +247,7 @@ fn notes_menu_language_dialog_and_repeated_words() {
     let notes_text = |h: &Harness<'_, SlideApp>| h.state().session.active().unwrap().doc.slides[0].notes_text();
     assert_eq!(notes_text(&h), "Remember the the plan");
     // The repeated "the": its squiggle starts after "Remember the ".
+    h.state_mut().squiggles.settle_notes("Remember the the plan", "xx-NM");
     h.run_steps(4);
     let x = h.query_all_by_role(Role::MultilineTextInput).next().map(|n| n.rect()).unwrap();
     let mut found = false;
