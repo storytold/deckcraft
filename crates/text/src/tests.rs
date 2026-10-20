@@ -838,6 +838,7 @@ fn a_word_does_not_break_after_a_slash_or_backslash() {
         let lines = wrapped(&text, w, |_| {});
         assert!(lines.len() >= 2, "{lines:?}");
         assert!(lines[0].chars().count() > "alpha/beta".len(), "filled to the edge, not cut at a separator: {lines:?}");
+        assert!(!lines[0].ends_with(sep), "no break right after {sep:?}: {lines:?}");
     }
     // latinLnBrk on: Unicode's break after a slash is allowed again.
     let text = "alpha/beta/gamma/delta/epsilon";
