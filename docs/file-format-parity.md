@@ -125,7 +125,7 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-15 | minor | A `.pptx` slide that can't be read is reported instead of dropped in silence: `file.open` and `file.openBytes` return `lostSlides`, the app shows a message and opens a repaired copy (Save asks for a new name), and `deckcraft-cli` warns on stderr (#203) |
 | 2026-10-16 | minor | PNG slide export with a transparent background (#784) |
 | 2026-10-16 | trivial | A `.ppsx` opened from the command line or the file association starts the slide show (#862) |
-| 2026-10-20 | minor | Localized font family names resolve to installed or loaded faces, including localized legacy weight families, and retain their line metrics; runtime-generated Chinese/French fonts and text-layout regressions; exact canonical families precede aliases, including style ranking and cached variable instances. CJK text remains partial |
+| 2026-10-20 | minor | Localized font family names resolve to installed or loaded faces, including localized legacy weight families, and retain their line metrics; runtime-generated Chinese/French fonts and text-layout regressions; exact canonical families precede aliases, including available style lists, style ranking and cached variable instances. CJK text remains partial |
 | 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |

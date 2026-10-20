@@ -393,6 +393,8 @@ mod tests {
             for font in if alias_first { [alias, regular, black] } else { [regular, black, alias] } {
                 assert_eq!(db.add_font(font), 1);
             }
+            assert_eq!(db.styles("DeckCraft Exact"), ["Regular", "Black"], "{alias_first}");
+            assert_eq!(db.styles("DeckCraft Other"), ["Bold"]);
             for (requested, expected) in [("Bold", "Black"), ("Medium", "Regular"), ("Semibold", "Regular")] {
                 let face = db.face("DeckCraft Exact", requested);
                 assert_eq!((face.family.as_str(), face.style.as_str()), ("DeckCraft Exact", expected), "{alias_first}, {requested}");
@@ -407,8 +409,17 @@ mod tests {
         std::fs::write(dir.path().join("canonical.ttf"), test_font::font("DeckCraft Exact", "Regular", 400, &[], (900, 100), false)).unwrap();
         let db = FontDb::with_font_dirs(vec![dir.path().into()]);
         db.add_font(test_font::font("DeckCraft Other", "Bold", 700, &["DeckCraft Exact"], (800, 200), false));
+        assert_eq!(db.styles("DeckCraft Exact"), ["Regular"], "a cataloged canonical family excludes loaded alias styles");
         let face = db.face("DeckCraft Exact", "Bold");
         assert_eq!((face.family.as_str(), face.style.as_str()), ("DeckCraft Exact", "Regular"));
+        // Conversely, a loaded canonical face excludes an alias-only catalog style.
+        let alias_dir = tempfile::tempdir().unwrap();
+        std::fs::write(alias_dir.path().join("alias.ttf"), test_font::font("DeckCraft Other", "Bold", 700, &["DeckCraft Exact"], (800, 200), false))
+            .unwrap();
+        let db = FontDb::with_font_dirs(vec![alias_dir.path().into()]);
+        db.add_font(test_font::font("DeckCraft Exact", "Regular", 400, &[], (900, 100), false));
+        assert_eq!(db.styles("DeckCraft Exact"), ["Regular"]);
+        assert_eq!(db.styles("DeckCraft Other"), ["Bold"]);
     }
 
     #[test]

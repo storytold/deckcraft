@@ -897,16 +897,29 @@ impl FontDb {
 
     /// Style names available for `family` (Regular first, then by weight).
     pub fn styles(&self, family: &str) -> Vec<String> {
-        let mut v: Vec<(bool, f32, String)> = self
-            .read_faces()
+        // Snapshot matching catalog names before taking the faces lock. A canonical family
+        // excludes alias styles even when its files have not been loaded yet.
+        #[cfg(not(target_arch = "wasm32"))]
+        let catalog: Vec<_> = self
+            .read_catalog()
             .iter()
-            .filter(|f| f.matches_family(family) && !f.style.contains('{'))
+            .filter(|c| c.matches_family(family))
+            .map(|c| (c.family.eq_ignore_ascii_case(family), c.style.clone()))
+            .collect();
+        let faces = self.read_faces();
+        let exact = faces.iter().any(|f| f.family.eq_ignore_ascii_case(family));
+        #[cfg(not(target_arch = "wasm32"))]
+        let exact = exact || catalog.iter().any(|(canonical, _)| *canonical);
+        let mut v: Vec<(bool, f32, String)> = faces
+            .iter()
+            .filter(|f| (if exact { f.family.eq_ignore_ascii_case(family) } else { f.matches_family(family) }) && !f.style.contains('{'))
             .map(|f| (f.italic, f.weight, f.style.clone()))
             .collect();
+        drop(faces);
         #[cfg(not(target_arch = "wasm32"))]
-        for c in self.read_catalog().iter() {
-            if c.matches_family(family) && !v.iter().any(|(_, _, s)| s.eq_ignore_ascii_case(&c.style)) {
-                v.push((style_italic(&c.style), style_weight(&c.style), c.style.clone()));
+        for (canonical, style) in catalog {
+            if (!exact || canonical) && !v.iter().any(|(_, _, s)| s.eq_ignore_ascii_case(&style)) {
+                v.push((style_italic(&style), style_weight(&style), style));
             }
         }
         v.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2)));
