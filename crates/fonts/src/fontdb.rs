@@ -315,6 +315,10 @@ pub struct FontDb {
     /// Semibold" loads a face of the family "Segoe UI").
     #[cfg(not(target_arch = "wasm32"))]
     loaded_families: Mutex<std::collections::HashSet<String>>,
+    /// Families (lower case) whose installed files the styled fallback already loaded: it asks
+    /// for the family of the face it found, for every character it lays out.
+    #[cfg(not(target_arch = "wasm32"))]
+    completed_families: Mutex<std::collections::HashSet<String>>,
     /// System fallback state: enabled, and characters no system font covers.
     #[cfg(not(target_arch = "wasm32"))]
     sys: Mutex<SysFallback>,
@@ -802,6 +806,8 @@ impl FontDb {
             #[cfg(not(target_arch = "wasm32"))]
             loaded_families: Mutex::new(std::collections::HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
+            completed_families: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
             sys: Mutex::new(SysFallback { enabled: true, ..Default::default() }),
             #[cfg(not(target_arch = "wasm32"))]
             loading: Mutex::new(()),
@@ -830,6 +836,8 @@ impl FontDb {
             cataloged: std::sync::OnceLock::new(),
             #[cfg(not(target_arch = "wasm32"))]
             loaded_families: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            completed_families: Mutex::new(std::collections::HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
             sys: Mutex::new(SysFallback { enabled: true, ..Default::default() }),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1024,6 +1032,21 @@ impl FontDb {
         log::debug!("cataloged {n} system font faces");
         *self.catalog.write().unwrap_or_else(std::sync::PoisonError::into_inner) = found;
         n
+    }
+
+    /// Load the files of the installed `family` once. The styled fallback asks for the family
+    /// of the face it found, for every character it lays out: without this the family's files
+    /// are read again and again (#892).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_cataloged_once(&self, family: &str) -> bool {
+        let key = family.to_lowercase();
+        {
+            let mut done = self.completed_families.lock().unwrap_or_else(|e| e.into_inner());
+            if !done.insert(key) {
+                return self.is_loaded(family);
+            }
+        }
+        self.load_cataloged(family)
     }
 
     /// Load the files of the installed `family` (faces already loaded are kept). Returns whether
@@ -1247,7 +1270,7 @@ impl FontDb {
             // styled best over everything now loaded. A caller that turned the system fallback
             // off gets no installed font: neither the family's other files nor the scan.
             if let Some(f) = &loaded {
-                let _ = self.load_cataloged(&f.family);
+                let _ = self.load_cataloged_once(&f.family);
             }
             let _ = self.system_fallback(c);
             if let Some(f) = self.loaded_fallback_styled(c, exclude, style) {

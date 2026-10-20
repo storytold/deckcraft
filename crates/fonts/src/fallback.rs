@@ -373,4 +373,17 @@ mod tests {
         assert!((f.weight - 400.0).abs() < 1e-3, "the only face is used, got {}", f.weight);
         assert_eq!(db.catalog_loads(), 0, "no family is loaded from the system");
     }
+
+    /// The styled fallback loads the family's files once, not for every character: a document
+    /// with a thousand of the same character asks a thousand times.
+    #[test]
+    fn the_styled_fallback_loads_a_family_once() {
+        let db = FontDb::empty_for_tests();
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        // The only face is a regular one, so a bold request sends the fallback to the system for
+        // the family's other files.
+        let _ = db.fallback_for_styled('A', u32::MAX, "Bold").expect("the regular face");
+        let _ = db.fallback_for_styled('A', u32::MAX, "Bold").expect("the regular face");
+        assert_eq!(db.catalog_loads(), 1, "the family is loaded once, not once per character");
+    }
 }
