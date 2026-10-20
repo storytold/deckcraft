@@ -330,6 +330,9 @@ pub struct FontDb {
 struct SysFallback {
     enabled: bool,
     misses: std::collections::HashSet<char>,
+    /// How many times a family was loaded from the system catalog (tests only).
+    #[cfg(test)]
+    catalog_loads: std::sync::atomic::AtomicU32,
 }
 
 /// Does face `index` of `data` carry colour glyph tables?
@@ -834,6 +837,18 @@ impl FontDb {
         }
     }
 
+    /// Whether the lazy system-font fallback is enabled (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn system_fallback_enabled(&self) -> bool {
+        self.sys.lock().unwrap_or_else(|e| e.into_inner()).enabled
+    }
+
+    /// How many times a family was loaded from the system catalog (tests only).
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn catalog_loads(&self) -> u32 {
+        self.sys.lock().unwrap_or_else(|e| e.into_inner()).catalog_loads.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Enable or disable the lazy system-font fallback for characters the loaded fonts lack
     /// (native only; on by default).
     pub fn set_system_fallback(&self, on: bool) {
@@ -1015,6 +1030,8 @@ impl FontDb {
     /// it is loaded.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_cataloged(&self, family: &str) -> bool {
+        #[cfg(test)]
+        self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).catalog_loads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         self.load_family(family, &loading)
     }
@@ -1223,11 +1240,12 @@ impl FontDb {
             return loaded;
         }
         #[cfg(not(target_arch = "wasm32"))]
-        {
+        if self.system_fallback_enabled() {
             // The loaded winner's family may have its bolder file still unloaded (a lookup by a
             // Windows family name loads only that style's file): load the family's other files,
             // then let the system scan load any family covering the character, and take the
-            // styled best over everything now loaded.
+            // styled best over everything now loaded. A caller that turned the system fallback
+            // off gets no installed font: neither the family's other files nor the scan.
             if let Some(f) = &loaded {
                 let _ = self.load_cataloged(&f.family);
             }

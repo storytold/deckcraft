@@ -358,4 +358,19 @@ mod tests {
         let better = db.fallback_for_styled(a, u32::MAX, "Bold").expect("the semibold face once it exists");
         assert!((better.weight - 600.0).abs() < 1e-3, "a bold request picks up the face that arrived, got weight {}", better.weight);
     }
+
+    /// A caller that turned the system fallback off gets no installed font: the styled
+    /// fallback must not load the family's other files either.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_styled_fallback_honours_the_system_fallback_setting() {
+        let db = FontDb::empty_for_tests();
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        // A bold request does not match the only face, so the styled fallback would ask the
+        // system for a bolder one - with the setting off, it must not.
+        let f = db.fallback_for_styled('A', u32::MAX, "Bold").expect("the regular face");
+        assert!((f.weight - 400.0).abs() < 1e-3, "the only face is used, got {}", f.weight);
+        assert_eq!(db.catalog_loads(), 0, "no family is loaded from the system");
+    }
 }
