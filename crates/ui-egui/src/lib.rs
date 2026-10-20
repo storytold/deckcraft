@@ -49,6 +49,9 @@ pub use control::{ControlRequest, ControlResponse};
 
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
+/// Picture picker: starting directory, allow multiple → selected paths.
+pub type PickPicturesFn = Box<dyn FnMut(Option<&std::path::Path>, bool) -> Option<Vec<String>>>;
+
 pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 /// `(purpose, request id)`. The host shows a picker and later pushes an [`InboxEvent`]
 /// carrying that same id. Completing a cancelled or unknown id does nothing: the file is
@@ -202,6 +205,8 @@ const STATUS_LINGER_MS: f64 = 6000.0;
 pub struct Services {
     /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
     pub pick_open: Option<PickFn>,
+    /// Desktop picture picker with directory and multiple-selection support.
+    pub pick_pictures: Option<PickPicturesFn>,
     /// Save dialog with a suggested name → path.
     pub pick_save: Option<PickFn>,
     pub read: Option<ReadFn>,
@@ -258,6 +263,8 @@ pub struct UiState {
     pub zoom: Option<f32>,
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
+    /// Last selected picture directory, persisted with UI preferences.
+    pub picture_directory: Option<std::path::PathBuf>,
     pub presenter_view: bool,
     pub ui_scale: f32,
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
@@ -296,6 +303,7 @@ impl Default for UiState {
             zoom: None,
             sorter_zoom: 1.0,
             recent: vec![],
+            picture_directory: None,
             presenter_view: true,
             ui_scale: 1.0,
             format_tab: "fill".into(),
@@ -664,7 +672,7 @@ impl SlideApp {
             // put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431).
             Ok(v) if matches!(id, "edit.copy" | "edit.cut") => {
                 if let Some(t) = v.get("text").and_then(Value::as_str) {
-                    self.pending_copy = Some(t.to_string());
+                    self.pending_copy = Some(system_clipboard_text(t));
                 }
             }
             Ok(_) => {}
@@ -1245,8 +1253,23 @@ impl SlideApp {
 
     /// Pick a file and run `cmd` with it (`name` + `data`, or `path`) added to `extra`.
     fn pick_and_run(&mut self, purpose: &str, cmd: &str, extra: &Value) {
-        if let Some(pick) = self.services.pick_open.as_mut() {
-            if let Some(path) = pick(purpose) {
+        if self.services.pick_open.is_some() || (purpose == "picture" && self.services.pick_pictures.is_some()) {
+            let paths = if purpose == "picture" && self.services.pick_pictures.is_some() {
+                let directory = self.ui.picture_directory.clone().filter(|p| p.is_dir()).or_else(|| {
+                    self.session.active().and_then(|d| d.path.as_deref()).and_then(|p| {
+                        let path = std::path::Path::new(p);
+                        let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().ok()?.join(path) };
+                        absolute.parent().filter(|p| p.is_dir()).map(std::path::Path::to_path_buf)
+                    })
+                });
+                self.services.pick_pictures.as_mut().and_then(|pick| pick(directory.as_deref(), cmd == "insert.picture"))
+            } else {
+                self.services.pick_open.as_mut().and_then(|pick| pick(purpose)).map(|p| vec![p])
+            };
+            for path in paths.into_iter().flatten() {
+                if purpose == "picture" {
+                    self.ui.picture_directory = std::path::Path::new(&path).parent().map(std::path::Path::to_path_buf);
+                }
                 let mut args = if extra.is_object() { extra.clone() } else { json!({}) };
                 let r = match self.services.read.as_ref().map(|r| r(&path)) {
                     Some(Ok(bytes)) => {
@@ -1727,8 +1750,15 @@ impl SlideApp {
                 egui::Event::Copy => self.publish_clipboard(ctx, false),
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
-                    // Our own marker for objects without text: paste what the session copied.
-                    let text = if text == OBJECTS_MARKER { String::new() } else { text };
+                    // Our marker identifies the session's objects, including their original media.
+                    // Do not query other system formats: they can be stale or belong to a different
+                    // clipboard provider (for example X11 versus Wayland).
+                    if text == OBJECTS_MARKER {
+                        if let Err(e) = self.session.execute("edit.paste", &json!({})) {
+                            self.set_status(e.to_string());
+                        }
+                        continue;
+                    }
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
                     // Text keeps its HTML (bold, italic, underline) when the host can read it.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
@@ -2232,6 +2262,61 @@ mod tests {
         assert!(harness.state().toast.is_none());
         harness.run_steps(2);
         assert!(harness.state().toast.is_none());
+    }
+
+    #[test]
+    fn picture_picker_imports_multiple_and_remembers_directory() {
+        let root = std::env::temp_dir();
+        let chosen = root.join("pictures").join("one.svg");
+        let selected = chosen.to_string_lossy().into_owned();
+        let expected = root.clone();
+        let services = Services {
+            pick_pictures: Some(Box::new(move |directory, multiple| {
+                assert_eq!(directory, Some(expected.as_path()));
+                assert!(multiple);
+                Some(vec![selected.clone(), selected.clone()])
+            })),
+            read: Some(Box::new(|_| Ok(b"<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='4'/></svg>".to_vec()))),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        app.session.active_mut().unwrap().path = Some(root.join("talk.pptx").to_string_lossy().into_owned());
+        let before = app.session.active().unwrap().doc.slides[0].shapes.len();
+        app.pick_and_insert("picture", "insert.picture");
+        assert_eq!(app.session.active().unwrap().doc.slides[0].shapes.len(), before + 2);
+        assert_eq!(app.ui.picture_directory.as_deref(), chosen.parent());
+        let restored: UiState = serde_json::from_value(serde_json::to_value(&app.ui).unwrap()).unwrap();
+        assert_eq!(restored.picture_directory, app.ui.picture_directory);
+
+        // A remembered existing folder takes precedence; cancelling preserves it and the slide.
+        app.ui.picture_directory = Some(root.clone());
+        app.session.active_mut().unwrap().path = None;
+        app.services.pick_pictures = Some(Box::new(move |directory, multiple| {
+            assert_eq!(directory, Some(root.as_path()));
+            assert!(multiple);
+            None
+        }));
+        app.pick_and_insert("picture", "insert.picture");
+        assert_eq!(app.session.active().unwrap().doc.slides[0].shapes.len(), before + 2);
+        assert!(app.ui.picture_directory.is_some());
+    }
+
+    #[test]
+    fn picture_picker_missing_directory_falls_back_and_replacement_is_single() {
+        let root = std::env::temp_dir();
+        let expected = root.clone();
+        let services = Services {
+            pick_pictures: Some(Box::new(move |directory, multiple| {
+                assert_eq!(directory, Some(expected.as_path()));
+                assert!(!multiple);
+                None
+            })),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        app.session.active_mut().unwrap().path = Some(root.join("talk.pptx").to_string_lossy().into_owned());
+        app.ui.picture_directory = Some(root.join("deckcraft-nonexistent-picture-directory"));
+        app.pick_and_insert("picture", "picture.change");
     }
 
     /// #115: Change Picture replaced nothing — it inserted a second picture.
@@ -2868,6 +2953,62 @@ mod tests {
         let d = harness.state().session.active().unwrap();
         let pasted = d.doc.slides[0].shapes.last().unwrap();
         assert!(pasted.text.as_ref().is_none_or(|t| t.text().is_empty()), "a copy of the rectangle, not a text box holding the marker");
+    }
+
+    #[test]
+    fn cut_picture_pastes_internal_media_even_with_external_clipboard_formats() {
+        let services = Services {
+            // A clipboard provider can still advertise an image format alongside our marker.
+            clipboard_image: Some(Box::new(|| Some(b"stale image data".to_vec()))),
+            clipboard_html: Some(Box::new(|| Some("<p>Old clipboard text</p>".into()))),
+            ..Default::default()
+        };
+        let mut h = step_app(services);
+        let bytes = b"<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'><rect width='4' height='4'/></svg>";
+        h.state_mut()
+            .session
+            .execute(
+                "insert.picture",
+                &json!({
+                    "name": "original.svg", "data": deckcraft_engine::cmd::base64_encode(bytes), "rect": [20, 30, 40, 50]
+                }),
+            )
+            .unwrap();
+        let count = |h: &egui_kittest::Harness<'_, SlideApp>| h.state().session.doc().unwrap().current_slide().unwrap().shapes.len();
+        let before = count(&h);
+        h.event(egui::Event::Cut);
+        h.run_steps(1);
+        assert_eq!(count(&h), before - 1);
+        let copied = h
+            .output()
+            .platform_output
+            .commands
+            .iter()
+            .find_map(|cmd| match cmd {
+                egui::output::OutputCommand::CopyText(text) => Some(text.clone()),
+                _ => None,
+            })
+            .expect("cut publishes a clipboard marker");
+        assert_eq!(copied, OBJECTS_MARKER);
+        h.event(egui::Event::Paste(copied));
+        h.run_steps(1);
+        assert_eq!(count(&h), before, "paste restores the cut picture");
+        let doc = h.state().session.doc().unwrap();
+        let picture = doc.current_slide().unwrap().shapes.last().unwrap();
+        let deckcraft_model::ShapeKind::Picture { fill } = &picture.kind else { panic!("not a picture") };
+        assert_eq!(doc.doc.media(fill.media).unwrap().data.as_slice(), bytes);
+    }
+
+    #[test]
+    fn cut_picture_command_publishes_nonempty_clipboard_marker() {
+        let mut h = step_app(Services::default());
+        h.state_mut().session.execute("insert.picture", &json!({
+            "name": "original.svg", "data": deckcraft_engine::cmd::base64_encode(b"<svg xmlns='http://www.w3.org/2000/svg' width='4' height='4'/>")
+        })).unwrap();
+        h.state_mut().run("edit.cut", json!({})).unwrap();
+        h.run_steps(1);
+        assert!(h.output().platform_output.commands.iter().any(|cmd| matches!(cmd,
+            egui::output::OutputCommand::CopyText(text) if text == OBJECTS_MARKER)));
     }
 
     /// #188: Ctrl/Cmd+A with the slide thumbnail pane focused selects every slide; with the

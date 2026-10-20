@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **Last updated:** 2026-10-20 (desktop picture picker and picture cut/paste; both rows remain D).
+
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The summary between `<!-- SUMMARY -->
@@ -178,7 +180,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Charts | Chart styles and colours | P2 | P |
 | SmartArt | Insert SmartArt (lists, processes, cycles, hierarchy) | P1 | P |
 | SmartArt | Text pane and layout switching | P2 | P |
-| Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
+| Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF; desktop multiple selection, remembered folder, presentation-folder default) | P0 | D |
 | Pictures | SVG pictures | P1 | M |
 | Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
 | Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
@@ -226,10 +228,17 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Draw | Ink pens, highlighter, eraser | P1 | P |
 | Draw | Ink to shape / text | P2 | P |
 | Undo & clipboard | Unlimited undo/redo | P0 | D |
-| Undo & clipboard | Cut, copy, paste shapes and slides | P0 | D |
+| Undo & clipboard | Cut, copy, paste shapes and slides (picture cuts retain internal media on paste) | P0 | D |
 | Undo & clipboard | Paste special (keep formatting, picture, text only) | P1 | D |
 | Automation (✱) | Every command scriptable (CLI, control channel, MCP; remote reply IDs, envelopes and framing validated, #718) | P0 | D |
 | Automation (✱) | Headless rendering and conversion | P0 | D |
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |
 | Platforms (✱) | BSD build | P2 | P |
+
+## Revision history
+
+| Date | Change |
+|---|---|
+| 2026-10-20 | Desktop picture picker improvements; Insert picture stays D |
+| 2026-10-20 | Picture cut/paste clipboard routing fixed; Cut, copy, paste stays D |
