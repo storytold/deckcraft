@@ -1258,7 +1258,10 @@ impl FontDb {
     /// not returned at once: the system pass runs (cheap once the family's files are in), and
     /// the styled pass runs again over everything now loaded.
     pub fn fallback_for_styled(&self, c: char, exclude: u32, style: &str) -> Option<Arc<FontFace>> {
-        let loaded = self.loaded_fallback_styled(c, exclude, style);
+        // The family that covers the character, and the face of it that carries the style: the
+        // same word is always drawn with the same (regional) glyph forms, whichever style the
+        // run asks for (#892).
+        let loaded = self.styled_face_of_family(c, exclude, style);
         if loaded.as_ref().is_some_and(|f| style_matches(f, style)) {
             return loaded;
         }
@@ -1273,7 +1276,9 @@ impl FontDb {
                 let _ = self.load_cataloged_once(&f.family);
             }
             let _ = self.system_fallback(c);
-            if let Some(f) = self.loaded_fallback_styled(c, exclude, style) {
+            // The family's files may hold the style the run asks for; the family itself does not
+            // change, so the glyph forms stay the same.
+            if let Some(f) = self.styled_face_of_family(c, exclude, style) {
                 return Some(f);
             }
         }
@@ -1300,13 +1305,21 @@ impl FontDb {
 
     /// Like `loaded_fallback`, but prefers faces matching the requested style's weight and
     /// italic, so bold CJK text falls back to a bold face instead of a regular one (#892).
-    fn loaded_fallback_styled(&self, c: char, exclude: u32, style: &str) -> Option<Arc<FontFace>> {
+    /// The face of the *covering family* that carries the requested style: the family is picked
+    /// by coverage alone, so the same word is always drawn with the same (regional) glyph forms,
+    /// and only the style is chosen within it (#892).
+    fn styled_face_of_family(&self, c: char, exclude: u32, style: &str) -> Option<Arc<FontFace>> {
         let faces = self.read_faces();
+        // The family that covers the character first, in the order the fallback picks it: the
+        // fallback family, then the others in load order.
         let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
-        order.sort_by_key(|f| {
-            (!f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic != style_italic(style), (f.weight - style_weight(style)).abs() as i32)
-        });
-        order.into_iter().find(|f| f.covers(c)).cloned()
+        order.sort_by_key(|f| !f.family.eq_ignore_ascii_case(FALLBACK_FAMILY));
+        let family = order.iter().find(|f| f.covers(c)).map(|f| f.family.clone())?;
+        // Within the family, the face that carries the style: the style's own name, else the
+        // closest weight, the upright ones first.
+        let mut of_family: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family == family && f.id != exclude).collect();
+        of_family.sort_by_key(|f| (f.italic != style_italic(style), (f.weight - style_weight(style)).abs() as i32, f.style.clone()));
+        of_family.into_iter().find(|f| f.covers(c)).cloned()
     }
 
     fn loaded_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {

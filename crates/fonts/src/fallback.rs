@@ -332,6 +332,26 @@ mod tests {
         assert!((bi.weight - 600.0).abs() < 1e-3, "Bold Italic prefers the heavier face, got {}", bi.weight);
     }
 
+    /// #892: the covering family does not change with the style. Two families cover the same
+    /// character, one of them with a bold face: a bold run must take the bold face of the *same*
+    /// family the regular run uses, not a bold face of another family - otherwise the same word is
+    /// drawn with different (regional) glyph forms depending on the run's style.
+    #[test]
+    fn the_styled_fallback_keeps_the_family() {
+        let db = FontDb::empty_for_tests();
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/other-regular.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/other-semibold.ttf").to_vec()), 1);
+        let a = 'A';
+        let regular = db.fallback_for_styled(a, u32::MAX, "Regular").expect("regular fallback");
+        let bold = db.fallback_for_styled(a, u32::MAX, "Bold").expect("bold fallback");
+        assert_eq!(regular.family, bold.family, "the same family covers the word, whichever style the run asks for");
+        // The bold face of that family (600), not the 700 face of the other one.
+        assert!((bold.weight - 600.0).abs() < 1e-3, "the bold face of that family is used, got {} ({})", bold.weight, bold.family);
+    }
+
     /// #892: for a "Regular" run the styled fallback picks exactly the face the plain one does.
     #[test]
     fn styled_regular_fallback_matches_the_plain_one() {
