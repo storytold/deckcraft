@@ -219,6 +219,14 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         if group_labels == Some(true) {
             c.data_labels = true;
         }
+        // The chart group's own data labels' number format (`c:barChart/c:dLbls/c:numFmt`), which
+        // is the chart's label format (#1046).
+        c.label_format = g
+            .path(&["dLbls", "numFmt"])
+            .filter(|n| n.attr("sourceLinked") != Some("1"))
+            .and_then(|n| n.attr("formatCode"))
+            .map(str::to_string)
+            .filter(|f| !f.is_empty());
         kinds.push(kind);
         let val_axis = group_val_axis(g);
         let secondary = val_axis.is_some() && val_axis != primary_val;
@@ -254,7 +262,15 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
             };
             let source =
                 s.child("val").or_else(|| s.child("yVal")).and_then(|v| v.find("numCache")).and_then(|c| c.child("formatCode")).map(|f| f.text());
-            ser.number_format = label_fmt(s.child("dLbls")).or_else(|| label_fmt(g.child("dLbls"))).or(source).filter(|f| !f.is_empty());
+            ser.number_format = label_fmt(s.child("dLbls")).or_else(|| label_fmt(g.child("dLbls"))).or(source.clone()).filter(|f| !f.is_empty());
+            // The series' labels' own format, when it has one: the effective format above may
+            // come from the group or the source data, and only the series' own is written back
+            // on the series (#1046).
+            ser.own_label_format = label_fmt(s.child("dLbls")).filter(|f| !f.is_empty());
+            // The series' values' own number format: the one its numbers are written and read
+            // with, apart from the data labels' format (#1046). OOXML keeps it in the values'
+            // cache (`c:numCache/c:formatCode`), not in an element of its own.
+            ser.value_format = source.clone().filter(|f| !f.is_empty() && f != "General");
             for dp in s.children_named("dPt") {
                 if let (Some(i), Some(f)) = (dp.child("idx").and_then(|i| i.u32("val")), simple_fill(dp.child("spPr"))) {
                     ser.point_fills.push((i as usize, f));

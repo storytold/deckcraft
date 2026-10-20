@@ -239,6 +239,16 @@ pub struct Series {
     /// source data's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub number_format: Option<String>,
+    /// The number format of the series' values (Excel code): the one its numbers are written
+    /// and read with, apart from the data labels' format (#1046). OOXML has no element for it
+    /// on the series, so it travels in the values' cache (`c:numCache/c:formatCode`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_format: Option<String>,
+    /// The number format the series' own data labels carried (`c:ser/c:dLbls/c:numFmt`), kept
+    /// apart from the effective one above, which may come from the chart group or the source
+    /// data: only the series' own is written back on the series (#1046).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub own_label_format: Option<String>,
     /// Trendlines (`c:trendline`), in file order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trendlines: Vec<Trendline>,
@@ -332,6 +342,10 @@ pub struct Chart {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_size: Option<f64>,
     pub data_labels: bool,
+    /// The number format of the chart's own data labels (`c:barChart/c:dLbls/c:numFmt`, Excel
+    /// code): what the labels of a chart-wide `c:dLbls` are written and read with (#1046).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_format: Option<String>,
     pub gridlines: bool,
     /// `c:minorGridlines` on the value axis: five to a major unit, between the major ones.
     pub minor_gridlines: bool,
@@ -453,6 +467,7 @@ impl Default for Chart {
             text_size: None,
             title_size: None,
             data_labels: false,
+            label_format: None,
             gridlines: true,
             minor_gridlines: false,
             axis_titles: (None, None),
@@ -730,6 +745,13 @@ impl Chart {
         let axis = if self.on_secondary(s) { &self.y2_format } else { &self.y_format };
         let code = s.number_format.as_ref().or(axis.as_ref());
         crate::numfmt::format(code.map_or("General", String::as_str), v, self.lang.as_deref())
+    }
+
+    /// The number format the series' values are written and read with: the series' own, else
+    /// the value axis', else the general format (#1046).
+    pub fn value_format<'a>(&'a self, s: &'a Series) -> &'a str {
+        let axis = if self.on_secondary(s) { &self.y2_format } else { &self.y_format };
+        s.value_format.as_deref().or(axis.as_deref()).filter(|f| !f.is_empty()).unwrap_or("General")
     }
 
     /// Does series `s` show its data labels? The series' own `c:dLbls/c:showVal` wins — an
