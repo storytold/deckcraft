@@ -664,3 +664,13 @@ fn renders_for_review() {
     h.get_by_role_and_label(egui::accesskit::Role::Button, "Share").click();
     save(&mut h, "share-dialog");
 }
+
+#[test]
+fn cloud_commands_refuse_without_a_service() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    for id in ["cloud.open", "cloud.browse", "cloud.shared", "cloud.link"] {
+        assert_eq!(app.run(id, json!({})).unwrap_err(), cloud::UNAVAILABLE, "{id}");
+    }
+    assert_eq!(app.run("cloud.saveAs", json!({})).unwrap_err(), cloud::UNAVAILABLE);
+    assert_eq!(app.run("cloud.openFile", json!({})).unwrap_err(), cloud::UNAVAILABLE);
+}

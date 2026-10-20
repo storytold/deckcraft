@@ -50,7 +50,6 @@ pub fn start() {
                     if let Some(share) = collabcraft_share::CollabCraft::from_env() {
                         app.share.connect(share.for_app("deckcraft"));
                     }
-                    cloud::start(&mut app);
                     let q = query();
                     if invite.is_none() {
                         if !q.contains("blank") {
