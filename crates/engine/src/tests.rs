@@ -601,6 +601,106 @@ fn double_click_edits_text_inside_group() {
 }
 
 #[test]
+fn grouped_text_editing_matches_rendered_text() {
+    use deckcraft_geom::{Point, Xfrm};
+    use deckcraft_model::{ShapeId, ShapeKind};
+
+    for nested in [false, true] {
+        for (rotation, flip_h, flip_v) in [(0.0, false, false), (27.0, false, false), (15.0, true, false), (0.0, false, true)] {
+            let mut s = session();
+            let id = ShapeId(
+                s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 20.0, 140.0, 60.0], "text": "Hello group"})).unwrap()["id"]
+                    .as_u64()
+                    .unwrap() as u32,
+            );
+            s.edit(|doc, sel| {
+                let group_id = ShapeId(doc.alloc_id().unwrap());
+                let outer_id = ShapeId(doc.alloc_id().unwrap());
+                let shapes = crate::shapes_mut(doc, sel).unwrap();
+                let child = shapes.remove(shapes.iter().position(|sh| sh.id == id).unwrap());
+                let group = Shape {
+                    id: group_id,
+                    xfrm: Some(Xfrm { rot: rotation, flip_h, flip_v, ..Xfrm::new(300.0, 100.0, 280.0, 120.0) }),
+                    kind: ShapeKind::Group { children: vec![child], child: Xfrm::new(0.0, 0.0, 140.0, 60.0) },
+                    ..Default::default()
+                };
+                shapes.push(if nested {
+                    Shape {
+                        id: outer_id,
+                        xfrm: Some(Xfrm { rot: -12.0, ..Xfrm::new(100.0, 60.0, 450.0, 200.0) }),
+                        kind: ShapeKind::Group { children: vec![group], child: Xfrm::new(250.0, 80.0, 350.0, 170.0) },
+                        ..Default::default()
+                    }
+                } else {
+                    group
+                });
+                sel.shapes.clear();
+                sel.text = None;
+                Ok(())
+            })
+            .unwrap();
+            let placed = deckcraft_render::place_slide(&s.doc().unwrap().doc, 0);
+            let drawn = placed.texts.iter().find(|t| t.body.text() == "Hello group").unwrap();
+            let t = TextSel { shape: id, caret: (0, 3), anchor: (0, 0), ..Default::default() };
+            let st = s.doc().unwrap();
+            let (_, editing) = cmd::text::text_frame(st, &t).unwrap();
+            for q in [Point::ZERO, Point::new(100.0, 40.0)] {
+                assert!(
+                    (editing * q - drawn.transform * q).hypot() < 1e-8,
+                    "editing transform differs from rendering (nested={nested}, rotation={rotation}, flips={flip_h}/{flip_v})"
+                );
+            }
+            let (cx, top, bot) = drawn.layout.caret_drawn(deckcraft_text::Pos { para: 0, ch: 3 }, deckcraft_text::Affinity::Downstream).unwrap();
+            let (a, b) = cmd::text::caret_line(st, &t).unwrap();
+            assert!((a - drawn.transform * Point::new(cx, top)).hypot() < 1e-8);
+            assert!((b - drawn.transform * Point::new(cx, bot)).hypot() < 1e-8);
+            let p = drawn.transform * Point::new(cx, (top + bot) / 2.0);
+            assert_eq!(cmd::text::text_pos_at(st, &t, p), (0, 3));
+            let ev = |kind| PointerEvent { kind, x: p.x, y: p.y, mods: Mods::default(), tol: 1.0, pressure: None };
+            s.pointer(ev(PointerKind::DoubleClick)).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text.as_ref().unwrap().shape, id);
+            s.pointer(ev(PointerKind::Down)).unwrap();
+            s.pointer(ev(PointerKind::Up)).unwrap();
+            let t = s.doc().unwrap().selection.text.as_ref().unwrap();
+            assert_eq!(t.shape, id, "clicking the displayed text keeps editing its group member");
+            assert_eq!(t.caret, (0, 3));
+            s.pointer(ev(PointerKind::ContextClick)).unwrap();
+            assert_eq!(s.doc().unwrap().selection.text.as_ref().unwrap().shape, id);
+
+            // The displayed corner resizes in the member's own coordinates, and grabbing its
+            // displayed frame moves it by the pointer's page-space displacement.
+            let st = s.doc().unwrap();
+            let x = cmd::xfrm_of(&st.doc, &st.selection, st.shape(id).unwrap());
+            let parent = cmd::parent_transform(st, id);
+            let corner = parent * tools::box_handles(&x).0[4];
+            assert!(matches!(s.hit_test(corner, 1.0), Some(tools::Hit::Resize { id: hit, handle: 4 }) if hit == id));
+            let end = parent * Point::new(x.x + x.w + 16.0, x.y + x.h + 8.0);
+            let event =
+                |kind, p: Point| PointerEvent { kind, x: p.x, y: p.y, mods: Mods { cmd: true, ..Default::default() }, tol: 1.0, pressure: None };
+            s.pointer(event(PointerKind::Down, corner)).unwrap();
+            s.pointer(event(PointerKind::Drag, end)).unwrap();
+            s.pointer(event(PointerKind::Up, end)).unwrap();
+            let resized = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+            assert!((resized.w - x.w - 16.0).abs() < 1e-8);
+            assert!((resized.h - x.h - 8.0).abs() < 1e-8);
+            s.execute("edit.undo", &json!({})).unwrap();
+
+            let frame = parent * x.affine() * Point::new(20.0, 0.0);
+            assert!(matches!(s.hit_test(frame, 1.0), Some(tools::Hit::Frame { id: hit }) if hit == id));
+            let end = frame + deckcraft_geom::Vec2::new(30.0, 15.0);
+            s.pointer(event(PointerKind::Down, frame)).unwrap();
+            s.pointer(event(PointerKind::Drag, end)).unwrap();
+            s.pointer(event(PointerKind::Up, end)).unwrap();
+            let moved = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+            let displacement = parent * moved.center() - parent * x.center();
+            assert!((displacement - deckcraft_geom::Vec2::new(30.0, 15.0)).hypot() < 1e-8);
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(s.doc().unwrap().shape(id).unwrap().xfrm, Some(x));
+        }
+    }
+}
+
+#[test]
 fn grown_table_frame_covers_its_drawn_rows() {
     // Rows stored 4 pt tall are drawn taller: the box, its handles and hit tests follow the drawn rows.
     let mut s = session();

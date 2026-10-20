@@ -1,11 +1,19 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** minor (grouped-text editing coordinates; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
 direct manipulation, keyboard and precision. Observations of PowerPoint are kept locally in
 `plan/powerpoint/01-observed-ui.md` and `menu-tree.txt` (gitignored, clean-room rules in
 AGENTS.md §2). Dimension score: **~60% ready** (estimated), **30–50 h** to parity.
+
+## Editing text inside groups
+
+Double-clicking text inside a moved, scaled, rotated, flipped or nested group keeps the editing
+outline, caret, selection highlight and mouse hit testing at the text's drawn position. Moving
+its frame and resizing its handles map pointer movement back into the member's group space.
+Synthetic engine tests compare editing coordinates with the renderer and cover caret placement,
+context clicks, frame movement, resizing and undo. Feature and readiness scores are unchanged.
 
 ## Empty list paragraphs
 
@@ -165,6 +173,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Grouped-text editing coordinates and pointer gestures follow enclosing group transforms |
 | 2026-10-16 | minor | Export › Change File Type › PNG and the Export… dialog offer a transparent background (#784) |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: one row each for Format Shape, Dialogs (41, listed from `dialogs.rs`), Animation Pane (timeline is in), window, Quick Access Toolbar, Format Background, rulers, image paste, context menus, exact size and edit points; estimates re-totalled (~26–46 h) |

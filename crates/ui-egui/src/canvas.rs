@@ -811,7 +811,8 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
     for id in &st.selection.shapes {
         let Some(sh) = st.shape(*id) else { continue };
         let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
-        let a = x.affine();
+        let parent = deckcraft_engine::cmd::parent_transform(st, *id);
+        let a = parent * x.affine();
         let corners = [Point::new(0.0, 0.0), Point::new(x.w, 0.0), Point::new(x.w, x.h), Point::new(0.0, x.h)].map(|q| xf.to_screen(a * q));
         if sh.is_line() {
             let (p0, p1) = (xf.to_screen(a * Point::new(0.0, 0.0)), xf.to_screen(a * Point::new(x.w, x.h)));
@@ -868,20 +869,20 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
         if sh.locked && !editing_this {
             // Locked: greyed handles that don't respond, no rotate or adjust handles.
             for h in box_handles(&x).0 {
-                painter.circle(xf.to_screen(h), 4.0, t.text_faint, Stroke::new(1.0, t.handle_fill));
+                painter.circle(xf.to_screen(parent * h), 4.0, t.text_faint, Stroke::new(1.0, t.handle_fill));
             }
             continue;
         }
         if st.selection.shapes.len() == 1 || !editing_this {
             let (hs, rot) = box_handles(&x);
-            let rot_s = xf.to_screen(rot);
+            let rot_s = xf.to_screen(parent * rot);
             if !editing_this && sh.ph.as_ref().is_none_or(|_| true) {
-                let top_mid = xf.to_screen(hs[1]);
+                let top_mid = xf.to_screen(parent * hs[1]);
                 painter.line_segment([top_mid, rot_s], sel_stroke);
                 rotate_handle(painter, rot_s, t);
             }
             for h in hs {
-                painter.circle(xf.to_screen(h), 4.5, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
+                painter.circle(xf.to_screen(parent * h), 4.5, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
             }
             let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
             for hd in &geo.handles {

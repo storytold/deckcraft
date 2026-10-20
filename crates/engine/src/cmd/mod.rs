@@ -415,6 +415,40 @@ pub fn xfrm_of(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shap
     x
 }
 
+/// Map a shape's containing group space onto the edited page. Root shapes use page coordinates.
+/// Keep the same child-space mapping and nesting limit as the renderer; a group's own box
+/// transform is not its children's transform when its child rectangle differs from its box.
+pub fn parent_transform(st: &crate::DocState, id: ShapeId) -> deckcraft_geom::Affine {
+    use deckcraft_geom::{Affine, Rect};
+    use deckcraft_model::{Shape, ShapeKind};
+
+    fn find(st: &crate::DocState, shapes: &[Shape], id: ShapeId, parent: Affine, depth: usize) -> Option<Affine> {
+        if depth > 32 {
+            return None;
+        }
+        for sh in shapes {
+            if sh.id == id {
+                return Some(parent);
+            }
+            if let ShapeKind::Group { children, child } = &sh.kind {
+                let x = xfrm_of(&st.doc, &st.selection, sh);
+                let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
+                if let Some(m) = find(st, children, id, parent * deckcraft_geom::group_child_affine(&x, ch), depth + 1) {
+                    return Some(m);
+                }
+            }
+        }
+        None
+    }
+
+    find(st, st.shapes(), id, Affine::IDENTITY, 0).unwrap_or(Affine::IDENTITY)
+}
+
+/// Shape-local coordinates to the edited page, including every enclosing group's transform.
+pub fn shape_to_slide(st: &crate::DocState, shape: &deckcraft_model::Shape) -> deckcraft_geom::Affine {
+    parent_transform(st, shape.id) * xfrm_of(&st.doc, &st.selection, shape).affine()
+}
+
 /// Row heights of table `t` as drawn: a stored height is a minimum, rows grow to fit their text.
 pub fn table_drawn_heights(doc: &deckcraft_model::Presentation, sel: &crate::Selection, t: &deckcraft_model::Table) -> Vec<f64> {
     match text::ctx_for(doc, sel) {
