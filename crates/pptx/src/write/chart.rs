@@ -81,17 +81,25 @@ fn def_rpr(w: &mut W, color: Option<&deckcraft_model::ColorRef>) {
     }
 }
 
-/// `c:txPr` with the chart's text colour (`Chart::text_color`) as the default run properties, on
-/// the axes, the legend, the data labels and the chart itself, as PowerPoint writes it. Nothing
-/// without a colour: the theme's default then applies on reading.
-fn tx_pr(w: &mut W, c: &Chart) {
-    let Some(color) = &c.text_color else { return };
+/// `c:txPr` with the chart's text colour (`Chart::text_color`) and the element's own text size
+/// as the default run properties, on the axes, the legend, the data labels and the chart itself,
+/// as PowerPoint writes it. Nothing without either: the theme's defaults then apply on reading.
+fn tx_pr(w: &mut W, c: &Chart, size: Option<f64>) {
+    let color = c.text_color.as_ref();
+    let sz = size.filter(|s| s.is_finite() && *s > 0.0).map(|s| (s.clamp(1.0, 400.0) * 100.0).round() as i64);
+    if color.is_none() && sz.is_none() {
+        return;
+    }
     w.open0("c:txPr");
     w.empty0("a:bodyPr");
     w.empty0("a:lstStyle");
     w.open0("a:p");
     w.open0("a:pPr");
-    def_rpr(w, Some(color));
+    w.open("a:defRPr", A::new().o("sz", sz));
+    if let Some(c) = color {
+        super::dml::solid(w, c);
+    }
+    w.close("a:defRPr");
     w.close("a:pPr");
     w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
     w.close("a:p");
@@ -124,11 +132,13 @@ fn rich(w: &mut W, text: &str, color: Option<&deckcraft_model::ColorRef>) {
     w.close("c:tx");
 }
 
-/// A title (the chart's or an axis's) in the chart's text colour.
-fn title(w: &mut W, text: &str, c: &Chart) {
+/// A title (the chart's or an axis's): its text in the chart's colour, at the size the file
+/// gave it.
+fn title(w: &mut W, text: &str, c: &Chart, size: Option<f64>) {
     w.open0("c:title");
     rich(w, text, c.text_color.as_ref());
     w.val("c:overlay", 0);
+    tx_pr(w, c, size);
     w.close("c:title");
 }
 
@@ -270,7 +280,7 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
         }
     }
     if let Some(d) = s.data_labels {
-        data_labels(w, c, d, s.own_label_format.as_deref());
+        data_labels(w, c, d, s.own_label_format.as_deref(), s.label_size);
     }
     // After labels, before the category and value caches (ECMA-376 series content order).
     if matches!(g, Group::Bar | Group::Line | Group::Area | Group::Scatter) {
@@ -378,9 +388,9 @@ fn trendline(w: &mut W, t: &Trendline) {
     w.close("c:trendline");
 }
 
-fn data_labels(w: &mut W, c: &Chart, show: bool, format: Option<&str>) {
+fn data_labels(w: &mut W, c: &Chart, show: bool, format: Option<&str>, size: Option<f64>) {
     w.open0("c:dLbls");
-    tx_pr(w, c);
+    tx_pr(w, c, size);
     for (n, v) in [
         ("c:showLegendKey", false),
         ("c:showVal", show),
@@ -413,13 +423,14 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", "b");
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t, c);
+            title(w, t, c, c.text_size);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
+        // The axis labels' text colour and size, as the file had them (#1046).
+        tx_pr(w, c, c.text_size);
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
-        tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
         w.val("c:crossBetween", "midCat");
@@ -433,13 +444,14 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", cat_pos);
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t, c);
+            title(w, t, c, c.text_size);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
+        // The axis labels' text colour and size, as the file had them (#1046).
+        tx_pr(w, c, c.text_size);
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
-        tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
         w.val("c:auto", 1);
@@ -471,16 +483,17 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.empty0("c:minorGridlines");
     }
     if let Some(t) = &c.axis_titles.1 {
-        title(w, t, c);
+        title(w, t, c, c.text_size);
     }
     match c.y_format.as_deref().filter(|f| !f.is_empty()) {
         Some(f) => w.empty("c:numFmt", A::new().a("formatCode", f).a("sourceLinked", 0)),
         None => w.empty("c:numFmt", A::new().a("formatCode", if c.kind.percent() { "0%" } else { "General" }).a("sourceLinked", 1)),
     }
+    // The axis labels' text colour and size, as the file had them (#1046).
+    tx_pr(w, c, c.text_size);
     w.val("c:majorTickMark", "none");
     w.val("c:minorTickMark", "none");
     w.val("c:tickLblPos", "nextTo");
-    tx_pr(w, c);
     w.val("c:crossAx", AX_CAT);
     w.val("c:crosses", "autoZero");
     w.val("c:crossBetween", if g == Group::Area || g == Group::Scatter { "midCat" } else { "between" });
@@ -532,7 +545,7 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
     // c:barDir, c:grouping, c:varyColors, c:ser, c:dLbls, c:gapWidth ...). They are the
     // default the series that carry labels of their own replace.
     if c.data_labels {
-        data_labels(w, c, true, c.label_format.as_deref());
+        data_labels(w, c, true, c.label_format.as_deref(), c.label_size);
     }
     match g {
         Group::Bar => {
@@ -640,7 +653,8 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.open0("c:chart");
     match &c.title {
         Some(t) => {
-            title(&mut w, t, c);
+            // The title's own text colour and size, as the file had them (#1046).
+            title(&mut w, t, c, c.title_size);
             w.val("c:autoTitleDeleted", 0);
         }
         None => w.val("c:autoTitleDeleted", 1),
@@ -718,7 +732,8 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         w.open0("c:legend");
         w.val("c:legendPos", p);
         w.val("c:overlay", u8::from(c.legend_overlay));
-        tx_pr(&mut w, c);
+        // The legend's own text colour and size, as the file had them (#1046).
+        tx_pr(&mut w, c, c.legend_size);
         w.close("c:legend");
     }
     w.val("c:plotVisOnly", 1);
@@ -727,7 +742,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     if let Some(f) = &c.chart_fill {
         sp_pr(&mut w, Some(f), None);
     }
-    tx_pr(&mut w, c);
+    tx_pr(&mut w, c, None);
     w.close("c:chartSpace");
     (w.finish(), false)
 }

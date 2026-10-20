@@ -219,6 +219,8 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         if group_labels == Some(true) {
             c.data_labels = true;
         }
+        // The chart group's own data labels' text size, when the file gives them one (#1046).
+        c.label_size = text_size(g.child("dLbls").and_then(|d| d.child("txPr")));
         // The chart group's own data labels' number format (`c:barChart/c:dLbls/c:numFmt`), which
         // is the chart's label format (#1046).
         c.label_format = g
@@ -267,6 +269,10 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
             // come from the group or the source data, and only the series' own is written back
             // on the series (#1046).
             ser.own_label_format = label_fmt(s.child("dLbls")).filter(|f| !f.is_empty());
+            // The data labels' own text size, when the file gives them one: the series' own
+            // labels', else the chart group's (#1046).
+            ser.label_size =
+                text_size(s.child("dLbls").and_then(|d| d.child("txPr"))).or_else(|| text_size(g.child("dLbls").and_then(|d| d.child("txPr"))));
             // The series' values' own number format: the one its numbers are written and read
             // with, apart from the data labels' format (#1046). OOXML keeps it in the values'
             // cache (`c:numCache/c:formatCode`), not in an element of its own.
@@ -377,6 +383,10 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     // the chart): the axes' and legend's, else the whole chart's; the title's own.
     let chart_size = text_size(root.child("txPr"));
     c.text_size = [val_ax, cat_ax, ch.child("legend")].into_iter().flatten().find_map(|e| text_size(e.child("txPr"))).or(chart_size);
+    // The legend's own size, when it has one: the size above is the first of the axes, the
+    // legend and the chart that has one, and the legend's own is what a rebuild must write
+    // back (#1046).
+    c.legend_size = ch.child("legend").and_then(|e| text_size(e.child("txPr")));
     // Text colour likewise: the axes' and legend's, else the whole chart's.
     c.text_color = [val_ax, cat_ax, ch.child("legend"), Some(root)].into_iter().flatten().find_map(|e| text_color(e.child("txPr")));
     c.title_size = ch.child("title").and_then(|t| text_size(t.child("tx").and_then(|x| x.child("rich"))).or_else(|| text_size(t.child("txPr"))));

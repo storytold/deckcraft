@@ -249,6 +249,10 @@ pub struct Series {
     /// data: only the series' own is written back on the series (#1046).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub own_label_format: Option<String>,
+    /// Text size in points of the series' own data labels (from their `c:txPr`), when the file
+    /// gives them a size of their own (#1046).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_size: Option<f64>,
     /// Trendlines (`c:trendline`), in file order.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub trendlines: Vec<Trendline>,
@@ -338,6 +342,10 @@ pub struct Chart {
     /// `None`: the file gives none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text_size: Option<f64>,
+    /// Text size in points of the legend's own labels (from its `c:txPr`), when the file gives
+    /// the legend a size of its own rather than the chart's (#1046).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legend_size: Option<f64>,
     /// Title text size in points (its rich text or `c:txPr`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_size: Option<f64>,
@@ -346,6 +354,10 @@ pub struct Chart {
     /// code): what the labels of a chart-wide `c:dLbls` are written and read with (#1046).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label_format: Option<String>,
+    /// Text size in points of the chart's own data labels (from their `c:txPr`), when the file
+    /// gives them a size of their own (#1046).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label_size: Option<f64>,
     pub gridlines: bool,
     /// `c:minorGridlines` on the value axis: five to a major unit, between the major ones.
     pub minor_gridlines: bool,
@@ -465,9 +477,11 @@ impl Default for Chart {
             legend: Some("b".into()),
             legend_overlay: false,
             text_size: None,
+            legend_size: None,
             title_size: None,
             data_labels: false,
             label_format: None,
+            label_size: None,
             gridlines: true,
             minor_gridlines: false,
             axis_titles: (None, None),
