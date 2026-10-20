@@ -8,6 +8,10 @@ pub fn localized(style: &str, weight: u16) -> Vec<u8> {
 }
 
 pub fn font(family: &str, style: &str, weight: u16, aliases: &[&str], win_metrics: (u16, u16), variable: bool) -> Vec<u8> {
+    font_with_chars(family, style, weight, aliases, win_metrics, variable, &['A', '字'])
+}
+
+pub fn font_with_chars(family: &str, style: &str, weight: u16, aliases: &[&str], win_metrics: (u16, u16), variable: bool, chars: &[char]) -> Vec<u8> {
     let base = include_bytes!("../fixtures/legacy-regular.ttf");
     let count = u16::from_be_bytes(base[4..6].try_into().unwrap()) as usize;
     let mut tables: BTreeMap<[u8; 4], Vec<u8>> = (0..count)
@@ -57,10 +61,19 @@ pub fn font(family: &str, style: &str, weight: u16, aliases: &[&str], win_metric
     name.extend(records);
     name.extend(strings);
     tables.insert(*b"name", name);
-    // A Windows UCS-4 cmap: A and 字 both draw the original square, rather than falling back.
+    // Each requested character draws the original square. UCS-4 also permits private-use
+    // characters for fallback tests that cannot depend on a machine's installed coverage.
+    let mut chars = chars.to_vec();
+    chars.sort_unstable();
+    chars.dedup();
     let mut cmap = vec![0, 0, 0, 1, 0, 3, 0, 10, 0, 0, 0, 12, 0, 12, 0, 0];
-    for v in [40_u32, 0, 2, 65, 65, 1, 0x5b57, 0x5b57, 1] {
+    for v in [16 + 12 * chars.len() as u32, 0, chars.len() as u32] {
         cmap.extend(v.to_be_bytes());
+    }
+    for c in chars {
+        for v in [c as u32, c as u32, 1] {
+            cmap.extend(v.to_be_bytes());
+        }
     }
     tables.insert(*b"cmap", cmap);
     let os2 = tables.get_mut(b"OS/2").unwrap();

@@ -1671,6 +1671,21 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
         shaped_paras.push(shape_para(ctx, shape, body, pi, scale, opts, number, upright_text));
     }
     for (pi, p) in shaped_paras.iter().enumerate() {
+        // Resolve ownership once per style: a fallback's alias can collide with a
+        // configured family's canonical name without making that fallback a run font.
+        let db = FontDb::global();
+        let configured_faces: Vec<Vec<_>> = p
+            .styles
+            .iter()
+            .map(|st| {
+                [st.ea.as_deref(), st.cs.as_deref(), st.sym.as_deref()]
+                    .into_iter()
+                    .flatten()
+                    .filter(|f| db.has_family(f))
+                    .map(|f| db.face(f, st.style_name))
+                    .collect()
+            })
+            .collect();
         let props = &p.props;
         let margin = props.margin_left.unwrap_or(0.0).max(0.0);
         let indent = props.indent.unwrap_or(0.0);
@@ -1703,8 +1718,8 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     let sz = st.size;
                     // The run's own fonts set the line; a fallback face (emoji, a symbol or a
                     // script the run's fonts lack) does not move the baseline in PowerPoint.
-                    let own = Arc::ptr_eq(face, &st.face)
-                        || [st.ea.as_deref(), st.cs.as_deref(), st.sym.as_deref()].into_iter().flatten().any(|f| face.has_family_name(f));
+                    let own =
+                        Arc::ptr_eq(face, &st.face) || configured_faces.get(c.style).is_some_and(|fonts| fonts.iter().any(|f| Arc::ptr_eq(face, f)));
                     let (a, d) = line_metrics(if own { face } else { &st.face }, sz);
                     asc = asc.max(a);
                     desc = desc.max(d);
