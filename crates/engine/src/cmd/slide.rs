@@ -627,6 +627,17 @@ fn from_outline(s: &mut Session, p: &Value) -> Result<Value> {
         for (k, sl) in new.into_iter().enumerate() {
             doc.slides.insert(at + k, sl);
         }
+        // Join the section of the slide before, as slide.new does.
+        let ids: Vec<SlideId> = doc.slides.iter().skip(at).take(n).map(|x| x.id).collect();
+        let prev = at.checked_sub(1).and_then(|i| doc.slides.get(i)).map(|x| x.id);
+        let section = prev.and_then(|p| doc.section_of(p));
+        if let Some(sec) = section.and_then(|si| doc.sections.get_mut(si)) {
+            let pos = prev.and_then(|p| sec.slides.iter().position(|x| *x == p)).map(|k| k + 1).unwrap_or(sec.slides.len());
+            let pos = pos.min(sec.slides.len());
+            sec.slides.splice(pos..pos, ids);
+        } else if let Some(first) = doc.sections.first_mut() {
+            first.slides.splice(0..0, ids);
+        }
         Ok(json!({"slides": n}))
     })
 }

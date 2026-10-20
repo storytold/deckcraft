@@ -299,7 +299,8 @@ impl ShowState {
         ShowAction::FinishStep(n)
     }
 
-    /// ← / Backspace: undo the last step, else go to the previous slide fully built.
+    /// ← / Backspace: undo the last step, else go to the previous slide fully built. An automatic
+    /// first step (With/After Previous) is part of the slide appearing, so it is never undone.
     pub fn prev(&mut self, pres: &Presentation) -> ShowAction {
         if self.ended {
             self.ended = false;
@@ -310,13 +311,16 @@ impl ShowState {
             self.playing = false;
             return ShowAction::Slide(self.slide);
         }
-        if self.playing {
+        // #844: undoing the automatic first step left the slide as before it appeared, and the show
+        // played the step again at once, so Back never got past the slide.
+        let undo = if self.playing { Some(self.step) } else { self.step.checked_sub(1) };
+        let auto_first = undo == Some(0) && !pres.show.without_animation && ShowState::timeline(pres, self.slide).step_is_auto(0);
+        if let Some(k) = undo
+            && !auto_first
+        {
             self.playing = false;
-            return ShowAction::StepBack(self.step);
-        }
-        if self.step > 0 {
-            self.step -= 1;
-            return ShowAction::StepBack(self.step);
+            self.step = k;
+            return ShowAction::StepBack(k);
         }
         let target = match self.prev_index(pres) {
             Some(i) => Some(i),

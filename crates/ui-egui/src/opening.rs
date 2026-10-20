@@ -199,4 +199,93 @@ mod tests {
         assert!(harness.state().opening.is_none());
         assert_eq!(harness.state().session.documents().len(), 1);
     }
+
+    /// A deck of `slides` slides saved as `file` (its extension picks the format).
+    fn saved_as(file: &str, slides: usize) -> String {
+        let mut s = Session::with_new();
+        for _ in 1..slides {
+            s.execute("slide.new", &serde_json::json!({})).unwrap();
+        }
+        let dir = std::env::temp_dir().join(format!("deckcraft-opening-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(file).to_string_lossy().to_string();
+        s.execute("file.saveAs", &serde_json::json!({"path": path})).unwrap();
+        path
+    }
+
+    /// #862: a PowerPoint Show handed over by the system (command line, double-click) starts its
+    /// slide show at once, full screen and from the first slide.
+    #[test]
+    fn a_ppsx_from_the_system_starts_the_show() {
+        let path = saved_as("Talk.PPSX", 3);
+        let mut app = SlideApp::new(Session::new(), crate::Services::default());
+        assert!(app.open_from_system(std::slice::from_ref(&path)).is_empty());
+        assert_eq!(app.session.documents().len(), 1);
+        let show = app.show.as_ref().expect("the slide show started");
+        assert_eq!(show.state.slide, 0);
+        assert!(!show.reading, "full screen, not Reading View");
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// #862: a `.pptx` from the system opens for editing, and so does a `.ppsx` followed by a
+    /// `.pptx`: the show would otherwise play the deck opened last.
+    #[test]
+    fn a_pptx_from_the_system_opens_for_editing() {
+        let pptx = saved_as("edit.pptx", 3);
+        let ppsx = saved_as("first.ppsx", 2);
+        let mut app = SlideApp::new(Session::new(), crate::Services::default());
+        assert!(app.open_from_system(std::slice::from_ref(&pptx)).is_empty());
+        assert!(app.show.is_none());
+        assert!(app.open_from_system(&[ppsx.clone(), pptx.clone()]).is_empty());
+        assert_eq!(app.session.documents().len(), 3);
+        assert!(app.show.is_none(), "the last file is a .pptx");
+        std::fs::remove_file(&pptx).ok();
+        std::fs::remove_file(&ppsx).ok();
+    }
+
+    /// #862: File › Open opens a `.ppsx` for editing, as PowerPoint does.
+    #[test]
+    fn file_open_opens_a_ppsx_for_editing() {
+        let path = saved_as("open.ppsx", 2);
+        let mut app = SlideApp::new(Session::new(), crate::Services::default());
+        app.open_path_in_background(&path);
+        wait(&mut app);
+        assert_eq!(app.session.active().unwrap().doc.slides.len(), 2);
+        assert!(app.show.is_none());
+        assert_eq!(app.ui.view, crate::ViewMode::Normal);
+        std::fs::remove_file(&path).ok();
+    }
+
+    /// #862: Esc, or a click past the end screen, ends the `.ppsx` show and leaves the deck open in
+    /// the editor (PowerPoint closes it instead).
+    #[test]
+    fn leaving_the_ppsx_show_keeps_the_deck_open() {
+        let path = saved_as("leave.ppsx", 2);
+        for leave in [egui::Key::Escape, egui::Key::ArrowRight] {
+            let mut app = SlideApp::new(Session::new(), crate::Services::default());
+            assert!(app.open_from_system(std::slice::from_ref(&path)).is_empty());
+            let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
+            harness.run_steps(3);
+            assert!(harness.state().show.is_some(), "the show is running");
+            if leave == egui::Key::ArrowRight {
+                for _ in 0..2 {
+                    harness.key_press(egui::Key::ArrowRight);
+                    harness.run_steps(2);
+                }
+                assert!(harness.state().show.as_ref().is_some_and(|s| s.ended), "the end screen");
+            }
+            harness.key_press(leave);
+            harness.run_steps(2);
+            assert!(harness.state().show.is_none(), "{leave:?} ends the show");
+            assert_eq!(harness.state().session.documents().len(), 1, "{leave:?}: the deck stays open");
+            assert_eq!(harness.state().ui.view, crate::ViewMode::Normal);
+        }
+        std::fs::remove_file(&path).ok();
+    }
 }

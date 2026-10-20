@@ -186,7 +186,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Masters and themes | 7 | 92% | ~70% | 8–14 | Notes/Handout master view polish, effect-scheme depth, Designer suggestions | [parity-checklist.md](parity-checklist.md) |
 | Shapes | 7 | 91% | ~75% | 8–14 | Edit points depth, WordArt depth (the Transform gallery and warp adjust handles are in) | [ui-parity.md](ui-parity.md) |
 | Format (fill, line, effects) | 6 | 83% | ~65% | 8–14 | Format Shape pane depth, bevel and 3-D, picture/texture fill options | [ui-parity.md](ui-parity.md) |
-| Arrange | 3 | 100% | ~90% | 1–2 | Align to slide vs selected as a menu choice, More Rotation Options | [ui-parity.md](ui-parity.md) |
+| Arrange | 3 | 100% | ~90% | 1–2 | More Rotation Options | [ui-parity.md](ui-parity.md) |
 | Text | 15 | 83% | ~62% | 18–30 | Font weights beyond Regular/Bold/Italic (#69), true vertical CJK, dictionaries, AutoFormat as you type, thesaurus depth, equations (PR #55 open) | [localization-parity.md](localization-parity.md) |
 | Tables | 5 | 97% | ~75% | 3–6 | Draw table depth, borders and cell effects depth | [parity-checklist.md](parity-checklist.md) |
 | Charts | 7 | 65% | ~45% | 12–20 | Data grid editing, chart elements, the `chartex` types (waterfall, funnel, treemap, sunburst, histogram, box) | [parity-checklist.md](parity-checklist.md) |
@@ -289,6 +289,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-16 | trivial | Arrange shortfall: Align to Slide and Align Selected Objects are in the Align menu. Percentages unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one headline breadth row (84% over 191 features after `cargo xtask parity`; duplicate checklist rows removed), one row per feature area with the latest breadth and shortfalls, one Themes / Slide show / Views / Review / Automation bullet each (320 engine commands). SmartArt ready ~35% (Text Pane, 6e40335) moves the area mean to 62.8%; dimension and headline percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed to adjust handles: the Transform gallery applies a preset |
 | 2026-10-14 | minor | Media remainder: Insert › Icons places Lucide stroke icons. 3-D models and stock content remain. Headline percentages unchanged; the checklist row stays missing |

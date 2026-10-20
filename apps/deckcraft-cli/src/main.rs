@@ -117,8 +117,24 @@ fn open(s: &mut Session, input: Option<&str>, sample: bool) -> Result<(), String
         return deckcraft_engine::sample::open_sample(s).map_err(|e| e.to_string());
     }
     match input {
-        Some(p) => s.execute("file.open", &json!({"path": p})).map(|_| ()).map_err(|e| e.to_string()),
+        Some(p) => {
+            let opened = s.execute("file.open", &json!({"path": p})).map_err(|e| e.to_string())?;
+            warn_if_damaged(p, &opened);
+            Ok(())
+        }
         None => s.execute("file.new", &json!({})).map(|_| ()).map_err(|e| e.to_string()),
+    }
+}
+
+/// Say on stderr what a file lost on opening, so a saved copy doesn't silently miss it (#203).
+fn warn_if_damaged(path: &str, opened: &serde_json::Value) {
+    let count = |key: &str| opened.get(key).and_then(|v| v.as_array()).map_or(0, |a| a.len());
+    let (slides, media) = (count("lostSlides"), count("damagedMedia"));
+    if slides > 0 {
+        eprintln!("deckcraft-cli: warning: {path}: {slides} slide{} couldn't be read and left out", if slides == 1 { "" } else { "s" });
+    }
+    if media > 0 {
+        eprintln!("deckcraft-cli: warning: {path}: {media} picture or media file{} couldn't be read", if media == 1 { "" } else { "s" });
     }
 }
 
@@ -244,11 +260,13 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut all = false;
     let mut scale = 2.0;
     let mut edit = false;
+    let mut transparent = false;
     let mut out = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--sample" => sample = true,
+            "--transparent" => transparent = true,
             "--slide" => slide = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--slide needs a number")?),
             "--all" => all = true,
             "--edit" => edit = true,
@@ -281,7 +299,7 @@ fn render(args: &[String]) -> Result<(), String> {
         std::fs::create_dir_all(&out).map_err(|e| format!("{out}: {e}"))?;
     }
     for i in list {
-        let (png, w, h) = deckcraft_engine::cmd::file::render_png(&st.doc, i, scale, edit);
+        let (png, w, h) = deckcraft_engine::cmd::file::render_png_with(&st.doc, i, scale, edit, transparent);
         let path = if all { format!("{out}/slide-{:02}.png", i + 1) } else { out.clone() };
         std::fs::write(&path, png).map_err(|e| format!("{path}: {e}"))?;
         outln!("{path} ({w}×{h})");
@@ -678,6 +696,21 @@ mod tests {
             assert!(e.contains(&format!("unknown option `{flag}`")), "{flag}: {e}");
             assert!(!out.exists(), "{flag}: rendered anyway");
         }
+    }
+
+    /// `render --transparent` leaves the slide background out (#784): the corner is transparent.
+    #[test]
+    fn render_transparent_leaves_the_background_out() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-transparent-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let alpha = |path: &std::path::Path| deckcraft_engine::render::decode_image(&std::fs::read(path).unwrap()).unwrap().get_pixel(1, 1).0[3];
+        let opaque = dir.join("opaque.png");
+        render(&args(&["--sample", "--scale", "0.25", &opaque.to_string_lossy()])).unwrap();
+        assert_eq!(alpha(&opaque), 255);
+        let clear = dir.join("clear.png");
+        render(&args(&["--sample", "--transparent", "--scale", "0.25", &clear.to_string_lossy()])).unwrap();
+        assert_eq!(alpha(&clear), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `run --export OUT.gif --export-params JSON` and `convert IN OUT.gif` write animated GIFs.

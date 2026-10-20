@@ -942,6 +942,7 @@ dependencies = [
  "deckcraft-engine",
  "deckcraft-mcp",
  "serde_json",
+ "zip",
 ]
 
 [[package]]

@@ -1,7 +1,7 @@
 //! Title bar, ribbon tabs and the ribbon card with every tab's groups.
 
 use deckcraft_engine::Target;
-use deckcraft_model::{ShapeKind, anim::AnimClass};
+use deckcraft_model::{ShapeId, ShapeKind, anim::AnimClass};
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -1134,6 +1134,9 @@ pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 pub fn align_menu(app: &mut SlideApp, ui: &mut Ui) {
+    let selection = app.session.active().map(|d| d.selection.shapes.clone()).unwrap_or_default();
+    let to_slide = align_to_slide(app.align_to.as_ref(), &selection);
+    let to = if to_slide { "slide" } else { "selection" };
     for (l, e, ic) in [
         ("Align Left", "left", Icon::AlignObjLeft),
         ("Align Center", "center", Icon::AlignObjCenter),
@@ -1142,11 +1145,28 @@ pub fn align_menu(app: &mut SlideApp, ui: &mut Ui) {
         ("Align Middle", "middle", Icon::AlignObjMiddle),
         ("Align Bottom", "bottom", Icon::AlignObjBottom),
     ] {
-        menu_item(app, ui, ic, l, "arrange.align", json!({"edge": e}));
+        menu_item(app, ui, ic, l, "arrange.align", json!({"edge": e, "to": to}));
     }
     ui.separator();
-    menu_item(app, ui, Icon::DistributeH, "Distribute Horizontally", "arrange.distribute", json!({"dir": "horizontal"}));
-    menu_item(app, ui, Icon::DistributeV, "Distribute Vertically", "arrange.distribute", json!({"dir": "vertical"}));
+    menu_item(app, ui, Icon::DistributeH, "Distribute Horizontally", "arrange.distribute", json!({"dir": "horizontal", "to": to}));
+    menu_item(app, ui, Icon::DistributeV, "Distribute Vertically", "arrange.distribute", json!({"dir": "vertical", "to": to}));
+    ui.separator();
+    let en = enabled(app, "arrange.align");
+    for (l, slide) in [("Align to Slide", true), ("Align Selected Objects", false)] {
+        if widgets::check_item(ui, l, en, to_slide == slide).clicked() {
+            app.align_to = Some((selection.clone(), slide));
+            ui.close();
+        }
+    }
+}
+
+/// Align to Slide or to the selected objects, as in PowerPoint: one object aligns to the slide and
+/// several to each other, unless the other choice was ticked for this same selection.
+fn align_to_slide(choice: Option<&(Vec<ShapeId>, bool)>, selection: &[ShapeId]) -> bool {
+    match choice {
+        Some((ids, to_slide)) if ids.as_slice() == selection => *to_slide,
+        _ => selection.len() < 2,
+    }
 }
 
 pub fn menu_item(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Value) {
@@ -3453,6 +3473,10 @@ mod effects_tests;
 #[cfg(test)]
 #[path = "master_layout_tests.rs"]
 mod master_layout_tests;
+
+#[cfg(test)]
+#[path = "align_tests.rs"]
+mod align_tests;
 
 #[cfg(test)]
 mod title_bar_tests {
