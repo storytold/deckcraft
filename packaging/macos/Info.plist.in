@@ -63,7 +63,7 @@
       <key>UTTypeTagSpecification</key>
       <dict>
         <key>public.filename-extension</key>
-        <array><string>deckcraft</string></array>
+        <array><string>deckcraft</string><string>slidecraft</string></array>
         <key>public.mime-type</key>
         <array><string>application/x-deckcraft</string></array>
       </dict>
@@ -88,6 +88,67 @@
         <key>public.filename-extension</key>
         <array><string>pptx</string></array>
       </dict>
+    </dict>
+  </array>
+
+  <!-- What Finder may open with DeckCraft (double-click, Open With, default app). Without these
+       AppKit refuses the 'odoc' event with "DeckCraft cannot open files in the … format";
+       apple_events.rs hands the paths to the app. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>DeckCraft Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array><string>ai.storyteller.deckcraft.presentation</string></array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>deckcraft</string><string>slidecraft</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>org.openxmlformats.presentationml.presentation</string></array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>pptx</string></array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array><string>application/vnd.openxmlformats-officedocument.presentationml.presentation</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint Template</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>org.openxmlformats.presentationml.template</string></array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>potx</string></array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array><string>application/vnd.openxmlformats-officedocument.presentationml.template</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint Show</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array><string>org.openxmlformats.presentationml.slideshow</string></array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>ppsx</string></array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array><string>application/vnd.openxmlformats-officedocument.presentationml.slideshow</string></array>
     </dict>
   </array>
 
