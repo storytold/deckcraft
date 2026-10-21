@@ -20,7 +20,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "3D Models from This Device…",
             ["Insert", "Illustrations", "3D Models"],
             None,
-            "{path? | data: base64, name?: file name (its extension tells the format: glb|gltf|obj|stl|ply|3mf), files?: {name: base64} (an OBJ's .mtl and textures; read from the model's folder when `path` is given), rect?: [x,y,w,h]}",
+            "{path? | data: base64, name?: file name (its extension tells the format: glb|gltf|obj|stl|ply|3mf), files?: {name: base64} (an OBJ's .mtl and textures; read from the model's folder when `path` is given), rect?: [x,y,w,h]} → {id, triangles, textures, companions: [the names in `files` the model used]}",
             has_slide,
             insert
         ),
@@ -310,16 +310,20 @@ fn initial_frame(m: &mut Model3d, scene: &Scene, span: f64) -> Option<(f64, f64)
 
 /// A companion file of the model being inserted: one given with the command (by its path, then by
 /// its file name), else one in the model's folder. Names that would leave the folder are not
-/// followed, so a model file can't pull other files from the disk into the presentation.
-fn companion(files: &[(String, Vec<u8>)], dir: Option<&std::path::Path>, name: &str) -> Option<Vec<u8>> {
+/// followed, so a model file can't pull other files from the disk into the presentation. A file
+/// taken from `files` is noted in `used`.
+fn companion(files: &[(String, Vec<u8>)], dir: Option<&std::path::Path>, name: &str, used: &mut Vec<String>) -> Option<Vec<u8>> {
     let norm = name.trim().replace('\\', "/");
     let base = norm.rsplit('/').next().unwrap_or(&norm).to_string();
     let file_name = |n: &str| n.replace('\\', "/").rsplit('/').next().unwrap_or("").to_string();
-    if let Some((_, b)) = files
+    if let Some((n, b)) = files
         .iter()
         .find(|(n, _)| n.replace('\\', "/").eq_ignore_ascii_case(&norm))
         .or_else(|| files.iter().find(|(n, _)| file_name(n).eq_ignore_ascii_case(&base)))
     {
+        if !used.contains(n) {
+            used.push(n.clone());
+        }
         return Some(b.clone());
     }
     #[cfg(not(target_arch = "wasm32"))]
@@ -328,8 +332,12 @@ fn companion(files: &[(String, Vec<u8>)], dir: Option<&std::path::Path>, name: &
         let inside = |p: &Path| !p.as_os_str().is_empty() && p.components().all(|c| matches!(c, Component::Normal(_) | Component::CurDir));
         let rel = Path::new(&norm);
         let tries = [inside(rel).then(|| dir.join(rel)), inside(Path::new(&base)).then(|| dir.join(&base))];
+        // The folder and the file with their links followed: a link inside the folder must not
+        // lead out of it. (A bare file name's folder is empty: the current one.)
+        let root = crate::io::real_path(if dir.as_os_str().is_empty() { Path::new(".") } else { dir })?;
         // Through `crate::io`, so an automation read root confines them like any other read.
         for p in tries.into_iter().flatten() {
+            let Some(p) = crate::io::real_path(&p).filter(|p| p.starts_with(&root)) else { continue };
             let p = p.to_string_lossy();
             if crate::io::file_len(&p).is_some_and(|n| n <= 256 << 20)
                 && let Ok(b) = crate::io::read_file(&p)
@@ -361,10 +369,12 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|o| o.iter().take(256).filter_map(|(k, v)| Some((k.clone(), base64_decode(v.as_str()?)?))).collect())
         .unwrap_or_default();
     let format = Format::sniff(&name, &bytes).ok_or_else(|| bad(CMD, format!("{name} is not a 3-D model (GLB, glTF, OBJ, STL, PLY or 3MF)")))?;
-    // Whether the model took anything from another file (a GLB can name external buffers).
+    // Whether the model took anything from another file (a GLB can name external buffers), and
+    // which of `files` it took.
     let used_companions = std::cell::Cell::new(false);
+    let used = std::cell::RefCell::new(Vec::new());
     let resolve = |n: &str| {
-        let f = companion(&files, dir.as_deref(), n);
+        let f = companion(&files, dir.as_deref(), n, &mut used.borrow_mut());
         used_companions.set(used_companions.get() || f.is_some());
         f
     };
@@ -390,7 +400,7 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
     m.media = media;
     let shape = Shape { xfrm: Some(rect), kind: ShapeKind::Model3d(Box::new(m)), descr: stem, ..Default::default() };
     let id = super::insert::add_shape(s, CMD, shape, true)?;
-    Ok(json!({"id": id, "triangles": scene.triangle_count(), "textures": scene.textures.len()}))
+    Ok(json!({"id": id, "triangles": scene.triangle_count(), "textures": scene.textures.len(), "companions": used.into_inner()}))
 }
 
 #[cfg(test)]

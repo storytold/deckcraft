@@ -67,3 +67,15 @@ pub fn file_len(path: &str) -> Option<u64> {
 pub fn file_len(_path: &str) -> Option<u64> {
     None
 }
+
+/// `path` absolute, with every link followed; `None` when it doesn't exist. To tell whether a
+/// file is really inside a folder (a link inside it may point anywhere).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn real_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn real_path(_path: &std::path::Path) -> Option<std::path::PathBuf> {
+    None
+}

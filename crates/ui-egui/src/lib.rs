@@ -1453,9 +1453,10 @@ impl SlideApp {
     }
 
     /// The files of request `id`, read together. 3-D models are inserted; when one of them names
-    /// other files (an OBJ, PLY or glTF model, or a GLB with external buffers or images), the other
-    /// files are its materials, buffers and textures, not files of their own. Otherwise each other
-    /// file is applied as if it came alone.
+    /// other files (an OBJ, PLY or glTF model, or a GLB with external buffers or images), the
+    /// other files are offered to it, and the ones a model uses are its materials, buffers and
+    /// textures. Every other file is applied as if it came alone: a photo dropped with an OBJ is
+    /// still a picture.
     fn apply_external_files(&mut self, id: u64, files: Vec<(String, Vec<u8>, Option<String>)>) {
         use deckcraft_engine::cmd::model3d::{is_model_file, needs_companions};
         let Some(pos) = self.pending_files.iter().position(|r| r.id == id) else { return };
@@ -1473,16 +1474,34 @@ impl SlideApp {
         } else {
             serde_json::Map::new()
         };
-        for ((name, bytes, path), model) in files.iter().zip(models) {
+        // Grouped, the models go first, so it is known which files they used.
+        let order: Vec<usize> = if grouped {
+            (0..files.len()).filter(|i| models.get(*i) == Some(&true)).chain((0..files.len()).filter(|i| models.get(*i) != Some(&true))).collect()
+        } else {
+            (0..files.len()).collect()
+        };
+        let mut used: Vec<String> = Vec::new();
+        for i in order {
+            let (Some((name, bytes, path)), Some(model)) = (files.get(i), models.get(i).copied()) else { continue };
             if model {
                 let mut p = json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes), "files": companions.clone()});
                 // Where its materials and textures are, when it came from the disk.
                 if let (Some(path), Some(o)) = (path, p.as_object_mut()) {
                     o.insert("path".into(), json!(path));
                 }
-                self.run_external_file(&target, name, "insert.model3d", &p);
-            } else if !grouped {
-                let fid = self.queue_external_file(req.purpose, target);
+                let r = self.run_external_file(&target, name, "insert.model3d", &p);
+                let took = r.as_ref().and_then(|v| v.get("companions")).and_then(Value::as_array).into_iter().flatten();
+                used.extend(took.filter_map(Value::as_str).map(String::from));
+            } else if grouped && infer_command(name, bytes).is_none() {
+                // A material or buffer file no model used: nothing to do with it on its own.
+                if !used.contains(name) {
+                    log::info!("{name}: not used by the 3-D model it came with");
+                }
+            } else if !used.contains(name) {
+                // A file of its own. In a grouped batch it came with a model that didn't use it:
+                // judged by what it is, not by the 3D Models picker it came from.
+                let purpose = if grouped { FilePurpose::Infer } else { req.purpose };
+                let fid = self.queue_external_file(purpose, target);
                 self.apply_external_file(fid, name, bytes);
             }
             // The first file made a presentation: the others go into it.
@@ -1556,26 +1575,33 @@ impl SlideApp {
         self.drain_requests();
     }
 
-    /// Run `cmd` for a file on the place its request captured, and report a failure.
-    fn run_external_file(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) {
+    /// Run `cmd` for a file on the place its request captured, and report a failure. The
+    /// command's answer, when it ran.
+    fn run_external_file(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Option<Value> {
         let result = if cmd == "file.openBytes" || self.viewing_target(target) {
-            self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string())
+            self.session.execute(cmd, params).map_err(|e| e.to_string())
         } else {
             self.execute_on_target(target, name, cmd, params)
         };
         match result {
-            Err(e) if cmd == "file.openBytes" => self.notify(e),
-            Err(e) => self.set_status(e),
-            Ok(()) => {}
+            Err(e) if cmd == "file.openBytes" => {
+                self.notify(e);
+                None
+            }
+            Err(e) => {
+                self.set_status(e);
+                None
+            }
+            Ok(v) => Some(v),
         }
     }
 
     /// Run `cmd` on the document and slide captured for the request, then put the view back
     /// if the user has since moved. A missing document or slide cancels the file.
-    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
+    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<Value, String> {
         let FileTarget::Document { doc, place } = target else {
             self.session.execute("file.new", &json!({})).map_err(|e| e.to_string())?;
-            return self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
+            return self.session.execute(cmd, params).map_err(|e| e.to_string());
         };
         let Some(idx) = self.session.documents().iter().position(|d| d.uid == *doc) else {
             return Err(format!("{name} was not applied: the presentation it was chosen for is closed"));
@@ -1600,7 +1626,7 @@ impl SlideApp {
             st.selection.text = None;
             st.selection.cells = None;
         }
-        let result = self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
+        let result = self.session.execute(cmd, params).map_err(|e| e.to_string());
         if view == Some(idx) {
             if let (Some(sel), Some(st)) = (saved, self.session.active_mut()) {
                 st.selection = sel;

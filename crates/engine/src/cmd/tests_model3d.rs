@@ -537,3 +537,44 @@ fn a_glb_with_an_external_buffer_is_stored_whole() {
     let scene = deckcraft_mesh::load("tri.glb", &stored, &deckcraft_mesh::no_files).unwrap();
     assert_eq!(scene.triangle_count(), 1);
 }
+
+/// A link inside the model's folder that leads out of it is not followed: the texture behind it
+/// stays on the disk. (Skipped where this account can't make links.)
+#[test]
+fn companions_do_not_follow_links_out_of_the_folder() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-model3d-link-{}", std::process::id()));
+    let (sub, outside) = (dir.join("model"), dir.join("elsewhere"));
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::create_dir_all(&outside).unwrap();
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 200, 10, 255])).save(outside.join("t.png")).unwrap();
+    #[cfg(unix)]
+    let linked = std::os::unix::fs::symlink(&outside, sub.join("link"));
+    #[cfg(windows)]
+    let linked = std::os::windows::fs::symlink_dir(&outside, sub.join("link"));
+    if linked.is_err() {
+        eprintln!("skipped: can't make a link here");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    std::fs::write(sub.join("m.mtl"), "newmtl A\nmap_Kd link/t.png\n").unwrap();
+    std::fs::write(sub.join("m.obj"), "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nusemtl A\nf 1/1 2/2 3/3\n").unwrap();
+    let mut s = session();
+    let r = s.execute("insert.model3d", &json!({"path": sub.join("m.obj").to_string_lossy()})).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(r["textures"], 0);
+}
+
+/// Insert says which of the files it was given the model used.
+#[test]
+fn insert_names_the_companions_it_used() {
+    let mtl = "newmtl A\nKd 1 0 0\n";
+    let obj = "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nusemtl A\nf 1 2 3\n";
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.model3d",
+            &json!({"name": "m.obj", "data": base64_encode(obj.as_bytes()), "files": {"m.mtl": base64_encode(mtl.as_bytes()), "photo.png": base64_encode(b"not used")}}),
+        )
+        .unwrap();
+    assert_eq!(r["companions"], json!(["m.mtl"]));
+}

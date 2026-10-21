@@ -283,3 +283,28 @@ fn a_glb_takes_its_buffer_but_not_unrelated_pictures() {
     assert_eq!(models(&app, uid, slide).len(), 2, "{status}");
     assert_eq!(pictures(&app, uid, slide), 1, "{status}");
 }
+
+/// An OBJ dropped with its material, its texture and an unrelated photo: one textured model,
+/// and the photo is still a picture; the material file is quietly the model's.
+#[test]
+fn an_obj_keeps_its_files_and_leaves_an_unrelated_photo_a_picture() {
+    let (mut app, _inbox, _started) = setup();
+    let uid = app.session.active().unwrap().uid;
+    let slide = app.session.active().unwrap().current_slide().unwrap().id;
+    let obj = b"mtllib tri.mtl\nusemtl skin\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n".to_vec();
+    let mtl = b"newmtl skin\nKd 1 1 1\nmap_Kd skin.png\n".to_vec();
+    app.open_or_insert_files(vec![
+        ("tri.obj".into(), obj, None),
+        ("tri.mtl".into(), mtl, None),
+        ("skin.png".into(), png(), None),
+        ("holiday.png".into(), png(), None),
+    ]);
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    let placed = models(&app, uid, slide);
+    assert_eq!(placed.len(), 1, "{status}");
+    assert_eq!(pictures(&app, uid, slide), 1, "the unrelated photo: {status}");
+    assert!(!status.contains("can't open"), "{status}");
+    let st = app.session.documents().iter().find(|d| d.uid == uid).unwrap();
+    let glb = st.doc.media(placed[0].media).expect("model part").data.clone();
+    assert_eq!(deckcraft_mesh::load("tri.glb", &glb, &deckcraft_mesh::no_files).expect("glb").textures.len(), 1);
+}
