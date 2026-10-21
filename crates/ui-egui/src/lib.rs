@@ -6,6 +6,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod drop_files;
+
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
@@ -1364,7 +1366,7 @@ impl SlideApp {
         for event in events {
             match event {
                 InboxEvent::Cancelled { id } => self.pending_files.retain(|r| r.id != id),
-                InboxEvent::File(file) => self.apply_external_file(file.id, &file.name, &file.bytes),
+                InboxEvent::File(file) => self.apply_external_file(file.id, &file.name, &file.bytes, None),
             }
         }
     }
@@ -1382,9 +1384,12 @@ impl SlideApp {
 
     /// A dropped or picked file read synchronously: presentations open, media is inserted on
     /// the slide that is current now.
-    pub fn open_or_insert_bytes(&mut self, name: &str, bytes: &[u8]) {
+    ///
+    /// `at` is a point in slide coordinates. A picture dropped on the canvas is centred there.
+    /// `None` keeps the centred insert (a pick from the dialog, or a drop on the ribbon).
+    pub fn open_or_insert_bytes(&mut self, name: &str, bytes: &[u8], at: Option<(f64, f64)>) {
         let id = self.begin_external_file("drop");
-        self.apply_external_file(id, name, bytes);
+        self.apply_external_file(id, name, bytes, at);
     }
 
     fn capture_file_target(&self) -> FileTarget {
@@ -1431,7 +1436,7 @@ impl SlideApp {
         }
     }
 
-    fn apply_external_file(&mut self, id: u64, name: &str, bytes: &[u8]) {
+    fn apply_external_file(&mut self, id: u64, name: &str, bytes: &[u8], at: Option<(f64, f64)>) {
         let Some(pos) = self.pending_files.iter().position(|r| r.id == id) else { return };
         let req = self.pending_files.remove(pos);
         let cmd = match command_for(req.purpose, name, bytes) {
@@ -1446,6 +1451,13 @@ impl SlideApp {
         } else {
             json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes)})
         };
+        let mut params = params;
+        if cmd == "insert.picture"
+            && let Some((x, y)) = at
+            && let Some(obj) = params.as_object_mut()
+        {
+            obj.insert("at".to_string(), json!([x, y]));
+        }
         let result = if cmd == "file.openBytes" || self.viewing_target(&req.target) {
             self.session.execute(cmd, &params).map(|_| ()).map_err(|e| e.to_string())
         } else {
@@ -1592,11 +1604,26 @@ impl SlideApp {
         // On the web, dropped files can only be read asynchronously: the host reads them and
         // delivers them through `Services::inbox`, tagged with the request captured at the drop.
         #[cfg(not(target_arch = "wasm32"))]
-        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
-            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
-            match f.bytes() {
-                Ok(bytes) => self.open_or_insert_bytes(&name, &bytes),
-                Err(e) => self.set_status(e),
+        {
+            let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+            if !dropped.is_empty() {
+                // The show covers the editor, so a drop there has no slide under the pointer.
+                let anchor = if self.show.is_none() {
+                    drop_files::drop_pointer(ctx).and_then(|p| drop_files::slide_anchor(self.canvas_rect, self.slide_rect, self.canvas_scale, p))
+                } else {
+                    None
+                };
+                for (i, f) in dropped.iter().enumerate() {
+                    let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
+                    match f.bytes() {
+                        Ok(bytes) => {
+                            // A second picture in the same drop sits just below the first.
+                            let at = anchor.map(|(x, y)| (x + 24.0 * i as f64, y + 24.0 * i as f64));
+                            self.open_or_insert_bytes(&name, &bytes, at);
+                        }
+                        Err(e) => self.set_status(e),
+                    }
+                }
             }
         }
         canvas::trackpad_twist(self, ctx);

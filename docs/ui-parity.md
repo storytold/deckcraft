@@ -96,7 +96,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Context menus on shapes, slides, text, thumbnails | yes | yes, shorter; a right click selects the shape under the pointer first |
 | WordArt transform | Transform gallery | Shape Format ▸ Text Effects ▸ Transform (`format.textWarp`): No Transform, Follow Path and the other 36 presets. Adjust handles: see WordArt adjust handles |
 | Rulers with indent markers and tab stops | yes | yes: indent markers and tab stops drag on the ruler (a click adds a tab, the corner selector picks its kind); Tabs dialog from Home › Paragraph and the Paragraph dialog |
-| Drag and drop of files and between thumbnails | yes | yes |
+| Drag and drop of files and between thumbnails | yes | yes: a picture dropped on the slide is centred on the pointer; a drop on the ribbon or thumbnails stays centred; a presentation opens |
 | Slide Sorter sections: a bar per section, add, rename in place, collapse, drag the whole section (its slides move with it) | yes | yes |
 | Image paste from the clipboard | yes | macOS pastes a picture when the paste carries no text (TIFF), and rich text copies and pastes as HTML (bold, italic, underline). Windows and Linux image paste stays #53 |
 | Font menu: every installed family with its faces | yes | families yes; only Regular/Bold/Italic faces (#69) |
@@ -201,6 +201,7 @@ consistency is open (#73, #56).
 | 2026-10-14 | minor | Font dialog from Home › Font, the shape menu and Cmd+T |
 | 2026-10-13 | minor | Grid Options dialog: spacing, snap, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
 | 2026-10-13 | minor | WordArt adjust handles on a selected text warp; dragging one sets that `prstTxWarp` adjust |
+| 2026-10-14 | minor | A picture dropped from the Finder onto the slide is centred on the pointer. A presentation still opens |
 | 2026-10-12 | minor | File tab (Backstage) observed in PowerPoint for Windows and matched (#76); the start screen is File › Home |
 | 2026-10-12 | minor | Off-slide objects drawn and editable around the slide in Normal view (#270) |
 | 2026-10-12 | minor | Selection Pane matched to PowerPoint (#133): drag and drop, arrows, groups, eye, Lock |
