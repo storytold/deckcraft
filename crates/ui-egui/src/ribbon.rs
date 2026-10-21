@@ -54,7 +54,7 @@ fn run(app: &mut SlideApp, id: &str, p: Value) {
 /// The window's title row: traffic-light space, quick access, centred title, actions.
 pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    let (height, _left, control_h) = title_geometry(app.integrated_titlebar);
+    let (height, left_offset, control_h) = title_geometry(app.integrated_titlebar);
     egui::Panel::top("title_bar").exact_size(height).frame(egui::Frame::NONE.fill(t.chrome)).show(ui, |ui| {
         let rect = ui.max_rect();
         // Dragging the empty title bar moves the window.
@@ -66,9 +66,6 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
             let max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
             ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!max));
         }
-<<<<<<< HEAD
-=======
-        let left_offset = if app.integrated_titlebar { 84.0 } else { 10.0 };
         let total_w = rect.width();
 
         // Responsive panel geometry via the shared helper (also called by the layout tests).
@@ -86,7 +83,6 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         let is_narrow = total_w < 720.0; // hide Undo/Redo, Comments, Dark toggle
         let is_compact = total_w < 500.0; // additionally hide Search (its shortcut remains)
 
->>>>>>> c2775dd (fix(ui): prevent DeckCraft title-bar overlap)
         let mut child = ui.new_child(
             egui::UiBuilder::new()
                 .max_rect(Rect::from_min_max(pos2(rect.min.x + left_offset, rect.min.y), pos2(left_max_x, rect.max.y)))
@@ -95,27 +91,7 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         child.spacing_mut().item_spacing.x = 2.0;
         let has_doc = app.session.active().is_some();
         let dirty = app.session.active().is_some_and(|d| d.is_dirty());
-<<<<<<< HEAD
         crate::qat::show(app, &mut child);
-=======
-        if icon_toggle(&mut child, Icon::Home, "Home", true, app.backstage_open()).clicked() {
-            let _ = app.run("app.home", json!({}));
-        }
-        if icon_toggle(&mut child, Icon::Save, "Save (⌘S)", has_doc, false).clicked() {
-            app.save();
-        }
-        if !is_narrow {
-            if icon_toggle(&mut child, Icon::Undo, "Undo (⌘Z)", enabled(app, "edit.undo"), false).clicked() {
-                run(app, "edit.undo", json!({}));
-            }
-            if icon_toggle(&mut child, Icon::Redo, "Redo (⌘Y)", enabled(app, "edit.redo"), false).clicked() {
-                run(app, "edit.redo", json!({}));
-            }
-        }
-        if icon_toggle(&mut child, Icon::PlayFromStart, "Play from Start (F5)", has_doc, false).clicked() {
-            app.start_show(0, false);
-        }
->>>>>>> c2775dd (fix(ui): prevent DeckCraft title-bar overlap)
         let title =
             app.session.active().map(|d| format!("{}{}", d.title(), if dirty { " — Edited" } else { "" })).unwrap_or_else(|| "DeckCraft".into());
         ui.painter().text(rect.center(), Align2::CENTER_CENTER, title, theme::font(13.0), t.text);
@@ -3479,7 +3455,6 @@ fn paint_freeform_icon(p: &egui::Painter, r: Rect, name: &str, ink: Color32) {
     p.add(egui::Shape::line(pts, egui::Stroke::new(1.3, ink)));
 }
 
-<<<<<<< HEAD
 /// The chart types in the Insert Chart and Change Chart Type menus: the main ones, a separator
 /// (`None`), then the Office 2016 types not already listed.
 fn chart_menu_types() -> Vec<Option<deckcraft_model::chart::ChartType>> {
@@ -3720,8 +3695,3 @@ fn compress_menu(app: &mut SlideApp, ui: &mut Ui) {
         ui.close();
     }
 }
-=======
-#[cfg(test)]
-#[path = "ribbon_tests.rs"]
-mod tests;
->>>>>>> c2775dd (fix(ui): prevent DeckCraft title-bar overlap)

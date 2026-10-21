@@ -267,7 +267,7 @@ fn token_path() -> Option<PathBuf> {
 fn load_token() -> Option<String> {
     let raw = std::fs::read(token_path()?).ok()?;
     let value: serde_json::Value = serde_json::from_slice(&raw).ok()?;
-    let service = deckcraft_ui_egui::cloud::base_url()?;
+    let service = base_url()?;
     let saved_service = value.get("service")?.as_str()?;
     if saved_service != service.as_str() {
         return None;
