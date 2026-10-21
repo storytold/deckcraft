@@ -286,7 +286,8 @@ impl Gltf<'_> {
         let samplers = arr(self.doc, "samplers");
         let mut used: Vec<Texture> = Vec::new();
         let mut map: Vec<(usize, usize)> = Vec::new();
-        let mut decoded: Vec<(usize, Option<Texture>)> = Vec::new();
+        // Per image: the first texture made from it (`None`: it couldn't be decoded).
+        let mut decoded: Vec<(usize, Option<usize>)> = Vec::new();
         let mut take = |ti: Option<usize>| -> Option<usize> {
             let ti = ti?;
             if let Some((_, n)) = map.iter().find(|(o, _)| *o == ti) {
@@ -297,15 +298,20 @@ impl Gltf<'_> {
             }
             let t = defs.get(ti)?;
             let src = idx(t, "source").or_else(|| t.pointer("/extensions/EXT_texture_webp/source").and_then(Value::as_u64).map(|v| v as usize))?;
-            let image = match decoded.iter().find(|(s, _)| *s == src) {
-                Some((_, img)) => img.clone(),
+            let mut tex = match decoded.iter().find(|(s, _)| *s == src) {
+                Some((_, first)) => used.get((*first)?)?.clone(),
                 None => {
+                    // Failed decodes count too, so a file can't ask for endless attempts.
+                    if decoded.len() >= crate::MAX_TEXTURES * 4 {
+                        return None;
+                    }
                     let img = self.image_bytes(src).and_then(Texture::decode);
-                    decoded.push((src, img.clone()));
-                    img
+                    decoded.push((src, img.is_some().then_some(used.len())));
+                    img?
                 }
             };
-            let mut tex = image?;
+            // This texture's own sampler, not the one of the texture the image came with.
+            (tex.wrap_s, tex.wrap_t) = (Wrap::Repeat, Wrap::Repeat);
             if let Some(s) = idx(t, "sampler").and_then(|s| samplers.get(s)) {
                 tex.wrap_s = wrap(s.get("wrapS"));
                 tex.wrap_t = wrap(s.get("wrapT"));

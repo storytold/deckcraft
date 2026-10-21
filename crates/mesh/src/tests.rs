@@ -457,3 +457,32 @@ fn gltf_textures_share_an_image_and_keep_their_samplers() {
     assert_eq!((s.textures[0].wrap_s, s.textures[0].wrap_t), (Wrap::Repeat, Wrap::Repeat));
     assert_eq!((s.textures[1].wrap_s, s.textures[1].wrap_t), (Wrap::Clamp, Wrap::Mirror));
 }
+
+/// A texture with no sampler of its own repeats, even when its image was first decoded for a
+/// texture that clamps.
+#[test]
+fn gltf_a_shared_image_does_not_lend_its_sampler() {
+    let mut b = Vec::new();
+    for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for c in v {
+            b.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    let doc = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "material": 0}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36, "uri": format!("data:application/octet-stream;base64,{}", b64(&b))}],
+        "images": [{"uri": format!("data:image/png;base64,{}", b64(&atlas_png()))}],
+        "samplers": [{"wrapS": 33071, "wrapT": 33071}],
+        "textures": [{"source": 0, "sampler": 0}, {"source": 0}],
+        "materials": [
+            {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+            {"pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}},
+        ],
+    });
+    let s = load("t.gltf", doc.to_string().as_bytes(), &no_files).unwrap();
+    assert_eq!((s.textures[0].wrap_s, s.textures[0].wrap_t), (Wrap::Clamp, Wrap::Clamp));
+    assert_eq!((s.textures[1].wrap_s, s.textures[1].wrap_t), (Wrap::Repeat, Wrap::Repeat));
+}
