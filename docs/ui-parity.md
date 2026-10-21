@@ -20,6 +20,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 |---|---|---|---|
 | Title bar: AutoSave, Home, Save, Undo/Redo, document title, Share, search | yes | yes, plus Export; no Share (cloud) | #71 macOS window controls misaligned |
 | Native macOS menu bar (File, Edit, View, Insert, Format, Arrange, Tools, Slide Show, Window, Help) | yes | **no** (`menus::menu_tree()` is defined but not installed) | 3–5 h |
+| Dock recent documents | yes | yes: opening or saving a presentation is recorded with the system recent-documents list | the Dock menu shows it when the app bundle declares its document types |
 | Menu-bar items with a DeckCraft equivalent | 217 app-specific items | 128 matched by name (59%, heuristic lower bound) | See [target-app-parity.md](target-app-parity.md) |
 | Ribbon tabs: Home, Insert, Draw, Design, Transitions, Animations, Slide Show, Record, Review, View | 10 | 10 | Record tab is a placeholder |
 | Colour menus: theme and standard colours, hex field, Eyedropper | yes (plus a More Colors dialog) | yes: theme and standard colours, hex field and an Eyedropper that takes the colour drawn under the pointer on the slide (#367) | More Colors dialog; Eyedropper only takes colours from the slide, not the rest of the screen |
@@ -201,6 +202,7 @@ consistency is open (#73, #56).
 | 2026-10-14 | minor | Font dialog from Home › Font, the shape menu and Cmd+T |
 | 2026-10-13 | minor | Grid Options dialog: spacing, snap, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
 | 2026-10-13 | minor | WordArt adjust handles on a selected text warp; dragging one sets that `prstTxWarp` adjust |
+| 2026-10-14 | minor | Opening or saving a presentation is recorded in the macOS recent-documents list (Dock / Apple menu). Exports are not. The Dock menu lists them once the app declares document types |
 | 2026-10-12 | minor | File tab (Backstage) observed in PowerPoint for Windows and matched (#76); the start screen is File › Home |
 | 2026-10-12 | minor | Off-slide objects drawn and editable around the slide in Normal view (#270) |
 | 2026-10-12 | minor | Selection Pane matched to PowerPoint (#133): drag and drop, arrows, groups, eye, Lock |

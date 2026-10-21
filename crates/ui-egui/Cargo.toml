@@ -26,9 +26,20 @@ log = { workspace = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = "0.3"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSDocumentController"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSArray", "NSString", "NSURL"] }
+
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
 
 [build-dependencies]
 serde_json = { workspace = true }
 toml = "1"
+
+# Cargo's default harness parks the main thread, and NSDocumentController deadlocks if a test
+# hops onto it. This binary starts on the main thread and checks the recent-documents list there.
+[[test]]
+name = "macos_recent_documents"
+harness = false
