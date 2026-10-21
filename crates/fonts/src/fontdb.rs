@@ -39,6 +39,17 @@ pub fn substitutes(family: &str) -> &'static [&'static str] {
         "aptos" | "aptos display" | "aptos narrow" | "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => {
             &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"]
         }
+        // 中文课件的主力族：CJK 字形一律 1em 等宽，换行不受影响；Noto/思源是
+        // craft-fonts 收录的官方开源形（黑体类→Noto Sans CJK SC，宋体类→Noto Serif）。
+        "黑体" | "simhei" | "微软雅黑" | "microsoft yahei" | "microsoft yahei ui" | "等线" | "dengxian" => {
+            &["Noto Sans CJK SC", "Source Han Sans SC", "Noto Sans CJK JP"]
+        }
+        "宋体" | "simsun" | "新宋体" | "nsimsun" | "思源宋体" | "source han serif" | "华文中宋" => {
+            &["Noto Serif CJK SC", "Source Han Serif SC"]
+        }
+        "楷体" | "kaiti" | "华文楷体" | "stkaiti" | "华文新魏" | "stxinwei" | "华文行楷" | "stxingkai" | "隶书" | "lisu" => {
+            &["Noto Sans CJK SC", "Source Han Sans SC"]
+        }
         "georgia" | "garamond" | "book antiqua" | "palatino" | "palatino linotype" | "constantia" => &["Merriweather", "Liberation Serif", "Georgia"],
         "century gothic" | "avenir" | "avenir next" | "futura" | "gill sans" | "gill sans mt" | "trebuchet ms" | "corbel" | "candara" => {
             &["Montserrat", "Poppins", "Avenir Next", "Inter"]
@@ -55,9 +66,28 @@ pub fn substitutes(family: &str) -> &'static [&'static str] {
 /// Families whose open substitutes ([`substitutes`]) keep their metrics, so text drawn with
 /// them breaks into the same lines.
 fn has_metric_twin(family: &str) -> bool {
+    let binding = family.to_ascii_lowercase();
+    let f = binding.as_str();
     matches!(
-        family.to_ascii_lowercase().as_str(),
+        f,
         "calibri" | "calibri light" | "cambria" | "cambria math" | "arial" | "helvetica" | "times new roman" | "times" | "courier new" | "courier"
+    ) || matches!(
+        // 中文课件主力族：Noto/思源与其 CJK 字形同为 1em 等宽，换行一致。
+        f,
+        "黑体"
+            | "simhei"
+            | "微软雅黑"
+            | "microsoft yahei"
+            | "microsoft yahei ui"
+            | "等线"
+            | "dengxian"
+            | "宋体"
+            | "simsun"
+            | "新宋体"
+            | "nsimsun"
+            | "思源宋体"
+            | "source han serif"
+            | "华文中宋"
     )
 }
 
@@ -1425,6 +1455,26 @@ impl OutlinePen for FlipPen {
     }
     fn close(&mut self) {
         self.0.close_path();
+    }
+}
+
+#[cfg(test)]
+mod cjk_document_tests {
+    use super::*;
+
+    /// 中文课件主力族（黑体/微软雅黑/宋体）在机器未装时落到 craft-fonts 收录的
+    /// Noto/思源形——而不是 Calibri 一系：CJK 1em 等宽保证换行一致。
+    #[test]
+    fn cjk_document_families_resolve_to_their_open_twin() {
+        let db = FontDb::global();
+        let Some(twin) = ["Noto Sans CJK SC", "Source Han Sans SC"].into_iter().find(|f| db.has_family(f)) else {
+            eprintln!("skipped: 本机与 craft-fonts 均无 Noto/思源黑体");
+            return;
+        };
+        for family in ["黑体", "微软雅黑", "等线"] {
+            let face = db.document_face(family, "Regular");
+            assert!(face.family.eq_ignore_ascii_case(twin), "{family} → {}，应为 {twin}", face.family);
+        }
     }
 }
 

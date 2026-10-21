@@ -133,6 +133,16 @@ pub fn slot_of(c: char) -> Option<FontSlot> {
     None
 }
 
+/// Is `c` a Common character Office classifies by code range rather than by its neighbours, so
+/// the run's Latin typeface draws it in every script context (ECMA-376 font classes): ASCII —
+/// spaces, digits, punctuation — and every code point outside the East Asian and Arabic ranges
+/// (`≥`, `“`, `—`, `°`). Only the Arabic punctuation set, the harakat and BOM-like marks follow
+/// the surrounding text.
+pub fn latin_neutral(c: char) -> bool {
+    let cp = c as u32;
+    script_of(c).is_none() && slot_of(c).is_none() && !arabic_common(cp)
+}
+
 /// A default BCP 47 language for a script (shaping picks `locl` forms by language).
 pub fn default_language(s: ScriptTag) -> Option<&'static str> {
     Some(match &s {
@@ -242,5 +252,29 @@ mod tests {
         for w in RANGES.windows(2) {
             assert!(w[0].1 < w[1].0, "{:x?} {:x?}", w[0], w[1]);
         }
+    }
+
+    #[test]
+    fn latin_neutral_by_code_range_not_neighbours() {
+        // ASCII: spaces, digits, punctuation take the Latin typeface whatever surrounds them.
+        for c in [' ', '\t', '\u{00A0}', '2', '(', ')', '+', '=', ',', '.', ':'] {
+            assert!(latin_neutral(c), "{c:?}");
+        }
+        // High ANSI neutrals outside the East Asian and Arabic ranges too.
+        for c in ['\u{2265}', '\u{201C}', '\u{2014}', '\u{00B0}', '\u{00B1}'] {
+            assert!(latin_neutral(c), "{c:?}");
+        }
+        // East Asian punctuation and full-width forms are East Asian (slot_of decides).
+        for c in ['，', '。', '、', '\u{3000}', '％'] {
+            assert!(!latin_neutral(c), "{c:?}");
+        }
+        // The Arabic punctuation set, harakat and tatweel follow the surrounding text.
+        for c in ['\u{060C}', '\u{061B}', '\u{061F}', '\u{0640}', '\u{064E}'] {
+            assert!(!latin_neutral(c), "{c:?}");
+        }
+        // Strong characters are never neutral.
+        assert!(!latin_neutral('a'));
+        assert!(!latin_neutral('日'));
+        assert!(!latin_neutral('س'));
     }
 }

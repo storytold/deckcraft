@@ -2595,3 +2595,25 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(changed.iter().any(|(px, _)| px[0] == 179 && px[1] == 179 && px[2] == 179));
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
 }
+
+#[test]
+fn metafile_symbol_charset_text_in_a_latin_font_draws_the_characters() {
+    // MathType writes equation text with "Times New Roman" in the symbol character set. Whether
+    // the font is installed (its U+F000+byte glyph) or missing (the byte's own character), a "+"
+    // draws a plus — not a .notdef box or a bullet.
+    let mut f = i16s(&[-720, 0, 0, 0, 400]);
+    f.extend([0, 0, 0, 2, 0, 0, 0, 0]); // charset 2: SYMBOL_CHARSET
+    f.extend(b"Times New Roman");
+    f.push(0);
+    let mut recs = vec![(0x02FB, f), (0x012D, i16s(&[0])), (0x0102, i16s(&[1])), (0x012E, i16s(&[0]))];
+    recs.push(text_record(1440, 360, "+", &[]));
+    let img = crate::metafile::rasterize(&wmf_with(2880, 1440, &recs), 288).expect("raster");
+    let (x0, y0, x1, y1) = mf_ink(&img).expect("plus ink");
+    assert!(x1 - x0 > 12 && y1 - y0 > 12, "a sizeable mark: {x0} {y0} {x1} {y1}");
+    let (cx, cy) = ((x0 + x1) / 2, (y0 + y1) / 2);
+    let on = |x: u32, y: u32| img.get_pixel(x, y)[3] > 100;
+    assert!(on(cx, cy), "ink at the crossing");
+    assert!(on(x0 + 2, cy) && on(x1 - 2, cy), "the horizontal bar");
+    assert!(on(cx, y0 + 2) && on(cx, y1 - 2), "the vertical bar");
+    assert!(!on(x0 + 1, y0 + 1) && !on(x1 - 1, y1 - 1), "empty corners: a plus, not a box or bullet");
+}
