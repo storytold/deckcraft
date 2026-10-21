@@ -604,3 +604,21 @@ fn insert_names_the_companions_it_used() {
         .unwrap();
     assert_eq!(r["companions"], json!(["m.mtl"]));
 }
+
+/// On a small model the side resize handles lie inside the 3-D handle's zone: they still
+/// resize, and the middle still turns the model.
+#[test]
+fn a_small_models_side_handles_resize() {
+    let mut s = session();
+    let r = s
+        .execute("insert.model3d", &json!({"name": "box.glb", "data": base64_encode(&glb([-0.5; 3], [0.5; 3])), "rect": [100, 100, 16, 16]}))
+        .unwrap();
+    let id = ShapeId(r["id"].as_u64().unwrap() as u32);
+    let x = model(&s, id).1;
+    let tol = 3.0;
+    let (pts, _) = crate::tools::box_handles(&x);
+    // The east handle is inside the 3-D handle's reach from the centre.
+    assert!((pts[3] - x.center()).hypot() <= tol * crate::tools::ROTATE3D_RADIUS);
+    assert_eq!(s.hit_test(pts[3], tol), Some(Hit::Resize { id, handle: 3 }));
+    assert_eq!(s.hit_test(x.center(), tol), Some(Hit::Rotate3d { id }));
+}

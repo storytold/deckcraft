@@ -434,13 +434,15 @@ impl Session {
                 if (rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
                     return Some(Hit::Rotate { id: *id });
                 }
-                if matches!(sh.kind, ShapeKind::Model3d(_)) && (x.center() - p).hypot() <= tol * ROTATE3D_RADIUS {
-                    return Some(Hit::Rotate3d { id: *id });
-                }
                 for (i, q) in pts.iter().enumerate() {
                     if (*q - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Resize { id: *id, handle: i as u8 });
                     }
+                }
+                // After the resize handles: on a small (or zoomed-out) model the side handles lie
+                // inside the 3-D handle's zone, and they win there.
+                if matches!(sh.kind, ShapeKind::Model3d(_)) && (x.center() - p).hypot() <= tol * ROTATE3D_RADIUS {
+                    return Some(Hit::Rotate3d { id: *id });
                 }
             }
         }
