@@ -2099,7 +2099,7 @@ fn slide_show(app: &mut SlideApp, ui: &mut Ui) {
                 s.rehearse = true;
             }
         }
-        let r = big_button(ui, Icon::Record, "Record", false);
+        let r = big_button(ui, Icon::Record, crate::i18n::tr("Record"), false);
         let _ = r.on_hover_text(crate::i18n::tr("Recording narration needs audio capture (coming soon)"));
     });
     group(ui, |ui| {

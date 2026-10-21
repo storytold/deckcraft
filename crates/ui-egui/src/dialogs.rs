@@ -1199,7 +1199,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 return true;
             }
-            let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
+            let what = quit_document_description(&names);
             ui.label(egui::RichText::new(if crate::i18n::is_korean() {  crate::i18n::format_fields("Do you want to save the changes you made to {what}?", &[("what", format!("{}", &what))]) } else { format!("Do you want to save the changes you made to {what}?") }).strong());
             ui.label(crate::i18n::tr("Your changes will be lost if you don't save them."));
             ui.add_space(8.0);
@@ -3695,3 +3695,33 @@ mod spelling_tests;
 #[cfg(test)]
 #[path = "paragraph_dialog_tests.rs"]
 mod paragraph_dialog_tests;
+
+fn quit_document_description(names: &[String]) -> String {
+    if let [name] = names {
+        format!("“{name}”")
+    } else if crate::i18n::is_korean() {
+        crate::i18n::format_fields("{} presentations", &[("", names.len().to_string())])
+    } else {
+        format!("{} presentations", names.len())
+    }
+}
+
+#[cfg(test)]
+mod korean_quit_tests {
+    use super::quit_document_description;
+    use crate::i18n::{Language, format_fields, set_current, tr};
+
+    #[test]
+    fn quit_counts_translate_without_changing_titles_or_tab_identifiers() {
+        let names = vec!["One".into(), "Two".into(), "Three".into()];
+        set_current(Language::Korean);
+        let what = quit_document_description(&names);
+        assert_eq!(what, "프레젠테이션 3개");
+        assert_eq!(format_fields("Do you want to save the changes you made to {what}?", &[("what", what)]), "프레젠테이션 3개의 변경 내용을 저장하시겠습니까?");
+        assert_eq!(quit_document_description(&["Record {what}".into()]), "“Record {what}”");
+        assert_eq!(tr("Record"), "녹음");
+        set_current(Language::English);
+        assert_eq!(quit_document_description(&names), "3 presentations");
+        assert_eq!(tr("Record"), "Record");
+    }
+}

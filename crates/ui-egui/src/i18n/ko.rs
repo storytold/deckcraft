@@ -1,5 +1,7 @@
 //! Contributor-reviewed Korean strings.
 pub(super) const TEXT: &[(&str, &str)] = &[
+    ("{} presentations", "프레젠테이션 {}개"),
+    ("Record", "녹음"),
     ("Top", "위쪽"),
     ("Undo", "실행 취소"),
     ("Edit", "편집"),
