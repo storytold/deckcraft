@@ -75,3 +75,17 @@ is copied into this repository. The licence text is in `licenses/pdf-writer/LICE
 | `krilla 0.8.2 / icc/sGrey-v4.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sGrey-v4.icc | CC0-1.0 | `00c0f94e09127520a17dc0e1d9264b5702081d96dbdb1549ee88e3631ce42a9d` | PDF export colour profiles |
 | `krilla 0.8.2 / icc/sRGB-v2-magic.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sRGB-v2-magic.icc | CC0-1.0 | `af4efe28f6d311799865f325ba39184a2e978b113ca74124d60af7de22b105f4` | PDF export colour profiles |
 | `krilla 0.8.2 / icc/sRGB-v4.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sRGB-v4.icc | CC0-1.0 | `c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353` | PDF export colour profiles |
+
+
+## Korean interface
+The Korean display catalog in crates/ui-egui/src/i18n/ko.rs contains original,
+contributor-supplied and reviewed translations of this repository's English UI,
+integrated with Codex under MIT OR Apache-2.0. Identifiers, document values and
+user names retain their original values.
+
+Korean glyphs use Nanum Gothic Regular/Bold from
+[craft-fonts 4fcc4b2](https://github.com/arksky1/craft-fonts/commit/4fcc4b2672a2a6765052c2f59fa3021485d32269).
+The font source is Google Fonts ofl/nanumgothic; its OFL-1.1 notice and original
+binaries are preserved in that shared input. No vendor UI localization is used.
+
+Generic alignment captions and undo/redo templates also reuse the contributor-reviewed PdfCraft and DesignCraft Korean catalogs where their meanings agree.

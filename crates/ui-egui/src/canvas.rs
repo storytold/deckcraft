@@ -102,7 +102,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let Some(st) = app.session.active() else { return };
     if st.doc.slides.is_empty() && st.selection.target == Target::Slides {
         let resp = ui.allocate_rect(avail, Sense::click());
-        ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
+        ui.painter().text(avail.center(), Align2::CENTER_CENTER, crate::i18n::tr("Click to add first slide"), theme::font(22.0), t.text_dim);
         if resp.clicked() {
             let _ = app.run("slide.new", json!({"layout": "title"}));
         }
@@ -591,7 +591,7 @@ fn ruler_markers(app: &mut SlideApp, ui: &mut Ui, p: &egui::Painter, avail: Rect
     }
     let (kind_align, kind_label) = KINDS[kind % KINDS.len()];
     cr.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, kind_label));
-    let cr = cr.on_hover_text(format!("{kind_label} (click to change)"));
+    let cr = cr.on_hover_text(if crate::i18n::is_korean() {  crate::i18n::format_fields("{kind_label} (click to change)", &[("kind_label", format!("{}", &kind_label))]) } else { format!("{kind_label} (click to change)") });
     p.rect_stroke(
         corner.shrink(2.0),
         CornerRadius::same(2),
@@ -1097,7 +1097,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 }
                 ui.separator();
             }
-            if ui.button("Exit Edit Points").clicked() {
+            if ui.button(crate::i18n::tr("Exit Edit Points")).clicked() {
                 let _ = app.run("shape.editPoints", json!({"on": false}));
                 ui.close();
             }
@@ -1106,7 +1106,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
         // A misspelt word under the pointer: its suggestions, then Ignore All and Add to Dictionary.
         if let Some(w) = app.squiggles.menu_word.clone() {
             if let Some(from) = w.delete_from {
-                if ui.button(egui::RichText::new("Delete Repeated Word").strong()).clicked() {
+                if ui.button(egui::RichText::new(crate::i18n::tr("Delete Repeated Word")).strong()).clicked() {
                     let cut: String = format!("{}{}", " ".repeat(w.start - from), w.word);
                     // The gap is spaces; take it from the text so tabs or no-break spaces match.
                     let gap = app
@@ -1143,7 +1143,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     ui.close();
                 }
             } else if w.suggestions.is_empty() {
-                ui.label(egui::RichText::new("(no spelling suggestions)").weak());
+                ui.label(egui::RichText::new(crate::i18n::tr("(no spelling suggestions)")).weak());
             }
             for to in &w.suggestions {
                 if ui.button(egui::RichText::new(to).strong()).clicked() {
@@ -1159,7 +1159,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     ui.close();
                 }
             }
-            if ui.button("Ignore All").clicked() {
+            if ui.button(crate::i18n::tr("Ignore All")).clicked() {
                 app.squiggles.ignore(&w.word);
                 app.squiggles.menu_word = None;
                 ui.close();
@@ -1194,12 +1194,12 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     ui.close();
                 }
             }
-            if ui.button("Link…").clicked() {
+            if ui.button(crate::i18n::tr("Link…")).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
                 ui.close();
             }
             ui.separator();
-            if ui.button("Format Shape…").clicked() {
+            if ui.button(crate::i18n::tr("Format Shape…")).clicked() {
                 let _ = app.run("view.pane", json!({"pane": "format"}));
                 ui.close();
             }
@@ -1236,7 +1236,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 crate::ribbon::menu_item(app, ui, crate::icons::Icon::Ungroup, "Ungroup", "arrange.ungroup", json!({}));
             });
             let locked = app.session.active().is_some_and(|d| d.selected_shapes().iter().all(|s| s.locked));
-            if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+            if ui.button(if locked { crate::i18n::tr("Unlock") } else { "Lock" }).clicked() {
                 let _ = app.run("shape.lock", json!({"locked": !locked}));
                 ui.close();
             }
@@ -1244,7 +1244,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 .session
                 .active()
                 .is_some_and(|d| d.selected_shapes().iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })));
-            if picture && ui.button("Change Picture…").clicked() {
+            if picture && ui.button(crate::i18n::tr("Change Picture…")).clicked() {
                 let _ = app.run("app.changePictureDialog", json!({}));
                 ui.close();
             }
@@ -1252,7 +1252,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
                 ui.close();
             }
-            if ui.button("Edit Alt Text…").clicked() {
+            if ui.button(crate::i18n::tr("Edit Alt Text…")).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("altText"));
                 ui.close();
             }
@@ -1282,12 +1282,12 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     }
                 }
             });
-            ui.menu_button("Grid and Guides", |ui| {
+            ui.menu_button(crate::i18n::tr("Grid and Guides"), |ui| {
                 let mut on = app.ui.guides;
                 if ui.checkbox(&mut on, "Guides").clicked() {
                     let _ = app.run("view.guides", json!({"on": on}));
                 }
-                for (label, vertical) in [("Add Vertical Guide", true), ("Add Horizontal Guide", false)] {
+                for (label, vertical) in [(crate::i18n::tr("Add Vertical Guide"), true), (crate::i18n::tr("Add Horizontal Guide"), false)] {
                     if ui.button(label).clicked() {
                         let _ = app.run("guide.add", json!({"vertical": vertical}));
                         let _ = app.run("view.guides", json!({"on": true}));
@@ -1295,11 +1295,11 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     }
                 }
             });
-            if ui.button("Reset Slide").clicked() {
+            if ui.button(crate::i18n::tr("Reset Slide")).clicked() {
                 let _ = app.run("slide.reset", json!({}));
                 ui.close();
             }
-            if ui.button("Format Background…").clicked() {
+            if ui.button(crate::i18n::tr("Format Background…")).clicked() {
                 let _ = app.run("view.pane", json!({"pane": "background"}));
                 ui.close();
             }

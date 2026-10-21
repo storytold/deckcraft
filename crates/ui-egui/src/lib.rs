@@ -16,6 +16,7 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
 pub mod icons;
+pub mod i18n;
 pub mod media;
 pub mod menus;
 pub mod notes;
@@ -237,6 +238,8 @@ pub enum ViewMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
+    /// Display language, stored with per-user UI settings, outside the document.
+    pub language: i18n::Language,
     pub brightness: theme::Brightness,
     pub tab: String,
     pub ribbon_collapsed: bool,
@@ -279,6 +282,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
+            language: i18n::Language::English,
             brightness: theme::Brightness::Light,
             tab: "Home".into(),
             ribbon_collapsed: false,
@@ -357,6 +361,7 @@ pub const RECENT_MAX: usize = 12;
 
 /// UI-only commands (id, label, shortcut, params).
 pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
+    ("ui.language", "Language", None, r#"{"language":"en|ko"}"#),
     ("view.normal", "Normal", None, "{}"),
     ("view.outline", "Outline View", None, "{}"),
     ("view.sorter", "Slide Sorter", None, "{}"),
@@ -654,6 +659,16 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        i18n::set_current(self.ui.language);
+        if id == "ui.language" {
+            let code = params.get("language").and_then(Value::as_str).ok_or("missing language")?;
+            let language = i18n::Language::from_code(code).ok_or("unsupported interface language")?;
+            self.ui.language = language;
+            self.fonts_ready = false;
+            i18n::set_current(language);
+            return Ok(json!({"language": language.code()}));
+        }
+
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -1538,6 +1553,7 @@ impl SlideApp {
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        i18n::set_current(self.ui.language);
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -1616,6 +1632,7 @@ impl SlideApp {
                 .collect()
         });
         self.ui_fonts.note(ctx, &typed);
+        if i18n::is_korean() { self.ui_fonts.note(ctx, i18n::korean_sample()); }
         for d in self.session.documents() {
             self.ui_fonts.note(ctx, &d.title());
         }
@@ -1796,6 +1813,7 @@ impl SlideApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        i18n::set_current(self.ui.language);
         let ctx = ui.ctx().clone();
         if !self.fonts_ready {
             ctx.request_repaint();
@@ -3412,5 +3430,26 @@ mod tests {
         let after = harness.state().ui.ui_scale;
         assert!(after > before + 0.3, "letting go applies the size dragged to: {before} -> {after}");
         assert!(harness.state().dialog.is_some(), "Preferences stays open");
+    }
+}
+
+#[cfg(test)]
+mod korean_integration_tests {
+    use super::*;
+    #[test]
+    fn interface_language_uses_control_command_and_persists_outside_documents() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let before = serde_json::to_value(&app.session.active().unwrap().doc).unwrap();
+        assert_eq!(app.ui.language, i18n::Language::English);
+        app.run("ui.language", json!({"language": "ko"})).unwrap();
+        assert_eq!(i18n::tr("File"), "파일");
+        let saved = serde_json::to_value(&app.ui).unwrap();
+        let restored: UiState = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.language, i18n::Language::Korean);
+        assert!(app.run("ui.language", json!({"language": "unsupported"})).is_err());
+        assert_eq!(app.ui.language, i18n::Language::Korean);
+        assert_eq!(before, serde_json::to_value(&app.session.active().unwrap().doc).unwrap());
+        app.run("ui.language", json!({"language": "en"})).unwrap();
+        assert_eq!(i18n::tr("File"), "File");
     }
 }

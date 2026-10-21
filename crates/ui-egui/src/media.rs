@@ -493,7 +493,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
         painter.text(
             pos2(rect.min.x, rect.max.y + 3.0),
             Align2::LEFT_TOP,
-            format!("No sound: {err}"),
+            if crate::i18n::is_korean() {  crate::i18n::format_fields("No sound: {err}", &[("err", format!("{}", &err))]) } else { format!("No sound: {err}") },
             egui::FontId::proportional(10.0),
             Color32::from_rgb(0xC0, 0x40, 0x40),
         );

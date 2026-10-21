@@ -94,12 +94,12 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                         ui.horizontal_centered(|ui| {
                             ui.label(RichText::new(title.clone()).font(crate::theme::bold(13.0)).color(t.text));
                             ui.add_space(16.0);
-                            ui.label(RichText::new(format!("Slide {} of {n}", slide + 1)).color(t.text_dim).font(crate::theme::font(13.0)));
+                            ui.label(RichText::new(if crate::i18n::is_korean() { let __i18n_0 = &(slide + 1); crate::i18n::format_fields("Slide {} of {n}", &[("", format!("{}", __i18n_0)), ("n", format!("{}", &n))]) } else { format!("Slide {} of {n}", slide + 1) }).color(t.text_dim).font(crate::theme::font(13.0)));
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                if ui.add_enabled(slide + 1 < n, egui::Button::new("Next")).clicked() {
+                                if ui.add_enabled(slide + 1 < n, egui::Button::new(crate::i18n::tr("Next"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": 1}));
                                 }
-                                if ui.add_enabled(slide > 0, egui::Button::new("Previous")).clicked() {
+                                if ui.add_enabled(slide > 0, egui::Button::new(crate::i18n::tr("Previous"))).clicked() {
                                     let _ = app.run("view.newWindow", json!({"delta": -1}));
                                 }
                             });
