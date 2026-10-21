@@ -65,6 +65,10 @@ pub fn decode(b: &Rec, limit: usize) -> Option<Picture> {
         _ => (b.kind, false),
     };
     let uids = if two_uids { 32 } else { 16 };
+    // The bytes a picture is copied from, refused before copying when they (plus `extra` bytes of
+    // header to add) would pass the budget.
+    let within = |bytes: &'_ [u8], extra: usize| bytes.len().checked_add(extra).is_some_and(|n| n <= limit);
+    let bitmap = || b.data.get(uids + 1..).filter(|d| within(d, 0)).map(<[u8]>::to_vec);
     match kind {
         // EMF, WMF: a metafile header then (usually deflated) data.
         0xF01A | 0xF01B => {
@@ -75,16 +79,16 @@ pub fn decode(b: &Rec, limit: usize) -> Option<Picture> {
             let data = if compressed {
                 miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(body, size.min(MAX_INFLATED).min(limit)).ok()?
             } else {
-                body.get(..size.min(body.len()))?.to_vec()
+                body.get(..size.min(body.len())).filter(|d| within(d, 0))?.to_vec()
             };
             let (ext, content_type) = if kind == 0xF01A { ("emf", "image/x-emf") } else { ("wmf", "image/x-wmf") };
             Some(Picture { ext, content_type, data })
         }
         // Bitmaps: a one-byte tag then the file.
-        0xF01D | 0xF02A => Some(Picture { ext: "jpg", content_type: "image/jpeg", data: b.data.get(uids + 1..)?.to_vec() }),
-        0xF01E => Some(Picture { ext: "png", content_type: "image/png", data: b.data.get(uids + 1..)?.to_vec() }),
-        0xF029 => Some(Picture { ext: "tif", content_type: "image/tiff", data: b.data.get(uids + 1..)?.to_vec() }),
-        0xF01F => Some(Picture { ext: "bmp", content_type: "image/bmp", data: dib_to_bmp(b.data.get(uids + 1..)?)? }),
+        0xF01D | 0xF02A => Some(Picture { ext: "jpg", content_type: "image/jpeg", data: bitmap()? }),
+        0xF01E => Some(Picture { ext: "png", content_type: "image/png", data: bitmap()? }),
+        0xF029 => Some(Picture { ext: "tif", content_type: "image/tiff", data: bitmap()? }),
+        0xF01F => Some(Picture { ext: "bmp", content_type: "image/bmp", data: dib_to_bmp(b.data.get(uids + 1..).filter(|d| within(d, 14))?)? }),
         // PICT (Macintosh) has no decoder here.
         _ => None,
     }
@@ -158,6 +162,8 @@ mod tests {
         let png = [&[0u8; 17][..], b"\x89PNG..."].concat();
         let p = decode_all(&Rec::at(&atom(0xF01E, 0x6E0, &png), 0).unwrap()).unwrap();
         assert_eq!((p.ext, &p.data[..4]), ("png", &b"\x89PNG"[..]));
+        // Over the remaining budget: refused before it is copied.
+        assert!(decode(&Rec::at(&atom(0xF01E, 0x6E0, &png), 0).unwrap(), 6).is_none());
 
         let wmf = b"\x01\x00\x09\x00\x00\x03 a tiny metafile".to_vec();
         let z = miniz_oxide::deflate::compress_to_vec_zlib(&wmf, 6);
