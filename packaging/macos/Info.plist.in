@@ -45,6 +45,41 @@
   <key>NSHumanReadableCopyright</key>
   <string>Copyright © the DeckCraft authors. MIT OR Apache-2.0.</string>
 
+  <!-- The documents Finder may hand DeckCraft (double-click, Open With, a drop on the Dock icon);
+       they arrive as an open-documents Apple event (src/apple_events.rs). Without this list
+       LaunchServices never offers DeckCraft for a presentation. -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>DeckCraft Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>CFBundleTypeIconFile</key>
+      <string>DeckCraft</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>ai.storyteller.deckcraft.presentation</string>
+      </array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>org.openxmlformats.presentationml.presentation</string>
+        <string>org.openxmlformats.presentationml.template</string>
+        <string>org.openxmlformats.presentationml.slideshow</string>
+      </array>
+    </dict>
+  </array>
+
   <!-- DeckCraft's own format: a zip of a JSON manifest plus media. -->
   <key>UTExportedTypeDeclarations</key>
   <array>
