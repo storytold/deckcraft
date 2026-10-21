@@ -180,6 +180,11 @@ pub fn read(bytes: &[u8], resolve: Resolve) -> Result<Scene> {
     // Triangle indices the faces will make, over every face (each face's list is capped alone).
     let mut made = 0usize;
     for e in &elements {
+        // An element without properties takes no bytes: skipping it is reading it (and its
+        // count, which nothing bounds, could otherwise spin for ever).
+        if e.props.is_empty() {
+            continue;
+        }
         let is_vertex = e.name == "vertex";
         let is_face = e.name == "face";
         if is_vertex && e.count > crate::MAX_VERTICES {

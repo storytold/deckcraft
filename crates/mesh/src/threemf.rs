@@ -16,6 +16,8 @@ use crate::{Error, Material, Primitive, Result, Scene, Texture, Wrap, bad};
 
 const MAX_PART: u64 = 512 << 20;
 const MAX_DEPTH: usize = 16;
+/// Objects placed (components followed), over the whole build: fan-out and cycles stop here.
+const MAX_PLACEMENTS: usize = 1_000_000;
 
 /// A 3MF transform: `p' = [x y z 1] · M` with M's rows `m[0..3]` and translation `m[3]`.
 type M43 = [[f64; 3]; 4];
@@ -64,19 +66,9 @@ pub fn read(bytes: &[u8]) -> Result<Scene> {
         .ok_or_else(|| bad("3MF without a model part"))?;
     let xml = part(&mut zip, &root).ok_or_else(|| bad("3MF model part missing"))?;
     let model = parse(&xml)?;
-    let mut tex_bytes: HashMap<u32, Option<Texture>> = HashMap::new();
-    for (id, (path, ws, wt)) in &model.textures {
-        let t = part(&mut zip, path).and_then(Texture::decode).map(|mut t| {
-            t.wrap_s = *ws;
-            t.wrap_t = *wt;
-            t
-        });
-        if t.is_none() {
-            log::warn!("3MF: texture {path} missing or unreadable");
-        }
-        tex_bytes.insert(*id, t);
-    }
-    build(&model, tex_bytes)
+    // Textures are read when triangles first use them (`prim_for`).
+    let mut read = |path: &str| part(&mut zip, path);
+    build(&model, &mut read)
 }
 
 /// The target of the package's 3-D model relationship.
@@ -268,16 +260,20 @@ enum Key {
     Texture(u32),
 }
 
-struct Out {
+struct Out<'a> {
     scene: Scene,
     prims: HashMap<Key, usize>,
     tex_index: HashMap<u32, Option<usize>>,
-    textures: HashMap<u32, Option<Texture>>,
+    /// Reads a part of the package (a texture image).
+    read: &'a mut dyn FnMut(&str) -> Option<Vec<u8>>,
+    /// Texture images read so far, readable or not.
+    tex_reads: usize,
     verts: usize,
+    placements: usize,
 }
 
-fn build(m: &Model, textures: HashMap<u32, Option<Texture>>) -> Result<Scene> {
-    let mut out = Out { scene: Scene::default(), prims: HashMap::new(), tex_index: HashMap::new(), textures, verts: 0 };
+fn build(m: &Model, read: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> Result<Scene> {
+    let mut out = Out { scene: Scene::default(), prims: HashMap::new(), tex_index: HashMap::new(), read, tex_reads: 0, verts: 0, placements: 0 };
     let items: Vec<(u32, M43)> = if m.build.is_empty() { m.objects.keys().map(|id| (*id, IDENTITY)).collect() } else { m.build.clone() };
     for (id, t) in items {
         emit(m, id, &t, 0, &mut out)?;
@@ -288,6 +284,10 @@ fn build(m: &Model, textures: HashMap<u32, Option<Texture>>) -> Result<Scene> {
 fn emit(m: &Model, id: u32, t: &M43, depth: usize, out: &mut Out) -> Result<()> {
     if depth > MAX_DEPTH {
         return Ok(());
+    }
+    out.placements += 1;
+    if out.placements > MAX_PLACEMENTS {
+        return Err(Error::TooLarge);
     }
     let Some(o) = m.objects.get(&id) else { return Ok(()) };
     for (cid, ct) in &o.components {
@@ -381,7 +381,21 @@ fn prim_for(m: &Model, key: Key, out: &mut Out) -> usize {
             let ti = match out.tex_index.get(&t) {
                 Some(i) => *i,
                 None => {
-                    let i = out.textures.get_mut(&t).and_then(Option::take).map(|tex| {
+                    let tex = match m.textures.get(&t) {
+                        Some((path, ws, wt)) if out.scene.textures.len() < crate::MAX_TEXTURES && out.tex_reads < crate::MAX_TEXTURES * 4 => {
+                            out.tex_reads += 1;
+                            let tex = (out.read)(path).and_then(Texture::decode);
+                            if tex.is_none() {
+                                log::warn!("3MF: texture {path} missing or unreadable");
+                            }
+                            tex.map(|mut x| {
+                                (x.wrap_s, x.wrap_t) = (*ws, *wt);
+                                x
+                            })
+                        }
+                        _ => None,
+                    };
+                    let i = tex.map(|tex| {
                         out.scene.textures.push(tex);
                         out.scene.textures.len() - 1
                     });

@@ -486,3 +486,46 @@ fn gltf_a_shared_image_does_not_lend_its_sampler() {
     assert_eq!((s.textures[0].wrap_s, s.textures[0].wrap_t), (Wrap::Clamp, Wrap::Clamp));
     assert_eq!((s.textures[1].wrap_s, s.textures[1].wrap_t), (Wrap::Repeat, Wrap::Repeat));
 }
+
+/// Hostile files stop quickly instead of hanging: a PLY element without properties that claims
+/// an endless count, a 3MF object made of itself many times over.
+#[test]
+fn hostile_counts_and_component_trees_stop() {
+    let start = std::time::Instant::now();
+    let ply = b"ply\nformat ascii 1.0\nelement edge 18446744073709551615\nelement vertex 3\nproperty float x\nproperty float y\nproperty float z\nelement face 1\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n";
+    let s = load("t.ply", ply, &no_files).unwrap();
+    assert_eq!(s.triangle_count(), 1);
+    let comps: String = (0..10).map(|_| r#"<component objectid="1"/>"#).collect();
+    let model = format!(
+        r#"<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><components>{comps}</components></object></resources><build><item objectid="1"/></build></model>"#
+    );
+    assert!(load("t.3mf", &threemf_zip(&model, &[]), &no_files).is_err());
+    assert!(start.elapsed() < std::time::Duration::from_secs(10), "{:?}", start.elapsed());
+}
+
+/// A glTF naming the same buffer file many times reads it once.
+#[test]
+fn gltf_reads_a_repeated_buffer_uri_once() {
+    let mut b = Vec::new();
+    for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for c in v {
+            b.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    let reads = std::cell::Cell::new(0);
+    let resolve = |n: &str| {
+        reads.set(reads.get() + 1);
+        (n == "tri.bin").then(|| b.clone())
+    };
+    let buffers: Vec<_> = (0..1000).map(|_| serde_json::json!({"byteLength": 36, "uri": "tri.bin"})).collect();
+    let doc = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}],
+        "bufferViews": [{"buffer": 999, "byteLength": 36}],
+        "buffers": buffers,
+    });
+    let s = load("t.gltf", doc.to_string().as_bytes(), &resolve).unwrap();
+    assert_eq!(s.triangle_count(), 1);
+    assert_eq!(reads.get(), 1);
+}

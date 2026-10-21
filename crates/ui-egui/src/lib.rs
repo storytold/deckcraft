@@ -804,10 +804,14 @@ impl SlideApp {
     pub fn save_shape_picture(&mut self) {
         let r = self.session.execute("shape.saveAsPicture", &json!({}));
         let (name, bytes) = match r {
-            Ok(v) => (
-                v.get("name").and_then(Value::as_str).unwrap_or("Picture.png").to_string(),
-                v.get("data").and_then(Value::as_str).and_then(deckcraft_engine::cmd::base64_decode).unwrap_or_default(),
-            ),
+            Ok(v) => match v.get("data").and_then(Value::as_str).and_then(deckcraft_engine::cmd::base64_decode).filter(|b| !b.is_empty()) {
+                Some(bytes) => (v.get("name").and_then(Value::as_str).unwrap_or("Picture.png").to_string(), bytes),
+                None => {
+                    // Never save an empty file as if it were the picture.
+                    self.set_status("Save as Picture: no picture to save".to_string());
+                    return;
+                }
+            },
             Err(e) => {
                 self.set_status(e.to_string());
                 return;

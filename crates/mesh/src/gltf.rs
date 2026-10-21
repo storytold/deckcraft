@@ -8,6 +8,8 @@
 //! `KHR_mesh_quantization` and `EXT_texture_webp`. Skipped with a log line: points and lines,
 //! Draco and meshopt compression, skins, morph targets and animations (the model is drawn at rest).
 
+use std::rc::Rc;
+
 use serde_json::Value;
 
 use crate::util::{base64, percent_decode};
@@ -84,7 +86,7 @@ fn read_doc(json: &[u8], bin: Option<&[u8]>, resolve: Resolve) -> Result<Scene> 
         }
     }
     let mut g = Gltf { doc: &doc, buffers: Vec::new(), resolve, verts: 0, indices: 0 };
-    g.load_buffers(bin);
+    g.load_buffers(bin)?;
     let (materials, textures) = g.materials();
     let mut scene = Scene { materials, textures, ..Default::default() };
     g.nodes(&mut scene)?;
@@ -116,7 +118,7 @@ fn num(v: Option<&Value>, default: f32) -> f32 {
 
 struct Gltf<'a> {
     doc: &'a Value,
-    buffers: Vec<Option<Vec<u8>>>,
+    buffers: Vec<Option<Rc<Vec<u8>>>>,
     resolve: Resolve<'a>,
     verts: usize,
     /// Triangle-list indices made so far, over every primitive.
@@ -142,21 +144,40 @@ impl Gltf<'_> {
         (self.resolve)(&percent_decode(uri))
     }
 
-    fn load_buffers(&mut self, bin: Option<&[u8]>) {
+    /// Each buffer's bytes; a URI named twice is read once, and all of them together stay
+    /// within [`crate::MAX_FILE`].
+    fn load_buffers(&mut self, bin: Option<&[u8]>) -> Result<()> {
         let list = arr(self.doc, "buffers");
         let mut out = Vec::with_capacity(list.len().min(1024));
+        let mut by_uri: Vec<(&str, Option<Rc<Vec<u8>>>)> = Vec::new();
+        let mut total = 0usize;
         for (i, b) in list.iter().enumerate().take(1024) {
             let data = match b.get("uri").and_then(Value::as_str) {
-                Some(uri) => self.uri_bytes(uri),
-                None if i == 0 => bin.map(<[u8]>::to_vec),
+                Some(uri) => match by_uri.iter().find(|(u, _)| *u == uri) {
+                    Some((_, d)) => d.clone(),
+                    None => {
+                        let d = self.uri_bytes(uri).map(Rc::new);
+                        total = total.saturating_add(d.as_ref().map_or(0, |d| d.len()));
+                        by_uri.push((uri, d.clone()));
+                        d
+                    }
+                },
+                None if i == 0 => bin.map(|b| {
+                    total = total.saturating_add(b.len());
+                    Rc::new(b.to_vec())
+                }),
                 None => None,
             };
+            if total > crate::MAX_FILE {
+                return Err(Error::TooLarge);
+            }
             if data.is_none() {
                 log::warn!("glTF: buffer {i} is missing");
             }
             out.push(data);
         }
         self.buffers = out;
+        Ok(())
     }
 
     /// The bytes of buffer view `i` and its stride.

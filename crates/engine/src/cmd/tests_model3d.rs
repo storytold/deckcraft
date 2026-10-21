@@ -501,3 +501,39 @@ fn an_orthographic_model_keeps_its_size_through_pptx() {
     let (f, f2) = (m.focal(x.h), m2.focal(sh.xfrm.unwrap().h));
     assert!(close(f, f2, f * 1e-3), "{f} {f2}");
 }
+
+/// A GLB whose buffer is a separate file is stored converted, so the deck holds the whole model.
+#[test]
+fn a_glb_with_an_external_buffer_is_stored_whole() {
+    let mut bin = Vec::new();
+    for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for c in v {
+            bin.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    let mut js = json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36, "uri": "tri.bin"}],
+    })
+    .to_string()
+    .into_bytes();
+    while !js.len().is_multiple_of(4) {
+        js.push(b' ');
+    }
+    let mut glb = b"glTF".to_vec();
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&((12 + 8 + js.len()) as u32).to_le_bytes());
+    glb.extend_from_slice(&(js.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x4E4F_534Au32.to_le_bytes());
+    glb.extend_from_slice(&js);
+    let mut s = session();
+    let r = s.execute("insert.model3d", &json!({"name": "tri.glb", "data": base64_encode(&glb), "files": {"tri.bin": base64_encode(&bin)}})).unwrap();
+    let (m, _) = model(&s, ShapeId(r["id"].as_u64().unwrap() as u32));
+    let stored = s.doc().unwrap().doc.media(m.media).unwrap().data.clone();
+    assert_ne!(stored.as_slice(), glb.as_slice(), "converted, not kept as it was");
+    let scene = deckcraft_mesh::load("tri.glb", &stored, &deckcraft_mesh::no_files).unwrap();
+    assert_eq!(scene.triangle_count(), 1);
+}

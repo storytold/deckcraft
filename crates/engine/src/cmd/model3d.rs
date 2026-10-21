@@ -354,11 +354,18 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         .map(|o| o.iter().take(256).filter_map(|(k, v)| Some((k.clone(), base64_decode(v.as_str()?)?))).collect())
         .unwrap_or_default();
     let format = Format::sniff(&name, &bytes).ok_or_else(|| bad(CMD, format!("{name} is not a 3-D model (GLB, glTF, OBJ, STL, PLY or 3MF)")))?;
-    let resolve = |n: &str| companion(&files, dir.as_deref(), n);
+    // Whether the model took anything from another file (a GLB can name external buffers).
+    let used_companions = std::cell::Cell::new(false);
+    let resolve = |n: &str| {
+        let f = companion(&files, dir.as_deref(), n);
+        used_companions.set(used_companions.get() || f.is_some());
+        f
+    };
     let scene = deckcraft_mesh::load(&name, &bytes, &resolve).map_err(|e| EngineError::Other(format!("{name}: {e}")))?;
     let (lo, hi) = scene.bounds().ok_or_else(|| EngineError::Other(format!("{name}: the model has no vertices")))?;
     // Kept as glTF binary: a GLB as it is, anything else converted.
-    let glb = if format == Format::Glb { bytes } else { deckcraft_mesh::to_glb(&scene) };
+    // A GLB stands alone and is kept as it is; anything that needed other files is converted.
+    let glb = if format == Format::Glb && !used_companions.get() { bytes } else { deckcraft_mesh::to_glb(&scene) };
     let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(&name).to_string();
     let slide = s.doc()?.doc.slide_size;
     let mut m = Model3d::fitted(deckcraft_model::MediaId(0), lo, hi);

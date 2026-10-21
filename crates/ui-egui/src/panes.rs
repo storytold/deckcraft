@@ -422,7 +422,8 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
         }
-        "model3d" => {
+        // Only for a model: any other shape falls through to the default page.
+        "model3d" if matches!(sh.kind, ShapeKind::Model3d(_)) => {
             let ShapeKind::Model3d(m) = &sh.kind else { return };
             ui.label(egui::RichText::new("Model Rotation").font(theme::bold(13.0)));
             for (k, (key, label)) in [("x", "X Rotation"), ("y", "Y Rotation"), ("z", "Z Rotation")].into_iter().enumerate() {
