@@ -23,24 +23,31 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+mod system_theme;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
 
-struct App(SlideApp);
+struct App {
+    app: SlideApp,
+    /// The system's light or dark setting, for Dark appearance ▸ Use system setting.
+    system_theme: system_theme::Watcher,
+}
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.0.logic(ctx);
+        self.app.logic(ctx);
     }
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.0.raw_input_hook(raw);
+        // In place of winit's report, which some systems lack (see `system_theme`).
+        raw.system_theme = self.system_theme.get();
+        self.app.raw_input_hook(raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.0.ui(ui);
+        self.app.ui(ui);
     }
     fn on_exit(&mut self) {
-        save_prefs(&self.0);
+        save_prefs(&self.app);
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -264,7 +271,8 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
-            Ok(Box::new(App(app)))
+            let system_theme = system_theme::Watcher::start(cc.egui_ctx.clone());
+            Ok(Box::new(App { app, system_theme }))
         }),
     )
 }
@@ -278,7 +286,8 @@ mod tests {
     #[test]
     fn on_exit_ends_the_process_on_macos() {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
-            let mut app = App(SlideApp::new(Session::new(), Services::default()));
+            let mut app =
+                App { app: SlideApp::new(Session::new(), Services::default()), system_theme: system_theme::Watcher::start(egui::Context::default()) };
             println!("calling on_exit");
             eframe::App::on_exit(&mut app);
             println!("on_exit returned");

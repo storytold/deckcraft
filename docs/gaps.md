@@ -288,8 +288,7 @@ Detail in [ui-parity.md](ui-parity.md).
   and texture options, 3-D). 6–10 h. **Beta blocker.**
 - **File tab depth** (#76 landed the Backstage): no online templates, cloud places, printer
   choice, video/GIF/CD exports or document protection. 4–8 h for the parts that need no cloud.
-- **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar, #41 system light/dark).
-  2–4 h.
+- **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar). 1–3 h.
 - **Icon consistency across Craft apps** (#73, #56). 2–4 h; coordinate in craftrules.
 - **Dialogs**: 41 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
   and Tabs, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
@@ -357,6 +356,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
+| 2026-10-17 | trivial | Window chrome: #41 (follow the system's light or dark setting) is done |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |
 | 2026-10-16 | trivial | AutoFormat superscripts ordinals (1st, 22nd) as you type, with an AutoCorrect option to turn it off; automatic bulleted lists remain |

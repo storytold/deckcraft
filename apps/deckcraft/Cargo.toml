@@ -29,5 +29,9 @@ arboard = { workspace = true, features = ["image-data"] }
 image = { workspace = true }
 cpal = "0.16"
 
+[target.'cfg(windows)'.dependencies]
+# Reads the system's light or dark setting (system_theme.rs).
+windows-registry = "0.6"
+
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
