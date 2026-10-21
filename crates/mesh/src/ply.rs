@@ -177,6 +177,8 @@ pub fn read(bytes: &[u8], resolve: Resolve) -> Result<Scene> {
     let mut uv: Vec<[f32; 2]> = Vec::new();
     // Faces: corner vertex indices, and per-corner texture coordinates when the face has them.
     let mut faces: Vec<(Vec<u32>, Vec<[f32; 2]>)> = Vec::new();
+    // Triangle indices the faces will make, over every face (each face's list is capped alone).
+    let mut made = 0usize;
     for e in &elements {
         let is_vertex = e.name == "vertex";
         let is_face = e.name == "face";
@@ -225,6 +227,10 @@ pub fn read(bytes: &[u8], resolve: Resolve) -> Result<Scene> {
                         if wanted {
                             corners =
                                 items.iter().map(|x| if x.is_finite() && *x >= 0.0 && *x < u32::MAX as f64 { *x as u32 } else { u32::MAX }).collect();
+                            made = made.saturating_add(corners.len().saturating_sub(2).saturating_mul(3));
+                            if made > crate::MAX_INDICES {
+                                return Err(Error::TooLarge);
+                            }
                         } else if coords {
                             tc = items.as_chunks::<2>().0.iter().map(|[u, v]| [*u as f32, 1.0 - *v as f32]).collect();
                         }

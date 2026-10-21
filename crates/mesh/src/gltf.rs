@@ -83,10 +83,9 @@ fn read_doc(json: &[u8], bin: Option<&[u8]>, resolve: Resolve) -> Result<Scene> 
             log::warn!("glTF: required extension {e} not supported; drawing what can be read");
         }
     }
-    let mut g = Gltf { doc: &doc, buffers: Vec::new(), resolve, verts: 0 };
+    let mut g = Gltf { doc: &doc, buffers: Vec::new(), resolve, verts: 0, indices: 0 };
     g.load_buffers(bin);
-    let textures = g.textures();
-    let (materials, textures) = g.materials(&textures);
+    let (materials, textures) = g.materials();
     let mut scene = Scene { materials, textures, ..Default::default() };
     g.nodes(&mut scene)?;
     Ok(scene)
@@ -120,6 +119,8 @@ struct Gltf<'a> {
     buffers: Vec<Option<Vec<u8>>>,
     resolve: Resolve<'a>,
     verts: usize,
+    /// Triangle-list indices made so far, over every primitive.
+    indices: usize,
 }
 
 /// `data:[mime];base64,...`
@@ -277,38 +278,39 @@ impl Gltf<'_> {
         self.uri_bytes(im.get("uri").and_then(Value::as_str)?)
     }
 
-    /// Every texture, decoded (`None` where the image can't be read).
-    fn textures(&self) -> Vec<Option<Texture>> {
+    /// Materials, and the textures they use (renumbered densely). Only textures a material uses
+    /// are decoded, each image once however many textures share it; each texture keeps its own
+    /// sampler's wrapping.
+    fn materials(&self) -> (Vec<Material>, Vec<Texture>) {
+        let defs = arr(self.doc, "textures");
         let samplers = arr(self.doc, "samplers");
-        arr(self.doc, "textures")
-            .iter()
-            .take(crate::MAX_TEXTURES * 4)
-            .map(|t| {
-                let src = idx(t, "source").or_else(|| t.pointer("/extensions/EXT_texture_webp/source").and_then(Value::as_u64).map(|v| v as usize));
-                let mut tex = src.and_then(|s| self.image_bytes(s)).and_then(Texture::decode)?;
-                if let Some(s) = idx(t, "sampler").and_then(|s| samplers.get(s)) {
-                    tex.wrap_s = wrap(s.get("wrapS"));
-                    tex.wrap_t = wrap(s.get("wrapT"));
-                }
-                Some(tex)
-            })
-            .collect()
-    }
-
-    /// Materials, and the textures they use (renumbered densely).
-    fn materials(&self, textures: &[Option<Texture>]) -> (Vec<Material>, Vec<Texture>) {
         let mut used: Vec<Texture> = Vec::new();
         let mut map: Vec<(usize, usize)> = Vec::new();
+        let mut decoded: Vec<(usize, Option<Texture>)> = Vec::new();
         let mut take = |ti: Option<usize>| -> Option<usize> {
             let ti = ti?;
             if let Some((_, n)) = map.iter().find(|(o, _)| *o == ti) {
                 return Some(*n);
             }
-            let t = textures.get(ti)?.as_ref()?.clone();
             if used.len() >= crate::MAX_TEXTURES {
                 return None;
             }
-            used.push(t);
+            let t = defs.get(ti)?;
+            let src = idx(t, "source").or_else(|| t.pointer("/extensions/EXT_texture_webp/source").and_then(Value::as_u64).map(|v| v as usize))?;
+            let image = match decoded.iter().find(|(s, _)| *s == src) {
+                Some((_, img)) => img.clone(),
+                None => {
+                    let img = self.image_bytes(src).and_then(Texture::decode);
+                    decoded.push((src, img.clone()));
+                    img
+                }
+            };
+            let mut tex = image?;
+            if let Some(s) = idx(t, "sampler").and_then(|s| samplers.get(s)) {
+                tex.wrap_s = wrap(s.get("wrapS"));
+                tex.wrap_t = wrap(s.get("wrapT"));
+            }
+            used.push(tex);
             map.push((ti, used.len() - 1));
             Some(used.len() - 1)
         };
@@ -439,6 +441,15 @@ impl Gltf<'_> {
                 Some(i) => self.indices(i).unwrap_or_default(),
                 None => (0..n as u32).collect(),
             };
+            // What `triangles` will make of them, counted before it allocates.
+            let made = match mode {
+                5 | 6 => raw.len().saturating_sub(2).saturating_mul(3),
+                _ => raw.len() / 3 * 3,
+            };
+            self.indices = self.indices.saturating_add(made);
+            if self.indices > crate::MAX_INDICES {
+                return Err(Error::TooLarge);
+            }
             let flip = det3(m) < 0.0;
             let indices = triangles(&raw, mode, flip);
             let nm = normal_matrix(m);

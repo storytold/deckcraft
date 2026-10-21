@@ -418,3 +418,86 @@ fn a_turning_model_draws_differently_and_saves_as_a_picture() {
     assert_eq!(img.get_pixel(img.width() / 2, img.height() / 2)[3], 255);
     assert!(r["name"].as_str().unwrap().ends_with(".png"));
 }
+
+fn effects_on(s: &mut Session, id: u64) -> Vec<String> {
+    let all = s.execute("animation.get", &json!({})).unwrap();
+    all.as_array().unwrap().iter().filter(|a| a["shape"].as_u64() == Some(id)).map(|a| a["effect"].as_str().unwrap().to_string()).collect()
+}
+
+/// The Animation Painter carries a 3-D effect to 3-D models only, like Add Animation.
+#[test]
+fn the_animation_painter_paints_3d_effects_onto_models_only() {
+    let mut s = session();
+    let from = insert_box(&mut s, [-0.5; 3], [0.5; 3]);
+    let other = insert_box(&mut s, [-0.5; 3], [0.5; 3]);
+    let rect = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 80]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [from.0]})).unwrap();
+    s.execute("animation.add", &json!({"effect": "turntable", "ids": [from.0]})).unwrap();
+    s.execute("animation.painter", &json!({"id": from.0, "sticky": true})).unwrap();
+    s.execute("animation.painterApply", &json!({"ids": [rect, other.0]})).unwrap();
+    assert_eq!(effects_on(&mut s, rect), ["fade"]);
+    assert_eq!(effects_on(&mut s, other.0 as u64), ["fade", "turntable"]);
+}
+
+/// Pasted into a deck whose media already uses the model's id for other bytes, the model is
+/// given a fresh id and still shows its own file.
+#[test]
+fn a_pasted_model_keeps_its_own_file_when_its_id_is_taken() {
+    let mut s = session();
+    let id = insert_box(&mut s, [-0.5; 3], [0.5; 3]);
+    let (m, _) = model(&s, id);
+    let glb = s.doc().unwrap().doc.media(m.media).unwrap().data.clone();
+    s.execute("edit.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    // A picture there uses the model's media id for its own bytes.
+    let mut png = Vec::new();
+    image::RgbaImage::from_pixel(2, 2, image::Rgba([10, 20, 30, 255]))
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    let pic = ShapeId(s.execute("insert.picture", &json!({"name": "p.png", "data": base64_encode(&png)})).unwrap()["id"].as_u64().unwrap() as u32);
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        let ShapeKind::Picture { fill } = &mut deckcraft_model::find_shape_mut(list, pic).unwrap().kind else { panic!("not a picture") };
+        let old = fill.media;
+        fill.media = m.media;
+        doc.media.iter_mut().find(|x| x.id == old).unwrap().id = m.media;
+        Ok(())
+    })
+    .unwrap();
+    assert_ne!(s.doc().unwrap().doc.media(m.media).unwrap().data, glb);
+    let r = s.execute("edit.paste", &json!({})).unwrap();
+    let pasted = ShapeId(r["ids"][0].as_u64().unwrap() as u32);
+    let (m2, _) = model(&s, pasted);
+    assert_ne!(m2.media, m.media);
+    assert_eq!(s.doc().unwrap().doc.media(m2.media).unwrap().data, glb);
+}
+
+/// An orthographic camera without AutoFit keeps the model's size on the slide through PPTX
+/// (which then has no `objViewport`, so the view is folded into the camera's size).
+#[test]
+fn an_orthographic_model_keeps_its_size_through_pptx() {
+    let mut s = session();
+    let id = insert_box(&mut s, [-0.5; 3], [0.5; 3]);
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).unwrap();
+        if let ShapeKind::Model3d(m) = &mut deckcraft_model::find_shape_mut(list, id).unwrap().kind {
+            m.camera.fov = 0.0;
+            m.camera.ortho = 1.5;
+            m.auto_fit = false;
+            m.viewport = 1.7;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let (m, x) = model(&s, id);
+    let doc = s.doc().unwrap().doc.clone();
+    let bytes = crate::cmd::file::save_bytes(&doc, "pptx").unwrap();
+    let back = crate::cmd::file::open_presentation("t.pptx", &bytes).unwrap();
+    let sh = back.slides.iter().flat_map(|sl| sl.shapes.iter()).find(|x| matches!(x.kind, ShapeKind::Model3d(_))).unwrap();
+    let ShapeKind::Model3d(m2) = &sh.kind else { panic!("not a model") };
+    assert!(m2.is_ortho());
+    let (f, f2) = (m.focal(x.h), m2.focal(sh.xfrm.unwrap().h));
+    assert!(close(f, f2, f * 1e-3), "{f} {f2}");
+}

@@ -416,8 +416,11 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
         sl.animations.retain(|a| !ids.contains(&a.shape));
         let mut added = 0;
         for id in &ids {
-            let paras = deckcraft_model::find_shape(&sl.shapes, *id).and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len());
-            for a in &painted {
+            let target = deckcraft_model::find_shape(&sl.shapes, *id);
+            let paras = target.and_then(|sh| sh.text.as_ref()).map_or(0, |t| t.paragraphs.len());
+            let model = target.is_some_and(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Model3d(_)));
+            // The 3-D effects animate 3-D models only (as `fitting` keeps them for Add Animation).
+            for a in painted.iter().filter(|a| model || !deckcraft_anim::is_model_effect(&a.effect)) {
                 let mut cloned = a.clone();
                 cloned.shape = *id;
                 if cloned.paragraph.is_some_and(|i| i as usize >= paras) {

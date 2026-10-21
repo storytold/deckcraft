@@ -424,3 +424,36 @@ fn empty_and_unknown_files_are_errors() {
     assert!(matches!(load("x.txt", b"hello", &no_files), Err(Error::Format(_))));
     assert!(matches!(load("x.glb", b"glTF\x01\0\0\0\x0c\0\0\0", &no_files), Err(Error::Unsupported(_))));
 }
+
+/// Two textures sharing one image keep their own samplers; a texture no material uses (here with
+/// an image that can't be read) is never decoded and leaves nothing behind.
+#[test]
+fn gltf_textures_share_an_image_and_keep_their_samplers() {
+    let mut b = Vec::new();
+    for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for c in v {
+            b.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    let png = atlas_png();
+    let doc = serde_json::json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "material": 0}, {"attributes": {"POSITION": 0}, "material": 1}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36, "uri": format!("data:application/octet-stream;base64,{}", b64(&b))}],
+        "images": [{"uri": format!("data:image/png;base64,{}", b64(&png))}, {"uri": "data:image/png;base64,AAAA"}],
+        "samplers": [{"wrapS": 33071, "wrapT": 33648}, {}],
+        "textures": [{"source": 0, "sampler": 0}, {"source": 0, "sampler": 1}, {"source": 1}],
+        "materials": [
+            {"pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}},
+            {"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}},
+        ],
+    });
+    let s = load("t.gltf", doc.to_string().as_bytes(), &no_files).unwrap();
+    assert_eq!(s.textures.len(), 2);
+    assert_eq!(s.materials[0].texture, Some(0));
+    assert_eq!(s.materials[1].texture, Some(1));
+    assert_eq!((s.textures[0].wrap_s, s.textures[0].wrap_t), (Wrap::Repeat, Wrap::Repeat));
+    assert_eq!((s.textures[1].wrap_s, s.textures[1].wrap_t), (Wrap::Clamp, Wrap::Mirror));
+}

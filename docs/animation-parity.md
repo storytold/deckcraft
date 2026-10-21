@@ -60,7 +60,7 @@ perspective-correct subdivided meshes.
 
 By how often people use them, the effects present cover nearly all real decks (Appear, Fade, Fly
 In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85% of use; by count,
-~34%.
+~35% (69 of ~195).
 
 | Animation feature | PowerPoint | DeckCraft |
 |---|---|---|
@@ -99,7 +99,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 | 2026-10-14 | trivial | Community PR wave folded: the Animation Pane timeline row says yes (it landed), preview split into canvas (yes) and from the selected effect (no); estimates drop the timeline and transition sounds (~15–27 h) |
 | 2026-10-14 | trivial | Repeat and bounce end round-trip through PPTX; rewind is still lost (#77) |
 | 2026-10-13 | minor | Animations ▸ Preview and Animation Pane ▸ Play All play the current slide's animations on the editor canvas; preview from the selected effect is still open |
-| 2026-10-14 | minor | 3-D effects (Arrive, Turntable, Swing, Jump & Turn, Leave) and Morph turning 3-D models |
+| 2026-10-14 | minor | 3-D effects (Arrive, Turntable, Swing, Jump & Turn, Leave) and Morph turning 3-D models; effects by count ~34% → ~35% |
 | 2026-10-13 | major | Transitions measured frame by frame against PowerPoint's video export and retuned (mean diff 35.7 → 15.0); PowerPoint's XML defaults and option meanings; new options |
 | 2026-10-13 | minor | Triggers now play in the slide show (they were read and written but never started), effects of different triggers apply in the order they were clicked |
 | 2026-10-11 | minor | Morph leaves unrelated text boxes unpaired: they fade in place (#119) |

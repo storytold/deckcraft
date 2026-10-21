@@ -267,6 +267,12 @@ fn remap_media(shapes: &mut [Shape], map: &HashMap<MediaId, MediaId>) {
                     m(p);
                 }
             }
+            deckcraft_model::ShapeKind::Model3d(md) => {
+                m(&mut md.media);
+                if let Some(p) = md.poster.as_mut() {
+                    m(p);
+                }
+            }
             deckcraft_model::ShapeKind::Opaque { preview: Some(p), .. } => m(p),
             _ => {}
         }

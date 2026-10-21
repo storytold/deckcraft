@@ -61,7 +61,9 @@ pub fn model3d(w: &mut W, m: &Model3d, model_rid: &str, raster_rid: Option<&str>
     vector(w, "am3d:up", c.up);
     point(w, "am3d:lookAt", c.look_at);
     if m.is_ortho() {
-        w.empty("am3d:orthographic", A::new().a("size", emu(c.ortho).max(1)));
+        // Without `objViewport` the view spans the frame's height: fold the viewport in.
+        let size = if m.auto_fit { c.ortho } else { c.ortho / m.span(1.0).max(1e-6) };
+        w.empty("am3d:orthographic", A::new().a("size", emu(size).max(1)));
     } else {
         // Without `objViewport` the field of view spans the frame's height: fold the viewport in.
         let fov = if m.auto_fit {

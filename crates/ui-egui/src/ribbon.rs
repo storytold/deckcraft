@@ -2091,7 +2091,7 @@ fn paint_effect_tile(p: &egui::Painter, r: Rect, a: &(&str, &str, AnimClass, u32
         paint_anim_tile(p, r, a.1, a.2, enabled);
         return;
     }
-    let t = Tokens::light();
+    let t = Tokens::get(p.ctx());
     let ir = Rect::from_center_size(pos2(r.center().x, r.min.y + 18.0), vec2(28.0, 28.0));
     icons::paint(p, ir, Icon::Models3d, t.text, !enabled);
     let mark = match a.2 {
