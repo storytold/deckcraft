@@ -91,10 +91,17 @@ pub fn is_model_file(name: &str, bytes: &[u8]) -> bool {
     deckcraft_mesh::is_model(name, bytes)
 }
 
-/// Does a model file of this name refer to other files (an OBJ's materials and textures, a PLY's
-/// texture, a glTF's buffers and images)?
+/// Can a model file of this name refer to other files (an OBJ's materials and textures, a PLY's
+/// texture, a glTF's or GLB's buffers and images)? By name only: files picked or dropped with it
+/// are then read together, and [`needs_companions`] decides from the bytes.
 pub fn uses_companions(name: &str) -> bool {
-    matches!(Format::from_name(name), Some(Format::Obj | Format::Ply | Format::Gltf))
+    matches!(Format::from_name(name), Some(Format::Obj | Format::Ply | Format::Gltf | Format::Glb))
+}
+
+/// Does this model file name other files it needs? A GLB only when it names external buffers
+/// or images, so a self-contained one dropped with pictures leaves them pictures.
+pub fn needs_companions(name: &str, bytes: &[u8]) -> bool {
+    deckcraft_mesh::names_other_files(name, bytes)
 }
 
 pub fn has_model(s: &Session) -> std::result::Result<(), String> {

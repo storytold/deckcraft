@@ -229,3 +229,57 @@ fn a_model_picked_with_its_companions_is_one_model_on_the_slide_that_asked() {
     let scene = deckcraft_mesh::load("tri.glb", &glb, &deckcraft_mesh::no_files).expect("glb");
     assert_eq!(scene.textures.len(), 1, "the material file was read with the model");
 }
+
+/// A one-triangle GLB whose positions are in the external `tri.bin`, and that buffer.
+fn glb_with_external_buffer() -> (Vec<u8>, Vec<u8>) {
+    let mut bin = Vec::new();
+    for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for c in v {
+            bin.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    let mut js = json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36, "uri": "tri.bin"}],
+    })
+    .to_string()
+    .into_bytes();
+    while !js.len().is_multiple_of(4) {
+        js.push(b' ');
+    }
+    let mut glb = b"glTF".to_vec();
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&((20 + js.len()) as u32).to_le_bytes());
+    glb.extend_from_slice(&(js.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x4E4F_534Au32.to_le_bytes());
+    glb.extend_from_slice(&js);
+    (glb, bin)
+}
+
+/// A GLB picked with the buffer it names gets it; a GLB that holds everything, dropped with a
+/// photo, leaves the photo a picture of its own.
+#[test]
+fn a_glb_takes_its_buffer_but_not_unrelated_pictures() {
+    let (mut app, inbox, started) = setup();
+    let uid = app.session.active().unwrap().uid;
+    let slide = app.session.active().unwrap().current_slide().unwrap().id;
+    app.pick_and_insert("model3d", "insert.model3d");
+    let (_, id) = started.lock().expect("request log").last().cloned().unwrap();
+    let (glb, bin) = glb_with_external_buffer();
+    inbox.lock().expect("inbox").push(InboxEvent::Files { id, files: vec![("tri.glb".into(), glb), ("tri.bin".into(), bin)] });
+    app.drain_inbox();
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(models(&app, uid, slide).len(), 1, "{status}");
+
+    let mut p = deckcraft_mesh::Primitive { material: None, ..Default::default() };
+    p.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    p.indices = vec![0, 1, 2];
+    let whole = deckcraft_mesh::to_glb(&deckcraft_mesh::Scene { primitives: vec![p], ..Default::default() });
+    app.open_or_insert_files(vec![("whole.glb".into(), whole, None), ("photo.png".into(), png(), None)]);
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(models(&app, uid, slide).len(), 2, "{status}");
+    assert_eq!(pictures(&app, uid, slide), 1, "{status}");
+}

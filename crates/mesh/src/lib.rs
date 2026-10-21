@@ -161,6 +161,17 @@ pub fn is_model(name: &str, bytes: &[u8]) -> bool {
     Format::sniff(name, bytes).is_some()
 }
 
+/// Can this model file name other files it needs (an OBJ's materials and textures, a PLY's
+/// texture, a glTF's buffers and images, a GLB's external buffers or images)? A GLB is read to
+/// tell: most hold everything themselves.
+pub fn names_other_files(name: &str, bytes: &[u8]) -> bool {
+    match Format::sniff(name, bytes) {
+        Some(Format::Obj | Format::Ply | Format::Gltf) => true,
+        Some(Format::Glb) => gltf::glb_names_files(bytes),
+        _ => false,
+    }
+}
+
 /// Read a model file of any supported kind. `resolve` supplies companion files.
 pub fn load(name: &str, bytes: &[u8], resolve: Resolve) -> Result<Scene> {
     if bytes.len() > MAX_FILE {

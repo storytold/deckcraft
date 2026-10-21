@@ -145,6 +145,7 @@ fn parse(xml: &[u8]) -> Result<Model> {
     let mut group: Option<(u8, u32)> = None;
     let mut object: Option<(u32, Object)> = None;
     let mut verts = 0usize;
+    let mut tris = 0usize;
     loop {
         let ev = r.read_event_into(&mut buf).map_err(|e| bad(format!("3MF XML: {e}")))?;
         match &ev {
@@ -211,7 +212,9 @@ fn parse(xml: &[u8]) -> Result<Model> {
                         if let Some((_, o)) = object.as_mut()
                             && let (Some(a), Some(b), Some(c)) = (num(e, b"v1"), num(e, b"v2"), num(e, b"v3"))
                         {
-                            if o.triangles.len() >= crate::MAX_INDICES / 3 {
+                            // Over every object, not each alone.
+                            tris += 1;
+                            if tris > crate::MAX_INDICES / 3 {
                                 return Err(Error::TooLarge);
                             }
                             o.triangles.push(([a, b, c], num(e, b"pid"), [num(e, b"p1"), num(e, b"p2"), num(e, b"p3")]));
@@ -270,10 +273,13 @@ struct Out<'a> {
     tex_reads: usize,
     verts: usize,
     placements: usize,
+    /// Triangle-list indices emitted so far, over every placement.
+    indices: usize,
 }
 
 fn build(m: &Model, read: &mut dyn FnMut(&str) -> Option<Vec<u8>>) -> Result<Scene> {
-    let mut out = Out { scene: Scene::default(), prims: HashMap::new(), tex_index: HashMap::new(), read, tex_reads: 0, verts: 0, placements: 0 };
+    let mut out =
+        Out { scene: Scene::default(), prims: HashMap::new(), tex_index: HashMap::new(), read, tex_reads: 0, verts: 0, placements: 0, indices: 0 };
     let items: Vec<(u32, M43)> = if m.build.is_empty() { m.objects.keys().map(|id| (*id, IDENTITY)).collect() } else { m.build.clone() };
     for (id, t) in items {
         emit(m, id, &t, 0, &mut out)?;
@@ -290,6 +296,11 @@ fn emit(m: &Model, id: u32, t: &M43, depth: usize, out: &mut Out) -> Result<()> 
         return Err(Error::TooLarge);
     }
     let Some(o) = m.objects.get(&id) else { return Ok(()) };
+    // Counted before anything is pushed: placing one object many times repeats its triangles.
+    out.indices = out.indices.saturating_add(o.triangles.len().saturating_mul(3));
+    if out.indices > crate::MAX_INDICES {
+        return Err(Error::TooLarge);
+    }
     for (cid, ct) in &o.components {
         emit(m, *cid, &compose(ct, t), depth + 1, out)?;
     }

@@ -66,9 +66,10 @@ pub fn model_scene(bytes: &Arc<Vec<u8>>) -> Option<Arc<Scene>> {
     c.clock += 1;
     let now = c.clock;
     c.map.insert(addr, (bytes.clone(), scene.clone(), now));
-    // Over budget: drop the least recently used, never the one just read.
+    // Over budget: drop the least recently used, never the one just read. The bytes each entry
+    // keeps alive count too, so files that couldn't be read are let go as well.
     loop {
-        let total: usize = c.map.values().filter_map(|e| e.1.as_ref()).map(|s| scene_bytes(s)).sum();
+        let total: usize = c.map.values().map(|e| e.0.len() + e.1.as_ref().map_or(0, |s| scene_bytes(s))).sum();
         if total <= SCENE_BUDGET || c.map.len() <= 1 {
             break;
         }

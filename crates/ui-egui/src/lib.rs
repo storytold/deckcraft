@@ -1452,16 +1452,17 @@ impl SlideApp {
         self.apply_external_files(id, files);
     }
 
-    /// The files of request `id`, read together. 3-D models are inserted; when one of them is an
-    /// OBJ, PLY or glTF model, the other files are its materials and textures, not files of their
-    /// own. Otherwise each other file is applied as if it came alone.
+    /// The files of request `id`, read together. 3-D models are inserted; when one of them names
+    /// other files (an OBJ, PLY or glTF model, or a GLB with external buffers or images), the other
+    /// files are its materials, buffers and textures, not files of their own. Otherwise each other
+    /// file is applied as if it came alone.
     fn apply_external_files(&mut self, id: u64, files: Vec<(String, Vec<u8>, Option<String>)>) {
-        use deckcraft_engine::cmd::model3d::{is_model_file, uses_companions};
+        use deckcraft_engine::cmd::model3d::{is_model_file, needs_companions};
         let Some(pos) = self.pending_files.iter().position(|r| r.id == id) else { return };
         let req = self.pending_files.remove(pos);
         let mut target = req.target;
         let models: Vec<bool> = files.iter().map(|(n, b, _)| is_model_file(n, b)).collect();
-        let grouped = files.iter().zip(&models).any(|((n, _, _), m)| *m && uses_companions(n));
+        let grouped = files.iter().zip(&models).any(|((n, b, _), m)| *m && needs_companions(n, b));
         let companions: serde_json::Map<String, Value> = if grouped {
             files
                 .iter()

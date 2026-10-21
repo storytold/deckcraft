@@ -79,7 +79,7 @@ struct WebShell {
 impl eframe::App for WebShell {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let dropped = ctx.input_mut(|i| std::mem::take(&mut i.raw.dropped_files));
-        // An OBJ, PLY or glTF model dropped with its materials and textures: one request, its
+        // An OBJ, PLY, glTF or GLB model dropped with its materials and textures: one request, its
         // files read and handed over together.
         let names: Vec<String> =
             dropped.iter().map(|f| f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped".into())).collect();

@@ -73,18 +73,41 @@ fn light(e: &El) -> Option<Light3d> {
     })
 }
 
+/// A model file's bounds (model units) and, placed as on insert, its outline (`x / −z` units).
+#[derive(Clone, Copy)]
+pub struct Fit {
+    lo: [f64; 3],
+    hi: [f64; 3],
+    extent: Option<(f64, f64)>,
+}
+
+fn fit(imp: &Imp, media: MediaId) -> Option<Fit> {
+    let item = imp.media.iter().find(|it| it.id == media)?;
+    let scene = deckcraft_mesh::load("model.glb", &item.data, &deckcraft_mesh::no_files).ok()?;
+    let (lo, hi) = scene.bounds()?;
+    let m = Model3d::fitted(media, lo, hi);
+    Some(Fit { lo, hi, extent: deckcraft_mesh::extent(&scene, &m.model_view(), m.is_ortho()) })
+}
+
 /// A model that comes without a scene (`p:contentPart`): set up as PowerPoint inserts one, seen
 /// so that it fills as much of its `w` × `h` point frame as it can.
-pub fn unplaced(imp: &Imp, media: MediaId, w: f64, h: f64) -> Model3d {
-    let scene = imp.media.iter().find(|it| it.id == media).and_then(|it| deckcraft_mesh::load("model.glb", &it.data, &deckcraft_mesh::no_files).ok());
-    let Some((scene, (lo, hi))) = scene.and_then(|sc| sc.bounds().map(|b| (sc, b))) else {
+pub fn unplaced(imp: &mut Imp, media: MediaId, w: f64, h: f64) -> Model3d {
+    let fit = match imp.model_fits.get(&media) {
+        Some(f) => *f,
+        None => {
+            let f = fit(imp, media);
+            imp.model_fits.insert(media, f);
+            f
+        }
+    };
+    let Some(Fit { lo, hi, extent }) = fit else {
         log::warn!("pptx: 3-D model {media:?} can't be read; shown as inserted");
         return Model3d { media, ..Default::default() };
     };
     let mut m = Model3d::fitted(media, lo, hi);
     // The view's height on the slide (`viewport` frame heights) that brings the outline to the
     // frame's nearer edges.
-    if let Some((hx, hy)) = deckcraft_mesh::extent(&scene, &m.model_view(), m.is_ortho())
+    if let Some((hx, hy)) = extent
         && hx > 0.0
         && hy > 0.0
         && w > 0.0

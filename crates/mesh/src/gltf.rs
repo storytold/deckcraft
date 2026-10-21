@@ -56,6 +56,19 @@ pub fn read_glb(bytes: &[u8], resolve: Resolve) -> Result<Scene> {
     read_doc(json, bin, resolve)
 }
 
+/// Does this `.glb` name files outside itself: a buffer or an image by a URI that isn't `data:`?
+pub fn glb_names_files(bytes: &[u8]) -> bool {
+    // The JSON chunk comes first (glTF 2.0 § 4.4.3).
+    let Some(len) = u32_at(bytes, 12).map(|l| l as usize) else { return false };
+    if u32_at(bytes, 0) != Some(MAGIC) || u32_at(bytes, 16) != Some(CHUNK_JSON) || len > MAX_JSON {
+        return false;
+    }
+    let Some(doc) = bytes.get(20..20usize.saturating_add(len)).and_then(|j| serde_json::from_slice::<Value>(j).ok()) else { return false };
+    ["buffers", "images"]
+        .iter()
+        .any(|k| arr(&doc, k).iter().filter_map(|x| x.get("uri").and_then(Value::as_str)).any(|u| !u.trim_start().starts_with("data:")))
+}
+
 /// A `.gltf` (JSON) file.
 pub fn read_json(bytes: &[u8], resolve: Resolve) -> Result<Scene> {
     read_doc(bytes, None, resolve)

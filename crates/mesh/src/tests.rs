@@ -529,3 +529,61 @@ fn gltf_reads_a_repeated_buffer_uri_once() {
     assert_eq!(s.triangle_count(), 1);
     assert_eq!(reads.get(), 1);
 }
+
+/// A 3MF that places a triangle-heavy object many times stops at the index limit, whatever the
+/// placement count.
+#[test]
+fn threemf_counts_indices_over_every_placement() {
+    let tris: String = (0..1000).map(|_| r#"<triangle v1="0" v2="1" v3="2"/>"#).collect();
+    let items: String = (0..20_000).map(|_| r#"<item objectid="1"/>"#).collect();
+    let model = format!(
+        r#"<?xml version="1.0"?><model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"/><vertex x="1" y="0" z="0"/><vertex x="0" y="1" z="0"/></vertices><triangles>{tris}</triangles></mesh></object></resources><build>{items}</build></model>"#
+    );
+    assert!(matches!(load("t.3mf", &threemf_zip(&model, &[]), &no_files), Err(Error::TooLarge)));
+}
+
+/// An OBJ naming its material library on every line reads it once; textures that can't be read
+/// stop being tried.
+#[test]
+fn obj_reads_each_library_once_and_bounds_texture_tries() {
+    let mut obj = String::from("v 0 0 0\nv 1 0 0\nv 0 1 0\n");
+    for _ in 0..1000 {
+        obj.push_str("mtllib m.mtl\n");
+    }
+    obj.push_str("usemtl A\nf 1 2 3\n");
+    let mtl: String = (0..2000).map(|i| format!("newmtl A\nmap_Kd missing{i}.png\n")).collect();
+    let (libs, others) = (std::cell::Cell::new(0), std::cell::Cell::new(0));
+    let resolve = |n: &str| {
+        if n == "m.mtl" {
+            libs.set(libs.get() + 1);
+            Some(mtl.clone().into_bytes())
+        } else {
+            others.set(others.get() + 1);
+            None
+        }
+    };
+    let s = load("t.obj", obj.as_bytes(), &resolve).unwrap();
+    assert_eq!(s.triangle_count(), 1);
+    assert_eq!(libs.get(), 1);
+    assert!(others.get() <= MAX_TEXTURES * 4, "{}", others.get());
+}
+
+/// A GLB names other files only when a buffer or image points outside it.
+#[test]
+fn a_glb_says_whether_it_names_other_files() {
+    let glb = to_glb(&die());
+    assert!(!names_other_files("die.glb", &glb));
+    let mut js = serde_json::json!({"asset": {"version": "2.0"}, "buffers": [{"byteLength": 36, "uri": "die.bin"}]}).to_string().into_bytes();
+    while !js.len().is_multiple_of(4) {
+        js.push(b' ');
+    }
+    let mut ext = b"glTF".to_vec();
+    ext.extend_from_slice(&2u32.to_le_bytes());
+    ext.extend_from_slice(&((20 + js.len()) as u32).to_le_bytes());
+    ext.extend_from_slice(&(js.len() as u32).to_le_bytes());
+    ext.extend_from_slice(&0x4E4F_534Au32.to_le_bytes());
+    ext.extend_from_slice(&js);
+    assert!(names_other_files("die.glb", &ext));
+    assert!(names_other_files("m.obj", b"v 0 0 0"));
+    assert!(!names_other_files("m.stl", b"solid x"));
+}
