@@ -14,6 +14,8 @@ pub mod credits;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
+pub mod equation_editor;
+pub mod equation_tab;
 pub mod fillui;
 pub mod icons;
 pub mod media;
@@ -445,6 +447,8 @@ pub struct SlideApp {
     pub dialog: Option<dialogs::Dialog>,
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
+    /// The equation editor (equaSHion's widget) while the Equation dialog is open.
+    pub(crate) equation: equation_editor::EquationHost,
     pub show: Option<show::Show>,
     /// Current slide's animations playing on the editor canvas (not the full-screen show).
     anim_preview: Option<AnimPreview>,
@@ -542,6 +546,7 @@ impl SlideApp {
             squiggles: Default::default(),
             dialog: None,
             thesaurus_query: String::new(),
+            equation: Default::default(),
             show: None,
             anim_preview: None,
             media: media::MediaHost::new(audio_out),
@@ -654,6 +659,12 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // An arrow key next to an equation goes into it (instead of stepping over it).
+        if id == "text.move"
+            && let Some(r) = equation_editor::enter_by_arrow(self, &params)
+        {
+            return r;
+        }
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -1328,6 +1339,11 @@ impl SlideApp {
         }
     }
 
+    /// [`Self::drain_requests`] for the equation editor's arrow-key entry.
+    pub(crate) fn drain_requests_pub(&mut self) {
+        self.drain_requests();
+    }
+
     /// Act on requests commands left for the UI.
     fn drain_requests(&mut self) {
         for r in std::mem::take(&mut self.session.ui_requests) {
@@ -1534,6 +1550,14 @@ impl SlideApp {
             FilePlace::NotesPage(t) => Ok(LocatedPlace { target: *t, slide: None }),
             FilePlace::Unspecified => Err("there was no slide to put it on".into()),
         }
+    }
+
+    /// Another app has replaced the shared egui fonts and visuals (OfficeCraft hosts several in
+    /// one window): install this app's again before it draws its next frame.
+    pub fn context_changed(&mut self) {
+        self.styled = false;
+        self.fonts_ready = false;
+        self.restyle = true;
     }
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.

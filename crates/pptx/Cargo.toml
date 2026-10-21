@@ -12,6 +12,8 @@ workspace = true
 deckcraft-model = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
+# Equations: the linear text of an imported OMML equation.
+equashion-math = { workspace = true }
 quick-xml = { workspace = true }
 zip = { workspace = true }
 thiserror = { workspace = true }
