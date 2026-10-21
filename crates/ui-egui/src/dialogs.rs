@@ -108,6 +108,9 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     if open && !close && !escape {
         app.dialog = Some(d);
+    } else if !close && d.id == "preferences" {
+        // Esc or the window's close button: the same as Cancel.
+        restore_preferences(app, &d);
     } else if app.dialog.is_none()
         && let Some(ret) = d.params.get("returnParams").filter(|v| v.is_object()).cloned()
     {
@@ -135,6 +138,31 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
         }
     });
     (ok, cancel)
+}
+
+/// What the Preferences dialog can change, as it was when the dialog opened.
+fn preferences_snapshot(app: &SlideApp) -> Value {
+    json!({
+        "dark": app.ui.brightness == theme::Brightness::Dark,
+        "uiScale": app.ui.ui_scale,
+        "prefs": serde_json::to_value(&app.session.prefs).unwrap_or(Value::Null),
+    })
+}
+
+/// Puts back the settings the Preferences dialog opened with (Cancel, Esc, the close button).
+fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
+    let Some(before) = d.params.get("before") else { return };
+    if let Some(dark) = before.get("dark").and_then(Value::as_bool)
+        && dark != (app.ui.brightness == theme::Brightness::Dark)
+    {
+        let _ = app.run("view.dark", json!({ "on": dark }));
+    }
+    if let Some(scale) = before.get("uiScale").and_then(Value::as_f64) {
+        app.ui.ui_scale = scale as f32;
+    }
+    if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
+        app.session.prefs = prefs;
+    }
 }
 
 fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
@@ -1565,6 +1593,18 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     d.fields.insert("pdfHidden".into(), hidden.to_string());
                 }
             }
+            let png = matches!(fmt.as_str(), "png" | "pngAll");
+            if png {
+                ui.add_space(4.0);
+                let mut clear = d.get("pngTransparent", "false") == "true";
+                if ui
+                    .checkbox(&mut clear, "Transparent background")
+                    .on_hover_text("Leave the slide background out: only what is on the slide is drawn")
+                    .changed()
+                {
+                    d.fields.insert("pngTransparent".into(), clear.to_string());
+                }
+            }
             let gif_params = if fmt == "gif" { gif_options(app, ui, d) } else { Ok(Value::Null) };
             if let Err(e) = &gif_params {
                 ui.label(egui::RichText::new(e).color(Tokens::get(ui.ctx()).text_dim));
@@ -1590,6 +1630,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 let extra = match fmt.as_str() {
                     "pdf" => pdf_params,
                     "gif" => gif_params,
+                    _ if png && d.get("pngTransparent", "false") == "true" => json!({"transparentBackground": true}),
                     _ => json!({}),
                 };
                 app.export_as(&fmt, extra);
@@ -2067,6 +2108,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.checkbox(&mut pr.ac_days, "Capitalize names of days");
             ui.checkbox(&mut pr.ac_caps_lock, "Correct accidental use of cAPS LOCK key");
             ui.checkbox(&mut pr.ac_fractions, "Replace fractions (1/2) with fraction characters (½)");
+            ui.checkbox(&mut pr.ac_ordinals, "Ordinals (1st) with superscript");
             ui.checkbox(&mut pr.autocorrect, "Replace text as you type");
             ui.add_space(4.0);
             let mut from = d.get("from", "");
@@ -2104,14 +2146,31 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
         "gridOptions" => grid_options(app, ui, d),
         "preferences" => {
+            // The controls apply as they change, so the dialog remembers what it opened with and
+            // Cancel (or Esc, or the close button: see `show`) puts that back.
+            if d.params.get("before").is_none() {
+                d.params = json!({ "before": preferences_snapshot(app) });
+            }
             ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
             let mut dark = app.ui.brightness == theme::Brightness::Dark;
             if ui.checkbox(&mut dark, "Dark appearance").changed() {
                 let _ = app.run("view.dark", json!({"on": dark}));
             }
-            let mut scale = app.ui.ui_scale;
-            if ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text("Interface size")).changed() {
-                app.ui.ui_scale = scale;
+            // While the pointer holds the slider its value only waits in the dialog: applying it
+            // would rescale the slider under the pointer and run it to an end (#767). It applies
+            // on release, and at once from the keyboard.
+            let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
+            let mut scale = pending.unwrap_or(app.ui.ui_scale);
+            let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text("Interface size"));
+            if r.is_pointer_button_down_on() {
+                if r.changed() || pending.is_some() {
+                    d.fields.insert("uiScale".into(), scale.to_string());
+                }
+            } else {
+                if r.changed() || pending.is_some() {
+                    app.ui.ui_scale = scale;
+                }
+                d.fields.remove("uiScale");
             }
             ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
             ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
@@ -2130,8 +2189,11 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ui.label("Your name (comments):");
                 ui.text_edit_singleline(&mut app.session.prefs.author);
             });
-            let (ok, _) = buttons(ui, "Done");
-            ok
+            let (ok, cancel) = buttons(ui, "Done");
+            if cancel {
+                restore_preferences(app, d);
+            }
+            ok || cancel
         }
         "photoAlbum" => photo_album_dialog(app, ui, d),
         "themeColors" => theme_colors_dialog(app, ui, d),
@@ -3313,7 +3375,7 @@ mod tests {
     };
 
     fn link(action: Action, tip: &str) -> Hyperlink {
-        Hyperlink { action, tooltip: tip.into(), highlight_click: false, sound: None, stop_sound: false }
+        Hyperlink { action, tooltip: tip.into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
     }
 
     fn url(address: &str, tip: &str) -> Hyperlink {
@@ -3381,6 +3443,47 @@ mod tests {
         assert!(bytes.starts_with(b"GIF89a"));
         assert_eq!(u16::from_le_bytes([bytes[6], bytes[7]]), 960, "medium by default");
         assert!(!bytes.windows(11).any(|w| w == b"NETSCAPE2.0"), "Loop forever unticked: plays once");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The Export… dialog offers "Transparent background" for PNG only, and the picture it
+    /// writes then leaves the slide background out (#784).
+    #[test]
+    fn export_dialog_writes_a_png_with_a_transparent_background() {
+        use egui::vec2;
+        use egui_kittest::kittest::Queryable as _;
+        use serde_json::json;
+
+        use crate::SlideApp;
+        let dir = std::env::temp_dir().join(format!("deckcraft-ui-png-clear-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("slide.png");
+        let picked = path.to_string_lossy().to_string();
+        let services = crate::Services { pick_save: Some(Box::new(move |_: &str| Some(picked.clone()))), ..Default::default() };
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(deckcraft_engine::Session::with_new(), services),
+        );
+        harness.run_steps(2);
+        harness.state_mut().run("app.exportDialog", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Transparent background").is_none(), "PDF has no transparent background");
+        harness.get_by_label("JPEG image (current slide)").click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("Transparent background").is_none(), "nor has JPEG");
+        harness.get_by_label("PNG images (current slide)").click_accesskit();
+        harness.run_steps(2);
+        harness.get_by_label("Transparent background").click_accesskit();
+        harness.run_steps(2);
+        assert_eq!(harness.state().dialog.as_ref().and_then(|d| d.fields.get("pngTransparent")).map(String::as_str), Some("true"));
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "the dialog closes after exporting");
+        let img = deckcraft_render::decode_image(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(img.get_pixel(2, 2).0[3], 0, "the background is left out");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -19,6 +19,7 @@ pub mod icons;
 pub mod media;
 pub mod menus;
 pub mod notes;
+pub mod opening;
 pub mod panes;
 mod preview;
 pub mod qat;
@@ -412,6 +413,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
     ("app.changePictureDialog", "Change Picture…", None, "{}"),
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
+    ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
     ("app.insertModel3dDialog", "3D Models from This Device…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
@@ -463,6 +465,8 @@ pub struct SlideApp {
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
     pub status: Option<(String, f64)>,
+    /// A presentation being read in the background, with its progress window ([`opening`]).
+    pub opening: Option<opening::Opening>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).
     pub toast: Option<toast::Toast>,
     /// Documents (by uid) whose missing fonts have been mentioned.
@@ -506,6 +510,8 @@ pub struct SlideApp {
     pub(crate) thumb_drag: Option<(usize, usize)>,
     /// Selection pane: folded groups, renaming, drag and drop.
     pub selpane: selpane::State,
+    /// Arrange ▸ Align: Align to Slide (`true`) or Align Selected Objects, ticked for that selection.
+    pub(crate) align_to: Option<(Vec<deckcraft_model::ShapeId>, bool)>,
     /// View › New Window: a second window on one presentation. `None` when it is closed.
     pub doc_window: Option<doc_window::DocWindow>,
     /// Slide Sorter: folded sections, inline rename, dragging a whole section.
@@ -554,6 +560,7 @@ impl SlideApp {
             anim_preview: None,
             media: media::MediaHost::new(audio_out),
             status: None,
+            opening: None,
             toast: None,
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
@@ -581,6 +588,7 @@ impl SlideApp {
             ui_fonts: uifonts::UiFonts::default(),
             thumb_drag: None,
             selpane: selpane::State::default(),
+            align_to: None,
             doc_window: None,
             sorter: sorter::State::default(),
             slides_focused: false,
@@ -778,7 +786,8 @@ impl SlideApp {
                 // Every slide for "all slides", one download each, named like the desktop export (#64).
                 let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
                 let mut any = false;
-                for (file, bytes) in web_image_files(&doc, slide, all, &name, ext) {
+                let transparent = extra.get("transparentBackground").and_then(Value::as_bool).unwrap_or(false);
+                for (file, bytes) in web_image_files(&doc, slide, all, &name, ext, transparent) {
                     any = self.download(&file, Ok(bytes)) || any;
                 }
                 return any;
@@ -1048,6 +1057,7 @@ impl SlideApp {
             }
             "app.changePictureDialog" => self.pick_and_insert("picture", "picture.change"),
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
+            "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
             "app.insertModel3dDialog" => self.pick_and_insert("model3d", "insert.model3d"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
@@ -1205,10 +1215,8 @@ impl SlideApp {
 
     fn pick_and_open(&mut self) {
         if let Some(pick) = self.services.pick_open.as_mut() {
-            if let Some(path) = pick("open")
-                && let Err(e) = self.open_path(&path)
-            {
-                self.notify(e);
+            if let Some(path) = pick("open") {
+                self.open_path_in_background(&path);
             }
         } else if self.services.open_async.is_some() {
             let id = self.begin_external_file("open");
@@ -1220,19 +1228,58 @@ impl SlideApp {
 
     pub fn open_path(&mut self, path: &str) -> Result<(), String> {
         self.session.execute("file.open", &json!({"path": path})).map_err(|e| e.to_string())?;
+        self.note_recent(path);
+        Ok(())
+    }
+
+    /// Files the system hands over (the command line, a double-click through the file
+    /// association), opened in order. When the last one is a PowerPoint Show (`.ppsx`), its slide
+    /// show starts at once from where Play from Start begins, as PowerPoint does; anything else
+    /// opens for editing, and File › Open opens a `.ppsx` for editing too. Returns the files that
+    /// couldn't be opened, with the reason.
+    pub fn open_from_system(&mut self, paths: &[String]) -> Vec<(String, String)> {
+        let mut failed = Vec::new();
+        let mut last = None;
+        for p in paths {
+            match self.open_path(p) {
+                Ok(()) => last = Some(p),
+                Err(e) => failed.push((p.clone(), e)),
+            }
+        }
+        if last.is_some_and(|p| p.to_ascii_lowercase().ends_with(".ppsx")) {
+            self.start_show(self.show_start_index(), false);
+        }
+        failed
+    }
+
+    /// A presentation was opened from `path`: first in the recent list, shown in Normal view.
+    pub(crate) fn note_recent(&mut self, path: &str) {
         self.status = None; // an older error (a missing file just before this one) must not linger
         self.recent_checked.remove(path);
         self.ui.recent.retain(|p| p != path);
         self.ui.recent.insert(0, path.to_string());
         self.ui.recent.truncate(RECENT_MAX);
         self.ui.view = ViewMode::Normal;
-        Ok(())
     }
 
     /// Transitions › Sound › Other Sound…: pick an audio file for the selected slides.
     pub(crate) fn pick_transition_sound(&mut self) {
         if self.services.pick_open.is_some() {
             self.pick_and_insert("audio", "transition.sound");
+        }
+    }
+
+    /// Home › New Slide › Reuse Slides…: pick a presentation and insert all its slides after the
+    /// current one (desktop only: the browser picker opens what it picks as a document).
+    fn pick_and_reuse(&mut self, keep: bool) {
+        let Some(pick) = self.services.pick_open.as_mut() else {
+            self.set_status("Reuse Slides needs the desktop app".to_string());
+            return;
+        };
+        let Some(path) = pick("open") else { return };
+        match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep})) {
+            Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
+            Err(e) => self.set_status(e.to_string()),
         }
     }
 
@@ -1619,6 +1666,7 @@ impl SlideApp {
         }
         self.last_time = now;
         self.drain_control(ctx);
+        self.poll_opening();
         if self.fonts_ready {
             self.drain_inbox();
         }
@@ -1869,6 +1917,7 @@ impl SlideApp {
         let t = theme::Tokens::get(&ctx);
         self.tick_media(&ctx);
         eyedropper::tick(self, &ctx);
+        self.opening_ui(&ctx);
         if self.show.is_some() {
             self.anim_preview = None;
             show::ui(self, ui);
@@ -1966,6 +2015,10 @@ impl SlideApp {
     fn drain_control(&mut self, ctx: &egui::Context) {
         let Some(rx) = self.control_rx.take() else { return };
         while let Ok(req) = rx.try_recv() {
+            // A request whose sender gave up waiting (reply timeout) must not run late (#719).
+            if !req.take() {
+                continue;
+            }
             let reply = req.reply.clone();
             match control::handle(self, ctx, &req) {
                 control::Outcome::Done(v) => {
@@ -2070,8 +2123,16 @@ pub fn now_ms() -> f64 {
 }
 
 /// Images for the browser download: the current slide, or every slide (named `<name>1.png`,
-/// `<name>2.png`... like the native export) when `all`.
-fn web_image_files(doc: &deckcraft_model::Presentation, current: usize, all: bool, name: &str, ext: &str) -> Vec<(String, Vec<u8>)> {
+/// `<name>2.png`... like the native export) when `all`. `transparent` leaves the slide
+/// background out (PNG only, #784).
+fn web_image_files(
+    doc: &deckcraft_model::Presentation,
+    current: usize,
+    all: bool,
+    name: &str,
+    ext: &str,
+    transparent: bool,
+) -> Vec<(String, Vec<u8>)> {
     let slides: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![current] };
     let single = slides.len() == 1;
     let scale = 2.0;
@@ -2080,7 +2141,8 @@ fn web_image_files(doc: &deckcraft_model::Presentation, current: usize, all: boo
         .into_iter()
         .enumerate()
         .map(|(k, i)| {
-            let img = deckcraft_render::render_slide(doc, i, &deckcraft_render::RenderOpts { scale, ..Default::default() });
+            let opts = deckcraft_render::RenderOpts { scale, transparent_background: transparent && ext == "png", ..Default::default() };
+            let img = deckcraft_render::render_slide(doc, i, &opts);
             let bytes = if ext == "png" { img.to_png_at(dpi) } else { img.to_jpeg_at(92, Some(dpi)) };
             let file = if single { format!("{name}.{ext}") } else { format!("{name}{}.{ext}", k + 1) };
             (file, bytes)
@@ -2181,12 +2243,36 @@ mod tests {
             doc.slides.push(first);
         }
         assert_eq!(doc.slides.len(), 3);
-        let all = web_image_files(&doc, 1, true, "Deck", "png");
+        let all = web_image_files(&doc, 1, true, "Deck", "png", false);
         let names: Vec<&str> = all.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, ["Deck1.png", "Deck2.png", "Deck3.png"]);
-        let one = web_image_files(&doc, 1, false, "Deck", "png");
+        let one = web_image_files(&doc, 1, false, "Deck", "png", false);
         assert_eq!(one.len(), 1);
         assert_eq!(one[0].0, "Deck.png");
+    }
+
+    /// The web PNG download honours "Transparent background" (#784): the slide background is
+    /// left out, so the corner is transparent; a JPEG download stays opaque.
+    #[test]
+    fn web_png_export_can_leave_the_background_transparent() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let got: Rc<RefCell<Vec<(String, Vec<u8>)>>> = Rc::default();
+        let log = got.clone();
+        let services = Services {
+            download: Some(Box::new(move |name: &str, b: &[u8]| log.borrow_mut().push((name.to_string(), b.to_vec())))),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        let corner_alpha = |bytes: &[u8]| deckcraft_render::decode_image(bytes).unwrap().get_pixel(2, 2).0[3];
+        assert!(app.export_as("png", json!({})));
+        assert!(app.export_as("png", json!({"transparentBackground": true})));
+        assert!(app.export_as("jpeg", json!({"transparentBackground": true})));
+        let got = got.borrow();
+        assert_eq!(got.len(), 3);
+        assert_eq!(corner_alpha(&got[0].1), 255, "opaque by default");
+        assert_eq!(corner_alpha(&got[1].1), 0, "transparent background");
+        assert_eq!(corner_alpha(&got[2].1), 255, "JPEG has no transparency");
     }
 
     fn title_text(app: &SlideApp) -> String {
@@ -2660,6 +2746,71 @@ mod tests {
         assert!((harness.state().session.prefs.grid_spacing - 6.0).abs() < 1e-9);
     }
 
+    /// Preferences (#752): Cancel, Esc and the window's close button put back what the dialog
+    /// changed while it was open; Done keeps it.
+    #[test]
+    fn preferences_cancel_restores_the_settings_done_keeps_them() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let before = harness.state().session.prefs.clone();
+        let dark_before = harness.state().ui.brightness;
+        let change = |harness: &mut egui_kittest::Harness<'static, SlideApp>| {
+            harness.state_mut().run("app.preferences", json!({})).unwrap();
+            harness.run_steps(2);
+            for label in ["Dark appearance", "Show smart guides", "Snap objects to grid"] {
+                harness
+                    .query_all_by_role_and_label(egui::accesskit::Role::CheckBox, label)
+                    .next()
+                    .unwrap_or_else(|| panic!("no {label} checkbox"))
+                    .click_accesskit();
+                harness.run_steps(2);
+            }
+            assert_ne!(harness.state().ui.brightness, dark_before, "the dialog previews the appearance");
+            assert_ne!(harness.state().session.prefs.smart_guides, before.smart_guides);
+        };
+        let unchanged = |harness: &egui_kittest::Harness<'static, SlideApp>, how: &str| {
+            let s = harness.state();
+            assert!(s.dialog.is_none(), "{how} closes Preferences");
+            assert_eq!(s.ui.brightness, dark_before, "{how} restores the appearance");
+            assert_eq!(s.session.prefs.smart_guides, before.smart_guides, "{how} restores smart guides");
+            assert_eq!(s.session.prefs.snap_to_grid, before.snap_to_grid, "{how} restores snap to grid");
+        };
+
+        change(&mut harness);
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+            .next()
+            .unwrap_or_else(|| panic!("no Cancel button"))
+            .click_accesskit();
+        harness.run_steps(2);
+        unchanged(&harness, "Cancel");
+
+        change(&mut harness);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        unchanged(&harness, "Esc");
+
+        change(&mut harness);
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Done")
+            .next()
+            .unwrap_or_else(|| panic!("no Done button"))
+            .click_accesskit();
+        harness.run_steps(2);
+        let s = harness.state();
+        assert!(s.dialog.is_none(), "Done closes Preferences");
+        assert_ne!(s.ui.brightness, dark_before, "Done keeps the appearance");
+        assert_ne!(s.session.prefs.smart_guides, before.smart_guides, "Done keeps smart guides");
+        assert_ne!(s.session.prefs.snap_to_grid, before.snap_to_grid, "Done keeps snap to grid");
+    }
+
     fn canvas_harness() -> egui_kittest::Harness<'static, SlideApp> {
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
@@ -2895,6 +3046,15 @@ mod tests {
         // The row is labelled with the file's name. Clicking it raises the open error, and the
         // drawn message is a second node that mentions the name (the OS text after it varies).
         harness.get_by_label("missing.deckcraft").click();
+        harness.run_steps(2);
+        // The file is read in the background (#350): wait for that read to finish.
+        for _ in 0..500 {
+            if harness.state().opening.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            harness.run_steps(1);
+        }
         harness.run_steps(2);
         assert!(harness.state().toast.is_some(), "the open error was raised");
         assert!(harness.get_all_by_label_contains("missing.deckcraft").count() >= 2, "the open error is drawn on the page, next to the entry");
@@ -3330,5 +3490,39 @@ mod tests {
         harness.run_steps(1);
         flick(&mut harness, egui::vec2(-24.0, 0.0));
         assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(0));
+    }
+
+    /// Preferences › Interface size (#767): dragging the slider leaves the interface size alone
+    /// until the pointer lets go, so the slider doesn't grow under the pointer mid-drag.
+    #[test]
+    fn interface_size_applies_when_the_slider_is_let_go() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        harness.state_mut().run("app.preferences", json!({})).unwrap();
+        harness.run_steps(4);
+        let before = harness.state().ui.ui_scale;
+        let rect =
+            harness.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Interface size").next().expect("the Interface size slider").rect();
+        let (from, to) = (rect.left_center() + egui::vec2(4.0, 0.0), rect.right_center() - egui::vec2(4.0, 0.0));
+        harness.hover_at(from);
+        harness.run_steps(1);
+        harness.drag_at(from);
+        harness.run_steps(1);
+        for k in 1..=8 {
+            harness.hover_at(from.lerp(to, k as f32 / 8.0));
+            harness.run_steps(1);
+        }
+        assert_eq!(harness.state().ui.ui_scale, before, "nothing rescales while the slider is held");
+        harness.drop_at(to);
+        harness.run_steps(2);
+        let after = harness.state().ui.ui_scale;
+        assert!(after > before + 0.3, "letting go applies the size dragged to: {before} -> {after}");
+        assert!(harness.state().dialog.is_some(), "Preferences stays open");
     }
 }

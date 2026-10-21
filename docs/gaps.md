@@ -1,40 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (interactive-deck clicks in the slide show; previous: minor (3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101; previous: minor, core-workflow alpha gate added; stage stays alpha; before that: major, first itemized gap list; full re-measure against PowerPoint for Mac 16.113.4 and the open GitHub issues)) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (gap 3 shrinks to media options and rewind: comment threads round-trip now, #70; 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101; previous: minor, core-workflow alpha gate added; stage stays alpha; before that: major, first itemized gap list; full re-measure against PowerPoint for Mac 16.113.4 and the open GitHub issues) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (EMF/WMF rectangle clip regions; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (embedded fonts are read, written and drawn, except MicroType Express subsets; previous: minor, 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (WordArt Transform gallery applies a text warp; previous: minor, 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (owned PPTX corpus round-trip; notes-master header and footer kept; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (owned PPTX corpus for comments, links, custom shows, groups and inherited placeholders; paragraph defaults and action sounds kept; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (owned PPTX corpus for text effects, body layout, theme effects, fills, bevels and connectors; run effect lists and bevel presets kept; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (owned corpus `corpus_media.rs`: 3-D model parts and animation bounce end round-trip; the real-deck corpus and #70/#74/#77 stay open) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (chart trendlines round-trip; previous: minor, 3-D bevel, camera and face lighting rendered; IME composition and CJK interface text landed, #101; core-workflow alpha gate added; stage stays alpha; full re-measure against PowerPoint for Mac 16.113.4 and the open GitHub issues) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Insert › Icons places a Lucide stroke set; 3-D models and stock content remain; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Size and Position dialog; previous: minor, 3-D bevel, camera and face lighting) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (six original starter decks on File › New; previous: minor, 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition in a table cell is underlined; previous: minor, 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (Photo Album is one of 28 dialogs; Font, Bullets, Find, Replace Fonts, Action Settings, Print and Insert Object remain; previous: minor, 3-D bevel, camera and face lighting) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (Edit Photo Album reuses the Photo Album dialog, still 28; Font, Bullets, Find, Replace Fonts, Action Settings, Print and Insert Object remain; previous: trivial, Photo Album counted) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Create New Theme Colors; dialogs 27 → 28; previous: 3-D bevel, camera and face lighting) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Create New Theme Fonts; dialogs 27 → 28; previous: 3-D bevel, camera and face lighting) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Date and Time dialog; 28 dialogs; previous: 3-D bevel, camera and face lighting) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (owned PPTX corpus for more deck kinds; handout-master text kept; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (laser pointer in the slide show; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** trivial (command palette no longer offers Export without a path, #79; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Design ▸ Effects; checklist row stays P so breadth stays 79%; previous: 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Slide Master Preserve and Title/Footers placeholders; checklist letters unchanged, breadth stays 79%, dialogs stay 27; previous: 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (chart trendlines are drawn; previous: minor, chart trendlines round-trip; 3-D bevel, camera and face lighting rendered; IME composition and CJK interface text landed, #101; core-workflow alpha gate added; stage stays alpha; full re-measure against PowerPoint for Mac 16.113.4 and the open GitHub issues) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Format Background picture options are pane controls, not a new dialog; dialogs stay 27; previous: 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (animation preview plays on the editor canvas; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (a two-finger twist rotates the selection; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (a trackpad swipe turns the page in the editor and the show; pinch-zoom remains; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Font dialog; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Paragraph dialog; previous: minor, Font dialog) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (Grid Options dialog; previous: minor, 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** minor (WordArt adjust handles drag; previous: minor, 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (pen pressure scales ink width; tilt, pinch and trackpad gestures remain; previous: minor, 3-D bevel, camera and face lighting rendered; previous: minor, IME composition and CJK interface text landed, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (3-D models landed: the gap is now Pan & Zoom, animated models and stock models; previous: minor, 3-D bevel, camera and face lighting rendered; before that: minor, IME composition and CJK interface text landed, #101; previous: minor, core-workflow alpha gate added; stage stays alpha; before that: major, first itemized gap list; full re-measure against PowerPoint for Mac 16.113.4 and the open GitHub issues) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -54,16 +20,13 @@ revision history.
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
 | 3 | PPTX round trip drops media options and rewind (#74, #77) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
-| 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 6–12 | [file-format-parity.md](file-format-parity.md) |
-| 3 | PPTX round trip drops comment threads, media options, rewind (#70, #74, #77) | File format | B | 3–6 | [file-format-parity.md](file-format-parity.md) |
 | 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 8 | Image paste fails on Windows and Linux (#53) | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
 | 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
-| 10 | Animation Pane: thin preview (timeline done); 64 of ~190 effects | Feature | B (pane) | 8–14 | [animation-parity.md](animation-parity.md) |
-| 10 | Animation Pane: no timeline; preview is the whole slide, not from the selected effect; 64 of ~190 effects | Feature | B (pane) | 10–16 | [animation-parity.md](animation-parity.md) |
+| 10 | Animation Pane: preview plays the whole slide, not from the selected effect (timeline done); 64 of ~190 effects | Feature | B (pane) | 8–14 | [animation-parity.md](animation-parity.md) |
 | 11 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
 | 12 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
 | 13 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
@@ -85,19 +48,15 @@ revision history.
 - **Estimate:** 4–8 h (backend probing outside the process or a safe-mode fallback, a software
   renderer path). Needs a tester with the hardware. **Beta blocker.**
 
-### Soak testing is engine-only
+### Soak testing has no memory or timing budgets
 - **Evidence:** `crates/engine/src/soak_tests.rs` runs seeded random command sequences over a
   ~100-slide deck (validity, selection, undo/redo exactness, bounded undo, save/reopen in both
   formats every 100 steps); `DECKCRAFT_SOAK_STEPS` runs it long. It found a chart `clamp` panic
-  that blanked whole slides. Still missing: UI-level (kittest) soak, memory and timing budgets.
-- **Impact:** long-session crash rate is now sampled in CI; slowdowns are not measured.
-- **Estimate:** 2–4 h left.
-### Soak testing is new
-- **Evidence:** `crates/ui-egui/src/ui_soak_tests.rs` drives the whole window with seeded random
-  clicks, drags, keys (plain, Ctrl, Shift), typing and scrolling over the sample deck, checking
-  document validity, bounded undo/journal/thumbnail/texture caches, zero caught command and
-  render panics (`Session::panics_caught`, `deckcraft_render::panics_caught`) and a mean frame
-  under 250 ms; 4 × 3000-action runs are clean. Engine-level command soak: PR #502.
+  that blanked whole slides. `crates/ui-egui/src/ui_soak_tests.rs` drives the whole window with
+  seeded random clicks, drags, keys (plain, Ctrl, Shift), typing and scrolling over the sample
+  deck, checking document validity, bounded undo/journal/thumbnail/texture caches, zero caught
+  command and render panics (`Session::panics_caught`, `deckcraft_render::panics_caught`) and a
+  mean frame under 250 ms; 4 × 3000-action runs are clean.
 - **Impact:** long-session crash rate is sampled in CI; RSS is not measured directly.
 - **Estimate:** 1–2 h (RSS sampling per platform).
 
@@ -106,48 +65,26 @@ revision history.
 Detail in [file-format-parity.md](file-format-parity.md).
 
 ### PPTX corpus is only decks we author
-- **Evidence:** `crates/pptx/tests/corpus.rs` builds decks in this repo and checks open → save →
-  reopen (package parts and text): a talk with a table, chart, picture, link and comment, and a
-  notes master with a header and footer. Saving used to replace that notes master with an empty
-  one, so "Acme review" and "Do not circulate" disappeared; they are kept now. There is still no
-  larger corpus and no reference render from PowerPoint.
-### PPTX has never met a corpus of real decks
-- **Evidence:** PPTX tests use decks DeckCraft generates. An owned check
-  (`crates/pptx/tests/corpus_elements.rs`) now opens, saves and reopens comments, hyperlinks and
-  actions, custom shows, grouped rotated objects, and placeholders that inherit position, geometry
-  and text from the layout. That check found paragraph default run properties (`defRPr`, including
-  a link) and action sounds (the sound itself, stop-previous, and a custom show's "Show and
-  return") were dropped on save; they are kept now. Embedded fonts, comment threads (#70), media
-  options (#74) and animation rewind (#77) are still open, and there is no corpus of decks from
-  outside this repo. No reference renders from PowerPoint exist to compare against.
-- **Evidence:** PPTX tests use decks DeckCraft generates. An owned check
-  (`crates/pptx/tests/corpus_style.rs`) now opens, saves and reopens text effects (gradient, outline,
-  shadow, glow, inner shadow, reflection and soft edge), autofit, columns, vertical and RTL text,
-  tab stops, line spacing, theme effects, gradient and pattern fills, 3-D bevels and connectors.
-  That check found a run's inner shadow, reflection and soft edge were dropped, and a bevel preset
-  with no kept `sp3d` was not written back; both are kept now. Comment threads (#70), media options
-  (#74), animation rewind (#77) and embedded fonts are still open, and there is no corpus of decks
-  from outside this repo. No reference renders from PowerPoint exist to compare against.
-- **Evidence:** every PPTX test (`crates/pptx/tests`, 30 tests, plus `corpus_media.rs`) uses decks
-  DeckCraft generates; the 2026-10-07 alpha checklist already listed this as open. No reference
-  renders from PowerPoint exist to compare against. `corpus_media.rs` opens, saves and reopens
-  SmartArt and OLE kept as XML (no diagram or embedding parts; those stay with #203), audio and
-  video bookmarks and trims, a section holding a hidden slide, slide-number and date fields, ink
-  (saved as freeform lines), `.glb` 3-D models, and animation repeat, bounce end and triggers.
-  Playback options (#74) and rewind (#77) are still lost.
-- **Evidence:** every PPTX test (`crates/pptx/tests`, 30 tests) uses decks DeckCraft generates;
-- **Evidence:** every PPTX test (`crates/pptx/tests`) uses decks DeckCraft generates;
-  the 2026-10-07 alpha checklist already listed this as open. No reference renders from PowerPoint
-  exist to compare against. `crates/pptx/tests/corpus_themes.rs` starts on PowerPoint-shaped XML:
-  themes and two masters with their layouts, shadow/glow/soft-edge/reflection effects, and text
-  and shape hyperlinks and actions (text Mouse Over actions were dropped; now kept).
-  exist to compare against. `corpus_charts.rs` round-trips one owned slice (a combo chart with
-  data labels and trendlines, a merged table with diagonal borders, text columns, autofit,
-  vertical text and a WordArt warp). That is still a generated deck, not a corpus of real ones.
-- **Evidence:** `crates/pptx/tests/corpus_kinds.rs` builds decks in this repo and checks open → save →
-  reopen (package parts and text): tables, charts, animations, media, sections, and several masters
-  and layouts. A handout master with a header, footer, date and slide number used to disappear on
-  save; that text is kept now. There is still no larger corpus and no reference render from PowerPoint.
+- **Evidence:** every PPTX test (`crates/pptx/tests`) uses decks built in this repo; the
+  2026-10-07 alpha checklist already listed this as open, and no reference renders from PowerPoint
+  exist to compare against. The owned corpus checks open → save → reopen (package parts and text):
+  `corpus.rs` (a talk with a table, chart, picture, link and comment; a notes master's header and
+  footer), `corpus_kinds.rs` (tables, charts, animations, media, sections, several masters and
+  layouts; a handout master's header, footer, date and slide number), `corpus_elements.rs`
+  (comments, hyperlinks and actions, custom shows, grouped rotated objects, placeholders that
+  inherit from the layout), `corpus_style.rs` (text effects, autofit, columns, vertical and RTL
+  text, tab stops, line spacing, theme effects, gradient and pattern fills, 3-D bevels,
+  connectors), `corpus_themes.rs` (PowerPoint-shaped themes and two masters with their layouts,
+  effects, text and shape hyperlinks and actions), `corpus_charts.rs` (a combo chart with data
+  labels and trendlines, a merged table with diagonal borders, text columns, autofit, vertical
+  text, a WordArt warp) and `corpus_media.rs` (SmartArt and OLE kept as XML, with no diagram or
+  embedding parts, which stay with #203; audio and video bookmarks and trims; a section holding a
+  hidden slide; slide-number and date fields; ink as freeform lines; `.glb` 3-D models; animation
+  repeat, bounce end and triggers). Losses these checks found are fixed: notes- and handout-master
+  text, paragraph default run properties (`defRPr`, including a link), action sounds, a run's
+  inner shadow, reflection and soft edge, a bevel preset with no kept `sp3d`, and text Mouse Over
+  actions. Still open: media options (#74), animation rewind (#77) and a corpus of decks from
+  outside this repo.
 - **Impact:** the main reason to switch is "open my PowerPoint decks". Fidelity on real decks
   (corporate templates, SmartArt, `chartex` charts, embedded fonts, EMF) is still mostly unknown.
 - **Estimate:** 20–35 h: grow the owned corpus in `storytold/photocraft-corpus` style (craftrules
@@ -242,6 +179,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
   moving average, with forecast and the equation and R² label. A moving average is drawn with
   neither label. A combo chart's secondary value axis is read (`y2_*`,
   `Series.secondary_axis`) and is not written back when the chart is rebuilt.
+  An unchanged chart's embedded workbook now survives save (#335); editing the chart still
+  drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
+  also survive `.deckcraft` save/reopen (`crates/engine/tests/chart_native.rs`), with binary
+  payloads in bounded ZIP entries sharing the media load budget (`crates/format` tests).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
 
@@ -261,9 +202,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
 
 ### Animation Pane, effect count and preview
 Animations ▸ Preview and the pane's Play All play the current slide's animations on the editor
-canvas (Escape or a click stops them). Still open: the advanced timeline, starting from the
-selected effect, and most of the effect gallery. Detail in
-[animation-parity.md](animation-parity.md). 10–16 h; the pane's timeline is a **beta blocker**.
+canvas (Escape or a click stops them), and the pane has an advanced timeline with draggable bars
+(`crates/ui-egui/src/animtimeline.rs`). Still open: previewing from the selected effect, and most
+of the effect gallery. Detail in [animation-parity.md](animation-parity.md). 8–14 h; the pane is a
+**beta blocker**.
 
 ### Interactive decks: media-action links, audio-triggered effects and click boxes
 - **Evidence:** the slide show plays click-triggered animations, keeps each slide's state across
@@ -272,11 +214,10 @@ selected effect, and most of the effect gallery. Detail in
   counters): a click on a shape whose action is "play sound" (`ppaction://media`, 126 and 486
   shapes in two decks) does nothing; triggers that start on `onStopAudio` or `begin` conditions are
   not read as triggers; click boxes are the shape's bounding box (a hexagon's corners count) and do
-  not follow a shape that a motion path has moved; the PPTX writer turns every "on click" after the
-  first effect of a trigger into "after previous", so a trigger with several click steps saved from
-  DeckCraft plays all of them at once.
-- **Impact:** games built around sound effects on buttons, or around a button that counts up with
-  repeated clicks, lose that part when they are saved from DeckCraft or played in it.
+  not follow a shape that a motion path has moved. Trigger sequences now keep their separate
+  click steps on PPTX save, including paragraph builds (`crates/pptx/tests/trigger_steps.rs`).
+- **Impact:** games built around sound effects on buttons, audio-triggered effects or moving
+  clickable shapes do not play as authored.
 - **Estimate:** 4–8 h.
 
 ### Notes and Handout masters
@@ -290,43 +231,22 @@ selected effect, and most of the effect gallery. Detail in
 - **Estimate:** done for beta.
 
 ### Edit points, text warp, 3-D
-- **Evidence:** checklist rows "Edit points" (P1 missing), "Text warp transforms" (partial: all 40
-  `prstTxWarp` presets render, their adjusts round-trip, and Shape Format ▸ Text Effects ▸
-  Transform applies one with `format.textWarp`; still open are adjust handles, and arc/circle
-  placement can differ from PowerPoint by 1–3 % of the path length), "Bevel and 3-D rotation"
-  (partial: bevels, camera presets and rotations and face lighting render as approximations and
-  `scene3d`/`sp3d` round-trip as raw XML; no extrusion or side faces, only the three-point rig, and
-  no command or pane to apply 3-D).
-- **Estimate:** 4–6 h (edit points), 1–2 h (warp adjust handles), 6–10 h (3-D extrusion,
-- **Evidence:** checklist rows "Edit points" (P1 partial: Edit Points converts a shape to a freeform, vertices drag, Ctrl/Cmd-click adds or deletes; no point types or Bézier control handles), "Text warp transforms" (partial: all 40
-- **Evidence:** checklist rows "Edit points" (P1 partial: Edit Points converts a shape to a freeform, vertices drag, Ctrl/Cmd-click adds or deletes, smooth/straight/corner points and Bézier handles; no Straight/Curved Segment or Open/Close Path), "Text warp transforms" (partial: all 40
-  `prstTxWarp` presets render and their adjusts round-trip, but there is no Transform gallery or
-  command to apply one, no adjust handles, and arc/circle placement can differ from PowerPoint by
-  1–3 % of the path length), "Bevel and 3-D rotation" (partial: bevels, camera presets and rotations and face lighting
-  render as approximations and `scene3d`/`sp3d` round-trip as raw XML; no extrusion or side faces,
-  only the three-point rig, and no command or pane to apply 3-D).
-- **Estimate:** 1 h (edit points: segment types, open/close path), 2–4 h (warp gallery, command and handles), 6–10 h (3-D extrusion,
-  render as approximations and `scene3d`/`sp3d` round-trip as raw XML; extrusions draw their
-  sides under turned cameras, each lit for its own normal; the preset light rigs, rig directions and
-  materials shade bevels and sides approximately (fitted to PowerPoint for three-point/matte only); contours draw as a
-  band round the face outline (not round the extruded silhouette); no command or pane to apply 3-D).
-- **Estimate:** 4–6 h (edit points), 2–4 h (warp gallery, command and handles), 1–2 h (fitting the other rigs and materials
-  to PowerPoint renders), plus the Format Shape page.
-  `prstTxWarp` presets render, their adjusts round-trip, and a selected warp shows a yellow handle
-  per adjust that dragging sets; still no Transform gallery or command to apply one, and arc/circle
-  placement can differ from PowerPoint by 1–3 % of the path length), "Bevel and 3-D rotation"
-  (partial: bevels, camera presets and rotations and face lighting render as approximations and
-  `scene3d`/`sp3d` round-trip as raw XML; no extrusion or side faces, only the three-point rig, and
-  no command or pane to apply 3-D).
-- **Estimate:** 4–6 h (edit points), 1–2 h (Transform gallery and command), 6–10 h (3-D extrusion,
-  rigs and materials, Format Shape page).
+- **Evidence:** checklist rows "Edit points" (P1 partial: Edit Points converts a shape to a
+  freeform, vertices drag, Ctrl/Cmd-click adds or deletes, smooth/straight/corner points and Bézier
+  handles; no Straight/Curved Segment or Open/Close Path), "Text warp transforms" (partial: all 40
+  `prstTxWarp` presets render, their adjusts round-trip, Shape Format ▸ Text Effects ▸ Transform
+  applies one with `format.textWarp`, and a selected warp shows a yellow handle per adjust that
+  dragging sets; arc/circle placement can differ from PowerPoint by 1–3 % of the path length),
+  "Bevel and 3-D rotation" (partial: bevels, camera presets and rotations and face lighting render
+  as approximations and `scene3d`/`sp3d` round-trip as raw XML; extrusions draw their sides under
+  turned cameras, each lit for its own normal; the preset light rigs, rig directions and materials
+  shade bevels and sides approximately (fitted to PowerPoint for three-point/matte only); contours
+  draw as a band round the face outline (not round the extruded silhouette); Format Shape ▸
+  Effects has 3-D Format and 3-D Rotation).
+- **Estimate:** 1 h (edit points: segment types, open/close path), 1–2 h (fitting the other rigs
+  and materials to PowerPoint renders).
 
 ### Proofing: spelling, thesaurus, AutoCorrect
-- **Evidence:** `review.spelling` checks a small built-in list of frequent misspellings
-  (`crates/engine/src/cmd/review.rs`); no dictionaries, no thesaurus. AutoCorrect has PowerPoint's options (two initial capitals,
-  sentence and day capitals, caps lock, fractions, an editable replace list); no AutoFormat of
-  ordinals or automatic bulleted lists, no undo of a single correction.
-- **Estimate:** 8–14 h (Hunspell-format dictionaries under an open licence per language).
 - **Evidence:** `review.spelling` checks with Hunspell-format dictionaries the system already has
   (`crates/engine/src/spell.rs`: affixes, cross products, one level of continuation, compounds,
   case rules, suggestions), each run in its own language (`lang` from PPTX), with a user dictionary
@@ -334,29 +254,30 @@ selected effect, and most of the effect gallery. Detail in
   context menu to correct, ignore or add; table cells and speaker notes are squiggled too, each
   with a right-click menu; repeated words (`the the`) are flagged with Delete Repeated Word;
   Review › Language marks the selection's proofing language or Do Not Check Spelling
-  (`lang`/`noProof` round-trip in PPTX). No grammar checking. The web build checks on the UI thread a few milliseconds per
-  frame. None ship with DeckCraft, so without one installed (always on Windows and the web) only a
-  short list of common misspellings is found.
-  Thesaurus (#549) and AutoCorrect (#521) have open PRs.
-- **Estimate:** 1–2 h (bundle openly licensed dictionaries).
+  (`lang`/`noProof` round-trip in PPTX). No grammar checking. The web build checks on the UI
+  thread a few milliseconds per frame. No dictionaries ship with DeckCraft, so without one
+  installed (always on Windows and the web) only a short list of common misspellings is found.
+  `review.thesaurus` looks up the selected word (checklist row partial). AutoCorrect has
+  PowerPoint's options (two initial capitals, sentence and day capitals, caps lock, fractions, an
+  editable replace list), and AutoFormat superscripts ordinals (1st) as you type; no automatic
+  bulleted lists, no undo of a single correction.
+- **Estimate:** 1–2 h (bundle openly licensed dictionaries); 2–4 h (AutoFormat as you type).
 
 ### Equations
 - **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
 - **Estimate:** 3–6 h to review, land and round-trip.
 
 ### Smaller missing rows
-Zoom (summary/section/slide, 6–10 h), reuse slides (2–4 h), laser pointer (1–2 h), transition
-sounds (1–2 h), artistic effects (6–10 h), compress pictures (2–3 h), insert screenshot (2–3 h), record audio/screen and record slide
-sounds (1–2 h), artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove background (6–10 h; needs a model or a classical
-Zoom (summary/section/slide, 6–10 h), reuse slides (2–4 h), transition
-sounds (1–2 h), artistic effects (6–10 h), remove background (6–10 h; needs a model or a classical
-matte), compress pictures (2–3 h), insert screenshot (2–3 h), record audio/screen and record slide
-show (8–12 h), compare presentations (6–10 h), password protection (4–6 h, ECMA-376 agile
-encryption), ink to shape/text (6–10 h), stock content (6–10 h; Insert › Icons places a Lucide
-stroke set), 3-D models' Pan & Zoom, glTF animations and 3-D effect options (4–8 h).
-show (8–12 h), compare presentations beyond slide-level accept (reject, per-object accept,
-markers on the slide: 3–5 h), password protection (4–6 h, ECMA-376 agile
-encryption), ink to shape/text (6–10 h), stock content, 3-D models' Pan & Zoom, glTF animations and 3-D effect options (4–8 h).
+Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
+`insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
+(1–2 h; `slide.reuse` inserts from a file), laser pointer from the presenter window (1–2 h),
+artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
+background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), record
+audio/screen and record slide show (8–12 h), compare presentations beyond slide-level accept
+(reject, per-object accept, markers on the slide: 3–5 h), password protection (4–6 h, ECMA-376
+agile encryption), ink to text and math beyond Ink to Shape (6–10 h), stock content
+(6–10 h; Insert › Icons places a Lucide stroke set), 3-D models' Pan & Zoom, glTF
+animations and 3-D effect options (4–8 h).
 
 ## UI/UX
 
@@ -371,37 +292,13 @@ Detail in [ui-parity.md](ui-parity.md).
 - **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar, #41 system light/dark).
   2–4 h.
 - **Icon consistency across Craft apps** (#73, #56). 2–4 h; coordinate in craftrules.
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60 (Font, Find/Replace dialog,
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60 (Font, Bullets and Numbering, Find/Replace dialog,
-  Replace Fonts, Action Settings, Print, Insert Object…). 8–14 h.
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60 (Font, Bullets and Numbering, Find/Replace dialog,
-  Replace Fonts, Action Settings, Print, Insert Object…). Size and Position is one of the 28. 8–14 h.
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60 (Photo Album is one of them). Still missing Font,
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60 (Photo Album is one of them; Edit Photo Album reopens it). Still missing Font,
-  Bullets and Numbering, Find/Replace, Replace Fonts, Action Settings, Print, Insert Object…. 8–14 h.
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60. Create New Theme Colors (Design › Colors ›
-  Customize Colors…) edits the open master's twelve theme colours, not a saved library of named
-  schemes. Still missing: Font, Bullets and Numbering, Find/Replace dialog, Replace Fonts, Action
-  Settings, Print, Insert Object. 8–14 h.
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60. Create New Theme Fonts (Design › Fonts ›
-  Customize Fonts…) edits the open master's heading and body latin faces and the scheme name.
-  It is not a saved library of theme fonts, and it does not pick East Asian or complex-script
-  faces. Still missing: Font, Bullets and Numbering, Find/Replace dialog, Replace Fonts, Action
-  Settings, Print, Insert Object. 8–14 h.
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60 (Font, Bullets and Numbering, Find/Replace dialog,
-  Action Settings, Print, Insert Object…). 8–14 h.
-- **Dialogs**: 30 dialogs vs PowerPoint's ~60 (Font, Find/Replace dialog, Replace Fonts, Print,
-  Insert Object…). Size and Position, Bullets and Numbering, Action Settings and Date and Time are in.
-  Format Background picture options (transparency, tile, offset, scale, alignment, mirror, and Apply
-  to All copying a picture) are pane controls on `design.background`, not another dialog. 8–14 h.
-- **Dialogs**: 28 dialogs vs PowerPoint's ~60. The Font dialog is in (family, size, style, underline,
-  colour, strikethrough, baseline, caps, character spacing, one undo step). Still missing: Bullets
-  and Numbering, Find/Replace, Replace Fonts, Action Settings, Print, Insert Object…. 6–12 h.
-- **Dialogs**: 29 dialogs vs PowerPoint's ~60. The Font dialog and the Paragraph dialog are in
-  (Paragraph: alignment, first-line and hanging indents, spacing before/after, line spacing, and a
-  Tabs dialog, each OK one undo step). Still missing: Bullets and Numbering, Find/Replace, Replace
-  Fonts, Action Settings, Print, Insert Object…. 4–8 h.
-- **Command palette defaults to an Export entry that fails** (#79). 0.5 h.
+- **Dialogs**: 41 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
+  and Tabs, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
+  Position, Date and Time, Photo Album (Edit Photo Album reopens it), Create New Theme Colors and
+  Create New Theme Fonts (each edits the open master's scheme, not a saved library; theme fonts
+  are latin only), Grid Options, AutoCorrect and Paste Special. Format Background picture options
+  are pane controls on `design.background`, not another dialog. Still missing: Print, Insert
+  Object…. 4–8 h.
 
 ## Hardware
 
@@ -413,10 +310,11 @@ Detail in [hardware-parity.md](hardware-parity.md).
   or wgpu path).
 - **Software-only video decode**; PowerPoint uses VideoToolbox/Media Foundation. 8–14 h (copy
   FilmCraft's hardware decode).
-- **No pen pressure or tilt for ink**; no pinch-zoom (it does not keep the point under the pointer). A two-finger twist does rotate the selected shapes. 3–6 h.
-- **No pen pressure or tilt for ink**; no pinch-zoom. A trackpad swipe turns the page when the
-  slide fits the window, and during the show. 2–4 h for pinch-zoom.
-- **Pen pressure scales ink width** when the pointer reports it (a mouse or a missing reading stays at the pen width; a stroke saved as a flat `0.5` still draws at the pen width). Tilt is not read. No pinch-zoom or other trackpad gestures. 2–4 h.
+- **No pen tilt and no pinch-zoom** (it does not keep the point under the pointer). Pen pressure
+  scales ink width when the pointer reports it (a mouse or a missing reading stays at the pen
+  width; a stroke saved as a flat `0.5` still draws at the pen width). A two-finger twist rotates
+  the selected shapes, and a trackpad swipe turns the page when the slide fits the window and
+  during the show. 2–4 h.
 
 ## Localization
 
@@ -459,6 +357,12 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
+| 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
+| 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |
+| 2026-10-16 | trivial | AutoFormat superscripts ordinals (1st, 22nd) as you type, with an AutoCorrect option to turn it off; automatic bulleted lists remain |
+| 2026-10-14 | trivial | Fixed #718: remote MCP no longer accepts unrelated or buffered stale success; loopback regressions cover invalid envelopes, incomplete and oversized frames |
+| 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |
 | 2026-10-13 | minor | Embedded fonts are read, written and drawn (TrueType, OpenType, Embedded OpenType). The gap is now MicroType Express subsets, which are kept but not drawn |
 | 2026-10-13 | minor | WordArt Transform gallery: Shape Format ▸ Text Effects lists the 40 presets and No Transform; `format.textWarp` applies one (adjust handles still open) |
@@ -511,6 +415,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-13 | minor | Grid Options dialog sets spacing, snap and whether gridlines and guides show; the on-screen grid follows that spacing |
 | 2026-10-13 | minor | WordArt adjust handles: a selected text warp shows one yellow handle per adjust, and dragging it sets that guide value (gallery and command still open) |
 | 2026-10-14 | minor | Pen pressure scales ink width when the pointer reports it; tilt, pinch-zoom and other trackpad gestures remain |
+| 2026-10-13 | trivial | Chart workbook round-trip (#335) noted under the charts gap; editing chart data is still open |
 | 2026-10-14 | minor | 3-D models (insert six formats, turn, views, 3-D effects, Morph, PPTX) landed; the row keeps Pan & Zoom, glTF animations and effect options |
 | 2026-10-13 | minor | Shape, picture and table rendering checked against PowerPoint on ~150 synthetic edge-case slides; 3-D bevels, cameras and face lighting now render approximately (gap narrowed to extrusion, rigs and the 3-D pane) |
 | 2026-10-13 | minor | Interactive decks: triggers, return-to-slide state and click rules landed in the slide show; the remaining pieces are one new entry under Features |

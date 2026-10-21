@@ -181,20 +181,18 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     // One texture pixel in screen points, and the canvas in pixels from the slide's corner.
     let pixel = vec2(slide_rect.width() / px.0 as f32, slide_rect.height() / px.1 as f32);
     let visible = visible_region(avail, slide_rect, pixel);
+    let typing_into = st.and_then(|d| d.selection.text.as_ref()).filter(|t| !t.notes).map(|t| t.shape);
     let tex = match st.map(|d| (d.selection.target, d)) {
         Some((Target::Slides, d)) => {
             let idx = d.selection.slide;
             let doc = d.doc.clone();
             let frame = anim.as_ref().map(|(tl, t)| (tl, *t));
-            // A placeholder's prompt makes way for the caret once it is being typed into.
-            let typing_into = d.selection.text.as_ref().filter(|t| !t.notes && t.cell.is_none()).map(|t| t.shape);
-            let no_prompt = typing_into.filter(|id| d.shape(*id).and_then(|sh| sh.text.as_ref()).is_none_or(|body| body.is_empty()));
-            app.textures.slide(ui.ctx(), &doc, idx, px, visible, true, crate::media::gif_key(&gifs), app.ui.grayscale, &times, no_prompt, frame)
+            app.textures.slide(ui.ctx(), &doc, idx, px, visible, true, crate::media::gif_key(&gifs), app.ui.grayscale, &times, typing_into, frame)
         }
-        Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px, visible),
-        Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px, visible),
+        Some((Target::Master { master }, d)) => master_tex(ui.ctx(), &d.doc, master, None, px, visible, typing_into),
+        Some((Target::Layout { master, layout }, d)) => master_tex(ui.ctx(), &d.doc, master, Some(layout), px, visible, typing_into),
         Some((t @ (Target::Handout | Target::NotesMaster), d)) => {
-            deckcraft_engine::master_page(&d.doc, t).and_then(|p| master_tex(ui.ctx(), &p, 0, None, px, visible))
+            deckcraft_engine::master_page(&d.doc, t).and_then(|p| master_tex(ui.ctx(), &p, 0, None, px, visible, typing_into))
         }
         None => None,
     };
@@ -418,6 +416,7 @@ fn master_tex(
     layout: Option<usize>,
     px: (u32, u32),
     visible: deckcraft_render::Region,
+    editing_text: Option<deckcraft_model::ShapeId>,
 ) -> Option<(egui::TextureHandle, deckcraft_render::Region)> {
     let scale = px.0 as f64 / doc.slide_size.width.max(1.0);
     let region = crate::textures::fit_texture(
@@ -429,7 +428,7 @@ fn master_tex(
         doc,
         master,
         layout,
-        &deckcraft_render::RenderOpts { scale, edit: true, offset: region.offset(), size: Some(region.size()), ..Default::default() },
+        &deckcraft_render::RenderOpts { scale, edit: true, editing_text, offset: region.offset(), size: Some(region.size()), ..Default::default() },
     );
     Some((crate::textures::upload_editor(ctx, "master-canvas", crate::textures::to_color_image(&img, false)), region))
 }
@@ -1568,6 +1567,61 @@ mod tests {
             harness.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
             harness.step();
         }
+    }
+
+    /// The first empty placeholder and the paragraph after Enter keep a list marker and indent.
+    #[test]
+    fn empty_bullet_preview_follows_click_type_enter_and_toggle() {
+        let mut h = harness();
+        h.state_mut().run("slide.new", json!({"layout": "titleAndContent"})).unwrap();
+        h.run_steps(3);
+        let st = h.state().session.active().unwrap();
+        let sh = st
+            .shapes()
+            .iter()
+            .find(|s| s.ph_type() == Some(deckcraft_model::PhType::Body) || s.ph_type() == Some(deckcraft_model::PhType::Obj))
+            .unwrap();
+        let id = sh.id;
+        let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
+        let p = screen(h.state(), x.x + 40.0, x.y + 20.0);
+        click(&mut h, p);
+        h.run_steps(3);
+        let caret = |h: &Harness<'_, SlideApp>| {
+            let st = h.state().session.active().unwrap();
+            let ts = st.selection.text.as_ref().expect("click starts typing");
+            assert_eq!(ts.shape, id);
+            deckcraft_engine::cmd::text::caret_line(st, ts).unwrap().0
+        };
+        let first = caret(&h);
+        h.event(Event::Text("First point".into()));
+        h.run_steps(3);
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        let second = caret(&h);
+        assert!((first.x - second.x).abs() < 0.01, "empty lines retain the bullet indent");
+        assert!(second.y > first.y);
+        let st = h.state().session.active().unwrap();
+        let l = deckcraft_engine::cmd::text::layout_for(st, st.selection.text.as_ref().unwrap()).unwrap();
+        assert_eq!(l.empty_bullets.len(), 1);
+        assert_eq!(l.empty_bullets[0].para, 1);
+        let renders = h.state().textures.canvas_renders;
+        h.state_mut().run("text.exit", json!({})).unwrap();
+        h.run_steps(3);
+        assert!(h.state().textures.canvas_renders > renders, "leaving text editing refreshes the marker texture");
+        h.state_mut().run("text.edit", json!({"id": id, "at": [1, 0]})).unwrap();
+        h.run_steps(3);
+        h.event(Event::Text("Second point".into()));
+        h.run_steps(3);
+        let st = h.state().session.active().unwrap();
+        let ts = st.selection.text.as_ref().unwrap();
+        assert_eq!(deckcraft_engine::cmd::text::body_of(st, ts).unwrap().text(), "First point\nSecond point");
+        assert!(deckcraft_engine::cmd::text::layout_for(st, ts).unwrap().empty_bullets.is_empty());
+        h.key_press(egui::Key::Enter);
+        h.run_steps(3);
+        h.state_mut().run("format.bullets", json!({})).unwrap();
+        h.run_steps(3);
+        let st = h.state().session.active().unwrap();
+        assert!(deckcraft_engine::cmd::text::layout_for(st, st.selection.text.as_ref().unwrap()).unwrap().empty_bullets.is_empty());
     }
 
     /// Double-clicking a table cell edits it with the caret drawn in that cell, where clicked.

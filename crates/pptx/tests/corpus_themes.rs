@@ -64,7 +64,7 @@ fn effects_and_links() -> Vec<u8> {
     let mut p = defaults::new_presentation(None);
     let layout = defaults::layout_of_kind(&p, LayoutType::Blank).unwrap_or_default();
     for _ in 0..2 {
-        let s = defaults::new_slide(&mut p, layout);
+        let s = defaults::new_slide(&mut p, layout).expect("slide");
         p.slides.push(Arc::new(s));
     }
     p.slides.truncate(2);
@@ -177,7 +177,7 @@ fn effects_and_links_survive_a_round_trip() {
 fn two_masters() -> Presentation {
     let mut p = defaults::new_presentation(None);
     let mut second = (*p.masters[0]).clone();
-    second.id = deckcraft_model::MasterId(p.alloc_id());
+    second.id = deckcraft_model::MasterId(p.alloc_id().expect("id"));
     second.name = "Brand Dark".into();
     second.theme.name = "Brand Dark Theme".into();
     second.theme.colors.name = "Brand Colours".into();
@@ -190,15 +190,15 @@ fn two_masters() -> Presentation {
         fill: deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0x10, 0x10, 0x18))),
     });
     for l in &mut second.layouts {
-        l.id = deckcraft_model::LayoutId(p.alloc_id());
+        l.id = deckcraft_model::LayoutId(p.alloc_id().expect("id"));
         l.name = format!("Dark {}", l.name);
     }
     second.layouts.truncate(4);
     let dark_layout = second.layouts[1].id;
     p.masters.push(Arc::new(second));
     let light_layout = p.masters[0].layouts[0].id;
-    let s1 = defaults::new_slide(&mut p, light_layout);
-    let s2 = defaults::new_slide(&mut p, dark_layout);
+    let s1 = defaults::new_slide(&mut p, light_layout).expect("slide");
+    let s2 = defaults::new_slide(&mut p, dark_layout).expect("slide");
     p.slides = vec![Arc::new(s1), Arc::new(s2)];
     p
 }

@@ -127,15 +127,7 @@ impl Package {
     pub fn rels(&self, part: &str) -> Rels {
         let rp = rels_path(part);
         let Some(doc) = self.xml(&rp) else { return Rels::default() };
-        let base = dir_of(part);
-        let mut out = Rels::default();
-        for r in doc.root.children_named("Relationship") {
-            let (Some(id), Some(ty), Some(target)) = (r.attr("Id"), r.attr("Type"), r.attr("Target")) else { continue };
-            let external = r.attr("TargetMode").is_some_and(|m| m.eq_ignore_ascii_case("external"));
-            let target = if external { target.to_string() } else { resolve(&base, target) };
-            out.items.push(Rel { id: id.to_string(), kind: ty.rsplit('/').next().unwrap_or(ty).to_string(), ty: ty.to_string(), target, external });
-        }
-        out
+        rels_of(&doc, part)
     }
     /// Content types: (extension defaults, part overrides).
     pub fn content_type(&self, part: &str) -> Option<String> {
@@ -157,13 +149,47 @@ impl Package {
     }
 }
 
+/// The relationships in a parsed rels part, with internal targets resolved against `part`'s folder.
+fn rels_of(doc: &xml::Doc, part: &str) -> Rels {
+    let base = dir_of(part);
+    let mut out = Rels::default();
+    for r in doc.root.children_named("Relationship") {
+        let (Some(id), Some(ty), Some(target)) = (r.attr("Id"), r.attr("Type"), r.attr("Target")) else { continue };
+        let external = r.attr("TargetMode").is_some_and(|m| m.eq_ignore_ascii_case("external"));
+        let target_raw = target.to_string();
+        let target = if external { target_raw.clone() } else { resolve(&base, target) };
+        out.items.push(Rel {
+            id: id.to_string(),
+            kind: ty.rsplit('/').next().unwrap_or(ty).to_string(),
+            ty: ty.to_string(),
+            target_raw,
+            target,
+            external,
+        });
+    }
+    out
+}
+
+/// The relationships of `part` from the bytes of its rels part (kept parts carried by a chart).
+pub fn rels_from_bytes(bytes: &[u8], part: &str) -> Rels {
+    match xml::parse(bytes) {
+        Ok(doc) => rels_of(&doc, part),
+        Err(e) => {
+            log::warn!("pptx: relationships of {part}: {e}");
+            Rels::default()
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Rel {
     pub id: String,
     /// Last segment of the relationship type (`slide`, `image`, `media`…).
     pub kind: String,
-    /// The whole relationship type URI, to write it back as it was.
+    /// Full relationship type URI.
     pub ty: String,
+    /// `Target` as written in the rels part (relative path or URL).
+    pub target_raw: String,
     /// Absolute part name for internal targets; the URL for external ones.
     pub target: String,
     pub external: bool,
@@ -191,6 +217,28 @@ impl Rels {
 
 pub fn norm(name: &str) -> String {
     name.trim_start_matches('/').replace('\\', "/").to_ascii_lowercase()
+}
+
+/// A part a chart may carry along beside its own `chartN.xml` (workbook, style, drawing, picture).
+/// Chart documents themselves are rewritten, and nothing outside these folders is copied: a relationship
+/// must not be able to replace `ppt/slides/slide1.xml` on save.
+pub fn sidecar_part(name: &str) -> bool {
+    let n = norm(name);
+    let segs: Vec<&str> = n.split('/').filter(|s| !s.is_empty()).collect();
+    if segs.iter().any(|s| *s == "." || *s == "..") {
+        return false;
+    }
+    let (Some(root), Some(area)) = (segs.first().copied(), segs.get(1).copied()) else { return false };
+    if root != "ppt" || !matches!(area, "embeddings" | "charts" | "drawings" | "media") {
+        return false;
+    }
+    let file = segs.last().copied().unwrap_or("");
+    let stem = file.strip_prefix("chart").unwrap_or("");
+    let num = stem.strip_suffix(".xml.rels").or_else(|| stem.strip_suffix(".xml")).unwrap_or("");
+    if stem != file && !num.is_empty() && num.chars().all(|c| c.is_ascii_digit()) {
+        return false;
+    }
+    true
 }
 
 pub fn dir_of(part: &str) -> String {
@@ -371,7 +419,14 @@ impl PackageOut {
         let err = |e: &dyn std::fmt::Display| PptxError::Write(e.to_string());
         zw.start_file("[Content_Types].xml", deflate).map_err(|e| err(&e))?;
         zw.write_all(&ct.finish()).map_err(|e| err(&e))?;
+        let mut written = std::collections::HashSet::new();
         for (name, data, compress) in &self.files {
+            // Zip entry names must be unique: a second part under a name already written is
+            // dropped rather than producing a package readers reject or resolve differently.
+            if !written.insert(norm(name)) {
+                log::warn!("pptx: part {name} written twice; keeping the first");
+                continue;
+            }
             let large = data.len() as u64 >= u32::MAX as u64 / 2;
             let opts = if *compress { deflate } else { stored }.large_file(large);
             zw.start_file(name.as_str(), opts).map_err(|e| err(&e))?;
@@ -430,5 +485,18 @@ mod tests {
         assert_eq!(relative("ppt/slides/slide1.xml", "ppt/media/image1.png"), "../media/image1.png");
         assert_eq!(relative("ppt/presentation.xml", "ppt/slides/slide1.xml"), "slides/slide1.xml");
         assert_eq!(relative("ppt/slides/slide1.xml", "ppt/slides/slide2.xml"), "slide2.xml");
+    }
+
+    #[test]
+    fn sidecar_parts_stay_inside_chart_folders() {
+        assert!(sidecar_part("ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx"));
+        assert!(sidecar_part("ppt/charts/style1.xml"));
+        assert!(sidecar_part("ppt/drawings/chartDrawing1.xml"));
+        assert!(sidecar_part("ppt/media/image1.png"));
+        assert!(!sidecar_part("ppt/charts/chart1.xml"));
+        assert!(!sidecar_part("ppt/charts/_rels/chart1.xml.rels"));
+        assert!(!sidecar_part("ppt/slides/slide1.xml"));
+        assert!(!sidecar_part("ppt/embeddings/../../ppt/slides/slide1.xml"));
+        assert!(!sidecar_part("/etc/passwd"));
     }
 }

@@ -26,12 +26,12 @@ fn glb(marker: u8) -> Vec<u8> {
 }
 
 fn shape(p: &mut Presentation, name: &str, x: f64, y: f64, w: f64, h: f64) -> Shape {
-    Shape { id: ShapeId(p.alloc_id()), name: name.into(), xfrm: Some(Xfrm::new(x, y, w, h)), ..Default::default() }
+    Shape { id: ShapeId(p.alloc_id().expect("id")), name: name.into(), xfrm: Some(Xfrm::new(x, y, w, h)), ..Default::default() }
 }
 
 fn new_slide(p: &mut Presentation, title: &str) -> Slide {
     let layout = defaults::layout_of_kind(p, deckcraft_model::LayoutType::TitleOnly).unwrap_or_default();
-    let mut s = defaults::new_slide(p, layout);
+    let mut s = defaults::new_slide(p, layout).expect("slide");
     if let Some(t) = s.shapes.first_mut() {
         t.text = Some(TextBody::from_text(title));
     }
@@ -55,11 +55,11 @@ fn corpus() -> (Presentation, Vec<u8>, Vec<u8>, Vec<u8>) {
     let block = glb(1);
     let globe = glb(2);
     let poster = png([20, 80, 160]);
-    let audio = p.add_media("clip.m4a", "audio/mp4", audio_bytes);
-    let video = p.add_media("clip.mp4", "video/mp4", video_bytes);
-    let block_id = p.add_media("block.glb", "model/gltf-binary", block.clone());
-    let globe_id = p.add_media("globe.glb", "model/gltf-binary", globe.clone());
-    let poster_id = p.add_media("globe-poster.png", "image/png", poster.clone());
+    let audio = p.add_media("clip.m4a", "audio/mp4", audio_bytes).expect("media");
+    let video = p.add_media("clip.mp4", "video/mp4", video_bytes).expect("media");
+    let block_id = p.add_media("block.glb", "model/gltf-binary", block.clone()).expect("media");
+    let globe_id = p.add_media("globe.glb", "model/gltf-binary", globe.clone()).expect("media");
+    let poster_id = p.add_media("globe-poster.png", "image/png", poster.clone()).expect("media");
 
     let mut objects = new_slide(&mut p, "Objects");
     let mut diagram = shape(&mut p, "Diagram", 40.0, 80.0, 288.0, 144.0);

@@ -20,7 +20,7 @@ fn style_xml() -> String {
 /// An exported deck with a 3x2 table using the probe style.
 fn table_deck() -> Vec<u8> {
     let mut p = defaults::new_presentation(None);
-    let id = ShapeId(p.alloc_id());
+    let id = ShapeId(p.alloc_id().expect("ids"));
     let first = p.slides[0].id;
     let mut t = deckcraft_model::Table::new(3, 2, 300.0, 30.0);
     t.style = "medium2-accent1".into();

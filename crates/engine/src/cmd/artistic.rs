@@ -173,7 +173,10 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(move |doc, sel| {
         let mut set: Vec<(ShapeId, MediaId, Option<MediaId>)> = Vec::new();
         for (id, original, processed) in &results {
-            let m = processed.as_ref().map(|(name, png)| doc.add_media(name, "image/png", png.clone()));
+            let m = match processed {
+                Some((name, png)) => Some(doc.add_media(name, "image/png", png.clone()).ok_or_else(|| bad("picture.artisticEffect", NO_ID_SPACE))?),
+                None => None,
+            };
             set.push((*id, *original, m));
         }
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("picture.artisticEffect", "no slide"))?;

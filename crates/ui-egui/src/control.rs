@@ -28,12 +28,34 @@ pub struct ControlRequest {
     pub method: String,
     pub params: Value,
     pub reply: Sender<ControlResponse>,
+    /// Who has the request: [`PENDING`], [`TAKEN`] (the app runs it) or [`ABANDONED`] (the
+    /// sender gave up on it, so the app must not run it late: issue #719).
+    pub state: std::sync::Arc<std::sync::atomic::AtomicU8>,
 }
+
+/// Queued, not yet run.
+pub const PENDING: u8 = 0;
+/// The app has started it: it will answer.
+pub const TAKEN: u8 = 1;
+/// Its sender gave up waiting (the reply timeout expired): it is dropped unrun.
+pub const ABANDONED: u8 = 2;
 
 impl ControlRequest {
     pub fn new(method: impl Into<String>, params: Value) -> (Self, std::sync::mpsc::Receiver<ControlResponse>) {
         let (tx, rx) = std::sync::mpsc::channel();
-        (Self { method: method.into(), params, reply: tx }, rx)
+        (Self { method: method.into(), params, reply: tx, state: Default::default() }, rx)
+    }
+
+    /// Claim the request for running; false when its sender already gave up on it.
+    pub fn take(&self) -> bool {
+        use std::sync::atomic::Ordering;
+        self.state.compare_exchange(PENDING, TAKEN, Ordering::SeqCst, Ordering::SeqCst).is_ok() || self.state.load(Ordering::SeqCst) == TAKEN
+    }
+
+    /// Give up on the request; false when the app has already started it (it will answer).
+    pub fn abandon(state: &std::sync::atomic::AtomicU8) -> bool {
+        use std::sync::atomic::Ordering;
+        state.compare_exchange(PENDING, ABANDONED, Ordering::SeqCst, Ordering::SeqCst).is_ok() || state.load(Ordering::SeqCst) == ABANDONED
     }
 }
 
@@ -400,5 +422,26 @@ pub fn save_screenshot(app: &mut SlideApp, image: &egui::ColorImage, path: Optio
             Err(e) => json!({"ok": false, "error": e}),
         },
         None => json!({"ok": false, "error": "no writer configured"}),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::*;
+
+    /// `take` and `abandon` are exclusive: whoever wins, the request runs at most once (#719).
+    #[test]
+    fn take_and_abandon_are_exclusive() {
+        let (req, _rx) = ControlRequest::new("m", json!({}));
+        assert!(req.take(), "a pending request is taken");
+        assert!(!ControlRequest::abandon(&req.state), "a taken request is not abandoned");
+        assert!(req.take(), "a taken request stays taken");
+
+        let (req, _rx) = ControlRequest::new("m", json!({}));
+        assert!(ControlRequest::abandon(&req.state), "a pending request is abandoned");
+        assert!(!req.take(), "an abandoned request is never taken");
+        assert!(ControlRequest::abandon(&req.state), "abandoning twice stays abandoned");
     }
 }

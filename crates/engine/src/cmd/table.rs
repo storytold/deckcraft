@@ -288,9 +288,9 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
     with_table(s, p, "table", move |t| {
         match op.as_str() {
             "rowAbove" => t.insert_row(r),
-            "rowBelow" => t.insert_row(r + 1),
+            "rowBelow" => t.insert_row(r.saturating_add(1)),
             "colLeft" => t.insert_col(c),
-            "colRight" => t.insert_col(c + 1),
+            "colRight" => t.insert_col(c.saturating_add(1)),
             "delRow" => {
                 if !t.delete_row(r) {
                     return Err(bad("table.deleteRow", "can't delete the last row"));
@@ -537,7 +537,7 @@ fn column_width(s: &mut Session, p: &Value) -> Result<Value> {
     with_table(s, p, "table.columnWidth", move |t| {
         // Keeping the table's width, the column to the right gives or takes the difference (dragging
         // an inner border). The last column has none: the table gets wider or narrower.
-        let pair = t.cols.get(c).zip(t.cols.get(c + 1)).map(|(a, b)| a.max(0.0) + b.max(0.0)).filter(|x| x.is_finite());
+        let pair = t.cols.get(c).zip(t.cols.get(c.saturating_add(1))).map(|(a, b)| a.max(0.0) + b.max(0.0)).filter(|x| x.is_finite());
         match pair {
             Some(pair) if keep_total => {
                 let min = MIN_COLUMN_WIDTH.min(pair / 2.0);
@@ -545,7 +545,7 @@ fn column_width(s: &mut Session, p: &Value) -> Result<Value> {
                 if let Some(x) = t.cols.get_mut(c) {
                     *x = w;
                 }
-                if let Some(x) = t.cols.get_mut(c + 1) {
+                if let Some(x) = t.cols.get_mut(c.saturating_add(1)) {
                     *x = pair - w;
                 }
             }

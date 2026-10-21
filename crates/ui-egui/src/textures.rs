@@ -21,7 +21,7 @@ struct Key {
     extra: u64,
     /// The pasteboard region the slide's drawing calls for (canvas only).
     want: Region,
-    skip_text: Option<ShapeId>,
+    editing_text: Option<ShapeId>,
 }
 
 struct Entry {
@@ -248,8 +248,7 @@ impl Textures {
     /// The canvas texture for slide `index`, the slide being `size` pixels, and the region it
     /// covers: the slide, grown over the pasteboard to show what reaches off the slide within
     /// `visible` (the canvas, in pixels from the slide's top-left corner). `extra` changes with the
-    /// GIF frames. `skip_text` leaves out one shape's text (the prompt of a placeholder being typed
-    /// into).
+    /// GIF frames. `editing_text` replaces its placeholder prompt with gray empty list markers.
     #[allow(clippy::too_many_arguments)]
     pub fn slide(
         &mut self,
@@ -262,7 +261,7 @@ impl Textures {
         extra: u64,
         grayscale: bool,
         gif_times: &[(ShapeId, f64)],
-        skip_text: Option<ShapeId>,
+        editing_text: Option<ShapeId>,
         anim: Option<(&deckcraft_anim::Timeline, f64)>,
     ) -> Option<(TextureHandle, Region)> {
         let slide = p.slides.get(index)?.clone();
@@ -290,7 +289,7 @@ impl Textures {
             edit,
             extra: extra ^ grayscale as u64 ^ anim_key(anim),
             want,
-            skip_text,
+            editing_text,
         };
         if let Some(e) = &self.canvas
             && e.key == key
@@ -309,7 +308,7 @@ impl Textures {
                 offset: region.offset(),
                 size: Some(region.size()),
                 state,
-                skip_text,
+                editing_text,
                 ..Default::default()
             };
             deckcraft_render::render_slide_drawn(p, index, &opts)
@@ -367,7 +366,7 @@ impl Textures {
             edit: false,
             extra: 0,
             want: Region::slide(width_px, h),
-            skip_text: None,
+            editing_text: None,
         };
         self.clock += 1;
         let clock = self.clock;

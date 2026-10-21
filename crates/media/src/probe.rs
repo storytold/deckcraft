@@ -198,8 +198,8 @@ fn probe_asf(b: &[u8]) -> Result<MediaInfo> {
     }
     let header_end = (u64le(16) as usize).min(b.len());
     let mut info = MediaInfo { container: "asf", ..Default::default() };
-    let mut pos = 30;
-    while pos + 24 <= header_end {
+    let mut pos: usize = 30;
+    while pos.checked_add(24).is_some_and(|end| end <= header_end) {
         let guid = &b[pos..pos + 16];
         let size = u64le(pos + 16) as usize;
         if size < 24 {
@@ -230,7 +230,24 @@ fn probe_asf(b: &[u8]) -> Result<MediaInfo> {
                 info.video = Some(VideoInfo { codec: "WMV".into(), width: u32le(td), height: u32le(td + 4), decodable: false, ..Default::default() });
             }
         }
-        pos += size;
+        // A hostile size must not wrap the walk (or walk off the end): an object that
+        // overruns the header ends it, which is also the correct ASF semantics.
+        let Some(next) = pos.checked_add(size).filter(|&p| p <= header_end) else { break };
+        pos = next;
     }
     Ok(info)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hostile_asf_object_sizes_end_the_walk() {
+        // The header object GUID followed by 48 × 0xFF: the walk reads usize::MAX back as
+        // every object size and must end instead of wrapping `pos` (and panicking).
+        let mut b = crate::ASF_HEADER.to_vec();
+        b.extend_from_slice(&[0xFF; 48]);
+        assert!(matches!(probe_asf(&b), Ok(info) if info.container == "asf"));
+    }
 }

@@ -338,7 +338,7 @@ pub fn body_pr(b: &El) -> BodyProps {
         match e.local() {
             "normAutofit" => {
                 p.autofit = Some(AutoFit::Shrink {
-                    font_scale: pct(e, "fontScale").unwrap_or(1.0).clamp(0.01, 1.0),
+                    font_scale: pct(e, "fontScale").map(|v| v.clamp(0.01, 1.0)),
                     line_reduction: pct(e, "lnSpcReduction").unwrap_or(0.0).clamp(0.0, 1.0),
                 })
             }
@@ -489,6 +489,7 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
         highlight_click: h.bool("highlightClick").unwrap_or(false),
         stop_sound: h.bool("endSnd").unwrap_or(false),
         sound: h.child("snd").and_then(|s| media_ref(imp, part, s)),
+        zoom_return: None,
     })
 }
 
@@ -644,8 +645,14 @@ mod tests {
         assert_eq!(b.wrap, Some(false));
         assert_eq!(b.vert, Some(TextDir::Vertical270));
         assert_eq!(b.columns, Some(2));
-        assert_eq!(b.autofit, Some(AutoFit::Shrink { font_scale: 0.625, line_reduction: 0.2 }));
+        assert_eq!(b.autofit, Some(AutoFit::Shrink { font_scale: Some(0.625), line_reduction: 0.2 }));
         assert_eq!(b.space_first_last, None);
+        // A bare `<a:normAutofit/>` keeps no scale: the schema default 100 % is drawn as it is,
+        // not the same as a saved 100 % (`fontScale="100000"`) (#724).
+        let d = parse(br#"<a:bodyPr><a:normAutofit/></a:bodyPr>"#).unwrap();
+        assert_eq!(body_pr(&d.root).autofit, Some(AutoFit::Shrink { font_scale: None, line_reduction: 0.0 }));
+        let d = parse(br#"<a:bodyPr><a:normAutofit fontScale="100000"/></a:bodyPr>"#).unwrap();
+        assert_eq!(body_pr(&d.root).autofit, Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 }));
         let d = parse(br#"<a:bodyPr spcFirstLastPara="1"/>"#).unwrap();
         assert_eq!(body_pr(&d.root).space_first_last, Some(true));
         // mongolianVert is its own direction (PowerPoint runs its lines left to right) and is

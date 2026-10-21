@@ -8,6 +8,7 @@ mod bench;
 mod ico;
 mod layers;
 mod parity;
+mod pdf_deps;
 mod stats;
 mod version;
 
@@ -19,9 +20,10 @@ usage: cargo xtask <command>
 
 commands:
   assets          check that every icon/image/font/asset is attributed in ATTRIBUTION.md
+  pdf-deps        verify pinned writer sources and the production feature boundary
   layers          enforce the crate dependency layering (plan/architecture.md §3)
   wasm            cargo check --target wasm32-unknown-unknown for the wasm-safe crates
-  ci              fmt --check, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
+  ci              fmt --check, pdf-deps, clippy -D warnings, test, assets, layers, wasm (stops at first failure)
   stats [--exact] count tests and lines per crate (--exact: ask the test harness via `-- --list`)
   bench [--save] [DECK...]
                   time open, render, save and export of the sample (and DECKs) in release, and
@@ -37,6 +39,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("assets") => assets::run(&root()),
         Some("layers") => cmd_layers(),
+        Some("pdf-deps") => pdf_deps::run(&root()),
         Some("wasm") => cmd_wasm(),
         Some("ci") => cmd_ci(),
         Some("stats") => stats::run(&root(), rest.contains(&"--exact")),
@@ -161,6 +164,7 @@ fn cmd_ci() -> Result<(), String> {
                 run(c, "cargo fmt --all -- --check")
             }),
         ),
+        ("pdf-deps", Box::new(|| pdf_deps::run(&root()))),
         (
             "clippy",
             Box::new(|| {

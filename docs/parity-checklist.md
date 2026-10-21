@@ -1,31 +1,31 @@
 # PowerPoint feature checklist
 
-> **Generated:** 2026-10-13 (summary by `cargo xtask parity`; Preview in editor re-scored; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The summary between `<!-- SUMMARY -->
-**Weighted breadth parity: 83%** over 194 features.
+**Weighted breadth parity: 84%** over 191 features.
 
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 66 | 45 | 16 | 5 | 80% |
-| P2 | 56 | 16 | 24 | 16 | 50% |
+| P1 | 65 | 45 | 16 | 4 | 82% |
+| P2 | 54 | 17 | 26 | 11 | 56% |
 
 | Area | Parity |
 |---|---|
 | Application shell | 81% |
-| Files | 72% |
-| Slides | 90% |
+| Files | 75% |
+| Slides | 92% |
 | Views | 98% |
 | Masters & themes | 92% |
 | Shapes | 91% |
 | Format | 83% |
 | Arrange | 100% |
-| Text | 81% |
+| Text | 83% |
 | Tables | 97% |
 | Charts | 65% |
 | SmartArt | 50% |
-| Pictures | 52% |
+| Pictures | 60% |
 | Media | 71% |
 | Transitions | 100% |
 | Animations | 85% |
@@ -54,7 +54,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Application shell | Multiple open presentations | P1 | P |
 | Application shell | Preferences (autosave, units, defaults) | P2 | P |
 | Files | New blank presentation | P0 | D |
-| Files | Native file format (open/save) | P0 | D |
+| Files | Native file format (open/save; chart package parts retained, `crates/engine/tests/chart_native.rs`) | P0 | D |
 | Files | Open PowerPoint .pptx | P0 | D |
 | Files | Save as PowerPoint .pptx | P0 | D |
 | Files | Open/save .potx/.ppsx/.pptm variants (.potx/.ppsx open; saved with the .pptx content type; no .pptm) | P2 | P |
@@ -68,7 +68,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
 | Files | Print (slides, handouts, notes, outline) | P1 | M |
 | Files | Password protection | P2 | M |
-| Files | Reuse slides from another file | P1 | M |
+| Files | Reuse slides from another file | P1 | P |
 | Files | Drag and drop files onto the window | P1 | D |
 | Files | OpenDocument .odp open/save | P2 | M |
 | Slides | New slide by layout | P0 | D |
@@ -79,7 +79,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Slides | Reset slide | P1 | D |
 | Slides | Slides from outline | P2 | D |
 | Slides | Copy/paste slides between decks | P1 | P |
-| Slides | Zoom (summary, section and slide zoom) | P2 | M |
+| Slides | Zoom (summary, section and slide zoom) | P2 | P |
 | Views | Normal view (thumbnails, slide, notes) | P0 | D |
 | Views | Outline view | P1 | D |
 | Views | Slide Sorter | P0 | D |
@@ -145,7 +145,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Text | Change case, grow/shrink font, clear formatting | P1 | D |
 | Text | Text outline and text effects | P2 | P |
 | Text | Paragraph alignment, indents, spacing, line spacing | P0 | D |
-| Text | Bullets and numbering | P0 | D |
+| Text | Bullets and numbering (including gray empty-line markers while editing) | P0 | D |
 | Text | Picture bullets, custom bullet symbols | P2 | P |
 | Text | List levels (Tab / Shift+Tab) | P0 | D |
 | Text | Tab stops | P2 | D |
@@ -155,10 +155,8 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Text | Text direction (rotated, stacked) | P1 | D |
 | Text | Find and replace, replace fonts | P1 | P |
 | Text | Spelling check | P1 | P |
-| Text | Thesaurus | P2 | M |
-| Text | AutoCorrect and smart quotes | P2 | Y |
+| Text | AutoCorrect and smart quotes | P2 | P |
 | Text | Thesaurus | P2 | P |
-| Text | AutoCorrect and smart quotes | P2 | M |
 | Text | Symbols and emoji | P1 | D |
 | Text | Equations | P2 | M |
 | Text | Hyperlinks (URL, slide, email) | P1 | D |
@@ -184,13 +182,11 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Pictures | SVG pictures | P1 | M |
 | Pictures | Crop (and crop to shape, aspect ratio) | P0 | P |
 | Pictures | Corrections, colour, transparency (recolor and Set Transparent Color done; sharpen/soften and colour temperature pending) | P1 | P |
-| Pictures | Artistic effects | P2 | M |
-| Pictures | Corrections, colour, transparency | P1 | P |
 | Pictures | Artistic effects | P2 | P |
 | Pictures | Remove background | P2 | M |
 | Pictures | Picture styles and borders | P1 | D |
 | Pictures | Change / reset picture | P1 | D |
-| Pictures | Compress pictures | P2 | M |
+| Pictures | Compress pictures | P2 | D |
 | Pictures | Paste image from clipboard (fails on Windows and Linux, #53) | P0 | P |
 | Pictures | Insert screenshot | P2 | M |
 | Media | Insert audio (any common format) | P0 | D |
@@ -210,7 +206,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Animations | Effect options, start (on click/with/after), duration, delay | P0 | D |
 | Animations | Animation pane (reorder, timing) | P0 | P |
 | Animations | By-paragraph text builds | P1 | D |
-| Animations | Triggers | P2 | D |
+| Animations | Triggers (separate click steps and paragraph builds round-trip; `crates/pptx/tests/trigger_steps.rs`) | P2 | D |
 | Animations | Animation Painter | P2 | D |
 | Animations | Preview in editor | P1 | D |
 | Slide show | Full-screen show from start / current | P0 | D |
@@ -232,7 +228,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Undo & clipboard | Unlimited undo/redo | P0 | D |
 | Undo & clipboard | Cut, copy, paste shapes and slides | P0 | D |
 | Undo & clipboard | Paste special (keep formatting, picture, text only) | P1 | D |
-| Automation (✱) | Every command scriptable (CLI, control channel, MCP) | P0 | D |
+| Automation (✱) | Every command scriptable (CLI, control channel, MCP; remote reply IDs, envelopes and framing validated, #718) | P0 | D |
 | Automation (✱) | Headless rendering and conversion | P0 | D |
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |

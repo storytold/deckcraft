@@ -541,7 +541,7 @@ fn shadow(blur: f64, dist: f64) -> Shadow {
 /// `title` false every line is a bullet (the bullet boxes of the bullet lists).
 fn text_shape(preset: &str, x: Xfrm, lines: &[&DiagramNode], title: bool) -> Shape {
     let mut body = TextBody::default();
-    body.body.autofit = Some(AutoFit::Shrink { font_scale: 1.0, line_reduction: 0.0 });
+    body.body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
     let top = lines.first().map(|n| if title { n.level } else { n.level.saturating_sub(1) }).unwrap_or(0);
     for (k, n) in lines.iter().enumerate() {
         let mut para = Paragraph::new(&n.text);
@@ -1703,12 +1703,12 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
 }
 
 /// Children with fresh ids for diagram `d` inside a group whose child space is `area`.
-fn regenerate(doc: &mut Presentation, d: &Diagram, area: Xfrm) -> Vec<Shape> {
+fn regenerate(cmd: &str, doc: &mut Presentation, d: &Diagram, area: Xfrm) -> Result<Vec<Shape>> {
     let mut v = layout(d, area);
     for sh in &mut v {
-        sh.id = ShapeId(doc.alloc_id());
+        sh.id = ShapeId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
     }
-    v
+    Ok(v)
 }
 
 /// Read the diagram (with typed text synced), let `f` change it, and regenerate the group.
@@ -1721,7 +1721,7 @@ fn edit_diagram<T>(s: &mut Session, p: &Value, cmd: &str, f: impl FnOnce(&mut Di
         let out = f(&mut d)?;
         normalize(&mut d.nodes);
         d.imported = false;
-        let kids = regenerate(doc, &d, child);
+        let kids = regenerate(cmd, doc, &d, child)?;
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
         let sh = deckcraft_model::find_shape_mut(shapes, gid).ok_or_else(|| bad(cmd, "no such shape"))?;
         sh.kind = ShapeKind::Group { children: kids, child };
@@ -1747,8 +1747,8 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
     let size = s.doc()?.doc.slide_size;
     let area = Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6);
     let id = s.edit(|doc, sel| {
-        let children = regenerate(doc, &d, area);
-        let id = ShapeId(doc.alloc_id());
+        let children = regenerate("insert.smartArt", doc, &d, area)?;
+        let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
         let g = Shape {
             id,
             name: format!("SmartArt ({kind})"),
@@ -1858,8 +1858,8 @@ fn from_text(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let d = Diagram { kind: kind.clone(), nodes, ..Default::default() };
     let gid = s.edit(|doc, sel| {
-        let children = regenerate(doc, &d, area);
-        let gid = ShapeId(doc.alloc_id());
+        let children = regenerate(CMD, doc, &d, area)?;
+        let gid = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let g = Shape {
             id: gid,
             name: format!("SmartArt ({kind})"),
@@ -1913,8 +1913,8 @@ fn to_text(s: &mut Session, p: &Value) -> Result<Value> {
             body.paragraphs.push(Paragraph::new(""));
         }
         body.body.wrap = Some(true);
-        body.body.autofit = Some(AutoFit::Shrink { font_scale: 1.0, line_reduction: 0.0 });
-        let id = ShapeId(doc.alloc_id());
+        body.body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+        let id = ShapeId(doc.alloc_id().ok_or_else(|| bad(CMD, NO_ID_SPACE))?);
         let tb =
             Shape { id, name: "Text".into(), xfrm: Some(area), text_box: true, text: Some(body), geom: Geom::preset("rect"), ..Default::default() };
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(CMD, "no slide"))?;
@@ -1989,7 +1989,7 @@ fn set_picture(s: &mut Session, p: &Value) -> Result<Value> {
         let (name, bytes) = super::insert::media_bytes(p, CMD)?;
         let ct = super::insert::content_type(&name, &bytes);
         target_group(s, p, CMD)?;
-        Some(s.edit(|doc, _| Ok(doc.add_media(&name, ct, bytes)))?)
+        Some(s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad(CMD, NO_ID_SPACE)))?)
     };
     edit_diagram(s, p, CMD, |d| {
         // A sub-point's picture is its top-level node's: that's the node the placeholder shows.

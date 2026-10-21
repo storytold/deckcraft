@@ -232,6 +232,15 @@ fn open_lists_recent_files_and_opens_one() {
     h.run_steps(2);
     assert!(h.query_by_label("Other.pptx").is_none(), "the search box filters by name");
     h.get_by_label("Quarterly review.pptx").click();
+    h.run_steps(1);
+    // The file is read in the background (#350); its progress window shows meanwhile.
+    for _ in 0..300 {
+        if h.state().opening.is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.run_steps(1);
+    }
     h.run_steps(3);
     assert_eq!(h.state().session.documents().len(), 2);
     assert_eq!(h.state().session.active().unwrap().path.as_deref(), Some(path.as_str()));
@@ -290,6 +299,32 @@ fn save_as_and_export_run_the_file_commands() {
     assert!(!h.state().session.active().unwrap().is_dirty());
     assert!(h.state().backstage.is_none());
     assert_eq!(asked.borrow().len(), 3, "no Save dialog for a presentation with a file");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Export › Change File Type › PNG offers "Transparent background" (#784): the PNG it saves
+/// leaves the slide background out. Other types don't show the option.
+#[test]
+fn change_file_type_png_can_leave_the_background_transparent() {
+    let dir = temp_dir("png-clear");
+    let (services, _) = saving_into(&dir);
+    let mut h = harness(SlideApp::new(Session::with_new(), services));
+    h.state_mut().run("app.backstage", json!({"page": "export"})).unwrap();
+    h.run_steps(3);
+    click_on_page(&h, "Change File Type");
+    h.run_steps(3);
+    assert!(h.query_by_label("Transparent background").is_none(), "only PNG has the option");
+    click_on_page(&h, "PNG Picture (*.png)");
+    h.run_steps(2);
+    h.get_by_label("Transparent background").click();
+    h.run_steps(2);
+    assert!(h.state().backstage.as_ref().is_some_and(|b| b.png_transparent));
+    click_on_page(&h, "Save As");
+    h.run_steps(3);
+    let title = h.state().session.active().unwrap().title();
+    let png = std::fs::read(dir.join(format!("{title}.png"))).unwrap();
+    let img = deckcraft_render::decode_image(&png).unwrap();
+    assert_eq!(img.get_pixel(2, 2).0[3], 0, "the background is left out");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -435,6 +470,15 @@ fn a_file_that_cant_be_opened_says_why() {
     h.run_steps(2);
     h.get_by_label("Browse").click();
     h.run_steps(3);
+    // The file is read in the background (#350): wait for it.
+    for _ in 0..500 {
+        if h.state().opening.is_none() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        h.run_steps(1);
+    }
+    h.run_steps(2);
     assert!(h.state().session.documents().is_empty());
     assert!(h.query_by_label_contains("not a presentation DeckCraft can read").is_some(), "the error is on screen");
     let _ = std::fs::remove_dir_all(&dir);

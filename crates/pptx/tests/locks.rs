@@ -15,14 +15,14 @@ fn png() -> Vec<u8> {
 }
 
 fn shape(p: &mut Presentation, name: &str, x: f64) -> Shape {
-    Shape { id: ShapeId(p.alloc_id()), name: name.into(), xfrm: Some(Xfrm::new(x, 40.0, 80.0, 60.0)), ..Default::default() }
+    Shape { id: ShapeId(p.alloc_id().expect("ids")), name: name.into(), xfrm: Some(Xfrm::new(x, 40.0, 80.0, 60.0)), ..Default::default() }
 }
 
 /// Slide 1 of a blank deck holds: a locked shape, an unlocked one, a hidden locked text box, a
 /// locked group (one child unlocked, one hidden), and a locked picture, connector and table.
 fn deck() -> Presentation {
     let mut p = defaults::new_presentation(None);
-    let img = p.add_media("image1.png", "image/png", png());
+    let img = p.add_media("image1.png", "image/png", png()).expect("media");
     let mut v = vec![];
     let mut a = shape(&mut p, "Locked", 0.0);
     a.locked = true;
@@ -40,7 +40,7 @@ fn deck() -> Presentation {
     c3.hidden = true;
     let gx = Xfrm::new(300.0, 40.0, 280.0, 60.0);
     let mut g = Shape {
-        id: ShapeId(p.alloc_id()),
+        id: ShapeId(p.alloc_id().expect("ids")),
         name: "Group".into(),
         xfrm: Some(gx),
         kind: ShapeKind::Group { children: vec![c1, c2, c3], child: gx },

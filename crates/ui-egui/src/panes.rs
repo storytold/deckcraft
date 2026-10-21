@@ -325,6 +325,8 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("size (pt)")).drag_stopped() {
                 run(app, "shape.effects", json!({"softEdges": s}));
             }
+            let raw3d = sh.effects.as_ref().and_then(|e| e.raw3d.clone());
+            three_d_options(app, ui, sh.id.0, raw3d.as_deref());
             if ui.button("Reset Effects").clicked() {
                 run(app, "shape.effects", json!({"reset": true}));
             }
@@ -754,6 +756,79 @@ fn picture_fill_options(app: &mut SlideApp, ui: &mut Ui, id: u32, pf: &deckcraft
     let mut rot = !pf.upright;
     if ui.checkbox(&mut rot, "Rotate with shape").changed() {
         run(app, "shape.fill", json!({"pictureProps": {"rotateWithShape": rot}}));
+    }
+}
+
+/// "perspectiveHeroicLeftFacing" → "Perspective heroic left facing".
+fn preset_label(name: &str) -> String {
+    let mut out = String::new();
+    for (i, c) in name.chars().enumerate() {
+        if i == 0 {
+            out.extend(c.to_uppercase());
+        } else if c.is_uppercase() {
+            out.push(' ');
+            out.extend(c.to_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A drop-down of `options`; picking one runs `shape.effects` with `{threeD: {key: option}}`.
+fn three_d_combo(app: &mut SlideApp, ui: &mut Ui, id: u32, label: &str, key: &str, cur: &str, options: &[&str]) {
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+        egui::ComboBox::from_id_salt(("3d", id, key)).selected_text(preset_label(cur)).width(170.0).show_ui(ui, |ui| {
+            for o in options {
+                if ui.selectable_label(*o == cur, preset_label(o)).clicked() {
+                    run(app, "shape.effects", json!({"threeD": {key: o}}));
+                }
+            }
+        });
+    });
+}
+
+/// A number field running `shape.effects` with `{threeD: {key: value}}` when it changes.
+fn three_d_drag(app: &mut SlideApp, ui: &mut Ui, label: &str, value: f64, suffix: &str, key: &str) {
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+        let mut v = value;
+        let r = ui.add(egui::DragValue::new(&mut v).suffix(suffix).max_decimals(1));
+        if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
+            run(app, "shape.effects", json!({"threeD": {key: v}}));
+        }
+    });
+}
+
+/// Format Shape ▸ Effects ▸ 3-D Format and 3-D Rotation.
+fn three_d_options(app: &mut SlideApp, ui: &mut Ui, id: u32, raw: Option<&str>) {
+    use deckcraft_engine::cmd::three_d::{BEVELS, CAMERAS, LIGHTS, MATERIALS, Shape3d};
+    let s3 = raw.map(Shape3d::parse).unwrap_or_default();
+    let with_none: Vec<&str> = std::iter::once("none").chain(BEVELS.iter().copied()).collect();
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new("3-D Format").font(theme::bold(13.0)));
+    for (label, key, b) in [("Top bevel", "bevelTop", &s3.top), ("Bottom bevel", "bevelBottom", &s3.bottom)] {
+        three_d_combo(app, ui, id, label, key, b.as_ref().map_or("none", |b| b.preset.as_str()), &with_none);
+        if let Some(b) = b {
+            three_d_drag(app, ui, "   Width", b.w, " pt", &format!("{key}W"));
+            three_d_drag(app, ui, "   Height", b.h, " pt", &format!("{key}H"));
+        }
+    }
+    three_d_drag(app, ui, "Depth", s3.depth, " pt", "depth");
+    three_d_drag(app, ui, "Contour", s3.contour, " pt", "contour");
+    three_d_combo(app, ui, id, "Material", "material", &s3.material, MATERIALS);
+    three_d_combo(app, ui, id, "Lighting", "lighting", &s3.light, LIGHTS);
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new("3-D Rotation").font(theme::bold(13.0)));
+    three_d_combo(app, ui, id, "Presets", "camera", &s3.camera, CAMERAS);
+    let (rx, ry, rz) = s3.rot.unwrap_or((0.0, 0.0, 0.0));
+    three_d_drag(app, ui, "X Rotation", rx, "°", "rotX");
+    three_d_drag(app, ui, "Y Rotation", ry, "°", "rotY");
+    three_d_drag(app, ui, "Z Rotation", rz, "°", "rotZ");
+    three_d_drag(app, ui, "Distance from ground", s3.z, " pt", "z");
+    if ui.add_enabled(raw.is_some(), egui::Button::new("Reset 3-D")).clicked() {
+        run(app, "shape.effects", json!({"threeD": {"reset": true}}));
     }
 }
 

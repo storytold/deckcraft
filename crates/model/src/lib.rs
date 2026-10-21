@@ -1021,10 +1021,13 @@ impl Default for Presentation {
 }
 
 impl Presentation {
-    /// A fresh id, unique across slides, shapes, layouts, masters and media in this deck.
-    pub fn alloc_id(&mut self) -> u32 {
-        self.next_id = self.next_id.max(1).saturating_add(1);
-        self.next_id
+    /// A fresh id, unique across slides, shapes, layouts, masters and media in this deck. `None`
+    /// once every id is in use (a hostile file can arrive that way): the deck cannot grow
+    /// further, and callers must refuse the change rather than duplicate ids (#407).
+    pub fn alloc_id(&mut self) -> Option<u32> {
+        let next = self.next_id.max(1).checked_add(1)?;
+        self.next_id = next;
+        Some(next)
     }
     /// Make sure `next_id` is above every id in use (after loading a file).
     pub fn fix_next_id(&mut self) {
@@ -1080,13 +1083,13 @@ impl Presentation {
         self.media.iter().find(|m| m.id == id)
     }
     /// Add media bytes, reusing an identical existing item.
-    pub fn add_media(&mut self, name: &str, content_type: &str, data: Vec<u8>) -> MediaId {
+    pub fn add_media(&mut self, name: &str, content_type: &str, data: Vec<u8>) -> Option<MediaId> {
         if let Some(m) = self.media.iter().find(|m| m.data.len() == data.len() && *m.data == data) {
-            return m.id;
+            return Some(m.id);
         }
-        let id = MediaId(self.alloc_id());
+        let id = MediaId(self.alloc_id()?);
         self.media.push(MediaItem { id, name: name.into(), content_type: content_type.into(), data: Arc::new(data), link: None });
-        id
+        Some(id)
     }
     /// Section index containing a slide (by position), when sections exist.
     pub fn section_of(&self, slide: SlideId) -> Option<usize> {

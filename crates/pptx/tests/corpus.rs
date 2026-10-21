@@ -22,7 +22,7 @@ fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
 
 fn shape(p: &mut Presentation, name: &str, x: f64, y: f64, w: f64, h: f64) -> deckcraft_model::Shape {
     deckcraft_model::Shape {
-        id: deckcraft_model::ShapeId(p.alloc_id()),
+        id: deckcraft_model::ShapeId(p.alloc_id().expect("id")),
         name: name.into(),
         xfrm: Some(deckcraft_geom::Xfrm::new(x, y, w, h)),
         ..Default::default()
@@ -31,7 +31,7 @@ fn shape(p: &mut Presentation, name: &str, x: f64, y: f64, w: f64, h: f64) -> de
 
 fn new_slide(p: &mut Presentation, title: &str) -> Slide {
     let layout = defaults::layout_of_kind(p, deckcraft_model::LayoutType::TitleOnly).unwrap_or_default();
-    let mut s = defaults::new_slide(p, layout);
+    let mut s = defaults::new_slide(p, layout).expect("slide");
     if let Some(t) = s.shapes.first_mut() {
         t.text = Some(TextBody::from_text(title));
     }
@@ -44,7 +44,7 @@ fn talk() -> Presentation {
     p.props.title = "Quarterly review".into();
     p.props.subject = "Owned corpus".into();
     p.props.author = "DeckCraft tests".into();
-    let img = p.add_media("mark.png", "image/png", png(4, 4, [20, 90, 160]));
+    let img = p.add_media("mark.png", "image/png", png(4, 4, [20, 90, 160])).expect("media");
 
     {
         let id = p.slides[0].id;
@@ -64,6 +64,7 @@ fn talk() -> Presentation {
                                     highlight_click: false,
                                     sound: None,
                                     stop_sound: false,
+                                    zoom_return: None,
                                 }),
                                 ..Default::default()
                             },

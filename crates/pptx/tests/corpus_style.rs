@@ -10,7 +10,7 @@ use deckcraft_model::text::{Align, AutoFit, BodyProps, ParaProps, Paragraph, Run
 use deckcraft_model::{Geom, Presentation, Shape, ShapeId, ShapeKind, defaults};
 
 fn shape(p: &mut Presentation, name: &str, x: f64, y: f64, w: f64, h: f64) -> Shape {
-    Shape { id: ShapeId(p.alloc_id()), name: name.into(), xfrm: Some(Xfrm::new(x, y, w, h)), ..Default::default() }
+    Shape { id: ShapeId(p.alloc_id().expect("id")), name: name.into(), xfrm: Some(Xfrm::new(x, y, w, h)), ..Default::default() }
 }
 
 fn shadow(inner: bool, dir: f64) -> Shadow {
@@ -74,12 +74,12 @@ fn style_deck() -> Presentation {
     };
 
     let layout = defaults::layout_of_kind(&p, deckcraft_model::LayoutType::Blank).unwrap_or_default();
-    let mut s = defaults::new_slide(&mut p, layout);
+    let mut s = defaults::new_slide(&mut p, layout).expect("slide");
 
     let mut word = shape(&mut p, "Styled text", 40.0, 40.0, 400.0, 180.0);
     word.text = Some(TextBody {
         body: BodyProps {
-            autofit: Some(AutoFit::Shrink { font_scale: 0.8, line_reduction: 0.2 }),
+            autofit: Some(AutoFit::Shrink { font_scale: Some(0.8), line_reduction: 0.2 }),
             columns: Some(2),
             col_spacing: Some(12.0),
             vert: Some(TextDir::Vertical270),
@@ -167,7 +167,7 @@ fn style_kinds_round_trip() {
     let twice = round(&once);
 
     let body = &by_name(&once, "Styled text").text.as_ref().expect("text").body;
-    assert_eq!(body.autofit, Some(AutoFit::Shrink { font_scale: 0.8, line_reduction: 0.2 }));
+    assert_eq!(body.autofit, Some(AutoFit::Shrink { font_scale: Some(0.8), line_reduction: 0.2 }));
     assert_eq!(body.columns, Some(2));
     assert_eq!(body.col_spacing, Some(12.0));
     assert_eq!(body.vert, Some(TextDir::Vertical270));

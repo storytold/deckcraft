@@ -216,7 +216,7 @@ pub fn build(name: &str, size: Size) -> Result<Presentation> {
         let key = Value::String(seed.layout.to_string());
         let layout = find_layout(&doc, &key, 0)
             .ok_or_else(|| bad("file.new", format!("template `{}` uses an unknown layout `{}`", starter.name, seed.layout)))?;
-        let mut slide = defaults::new_slide(&mut doc, layout);
+        let mut slide = defaults::new_slide(&mut doc, layout).ok_or_else(|| bad("file.new", crate::cmd::NO_ID_SPACE))?;
         if !seed.title.is_empty()
             && let Some(sh) = slide.shapes.iter_mut().find(|sh| sh.ph_type().is_some_and(|k| k.is_title()))
         {

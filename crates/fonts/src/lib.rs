@@ -227,6 +227,35 @@ mod tests {
     }
 
     #[test]
+    fn filtered_fallback_continues_after_a_rejected_loaded_face() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        let first = db.fallback_for('A', u32::MAX).unwrap();
+        let accepted_family = if first.family == LAST_RESORT_FAMILY { "DeckCraft Legacy" } else { LAST_RESORT_FAMILY };
+        let fallback = db.fallback_for_filtered('A', u32::MAX, |f| f.family == accepted_family).unwrap();
+        assert_eq!(fallback.family, accepted_family);
+        assert!(fallback.covers('A'));
+        assert_ne!(fallback.id(), first.id());
+        assert_eq!(db.fallback_for('A', u32::MAX).unwrap().id(), first.id(), "document fallback order is unchanged");
+        assert!(db.fallback_for_filtered('A', fallback.id(), |f| f.family == accepted_family).is_none(), "the excluded face stays excluded");
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn filtered_fallback_loads_an_eligible_system_face_and_does_not_cache_policy_misses() {
+        let dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
+        let db = FontDb::with_font_dirs(vec![dir]);
+        let first = db.fallback_for('A', u32::MAX).unwrap();
+        assert_ne!(first.family, "DeckCraft Legacy");
+        assert!(db.fallback_for_filtered('A', u32::MAX, |_| false).is_none());
+        assert!(db.fallback_for('A', u32::MAX).is_some(), "an interface policy miss does not hide document glyphs");
+        let accepted = db.fallback_for_filtered('A', u32::MAX, |f| f.family == "DeckCraft Legacy").unwrap();
+        assert_eq!(accepted.family, "DeckCraft Legacy");
+        assert!(accepted.covers('A'));
+    }
+
+    #[test]
     fn concurrent_lookups_all_find_an_installed_family() {
         // Threads resolving an installed family nobody had loaded yet used to fall back to
         // another face when a different thread finished loading it first, so the same text was

@@ -292,6 +292,9 @@ pub struct LineInfo {
 #[derive(Clone, Debug, Default)]
 pub struct TextLayout {
     pub runs: Vec<GlyphRun>,
+    /// Empty list markers for the editor only; ordinary rendering and export omit them.
+    /// Their space is still reserved so the caret starts where the first character will.
+    pub empty_bullets: Vec<GlyphRun>,
     pub decos: Vec<Deco>,
     pub lines: Vec<LineInfo>,
     /// Inner text box (insets applied), shape-local.
@@ -739,56 +742,52 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
     let lead_size = lead_style.size;
     let lead_face = lead_style.face.clone();
     // Bullet.
-    let bullet = if para.is_empty() && opts.prompt_color.is_none() {
-        None
-    } else {
-        match &props.bullet {
-            Some(Bullet::Char { char }) => {
-                let mut rp = lead.clone();
-                if let Some(f) = &props.bullet_font {
-                    rp.font = Some(f.clone());
-                }
-                rp.bold = Some(false);
-                rp.italic = Some(false);
-                if let Some(c) = &props.bullet_color {
-                    rp.fill = Some(Fill::solid(c.clone()));
-                }
-                rp.size = Some(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0));
-                rp.underline = None;
-                rp.strike = None;
-                rp.highlight = None;
-                let mut st = make_style(ctx, &rp, scale, opts.prompt_color);
-                st.baseline = 0.0;
-                // Symbol fonts (Wingdings) aren't available: map common private-use bullets.
-                let ch = map_symbol_bullet(char, props.bullet_font.as_deref());
-                bullet_face(db, &mut st, &ch);
+    let bullet = match &props.bullet {
+        Some(Bullet::Char { char }) => {
+            let mut rp = lead.clone();
+            if let Some(f) = &props.bullet_font {
+                rp.font = Some(f.clone());
+            }
+            rp.bold = Some(false);
+            rp.italic = Some(false);
+            if let Some(c) = &props.bullet_color {
+                rp.fill = Some(Fill::solid(c.clone()));
+            }
+            rp.size = Some(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0));
+            rp.underline = None;
+            rp.strike = None;
+            rp.highlight = None;
+            let mut st = make_style(ctx, &rp, scale, opts.prompt_color);
+            st.baseline = 0.0;
+            // Symbol fonts (Wingdings) aren't available: map common private-use bullets.
+            let ch = map_symbol_bullet(char, props.bullet_font.as_deref());
+            bullet_face(db, &mut st, &ch);
 
-                // A symbol font (Wingdings, Symbol…) that is installed draws its own glyph, found
-                // at U+F000 + the character code as such fonts map them; otherwise common symbol
-                // bullets are mapped to Unicode look-alikes.
-                let ch = match symbol_font_char(&st.face, char, props.bullet_font.as_deref()) {
-                    Some(c) => c.to_string(),
-                    None => map_symbol_bullet(char, props.bullet_font.as_deref()),
-                };
-                if !st.face.covers(ch.chars().next().unwrap_or('•')) {
-                    st.face = db.face("Inter", "Regular");
-                }
-                Some((ch, st))
+            // A symbol font (Wingdings, Symbol…) that is installed draws its own glyph, found
+            // at U+F000 + the character code as such fonts map them; otherwise common symbol
+            // bullets are mapped to Unicode look-alikes.
+            let ch = match symbol_font_char(&st.face, char, props.bullet_font.as_deref()) {
+                Some(c) => c.to_string(),
+                None => map_symbol_bullet(char, props.bullet_font.as_deref()),
+            };
+            if !st.face.covers(ch.chars().next().unwrap_or('•')) {
+                st.face = db.face("Inter", "Regular");
             }
-            Some(Bullet::AutoNum { scheme, start_at }) => {
-                let mut rp = lead.clone();
-                if let Some(c) = &props.bullet_color {
-                    rp.fill = Some(Fill::solid(c.clone()));
-                }
-                rp.size = Some(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0));
-                rp.underline = None;
-                let mut st = make_style(ctx, &rp, scale, opts.prompt_color);
-                let label = autonum(scheme, start_at.saturating_sub(1).saturating_add(number.unwrap_or(1)));
-                bullet_face(db, &mut st, &label);
-                Some((label, st))
-            }
-            _ => None,
+            Some((ch, st))
         }
+        Some(Bullet::AutoNum { scheme, start_at }) => {
+            let mut rp = lead.clone();
+            if let Some(c) = &props.bullet_color {
+                rp.fill = Some(Fill::solid(c.clone()));
+            }
+            rp.size = Some(lead.size.unwrap_or(18.0) * props.bullet_size.unwrap_or(1.0));
+            rp.underline = None;
+            let mut st = make_style(ctx, &rp, scale, opts.prompt_color);
+            let label = autonum(scheme, start_at.saturating_sub(1).saturating_add(number.unwrap_or(1)));
+            bullet_face(db, &mut st, &label);
+            Some((label, st))
+        }
+        _ => None,
     };
     ParaShaped { cells, styles, faces, props, lead_size, lead_face, bullet, level: para.level, rtl }
 }
@@ -1549,18 +1548,21 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
     let autofit = bp.autofit.unwrap_or(AutoFit::None);
     // Shrink on overflow starts from the scale the file was saved with (`fontScale`,
     // `lnSpcReduction`), which is what PowerPoint draws; editing the text resets it.
-    let (scale0, reduce0) = match (autofit, opts.no_shrink) {
+    let (scale0, reduce0, no_saved_scale) = match (autofit, opts.no_shrink) {
         (AutoFit::Shrink { font_scale, line_reduction }, false) => (
-            if font_scale.is_finite() { font_scale.clamp(0.1, 1.0) } else { 1.0 },
+            font_scale.filter(|s| s.is_finite()).map(|s| s.clamp(0.1, 1.0)).unwrap_or(1.0),
             if line_reduction.is_finite() { line_reduction.clamp(0.0, 0.2) } else { 0.0 },
+            font_scale.is_none(),
         ),
-        _ => (1.0, 0.0),
+        _ => (1.0, 0.0, false),
     };
     let mut l = layout_scaled(ctx, shape, body, &bp, opts, scale0, reduce0);
     // A scale PowerPoint saved is drawn as it is: PowerPoint fits the text again only when it
     // changes (and editing resets the saved scale), not when a file opens, even where our
     // metrics would call it overflowing (trailing empty paragraphs, substituted fonts).
-    let saved = scale0 < 1.0 || reduce0 > 0.0;
+    // A body whose file has no `fontScale` at all (`<a:normAutofit/>`) is the schema default
+    // 100 % and is drawn as it is too, not refitted on open (#724).
+    let saved = no_saved_scale || scale0 < 1.0 || reduce0 > 0.0;
     if let (AutoFit::Shrink { .. }, false) = (autofit, opts.no_shrink)
         && l.overflow
         && !saved
@@ -1654,6 +1656,10 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                 *deeper = 0;
             }
             numbering.get(lvl).copied()
+        } else if matches!(pp.bullet, Some(Bullet::AutoNum { .. })) {
+            // Preview the next number without consuming it: empty paragraphs do not advance
+            // numbering in the saved document or affect later populated paragraphs.
+            numbering.get(lvl).map(|n| n.saturating_add(1))
         } else {
             if !para.is_empty() {
                 for n in numbering.iter_mut().skip(lvl) {
@@ -1908,9 +1914,20 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
         // PowerPoint draws justified and distributed anchoring at the bottom.
         Anchor::Bottom | Anchor::Justified | Anchor::Distributed => inner.height() - used_h,
     };
-    // anchorCtr: centre the block horizontally.
-    let dx = if bp.anchor_ctr.unwrap_or(false) { ((inner.width() - out.content_width) / 2.0).max(0.0) } else { 0.0 };
-    let ox = inner.x0 + dx;
+    // anchorCtr: centre the drawn text block on the box. Lines sit where their alignment put
+    // them, so the origin is set so the block's centre lands on the box's centre — a left-edge
+    // offset alone pushed right-aligned lines out of the box (#736). Empty lines carry no ink
+    // and stay out of the block. Overflowing content centres symmetrically past both edges.
+    // Not applied to vertical text (there the offset would run along the wrong axis) or
+    // multi-column bodies (centring unimplemented for them).
+    let centre_block = bp.anchor_ctr.unwrap_or(false) && ncols == 1 && matches!(vert, TextDir::Horizontal);
+    let ox = if centre_block && !all_lines.is_empty() {
+        let ink = all_lines.iter().filter(|(li, ..)| li.end > li.start);
+        let (bmin, bmax) = ink.fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), (li, ..)| (a.min(li.extent.0), b.max(li.extent.1)));
+        if bmax >= bmin { inner.x0 + inner.width() / 2.0 - (bmin + bmax) / 2.0 } else { inner.x0 }
+    } else {
+        inner.x0
+    };
     let oy = inner.y0 + dy;
     // Emit runs, in visual order.
     for (line, place, _, bullet) in all_lines.iter_mut() {
@@ -1930,7 +1947,7 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
             && let Some((_, st)) = p.bullet.as_ref()
         {
             let (_, g) = measure_str(&st.face, st.size, &s);
-            out.runs.push(GlyphRun {
+            let run = GlyphRun {
                 face: st.face.clone(),
                 size: st.size,
                 color: st.color,
@@ -1946,7 +1963,12 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                 gradient: None,
                 effects: None,
                 upright: false,
-            });
+            };
+            if body.paragraphs.get(line.para).is_some_and(|p| p.is_empty()) && opts.prompt_color.is_none() {
+                out.empty_bullets.push(run);
+            } else {
+                out.runs.push(run);
+            }
         }
         // Group visually consecutive cells by (style, face).
         let mut cur: Option<GlyphRun> = None;

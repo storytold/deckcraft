@@ -34,7 +34,7 @@ fn rezip(es: &[(String, Vec<u8>)]) -> Vec<u8> {
 /// return the OMML read back.
 fn moved_to(host: &str) -> String {
     let mut p = defaults::new_presentation(None);
-    let id = ShapeId(p.alloc_id());
+    let id = ShapeId(p.alloc_id().expect("id"));
     let omml = format!("<m:oMathPara {NS_M}><m:oMath><m:r><m:t>x=1</m:t></m:r></m:oMath></m:oMathPara>");
     let eq = Shape {
         id,

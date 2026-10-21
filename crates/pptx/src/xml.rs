@@ -171,19 +171,6 @@ impl El {
         write_el(self, &mut s, 0);
         s
     }
-    /// Remove descendant elements with any of these local names (bounded).
-    pub fn remove_all(&mut self, locals: &[&str]) {
-        fn rec(e: &mut El, locals: &[&str], depth: usize) {
-            if depth > MAX_DEPTH {
-                return;
-            }
-            e.children.retain(|c| !matches!(c, Node::El(x) if locals.contains(&x.local())));
-            for c in e.elements_mut() {
-                rec(c, locals, depth + 1);
-            }
-        }
-        rec(self, locals, 0)
-    }
 }
 
 fn write_el(e: &El, s: &mut String, depth: usize) {

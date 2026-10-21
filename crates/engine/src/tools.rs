@@ -295,7 +295,12 @@ impl ToolState {
 
     /// The shape in Edit Points, while it is still the one selected shape.
     pub fn editing_points(&self, st: &crate::DocState) -> Option<ShapeId> {
-        self.edit_points.filter(|id| st.selection.shapes.as_slice() == [*id] && st.selection.text.is_none() && st.shape(*id).is_some())
+        // Only a freeform has points: after Undo takes the conversion back, Edit Points is over.
+        self.edit_points.filter(|id| {
+            st.selection.shapes.as_slice() == [*id]
+                && st.selection.text.is_none()
+                && st.shape(*id).is_some_and(|sh| matches!(sh.geom, deckcraft_model::Geom::Custom { .. }))
+        })
     }
 
     /// A freeform path is being drawn (Enter/Escape/double-click finish it).
@@ -439,10 +444,12 @@ impl Session {
                 }
             }
         }
-        // The frame of the text being edited: grabbing it moves the box.
+        // The frame of the text being edited: grabbing it moves the box, unless a shape in front
+        // of the text covers that spot (#931).
         if let Some(e) = edited_box(st)
             && e.movable
             && edit_zone(&e.xfrm, p, tol) == EditZone::Frame
+            && !shape_in_front(st, st.shapes(), e.id, p, tol, 0)
         {
             return Some(Hit::Frame { id: e.id });
         }
@@ -1309,7 +1316,10 @@ impl Session {
             None => edited_box(st).is_some_and(|e| edit_zone(&e.xfrm, p, tol) != EditZone::Outside),
             Some(_) => xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p),
         };
+        // A shape in front of the edited text takes the click, as in PowerPoint (#931).
+        let in_front = shape_in_front(st, st.shapes(), t.shape, p, tol, 0);
         if !inside
+            || in_front
             || matches!(
                 self.hit_test(p, tol),
                 Some(
@@ -1490,7 +1500,7 @@ impl Session {
             let list = cmd::current_shapes(doc, sel).cloned().unwrap_or_default();
             let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
             let boxes: Vec<Xfrm> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
-            cmd::edit::reid(doc, &mut copies);
+            cmd::edit::reid("edit.duplicate", doc, &mut copies)?;
             for (c, b) in copies.iter_mut().zip(boxes) {
                 c.xfrm = Some(b);
                 c.ph = None;
@@ -1644,7 +1654,7 @@ impl Session {
             let id = match existing {
                 Some(id) => id,
                 None => {
-                    let id = ShapeId(doc.alloc_id());
+                    let id = ShapeId(doc.alloc_id().ok_or_else(|| cmd::bad("ink.draw", cmd::NO_ID_SPACE))?);
                     let size = doc.slide_size;
                     let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("ink", "no slide"))?;
                     list.push(Shape {
@@ -1731,6 +1741,27 @@ struct EditedBox {
     xfrm: Xfrm,
     /// Its frame can be grabbed to move it: not a line (no frame to grab) and not locked.
     movable: bool,
+}
+
+/// Whether a visible shape drawn in front of `target` is under `p`: the shapes above it in its
+/// list, topmost first, and inside a group that holds it, the members above it.
+fn shape_in_front(st: &crate::DocState, shapes: &[Shape], target: ShapeId, p: Point, tol: f64, depth: usize) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    for s in shapes.iter().rev() {
+        if s.id == target {
+            return false;
+        }
+        if deckcraft_model::find_shape(std::slice::from_ref(s), target).is_some() {
+            // The group holding the text: look among its members.
+            return shape_in_front(st, s.children(), target, p, tol, depth + 1);
+        }
+        if !s.hidden && hit_shape(st, s, p, tol).is_some() {
+            return true;
+        }
+    }
+    false
 }
 
 fn edited_box(st: &crate::DocState) -> Option<EditedBox> {

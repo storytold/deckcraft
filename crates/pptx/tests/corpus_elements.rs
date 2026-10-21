@@ -14,11 +14,11 @@ use deckcraft_model::{Comment, CustomShow, Geom, LayoutType, PhType, Presentatio
 const CHIME: &[u8] = b"RIFFdeckcraft-chime-WAVEfmt ";
 
 fn link(action: Action) -> Hyperlink {
-    Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false }
+    Hyperlink { action, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None }
 }
 
 fn box_at(p: &mut Presentation, name: &str, x: f64, y: f64) -> Shape {
-    Shape { id: ShapeId(p.alloc_id()), name: name.into(), xfrm: Some(Xfrm::new(x, y, 80.0, 28.0)), ..Default::default() }
+    Shape { id: ShapeId(p.alloc_id().expect("id")), name: name.into(), xfrm: Some(Xfrm::new(x, y, 80.0, 28.0)), ..Default::default() }
 }
 
 fn round(p: &Presentation) -> Presentation {
@@ -51,8 +51,8 @@ fn deck() -> Presentation {
         body.list_style = ls;
     }
 
-    let chime = p.add_media("chime.wav", "audio/wav", CHIME.to_vec());
-    let mut a = defaults::new_slide(&mut p, layout);
+    let chime = p.add_media("chime.wav", "audio/wav", CHIME.to_vec()).expect("media");
+    let mut a = defaults::new_slide(&mut p, layout).expect("slide");
     a.name = "Review".into();
     if let Some(title) = a.shapes.iter_mut().find(|s| s.ph_type() == Some(PhType::Title)) {
         title.text = Some(TextBody::from_text("Review"));
@@ -72,6 +72,7 @@ fn deck() -> Presentation {
                             highlight_click: false,
                             sound: None,
                             stop_sound: false,
+                            zoom_return: None,
                         }),
                         ..Default::default()
                     },
@@ -97,6 +98,7 @@ fn deck() -> Presentation {
         highlight_click: true,
         sound: None,
         stop_sound: false,
+        zoom_return: None,
     });
     a.shapes.push(site);
 
@@ -116,13 +118,26 @@ fn deck() -> Presentation {
     }
 
     let mut hover = box_at(&mut p, "Hover", 40.0, 500.0);
-    hover.hover =
-        Some(Hyperlink { action: Action::PreviousSlide, tooltip: "Back one".into(), highlight_click: false, sound: None, stop_sound: true });
+    hover.hover = Some(Hyperlink {
+        action: Action::PreviousSlide,
+        tooltip: "Back one".into(),
+        highlight_click: false,
+        sound: None,
+        stop_sound: true,
+        zoom_return: None,
+    });
     a.shapes.push(hover);
 
     let mut home = box_at(&mut p, "Home", 800.0, 460.0);
     home.geom = Geom::preset("actionButtonHome");
-    home.click = Some(Hyperlink { action: Action::FirstSlide, tooltip: String::new(), highlight_click: true, sound: None, stop_sound: false });
+    home.click = Some(Hyperlink {
+        action: Action::FirstSlide,
+        tooltip: String::new(),
+        highlight_click: true,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
     a.shapes.push(home);
 
     let mut board = box_at(&mut p, "To board", 140.0, 500.0);
@@ -132,6 +147,7 @@ fn deck() -> Presentation {
         highlight_click: false,
         sound: Some(chime),
         stop_sound: false,
+        zoom_return: None,
     });
     a.shapes.push(board);
 
@@ -149,7 +165,7 @@ fn deck() -> Presentation {
         ..Default::default()
     }];
 
-    let mut b = defaults::new_slide(&mut p, layout);
+    let mut b = defaults::new_slide(&mut p, layout).expect("slide");
     if let Some(title) = b.shapes.iter_mut().find(|s| s.ph_type() == Some(PhType::Title)) {
         title.text = Some(TextBody::from_text("Second"));
     }

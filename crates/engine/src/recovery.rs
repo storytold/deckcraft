@@ -311,7 +311,10 @@ mod tests {
         let opened = open(&mut s2, &dir).unwrap();
         assert!(s2.documents().iter().all(|d| d.uid != uid), "{opened:?}");
         assert!(lock_path(&dir, other).exists(), "a live owner's lock stays");
-        // Once the owner is gone, its entry is recovered and its lock file cleaned up.
+        // Once the owner is gone, its entry is recovered and its lock file cleaned up. Unlock
+        // rather than only drop: a child spawned meanwhile by a parallel test (mkfifo) shares the
+        // open file and would keep the lock held until it execs.
+        lock.unlock().unwrap();
         drop(lock);
         let mut s3 = Session::new();
         open(&mut s3, &dir).unwrap();

@@ -163,7 +163,7 @@ mod tests {
         };
         let strokes = vec![mk(&rect), mk(&zig)];
         s.edit(|doc, sel| {
-            let id = ShapeId(doc.alloc_id());
+            let id = ShapeId(doc.alloc_id().expect("id"));
             crate::shapes_mut(doc, sel).unwrap().push(Shape {
                 id,
                 name: "Ink".into(),

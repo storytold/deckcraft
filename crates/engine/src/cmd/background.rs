@@ -165,8 +165,10 @@ fn remove_background(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let n = done.len();
     s.edit(|doc, sel| {
-        let added: Vec<(ShapeId, deckcraft_model::MediaId)> =
-            done.into_iter().map(|(id, name, png)| (id, doc.add_media(&name, "image/png", png))).collect();
+        let added: Vec<(ShapeId, deckcraft_model::MediaId)> = done
+            .into_iter()
+            .map(|(id, name, png)| Ok((id, doc.add_media(&name, "image/png", png).ok_or_else(|| bad("picture.removeBackground", NO_ID_SPACE))?)))
+            .collect::<Result<_>>()?;
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("picture.removeBackground", "no slide"))?;
         for (id, media) in added {
             if let Some(sh) = deckcraft_model::find_shape_mut(shapes, id)

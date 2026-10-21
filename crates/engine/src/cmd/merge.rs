@@ -237,7 +237,7 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
             made.push(sh);
         }
         for sh in &mut made {
-            sh.id = ShapeId(doc.alloc_id());
+            sh.id = ShapeId(doc.alloc_id().ok_or_else(|| bad("shape.merge", NO_ID_SPACE))?);
             new_ids.push(sh.id);
         }
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("shape.merge", "no slide"))?;

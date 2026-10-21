@@ -1,9 +1,6 @@
 # Hardware parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (PNG and JPEG slide export record 144 dpi at the default 2 pixels per point; previous: IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (a two-finger twist rotates the selection; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (a trackpad swipe turns the page; pinch-zoom remains; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (pen pressure scales ink width; tilt remains; previous: minor, IME input, #101; previous: major, created from the renderer, media and windowing code) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
 
 What hardware PowerPoint uses and what DeckCraft uses, per platform. Dimension score: **~40%
 ready** (estimated), **25–45 h** to parity. Performance (unmeasured, ~55%) is tracked here too
@@ -47,11 +44,8 @@ because it mostly follows from hardware use.
 |---|---|---|
 | Keyboard and presentation clickers (Page Up/Down, B, Esc) | yes | yes |
 | Mouse and trackpad scroll | yes | yes |
-| Pinch to zoom, two-finger gestures | yes | pinch zoom does not keep the point under the pointer; a two-finger twist rotates the selected shapes |
-| Pinch to zoom | yes | no |
+| Pinch to zoom, two-finger gestures | yes | partial: pinch zoom does not keep the point under the pointer; a two-finger twist rotates the selected shapes |
 | Two-finger swipe between slides | yes | yes: when the slide fits the window, and during the show. A zoomed slide still pans |
-| Pen pressure and tilt for ink (Apple Pencil via Sidecar, Windows Ink) | yes | no: ink strokes have constant width |
-| Pinch to zoom, two-finger gestures | yes | no |
 | Pen pressure and tilt for ink (Apple Pencil via Sidecar, Windows Ink) | yes | pressure scales the stroke when the pointer reports it (a mouse or a missing reading draws at the pen width); tilt is not read |
 | Touch screens (Windows) | yes | basic pointer only |
 | IME input methods for CJK text | yes | yes: composed in place, underlined, candidate window at the caret (#101) |
@@ -81,6 +75,7 @@ outlines every frame (#67, fix open), and the decoders run in software.
 |---|---|---|
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
+| 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |
 | 2026-10-14 | minor | A two-finger twist on the trackpad rotates the selected shapes, as one undo step. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | A sideways trackpad swipe turns the page in Normal view (when the slide fits) and in the show. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | Pen pressure scales ink width; tilt, pinch zoom and trackpad gestures remain (estimate 3–6 h → 2–5 h) |

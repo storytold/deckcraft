@@ -327,6 +327,7 @@ pub fn draw(
     _w: f64,
     _h: f64,
     fields: &dyn deckcraft_text::Fields,
+    editing: bool,
 ) -> Option<kurbo::Rect> {
     let _ = pres;
     let rects = cell_rects(t, &row_heights(rctx, t, fields));
@@ -418,14 +419,18 @@ pub fn draw(
     // Text.
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        if cell.text.is_empty() || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
+        if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
             continue;
         }
         let body = cell_body(rctx, t, *r, *c, cell);
         let tmp = Shape { text: Some(body.clone()), ..Default::default() };
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));
-        crate::draw_text(ctx, rctx, &tmp, &body, *rect, m, fields, None);
+        let mut l = deckcraft_text::layout(rctx, &tmp, &body, &deckcraft_text::Opts { rect: *rect, fields, prompt_color: None, no_shrink: false });
+        if editing {
+            crate::preview_empty_bullets(&mut l);
+        }
+        crate::draw_layout(ctx, &l, *rect, m);
         let _ = peniko::Fill::NonZero;
     }
     covered

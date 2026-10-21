@@ -189,7 +189,7 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
         let xs: Vec<Xfrm> = members.iter().filter_map(|m| m.xfrm).collect();
         let b = union_bounds(&xs).ok_or_else(|| bad("arrange.group", "nothing to group"))?;
         let gx = Xfrm::new(b.x0, b.y0, b.width(), b.height());
-        let id = ShapeId(doc.alloc_id());
+        let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("arrange.group", NO_ID_SPACE))?);
         let n = super::current_shapes(doc, sel).map(|v| v.len()).unwrap_or(0);
         let g = Shape {
             id,

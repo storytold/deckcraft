@@ -139,7 +139,7 @@ fn poster_frame(s: &mut Session, p: &Value) -> Result<Value> {
     let data = s.doc()?.doc.media(m.media).map(|i| i.data.clone()).ok_or_else(|| EngineError::Other("the media data is missing".into()))?;
     let png = poster_png(&data, ms).ok_or_else(|| EngineError::Other("no frame could be decoded there".into()))?;
     let name = format!("poster{id}.png");
-    let poster = s.edit(|doc, _| Ok(doc.add_media(&name, "image/png", png)))?;
+    let poster = s.edit(|doc, _| doc.add_media(&name, "image/png", png).ok_or_else(|| bad("media.posterFrame", NO_ID_SPACE)))?;
     edit_shapes(s, &json!({"id": id}), "media.posterFrame", |sh| {
         if let ShapeKind::Media(m) = &mut sh.kind {
             m.poster = Some(poster);

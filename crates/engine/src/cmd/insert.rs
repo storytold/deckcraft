@@ -149,9 +149,9 @@ fn default_rect(s: &Session, w: f64, h: f64) -> Xfrm {
     Xfrm::new((size.width - w) / 2.0, (size.height - h) / 2.0, w, h)
 }
 
-pub(crate) fn add_shape(s: &mut Session, mut shape: Shape, select: bool) -> Result<ShapeId> {
+pub(crate) fn add_shape(s: &mut Session, cmd: &str, mut shape: Shape, select: bool) -> Result<ShapeId> {
     s.edit(|doc, sel| {
-        shape.id = ShapeId(doc.alloc_id());
+        shape.id = ShapeId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
         if shape.name.is_empty() {
             let base = match &shape.kind {
                 ShapeKind::Picture { .. } => "Picture".to_string(),
@@ -222,7 +222,7 @@ fn insert_shape(s: &mut Session, p: &Value) -> Result<Value> {
     if let (Some(look), false) = (&s.default_look, line_like) {
         super::format::apply_painted(&mut shape, look);
     }
-    let id = add_shape(s, shape, true)?;
+    let id = add_shape(s, "shape.insert", shape, true)?;
     Ok(json!({"id": id}))
 }
 
@@ -268,7 +268,7 @@ fn insert_icon(s: &mut Session, p: &Value) -> Result<Value> {
         style: Some(ShapeStyle::line(SchemeSlot::Tx1)),
         ..Default::default()
     };
-    let id = add_shape(s, shape, true)?;
+    let id = add_shape(s, "insert.icon", shape, true)?;
     Ok(json!({"id": id}))
 }
 
@@ -290,7 +290,7 @@ fn text_box(s: &mut Session, p: &Value) -> Result<Value> {
             t.body.wrap = Some(false);
         }
     }
-    let id = add_shape(s, shape, true)?;
+    let id = add_shape(s, "insert.textBox", shape, true)?;
     super::text::fit_text_box(s, id)?;
     if text.is_empty() {
         // Start typing immediately.
@@ -426,7 +426,7 @@ fn picture(s: &mut Session, p: &Value) -> Result<Value> {
         }
         _ => [0.0; 4],
     };
-    let media = s.edit(|doc, _| Ok(doc.add_media(&name, ct, bytes)))?;
+    let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("insert.picture", NO_ID_SPACE)))?;
     let shape = Shape {
         xfrm: Some(rect),
         kind: ShapeKind::Picture { fill: PictureFill { media, crop, ..Default::default() } },
@@ -453,7 +453,7 @@ fn picture(s: &mut Session, p: &Value) -> Result<Value> {
         })?;
         return Ok(json!({"id": ph_id}));
     }
-    let id = add_shape(s, shape, true)?;
+    let id = add_shape(s, "insert.picture", shape, true)?;
     Ok(json!({"id": id}))
 }
 
@@ -544,7 +544,10 @@ fn commit_album(s: &mut Session, items: Vec<AlbumItem>, opts: AlbumOpts, replace
     let result = (|| {
         let album_id = match replace.as_ref().map(|(id, _)| *id) {
             Some(id) if id != 0 => id,
-            _ => s.edit(|doc, _| Ok(doc.alloc_id()))?,
+            _ => {
+                let cmd = if replace.is_some() { "insert.photoAlbumEdit" } else { "insert.photoAlbum" };
+                s.edit(|doc, _| doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE)))?
+            }
         };
         let at = if let Some((_, ids)) = &replace {
             let st = s.doc()?;
@@ -1190,7 +1193,7 @@ fn table(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    let id = add_shape(s, Shape { xfrm: Some(rect), kind: ShapeKind::Table(t), ..Default::default() }, true)?;
+    let id = add_shape(s, "insert.table", Shape { xfrm: Some(rect), kind: ShapeKind::Table(t), ..Default::default() }, true)?;
     Ok(json!({"id": id}))
 }
 
@@ -1247,7 +1250,7 @@ fn chart(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or(Xfrm::new(size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7));
-    let id = add_shape(s, Shape { xfrm: Some(rect), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }, true)?;
+    let id = add_shape(s, "insert.chart", Shape { xfrm: Some(rect), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }, true)?;
     Ok(json!({"id": id}))
 }
 
@@ -1299,12 +1302,15 @@ fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
     });
     let data = std::sync::Arc::try_unwrap(bytes).unwrap_or_else(|a| (*a).clone());
     let (media, poster) = s.edit(|doc, _| {
-        let media = doc.add_media(&name, ct, data);
-        let poster = poster_png.map(|png| doc.add_media(&format!("{name}-poster.png"), "image/png", png));
+        let media = doc.add_media(&name, ct, data).ok_or_else(|| bad("insert.media", NO_ID_SPACE))?;
+        let poster = match poster_png {
+            Some(png) => Some(doc.add_media(&format!("{name}-poster.png"), "image/png", png).ok_or_else(|| bad("insert.media", NO_ID_SPACE))?),
+            None => None,
+        };
         Ok((media, poster))
     })?;
     let clip = MediaClip { media, video, poster, volume: 1.0, duration_ms, width, height, ..Default::default() };
-    let id = add_shape(s, Shape { xfrm: Some(rect), kind: ShapeKind::Media(clip), descr: name, ..Default::default() }, true)?;
+    let id = add_shape(s, "insert.media", Shape { xfrm: Some(rect), kind: ShapeKind::Media(clip), descr: name, ..Default::default() }, true)?;
     if let Some(w) = &warning {
         s.ui_requests.push(crate::UiRequest::Message { text: w.clone() });
     }
@@ -1346,7 +1352,7 @@ fn word_art(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    let id = add_shape(s, shape, true)?;
+    let id = add_shape(s, "insert.wordArt", shape, true)?;
     super::text::fit_text_box(s, id)?;
     Ok(json!({"id": id}))
 }
@@ -1584,6 +1590,7 @@ fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
         highlight_click: bool_or(p, "highlightClick", false),
         sound: None,
         stop_sound: false,
+        zoom_return: None,
     };
     if s.doc()?.selection.text.is_some() {
         return super::text::link_text(s, link, &display);
@@ -1632,7 +1639,7 @@ fn shape_action(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let highlight = bool_param(p, "highlight").unwrap_or(true);
     let tooltip = str_param(p, "tooltip").unwrap_or("").to_string();
-    let link = action.map(|action| Hyperlink { action, tooltip, highlight_click: highlight, sound: None, stop_sound: false });
+    let link = action.map(|action| Hyperlink { action, tooltip, highlight_click: highlight, sound: None, stop_sound: false, zoom_return: None });
     edit_shapes(s, p, CMD, |sh| {
         if hover {
             sh.hover = link.clone();
@@ -1665,10 +1672,17 @@ fn action_button(s: &mut Session, p: &Value) -> Result<Value> {
         xfrm: Some(rect),
         geom: Geom::preset(preset),
         style: Some(ShapeStyle::accent(SchemeSlot::Accent1)),
-        click: action.map(|a| Hyperlink { action: a, tooltip: String::new(), highlight_click: true, sound: None, stop_sound: false }),
+        click: action.map(|a| Hyperlink {
+            action: a,
+            tooltip: String::new(),
+            highlight_click: true,
+            sound: None,
+            stop_sound: false,
+            zoom_return: None,
+        }),
         ..Default::default()
     };
-    let id = add_shape(s, shape, true)?;
+    let id = add_shape(s, "insert.actionButton", shape, true)?;
     Ok(json!({"id": id}))
 }
 

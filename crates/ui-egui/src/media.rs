@@ -536,7 +536,7 @@ mod tests {
 
     fn deck(shape: u32, bytes: Vec<u8>) -> (Presentation, ShapeId, MediaClip) {
         let mut doc = Presentation::default();
-        let media = doc.add_media("clip.wav", "audio/wav", bytes);
+        let media = doc.add_media("clip.wav", "audio/wav", bytes).expect("media");
         let clip = MediaClip { media, volume: 1.0, ..Default::default() };
         let id = ShapeId(shape);
         let slide = Arc::make_mut(&mut doc.slides[0]);
@@ -593,7 +593,7 @@ mod tests {
     fn gif_clocks_do_not_carry_across_documents() {
         let gif = |shape: u32| {
             let mut doc = Presentation::default();
-            let media = doc.add_media("a.gif", "image/gif", b"GIF89a-not-animated".to_vec());
+            let media = doc.add_media("a.gif", "image/gif", b"GIF89a-not-animated".to_vec()).expect("media");
             let id = ShapeId(shape);
             let slide = Arc::make_mut(&mut doc.slides[0]);
             slide.shapes.push(Shape {

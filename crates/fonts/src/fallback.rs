@@ -188,7 +188,12 @@ impl FontDb {
             // A letter with marks the run's font lacks (stacked combining marks): a loaded plain
             // face that draws the whole cluster, as PowerPoint draws the marks, before the run's
             // font with missing-glyph boxes.
-            _ => self.read_faces().iter().find(|f| !f.is_color() && covers_cluster(f, cluster)).cloned().unwrap_or_else(first),
+            _ => {
+                // Searched before `first` runs: it may load the default family, which needs the
+                // faces' write lock, so the read lock must not be held across it.
+                let found = self.read_faces().iter().find(|f| !f.is_color() && covers_cluster(f, cluster)).cloned();
+                found.unwrap_or_else(first)
+            }
         };
         // A pictograph that defaults to text presentation (⚠ ♥ ⬆ ▶) whose first fallback is the
         // colour emoji font: PowerPoint draws it from a plain symbol font.
@@ -275,6 +280,22 @@ mod tests {
         } else {
             eprintln!("skipped: no installed or bundled face covers Arabic");
         }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn falling_back_to_the_default_face_does_not_deadlock() {
+        // An empty chain and a character no loaded face draws: the loaded faces are searched,
+        // then the default family is looked up, which loads it (taking the faces' write lock).
+        // Holding the search's read lock across that lookup hung the thread.
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let db = FontDb::with_font_dirs(Vec::new());
+            db.set_system_fallback(false);
+            let _ = tx.send(db.cascade(&['\u{10FFFD}'], &[], "Regular").family.clone());
+        });
+        let family = rx.recv_timeout(std::time::Duration::from_secs(30)).expect("cascade did not return");
+        assert!(!family.is_empty());
     }
 
     #[test]

@@ -408,6 +408,94 @@ fn text_color(e: Option<&El>) -> Option<deckcraft_model::ColorRef> {
     rec(e?, 0)
 }
 
+const MAX_KEPT_PARTS: usize = 256;
+const MAX_KEPT_DEPTH: usize = 8;
+
+/// Relationships and parts a chart points at, so a later save can write them back.
+pub(crate) fn capture_kept(pkg: &crate::opc::Package, chart_part: &str) -> deckcraft_model::chart::ChartKept {
+    use deckcraft_model::chart::{ChartKept, ChartRel};
+
+    let mut kept = ChartKept::default();
+    // The chart document itself is rewritten; don't store a second copy of it.
+    let mut seen = std::collections::HashMap::from([(crate::opc::norm(chart_part), true)]);
+    for r in pkg.rels(chart_part).items {
+        if !safe_rel(&r.id, &r.ty, &r.target_raw) {
+            log::warn!("pptx: skipping chart relationship {}", r.id);
+            continue;
+        }
+        if r.external {
+            kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: String::new(), external: true });
+            continue;
+        }
+        if copy_part(pkg, &r.target, &mut kept.parts, &mut seen, 0) {
+            kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: r.target, external: false });
+        }
+    }
+    kept
+}
+
+fn safe_rel(id: &str, ty: &str, target: &str) -> bool {
+    [id, ty, target].iter().all(|s| !s.is_empty() && s.len() <= 4096 && !s.chars().any(|c| c.is_control() || matches!(c, '<' | '>' | '"' | '\'')))
+}
+
+/// `true` when `part` is stored (now or from an earlier relationship).
+fn copy_part(
+    pkg: &crate::opc::Package,
+    part: &str,
+    out: &mut Vec<deckcraft_model::chart::ChartPart>,
+    seen: &mut std::collections::HashMap<String, bool>,
+    depth: usize,
+) -> bool {
+    use deckcraft_model::chart::ChartPart;
+
+    if depth > MAX_KEPT_DEPTH || out.len() >= MAX_KEPT_PARTS {
+        log::warn!("pptx: chart part closure stopped at {part}");
+        return false;
+    }
+    let key = crate::opc::norm(part);
+    if let Some(ok) = seen.get(&key) {
+        return *ok;
+    }
+    if !crate::opc::sidecar_part(part) {
+        log::warn!("pptx: chart relationship target {part} is not kept");
+        seen.insert(key, false);
+        return false;
+    }
+    let Some(bytes) = pkg.get(part) else {
+        log::warn!("pptx: chart relationship target {part} is missing");
+        seen.insert(key, false);
+        return false;
+    };
+    let name = pkg.original_name(part).unwrap_or(part).trim_start_matches('/').to_string();
+    if !crate::opc::sidecar_part(&name) {
+        log::warn!("pptx: chart part name {name} is not kept");
+        seen.insert(key, false);
+        return false;
+    }
+    let content_type = pkg.content_type(part).unwrap_or_default();
+    out.push(ChartPart { name, content_type, bytes: bytes.to_vec(), native_entry: None });
+    seen.insert(key, true);
+    let rels_name = crate::opc::rels_path(part);
+    if crate::opc::sidecar_part(&rels_name)
+        && seen.get(&crate::opc::norm(&rels_name)).is_none()
+        && let Some(rels_bytes) = pkg.get(&rels_name)
+    {
+        seen.insert(crate::opc::norm(&rels_name), true);
+        let name = pkg.original_name(&rels_name).unwrap_or(&rels_name).trim_start_matches('/').to_string();
+        out.push(ChartPart {
+            name,
+            content_type: "application/vnd.openxmlformats-package.relationships+xml".into(),
+            bytes: rels_bytes.to_vec(),
+            native_entry: None,
+        });
+        let targets: Vec<String> = pkg.rels(part).items.into_iter().filter(|r| !r.external).map(|r| r.target).collect();
+        for target in targets {
+            copy_part(pkg, &target, out, seen, depth + 1);
+        }
+    }
+    true
+}
+
 /// The size in points of the first `a:defRPr` or `a:rPr` with one under `e` (`sz` in hundredths).
 fn text_size(e: Option<&El>) -> Option<f64> {
     fn rec(e: &El, depth: usize) -> Option<f64> {
@@ -463,10 +551,10 @@ mod tests {
     fn minor_gridlines_are_read_and_written_back() {
         let mut c = Chart::sample(ChartType::Line);
         c.minor_gridlines = true;
-        let back = read_chart_xml(&crate::write::chart::chart_xml(&c)).unwrap();
+        let back = read_chart_xml(&crate::write::chart::chart_xml(&c).0).unwrap();
         assert!(back.gridlines && back.minor_gridlines);
         c.minor_gridlines = false;
-        assert!(!read_chart_xml(&crate::write::chart::chart_xml(&c)).unwrap().minor_gridlines);
+        assert!(!read_chart_xml(&crate::write::chart::chart_xml(&c).0).unwrap().minor_gridlines);
     }
 
     #[test]

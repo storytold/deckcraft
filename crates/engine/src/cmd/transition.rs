@@ -182,7 +182,7 @@ fn sound(s: &mut Session, p: &Value) -> Result<Value> {
         let existing = doc.media.iter().find(|m| m.name == name && m.data.as_slice() == bytes.as_slice()).map(|m| m.id);
         let media = match existing {
             Some(m) => m,
-            None => doc.add_media(&name, ct, bytes),
+            None => doc.add_media(&name, ct, bytes).ok_or_else(|| bad("transition.sound", NO_ID_SPACE))?,
         };
         for &i in &list {
             if let Some(sl) = doc.slides.get_mut(i) {

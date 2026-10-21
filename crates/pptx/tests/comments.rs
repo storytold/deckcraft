@@ -127,7 +127,7 @@ fn comments_on_several_slides_round_trip() {
     let mut p = deck();
     let layout = p.slides[0].layout;
     while p.slides.len() < 3 {
-        let s = defaults::new_slide(&mut p, layout);
+        let s = defaults::new_slide(&mut p, layout).expect("slide");
         p.slides.push(Arc::new(s));
     }
     let s = Arc::make_mut(&mut p.slides[2]);

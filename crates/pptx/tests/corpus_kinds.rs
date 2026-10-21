@@ -23,7 +23,7 @@ fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
 
 fn shape(p: &mut Presentation, name: &str, x: f64, y: f64, w: f64, h: f64) -> deckcraft_model::Shape {
     deckcraft_model::Shape {
-        id: deckcraft_model::ShapeId(p.alloc_id()),
+        id: deckcraft_model::ShapeId(p.alloc_id().expect("id")),
         name: name.into(),
         xfrm: Some(deckcraft_geom::Xfrm::new(x, y, w, h)),
         ..Default::default()
@@ -32,7 +32,7 @@ fn shape(p: &mut Presentation, name: &str, x: f64, y: f64, w: f64, h: f64) -> de
 
 fn slide_with(p: &mut Presentation, kind: LayoutType, title: &str) -> Slide {
     let layout = defaults::layout_of_kind(p, kind).unwrap_or_default();
-    let mut s = defaults::new_slide(p, layout);
+    let mut s = defaults::new_slide(p, layout).expect("slide");
     if let Some(t) = s.shapes.first_mut() {
         t.text = Some(TextBody::from_text(title));
     }
@@ -125,9 +125,9 @@ fn animations() -> Presentation {
 
 fn media() -> Presentation {
     let mut p = defaults::new_presentation(None);
-    let picture = p.add_media("mark.png", "image/png", png(4, 4, [20, 90, 160]));
-    let tone = p.add_media("tone.wav", "audio/wav", b"owned-wav-tone".to_vec());
-    let clip = p.add_media("clip.mp4", "video/mp4", b"owned-mp4-clip".to_vec());
+    let picture = p.add_media("mark.png", "image/png", png(4, 4, [20, 90, 160])).expect("media");
+    let tone = p.add_media("tone.wav", "audio/wav", b"owned-wav-tone".to_vec()).expect("media");
+    let clip = p.add_media("clip.mp4", "video/mp4", b"owned-mp4-clip".to_vec()).expect("media");
     let mut s = slide_with(&mut p, LayoutType::TitleOnly, "Media");
     let mut pic = shape(&mut p, "Mark", 60.0, 120.0, 80.0, 80.0);
     pic.kind = ShapeKind::Picture { fill: PictureFill { media: picture, ..Default::default() } };
@@ -156,6 +156,7 @@ fn sections() -> Presentation {
                             highlight_click: false,
                             sound: None,
                             stop_sound: false,
+                            zoom_return: None,
                         }),
                         ..Default::default()
                     },
@@ -185,14 +186,14 @@ fn masters() -> Presentation {
         }
     }
     let mut evening = (**p.masters.first().expect("master")).clone();
-    evening.id = MasterId(p.alloc_id());
+    evening.id = MasterId(p.alloc_id().expect("id"));
     evening.name = "Evening".into();
     evening.shapes.retain(|s| s.ph_type().is_some());
     let mut banner = shape(&mut p, "Evening banner", 40.0, 40.0, 400.0, 40.0);
     banner.text = Some(TextBody::from_text("Evening master"));
     evening.shapes.push(banner);
     let mut quote = evening.layouts.first().expect("layout").clone();
-    quote.id = LayoutId(p.alloc_id());
+    quote.id = LayoutId(p.alloc_id().expect("id"));
     quote.name = "Quote".into();
     quote.kind = LayoutType::Custom;
     quote.shapes.retain(|s| s.ph_type() == Some(PhType::CtrTitle) || s.ph_type() == Some(PhType::Title));
@@ -206,7 +207,7 @@ fn masters() -> Presentation {
     let title = slide_with(&mut p, LayoutType::Title, "Welcome");
     let agenda = slide_with(&mut p, LayoutType::SectionHeader, "Agenda");
     let compared = slide_with(&mut p, LayoutType::Comparison, "Comparison");
-    let mut quoted = defaults::new_slide(&mut p, quote_id);
+    let mut quoted = defaults::new_slide(&mut p, quote_id).expect("slide");
     if let Some(t) = quoted.shapes.first_mut() {
         t.text = Some(TextBody::from_text("A line"));
     }

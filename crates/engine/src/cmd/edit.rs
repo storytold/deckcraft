@@ -175,7 +175,11 @@ fn copied_html(s: &Session) -> String {
 fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let caret = copying_caret(s);
     let t = copy_inner(s, p)?;
-    let html = if caret { String::new() } else { copied_html(s) };
+    if caret {
+        // Nothing is selected, so there is nothing to cut; `delete` would remove the next character.
+        return Ok(json!({"text": t, "html": ""}));
+    }
+    let html = copied_html(s);
     delete(s, p)?;
     Ok(json!({"text": t, "html": html}))
 }
@@ -184,22 +188,29 @@ fn cut(s: &mut Session, p: &Value) -> Result<Value> {
 /// attached to a shape that was copied too follow its copy; ends attached to a shape outside the
 /// copied set are detached (the connector keeps its geometry), so a copy never stays glued to
 /// the original or to an unrelated shape that happens to share an id in another deck.
-pub(crate) fn reid(doc: &mut deckcraft_model::Presentation, shapes: &mut [Shape]) -> HashMap<ShapeId, ShapeId> {
-    fn rec(doc: &mut deckcraft_model::Presentation, shapes: &mut [Shape], map: &mut HashMap<ShapeId, ShapeId>, depth: usize) {
+pub(crate) fn reid(cmd: &str, doc: &mut deckcraft_model::Presentation, shapes: &mut [Shape]) -> Result<HashMap<ShapeId, ShapeId>> {
+    fn rec(
+        cmd: &str,
+        doc: &mut deckcraft_model::Presentation,
+        shapes: &mut [Shape],
+        map: &mut HashMap<ShapeId, ShapeId>,
+        depth: usize,
+    ) -> Result<()> {
         if depth > 64 {
-            return;
+            return Ok(());
         }
         for s in shapes {
-            let id = ShapeId(doc.alloc_id());
+            let id = ShapeId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
             map.insert(s.id, id);
             s.id = id;
             if let Some(ch) = s.children_mut() {
-                rec(doc, ch, map, depth + 1);
+                rec(cmd, doc, ch, map, depth + 1)?;
             }
         }
+        Ok(())
     }
     let mut map = HashMap::new();
-    rec(doc, shapes, &mut map, 0);
+    rec(cmd, doc, shapes, &mut map, 0)?;
     walk_mut(shapes, &mut |s| {
         if let deckcraft_model::ShapeKind::Connector { start, end } = &mut s.kind {
             for e in [start, end] {
@@ -207,7 +218,7 @@ pub(crate) fn reid(doc: &mut deckcraft_model::Presentation, shapes: &mut [Shape]
             }
         }
     });
-    map
+    Ok(map)
 }
 
 /// Point copied animations at the copies: targets and triggers in `map` follow it; an animation
@@ -267,19 +278,19 @@ fn remap_media(shapes: &mut [Shape], map: &HashMap<MediaId, MediaId>) {
 
 /// Add the clipboard's media to `doc` and return the ids that changed: an id already used in
 /// `doc` by other bytes (another deck) gets a fresh id, and the pasted shapes must use it.
-fn bring_media(doc: &mut deckcraft_model::Presentation, media: &[deckcraft_model::MediaItem]) -> HashMap<MediaId, MediaId> {
+fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deckcraft_model::MediaItem]) -> Result<HashMap<MediaId, MediaId>> {
     let mut map = HashMap::new();
     for m in media {
         match doc.media(m.id) {
             None => doc.media.push(m.clone()),
             Some(x) if x.data == m.data => {}
             Some(_) => {
-                let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone());
+                let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
             }
         }
     }
-    map
+    Ok(map)
 }
 
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
@@ -308,12 +319,12 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     if !clip.slides.is_empty() {
         let at = s.doc()?.selection.slide + 1;
         return s.edit(|doc, sel| {
-            let media = bring_media(doc, &clip.media);
+            let media = bring_media("edit.paste", doc, &clip.media)?;
             let mut new_ids = vec![];
             for (k, sl) in clip.slides.iter().enumerate() {
                 let mut sl = sl.clone();
-                sl.id = SlideId(doc.alloc_id());
-                let map = reid(doc, &mut sl.shapes);
+                sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("edit.paste", NO_ID_SPACE))?);
+                let map = reid("edit.paste", doc, &mut sl.shapes)?;
                 remap_animations(&mut sl.animations, &map);
                 remap_media(&mut sl.shapes, &media);
                 if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &mut sl.background
@@ -341,9 +352,9 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         let same_slide = s.doc().ok().is_some_and(|d| clip.shapes.iter().any(|c| d.shape(c.id).is_some()));
         let off = if same_slide { off } else { 0.0 };
         return s.edit(|doc, sel| {
-            let media = bring_media(doc, &clip.media);
+            let media = bring_media("edit.paste", doc, &clip.media)?;
             let mut shapes = clip.shapes.clone();
-            reid(doc, &mut shapes);
+            reid("edit.paste", doc, &mut shapes)?;
             remap_media(&mut shapes, &media);
             for sh in &mut shapes {
                 if let Some(x) = sh.xfrm.as_mut() {
@@ -491,7 +502,7 @@ fn paste_picture(s: &mut Session) -> Result<Value> {
     }
     let st = s.doc()?;
     let mut doc = (*st.doc).clone();
-    bring_media(&mut doc, &clip.media);
+    bring_media("edit.pasteSpecial", &mut doc, &clip.media)?;
     let mut slide = st.current_slide().cloned().ok_or_else(|| bad("edit.pasteSpecial", "no slide"))?;
     let xs: Vec<deckcraft_geom::Xfrm> = clip.shapes.iter().filter_map(|x| x.xfrm).collect();
     let b = super::arrange::union_bounds(&xs).ok_or_else(|| bad("edit.pasteSpecial", "nothing to draw"))?;
@@ -527,7 +538,7 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         let list = super::current_shapes(doc, sel).cloned().unwrap_or_default();
         let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
         let boxes: Vec<_> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
-        reid(doc, &mut copies);
+        reid("edit.duplicate", doc, &mut copies)?;
         for (c, b) in copies.iter_mut().zip(boxes) {
             let mut x = b;
             x.x += off;

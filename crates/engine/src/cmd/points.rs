@@ -16,7 +16,7 @@ use crate::{Result, Session};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(
-            noundo "shape.editPoints",
+            "shape.editPoints",
             "Edit Points",
             ["Shape Format", "Insert Shapes", "Edit Shape"],
             None,
@@ -355,8 +355,8 @@ fn refit(sh: &mut Shape) {
 /// The one shape whose points are edited: `id`, or the single selected shape.
 fn target(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     let st = s.doc()?;
-    let id = match p.get("id").and_then(Value::as_u64) {
-        Some(i) => ShapeId(i as u32),
+    let id = match id_param(p, "id", cmd)? {
+        Some(i) => i,
         None => match st.selection.shapes.as_slice() {
             [one] => *one,
             _ => return Err(bad(cmd, "select one shape")),
@@ -429,8 +429,8 @@ pub fn slide_vertices(doc: &deckcraft_model::Presentation, sel: &crate::Selectio
 
 fn points(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let id = match p.get("id").and_then(Value::as_u64) {
-        Some(i) => ShapeId(i as u32),
+    let id = match id_param(p, "id", "shape.points")? {
+        Some(i) => i,
         None => *st.selection.shapes.first().ok_or_else(|| bad("shape.points", "select a shape"))?,
     };
     let sh = st.shape(id).ok_or_else(|| bad("shape.points", "no such shape"))?;

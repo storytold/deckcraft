@@ -8,7 +8,12 @@
 //! Layouts: one slide per page, notes pages (slide above its speaker notes) and handouts (1, 2, 3,
 //! 4, 6 or 9 slides per page).
 
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+#![forbid(unsafe_code)]
+
 use std::collections::HashMap;
+
+use craft_pdf::write::{self, Metadata, Writer, backend as krilla};
 
 use deckcraft_fonts::FontDb;
 use deckcraft_model::Presentation;
@@ -19,7 +24,6 @@ use krilla::annotation::{Annotation, LinkAnnotation, Target};
 use krilla::destination::XyzDestination;
 use krilla::geom::{Point, Size, Transform};
 use krilla::image::Image;
-use krilla::metadata::Metadata;
 use krilla::num::NormalizedF32;
 use krilla::outline::{Outline, OutlineNode};
 use krilla::page::PageSettings;
@@ -35,6 +39,12 @@ pub enum PdfError {
     NoPages,
     #[error("PDF writer: {0}")]
     Write(String),
+}
+
+impl From<write::WriteError> for PdfError {
+    fn from(error: write::WriteError) -> Self {
+        Self::Write(error.to_string())
+    }
 }
 
 pub type Result<T> = std::result::Result<T, PdfError>;
@@ -118,6 +128,10 @@ pub fn notes_slide_box(paper: (f64, f64), aspect: f64) -> Rect {
 
 /// Export `pres` as PDF bytes.
 pub fn export(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
+    write::guard(|| export_inner(pres, opts))
+}
+
+fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     let slides: Vec<usize> = match &opts.slides {
         Some(v) => v.iter().copied().filter(|i| *i < pres.slides.len()).collect(),
         None => (0..pres.slides.len()).filter(|i| opts.include_hidden || !pres.slides[*i].hidden).collect(),
@@ -125,16 +139,16 @@ pub fn export(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     if slides.is_empty() {
         return Err(PdfError::NoPages);
     }
-    let mut pdf = krilla::Document::new();
     let title = opts.title.clone().unwrap_or_else(|| pres.props.title.clone());
-    let mut meta = Metadata::new().creator("DeckCraft".into()).producer("DeckCraft".into());
-    if !title.trim().is_empty() {
-        meta = meta.title(title);
-    }
-    if !pres.props.author.trim().is_empty() {
-        meta = meta.authors(vec![pres.props.author.clone()]);
-    }
-    pdf.set_metadata(meta);
+    let metadata = Metadata {
+        creator: "DeckCraft".into(),
+        producer: "DeckCraft".into(),
+        title: (!title.trim().is_empty()).then_some(title),
+        authors: if pres.props.author.trim().is_empty() { Vec::new() } else { vec![pres.props.author.clone()] },
+        ..Default::default()
+    };
+    let mut writer = Writer::new(Default::default(), metadata);
+    let pdf = writer.document_mut();
 
     let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
     let mut ex = Exporter { pres, opts, fonts: HashMap::new() };
@@ -174,16 +188,16 @@ pub fn export(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
         {
             let mut s = page.surface();
             for (i, b) in v {
-                ex.slide(&mut s, *i, *b);
+                ex.slide(&mut s, *i, *b)?;
                 annots.extend(ex.links(*i, *b, &page_of));
             }
             match opts.layout {
                 PageLayout::Notes => {
                     if let Some((i, _)) = v.first() {
                         let notes = pres.slides[*i].notes_text();
-                        ex.paragraphs(&mut s, &notes, notes_frames(pres, opts.paper).1, 12.0);
+                        ex.paragraphs(&mut s, &notes, notes_frames(pres, opts.paper).1, 12.0)?;
                     }
-                    ex.page_texts(&mut s, pres.notes_master.as_deref(), pw, ph, v.first().map(|x| x.0 + 1).unwrap_or(1));
+                    ex.page_texts(&mut s, pres.notes_master.as_deref(), pw, ph, v.first().map(|x| x.0 + 1).unwrap_or(1))?;
                 }
                 PageLayout::Handouts { per_page } => {
                     if per_page == 3 {
@@ -191,7 +205,7 @@ pub fn export(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
                             ex.note_lines(&mut s, Rect::new(b.x1 + 24.0, b.y0, pw - 54.0, b.y1));
                         }
                     }
-                    ex.page_texts(&mut s, pres.handout_master.as_deref(), pw, ph, page_of.get(&v[0].0).map(|p| p + 1).unwrap_or(1));
+                    ex.page_texts(&mut s, pres.handout_master.as_deref(), pw, ph, page_of.get(&v[0].0).map(|p| p + 1).unwrap_or(1))?;
                 }
                 PageLayout::Slides => {}
             }
@@ -202,7 +216,7 @@ pub fn export(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
         }
         page.finish();
     }
-    pdf.finish().map_err(|e| PdfError::Write(format!("{e:?}")))
+    writer.finish().map_err(Into::into)
 }
 
 /// A notes-size master's rect of placeholder `kind`, scaled to a page of `paper` points.
@@ -368,7 +382,7 @@ pub fn handout_boxes(per_page: u8, paper: (f64, f64), aspect: f64) -> Vec<Rect> 
 struct Exporter<'a> {
     pres: &'a Presentation,
     opts: &'a PdfOptions,
-    fonts: HashMap<u32, Option<Font>>,
+    fonts: HashMap<u32, Font>,
 }
 
 fn tf(a: Affine) -> Transform {
@@ -384,37 +398,68 @@ fn grey(v: u8, opacity: f32) -> Fill {
     }
 }
 
+/// Premultiplied RGBA (the renderer's pixels) to the straight RGBA the writer stores.
+fn straight(rgba: &mut [u8]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = px[3] as u32;
+        if a != 0 && a != 255 {
+            for c in &mut px[..3] {
+                *c = (((*c as u32 * 255 + a / 2) / a).min(255)) as u8;
+            }
+        }
+    }
+}
+
+/// A backdrop raster as one PDF image, composited onto white (slides are normally opaque). Equal
+/// backdrops become equal images, which the writer stores once.
+fn backdrop(mut img: deckcraft_render::Image) -> Image {
+    for px in img.pixels.as_chunks_mut::<4>().0 {
+        let a = px[3] as u32;
+        for c in &mut px[..3] {
+            *c = (*c as u32 + (255 - a)).min(255) as u8;
+        }
+        px[3] = 255;
+    }
+    Image::from_rgba8(img.pixels, img.width, img.height)
+}
+
 impl Exporter<'_> {
-    fn font(&mut self, face: &deckcraft_fonts::FontFace) -> Option<Font> {
-        self.fonts.entry(face.id()).or_insert_with(|| Font::new(face.data().to_vec().into(), face.index())).clone()
+    fn font(&mut self, face: &deckcraft_fonts::FontFace) -> Result<Font> {
+        if let Some(font) = self.fonts.get(&face.id()) {
+            return Ok(font.clone());
+        }
+        let font = write::font(face.data(), face.index(), None)?;
+        self.fonts.insert(face.id(), font.clone());
+        Ok(font)
     }
 
     /// Slide `i` drawn into `b` (page points).
-    fn slide(&mut self, s: &mut Surface, i: usize, b: Rect) {
+    fn slide(&mut self, s: &mut Surface, i: usize, b: Rect) -> Result<()> {
         let pres = self.pres;
         let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
         let scale = (b.width() / 72.0 * self.opts.dpi.clamp(36.0, 600.0)) / sw;
-        let img = deckcraft_render::render_slide(pres, i, &RenderOpts { scale, threads: 4, ..Default::default() });
-        if img.width > 0 && img.height > 0 {
-            let (w, h) = (img.width, img.height);
+        let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
+        // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
+        // on every slide that shares its layout, so the writer stores it once, and the slide's own
+        // shapes draw over it (#845).
+        let back = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Backdrop, &ropts);
+        let front = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Content, &ropts);
+        let (w, h) = (back.width, back.height);
+        if w > 0
+            && h > 0
+            && let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32)
+        {
+            s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
+            s.draw_image(backdrop(back), size);
             // Taken, not copied: a print-resolution slide is ~16 MB.
-            let mut rgba = img.pixels;
-            for px in rgba.as_chunks_mut::<4>().0 {
-                // Composite onto white (slides are normally opaque).
-                let a = px[3] as u32;
-                for c in &mut px[..3] {
-                    *c = (*c as u32 + (255 - a)).min(255) as u8;
-                }
-                px[3] = 255;
+            let mut rgba = front.pixels;
+            if rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0) {
+                straight(&mut rgba);
+                s.draw_image(Image::from_rgba8(rgba, w, h), size);
             }
-            let image = Image::from_rgba8(rgba, w, h);
-            if let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32) {
-                s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
-                s.draw_image(image, size);
-                s.pop();
-            }
+            s.pop();
         }
         if self.opts.frame_slides && self.opts.layout != PageLayout::Slides {
             let p = kurbo::Shape::to_path(&b, 0.1);
@@ -432,14 +477,15 @@ impl Exporter<'_> {
         if self.opts.text_layer {
             let view = Affine::translate((b.x0, b.y0)) * Affine::scale(k);
             for pt in deckcraft_render::place_slide(pres, i).texts {
-                self.text_layer(s, &pt, view, false);
+                self.text_layer(s, &pt, view, false)?;
             }
             let _ = sh;
         }
+        Ok(())
     }
 
     /// Invisible glyphs exactly over the rasterised text.
-    fn text_layer(&mut self, s: &mut Surface, pt: &PlacedText, view: Affine, visible: bool) {
+    fn text_layer(&mut self, s: &mut Surface, pt: &PlacedText, view: Affine, visible: bool) -> Result<()> {
         for run in &pt.layout.runs {
             if run.glyphs.is_empty() || run.size <= 0.0 {
                 continue;
@@ -457,7 +503,7 @@ impl Exporter<'_> {
             if text.trim().is_empty() {
                 continue;
             }
-            let Some(font) = self.font(&run.face) else { continue };
+            let font = self.font(&run.face)?;
             let n = run.glyphs.len();
             let ranges = glyph_text_ranges(&text, run.chars, &run.cells, n);
             let (x0, y0) = (run.glyphs[0].1, run.glyphs[0].2);
@@ -486,6 +532,7 @@ impl Exporter<'_> {
             s.set_fill(None);
             s.pop();
         }
+        Ok(())
     }
 
     fn links(&self, i: usize, b: Rect, page_of: &HashMap<usize, usize>) -> Vec<Annotation> {
@@ -516,15 +563,15 @@ impl Exporter<'_> {
         out
     }
 
-    fn ui_font(&mut self) -> Option<(Font, std::sync::Arc<deckcraft_fonts::FontFace>)> {
+    fn ui_font(&mut self) -> Result<(Font, std::sync::Arc<deckcraft_fonts::FontFace>)> {
         let face = FontDb::global().face(deckcraft_fonts::DEFAULT_FAMILY, "Regular");
         let f = self.font(&face)?;
-        Some((f, face))
+        Ok((f, face))
     }
 
     /// Wrapped plain text (notes).
-    fn paragraphs(&mut self, s: &mut Surface, text: &str, area: Rect, size: f64) {
-        let Some((font, face)) = self.ui_font() else { return };
+    fn paragraphs(&mut self, s: &mut Surface, text: &str, area: Rect, size: f64) -> Result<()> {
+        let (font, face) = self.ui_font()?;
         let k = size / face.upem.max(1.0);
         let width = |w: &str| w.chars().map(|c| face.advance(face.glyph_for(c)) * k).sum::<f64>();
         let lh = size * 1.3;
@@ -554,6 +601,7 @@ impl Exporter<'_> {
             y += lh;
         }
         s.set_fill(None);
+        Ok(())
     }
 
     /// Ruled lines for handwritten notes (3-per-page handouts).
@@ -578,21 +626,23 @@ impl Exporter<'_> {
 
     /// A notes or handout page's header, date, footer and page number from its master; just the
     /// page number when the deck has no such master.
-    fn page_texts(&mut self, s: &mut Surface, master: Option<&deckcraft_model::Master>, pw: f64, ph: f64, n: usize) {
+    fn page_texts(&mut self, s: &mut Surface, master: Option<&deckcraft_model::Master>, pw: f64, ph: f64, n: usize) -> Result<()> {
         let Some(m) = master else { return self.footer(s, pw, ph, n) };
         // Laid out by the text engine in the placeholders, scaled from the notes size to the page:
         // wrapping, alignment and mixed formatting as the master has them.
         let pres = self.pres;
         let view = Affine::scale_non_uniform(pw / pres.notes_size.width.max(1.0), ph / pres.notes_size.height.max(1.0));
         for pt in deckcraft_render::place_master_texts(pres, m, n) {
-            self.text_layer(s, &pt, view, true);
+            self.text_layer(s, &pt, view, true)?;
         }
+        Ok(())
     }
-    fn footer(&mut self, s: &mut Surface, pw: f64, ph: f64, n: usize) {
-        let Some((font, _)) = self.ui_font() else { return };
+    fn footer(&mut self, s: &mut Surface, pw: f64, ph: f64, n: usize) -> Result<()> {
+        let (font, _) = self.ui_font()?;
         s.set_fill(Some(grey(0x60, 1.0)));
         s.draw_text(Point::from_xy((pw - 72.0) as f32, (ph - 30.0) as f32), font, 9.0, &n.to_string(), false, TextDirection::Auto);
         s.set_fill(None);
+        Ok(())
     }
 }
 

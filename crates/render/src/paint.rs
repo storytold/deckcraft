@@ -188,16 +188,6 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         return;
     };
     let px_scale = crate::scale_of(m);
-    let want = (bounds.width().max(bounds.height()) * px_scale).max(1.0);
-    let frame = gif_time.and_then(|t| images::gif_pixmap(&item.data, &pf.adjust, t));
-    let Some(pm) = frame.or_else(|| images::decode_for(&item.data, want, &pf.adjust)) else {
-        missing(ctx, bounds);
-        return;
-    };
-    let (iw, ih) = (pm.width() as f64, pm.height() as f64);
-    if iw < 1.0 || ih < 1.0 {
-        return;
-    }
     let dest = match &pf.mode {
         PictureMode::Stretch { fill_rect } => {
             let [l, t, r, b] = *fill_rect;
@@ -211,6 +201,18 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
         }
         PictureMode::Tile { .. } => bounds,
     };
+    // Decode for the whole image's size on screen, not the box's: a cropped picture shows only part
+    // of it, magnified (#762).
+    let want = (dest.width().abs().max(dest.height().abs()) * px_scale).max(1.0);
+    let frame = gif_time.and_then(|t| images::gif_pixmap(&item.data, &pf.adjust, t));
+    let Some(pm) = frame.or_else(|| images::decode_for(&item.data, want, &pf.adjust)) else {
+        missing(ctx, bounds);
+        return;
+    };
+    let (iw, ih) = (pm.width() as f64, pm.height() as f64);
+    if iw < 1.0 || ih < 1.0 {
+        return;
+    }
     let alpha = pf.alpha.unwrap_or(1.0).clamp(0.0, 1.0);
     let image = vello_cpu::Image {
         image: vello_cpu::ImageSource::Pixmap(pm.clone()),

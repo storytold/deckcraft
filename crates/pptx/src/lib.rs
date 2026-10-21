@@ -18,6 +18,10 @@ mod tables;
 mod write;
 mod xml;
 
+/// The bounded XML reader the importer uses, for callers that read kept fragments (a shape's
+/// 3-D settings) instead of scanning strings.
+pub use xml::{Doc as XmlDoc, El as XmlEl, parse as parse_xml};
+
 use deckcraft_model::Presentation;
 
 /// Extension URI of the PowerPoint 2010 section list in `presentation.xml`.
@@ -57,6 +61,12 @@ pub fn is_encrypted(bytes: &[u8]) -> bool {
 /// Read a `.pptx` / `.potx` / `.ppsx` package.
 pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     read::import(bytes)
+}
+
+/// [`import`], plus the part names of slides the file lists but that couldn't be read and were
+/// left out.
+pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {
+    read::import_checked(bytes)
 }
 
 /// Read the theme of a `.thmx` file, or of a `.pptx` / `.potx`'s first master, with its media.

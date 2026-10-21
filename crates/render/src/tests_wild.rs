@@ -265,7 +265,7 @@ fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
 
 fn picture_deck(line: Option<Line>) -> Presentation {
     let mut p = Presentation::default();
-    let media = p.add_media("image1.png", "image/png", png(8, 8, [0, 0, 255]));
+    let media = p.add_media("image1.png", "image/png", png(8, 8, [0, 0, 255])).expect("media");
     let sh = Shape {
         id: ShapeId(15),
         xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
@@ -399,7 +399,7 @@ fn half_red_half_blue() -> Vec<u8> {
 fn tiled(sx: f64, flip: &str, align: &str) -> Image {
     use deckcraft_model::style::{PictureFill, PictureMode};
     let mut p = Presentation::default();
-    let media = p.add_media("t.png", "image/png", half_red_half_blue());
+    let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
     let mode = PictureMode::Tile { tx: 0.0, ty: 0.0, sx, sy: 10.0, flip: flip.into(), align: align.into() };
     let sh = Shape {
         id: ShapeId(21),
@@ -606,7 +606,7 @@ fn a_large_pictures_shadow_is_whole() {
     let mut counts = vec![];
     for side in [8u32, 400] {
         let mut p = Presentation::default();
-        let media = p.add_media("image1.png", "image/png", png(side, side * 3 / 4, [0, 0, 255]));
+        let media = p.add_media("image1.png", "image/png", png(side, side * 3 / 4, [0, 0, 255])).expect("media");
         let mut fx = offset_shadow();
         if let Some(o) = &mut fx.outer_shadow {
             o.blur = 8.0;
@@ -690,7 +690,7 @@ fn an_upright_picture_fill_stays_upright_in_a_turned_shape() {
     let blue = Rgba::rgb(0, 0, 255);
     for upright in [false, true] {
         let mut p = Presentation::default();
-        let media = p.add_media("t.png", "image/png", half_red_half_blue());
+        let media = p.add_media("t.png", "image/png", half_red_half_blue()).expect("media");
         // Half red (left) half blue picture in a 200 × 200 square turned a quarter (and so
         // covering the same square).
         let sh = Shape {

@@ -19,6 +19,10 @@ use deckcraft_fonts::{FontDb, FontFace};
 /// 55 MB, the only Hangul face) and `PingFang.ttc` (about 78 MB, Simplified Chinese).
 const MAX_FACE_BYTES: usize = 128 << 20;
 
+fn accepts_face(byte_len: usize, color: bool) -> bool {
+    !color && byte_len <= MAX_FACE_BYTES
+}
+
 /// Faces borrowed for the interface, and the characters already looked at.
 #[derive(Default)]
 pub struct UiFonts {
@@ -53,7 +57,7 @@ pub fn faces_for_text(
             continue;
         }
         let Some(f) = lookup(c) else { continue };
-        if f.is_color() || f.data().len() > MAX_FACE_BYTES || have.iter().chain(&out).any(|h| h.id() == f.id()) {
+        if !accepts_face(f.data().len(), f.is_color()) || have.iter().chain(&out).any(|h| h.id() == f.id()) {
             continue;
         }
         out.push(f);
@@ -69,7 +73,13 @@ impl UiFonts {
         }
         let font = egui::FontId::proportional(13.0);
         let new = ctx.fonts_mut(|f| {
-            faces_for_text(text, &self.faces, &mut self.seen, |c| f.has_glyph(&font, c), |c| FontDb::global().fallback_for(c, u32::MAX))
+            faces_for_text(
+                text,
+                &self.faces,
+                &mut self.seen,
+                |c| f.has_glyph(&font, c),
+                |c| FontDb::global().fallback_for_filtered(c, u32::MAX, |face| accepts_face(face.data().len(), face.is_color())),
+            )
         });
         if !new.is_empty() {
             log::debug!("interface fallback fonts: {}", new.iter().map(|f| f.family.as_str()).collect::<Vec<_>>().join(", "));
@@ -166,6 +176,14 @@ mod tests {
 
     fn face(family: &str) -> Arc<FontFace> {
         FontDb::global().face(family, "Regular")
+    }
+
+    #[test]
+    fn interface_face_policy_rejects_colour_and_oversize_faces() {
+        assert!(accepts_face(MAX_FACE_BYTES, false), "the documented size boundary remains accepted");
+        assert!(!accepts_face(MAX_FACE_BYTES + 1, false), "an oversized outline face is still rejected");
+        assert!(!accepts_face(1, true), "even a small colour face is still rejected");
+        assert!(!accepts_face(MAX_FACE_BYTES + 1, true));
     }
 
     /// One face for a whole string, looked up once per character, never for characters the

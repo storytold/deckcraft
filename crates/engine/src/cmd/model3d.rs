@@ -372,10 +372,10 @@ fn insert(s: &mut Session, p: &Value) -> Result<Value> {
         }
         _ => Xfrm::new((slide.width - w) / 2.0, (slide.height - h) / 2.0, w, h),
     };
-    let media = s.edit(|doc, _| Ok(doc.add_media(&format!("{stem}.glb"), "model/gltf.binary", glb)))?;
+    let media = s.edit(|doc, _| doc.add_media(&format!("{stem}.glb"), "model/gltf.binary", glb).ok_or_else(|| bad(CMD, super::NO_ID_SPACE)))?;
     m.media = media;
     let shape = Shape { xfrm: Some(rect), kind: ShapeKind::Model3d(Box::new(m)), descr: stem, ..Default::default() };
-    let id = super::insert::add_shape(s, shape, true)?;
+    let id = super::insert::add_shape(s, CMD, shape, true)?;
     Ok(json!({"id": id, "triangles": scene.triangle_count(), "textures": scene.textures.len()}))
 }
 

@@ -228,8 +228,9 @@ fn max_shape_id(shapes: &[Shape], m: &mut u32) {
 
 /// The revised slide made to live in `doc`: its media copied over (remapped on an id clash), shape
 /// ids kept unless another slide of `doc` uses them (then fresh, animations following), and its
-/// layout matched by id, then by name, then the first layout.
-pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacing: Option<SlideId>) -> Slide {
+/// layout matched by id, then by name, then the first layout. An error when `doc` has used every
+/// object id and cannot take the slide without duplicating ids (#407).
+pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacing: Option<SlideId>) -> crate::Result<Slide> {
     let mut sl = slide.clone();
     // Media.
     let mut mids = vec![];
@@ -241,7 +242,9 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
             Some(x) if x.data == m.data => {}
             None => doc.media.push(m.clone()),
             Some(_) => {
-                let new = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone());
+                let new = doc
+                    .add_media(&m.name, &m.content_type, m.data.as_ref().clone())
+                    .ok_or_else(|| crate::cmd::bad("review.accept", crate::cmd::NO_ID_SPACE))?;
                 media_map.insert(id, new);
             }
         }
@@ -261,13 +264,13 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
         ids: &mut HashMap<ShapeId, ShapeId>,
         media: &HashMap<MediaId, MediaId>,
         depth: usize,
-    ) {
+    ) -> crate::Result<()> {
         if depth > 64 {
-            return;
+            return Ok(());
         }
         for s in shapes {
             if taken.contains(&s.id.0) {
-                let new = ShapeId(doc.alloc_id());
+                let new = ShapeId(doc.alloc_id().ok_or_else(|| crate::cmd::bad("review.accept", crate::cmd::NO_ID_SPACE))?);
                 ids.insert(s.id, new);
                 s.id = new;
             }
@@ -290,11 +293,12 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
                 remap(&mut pf.media);
             }
             if let Some(ch) = s.children_mut() {
-                rec(doc, ch, taken, ids, media, depth + 1);
+                rec(doc, ch, taken, ids, media, depth + 1)?;
             }
         }
+        Ok(())
     }
-    rec(doc, &mut sl.shapes, &taken, &mut id_map, &media_map, 0);
+    rec(doc, &mut sl.shapes, &taken, &mut id_map, &media_map, 0)?;
     for a in &mut sl.animations {
         if let Some(n) = id_map.get(&a.shape) {
             a.shape = *n;
@@ -318,37 +322,39 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
         Some(id) => sl.id = id,
         None => {
             if doc.slides.iter().any(|s| s.id == sl.id) || sl.id.0 == 0 {
-                sl.id = SlideId(doc.alloc_id());
+                sl.id = SlideId(doc.alloc_id().ok_or_else(|| crate::cmd::bad("review.accept", crate::cmd::NO_ID_SPACE))?);
             }
             doc.next_id = doc.next_id.max(sl.id.0);
         }
     }
-    sl
+    Ok(sl)
 }
 
-/// Apply `change` (from [`diff`] of `doc` against `rev`) to `doc`. Returns the slide index to show.
-pub fn accept(doc: &mut Presentation, rev: &Presentation, change: &Change) -> Option<usize> {
+/// Apply `change` (from [`diff`] of `doc` against `rev`) to `doc`. Returns the slide index to show
+/// (`None` when the change no longer applies), or an error when `doc` has used every object id.
+pub fn accept(doc: &mut Presentation, rev: &Presentation, change: &Change) -> crate::Result<Option<usize>> {
     match change.kind {
         ChangeKind::Changed => {
-            let b = rev.slides.get(change.revised?)?.clone();
-            let id = doc.slides.get(change.slide)?.id;
-            let sl = adopt(doc, rev, &b, Some(id));
-            *doc.slides.get_mut(change.slide)? = Arc::new(sl);
-            Some(change.slide)
+            let Some(b) = change.revised.and_then(|r| rev.slides.get(r)).cloned() else { return Ok(None) };
+            let Some(id) = doc.slides.get(change.slide).map(|s| s.id) else { return Ok(None) };
+            let sl = adopt(doc, rev, &b, Some(id))?;
+            let Some(slot) = doc.slides.get_mut(change.slide) else { return Ok(None) };
+            *slot = Arc::new(sl);
+            Ok(Some(change.slide))
         }
         ChangeKind::Inserted => {
-            let b = rev.slides.get(change.revised?)?.clone();
-            let sl = adopt(doc, rev, &b, None);
+            let Some(b) = change.revised.and_then(|r| rev.slides.get(r)).cloned() else { return Ok(None) };
+            let sl = adopt(doc, rev, &b, None)?;
             let at = change.slide.min(doc.slides.len());
             doc.slides.insert(at, Arc::new(sl));
-            Some(at)
+            Ok(Some(at))
         }
         ChangeKind::Deleted => {
             if change.slide >= doc.slides.len() || doc.slides.len() <= 1 {
-                return None;
+                return Ok(None);
             }
             doc.slides.remove(change.slide);
-            Some(change.slide.min(doc.slides.len().saturating_sub(1)))
+            Ok(Some(change.slide.min(doc.slides.len().saturating_sub(1))))
         }
     }
 }

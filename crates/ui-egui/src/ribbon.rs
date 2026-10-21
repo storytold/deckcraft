@@ -1,7 +1,7 @@
 //! Title bar, ribbon tabs and the ribbon card with every tab's groups.
 
 use deckcraft_engine::Target;
-use deckcraft_model::{ShapeKind, anim::AnimClass};
+use deckcraft_model::{ShapeId, ShapeKind, anim::AnimClass};
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -439,6 +439,14 @@ fn slides_group(app: &mut SlideApp, ui: &mut Ui) {
                 }
                 if ui.button("Slides from Outline…").clicked() {
                     app.dialog = Some(crate::dialogs::Dialog::new("outline"));
+                }
+                let desktop = app.services.pick_open.is_some();
+                for (label, keep) in [("Reuse Slides…", false), ("Reuse Slides (Keep Source Formatting)…", true)] {
+                    let r = ui.add_enabled(desktop, egui::Button::new(label));
+                    if r.clicked() {
+                        run(app, "app.reuseSlidesDialog", json!({"keepFormatting": keep}));
+                    }
+                    r.on_disabled_hover_text("Choosing a presentation to reuse needs the desktop app");
                 }
             });
         }
@@ -1130,6 +1138,9 @@ pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 pub fn align_menu(app: &mut SlideApp, ui: &mut Ui) {
+    let selection = app.session.active().map(|d| d.selection.shapes.clone()).unwrap_or_default();
+    let to_slide = align_to_slide(app.align_to.as_ref(), &selection);
+    let to = if to_slide { "slide" } else { "selection" };
     for (l, e, ic) in [
         ("Align Left", "left", Icon::AlignObjLeft),
         ("Align Center", "center", Icon::AlignObjCenter),
@@ -1138,11 +1149,28 @@ pub fn align_menu(app: &mut SlideApp, ui: &mut Ui) {
         ("Align Middle", "middle", Icon::AlignObjMiddle),
         ("Align Bottom", "bottom", Icon::AlignObjBottom),
     ] {
-        menu_item(app, ui, ic, l, "arrange.align", json!({"edge": e}));
+        menu_item(app, ui, ic, l, "arrange.align", json!({"edge": e, "to": to}));
     }
     ui.separator();
-    menu_item(app, ui, Icon::DistributeH, "Distribute Horizontally", "arrange.distribute", json!({"dir": "horizontal"}));
-    menu_item(app, ui, Icon::DistributeV, "Distribute Vertically", "arrange.distribute", json!({"dir": "vertical"}));
+    menu_item(app, ui, Icon::DistributeH, "Distribute Horizontally", "arrange.distribute", json!({"dir": "horizontal", "to": to}));
+    menu_item(app, ui, Icon::DistributeV, "Distribute Vertically", "arrange.distribute", json!({"dir": "vertical", "to": to}));
+    ui.separator();
+    let en = enabled(app, "arrange.align");
+    for (l, slide) in [("Align to Slide", true), ("Align Selected Objects", false)] {
+        if widgets::check_item(ui, l, en, to_slide == slide).clicked() {
+            app.align_to = Some((selection.clone(), slide));
+            ui.close();
+        }
+    }
+}
+
+/// Align to Slide or to the selected objects, as in PowerPoint: one object aligns to the slide and
+/// several to each other, unless the other choice was ticked for this same selection.
+fn align_to_slide(choice: Option<&(Vec<ShapeId>, bool)>, selection: &[ShapeId]) -> bool {
+    match choice {
+        Some((ids, to_slide)) if ids.as_slice() == selection => *to_slide,
+        _ => selection.len() < 2,
+    }
 }
 
 pub fn menu_item(app: &mut SlideApp, ui: &mut Ui, icon: Icon, label: &str, id: &str, p: Value) {
@@ -1247,6 +1275,8 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
+        let r = big_button(ui, Icon::Zoom, "Zoom", enabled(app, "insert.zoom"));
+        egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(300.0).show(|ui| zoom_menu(app, ui));
         big(app, ui, Icon::Link, "Link", "app.dialog", json!({"id": "hyperlink"}));
         let r = big_button(ui, Icon::Action, "Action", enabled(app, "insert.actionButton"));
         egui::Popup::menu(&r).show(|ui| {
@@ -2756,6 +2786,10 @@ fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         rows(ui, |ui| {
             small(app, ui, Icon::ChangePicture, "Change Picture", "app.changePictureDialog", json!({}));
             small(app, ui, Icon::ResetPicture, "Reset Picture", "picture.reset", json!({}));
+            let (_, r) = small_button_ex(ui, Icon::CompressPictures, "Compress Pictures", enabled(app, "picture.compress"), false, true);
+            if let Some(r) = r {
+                egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(260.0).show(|ui| compress_menu(app, ui));
+            }
         });
     });
     group(ui, |ui| {
@@ -3556,6 +3590,10 @@ mod effects_tests;
 mod master_layout_tests;
 
 #[cfg(test)]
+#[path = "align_tests.rs"]
+mod align_tests;
+
+#[cfg(test)]
 mod title_bar_tests {
     use super::*;
 
@@ -3622,4 +3660,99 @@ fn smooth_corners_row(app: &mut SlideApp, ui: &mut egui::Ui) {
             run(app, "shape.smoothCorners", json!({"smoothing": state.1, "radius": state.0}));
         }
     });
+}
+
+/// Insert › Zoom: pick Summary, Section or Slide Zoom and what it zooms to, as PowerPoint's
+/// Insert Zoom dialogs do (a checklist of slides or sections).
+fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
+    let Some(doc) = app.session.active().map(|d| d.doc.clone()) else { return };
+    let id = egui::Id::new("insert_zoom_menu");
+    let (mut kind, mut picked): (u8, Vec<usize>) = ui.data_mut(|d| d.get_temp(id).unwrap_or((0, vec![])));
+    ui.horizontal(|ui| {
+        for (k, label) in [(0u8, "Slide Zoom"), (1, "Section Zoom"), (2, "Summary Zoom")] {
+            if ui.selectable_label(kind == k, label).clicked() && kind != k {
+                kind = k;
+                picked.clear();
+            }
+        }
+    });
+    ui.separator();
+    let items: Vec<String> = if kind == 1 {
+        doc.sections.iter().map(|s| s.name.clone()).collect()
+    } else {
+        doc.slides
+            .iter()
+            .enumerate()
+            .map(|(i, s)| {
+                let t = s.title();
+                format!("{}. {}", i + 1, t.lines().next().unwrap_or("").trim())
+            })
+            .collect()
+    };
+    if items.is_empty() {
+        ui.label(if kind == 1 { "The presentation has no sections. Add one with Home › Section." } else { "No slides." });
+    }
+    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+        for (i, label) in items.iter().enumerate() {
+            let mut on = picked.contains(&i);
+            if ui.checkbox(&mut on, label).changed() {
+                if on {
+                    picked.push(i);
+                } else {
+                    picked.retain(|x| *x != i);
+                }
+            }
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(id, (kind, picked.clone())));
+    ui.separator();
+    if ui.add_enabled(!picked.is_empty(), egui::Button::new("Insert")).clicked() {
+        let mut v = picked.clone();
+        v.sort_unstable();
+        let p = match kind {
+            1 => json!({"kind": "section", "sections": v}),
+            2 => json!({"kind": "summary", "slides": v}),
+            _ => json!({"kind": "slide", "slides": v}),
+        };
+        run(app, "insert.zoom", p);
+        ui.data_mut(|d| d.remove::<(u8, Vec<usize>)>(id));
+        ui.close();
+    }
+}
+
+/// Compress Pictures options, as in PowerPoint's dialog: resolution, apply to this picture or
+/// all, delete cropped areas. The choices last for the session.
+fn compress_menu(app: &mut SlideApp, ui: &mut Ui) {
+    let id = egui::Id::new("compress_pictures_opts");
+    let (mut ppi, mut only_selected, mut delete_cropped): (u32, bool, bool) = ui.data_mut(|d| d.get_temp(id).unwrap_or((220, true, true)));
+    ui.label(egui::RichText::new("Compression options").strong());
+    ui.checkbox(&mut only_selected, "Apply only to this picture");
+    ui.checkbox(&mut delete_cropped, "Delete cropped areas of pictures");
+    ui.separator();
+    ui.label(egui::RichText::new("Resolution").strong());
+    for (v, label) in [
+        (330, "HD (330 ppi): good quality for high-definition displays"),
+        (220, "Print (220 ppi): excellent quality on most printers and screens"),
+        (150, "Web (150 ppi): good for web pages and projectors"),
+        (96, "E-mail (96 ppi): minimise document size for sharing"),
+    ] {
+        ui.radio_value(&mut ppi, v, label);
+    }
+    ui.data_mut(|d| d.insert_temp(id, (ppi, only_selected, delete_cropped)));
+    ui.separator();
+    if ui.button("Compress").clicked() {
+        let p = json!({"ppi": ppi, "deleteCropped": delete_cropped, "all": !only_selected});
+        match app.session.execute("picture.compress", &p) {
+            Ok(r) => {
+                let kb = |v: &Value| v.as_u64().unwrap_or(0) / 1024;
+                let msg = match r["pictures"].as_u64().unwrap_or(0) {
+                    0 => "Pictures are already at or below that resolution".to_string(),
+                    n => format!("Compressed {n} picture(s): {} KB → {} KB", kb(&r["before"]), kb(&r["after"])),
+                };
+                app.set_status(msg);
+            }
+            Err(e) => app.set_status(e.to_string()),
+        }
+        ui.close();
+    }
 }

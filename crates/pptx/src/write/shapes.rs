@@ -401,6 +401,10 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             let mut plain = (**c).clone();
             plain.raw = plain.raw.filter(|r| !r.contains(super::chart::NS_CX));
+            if ex.is_some() {
+                // The kept workbook belongs to the `chartEx` part; the fallback has none.
+                plain.kept = Default::default();
+            }
             let rid = x.chart_rel(o, &plain);
             frame_open(w, x, o, id, s);
             w.open("a:graphicData", A::new().a("uri", "http://schemas.openxmlformats.org/drawingml/2006/chart"));
@@ -833,6 +837,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
             highlight_click: false,
             sound: None,
             stop_sound: false,
+            zoom_return: None,
         });
     }
     cnvpr(w, x, o, id, &s2);

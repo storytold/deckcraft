@@ -2,47 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-13 · **Change:** trivial (video-seek race fixed and regression-tested; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** minor (presenter keyboard navigation; hours to ~95% per audience added; ready 56% → 55%; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (SmartArt text on its text rectangle; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (title bar Export button; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (right click selects; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (progress log: codec parsers reject overflowing numeric fields, #426; previous: minor, hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (WordArt Transform gallery; previous: hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (progress log: owned PPTX corpus round-trip, notes-master header and footer; previous: minor, hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (owned PPTX corpus for comments, links, custom shows, groups and inherited placeholders; previous: minor, hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (owned PPTX corpus for text effects, body layout, theme effects, fills, bevels and connectors; previous: minor, hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: PPTX corpus for models, media and timing) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: chart trendlines round-trip; previous: minor, hours to ~95% per audience added; ready ~55%; stage stays alpha; full re-measure against PowerPoint for Mac 16.113.4) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Lucide icon gallery; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (Size and Position dialog; breadth stays 79%, ready stays ~55%; previous: minor, hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: previous and next comment; breadth stays 79%; previous: minor, hours to ~95%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (View › New Window; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (six original starter decks; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: IME underlines in table cells; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (Photo Album dialog; breadth stays 79%, ready ~55%; previous: minor, hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (Edit Photo Album; breadth stays 79%, ready ~55%; previous: trivial, Photo Album dialog) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Create New Theme Colors; breadth and ready percentages unchanged; previous: hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Create New Theme Fonts; breadth and ready percentages unchanged; previous: hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Alt Text decorative checkbox; breadth stays 79%; previous: minor, hours to ~95%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Hyperlink dialog follows the selection; breadth stays 79%; previous: minor, hours to ~95%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Zoom dialog; breadth stays 79%; previous: minor, hours to ~95%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (progress log: owned PPTX corpus for more deck kinds, handout-master text; previous: minor, hours to ~95% per audience) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Show Media Controls; breadth stays 79%; previous: minor, hours to ~95%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Design ▸ Effects; percentages unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (Slide Master Preserve and Title/Footers placeholders; percentages unchanged; previous: hours to ~95% per audience, ready 56% → 55%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Trim Media dialog follows the selection; breadth stays 79%; previous: minor, hours to ~95%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: chart trendlines are drawn; previous: trivial, chart trendlines round-trip; hours to ~95% per audience added; ready ~55%; stage stays alpha; full re-measure against PowerPoint for Mac 16.113.4) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Format Background picture options; percentages unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: copy and paste rich text and pictures with other apps; previous: hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (animation preview on the canvas; breadth 79% → 80%, Animations 79% → 85%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Format Shape fill transparency follows the selection; breadth stays 79%; previous: minor, hours to ~95%) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** trivial (progress log: web file picker keeps its document and slide, #414; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Font dialog; previous: minor, hours to ~95% per audience added; ready stays ~55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: Paragraph dialog; previous: trivial, Font dialog; ready stays ~55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (Grid Options dialog; previous: hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-13 · **Last updated:** 2026-10-13 · **Change:** minor (WordArt adjust handles; previous: hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** trivial (progress log: pen pressure scales ink width; previous: minor, hours to ~95% per audience added; ready 56% → 55%; stage stays alpha) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -54,9 +14,8 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 
 | | Value | Kind |
 |---|---|---|
-| **Feature breadth** | **79%** weighted over 191 PowerPoint features (P0 92%, P1 75%, P2 39%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
-| **Feature breadth** | **80%** weighted over 191 PowerPoint features (P0 92%, P1 75%, P2 36%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
-| Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands |
+| **Feature breadth** | **84%** weighted over 191 PowerPoint features (P0 92%, P1 82%, P2 55%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
+| Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands at d556ff9 (the registry has grown since; not re-measured) |
 | **Ready for real work** | **~55%** | estimated: weighted dimensions below |
 | Mainstream practitioner | ~53% | estimated: weekly-use areas × discounts for interaction (×0.92), stability (×0.92) and `.pptx` exchange (×0.88), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
 | Essentials user | ~62% | estimated: core features × discounts for launch (×0.90), clarity (×0.95) and opening received files (×0.90), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
@@ -86,7 +45,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 | Dimension | Ready | Hours to full | Doc |
 |---|---:|---|---|
-| Features (breadth 80% measured, with depth) | ~62% | 140–240 | [docs/parity-checklist.md](docs/parity-checklist.md) |
+| Features (breadth 84% measured, with depth) | ~62% | 140–240 | [docs/parity-checklist.md](docs/parity-checklist.md) |
 | UI/UX fidelity | ~60% | 30–50 | [docs/ui-parity.md](docs/ui-parity.md) |
 | File formats (PPTX, PDF, legacy, export) | ~58% | 60–110 | [docs/file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (GPU raster, video decode, displays, pens) | ~40% | 25–45 | [docs/hardware-parity.md](docs/hardware-parity.md) |
@@ -102,28 +61,26 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 | Area | Breadth (measured) | Ready (est.) | Hours | Doc |
 |---|---:|---:|---|---|
-| Application shell | 71% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
-| Slides and sections | 90% | ~85% | 3–5 | [checklist](docs/parity-checklist.md) |
-| Views | 90% | ~80% | 3–6 | [ui-parity](docs/ui-parity.md) |
-| Masters and themes | 85% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
-| Shapes | 86% | ~75% | 8–14 | [ui-parity](docs/ui-parity.md) |
-| Format (fill, line, effects) | 81% | ~65% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Application shell | 81% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Slides and sections | 92% | ~85% | 3–5 | [checklist](docs/parity-checklist.md) |
+| Views | 98% | ~80% | 3–6 | [ui-parity](docs/ui-parity.md) |
+| Masters and themes | 92% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
+| Shapes | 91% | ~75% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Format (fill, line, effects) | 83% | ~65% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Arrange | 100% | ~90% | 1–2 | [ui-parity](docs/ui-parity.md) |
-| Text | 80% | ~62% | 18–30 | [gaps](docs/gaps.md#features) |
-| Tables | 89% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
+| Text | 83% | ~62% | 18–30 | [gaps](docs/gaps.md#features) |
+| Tables | 97% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
-| SmartArt | 33% | ~25% | 10–16 | [gaps](docs/gaps.md#smartart-is-pre-drawn-shapes-only) |
-| Pictures | 48% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
+| SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
+| Pictures | 60% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
 | Media | 71% | ~62% | 6–12 | [file formats](docs/file-format-parity.md) |
-| Transitions | 92% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
-| Animations | 79% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
-| Slide show and presenter view | 68% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
+| Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
 | Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
-| Slide show and presenter view | 66% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
-| Review | 60% | ~45% | 8–14 | [gaps](docs/gaps.md) |
-| Draw (ink) | 33% | ~30% | 5–9 | [hardware-parity](docs/hardware-parity.md) |
-| Undo and clipboard | 88% | ~75% | 3–5 | [ui-parity](docs/ui-parity.md) |
-| Files (commands; formats above) | 69% | ~50% | in file formats | [file formats](docs/file-format-parity.md) |
+| Slide show and presenter view | 68% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
+| Review | 70% | ~45% | 8–14 | [gaps](docs/gaps.md) |
+| Draw (ink) | 50% | ~30% | 5–9 | [hardware-parity](docs/hardware-parity.md) |
+| Undo and clipboard | 100% | ~75% | 3–5 | [ui-parity](docs/ui-parity.md) |
+| Files (commands; formats above) | 75% | ~50% | in file formats | [file formats](docs/file-format-parity.md) |
 
 ## Languages
 
@@ -154,16 +111,11 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
 
 1. **No data loss, no startup crashes:** Close's save prompt (#60), Windows GPU crashes (#40, #59),
    image paste (#53), editor soak tests. 10–20 h.
-2. **PPTX on real decks:** a larger owned corpus and the remaining round-trip losses; #70, #74, #77;
-   EMF/WMF and SVG. 36–64 h.
-2. **PPTX on real decks:** owned corpus now covers comments, links and actions, custom shows,
-   rotated groups and placeholders that inherit from the layout. Still open: a larger corpus,
-   embedded fonts, #70, #74, #77, EMF/WMF and SVG. 36–64 h.
-2. **PPTX on real decks:** owned corpus now covers text effects, autofit, columns, vertical and
-   RTL text, tabs, line spacing, theme effects, fills, bevels and connectors. Still open: a larger
-   corpus, embedded fonts, #70, #74, #77, EMF/WMF and SVG. 36–64 h.
-2. **PPTX on real decks:** owned corpus, round-trip checks, fixes; #70, #74, #77; EMF/WMF and SVG.
-   `corpus_media.rs` keeps 3-D models and animation bounce end. 36–64 h.
+2. **PPTX on real decks:** the owned corpus now round-trips comments, links and actions, custom
+   shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
+   fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
+   and animation bounce end. Still open: a corpus of real decks, #70, #74, #77, EMF+ records,
+   MicroType Express font subsets and SVG. 36–64 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
@@ -179,6 +131,24 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
+| 2026-10-17 | Opening a file caps absurd effect sizes (glow, soft edges, shadows, reflections, on shapes, text and table text) at what Format Shape allows: a glow of 10^18 pt in a .pptx made rendering ask for 34 GB and abort |
+| 2026-10-17 | Opening a .deckcraft file whose shapes repeat an id gives the repeats fresh ids (groups, layouts and masters too), so the deck validates and edits by id find one shape |
+| 2026-10-17 | Edit Points: turning a shape into a freeform is one undo step, so Undo brings the original shape back (it used to stay a freeform) |
+| 2026-10-17 | While a placeholder's text is being edited, a click on a shape in front of it selects that shape instead of moving the caret, as in PowerPoint (#931) |
+| 2026-10-15 | Native saves keep an imported chart's embedded workbook, drawings and relationships; headless PPTX → edit → native save/reopen → PPTX tests verify the payloads and stale-workbook rejection |
+| 2026-10-15 | PPTX trigger sequences keep separate On Click steps, including paragraph builds; synthetic import/edit/save/reopen and headless show regressions |
+| 2026-10-16 | Export: PNG with a transparent background — the slide background is left out, only the slide's content is drawn (Export… dialog, File › Export, web download, `file.export`/`file.render` `transparentBackground`, `deckcraft-cli render --transparent`) (#784) |
+| 2026-10-16 | Arrange ▸ Align: Align to Slide and Align Selected Objects, as in PowerPoint. One object aligns to the slide and several to each other until the other choice is ticked; the choice holds for that selection and also drives Distribute |
+| 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
+| 2026-10-15 | A `.pptx` slide that can't be read is reported, not dropped in silence: `lostSlides` from `file.open`, a message and a repaired copy in the app, a warning from `deckcraft-cli` (#203) |
+| 2026-10-16 | AutoFormat as you type: ordinals (1st, 22nd, 103rd) get superscript suffixes after a space or punctuation; Tools ▸ AutoCorrect and `text.autocorrect {ordinals}` turn it off |
+| 2026-10-16 | A PowerPoint Show (`.ppsx`) opened from the command line or the file association starts its slide show, as in PowerPoint; File › Open still opens it for editing (#862) |
+| 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
+| 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
+| 2026-10-14 | Empty bulleted and numbered paragraphs show gray markers while editing, including on first click and after Enter. Markers use the list style and stay out of slide shows and exports. |
+| 2026-10-13 | Interface font fallback continues to eligible installed faces when the first covering face is colour or exceeds the 48 MiB limit; document fallback order and the CJK/IME rendering assertions are retained (#101) |
+| 2026-10-13 | PDFW2: adopt the shared writer with native unwind recovery and explicit font-embedding failures; preserve app-owned export behavior and keep reader dependencies out of production |
 | 2026-10-13 | Eyedropper: Shape Fill, Shape Outline, Font Color and every other colour menu end with an Eyedropper that takes the colour drawn at a point of the slide (hover shows it, a click applies it, Esc cancels); `slide.colorAt` gives the same from scripts and MCP (#367) |
 | 2026-10-13 | Slide show: Honeycomb's hexagons cover the whole slide again — the bottom quarter stayed black until the endpoint (#420) |
 | 2026-10-13 | Copy and Cut from the ribbon, the slide's right-click menu and the menus put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431) |
@@ -195,46 +165,49 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | Chart trendlines are drawn: linear, exponential, logarithmic, polynomial, power and moving average, with forecast and the equation and R² label. The value axis grows to include the fit |
 | 2026-10-14 | Chart trendlines round-trip (type, polynomial order, moving-average period, forecast, intercept, equation and R²). An owned corpus slice also checks combo charts with data labels, merged tables with diagonal borders, and text columns, autofit, vertical text and a WordArt warp |
 | 2026-10-14 | Insert › Icons: a gallery of Lucide stroke icons (release 1.56.0) inserted as custom shapes, no fill, round stroke scaled from the 24-unit design |
-| 2026-10-14 | Size and Position dialog: height, width, rotation, scale and lock aspect ratio in one undo step, from Shape Format › Size and the shape menu. Breadth stays 79% |
+| 2026-10-14 | Size and Position dialog: height, width, rotation, scale and lock aspect ratio in one undo step, from Shape Format › Size and the shape menu |
 | 2026-10-14 | Review: Previous and Next comment walk every comment in the deck; the Comments pane lists every slide and highlights the one you landed on |
 | 2026-10-13 | View › New Window opens a second window on the same presentation. The window has its own slide and shows edits made in the first window. Arrange All is not included |
 | 2026-10-14 | File › New starter decks: Briefing, Lesson, Pitch, Field Notes, Quarterly and Evening Talk, original text on our themes (`file.new {template}`, `file.templates`). The large template gallery is still open |
 | 2026-10-14 | Slide Sorter sections: Add Section, rename in place, collapse a section, and drag the bar to move that section and its slides |
 | 2026-10-14 | Text: an input method's composition in a table cell is underlined in place, with the caret and candidate window in that cell |
-| 2026-10-14 | Edit Photo Album (`insert.photoAlbumEdit`): reopen the album's slides and re-flow them in one undo step, with black and white, rotation, brightness, contrast and an album theme. Breadth stays 79%, ready ~55% |
-| 2026-10-14 | Photo Album dialog (`insert.photoAlbum`): pictures and text boxes become slides in the open presentation, one undo step. Breadth stays 79%, ready ~55% |
-| 2026-10-14 | Design › Colors › Customize Colors… opens Create New Theme Colors: the open master's scheme name and twelve theme colours, applied in one undo. Command count stays 226; dialogs 27 → 28 |
-| 2026-10-14 | Design › Fonts › Customize Fonts… opens Create New Theme Fonts: the open master's scheme name and its heading and body latin faces, applied in one undo. Command count stays 226; dialogs 27 → 28 |
+| 2026-10-14 | Edit Photo Album (`insert.photoAlbumEdit`): reopen the album's slides and re-flow them in one undo step, with black and white, rotation, brightness, contrast and an album theme |
+| 2026-10-14 | Photo Album dialog (`insert.photoAlbum`): pictures and text boxes become slides in the open presentation, one undo step |
+| 2026-10-14 | Design › Colors › Customize Colors… opens Create New Theme Colors: the open master's scheme name and twelve theme colours, applied in one undo |
+| 2026-10-14 | Design › Fonts › Customize Fonts… opens Create New Theme Fonts: the open master's scheme name and its heading and body latin faces, applied in one undo |
 | 2026-10-14 | Alt Text: Mark as decorative opens checked when the selection already is, so OK no longer clears it |
 | 2026-10-14 | Insert Hyperlink: address, email, slide and ScreenTip open from the selection, so OK no longer replaces them with `https://` and an empty tip |
-| 2026-10-14 | Insert › Date and Time: the ribbon and Insert menu open a format list (datetime1–datetime13) with a language and Update automatically. OK inserts one field, or the shown text when Update is off. 28 dialogs; 226 commands. English has every format; en-GB, French, Japanese and Swedish list the numeric date and 24-hour time |
+| 2026-10-14 | Insert › Date and Time: the ribbon and Insert menu open a format list (datetime1–datetime13) with a language and Update automatically. OK inserts one field, or the shown text when Update is off. English has every format; en-GB, French, Japanese and Swedish list the numeric date and 24-hour time |
 | 2026-10-14 | View: the Zoom dialog takes a percent or Fit and applies it on OK. View ▸ Zoom opens it; the arrow still lists the presets |
 | 2026-10-13 | PPTX corpus round-trip for tables, charts, animations, media, sections and masters/layouts (open → save → reopen, package parts and text). A handout master's header, footer, date and slide number are kept |
 | 2026-10-13 | Playback stays with its document and its clip (#415): switching decks or closing the last one stops the previous sound, replacing a clip plays the new one, and the duration and decode caches keep the bytes they are keyed by |
-| 2026-10-13 | Slide show: a laser pointer (Cmd/Ctrl+L, the show's laser colour, no ink). Checklist row Partial; weighted breadth stays 79%, P2 summary 39%, slide show area 68%. The presenter window does not move the dot |
+| 2026-10-13 | Slide show: a laser pointer (Cmd/Ctrl+L, the show's laser colour, no ink). Checklist row Partial. The presenter window does not move the dot |
 | 2026-10-14 | Slide Show: Show Media Controls writes the show setting and hides the playback bar and GIF button during the show |
-| 2026-10-14 | During a show, a typed slide number is shown and Enter goes to that slide. Breadth stays 79% |
-| 2026-10-14 | A custom show plays only its slides: Show in the Custom Shows dialog, Set Up Slide Show, or a click action. Breadth stays 79% |
-| 2026-10-14 | Presenter view pauses and resets its timer (T, R) and changes notes size (A-/A+, brackets). The clock shows local time. Second-display placement stays with #433. Breadth stays 79% |
-| 2026-10-14 | See All Slides and zoom during a show: a thumbnail grid (G, or All), click to jump, and click-to-zoom at 2× (Z). Presenter view has Black, White, All slides and Zoom. Breadth stays 79% |
+| 2026-10-14 | During a show, a typed slide number is shown and Enter goes to that slide |
+| 2026-10-14 | A custom show plays only its slides: Show in the Custom Shows dialog, Set Up Slide Show, or a click action |
+| 2026-10-14 | Presenter view pauses and resets its timer (T, R) and changes notes size (A-/A+, brackets). The clock shows local time. Second-display placement stays with #433 |
+| 2026-10-14 | See All Slides and zoom during a show: a thumbnail grid (G, or All), click to jump, and click-to-zoom at 2× (Z). Presenter view has Black, White, All slides and Zoom |
 | 2026-10-13 | The command palette skips commands that need a value, so searching for Export runs the export dialog (#79) |
 | 2026-10-14 | PNG and JPEG slide export record their resolution. The default 2 pixels per point is 144 dpi, so Preview and print show the slide's real size instead of twice that |
 | 2026-10-14 | Design ▸ Effects: named effect schemes (DeckCraft, Soft, Crisp, Lift, Glow, Plain) replace the theme's fills, lines and effects and leave colours and fonts. `design.effects` |
-| 2026-10-14 | Slide Master: Preserve on the open master or layout, and Title and Footers placeholder checkboxes. Two commands (`master.preserve`, `master.placeholders`); dialogs stay 27; breadth stays 79% |
+| 2026-10-14 | Slide Master: Preserve on the open master or layout, and Title and Footers placeholder checkboxes. Two commands (`master.preserve`, `master.placeholders`) |
 | 2026-10-14 | Trim Media: start, end and fades open from the selected clip, so OK no longer resets them to zero |
 | 2026-10-14 | Format Background: a solid fill's transparency, and for a picture transparency, tile, offset, scale, alignment and mirror. Apply to All copies a picture background onto every slide. The same `design.background` command; dialogs stay 27 |
 | 2026-10-13 | Editor slide rasters sit on the physical pixel grid, so small text stays sharp on a Retina display instead of being blurred by a linear filter between pixels (#184) |
 | 2026-10-14 | Copy and paste with other apps: bold, italic and underline travel as HTML (Pages keeps them); a shape with no text still copies as DeckCraft objects so Ctrl+V pastes it (#182) |
-| 2026-10-13 | Animations ▸ Preview plays the current slide's animations on the editor canvas (Play All does the same); Escape or a click stops it. Breadth 79% → 80%, Animations 79% → 85% |
+| 2026-10-13 | Animations ▸ Preview plays the current slide's animations on the editor canvas (Play All does the same); Escape or a click stops it. Checklist row Preview in editor re-scored done |
 | 2026-10-14 | A two-finger twist on the trackpad rotates the selected shapes, as one undo step. Pinch-zoom is unchanged |
 | 2026-10-14 | A trackpad swipe turns the page: sideways when the slide fits the window, and any flick during the slide show. One gesture turns one page. Pinch-zoom is unchanged |
 | 2026-10-14 | Format Shape: the Fill transparency slider shows the selected solid fill, and leaving it no longer clears that transparency |
 | 2026-10-13 | Web file picker: a picture, sound, video or outline finishes on the document and slide that asked for it, and is dropped if that presentation was closed or the picker dismissed (#414) |
-| 2026-10-14 | Paragraph dialog (Home › Paragraph launcher): alignment, first-line and hanging indents, spacing before and after, line spacing, and a Tabs dialog, each applied in one undo step. Breadth stays 79% |
-| 2026-10-14 | Font dialog (Home › Font, the shape menu, Cmd+T): family, size, bold, italic, underline, colour, strikethrough, baseline, caps and character spacing, applied in one undo step. Breadth stays 79% |
+| 2026-10-14 | Paragraph dialog (Home › Paragraph launcher): alignment, first-line and hanging indents, spacing before and after, line spacing, and a Tabs dialog, each applied in one undo step |
+| 2026-10-14 | Font dialog (Home › Font, the shape menu, Cmd+T): family, size, bold, italic, underline, colour, strikethrough, baseline, caps and character spacing, applied in one undo step |
 | 2026-10-13 | Grid Options: spacing, snap to grid, snap to other objects, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
 | 2026-10-13 | WordArt adjust handles: a selected text warp shows one yellow handle per adjust, and dragging it sets that guide value (one undo step) |
 | 2026-10-14 | Draw: pen pressure scales ink width when the pointer reports it (a mouse or a missing reading stays at the pen width; a stroke saved as a flat 0.5 still draws at the pen width). Tilt is not read |
+| 2026-10-13 | Saving a presentation keeps the embedded workbook behind an unchanged chart, and the chart part's relationships (#335). Editing the chart drops that workbook instead of writing numbers that no longer match it |
+| 2026-10-13 | A presentation whose object ids are used up refuses to grow instead of handing out duplicate ids (#407) |
+| 2026-10-13 | macOS: a Finder double-click, Open With, a drop on the Dock icon and `open -a DeckCraft deck.pptx` open the file (#138, #347). `Info.plist` now declares the documents DeckCraft opens (`.deckcraft`, `.pptx`, `.potx`, `.ppsx`, the same set as the Windows installer and the Linux desktop file, kept equal by a test), and the `kAEOpenDocuments` Apple event is handled through the pinned `fmv-macos-events` crate as in GridCraft; the `-psn_` argument older macOS adds on a Finder launch is ignored. PowerPoint stays the default until the user picks DeckCraft |
 | 2026-10-14 | 3-D models: Insert › 3D Models › This Device… reads GLB, glTF, OBJ (with its MTL and textures), STL, PLY and 3MF; models turn with a 3-D handle, the 3D Model Views gallery and rotation fields, refit their frame, Reset; 3-D effects Arrive, Turntable, Swing, Jump & Turn and Leave; Morph turns them between slides; a 3D Model tab, Format pane page and right-click menu (Save as Picture); PowerPoint's `am3d:model3d` read and written, checked both ways in PowerPoint, lighting measured against PowerPoint's |
 | 2026-10-13 | Slide transitions like PowerPoint: every transition and option measured frame by frame against PowerPoint's video export and retuned (curves, directions, soft edges, 3-D perspective, contents moving over backgrounds); PowerPoint's own XML elements and defaults read and written (diagonal Wipe, Zoom, Shape In/Out, Glitter Hexagons, Shred In/Out, Page Curl Single); `deckcraft-cli render-transition` renders frames headless |
 | 2026-10-13 | Wild text cases measured against PowerPoint (102 synthetic slides): bidi by run language, East Asian vertical text upright, mongolianVert/wordArtVert/wordArtVertRtl, underline styles and strikethrough at the font's metrics, centre/right/decimal tabs, East Asian, Thai, Hindi, Arabic and Hebrew numbering, small caps, all-caps "ß", transparent text, soft hyphens, kinsoku, rtlCol and just/dist anchoring, emoji presentation, fallback faces that no longer move the baseline |
@@ -268,6 +241,14 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
+| 2026-10-15 | trivial | Progress log: chart package parts survive a native save. Scores and milestone names unchanged |
+| 2026-10-15 | trivial | Progress log: PPTX trigger click-step round trip. Feature scores and milestone names unchanged |
+| 2026-10-16 | trivial | Progress log: PNG export with a transparent background (#784) |
+| 2026-10-16 | trivial | Progress log: a `.ppsx` from the system starts the slide show (#862) |
+| 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
+| 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
+| 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |
 | 2026-10-13 | trivial | Progress log: Eyedropper in the colour menus, slide.colorAt (#367) |
 | 2026-10-13 | trivial | Progress log: video seek frame-loss race and regression coverage |
 | 2026-10-14 | minor | Presenter keyboard navigation and end-screen controls |
@@ -317,6 +298,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | trivial | Progress log: Font dialog |
 | 2026-10-13 | trivial | Progress log: Grid Options dialog |
 | 2026-10-14 | trivial | Progress log: pen pressure scales ink width |
+| 2026-10-13 | trivial | Progress log: chart workbook round-trip (#335) |
+| 2026-10-13 | trivial | Progress log: Finder opens presentations on macOS (#138) |
 | 2026-10-14 | trivial | Progress log: 3-D models; Media row re-scored (67% → 71%) |
 | 2026-10-13 | trivial | Progress log: wild text cases |
 | 2026-10-13 | trivial | Progress log: slide show for interactive decks |

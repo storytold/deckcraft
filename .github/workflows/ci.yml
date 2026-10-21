@@ -19,6 +19,7 @@ env:
 
 jobs:
   gates:
+    timeout-minutes: 60
     name: gates (${{ matrix.os }})
     strategy:
       fail-fast: false

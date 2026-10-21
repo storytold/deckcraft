@@ -27,12 +27,12 @@ fn png(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
 }
 
 fn shape(p: &mut Presentation, name: &str, x: f64, y: f64, w: f64, h: f64) -> Shape {
-    Shape { id: ShapeId(p.alloc_id()), name: name.into(), xfrm: Some(Xfrm::new(x, y, w, h)), ..Default::default() }
+    Shape { id: ShapeId(p.alloc_id().expect("ids")), name: name.into(), xfrm: Some(Xfrm::new(x, y, w, h)), ..Default::default() }
 }
 
 fn new_slide(p: &mut Presentation, title: &str) -> Slide {
     let layout = defaults::layout_of_kind(p, deckcraft_model::LayoutType::TitleOnly).unwrap_or_default();
-    let mut s = defaults::new_slide(p, layout);
+    let mut s = defaults::new_slide(p, layout).expect("slide");
     if let Some(t) = s.shapes.first_mut() {
         t.text = Some(TextBody::from_text(title));
     }
@@ -45,9 +45,9 @@ pub fn rich_deck() -> Presentation {
     p.props.title = "Rich deck".into();
     p.props.author = "DeckCraft tests".into();
     p.props.created = "2025-01-02T03:04:05Z".into();
-    let img = p.add_media("image1.png", "image/png", png(40, 30, [200, 40, 40]));
-    let img2 = p.add_media("image2.png", "image/png", png(8, 8, [20, 140, 220]));
-    let video = p.add_media("clip.mp4", "video/mp4", b"\x00\x00\x00\x18ftypmp42not-a-real-video".to_vec());
+    let img = p.add_media("image1.png", "image/png", png(40, 30, [200, 40, 40])).expect("media");
+    let img2 = p.add_media("image2.png", "image/png", png(8, 8, [20, 140, 220])).expect("media");
+    let video = p.add_media("clip.mp4", "video/mp4", b"\x00\x00\x00\x18ftypmp42not-a-real-video".to_vec()).expect("media");
 
     // Slide 1: title slide with notes and formatted text.
     {
@@ -84,6 +84,7 @@ pub fn rich_deck() -> Presentation {
                                 highlight_click: false,
                                 sound: None,
                                 stop_sound: false,
+                                zoom_return: None,
                             }),
                             ..Default::default()
                         },
@@ -155,7 +156,14 @@ pub fn rich_deck() -> Presentation {
         }],
         ..Default::default()
     });
-    b.click = Some(Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: true, sound: None, stop_sound: false });
+    b.click = Some(Hyperlink {
+        action: Action::NextSlide,
+        tooltip: String::new(),
+        highlight_click: true,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
     let mut c = shape(&mut p, "Freeform", 450.0, 120.0, 100.0, 100.0);
     c.geom = Geom::Custom {
         paths: vec![CustomPath {
@@ -331,7 +339,7 @@ pub fn rich_deck() -> Presentation {
 
     // Slide 6: bulleted content with a by-paragraph build, a slide link and an equation.
     let layout = defaults::layout_of_kind(&p, deckcraft_model::LayoutType::TitleAndContent).unwrap_or_default();
-    let mut s = defaults::new_slide(&mut p, layout);
+    let mut s = defaults::new_slide(&mut p, layout).expect("slide");
     s.shapes[0].text = Some(TextBody::from_text("Build"));
     s.shapes[1].text = Some(TextBody::from_text("One\nTwo\nThree"));
     let body = s.shapes[1].id;
@@ -339,8 +347,14 @@ pub fn rich_deck() -> Presentation {
     let target = p.slides[1].id;
     let mut link = shape(&mut p, "Go to shapes", 600.0, 450.0, 200.0, 40.0);
     link.text = Some(TextBody::from_text("Back to shapes"));
-    link.click =
-        Some(Hyperlink { action: Action::Slide { slide: target }, tooltip: String::new(), highlight_click: false, sound: None, stop_sound: false });
+    link.click = Some(Hyperlink {
+        action: Action::Slide { slide: target },
+        tooltip: String::new(),
+        highlight_click: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
     let mut eq = shape(&mut p, "Equation", 100.0, 450.0, 300.0, 40.0);
     eq.text = Some(TextBody {
         paragraphs: vec![Paragraph {
@@ -503,7 +517,7 @@ fn pictures_media_and_ink_round_trip() {
 #[test]
 fn pressured_ink_exports_at_its_mean_width() {
     let mut p = Presentation::default();
-    let id = ShapeId(p.alloc_id());
+    let id = ShapeId(p.alloc_id().expect("id"));
     let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
     slide.shapes.push(Shape {
         id,
@@ -624,7 +638,7 @@ fn every_transition_kind_survives() {
     p.slides.clear();
     for (kind, ..) in deckcraft_model::anim::TRANSITIONS {
         let mut s = base.clone();
-        s.id = SlideId(p.alloc_id());
+        s.id = SlideId(p.alloc_id().expect("ids"));
         s.transition = Some(Transition { kind: kind.to_string(), duration_ms: 1200, ..Default::default() });
         p.slides.push(Arc::new(s));
     }
@@ -806,7 +820,7 @@ fn colour_map_overrides_round_trip() {
 #[test]
 fn a_picture_duotone_round_trips() {
     let mut p = defaults::new_presentation(None);
-    let img = p.add_media("image1.png", "image/png", png(4, 4, [128, 128, 128]));
+    let img = p.add_media("image1.png", "image/png", png(4, 4, [128, 128, 128])).expect("media");
     let mut pic = shape(&mut p, "Duotone", 10.0, 10.0, 100.0, 100.0);
     let mut pf = PictureFill { media: img, ..Default::default() };
     pf.adjust.duotone = Some((ColorRef::scheme(SchemeSlot::Accent1).with(ColorTransform::Shade(30000)), ColorRef::rgb(Rgba::rgb(250, 240, 200))));
@@ -919,7 +933,7 @@ fn transition_deck(list: &[(&str, &str, u32, Option<u32>)]) -> (Presentation, Ve
     p.slides.clear();
     for (kind, option, ms, adv) in list {
         let mut s = base.clone();
-        s.id = SlideId(p.alloc_id());
+        s.id = SlideId(p.alloc_id().expect("ids"));
         s.transition = Some(Transition {
             kind: kind.to_string(),
             option: option.to_string(),
@@ -1143,8 +1157,8 @@ fn float_down_is_preset_47_both_ways() {
 #[test]
 fn embedded_fonts_round_trip() {
     let mut p = Presentation::default();
-    let regular = p.add_media("font1.fntdata", "application/x-fontdata", b"REGULAR-FONT-BYTES-0123456789".to_vec());
-    let bold = p.add_media("font2.fntdata", "application/x-fontdata", b"BOLD-FONT-BYTES-0123456789abcd".to_vec());
+    let regular = p.add_media("font1.fntdata", "application/x-fontdata", b"REGULAR-FONT-BYTES-0123456789".to_vec()).expect("media");
+    let bold = p.add_media("font2.fntdata", "application/x-fontdata", b"BOLD-FONT-BYTES-0123456789abcd".to_vec()).expect("media");
     p.embedded_fonts.push(deckcraft_model::EmbeddedFont {
         typeface: "Deck Test Face".into(),
         panose: Some("020B0604020202020204".into()),
@@ -1682,6 +1696,114 @@ fn radar_stock_and_combo_round_trip() {
     }
 }
 
+/// Home › New Slide › Reuse Slides: slides from another .pptx land after the current slide with
+/// their pictures (fresh media ids, same bytes) and animations on the renumbered shapes. By
+/// default they take a destination layout; Keep Source Formatting brings the source master.
+#[test]
+fn reuse_slides_from_another_presentation() {
+    use deckcraft_engine::Session;
+    use serde_json::json;
+    let b64 = deckcraft_engine::cmd::base64_encode;
+    // Source: three slides, a picture with an animation on the second.
+    let mut src = Session::with_new();
+    src.execute("slide.new", &json!({})).unwrap();
+    let pic = png(8, 8, [10, 200, 30]);
+    src.execute("insert.picture", &json!({"data": b64(&pic), "name": "green.png"})).unwrap();
+    src.execute("animation.add", &json!({"effect": "fade"})).unwrap();
+    src.execute("slide.new", &json!({})).unwrap();
+    let src_bytes = deckcraft_pptx::export(&src.doc().unwrap().doc).unwrap();
+
+    let mut s = Session::with_new();
+    // Media ids in the two decks overlap; the destination's own picture must stay its own.
+    let red = png(4, 4, [200, 0, 0]);
+    s.execute("insert.picture", &json!({"data": b64(&red), "name": "red.png"})).unwrap();
+    let r = s.execute("slide.reuse", &json!({"data": b64(&src_bytes), "name": "src.pptx", "slides": [1]})).unwrap();
+    assert_eq!(r["slides"], 1, "{r}");
+    let doc = s.doc().unwrap().doc.clone();
+    assert_eq!(doc.slides.len(), 2);
+    assert_eq!(s.doc().unwrap().selection.slide, 1, "the reused slide is selected");
+    let pictures = |sl: &deckcraft_model::Slide| {
+        let mut v = vec![];
+        deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
+            if let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind {
+                v.push(fill.media);
+            }
+        });
+        v
+    };
+    let mine = pictures(&doc.slides[0]);
+    let reused = pictures(&doc.slides[1]);
+    assert_eq!(doc.media(mine[0]).map(|m| m.data.as_slice() == red.as_slice()), Some(true), "own picture untouched");
+    assert_eq!(doc.media(reused[0]).map(|m| m.data.as_slice() == pic.as_slice()), Some(true), "reused picture copied");
+    let anim = &doc.slides[1].animations[0];
+    assert!(doc.slides[1].shapes.iter().any(|sh| sh.id == anim.shape), "animation follows its shape");
+    assert!(doc.layout(doc.slides[1].layout).is_some(), "uses a destination layout");
+    assert_eq!(doc.masters.len(), 1);
+    // The result saves and reopens.
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&doc).unwrap()).unwrap();
+    assert_eq!(back.slides.len(), 2);
+
+    // Keep Source Formatting: every slide, and the source master comes along.
+    let r = s.execute("slide.reuse", &json!({"data": b64(&src_bytes), "name": "src.pptx", "keepFormatting": true, "at": 0})).unwrap();
+    assert_eq!(r["slides"], 3);
+    let doc = s.doc().unwrap().doc.clone();
+    assert_eq!(doc.slides.len(), 5);
+    assert_eq!(doc.masters.len(), 2);
+    for sl in &doc.slides[..3] {
+        assert_eq!(doc.layout(sl.layout).map(|(m, _)| m.id), Some(doc.masters[1].id), "source master");
+    }
+    // One undo removes the whole reuse.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
+    assert!(s.execute("slide.reuse", &json!({"data": b64(&src_bytes), "name": "src.pptx", "slides": [7]})).is_err());
+    assert!(s.execute("slide.reuse", &json!({"data": b64(&[0u8, 159, 146, 150]), "name": "x.bin"})).is_err());
+}
+
+/// Picture Format › Compress Pictures: a big picture shown small is downsampled, its original
+/// goes when nothing else uses it, the saved file shrinks, a copy that wasn't compressed keeps
+/// the original, and undo brings everything back.
+#[test]
+fn compress_pictures_shrinks_the_file_and_keeps_shared_originals() {
+    use deckcraft_engine::Session;
+    use serde_json::json;
+    let b64 = deckcraft_engine::cmd::base64_encode;
+    // A noisy 1600 × 1600 picture (doesn't compress away on its own).
+    let big = {
+        let img = image::RgbImage::from_fn(1600, 1600, |x, y| image::Rgb([(x * 31 % 251) as u8, (y * 17 % 253) as u8, ((x * y) % 255) as u8]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let mut s = Session::with_new();
+    s.execute("insert.picture", &json!({"data": b64(&big), "name": "noise.png"})).unwrap();
+    s.execute("shape.resize", &json!({"w": 144, "h": 144})).unwrap();
+    let size_before = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap().len();
+    let r = s.execute("picture.compress", &json!({"ppi": 150})).unwrap();
+    assert_eq!(r["pictures"], 1, "{r}");
+    let doc = s.doc().unwrap().doc.clone();
+    assert_eq!(doc.media.len(), 1, "the original is gone");
+    let img = image::load_from_memory(&doc.media[0].data).unwrap();
+    assert_eq!((img.width(), img.height()), (300, 300), "2 in at 150 ppi");
+    let size_after = deckcraft_pptx::export(&doc).unwrap().len();
+    assert!(size_after * 4 < size_before, "{size_before} → {size_after}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.media[0].data.len(), big.len(), "undo restores the original");
+
+    // A duplicate that isn't compressed still needs the original.
+    s.execute("edit.duplicate", &json!({})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes.clone();
+    let first: Vec<_> = s.doc().unwrap().doc.slides[0].shapes.iter().map(|sh| sh.id).filter(|id| !copy.contains(id)).collect();
+    s.execute("picture.compress", &json!({"ppi": 150, "ids": [first.last().unwrap().0]})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    assert_eq!(doc.media.len(), 2);
+    assert!(doc.media.iter().any(|m| m.data.len() == big.len()), "the copy keeps the original");
+    // All pictures: the copy gets compressed too, and the original goes.
+    s.execute("picture.compress", &json!({"ppi": 150, "all": true})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    assert!(doc.media.iter().all(|m| m.data.len() < big.len() / 4));
+    assert!(s.execute("picture.compress", &json!({"ppi": 5, "all": true})).is_err());
+}
+
 /// #203: SmartArt we can't draw kept its XML but lost its diagram parts on save.
 #[test]
 fn smartart_without_a_drawing_keeps_its_parts() {
@@ -1690,11 +1812,13 @@ fn smartart_without_a_drawing_keeps_its_parts() {
         "data1.xml",
         "application/vnd.openxmlformats-officedocument.drawingml.diagramData+xml",
         br#"<dgm:dataModel xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><dgm:ptLst><dgm:pt modelId="1"><dgm:t><a:p><a:r><a:t>Manager</a:t></a:r></a:p></dgm:t></dgm:pt></dgm:ptLst><dgm:extLst><a:ext uri="http://schemas.microsoft.com/office/drawing/2008/diagram"><dsp:dataModelExt xmlns:dsp="http://schemas.microsoft.com/office/drawing/2008/diagram" relId="rId6"/></a:ext></dgm:extLst></dgm:dataModel>"#.to_vec(),
-    );
+    ).expect("media");
     let mut parts = vec![("rId2".to_string(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagramData".to_string(), data)];
     for (i, kind) in ["Layout", "QuickStyle", "Colors"].into_iter().enumerate() {
         let xml = format!(r#"<dgm:{kind} xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram"/>"#).into_bytes();
-        let m = p.add_media(&format!("{kind}1.xml"), &format!("application/vnd.openxmlformats-officedocument.drawingml.diagram{kind}+xml"), xml);
+        let m = p
+            .add_media(&format!("{kind}1.xml"), &format!("application/vnd.openxmlformats-officedocument.drawingml.diagram{kind}+xml"), xml)
+            .expect("media");
         parts.push((format!("rId{}", i + 3), format!("http://schemas.openxmlformats.org/officeDocument/2006/relationships/diagram{kind}"), m));
     }
     let xml = r#"<p:graphicFrame xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:nvGraphicFramePr><p:cNvPr id="4" name="Diagram 3"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/diagram"><dgm:relIds xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" r:dm="rId2" r:lo="rId3" r:qs="rId4" r:cs="rId5"/></a:graphicData></a:graphic></p:graphicFrame>"#;
@@ -1719,8 +1843,10 @@ fn smartart_without_a_drawing_keeps_its_parts() {
 #[test]
 fn legacy_ole_object_is_written_in_the_fallback_form() {
     let mut p = defaults::new_presentation(None);
-    let bin = p.add_media("oleObject1.bin", "application/vnd.openxmlformats-officedocument.oleObject", b"\xD0\xCF\x11\xE0not-a-real-ole".to_vec());
-    let prev = p.add_media("image1.png", "image/png", png(4, 3, [10, 20, 30]));
+    let bin = p
+        .add_media("oleObject1.bin", "application/vnd.openxmlformats-officedocument.oleObject", b"\xD0\xCF\x11\xE0not-a-real-ole".to_vec())
+        .expect("media");
+    let prev = p.add_media("image1.png", "image/png", png(4, 3, [10, 20, 30])).expect("media");
     let xml = r#"<p:graphicFrame xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><p:nvGraphicFramePr><p:cNvPr id="4" name="Object 3"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="0" y="0"/><a:ext cx="914400" cy="914400"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/presentationml/2006/ole"><p:oleObj spid="_x0000_s1026" name="Slide" r:id="rId4" progId="PowerPoint.Slide.8"><p:embed/></p:oleObj></a:graphicData></a:graphic></p:graphicFrame>"#;
     let parts = vec![("rId4".to_string(), "http://schemas.openxmlformats.org/officeDocument/2006/relationships/oleObject".to_string(), bin)];
     let mut s = new_slide(&mut p, "OLE");
@@ -1734,4 +1860,63 @@ fn legacy_ole_object_is_written_in_the_fallback_form() {
     assert!(xml.contains("<p:pic>") && !xml.contains("spid"), "{xml}");
     assert!(preview.is_some(), "the preview picture is kept");
     assert!(parts.iter().any(|(_, k, _)| k.ends_with("/oleObject")), "the embedding is kept: {parts:?}");
+}
+
+/// Insert › Zoom: slide, section and summary zooms are linked pictures of their targets, with
+/// Return to Zoom on section and summary zooms; a summary zoom makes its own slide; all of it is
+/// one undo step and saves as linked pictures.
+#[test]
+fn zoom_inserts_linked_slide_pictures() {
+    use deckcraft_engine::Session;
+    use deckcraft_model::text::Action;
+    use serde_json::json;
+    let mut s = Session::with_new();
+    for t in ["Intro", "Plan", "Budget", "Risks"] {
+        s.execute("slide.new", &json!({"title": t})).unwrap();
+    }
+    // Slides: 0 title, 1 Intro, 2 Plan, 3 Budget, 4 Risks.
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let r = s.execute("insert.zoom", &json!({"slides": [2]})).unwrap();
+    assert_eq!(r["returnToZoom"], false);
+    let doc = s.doc().unwrap().doc.clone();
+    let zoom = doc.slides[0].shapes.iter().find(|sh| sh.name.starts_with("Slide Zoom")).expect("slide zoom");
+    let link = zoom.click.as_ref().unwrap();
+    assert_eq!(link.action, Action::Slide { slide: doc.slides[2].id });
+    assert_eq!(link.zoom_return, None);
+    assert_eq!(link.tooltip, "Plan");
+    let ShapeKind::Picture { fill } = &zoom.kind else { panic!() };
+    assert!(doc.media(fill.media).is_some_and(|m| m.data.starts_with(b"\x89PNG")));
+
+    // Section zoom: back after the section's last slide.
+    s.execute("section.add", &json!({"name": "Start", "at": 0})).unwrap();
+    s.execute("section.add", &json!({"name": "Money", "at": 3})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    let money = doc.sections.iter().position(|x| x.name == "Money").unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.execute("insert.zoom", &json!({"kind": "section", "sections": [money]})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    let sec = doc.slides[0].shapes.iter().find(|sh| sh.name.starts_with("Section Zoom")).unwrap();
+    let last = *doc.sections[money].slides.last().unwrap();
+    assert_eq!(sec.click.as_ref().unwrap().zoom_return, Some(last));
+
+    // Summary zoom on slides 1 and 3: a new slide in front, parts 1–2 and 3–4.
+    let before = doc.slides.len();
+    s.execute("insert.zoom", &json!({"kind": "summary", "slides": [1, 3]})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    assert_eq!(doc.slides.len(), before + 1);
+    let sum = &doc.slides[1];
+    assert!(sum.title().contains("Summary"));
+    let tiles: Vec<_> = sum.shapes.iter().filter_map(|sh| sh.click.as_ref()).collect();
+    assert_eq!(tiles.len(), 2);
+    assert_eq!(tiles[0].zoom_return, Some(doc.slides[3].id), "part one runs to the slide before part two");
+    assert_eq!(tiles[1].zoom_return, Some(doc.slides.last().unwrap().id));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.slides.len(), before, "one undo step");
+
+    // Saved as linked pictures.
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap()).unwrap();
+    let z = back.slides[0].shapes.iter().find(|sh| matches!(sh.kind, ShapeKind::Picture { .. }) && sh.click.is_some()).unwrap();
+    assert!(matches!(z.click.as_ref().unwrap().action, Action::Slide { .. }));
+    assert!(s.execute("insert.zoom", &json!({"slides": [42]})).is_err());
+    assert!(s.execute("insert.zoom", &json!({"kind": "slide"})).is_err());
 }

@@ -61,3 +61,17 @@ families excluded by `crates/fonts/build.rs`:
 | BIZ UDPGothic, BIZ UDMincho, Shippori Mincho, Noto Sans Arabic | OFL-1.1 | Japanese and Arabic text |
 
 Web (wasm32) builds embed only Inter Regular/Bold and BIZ UDPGothic Regular.
+
+## PDF writer colour profiles
+
+`craft-pdf` is used with only its `write` feature and default features disabled. Krilla
+0.8.2 embeds the following profiles; these were already reachable through the direct Krilla
+exporter. No interpreter fallback fonts or CMaps are enabled, and no profile or font binary
+is copied into this repository. The licence text is in `licenses/pdf-writer/LICENSE-ICC.txt`.
+
+| Asset | Author | Source | Licence | SHA-256 | Used for |
+|---|---|---|---|---|---|
+| `krilla 0.8.2 / icc/sGrey-v2-magic.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sGrey-v2-magic.icc | CC0-1.0 | `4110169287e5f1b5149ca9f1da1814d32943905bba8030e849d1a3b729a19481` | PDF export colour profiles |
+| `krilla 0.8.2 / icc/sGrey-v4.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sGrey-v4.icc | CC0-1.0 | `00c0f94e09127520a17dc0e1d9264b5702081d96dbdb1549ee88e3631ce42a9d` | PDF export colour profiles |
+| `krilla 0.8.2 / icc/sRGB-v2-magic.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sRGB-v2-magic.icc | CC0-1.0 | `af4efe28f6d311799865f325ba39184a2e978b113ca74124d60af7de22b105f4` | PDF export colour profiles |
+| `krilla 0.8.2 / icc/sRGB-v4.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sRGB-v4.icc | CC0-1.0 | `c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353` | PDF export colour profiles |

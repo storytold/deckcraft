@@ -227,6 +227,29 @@ impl Table {
         if r1 >= self.rows.len() || c1 >= self.cols.len() || (r0 == r1 && c0 == c1) {
             return false;
         }
+        // Grow the rectangle until no existing merge sticks out of it.
+        let (mut r0, mut c0, mut r1, mut c1) = (r0, c0, r1, c1);
+        loop {
+            let before = (r0, c0, r1, c1);
+            for (r, row) in self.rows.iter().enumerate() {
+                for (c, cell) in row.cells.iter().enumerate().take(self.cols.len()) {
+                    if cell.is_covered() {
+                        continue;
+                    }
+                    let ar1 = r.saturating_add((cell.row_span.max(1) as usize).saturating_sub(1)).min(self.rows.len() - 1);
+                    let ac1 = c.saturating_add((cell.grid_span.max(1) as usize).saturating_sub(1)).min(self.cols.len() - 1);
+                    if r <= r1 && ar1 >= r0 && c <= c1 && ac1 >= c0 {
+                        r0 = r0.min(r);
+                        c0 = c0.min(c);
+                        r1 = r1.max(ar1);
+                        c1 = c1.max(ac1);
+                    }
+                }
+            }
+            if (r0, c0, r1, c1) == before {
+                break;
+            }
+        }
         let mut text = vec![];
         for r in r0..=r1 {
             for c in c0..=c1 {
@@ -503,6 +526,20 @@ mod tests {
 
     fn anchor_text(t: &Table, r: usize, c: usize) -> String {
         t.cell(r, c).unwrap().text.text()
+    }
+
+    #[test]
+    fn merging_over_an_existing_merge_takes_it_in() {
+        let mut t = Table::new(3, 3, 300.0, 30.0);
+        if let Some(c) = t.cell_mut(1, 2) {
+            c.text = TextBody::from_text("X");
+        }
+        assert!(t.merge(1, 1, 1, 2));
+        assert!(t.merge(0, 0, 1, 1));
+        assert_topology(&t);
+        let a = t.cell(0, 0).unwrap();
+        assert_eq!((a.row_span, a.grid_span), (2, 3));
+        assert_eq!(anchor_text(&t, 0, 0), "X");
     }
 
     #[test]

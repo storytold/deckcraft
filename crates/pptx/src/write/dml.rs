@@ -489,9 +489,11 @@ pub fn body_pr(w: &mut W, b: &BodyProps) {
         Some(AutoFit::None) => w.empty0("a:noAutofit"),
         Some(AutoFit::Shape) => w.empty0("a:spAutoFit"),
         Some(AutoFit::Shrink { font_scale, line_reduction }) => {
-            let fs = pct(font_scale.clamp(0.01, 1.0));
+            // A scale the model holds is written, 100 % included: reopening then keeps the same
+            // "draw the saved scale" state instead of becoming a bare `<a:normAutofit/>` (#724).
+            let fs = font_scale.map(|s| pct(s.clamp(0.01, 1.0)));
             let lr = pct(line_reduction.clamp(0.0, 1.0));
-            w.empty("a:normAutofit", A::new().o("fontScale", (fs != 100_000).then_some(fs)).o("lnSpcReduction", (lr != 0).then_some(lr)));
+            w.empty("a:normAutofit", A::new().o("fontScale", fs).o("lnSpcReduction", (lr != 0).then_some(lr)));
         }
         None => {}
     }

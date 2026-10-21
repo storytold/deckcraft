@@ -41,8 +41,14 @@ impl Anchor {
 pub enum AutoFit {
     /// Do not autofit.
     None,
-    /// Shrink text on overflow: font scale and line-spacing reduction (0–1).
-    Shrink { font_scale: f64, line_reduction: f64 },
+    /// Shrink text on overflow: font scale and line-spacing reduction (0–1). `font_scale` is
+    /// `None` for a file's `<a:normAutofit/>` with no `fontScale`: the schema default 100 %,
+    /// which PowerPoint draws as it is and only fits again when the text changes (#724).
+    Shrink {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        font_scale: Option<f64>,
+        line_reduction: f64,
+    },
     /// Resize shape to fit text.
     Shape,
 }
@@ -344,6 +350,10 @@ pub struct Hyperlink {
     /// `endSnd`: stop the sound that is already playing.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub stop_sound: bool,
+    /// Zoom (Insert ▸ Zoom) with Return to Zoom: in the show, after this slide is shown and
+    /// advanced past, go back to the slide with the zoom. Saved to .pptx as a plain slide link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zoom_return: Option<crate::SlideId>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]

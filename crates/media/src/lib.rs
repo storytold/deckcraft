@@ -92,9 +92,15 @@ impl Container {
         } else if at(0, &ASF_HEADER) {
             Container::Asf
         } else if at(0, b"ID3") {
-            // ID3v2 is followed by MP3 frames (or, rarely, ADTS).
-            let size = b.get(6..10).map(|s| s.iter().fold(0usize, |a, &x| (a << 7) | (x & 0x7f) as usize)).unwrap_or(0);
-            match Container::sniff(b.get(10 + size..).unwrap_or(&[])) {
+            // ID3v2 is followed by MP3 frames (or, rarely, ADTS). The chain of tags is walked
+            // iteratively — a crafted file can carry thousands of empty tags — and only the
+            // bytes after the last one are sniffed.
+            let mut rest = b;
+            while rest.starts_with(b"ID3") {
+                let size = rest.get(6..10).map(|s| s.iter().fold(0usize, |a, &x| (a << 7) | (x & 0x7f) as usize)).unwrap_or(0);
+                rest = rest.get(10 + size..).unwrap_or(&[]);
+            }
+            match Container::sniff(rest) {
                 Container::Adts => Container::Adts,
                 _ => Container::Mp3,
             }
@@ -126,3 +132,20 @@ impl Container {
 
 /// Worker threads are available (not on wasm32).
 pub(crate) const THREADS: bool = !cfg!(target_arch = "wasm32");
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn id3_tag_chains_do_not_recurse_the_stack() {
+        // 2 MB of empty ID3v2 tags (10 bytes each) chained ahead of the MP3 frames: walking
+        // the chain must not cost one stack frame per tag.
+        let mut b = Vec::with_capacity(200_000 * 10 + 2);
+        for _ in 0..200_000 {
+            b.extend_from_slice(&[b'I', b'D', b'3', 4, 0, 0, 0, 0, 0, 0]);
+        }
+        b.extend_from_slice(&[0xFF, 0xFB]); // an MP3 frame sync
+        assert_eq!(Container::sniff(&b), Container::Mp3);
+    }
+}

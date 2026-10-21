@@ -166,7 +166,7 @@ fn browse_theme(s: &mut Session, p: &Value) -> Result<Value> {
         // The theme's pictures (format-scheme blip fills) get ids of this deck.
         let mut map = std::collections::HashMap::new();
         for m in &media {
-            let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone());
+            let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad("design.browseTheme", NO_ID_SPACE))?;
             map.insert(m.id.0, id.0);
         }
         let theme = if map.is_empty() { theme.clone() } else { remap_media_ids(&theme, &map)? };
@@ -519,7 +519,7 @@ fn background(s: &mut Session, p: &Value) -> Result<Value> {
     } else if p.get("picture").is_some() {
         let (name, bytes) = super::insert::media_bytes(&with_param(p, "data", p.get("picture").cloned().unwrap_or_default()), "design.background")?;
         let ct = super::insert::content_type(&name, &bytes);
-        let media = s.edit(|doc, _| Ok(doc.add_media(&name, ct, bytes)))?;
+        let media = s.edit(|doc, _| doc.add_media(&name, ct, bytes).ok_or_else(|| bad("design.background", NO_ID_SPACE)))?;
         let mut pf = deckcraft_model::style::PictureFill { media, ..Default::default() };
         if let Some(pp) = &props {
             apply_picture_props(&mut pf, pp);
@@ -853,7 +853,7 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
             };
             let mut new_ids = vec![];
             for _ in 0..3 {
-                new_ids.push(ShapeId(doc.alloc_id()));
+                new_ids.push(ShapeId(doc.alloc_id().ok_or_else(|| bad("design.headerFooter", NO_ID_SPACE))?));
             }
             let Some(sl) = doc.slides.get_mut(i) else { continue };
             let sl = Arc::make_mut(sl);
@@ -1024,7 +1024,7 @@ fn handout_view(s: &mut Session, _p: &Value) -> Result<Value> {
             };
             let size = doc.notes_size;
             for (_, k) in HANDOUT_KINDS {
-                let id = ShapeId(doc.alloc_id());
+                let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("view.handoutMaster", NO_ID_SPACE))?);
                 m.shapes.push(handout_placeholder(k, size, id));
             }
             doc.handout_master = Some(Arc::new(m));
@@ -1044,7 +1044,11 @@ fn handout_placeholders(s: &mut Session, p: &Value) -> Result<Value> {
         let size = doc.notes_size;
         let mut ids = vec![];
         for (key, _) in HANDOUT_KINDS {
-            ids.push(p.get(key).and_then(Value::as_bool).map(|_| ShapeId(doc.alloc_id())));
+            let id = match p.get(key).and_then(Value::as_bool) {
+                Some(_) => Some(ShapeId(doc.alloc_id().ok_or_else(|| bad("handout.placeholders", NO_ID_SPACE))?)),
+                None => None,
+            };
+            ids.push(id);
         }
         let m = Arc::make_mut(doc.handout_master.as_mut().ok_or_else(|| bad("handout.placeholders", "no handout master"))?);
         for ((key, kind), id) in HANDOUT_KINDS.into_iter().zip(ids) {
@@ -1128,7 +1132,7 @@ fn notes_view(s: &mut Session, _p: &Value) -> Result<Value> {
             });
             let size = doc.notes_size;
             for (_, k) in NOTES_KINDS {
-                let id = ShapeId(doc.alloc_id());
+                let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("view.notesMaster", NO_ID_SPACE))?);
                 m.shapes.push(notes_placeholder(k, size, id));
             }
             doc.notes_master = Some(Arc::new(m));
@@ -1146,7 +1150,8 @@ fn notes_view(s: &mut Session, _p: &Value) -> Result<Value> {
 fn notes_placeholders(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, _| {
         let size = doc.notes_size;
-        let ids: Vec<ShapeId> = NOTES_KINDS.iter().map(|_| ShapeId(doc.alloc_id())).collect();
+        let ids: Vec<ShapeId> =
+            NOTES_KINDS.iter().map(|_| doc.alloc_id().map(ShapeId).ok_or_else(|| bad("notes.placeholders", NO_ID_SPACE))).collect::<Result<_>>()?;
         let m = Arc::make_mut(doc.notes_master.as_mut().ok_or_else(|| bad("notes.placeholders", "no notes master"))?);
         for ((key, kind), id) in NOTES_KINDS.into_iter().zip(ids) {
             let Some(on) = p.get(key).and_then(Value::as_bool) else { continue };
@@ -1180,8 +1185,8 @@ fn insert_layout(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").unwrap_or("Custom Layout").to_string();
     s.edit(|doc, sel| {
         let mi = master_index(doc, sel);
-        let id = deckcraft_model::LayoutId(doc.alloc_id());
-        let tid = ShapeId(doc.alloc_id());
+        let id = deckcraft_model::LayoutId(doc.alloc_id().ok_or_else(|| bad("master.insertLayout", NO_ID_SPACE))?);
+        let tid = ShapeId(doc.alloc_id().ok_or_else(|| bad("master.insertLayout", NO_ID_SPACE))?);
         let size = doc.slide_size;
         let m = Arc::make_mut(doc.masters.get_mut(mi).ok_or_else(|| bad("master.insertLayout", "no master"))?);
         let title = m.shapes.iter().find(|x| x.ph_type() == Some(PhType::Title)).cloned().map(|mut t| {
@@ -1273,7 +1278,7 @@ fn insert_placeholder(s: &mut Session, p: &Value) -> Result<Value> {
         text: Some(TextBody::default()),
         ..Default::default()
     };
-    let id = super::insert::add_shape(s, shape, true)?;
+    let id = super::insert::add_shape(s, "master.insertPlaceholder", shape, true)?;
     Ok(json!({"id": id}))
 }
 
@@ -1342,7 +1347,7 @@ fn placeholders(s: &mut Session, p: &Value) -> Result<Value> {
     s.edit(|doc, sel| {
         let mut ids = Vec::with_capacity(add.len());
         for _ in 0..add.len() {
-            ids.push(ShapeId(doc.alloc_id()));
+            ids.push(ShapeId(doc.alloc_id().ok_or_else(|| bad("master.placeholders", NO_ID_SPACE))?));
         }
         let prototypes = match sel.target {
             Target::Master { master } | Target::Layout { master, .. } => doc.masters.get(master).map(|m| m.shapes.clone()).unwrap_or_default(),

@@ -4,6 +4,7 @@ pub mod animation;
 pub mod arrange;
 pub mod artistic;
 pub mod background;
+pub mod compress;
 pub mod design;
 pub mod edit;
 pub mod file;
@@ -18,6 +19,7 @@ pub mod model3d;
 pub mod picture_style;
 pub mod points;
 pub mod recolor;
+pub mod reuse;
 pub mod review;
 mod richclip;
 pub mod selection;
@@ -26,7 +28,9 @@ pub mod slide;
 pub mod smartart;
 pub mod table;
 pub mod text;
+pub mod three_d;
 pub mod transition;
+pub mod zoom;
 
 use deckcraft_geom::Xfrm;
 use deckcraft_model::ShapeId;
@@ -162,6 +166,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(file::specs());
         v.extend(edit::specs());
         v.extend(slide::specs());
+        v.extend(reuse::specs());
         v.extend(insert::specs());
         v.extend(model3d::specs());
         v.extend(smartart::specs());
@@ -185,6 +190,8 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(inspect::specs());
         v.extend(media::specs());
         v.extend(artistic::specs());
+        v.extend(zoom::specs());
+        v.extend(compress::specs());
         v
     })
 }
@@ -287,6 +294,10 @@ pub fn parse_params(doc: &str) -> std::result::Result<Vec<Param<'_>>, String> {
 }
 
 // ---------- param helpers ----------
+
+/// The deck has used every object id (a hostile file can arrive that way): it cannot grow, and
+/// growing would duplicate ids (#407).
+pub(crate) const NO_ID_SPACE: &str = "the presentation has used every object id and can hold no more";
 
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }

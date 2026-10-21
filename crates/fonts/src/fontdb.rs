@@ -1175,17 +1175,40 @@ impl FontDb {
         None
     }
 
+    /// A covering fallback accepted by the caller (for example, an interface that cannot use
+    /// colour or very large faces). Rejected faces do not stop the search for another face.
+    /// A policy-specific miss is not stored as a general document-font miss.
+    pub fn fallback_for_filtered(&self, c: char, exclude: u32, accept: impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {
+        if let Some(f) = self.loaded_fallback_filtered(c, exclude, &accept) {
+            return Some(f);
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.system_fallback_filtered(c, &|f| f.id != exclude && accept(f), false) {
+            return self.loaded_fallback_filtered(c, exclude, &accept);
+        }
+        None
+    }
+
     fn loaded_fallback(&self, c: char, exclude: u32) -> Option<Arc<FontFace>> {
+        self.loaded_fallback_filtered(c, exclude, &|_| true)
+    }
+
+    fn loaded_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {
         let faces = self.read_faces();
         let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
         order.sort_by_key(|f| (!f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32));
-        order.into_iter().find(|f| f.covers(c)).cloned()
+        order.into_iter().find(|f| f.covers(c) && accept(f)).cloned()
     }
 
     /// Load a system font covering `c` (preferred fallback families first, then any cataloged
     /// file under 40 MB). Returns true if one was loaded. Misses are remembered.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn system_fallback(&self, c: char) -> bool {
+        self.system_fallback_filtered(c, &|_| true, true)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn system_fallback_filtered(&self, c: char, accept: &impl Fn(&FontFace) -> bool, remember_miss: bool) -> bool {
         if c.is_control() || c.is_whitespace() {
             return false;
         }
@@ -1196,7 +1219,7 @@ impl FontDb {
                 return false;
             }
         }
-        let covered = |db: &FontDb| db.read_faces().iter().any(|f| f.covers(c));
+        let covered = |db: &FontDb| db.read_faces().iter().any(|f| f.covers(c) && accept(f));
         let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
         let loading = self.loading.lock().unwrap_or_else(|e| e.into_inner());
         // Another thread may have loaded a face for `c` (faces are only ever added), or found
@@ -1229,7 +1252,9 @@ impl FontDb {
                 return true;
             }
         }
-        self.sys.lock().unwrap_or_else(|e| e.into_inner()).misses.insert(c);
+        if remember_miss {
+            self.sys.lock().unwrap_or_else(|e| e.into_inner()).misses.insert(c);
+        }
         false
     }
 

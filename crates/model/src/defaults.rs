@@ -203,13 +203,13 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
     let title_box = |b: &mut B| {
         let (x, y, ww, hh) = r(60.0, 29.0, 840.0, 104.0);
         let mut s = b.shape("Title 1", PhType::Title, 0, x, y, ww, hh);
-        s.text = Some(body_with(Some(Anchor::Middle), Some(AutoFit::Shrink { font_scale: 1.0, line_reduction: 0.0 })));
+        s.text = Some(body_with(Some(Anchor::Middle), Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 })));
         s
     };
     let body_box = |b: &mut B, name: &str, idx: u32, x: f64, y: f64, ww: f64, hh: f64| {
         let (x, y, ww, hh) = r(x, y, ww, hh);
         let mut s = b.shape(name, PhType::Body, idx, x, y, ww, hh);
-        s.text = Some(body_with(Some(Anchor::Top), Some(AutoFit::Shrink { font_scale: 1.0, line_reduction: 0.0 })));
+        s.text = Some(body_with(Some(Anchor::Top), Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 })));
         s
     };
 
@@ -263,7 +263,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         t.text = Some(TextBody {
             body: BodyProps {
                 anchor: Some(Anchor::Bottom),
-                autofit: Some(AutoFit::Shrink { font_scale: 1.0, line_reduction: 0.0 }),
+                autofit: Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 }),
                 ..Default::default()
             },
             list_style: ls,
@@ -288,7 +288,7 @@ pub fn build_master(size: Size, theme: Theme, first_id: u32) -> (Master, u32) {
         st.text = Some(TextBody {
             body: BodyProps {
                 anchor: Some(Anchor::Top),
-                autofit: Some(AutoFit::Shrink { font_scale: 1.0, line_reduction: 0.0 }),
+                autofit: Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 }),
                 ..Default::default()
             },
             list_style: ls,
@@ -519,15 +519,20 @@ pub fn blank_presentation(size: Size, theme: Theme, title_slide: bool) -> Presen
         raw_ext: None,
     };
     if title_slide {
-        let s = new_slide(&mut p, first_layout);
-        p.slides.push(Arc::new(s));
+        // A fresh deck starts at id 256 and this builds a handful of ids, so the slide always
+        // fits; should that ever stop holding, the deck arrives without its title slide rather
+        // than with a duplicated id.
+        if let Some(s) = new_slide(&mut p, first_layout) {
+            p.slides.push(Arc::new(s));
+        }
     }
     p
 }
 
-/// A slide for `layout` with its placeholders instantiated (empty, inheriting position).
-pub fn new_slide(p: &mut Presentation, layout: LayoutId) -> Slide {
-    let id = SlideId(p.alloc_id());
+/// A slide for `layout` with its placeholders instantiated (empty, inheriting position). `None`
+/// when the deck has used every object id and cannot grow (#407).
+pub fn new_slide(p: &mut Presentation, layout: LayoutId) -> Option<Slide> {
+    let id = SlideId(p.alloc_id()?);
     let mut shapes = vec![];
     let lay_shapes: Vec<Shape> = p.layout(layout).map(|(_, l)| l.shapes.clone()).unwrap_or_default();
     for ls in lay_shapes {
@@ -535,7 +540,7 @@ pub fn new_slide(p: &mut Presentation, layout: LayoutId) -> Slide {
         if ph.kind.is_footer_kind() {
             continue;
         }
-        let sid = ShapeId(p.alloc_id());
+        let sid = ShapeId(p.alloc_id()?);
         shapes.push(Shape {
             id: sid,
             name: ls.name.clone(),
@@ -546,7 +551,7 @@ pub fn new_slide(p: &mut Presentation, layout: LayoutId) -> Slide {
             ..Default::default()
         });
     }
-    Slide { id, layout, shapes, ..Default::default() }
+    Some(Slide { id, layout, shapes, ..Default::default() })
 }
 
 /// Layout for a kind in the first master.

@@ -5,6 +5,18 @@ headless engine (no window); with `--connect PORT` it drives a running DeckCraft
 `--control PORT`, so an agent and a person can work on the same deck. `--sample` opens the sample
 deck.
 
+Connected mode accepts only newline-terminated replies of at most 16 MiB (including the newline),
+with the current request's numeric `id`, a boolean `ok`, and either `result` on success or a string
+`error` on failure. CRLF is accepted. Invalid replies close the connection and report that the
+command may or may not have run; they never cause a replay. Check the document before retrying a
+mutation. Before sending another request, unsolicited bytes in the reader's buffer or on the
+socket cause a fresh connection to be opened. Large image replies must fit this budget; render
+to a file or use a smaller scale when necessary.
+
+Regression coverage for #718 lives in `crates/mcp/src/backend.rs`: synthetic loopback peers test
+reply correlation, envelopes, framing, the size cap and buffered unsolicited bytes, alongside the
+lost-reply and reconnect tests.
+
 ```json
 {
   "mcpServers": {

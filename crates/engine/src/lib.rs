@@ -20,6 +20,7 @@ pub mod inkshape;
 pub mod io;
 pub mod keys;
 pub mod links;
+pub mod media_refs;
 pub mod recovery;
 pub mod sample;
 pub mod sounds;
@@ -323,12 +324,13 @@ pub struct Prefs {
     pub smart_quotes: bool,
     /// AutoCorrect options (Tools ▸ AutoCorrect): fix TWo INitial CApitals, capitalize the first
     /// letter of sentences and the names of days, fix accidental cAPS lOCK, and replace 1/2, 1/4
-    /// and 3/4 with fraction characters.
+    /// and 3/4 with fraction characters; AutoFormat superscripts ordinals (1st) as you type.
     pub ac_two_initials: bool,
     pub ac_sentence_caps: bool,
     pub ac_days: bool,
     pub ac_caps_lock: bool,
     pub ac_fractions: bool,
+    pub ac_ordinals: bool,
     /// Your own "replace … with …" entries; they win over the built-in list.
     pub ac_entries: Vec<(String, String)>,
     /// Built-in entries you deleted.
@@ -353,6 +355,7 @@ impl Default for Prefs {
             ac_days: true,
             ac_caps_lock: true,
             ac_fractions: true,
+            ac_ordinals: true,
             ac_entries: Vec::new(),
             ac_removed: Vec::new(),
             author: "Presenter".into(),
@@ -472,6 +475,9 @@ pub struct Session {
     pub mac_keys: bool,
     /// Command panics caught by the guard (the document was rolled back); soak tests require 0.
     pub panics_caught: u64,
+    /// Presentations a host read off the UI thread, waiting for `file.adopt` (by token).
+    loaded: Vec<(u64, cmd::file::LoadedFile)>,
+    next_loaded: u64,
 }
 
 impl Default for Session {
@@ -501,7 +507,26 @@ impl Session {
             gif_paused: Default::default(),
             mac_keys: cfg!(target_os = "macos"),
             panics_caught: 0,
+            loaded: vec![],
+            next_loaded: 0,
         }
+    }
+    /// Hand over a presentation read on another thread ([`cmd::file::read_presentation_file`]);
+    /// `file.adopt` with the returned token adds it as a document, through the command path like
+    /// `file.open` (journaled, panic-guarded). Only the latest few wait; older ones are dropped.
+    pub fn stage_loaded(&mut self, f: cmd::file::LoadedFile) -> u64 {
+        const KEEP: usize = 4;
+        self.next_loaded = self.next_loaded.wrapping_add(1);
+        if self.loaded.len() >= KEEP {
+            self.loaded.remove(0);
+        }
+        self.loaded.push((self.next_loaded, f));
+        self.next_loaded
+    }
+    /// The staged presentation for `token`, removed from the session.
+    pub(crate) fn take_loaded(&mut self, token: u64) -> Option<cmd::file::LoadedFile> {
+        let i = self.loaded.iter().position(|(t, _)| *t == token)?;
+        Some(self.loaded.remove(i).1)
     }
     /// A session with one new presentation open.
     pub fn with_new() -> Self {
