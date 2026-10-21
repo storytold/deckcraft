@@ -16,7 +16,6 @@ use deckcraft_model::{
     Shape, ShapeId, ShapeKind, Size, Slide, SlideId, TextBody, Theme, Xfrm, defaults,
 };
 
-use crate::blip::Picture;
 use crate::doc::{self, Doc, Listed, rt};
 use crate::draw::{self, Props, RawShape, prop};
 use crate::geom;
@@ -64,14 +63,14 @@ struct Scope<'s, 'a> {
 struct Ctx<'a> {
     p: Presentation,
     fonts: Vec<String>,
-    blips: Vec<Option<Picture>>,
+    blips: crate::blip::Store<'a>,
     media: HashMap<usize, Option<MediaId>>,
     defaults: Props<'a>,
     /// Master shapes by shape id, for slide shapes that inherit from one (`hspMaster`).
     master_props: HashMap<u32, Props<'a>>,
 }
 
-pub fn convert(d: &Doc, pictures: &[u8]) -> Presentation {
+pub fn convert<'a>(d: &Doc<'a>, pictures: &'a [u8]) -> Presentation {
     let atom = d.document_atom();
     let side =
         |v: Option<i32>, fallback: f64| v.map(|v| f64::from(v) / MU).filter(|v| v.is_finite() && *v >= 1.0 && *v <= 56.0 * 72.0).unwrap_or(fallback);
@@ -84,7 +83,7 @@ pub fn convert(d: &Doc, pictures: &[u8]) -> Presentation {
     let mut cx = Ctx {
         p,
         fonts: doc::fonts(d),
-        blips: crate::blip::store(dgg, pictures),
+        blips: crate::blip::Store::new(dgg, pictures),
         media: HashMap::new(),
         defaults: draw::default_props(dgg),
         master_props: HashMap::new(),
@@ -386,12 +385,8 @@ impl<'a> Ctx<'a> {
         if let Some(m) = self.media.get(&pib) {
             return *m;
         }
-        let id = self
-            .blips
-            .get(pib.wrapping_sub(1))
-            .cloned()
-            .flatten()
-            .and_then(|pic| self.p.add_media(&format!("image{pib}.{}", pic.ext), pic.content_type, pic.data));
+        let id =
+            self.blips.take(pib.wrapping_sub(1)).and_then(|pic| self.p.add_media(&format!("image{pib}.{}", pic.ext), pic.content_type, pic.data));
         self.media.insert(pib, id);
         id
     }

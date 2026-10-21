@@ -109,6 +109,8 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
     let mut persist: HashMap<u32, usize> = HashMap::new();
     let mut doc_ref = None;
     let mut seen = HashSet::new();
+    // Many edits may name one persist directory; it is read once (its first reading wins anyway).
+    let mut dirs_seen = HashSet::new();
     let mut at = edit_at;
     for _ in 0..MAX_EDITS {
         if !seen.insert(at) {
@@ -122,7 +124,9 @@ pub fn read<'a>(current_user: &[u8], stream: &'a [u8]) -> Result<Doc<'a>, PptErr
                 return Err(PptError::Encrypted);
             }
         }
-        if let Some(dir) = edit.u32(12).and_then(|o| Rec::at(stream, o as usize)).filter(|r| r.kind == rt::PERSIST_DIRECTORY) {
+        if let Some(dir) =
+            edit.u32(12).filter(|&o| dirs_seen.insert(o)).and_then(|o| Rec::at(stream, o as usize)).filter(|r| r.kind == rt::PERSIST_DIRECTORY)
+        {
             read_persist_directory(dir.data, &mut persist);
         }
         match edit.u32(8) {
