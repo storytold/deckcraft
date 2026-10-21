@@ -157,7 +157,10 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
                     let files = dialog.pick_files().await.unwrap_or_default();
                     let mut read = Vec::with_capacity(files.len());
                     for file in files {
-                        read.push((file.file_name(), file.read().await));
+                        match read_picked(&file).await {
+                            Some(bytes) => read.push((file.file_name(), bytes)),
+                            None => log::error!("couldn't read picked file {}", file.file_name()),
+                        }
                     }
                     let event = if read.is_empty() { InboxEvent::Cancelled { id: request } } else { InboxEvent::Files { id: request, files: read } };
                     push_inbox(&inbox, event);
@@ -169,8 +172,14 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
                     ctx.request_repaint();
                     return;
                 };
-                let bytes = file.read().await;
-                push_inbox(&inbox, InboxEvent::File(InboxFile { id: request, name: file.file_name(), bytes }));
+                let event = match read_picked(&file).await {
+                    Some(bytes) => InboxEvent::File(InboxFile { id: request, name: file.file_name(), bytes }),
+                    None => {
+                        log::error!("couldn't read picked file {}", file.file_name());
+                        InboxEvent::Cancelled { id: request }
+                    }
+                };
+                push_inbox(&inbox, event);
                 ctx.request_repaint();
             });
         })),
@@ -183,6 +192,13 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
         inbox: Some(inbox),
         ..Default::default()
     }
+}
+
+/// A picked file's bytes, or `None` when the browser can't read it. (rfd's `read` waits only for
+/// success, so a failed read would never finish and its request would never end.)
+async fn read_picked(file: &rfd::FileHandle) -> Option<Vec<u8>> {
+    let buf = wasm_bindgen_futures::JsFuture::from(file.inner().array_buffer()).await.ok()?;
+    Some(js_sys::Uint8Array::new(&buf).to_vec())
 }
 
 fn push_inbox(inbox: &Inbox, event: InboxEvent) {

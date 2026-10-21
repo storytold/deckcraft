@@ -116,9 +116,36 @@ fn insert_reads_every_format() {
     assert_eq!(s.doc().unwrap().shapes().len(), n);
 }
 
+/// A new, empty folder of one test's own (never one left by an earlier run), removed when it
+/// goes out of scope, even when the test fails.
+struct TempDir(std::path::PathBuf);
+
+impl TempDir {
+    fn new(tag: &str) -> TempDir {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        for _ in 0..100 {
+            let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
+            let p = std::env::temp_dir().join(format!("deckcraft-{tag}-{}-{nanos}-{}", std::process::id(), N.fetch_add(1, Ordering::Relaxed)));
+            // `create_dir` fails on a folder that exists: this one is new.
+            if std::fs::create_dir(&p).is_ok() {
+                return TempDir(p);
+            }
+        }
+        panic!("no new temporary folder");
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[test]
 fn companions_come_from_the_models_folder_only() {
-    let dir = std::env::temp_dir().join(format!("deckcraft-model3d-{}", std::process::id()));
+    let tmp = TempDir::new("model3d");
+    let dir = tmp.0.clone();
     let sub = dir.join("model");
     std::fs::create_dir_all(sub.join("tex")).unwrap();
     let img = image::RgbaImage::from_pixel(2, 2, image::Rgba([200, 10, 10, 255]));
@@ -131,7 +158,6 @@ fn companions_come_from_the_models_folder_only() {
     let r = s.execute("insert.model3d", &json!({"path": sub.join("m.obj").to_string_lossy()})).unwrap();
     // tex/a.png is read; ../outside.png is not followed out of the folder.
     assert_eq!(r["textures"], 1);
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -542,7 +568,8 @@ fn a_glb_with_an_external_buffer_is_stored_whole() {
 /// stays on the disk. (Skipped where this account can't make links.)
 #[test]
 fn companions_do_not_follow_links_out_of_the_folder() {
-    let dir = std::env::temp_dir().join(format!("deckcraft-model3d-link-{}", std::process::id()));
+    let tmp = TempDir::new("model3d-link");
+    let dir = tmp.0.clone();
     let (sub, outside) = (dir.join("model"), dir.join("elsewhere"));
     std::fs::create_dir_all(&sub).unwrap();
     std::fs::create_dir_all(&outside).unwrap();
@@ -551,16 +578,15 @@ fn companions_do_not_follow_links_out_of_the_folder() {
     let linked = std::os::unix::fs::symlink(&outside, sub.join("link"));
     #[cfg(windows)]
     let linked = std::os::windows::fs::symlink_dir(&outside, sub.join("link"));
-    if linked.is_err() {
-        eprintln!("skipped: can't make a link here");
-        let _ = std::fs::remove_dir_all(&dir);
+    // The folder is new, so a failure is the account not being allowed to make links.
+    if let Err(e) = linked {
+        eprintln!("skipped: can't make a link here ({e})");
         return;
     }
     std::fs::write(sub.join("m.mtl"), "newmtl A\nmap_Kd link/t.png\n").unwrap();
     std::fs::write(sub.join("m.obj"), "mtllib m.mtl\nv 0 0 0\nv 1 0 0\nv 1 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nusemtl A\nf 1/1 2/2 3/3\n").unwrap();
     let mut s = session();
     let r = s.execute("insert.model3d", &json!({"path": sub.join("m.obj").to_string_lossy()})).unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(r["textures"], 0);
 }
 
