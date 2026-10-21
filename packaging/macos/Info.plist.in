@@ -114,6 +114,23 @@
       <key>CFBundleTypeMIMETypes</key>
       <array><string>application/vnd.openxmlformats-officedocument.presentationml.slideshow</string></array>
     </dict>
+    <!-- PowerPoint 97-2003: opened (imported), never written back. -->
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>PowerPoint 97-2003 Presentation</string>
+      <key>CFBundleTypeRole</key>
+      <string>Viewer</string>
+      <key>LSHandlerRank</key>
+      <string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.microsoft.powerpoint.ppt</string>
+      </array>
+      <key>CFBundleTypeExtensions</key>
+      <array><string>ppt</string><string>pot</string><string>pps</string></array>
+      <key>CFBundleTypeMIMETypes</key>
+      <array><string>application/vnd.ms-powerpoint</string></array>
+    </dict>
   </array>
 
   <!-- DeckCraft's own format: a zip of a JSON manifest plus media. -->
@@ -143,6 +160,24 @@
   <!-- Open XML presentations; the system's own declaration wins when it has one. -->
   <key>UTImportedTypeDeclarations</key>
   <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.microsoft.powerpoint.ppt</string>
+      <key>UTTypeDescription</key>
+      <string>PowerPoint 97-2003 Presentation</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.presentation</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>ppt</string><string>pot</string><string>pps</string></array>
+        <key>public.mime-type</key>
+        <array><string>application/vnd.ms-powerpoint</string></array>
+      </dict>
+    </dict>
     <dict>
       <key>UTTypeIdentifier</key>
       <string>org.openxmlformats.presentationml.presentation</string>
