@@ -125,6 +125,8 @@
       <key>LSItemContentTypes</key>
       <array>
         <string>com.microsoft.powerpoint.ppt</string>
+        <string>com.microsoft.powerpoint.pot</string>
+        <string>com.microsoft.powerpoint.pps</string>
       </array>
       <key>CFBundleTypeExtensions</key>
       <array><string>ppt</string><string>pot</string><string>pps</string></array>
@@ -173,7 +175,43 @@
       <key>UTTypeTagSpecification</key>
       <dict>
         <key>public.filename-extension</key>
-        <array><string>ppt</string><string>pot</string><string>pps</string></array>
+        <array><string>ppt</string></array>
+        <key>public.mime-type</key>
+        <array><string>application/vnd.ms-powerpoint</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.microsoft.powerpoint.pot</string>
+      <key>UTTypeDescription</key>
+      <string>PowerPoint 97-2003 Template</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.presentation</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>pot</string></array>
+        <key>public.mime-type</key>
+        <array><string>application/vnd.ms-powerpoint</string></array>
+      </dict>
+    </dict>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.microsoft.powerpoint.pps</string>
+      <key>UTTypeDescription</key>
+      <string>PowerPoint 97-2003 Slide Show</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+        <string>public.presentation</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>pps</string></array>
         <key>public.mime-type</key>
         <array><string>application/vnd.ms-powerpoint</string></array>
       </dict>

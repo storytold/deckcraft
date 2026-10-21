@@ -7,6 +7,8 @@ use crate::record::Rec;
 
 /// Largest picture inflated from a compressed metafile.
 const MAX_INFLATED: usize = 64 << 20;
+/// Most bytes all of a file's pictures may decode to together (the native format's media budget).
+const MAX_TOTAL: usize = 4 << 30;
 
 /// A decoded picture: file extension, content type and bytes as a file of that type.
 #[derive(Clone, Debug, PartialEq)]
@@ -16,14 +18,33 @@ pub struct Picture {
     pub data: Vec<u8>,
 }
 
-/// The pictures of the blip store, by index (0-based; shapes use 1-based ids). `None` for an entry
-/// that is empty or can't be read.
-pub fn store(dgg: Option<Rec>, pictures_stream: &[u8]) -> Vec<Option<Picture>> {
-    let Some(bstore) = dgg.and_then(|d| d.child(rt::BSTORE)) else { return vec![] };
-    bstore.children().map(|r| if r.kind == rt::FBSE { fbse(&r, pictures_stream) } else { None }).collect()
+/// The blip store: each entry's blip record, decoded only when a shape first asks for it, every
+/// entry at most once, and all of them together within [`MAX_TOTAL`] bytes.
+pub struct Store<'a> {
+    entries: Vec<Option<Rec<'a>>>,
+    budget: usize,
 }
 
-fn fbse(r: &Rec, pictures: &[u8]) -> Option<Picture> {
+impl<'a> Store<'a> {
+    pub fn new(dgg: Option<Rec<'a>>, pictures_stream: &'a [u8]) -> Self {
+        let entries = match dgg.and_then(|d| d.child(rt::BSTORE)) {
+            Some(bstore) => bstore.children().map(|r| if r.kind == rt::FBSE { fbse(&r, pictures_stream) } else { None }).collect(),
+            None => vec![],
+        };
+        Store { entries, budget: MAX_TOTAL }
+    }
+
+    /// The picture at `index` (0-based; shapes use 1-based ids), taken out of the store. `None`
+    /// for an entry that is empty, can't be read, was taken already, or would pass the budget.
+    pub fn take(&mut self, index: usize) -> Option<Picture> {
+        let blip = self.entries.get_mut(index)?.take()?;
+        let pic = decode(&blip, self.budget)?;
+        self.budget = self.budget.saturating_sub(pic.data.len());
+        Some(pic)
+    }
+}
+
+fn fbse<'a>(r: &Rec<'a>, pictures: &'a [u8]) -> Option<Rec<'a>> {
     // btWin32, btMacOS, rgbUid[16], tag, size, cRef, foDelay, unused, cbName, unused, unused.
     let size = r.u32(20)? as usize;
     let offset = r.u32(28)? as usize;
@@ -32,12 +53,11 @@ fn fbse(r: &Rec, pictures: &[u8]) -> Option<Picture> {
         return None;
     }
     let embedded_at = 36usize.checked_add(name_len)?;
-    let blip = if r.data.len() > embedded_at { Rec::at(r.data, embedded_at) } else { Rec::at(pictures, offset) };
-    blip.and_then(|b| decode(&b))
+    if r.data.len() > embedded_at { Rec::at(r.data, embedded_at) } else { Rec::at(pictures, offset) }
 }
 
-/// Decode one blip record.
-pub fn decode(b: &Rec) -> Option<Picture> {
+/// Decode one blip record into at most `limit` bytes.
+pub fn decode(b: &Rec, limit: usize) -> Option<Picture> {
     // The instance says whether a second UID follows the first.
     let (kind, two_uids): (u16, bool) = match b.instance {
         0x3D4 | 0x216 | 0x542 | 0x46A | 0x6E2 | 0x6E0 | 0x7A8 | 0x6E4 => (b.kind, false),
@@ -53,7 +73,7 @@ pub fn decode(b: &Rec) -> Option<Picture> {
             let compressed = *h.get(32)? == 0;
             let body = b.data.get(uids + 34..)?;
             let data = if compressed {
-                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(body, size.min(MAX_INFLATED)).ok()?
+                miniz_oxide::inflate::decompress_to_vec_zlib_with_limit(body, size.min(MAX_INFLATED).min(limit)).ok()?
             } else {
                 body.get(..size.min(body.len()))?.to_vec()
             };
@@ -68,6 +88,7 @@ pub fn decode(b: &Rec) -> Option<Picture> {
         // PICT (Macintosh) has no decoder here.
         _ => None,
     }
+    .filter(|p| p.data.len() <= limit)
 }
 
 /// A device-independent bitmap with the 14-byte file header a `.bmp` needs in front.
@@ -106,10 +127,36 @@ mod tests {
     use super::*;
     use crate::record::build::*;
 
+    fn decode_all(b: &Rec) -> Option<Picture> {
+        decode(b, usize::MAX)
+    }
+
+    /// Many entries pointing at one deflated metafile decode within the shared budget, each
+    /// at most once.
+    #[test]
+    fn the_store_decodes_lazily_within_a_budget() {
+        let wmf = vec![7u8; 1000];
+        let z = miniz_oxide::deflate::compress_to_vec_zlib(&wmf, 6);
+        let mut header = vec![0u8; 34];
+        header[..4].copy_from_slice(&(wmf.len() as u32).to_le_bytes());
+        let pictures = atom(0xF01B, 0x216, &[&[0u8; 16][..], &header, &z].concat());
+        let mut fbse = vec![0u8; 36];
+        fbse[20..24].copy_from_slice(&(pictures.len() as u32).to_le_bytes());
+        let entries: Vec<Vec<u8>> = (0..5).map(|_| atom(rt::FBSE, 3, &fbse)).collect();
+        let dgg = container(rt::DGG_CONTAINER, 0, &[container(rt::BSTORE, 5, &entries)]);
+        let mut store = Store::new(Rec::at(&dgg, 0), &pictures);
+        store.budget = 2500;
+        assert_eq!(store.take(0).map(|p| p.data.len()), Some(1000));
+        assert!(store.take(0).is_none(), "taken already");
+        assert!(store.take(1).is_some());
+        assert!(store.take(2).is_none(), "past the budget");
+        assert!(store.take(99).is_none());
+    }
+
     #[test]
     fn decodes_png_and_deflated_metafiles() {
         let png = [&[0u8; 17][..], b"\x89PNG..."].concat();
-        let p = decode(&Rec::at(&atom(0xF01E, 0x6E0, &png), 0).unwrap()).unwrap();
+        let p = decode_all(&Rec::at(&atom(0xF01E, 0x6E0, &png), 0).unwrap()).unwrap();
         assert_eq!((p.ext, &p.data[..4]), ("png", &b"\x89PNG"[..]));
 
         let wmf = b"\x01\x00\x09\x00\x00\x03 a tiny metafile".to_vec();
@@ -118,11 +165,11 @@ mod tests {
         header[..4].copy_from_slice(&(wmf.len() as u32).to_le_bytes());
         header[28..32].copy_from_slice(&(z.len() as u32).to_le_bytes());
         let body = [&[0u8; 16][..], &header, &z].concat();
-        let p = decode(&Rec::at(&atom(0xF01B, 0x216, &body), 0).unwrap()).unwrap();
+        let p = decode_all(&Rec::at(&atom(0xF01B, 0x216, &body), 0).unwrap()).unwrap();
         assert_eq!((p.ext, p.data), ("wmf", wmf));
         // Damaged deflate data is no picture rather than a panic.
         let bad = [&[0u8; 16][..], &header, &[1, 2, 3]].concat();
-        assert!(decode(&Rec::at(&atom(0xF01A, 0x3D4, &bad), 0).unwrap()).is_none());
+        assert!(decode_all(&Rec::at(&atom(0xF01A, 0x3D4, &bad), 0).unwrap()).is_none());
     }
 
     #[test]
@@ -136,7 +183,7 @@ mod tests {
         dib[14] = 24;
         dib.extend_from_slice(&[0, 0, 255, 0]);
         let body = [&[0u8; 17][..], &dib].concat();
-        let p = decode(&Rec::at(&atom(0xF01F, 0x7A8, &body), 0).unwrap()).unwrap();
+        let p = decode_all(&Rec::at(&atom(0xF01F, 0x7A8, &body), 0).unwrap()).unwrap();
         assert_eq!(&p.data[..2], b"BM");
         assert_eq!(u32::from_le_bytes(p.data[10..14].try_into().unwrap()), 54);
         let img = image::load_from_memory_with_format(&p.data, image::ImageFormat::Bmp).unwrap().to_rgba8();
