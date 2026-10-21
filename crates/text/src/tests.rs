@@ -1467,3 +1467,73 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
 }
+
+#[test]
+fn ascii_neutrals_keep_the_latin_face_after_east_asian_text() {
+    // ECMA-376 font classes: ASCII spaces, digits and punctuation, and high-ANSI neutrals such
+    // as ≥, draw with the run's Latin typeface whatever surrounds them, so a line of
+    // space-padded text measures — and wraps — where PowerPoint's does (course decks overlay
+    // equation objects on runs of reserved spaces).
+    let face_of = |l: &TextLayout, ch: char| {
+        l.runs.iter().find(|r| r.cells.iter().any(|&(_, c)| c == ch)).map(|r| r.face.family.clone()).expect("every character is drawn")
+    };
+    let (p, sh) = setup("日 a ≥", 600.0, 200.0);
+    let l = lay(&p, &sh, 600.0, 200.0);
+    let latin = face_of(&l, 'a');
+    assert_eq!(face_of(&l, ' '), latin, "the space after the Han character stays Latin");
+    assert_eq!(face_of(&l, '≥'), latin, "≥ stays Latin after East Asian text");
+    let (p, sh) = setup(" 日", 600.0, 200.0);
+    let l = lay(&p, &sh, 600.0, 200.0);
+    let (p2, sh2) = setup("a", 600.0, 200.0);
+    let l2 = lay(&p2, &sh2, 600.0, 200.0);
+    assert_eq!(face_of(&l, ' '), face_of(&l2, 'a'), "a leading space takes the Latin typeface too");
+}
+
+#[test]
+fn the_symbol_font_maps_through_the_adobe_encoding() {
+    // The Symbol font's codes are not bullets: the ASCII range and the math operators map to
+    // their Unicode equivalents (the published Adobe Symbol encoding), so missing-font text
+    // keeps its characters instead of collapsing into bullets.
+    assert_eq!(map_symbol_bullet("+", Some("Symbol")), "+");
+    assert_eq!(map_symbol_bullet("=", Some("Symbol")), "=");
+    assert_eq!(map_symbol_bullet("(", Some("Symbol")), "(");
+    assert_eq!(map_symbol_bullet("\u{F02D}", Some("Symbol")), "−");
+    assert_eq!(map_symbol_bullet("\u{F0B3}", Some("Symbol")), "≥");
+    assert_eq!(map_symbol_bullet("a", Some("Symbol")), "α");
+    assert_eq!(map_symbol_bullet("\u{F0D6}", Some("Symbol")), "√");
+    assert_eq!(map_symbol_bullet("\u{F0B7}", Some("Symbol")), "•");
+    // The bullet fonts keep their look-alikes.
+    assert_eq!(map_symbol_bullet("\u{F06C}", Some("Wingdings")), "●");
+    assert_eq!(map_symbol_bullet("n", Some("Webdings")), "●");
+    assert_eq!(map_symbol_bullet("\u{F0FC}", Some("Wingdings")), "✓");
+}
+
+#[test]
+fn metafile_symbol_charset_text_falls_back_to_the_bytes_character() {
+    // MathType writes equation text in "Times New Roman" with the symbol character set. Where
+    // the face has the U+F000+byte glyph it is drawn; where it hasn't (the font is missing),
+    // the byte's own character stands in rather than a .notdef box.
+    let db = FontDb::global();
+    let Some(family) = first_family(LATIN_FAMILIES, |f| f.covers('+') && !f.covers('\u{F02B}')) else {
+        eprintln!("skipped: every Latin font maps the symbol range");
+        return;
+    };
+    let face = db.face(&family, "Regular");
+    assert_eq!(metafile_char(&face, "Times New Roman", SYMBOL_CHARSET, '\u{F02B}'), '+');
+    assert_eq!(metafile_char(&face, "Times New Roman", SYMBOL_CHARSET, '\u{F06E}'), 'n');
+    assert_eq!(metafile_char(&face, "Times New Roman", 0, '+'), '+');
+    // A symbol family without its font keeps the look-alike mapping.
+    assert_eq!(metafile_char(&face, "Symbol", SYMBOL_CHARSET, '\u{F02B}'), '+');
+}
+
+#[test]
+fn glyph_advances_are_quantized_to_hundredths_of_a_point() {
+    // Office measures in hundredths of a point, each glyph's advance rounded down: 17.5625 pt
+    // advances 17.56, whole-point advances stay whole, and a space-padded line fits its box by
+    // the width PowerPoint saw.
+    assert_eq!(glyph_advance(17.5625), 17.56);
+    assert_eq!(glyph_advance(23.109375), 23.1);
+    assert_eq!(glyph_advance(10.65625), 10.65);
+    assert_eq!(glyph_advance(32.0), 32.0);
+    assert_eq!(glyph_advance(8.0), 8.0);
+}

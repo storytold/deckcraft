@@ -860,10 +860,15 @@ fn shape_cells(
         let Some(st) = styles.get(si) else { continue };
         let (sc, slot) = scripts.get(a).copied().unwrap_or((None, FontSlot::Latin));
         // Spaces, digits and punctuation stay in the face of the text before them when it can
-        // draw them, so a phrase isn't cut into items at every space.
+        // draw them, so a phrase isn't cut into items at every space — except the Common
+        // characters Office classifies by code range (ECMA-376): ASCII spaces, digits and
+        // punctuation, and high-ANSI neutrals such as `≥` or `“`, take the run's Latin typeface
+        // whatever surrounds them (a space after a Han character is a narrow Latin one, and a
+        // line of space-padded text wraps where PowerPoint's does).
         // Emoji, and pictographs asked to look like text (U+FE0E), pick their own face.
         let neutral =
             cluster.iter().all(|c| script::script_of(*c).is_none()) && !deckcraft_fonts::is_emoji_cluster(cluster) && !cluster.contains(&'\u{FE0E}');
+        let latin = neutral && cluster.iter().all(|c| script::latin_neutral(*c));
         // A symbol-font character (U+F0xx) with an `a:sym` font draws in that font when it's there.
         let sym_face = st
             .sym
@@ -875,11 +880,16 @@ fn shape_cells(
         let face = match (sym_face, prev.as_ref()) {
             (Some(f), _) => f,
             (None, Some(p))
-                if neutral && !p.is_color() && deckcraft_fonts::covers_cluster(p, cluster) && char_style.get(a.wrapping_sub(1)) == Some(&si) =>
+                if neutral
+                    && !latin
+                    && !p.is_color()
+                    && deckcraft_fonts::covers_cluster(p, cluster)
+                    && char_style.get(a.wrapping_sub(1)) == Some(&si) =>
             {
                 p.clone()
             }
             (None, _) => {
+                let slot = if latin { FontSlot::Latin } else { slot };
                 let chain = chains.entry((si, slot, sc)).or_insert_with(|| face_chain(ctx, st, slot, sc));
                 db.cascade(cluster, chain, st.style_name)
             }
@@ -1082,7 +1092,7 @@ fn shape_item(
         let s = scale_of(cell);
         let w = width.entry(h).or_insert(0.0);
         cell.glyphs.push((g.gid, *w + g.x_offset as f64 * s, -(g.y_offset as f64) * s));
-        *w += g.x_advance as f64 * s;
+        *w += glyph_advance(g.x_advance as f64 * s);
         let e = lig.entry(h).or_insert((g.gid, 0));
         e.1 += 1;
     }
@@ -1137,6 +1147,16 @@ fn is_symbol_font(family: &str) -> bool {
     f.starts_with("wingdings") || f == "symbol" || f.starts_with("webdings") || f.starts_with("marlett")
 }
 
+/// A glyph's advance as PowerPoint measures it: Office lays text out in hundredths of a point (the
+/// unit of `sz` and `spc`), quantizing each glyph's advance down. A line of space-padded course
+/// text then fits its box by the width PowerPoint saw rather than exact font units — a 32 pt Times
+/// New Roman line of 35 glyphs measures 0.18 pt narrower — and wraps where PowerPoint's does
+/// (measured against PowerPoint on a deck whose first line fits its box by two hundredths of a
+/// point).
+fn glyph_advance(adv: f64) -> f64 {
+    (adv * 100.0).floor() / 100.0
+}
+
 /// The character to draw bullet `c` with the installed symbol font `face`, when `font` names a
 /// symbol font that `face` is (not a substitute) and it has the glyph.
 fn symbol_font_char(face: &FontFace, c: &str, font: Option<&str>) -> Option<char> {
@@ -1169,6 +1189,25 @@ pub fn symbol_char(face: &FontFace, font: &str, c: char) -> Option<char> {
     Some(symbol_font_char(face, &s, Some(font)).unwrap_or_else(|| map_symbol_bullet(&s, Some(font)).chars().next().unwrap_or('•')))
 }
 
+/// `SYMBOL_CHARSET` (MS-WMF LOGFONT): the text bytes are the font's own symbol codes, drawn from
+/// the U+F000 + byte code point.
+pub const SYMBOL_CHARSET: u8 = 2;
+
+/// The character a metafile text item draws for `c` (one decoded character of the record's text)
+/// in the font of `charset`: symbol-font families map their codes as bullets do
+/// ([`symbol_char`]), and a `SYMBOL_CHARSET` font that is not a symbol family — MathType writes
+/// "Times New Roman" with the symbol character set — keeps its U+F000 + byte code where `face`
+/// draws it there and falls back to the byte's own character where it doesn't (the requested
+/// font is missing), rather than to a .notdef box.
+pub fn metafile_char(face: &FontFace, family: &str, charset: u8, c: char) -> char {
+    let c = symbol_char(face, family, c).unwrap_or(c);
+    if charset == SYMBOL_CHARSET && ('\u{F000}'..='\u{F0FF}').contains(&c) && !face.covers(c) {
+        char::from_u32(c as u32 & 0xFF).unwrap_or(c)
+    } else {
+        c
+    }
+}
+
 /// The Unicode bullet for a symbol-font bullet character (Wingdings, Symbol), or the character.
 pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
     let f = font.unwrap_or("").to_ascii_lowercase();
@@ -1187,32 +1226,43 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
         };
         return m.to_string();
     }
-    if f.contains("wingdings") || f.contains("symbol") || ('\u{f000}'..='\u{f0ff}').contains(&first) {
+    if f.starts_with("wingdings 2") {
         let code = (first as u32) & 0xff;
-        // Wingdings 2 and 3 put different shapes at the same codes.
-        if f.starts_with("wingdings 2") {
-            let m = match code {
-                0x97 | 0x98 => '●',
-                0x9e..=0xa1 => '■',
-                0xa2..=0xa5 => '◆',
-                0xea..=0xf3 => '★',
-                0xb7..=0xbf => '○',
-                0x50 => '✓',
-                _ => '•',
-            };
-            return m.to_string();
-        }
-        if f.starts_with("wingdings 3") {
-            let m = match code {
-                0x7d | 0x75 => '►',
-                0x7c | 0x74 => '◄',
-                0x70 => '▲',
-                0x71 => '▼',
-                0xc6 | 0xc7 => '➔',
-                _ => '▶',
-            };
-            return m.to_string();
-        }
+        let m = match code {
+            0x97 | 0x98 => '●',
+            0x9e..=0xa1 => '■',
+            0xa2..=0xa5 => '◆',
+            0xea..=0xf3 => '★',
+            0xb7..=0xbf => '○',
+            0x50 => '✓',
+            _ => '•',
+        };
+        return m.to_string();
+    }
+    if f.starts_with("wingdings 3") {
+        let code = (first as u32) & 0xff;
+        let m = match code {
+            0x7d | 0x75 => '►',
+            0x7c | 0x74 => '◄',
+            0x70 => '▲',
+            0x71 => '▼',
+            0xc6 | 0xc7 => '➔',
+            _ => '▶',
+        };
+        return m.to_string();
+    }
+    // The Adobe Symbol encoding is not a bullet set: it is the public reference mapping of the
+    // Symbol font's codes (Greek, the math operators). Where a code has no Unicode equivalent
+    // here, the character itself stands in rather than a bullet.
+    if f.contains("symbol") {
+        let code = ((first as u32) & 0xff) as u8;
+        return match symbol_encoding(code) {
+            0 => c.to_string(),
+            v => char::from_u32(v).map(String::from).unwrap_or_else(|| c.to_string()),
+        };
+    }
+    if f.contains("wingdings") || ('\u{f000}'..='\u{f0ff}').contains(&first) {
+        let code = (first as u32) & 0xff;
         let m = match code {
             0xa7 => '▪',
             0xd8 => '➢',
@@ -1230,6 +1280,45 @@ pub fn map_symbol_bullet(c: &str, font: Option<&str>) -> String {
     }
     // PowerPoint draws only the first character of a longer `buChar` ("••" draws one dot).
     c.graphemes(true).next().unwrap_or("•").to_string()
+}
+
+/// The Unicode code point of a code in the Adobe Symbol encoding (the published mapping of the
+/// Symbol font; AGLFN/Symbol.txt), or 0 where the encoding has no equivalent.
+fn symbol_encoding(code: u8) -> u32 {
+    const T: &[u16; 224] = &[
+        // 0x20..=0x2F: space ! ∀ # ∃ % & ∋ ( ) ∗ + , − . /
+        0x20, 0x21, 0x2200, 0x23, 0x2203, 0x25, 0x26, 0x220B, 0x28, 0x29, 0x2217, 0x2B, 0x2C, 0x2212, 0x2E, 0x2F, //
+        // 0x30..=0x3F: digits : ; < = > ? ≅
+        0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x2245, //
+        // 0x40..=0x4F: Α Β Χ Δ Ε Φ Γ Η Ι ϑ Κ Λ Μ Ν Ο Π
+        0x391, 0x392, 0x3A7, 0x394, 0x395, 0x3A6, 0x393, 0x397, 0x399, 0x3D1, 0x39A, 0x39B, 0x39C, 0x39D, 0x39F, 0x3A0, //
+        // 0x50..=0x5F: Θ Ρ Σ Τ Υ ς Ω Ξ Ψ Ζ [ ∴ ] ⊥ _
+        0x398, 0x3A1, 0x3A3, 0x3A4, 0x3A5, 0x3C2, 0x3A9, 0x39E, 0x3A8, 0x396, 0x5B, 0x2234, 0x5D, 0x22A5, 0x5F, 0, //
+        // 0x60..=0x6F: ` α β χ δ ε φ γ η ι ϕ κ λ μ ν ο
+        0, 0x3B1, 0x3B2, 0x3C7, 0x3B4, 0x3B5, 0x3C6, 0x3B3, 0x3B7, 0x3B9, 0x3D5, 0x3BA, 0x3BB, 0x3BC, 0x3BD, 0x3BF, //
+        // 0x70..=0x7F: π θ ρ σ τ υ ϖ ω ξ ψ ζ { | } ∼ (0x7F unmapped)
+        0x3C0, 0x3B8, 0x3C1, 0x3C3, 0x3C4, 0x3C5, 0x3D6, 0x3C9, 0x3BE, 0x3C8, 0x3B6, 0x7B, 0x7C, 0x7D, 0x223C, 0, //
+        // 0x80..=0x8F, 0x90..=0x9F, 0xA0: € then nothing mapped
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,      //
+        0x20AC, //
+        // 0xA1..=0xAF: ϒ ′ ≤ ⁄ ∞ ƒ ♣ ♦ ♥ ♠ ↔ ← ↑ → ↓
+        0x3D2, 0x2032, 0x2264, 0x2044, 0x221E, 0x0192, 0x2663, 0x2666, 0x2665, 0x2660, 0x2194, 0x2190, 0x2191, 0x2192, 0x2193, //
+        // 0xB0..=0xBF: ° ± ″ ≥ × ∝ ∂ • ÷ ≠ ≡ ≈ … (three spacing/position codes)
+        0xB0, 0xB1, 0x2033, 0x2265, 0xD7, 0x221D, 0x2202, 0x2022, 0xF7, 0x2260, 0x2261, 0x2248, 0x2026, 0, 0, 0, //
+        // 0xC0..=0xCF: ℑ ℜ ℘ ⊗ ⊕ ∅ ∩ ∪ ⊃ ⊂ ⊄ ⊆ ⊇ ∈ ∉ ∠
+        0x2111, 0x211C, 0x2118, 0x2297, 0x2295, 0x2205, 0x2229, 0x222A, 0x2283, 0x2282, 0x2284, 0x2286, 0x2287, 0x2208, 0x2209, 0x2220, //
+        // 0xD0..=0xDF: ∇ ® © ™ ∏ ∑ √ ∙ ¬ ∧ ∨ ⇔ ⟨ (three unmapped)
+        0x2207, 0xAE, 0xA9, 0x2122, 0x220F, 0x2211, 0x221A, 0x2219, 0xAC, 0x2227, 0x2228, 0x21D4, 0x2329, 0, 0, 0, //
+        // 0xE0..=0xEF: (unmapped)
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+        // 0xF0..=0xFF: ∫ ⌠ ⌡ (similar) ◊ (the rest unmapped)
+        0, 0, 0x222B, 0x2320, 0x2321, 0, 0x25CA, 0, 0, 0, 0, 0, 0, 0, 0, 0, //
+    ];
+    match usize::from(code).checked_sub(0x20) {
+        Some(i) => T.get(i).copied().map_or(0, u32::from),
+        None => 0,
+    }
 }
 
 fn measure_str(face: &FontFace, size: f64, s: &str) -> (f64, Vec<(u32, f64)>) {
