@@ -8,6 +8,7 @@
 #![forbid(unsafe_code)]
 
 mod bevel;
+mod bitmap;
 mod camera;
 mod chart;
 mod chartex;
@@ -2273,8 +2274,11 @@ fn draw_glyph_with(
     let k = run.size / run.face.upem.max(1.0);
     // Colour glyphs (emoji) paint their own colours; an outline (text outline effect) still
     // strokes the plain glyph below.
-    if alpha > 0.0 && run.outline.is_none() && run.face.is_color() && colr::paint(ctx, &run.face, gid, at, k, run.color, alpha) {
-        return;
+    if alpha > 0.0 && run.outline.is_none() && run.face.is_color() {
+        // COLR layers, then an embedded bitmap (Apple Color Emoji is `sbix` PNGs, not COLR).
+        if colr::paint(ctx, &run.face, gid, at, k, run.color, alpha) || bitmap::paint(ctx, &run.face, gid, at, k, alpha) {
+            return;
+        }
     }
     let path = glyph(&run.face, gid);
     if path.elements().is_empty() {

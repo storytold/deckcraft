@@ -15,6 +15,7 @@ because it mostly follows from hardware use.
 | Transitions and Morph frames | GPU | CPU-rendered slide images composited as textured quads on the GPU | same | same | same |
 | Picture export resolution | 2 px per point, tagged so the file is the slide's size | PNG `pHYs` and JPEG density, 144 dpi at the default 2 px per point | same | same | same |
 | High-DPI / Retina | yes | yes; editor slide rasters sit on the physical pixel grid (#184) | yes | yes | yes |
+| Colour emoji | the system colour-emoji font | Apple Color Emoji (`sbix` PNGs) when that font is installed | a catalogued colour-emoji family when installed | same | only a colour font the page loaded |
 | Wide gamut / HDR display | partly (P3 images) | no (sRGB) | no | no | no |
 | Startup on all GPUs | yes | yes | **no**: crashes in some Intel/AMD drivers (#40, #59) | not reported | n/a |
 | Software fallback when no GPU | yes (WARP on Windows) | no | no | no | no |
@@ -79,5 +80,6 @@ outlines every frame (#67, fix open), and the decoders run in software.
 | 2026-10-14 | minor | A two-finger twist on the trackpad rotates the selected shapes, as one undo step. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | A sideways trackpad swipe turns the page in Normal view (when the slide fits) and in the show. Pinch-zoom is unchanged |
 | 2026-10-14 | minor | Pen pressure scales ink width; tilt, pinch zoom and trackpad gestures remain (estimate 3–6 h → 2–5 h) |
+| 2026-10-14 | minor | Colour emoji draw from the installed colour font (Apple Color Emoji on macOS) |
 | 2026-10-12 | minor | IME input methods (#101) |
 | 2026-10-10 | major | Created: rendering, media, displays, input and performance against PowerPoint 16.113 |

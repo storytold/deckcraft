@@ -1367,6 +1367,11 @@ impl FontDb {
         if MISSES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).contains(&c) {
             return false;
         }
+        // Named colour-emoji families first. Apple Color Emoji is one file of about 180 MB, over
+        // the general scan's cap, so a size-ordered walk never reaches it.
+        if self.load_named_emoji_font(c) {
+            return true;
+        }
         let mut paths: Vec<std::path::PathBuf> = self.read_catalog().iter().map(|e| e.path.clone()).collect();
         paths.sort();
         paths.dedup();
@@ -1383,6 +1388,43 @@ impl FontDb {
             }
         }
         MISSES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(c);
+        false
+    }
+
+    /// Load a cataloged colour-emoji family that covers `c`. True when one was already loaded or
+    /// this call loaded it. Files larger than 256 MB are left unread.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_named_emoji_font(&self, c: char) -> bool {
+        const MAX: u64 = 256 << 20;
+        let families: Vec<&str> = SYSTEM_FALLBACKS.iter().copied().filter(|f| f.to_ascii_lowercase().contains("emoji")).collect();
+        for fam in families {
+            let paths: Vec<std::path::PathBuf> = {
+                let cat = self.read_catalog();
+                let mut p: Vec<_> = cat.iter().filter(|e| e.family.eq_ignore_ascii_case(fam)).map(|e| e.path.clone()).collect();
+                p.sort();
+                p.dedup();
+                p
+            };
+            if paths.is_empty() {
+                continue;
+            }
+            if !self.is_loaded(fam) {
+                for p in &paths {
+                    let len = std::fs::metadata(p).map(|m| m.len()).unwrap_or(u64::MAX);
+                    if len > MAX {
+                        continue;
+                    }
+                    if let Ok(data) = std::fs::read(p) {
+                        self.add_font(data);
+                    }
+                }
+                self.loaded_families.lock().unwrap_or_else(|e| e.into_inner()).insert(fam.to_lowercase());
+            }
+            let hit = self.read_faces().iter().any(|f| f.family.eq_ignore_ascii_case(fam) && f.is_color() && f.covers(c));
+            if hit {
+                return true;
+            }
+        }
         false
     }
 

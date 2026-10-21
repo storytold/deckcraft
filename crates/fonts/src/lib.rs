@@ -192,6 +192,19 @@ mod tests {
     }
 
     #[test]
+    fn emoji_fall_back_to_apple_color_emoji_on_macos() {
+        // Apple Color Emoji is about 180 MB, over the general colour-font scan's cap. On macOS it
+        // is still the face a grinning face resolves to. Other platforms have no such file.
+        if !cfg!(target_os = "macos") || !std::path::Path::new("/System/Library/Fonts/Apple Color Emoji.ttc").is_file() {
+            return;
+        }
+        let face = FontDb::global().cascade(&['😀'], &[], "Regular");
+        assert!(face.is_color(), "emoji resolved to {}", face.family);
+        assert!(face.family.to_ascii_lowercase().contains("emoji"), "{}", face.family);
+        assert!(face.covers('😀'));
+    }
+
+    #[test]
     fn colour_fonts_are_recognised() {
         let db = FontDb::with_font_dirs(Vec::new());
         assert!(db.add_font(include_bytes!("../../render/tests/fixtures/colr-squares.ttf").to_vec()) > 0);
