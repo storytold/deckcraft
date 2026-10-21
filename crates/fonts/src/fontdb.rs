@@ -315,6 +315,10 @@ pub struct FontDb {
     /// Semibold" loads a face of the family "Segoe UI").
     #[cfg(not(target_arch = "wasm32"))]
     loaded_families: Mutex<std::collections::HashSet<String>>,
+    /// Families (lower case) whose installed files the styled fallback already loaded: it asks
+    /// for the family of the face it found, for every character it lays out.
+    #[cfg(not(target_arch = "wasm32"))]
+    completed_families: Mutex<std::collections::HashSet<String>>,
     /// System fallback state: enabled, and characters no system font covers.
     #[cfg(not(target_arch = "wasm32"))]
     sys: Mutex<SysFallback>,
@@ -330,6 +334,9 @@ pub struct FontDb {
 struct SysFallback {
     enabled: bool,
     misses: std::collections::HashSet<char>,
+    /// How many times a family was loaded from the system catalog (tests only).
+    #[cfg(test)]
+    catalog_loads: std::sync::atomic::AtomicU32,
 }
 
 /// Does face `index` of `data` carry colour glyph tables?
@@ -772,7 +779,41 @@ fn style_italic(style: &str) -> bool {
     s.contains("italic") || s.contains("oblique") || s == "it"
 }
 
+/// Does the face itself carry the requested style? Its own style name when it names one, else
+/// its weight and italic flags. "Bold" asks for a bold face: a Regular-named face never
+/// matches, whatever its weight, so a heavier file of the family still gets a chance to load.
+fn style_matches(f: &FontFace, style: &str) -> bool {
+    let ns = norm(style);
+    if !ns.is_empty() && norm(&f.style) == ns {
+        return true;
+    }
+    f.italic == style_italic(style) && f.weight == style_weight(style)
+}
+
 impl FontDb {
+    /// A database with no faces at all: tests load exactly the fixtures they need, so the
+    /// styled fallback's choice is machine-independent.
+    #[cfg(test)]
+    pub(crate) fn empty_for_tests() -> Self {
+        Self {
+            faces: RwLock::new(Vec::new()),
+            outlines: Mutex::new(HashMap::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            catalog: RwLock::new(Vec::new()),
+            font_dirs: Vec::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            cataloged: std::sync::OnceLock::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            loaded_families: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            completed_families: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
+            sys: Mutex::new(SysFallback { enabled: true, ..Default::default() }),
+            #[cfg(not(target_arch = "wasm32"))]
+            loading: Mutex::new(()),
+        }
+    }
+
     /// A database holding the bundled fonts, then the craft-fonts Japanese faces (Mincho first,
     /// so they are the fallback for Japanese text after the requested and bundled fonts; empty
     /// without `CRAFT_FONTS_DIR`), whose system font scan reads `font_dirs`.
@@ -796,10 +837,24 @@ impl FontDb {
             #[cfg(not(target_arch = "wasm32"))]
             loaded_families: Mutex::new(std::collections::HashSet::new()),
             #[cfg(not(target_arch = "wasm32"))]
+            completed_families: Mutex::new(std::collections::HashSet::new()),
+            #[cfg(not(target_arch = "wasm32"))]
             sys: Mutex::new(SysFallback { enabled: true, ..Default::default() }),
             #[cfg(not(target_arch = "wasm32"))]
             loading: Mutex::new(()),
         }
+    }
+
+    /// Whether the lazy system-font fallback is enabled (native only).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn system_fallback_enabled(&self) -> bool {
+        self.sys.lock().unwrap_or_else(|e| e.into_inner()).enabled
+    }
+
+    /// How many times a family was loaded from the system catalog (tests only).
+    #[cfg(all(test, not(target_arch = "wasm32")))]
+    pub(crate) fn catalog_loads(&self) -> u32 {
+        self.sys.lock().unwrap_or_else(|e| e.into_inner()).catalog_loads.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Enable or disable the lazy system-font fallback for characters the loaded fonts lack
@@ -979,10 +1034,27 @@ impl FontDb {
         n
     }
 
+    /// Load the files of the installed `family` once. The styled fallback asks for the family
+    /// of the face it found, for every character it lays out: without this the family's files
+    /// are read again and again (#892).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn load_cataloged_once(&self, family: &str) -> bool {
+        let key = family.to_lowercase();
+        {
+            let mut done = self.completed_families.lock().unwrap_or_else(|e| e.into_inner());
+            if !done.insert(key) {
+                return self.is_loaded(family);
+            }
+        }
+        self.load_cataloged(family)
+    }
+
     /// Load the files of the installed `family` (faces already loaded are kept). Returns whether
     /// it is loaded.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_cataloged(&self, family: &str) -> bool {
+        #[cfg(test)]
+        self.sys.lock().unwrap_or_else(|e| e.into_inner()).catalog_loads.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let loading = self.loading.lock().unwrap_or_else(|e| e.into_inner());
         self.load_family(family, &loading)
     }
@@ -1175,6 +1247,44 @@ impl FontDb {
         None
     }
 
+    /// A covering fallback that prefers faces matching the requested style's weight and italic,
+    /// so bold CJK text falls back to a bold face instead of a regular one (#892).
+    ///
+    /// A loaded face that does not carry the requested style may still have its bolder file
+    /// unloaded: a lookup by a Windows family name loads only that style's file (`load_family`),
+    /// so "Malgun Gothic" Regular can be in while Bold is not. Settling for it would leave the
+    /// system pass — the one that loads the whole family — never reached, and every bold run of
+    /// that family would draw regular for the session. So a style-mismatched loaded winner is
+    /// not returned at once: the system pass runs (cheap once the family's files are in), and
+    /// the styled pass runs again over everything now loaded.
+    pub fn fallback_for_styled(&self, c: char, exclude: u32, style: &str) -> Option<Arc<FontFace>> {
+        // The family that covers the character, and the face of it that carries the style: the
+        // same word is always drawn with the same (regional) glyph forms, whichever style the
+        // run asks for (#892).
+        let loaded = self.styled_face_of_family(c, exclude, style);
+        if loaded.as_ref().is_some_and(|f| style_matches(f, style)) {
+            return loaded;
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if self.system_fallback_enabled() {
+            // The loaded winner's family may have its bolder file still unloaded (a lookup by a
+            // Windows family name loads only that style's file): load the family's other files,
+            // then let the system scan load any family covering the character, and take the
+            // styled best over everything now loaded. A caller that turned the system fallback
+            // off gets no installed font: neither the family's other files nor the scan.
+            if let Some(f) = &loaded {
+                let _ = self.load_cataloged_once(&f.family);
+            }
+            let _ = self.system_fallback(c);
+            // The family's files may hold the style the run asks for; the family itself does not
+            // change, so the glyph forms stay the same.
+            if let Some(f) = self.styled_face_of_family(c, exclude, style) {
+                return Some(f);
+            }
+        }
+        loaded
+    }
+
     /// A covering fallback accepted by the caller (for example, an interface that cannot use
     /// colour or very large faces). Rejected faces do not stop the search for another face.
     /// A policy-specific miss is not stored as a general document-font miss.
@@ -1191,6 +1301,25 @@ impl FontDb {
 
     fn loaded_fallback(&self, c: char, exclude: u32) -> Option<Arc<FontFace>> {
         self.loaded_fallback_filtered(c, exclude, &|_| true)
+    }
+
+    /// Like `loaded_fallback`, but prefers faces matching the requested style's weight and
+    /// italic, so bold CJK text falls back to a bold face instead of a regular one (#892).
+    /// The face of the *covering family* that carries the requested style: the family is picked
+    /// by coverage alone, so the same word is always drawn with the same (regional) glyph forms,
+    /// and only the style is chosen within it (#892).
+    fn styled_face_of_family(&self, c: char, exclude: u32, style: &str) -> Option<Arc<FontFace>> {
+        let faces = self.read_faces();
+        // The family that covers the character first, in the order the fallback picks it: the
+        // fallback family, then the others in load order.
+        let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
+        order.sort_by_key(|f| !f.family.eq_ignore_ascii_case(FALLBACK_FAMILY));
+        let family = order.iter().find(|f| f.covers(c)).map(|f| f.family.clone())?;
+        // Within the family, the face that carries the style: the style's own name, else the
+        // closest weight, the upright ones first.
+        let mut of_family: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.family == family && f.id != exclude).collect();
+        of_family.sort_by_key(|f| (f.italic != style_italic(style), (f.weight - style_weight(style)).abs() as i32, f.style.clone()));
+        of_family.into_iter().find(|f| f.covers(c)).cloned()
     }
 
     fn loaded_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {

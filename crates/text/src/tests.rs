@@ -1467,3 +1467,104 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
 }
+
+/// #892: a run's fake-bold flag follows the face actually drawn, not the document face. A bold
+/// run whose font has no bold file gets the synthetic stroke; when its CJK cluster falls back
+/// to a face that really is bold, that face must not be stroked again.
+#[test]
+fn fallback_faces_decide_their_own_fake_bold() {
+    // The rule `make_style` and the GlyphRun builder share: a face lighter than 550 does not
+    // draw bold, a non-italic face does not draw italic.
+    let regular = FontDb::global().face("Inter", "Regular");
+    let bold = FontDb::global().face("Inter", "Bold");
+    assert_eq!(face_fake_style(&regular, true, false), (true, false), "a regular face of a bold run is fake-bold");
+    assert_eq!(face_fake_style(&bold, true, false), (false, false), "a real bold face is not stroked again");
+    assert_eq!(face_fake_style(&regular, true, true), (true, true), "both flags independently");
+    assert_eq!(face_fake_style(&bold, false, false), (false, false), "a regular run never fakes anything");
+}
+
+/// #892: every GlyphRun's fake-bold flag agrees with the face it draws: fake_bold only when
+/// the drawn face is lighter than 550. The old code copied the document face's flag onto every
+/// run, so a bold run falling back to a genuinely bold CJK face was stroked AND true-bold.
+#[test]
+fn every_run_fake_bold_agrees_with_its_drawn_face() {
+    let (mut p, _sh) = setup("Hello", 600.0, 300.0);
+    // Mutate the slide the context resolves against (setup returned a detached clone).
+    {
+        let slide = Arc::get_mut(&mut p.slides[0]).expect("the only slide ref");
+        let shape = &mut slide.shapes[0];
+        shape.text.as_mut().unwrap().paragraphs[0].runs[0].props.bold = Some(true);
+    }
+    let sh = p.slides[0].shapes[0].clone();
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let l = layout(
+        &ctx,
+        &sh,
+        sh.text.as_ref().unwrap(),
+        &Opts { rect: Rect::new(0.0, 0.0, 600.0, 300.0), fields: &NoFields, prompt_color: None, no_shrink: false },
+    );
+    let _ = &sh;
+    assert!(!l.runs.is_empty());
+    // Bullet runs (no cells; bullets never ask for bold) legitimately carry the default flags;
+    // text runs must agree with the face they draw.
+    for r in l.runs.iter().filter(|r| !r.cells.is_empty()) {
+        assert_eq!(
+            r.fake_bold,
+            r.face.weight < 550.0,
+            "run face {} weight {} disagrees with fake_bold {}",
+            r.face.family,
+            r.face.weight,
+            r.fake_bold
+        );
+    }
+}
+
+/// #892: a bold run in a Regular-only font whose CJK cluster falls back to a genuinely bold
+/// face draws that face WITHOUT the synthetic stroke: fake_bold follows the drawn face, so the
+/// glyphs are not double-emboldened. Skipped on machines whose bundled set can't produce the
+/// case (the fallback face must exist and be bold).
+#[test]
+fn bold_fallback_face_is_not_stroked_again() {
+    let (mut p, _sh) = setup("Hello", 600.0, 300.0);
+    {
+        let slide = Arc::get_mut(&mut p.slides[0]).expect("the only slide ref");
+        let shape = &mut slide.shapes[0];
+        shape.text.as_mut().unwrap().paragraphs[0].runs[0].props.bold = Some(true);
+        shape.text.as_mut().unwrap().paragraphs[0].runs[0].props.font = Some("Shippori Mincho".into());
+    }
+    let db = FontDb::global();
+    let mincho = db.face("Shippori Mincho", "Bold"); // no Bold file exists: the Regular face
+    if mincho.weight >= 550.0 {
+        return; // a bold face exists here: the case can't be produced
+    }
+    // A char the run's own face lacks whose styled bold fallback is genuinely bold.
+    // Hangul and simplified-only Han: the bundled Japanese faces lack them (the bundle has
+    // no Korean face at all), so the styled fallback must reach a system face.
+    let Some(c) = ['\u{AC00}', '\u{8BED}', '\u{4F60}', '\u{3059}']
+        .into_iter()
+        // As cascade judges it: the styled fallback only wins when the face covers the cluster.
+        .find(|&c| !mincho.covers(c) && db.fallback_for_styled(c, mincho.id(), "Bold").is_some_and(|f| f.weight >= 550.0 && f.covers(c)))
+    else {
+        return;
+    };
+    let sh = {
+        let slide = Arc::get_mut(&mut p.slides[0]).expect("the only slide ref");
+        let shape = &mut slide.shapes[0];
+        shape.text.as_mut().unwrap().paragraphs[0].runs[0].text = format!("A{c}B");
+        shape.clone()
+    };
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let l = layout(
+        &ctx,
+        &sh,
+        sh.text.as_ref().unwrap(),
+        &Opts { rect: Rect::new(0.0, 0.0, 600.0, 300.0), fields: &NoFields, prompt_color: None, no_shrink: false },
+    );
+    let runs: Vec<_> = l.runs.iter().filter(|r| !r.cells.is_empty()).collect();
+    assert!(runs.len() >= 2, "{} runs for 'A{c}B'", runs.len());
+    let bold_run = runs.iter().find(|r| r.face.weight >= 550.0).expect("the bold fallback run");
+    assert!(!bold_run.fake_bold, "a genuinely bold fallback face ({} {}) must not also be stroked", bold_run.face.family, bold_run.face.weight);
+    for r in runs.iter().filter(|r| r.face.weight < 550.0) {
+        assert!(r.fake_bold, "a regular fallback face of a bold run keeps the synthetic stroke ({} {})", r.face.family, r.face.weight);
+    }
+}

@@ -137,6 +137,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-17 | Edit Points: turning a shape into a freeform is one undo step, so Undo brings the original shape back (it used to stay a freeform) |
 | 2026-10-17 | While a placeholder's text is being edited, a click on a shape in front of it selects that shape instead of moving the caret, as in PowerPoint (#931) |
 | 2026-10-15 | Native saves keep an imported chart's embedded workbook, drawings and relationships; headless PPTX → edit → native save/reopen → PPTX tests verify the payloads and stale-workbook rejection |
+| 2026-10-18 | Fonts: the CJK fallback path prefers faces matching the run's bold/italic — bold CJK text in Calibri or Arial was drawn regular (#892) |
+| 2026-10-19 | Fonts: bold CJK fallback completes — a family whose Regular face loaded alone now loads its Bold file, and a run's fake-bold flag follows the face actually drawn (#892) |
 | 2026-10-15 | PPTX trigger sequences keep separate On Click steps, including paragraph builds; synthetic import/edit/save/reopen and headless show regressions |
 | 2026-10-16 | Export: PNG with a transparent background — the slide background is left out, only the slide's content is drawn (Export… dialog, File › Export, web download, `file.export`/`file.render` `transparentBackground`, `deckcraft-cli render --transparent`) (#784) |
 | 2026-10-16 | Arrange ▸ Align: Align to Slide and Align Selected Objects, as in PowerPoint. One object aligns to the slide and several to each other until the other choice is ticked; the choice holds for that selection and also drives Distribute |

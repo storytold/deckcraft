@@ -182,7 +182,9 @@ impl FontDb {
             }
         }
         let exclude = chain.first().map(|f| f.id()).unwrap_or(u32::MAX);
-        let f = match self.fallback_for(key, exclude) {
+        // The styled fallback prefers faces matching the run's bold/italic, so bold CJK text
+        // falls back to a bold face instead of a regular one (#892).
+        let f = match self.fallback_for_styled(key, exclude, style) {
             Some(f) if covers_cluster(&f, cluster) => f,
             Some(f) if chain.iter().all(|c| !c.covers(key)) => f,
             // A letter with marks the run's font lacks (stacked combining marks): a loaded plain
@@ -305,5 +307,103 @@ mod tests {
             let c = ligature_carets(&face, gid);
             assert!(c.windows(2).all(|w| w[0] <= w[1]));
         }
+    }
+
+    /// #892: the styled fallback picks the covering face that matches the requested weight and
+    /// italic. The two fixture faces (one family, weights 400 and 600, both covering "A") are
+    /// the database's only faces, so the choice is deterministic on every machine: no bundled
+    /// or system face can win the sort from under them.
+    #[test]
+    fn styled_fallback_prefers_the_matching_weight_and_italic() {
+        let db = FontDb::empty_for_tests();
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec()), 1);
+        let a = 'A';
+        let regular = db.fallback_for_styled(a, u32::MAX, "Regular").expect("regular fallback");
+        assert!((regular.weight - 400.0).abs() < 1e-3, "regular picks the 400 face, got {}", regular.weight);
+        let bold = db.fallback_for_styled(a, u32::MAX, "Bold").expect("bold fallback");
+        assert!((bold.weight - 600.0).abs() < 1e-3, "bold picks the 600 face, got {}", bold.weight);
+        // Italic runs prefer the non-italic faces when no italic face exists; bold italic
+        // still prefers the heavier one, through its weight key.
+        let italic = db.fallback_for_styled(a, u32::MAX, "Italic").expect("italic fallback");
+        assert!(!italic.italic && (italic.weight - 400.0).abs() < 1e-3, "the 400 upright face wins for Italic, got {}", italic.weight);
+        let bi = db.fallback_for_styled(a, u32::MAX, "Bold Italic").expect("bold italic fallback");
+        assert!((bi.weight - 600.0).abs() < 1e-3, "Bold Italic prefers the heavier face, got {}", bi.weight);
+    }
+
+    /// #892: the covering family does not change with the style. Two families cover the same
+    /// character, one of them with a bold face: a bold run must take the bold face of the *same*
+    /// family the regular run uses, not a bold face of another family - otherwise the same word is
+    /// drawn with different (regional) glyph forms depending on the run's style.
+    #[test]
+    fn the_styled_fallback_keeps_the_family() {
+        let db = FontDb::empty_for_tests();
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/other-regular.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/other-semibold.ttf").to_vec()), 1);
+        let a = 'A';
+        let regular = db.fallback_for_styled(a, u32::MAX, "Regular").expect("regular fallback");
+        let bold = db.fallback_for_styled(a, u32::MAX, "Bold").expect("bold fallback");
+        assert_eq!(regular.family, bold.family, "the same family covers the word, whichever style the run asks for");
+        // The bold face of that family (600), not the 700 face of the other one.
+        assert!((bold.weight - 600.0).abs() < 1e-3, "the bold face of that family is used, got {} ({})", bold.weight, bold.family);
+    }
+
+    /// #892: for a "Regular" run the styled fallback picks exactly the face the plain one does.
+    #[test]
+    fn styled_regular_fallback_matches_the_plain_one() {
+        let db = FontDb::empty_for_tests();
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec()), 1);
+        let a = 'A';
+        assert_eq!(db.fallback_for(a, u32::MAX).map(|f| f.id()), db.fallback_for_styled(a, u32::MAX, "Regular").map(|f| f.id()));
+    }
+
+    /// #892: a bold request picks up a bolder face of the family even when a Regular face of
+    /// it was loaded first — a lookup by a Windows family name loads only that style's file,
+    /// and the first styled pass must not settle for it before the family's other files load.
+    #[test]
+    fn styled_fallback_picks_up_a_bolder_face_that_arrives_later() {
+        let db = FontDb::empty_for_tests();
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        let a = 'A';
+        let first = db.fallback_for_styled(a, u32::MAX, "Bold").expect("the regular face while it is the only one");
+        assert!((first.weight - 400.0).abs() < 1e-3, "only the regular face exists yet, got {}", first.weight);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec()), 1);
+        let better = db.fallback_for_styled(a, u32::MAX, "Bold").expect("the semibold face once it exists");
+        assert!((better.weight - 600.0).abs() < 1e-3, "a bold request picks up the face that arrived, got weight {}", better.weight);
+    }
+
+    /// A caller that turned the system fallback off gets no installed font: the styled
+    /// fallback must not load the family's other files either.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn the_styled_fallback_honours_the_system_fallback_setting() {
+        let db = FontDb::empty_for_tests();
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        // A bold request does not match the only face, so the styled fallback would ask the
+        // system for a bolder one - with the setting off, it must not.
+        let f = db.fallback_for_styled('A', u32::MAX, "Bold").expect("the regular face");
+        assert!((f.weight - 400.0).abs() < 1e-3, "the only face is used, got {}", f.weight);
+        assert_eq!(db.catalog_loads(), 0, "no family is loaded from the system");
+    }
+
+    /// The styled fallback loads the family's files once, not for every character: a document
+    /// with a thousand of the same character asks a thousand times.
+    #[test]
+    fn the_styled_fallback_loads_a_family_once() {
+        let db = FontDb::empty_for_tests();
+        assert_eq!(db.add_font(include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec()), 1);
+        // The only face is a regular one, so a bold request sends the fallback to the system for
+        // the family's other files.
+        let _ = db.fallback_for_styled('A', u32::MAX, "Bold").expect("the regular face");
+        let _ = db.fallback_for_styled('A', u32::MAX, "Bold").expect("the regular face");
+        assert_eq!(db.catalog_loads(), 1, "the family is loaded once, not once per character");
     }
 }
