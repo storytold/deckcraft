@@ -2186,6 +2186,30 @@ mod copy_remap {
     }
 
     #[test]
+    fn a_pasted_picture_brings_its_svg_along() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (pa, ..) = populate(&mut a, b"raster");
+        populate(&mut b, b"deck b picture");
+        {
+            let doc = Arc::make_mut(&mut a.doc_mut().unwrap().doc);
+            let svg = doc.add_media("p.svg", "image/svg+xml", b"<svg/>".to_vec()).expect("media");
+            let slide = Arc::make_mut(&mut doc.slides[0]);
+            let Some(Shape { kind: ShapeKind::Picture { fill }, .. }) = slide.shapes.iter_mut().find(|x| x.id == pa) else { panic!() };
+            fill.svg = Some(svg);
+        }
+        select(&mut a, &[pa]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let new = shape(&b, 0, ShapeId(r["ids"][0].as_u64().unwrap() as u32));
+        let ShapeKind::Picture { fill } = &new.kind else { panic!("not a picture") };
+        let svg = fill.svg.and_then(|m| b.doc().unwrap().doc.media(m)).map(|m| m.data.as_ref().clone());
+        assert_eq!(svg.as_deref(), Some(&b"<svg/>"[..]));
+    }
+
+    #[test]
     fn copied_connectors_follow_copied_ends_and_detach_from_the_rest() {
         let mut s = Session::with_new();
         let (p, b, c) = populate(&mut s, b"x");

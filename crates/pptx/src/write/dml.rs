@@ -102,6 +102,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
     // An SVG rides in Office's SVG extension. Without a raster fallback the blip itself names no
     // image, as PowerPoint writes it.
     let svg_rel = pf.svg.and_then(|m| x.media_rel(o, m, "image"));
+    let svg_linked = pf.svg.and_then(|m| x.p.media(m)).is_some_and(|m| m.data.is_empty() && m.link.is_some());
     let svg_only = svg_rel.is_some() && pf.svg == Some(pf.media);
     let rid = if svg_only { None } else { Some(x.media_rel(o, pf.media, "image").unwrap_or_else(|| x.placeholder_rel(o))) };
     w.open(tag, A::new().a("rotWithShape", if pf.upright { "0" } else { "1" }));
@@ -176,7 +177,7 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
             }
             if let Some(svg) = &svg_rel {
                 w.open("a:ext", A::new().a("uri", "{96DAC541-7B7A-43D3-8B79-37D633B846F1}"));
-                w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", crate::opc::NS_ASVG).a("r:embed", svg));
+                w.empty("asvg:svgBlip", A::new().a("xmlns:asvg", crate::opc::NS_ASVG).a(if svg_linked { "r:link" } else { "r:embed" }, svg));
                 w.close("a:ext");
             }
             w.close("a:extLst");
