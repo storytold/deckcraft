@@ -43,7 +43,11 @@ pub fn instance_id() -> u64 {
     static ID: OnceLock<u64> = OnceLock::new();
     *ID.get_or_init(|| {
         use std::hash::{BuildHasher, Hasher};
+        #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        // wasm32 has no process id (`std::process::id` panics there) and no clock; one page is one
+        // instance, so its id comes from the hasher's keys alone.
+        #[cfg(not(target_arch = "wasm32"))]
         h.write_u32(std::process::id());
         #[cfg(not(target_arch = "wasm32"))]
         if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
