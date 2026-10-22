@@ -18,12 +18,20 @@ if [ "${1:-}" != "--skip-build" ]; then
   (cd "$ROOT" && cargo build --release --locked -p deckcraft -p deckcraft-cli)
 fi
 
-ARCH="$(uname -m)"
-case "$ARCH" in
-  amd64) ARCH=x86_64 ;;
-  arm64) ARCH=aarch64 ;;
-esac
-BIN="$CARGO_TARGET_DIR/release"
+release_arch() {
+  case "$1" in
+    amd64 | x86_64) echo x86_64 ;;
+    arm64 | aarch64) echo aarch64 ;;
+    *) echo "$1" ;;
+  esac
+}
+HOST_ARCH="$(release_arch "$(uname -m)")"
+# The release workflow cross-compiles aarch64 in an x86_64 VM with CARGO_BUILD_TARGET set to
+# aarch64-unknown-freebsd (craft-common-actions#39): name the archive after the target.
+ARCH="$HOST_ARCH"
+if [ -n "${CARGO_BUILD_TARGET:-}" ]; then ARCH="$(release_arch "${CARGO_BUILD_TARGET%%-*}")"; fi
+# Cargo puts a cross build under target/<triple>/release.
+BIN="$CARGO_TARGET_DIR/${CARGO_BUILD_TARGET:+$CARGO_BUILD_TARGET/}release"
 NAME="deckcraft-$VERSION-freebsd-$ARCH"
 WORK="$CARGO_TARGET_DIR/freebsd-package"
 STAGE="$WORK/$NAME"
@@ -40,6 +48,10 @@ cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/share/icons/"
 copy_docs "$STAGE/share/doc/deckcraft"
 
 tar -C "$WORK" -czf "$DIST/$NAME.tar.gz" "$NAME"
-"$STAGE/bin/deckcraft-cli" --version
+if [ "$ARCH" = "$HOST_ARCH" ]; then
+  "$STAGE/bin/deckcraft-cli" --version
+else
+  echo "skipping --version: an $ARCH binary does not run on this $HOST_ARCH machine"
+fi
 echo "wrote $DIST/$NAME.tar.gz"
 ls -lh "$DIST/$NAME.tar.gz"
