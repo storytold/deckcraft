@@ -9,6 +9,7 @@ description = "DeckCraft fonts: font database (craft-fonts + system), substitute
 workspace = true
 
 [dependencies]
+deckcraft-collate = { workspace = true }
 kurbo = { workspace = true }
 skrifa = { workspace = true }
 harfrust = { workspace = true }

@@ -10,6 +10,7 @@ workspace = true
 
 [dependencies]
 deckcraft-geom = { workspace = true }
+deckcraft-collate = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }
 deckcraft-fonts = { workspace = true }

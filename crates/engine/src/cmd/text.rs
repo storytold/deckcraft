@@ -1429,9 +1429,7 @@ pub(crate) fn format_body(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
 }
 
 fn fonts_used(s: &mut Session, _: &Value) -> Result<Value> {
-    let mut v = crate::fonts::used_fonts(&s.doc()?.doc);
-    v.sort_by_key(|f| f.to_lowercase());
-    Ok(json!(v))
+    Ok(json!(deckcraft_fonts::sorted_unique_names(crate::fonts::used_fonts(&s.doc()?.doc))))
 }
 
 fn replace_font(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1439,6 +1437,10 @@ fn replace_font(s: &mut Session, p: &Value) -> Result<Value> {
     let to = str_param(p, "to").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad("font.replace", "missing `to`"))?.to_string();
     if to.len() > 256 || to.chars().any(char::is_control) {
         return Err(bad("font.replace", "`to` is not a font name"));
+    }
+    // `from` is folded once per call and compared with every font name in the deck: bound it.
+    if from.len() > 256 {
+        return Err(bad("font.replace", "`from` is not a font name"));
     }
     // Count on a copy first so a replace that finds nothing leaves no undo step.
     let mut probe = (*s.doc()?.doc).clone();
@@ -1505,6 +1507,91 @@ mod replace_font_tests {
         s.execute("edit.undo", &json!({})).unwrap();
         s.execute("edit.undo", &json!({})).unwrap();
         assert!(fonts(&mut s).iter().any(|f| f == "Comic Neue"));
+    }
+
+    /// A session whose text boxes are drawn in the given fonts, one box per name.
+    fn session_in_fonts(names: &[&str]) -> Session {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "B"})).unwrap();
+        for n in names {
+            s.execute("insert.textBox", &json!({"rect": [10, 10, 200, 50], "text": "Hello"})).unwrap();
+            s.execute("text.exit", &json!({})).unwrap();
+            s.execute("format.font", &json!({"family": n})).unwrap();
+        }
+        s
+    }
+
+    #[test]
+    fn font_lists_merge_case_and_nfd() {
+        let mut s = session_in_fonts(&["Zapfino", "Đồ Hoạ", "ann sans", "Ánh Sáng", "Ann Sans", "đồ hoạ", "A\u{301}nh Sáng"]);
+        let used = fonts(&mut s);
+        let spellings = ["Zapfino", "Đồ Hoạ", "ann sans", "Ánh Sáng", "Ann Sans", "đồ hoạ", "A\u{301}nh Sáng"];
+        let ours: Vec<&str> = used.iter().map(String::as_str).filter(|f| spellings.contains(f)).collect();
+        assert_eq!(ours, ["Ánh Sáng", "ann sans", "Đồ Hoạ", "Zapfino"], "{used:?}");
+    }
+
+    #[test]
+    fn ascii_font_order_unchanged() {
+        // Names no machine has, so format.font keeps their spelling.
+        let mut s = session_in_fonts(&["Qqq Times New Roman", "Qqq calibri", "Qqq Arial", "Qqq arial black"]);
+        let used: Vec<String> = fonts(&mut s).into_iter().filter(|f| f.starts_with("Qqq ")).collect();
+        // The old order: `to_lowercase` byte order.
+        assert_eq!(used, ["Qqq Arial", "Qqq arial black", "Qqq calibri", "Qqq Times New Roman"]);
+    }
+
+    #[test]
+    fn replace_matches_nfd_and_case() {
+        let mut s = session_in_fonts(&["Đô\u{300} Hoa\u{323}"]);
+        let r = s.execute("font.replace", &json!({"from": " đồ hoạ ", "to": "Lato"})).unwrap();
+        assert!(r["replaced"].as_u64().unwrap() >= 1, "{r}");
+        let used = fonts(&mut s);
+        assert!(used.iter().any(|f| f == "Lato") && !used.iter().any(|f| f.starts_with("Đ")), "{used:?}");
+    }
+
+    #[test]
+    fn replace_with_the_same_name_normalises_variants_and_undoes() {
+        let nfd = "Đô\u{300} Hoa\u{323}";
+        let spelled = |s: &Session, name: &str| crate::fonts::used_fonts(&s.doc().unwrap().doc).iter().any(|f| f == name);
+        let mut s = session_in_fonts(&[nfd, "Đồ Hoạ"]);
+        // The variant's run (and its end mark) change; the NFC field already spells `to`.
+        let r = s.execute("font.replace", &json!({"from": "Đồ Hoạ", "to": "Đồ Hoạ"})).unwrap();
+        assert_eq!(r["replaced"], 2, "{r}");
+        assert!(!spelled(&s, nfd) && spelled(&s, "Đồ Hoạ"));
+        // Once normalised there is nothing left to change, and no undo step for it.
+        let undo = s.doc().unwrap().history.undo.len();
+        assert_eq!(s.execute("font.replace", &json!({"from": "Đồ Hoạ", "to": "Đồ Hoạ"})).unwrap()["replaced"], 0);
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+        // One undo restores the variant spelling.
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(spelled(&s, nfd));
+        // A name with no variant: nothing to do.
+        let mut s = session_in_fonts(&["Đồ Hoạ"]);
+        assert_eq!(s.execute("font.replace", &json!({"from": "Đồ Hoạ", "to": "Đồ Hoạ"})).unwrap()["replaced"], 0);
+    }
+
+    #[test]
+    fn font_names_hostile_never_panic() {
+        let marks = format!("e{}", "\u{301}".repeat(10_000));
+        let big = "Ế".repeat(1 << 19);
+        let mut s = session_in_fonts(&["\u{10FFFF}", "Lato"]);
+        for from in [marks.as_str(), big.as_str(), "\u{10FFFF}", "e\u{301}", "\u{0}", " "] {
+            let _ = s.execute("font.replace", &json!({"from": from, "to": "Inter"}));
+            let _ = fonts(&mut s);
+        }
+        let _ = s.execute("format.font", &json!({"family": marks}));
+        let _ = fonts(&mut s);
+    }
+
+    #[test]
+    fn replace_from_over_256_bytes_is_refused() {
+        let mut s = session_in_fonts(&["Qqq Sans"]);
+        let undo = s.doc().unwrap().history.undo.len();
+        for from in ["x".repeat(257), "Ế".repeat(1 << 19), format!("e{}", "\u{301}".repeat(10_000))] {
+            assert!(s.execute("font.replace", &json!({"from": from, "to": "Inter"})).is_err(), "{}", from.len());
+        }
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo);
+        // 256 bytes is still a (nonexistent) font name: nothing replaced, no error.
+        assert_eq!(s.execute("font.replace", &json!({"from": "x".repeat(256), "to": "Inter"})).unwrap()["replaced"], 0);
     }
 
     #[test]

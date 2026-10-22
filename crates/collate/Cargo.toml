@@ -1,0 +1,18 @@
+[package]
+name = "deckcraft-collate"
+description = "Text collation: canonical equivalence (NFC = NFD) and Vietnamese order (CLDR vi) for sorting and filtering"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+# Test-only oracles (never shipped): the Unicode data behind the tables in src/ucd.rs, and the
+# ICU4X `vi` collation compared with ours in tests/collate_icu.rs.
+icu_normalizer = { workspace = true }
+icu_collator = { workspace = true }
+icu_locale_core = { workspace = true }

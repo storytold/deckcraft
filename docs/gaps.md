@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (font-name lists ordered and merged by base letter, then accent (NFC = NFD for Latin letters); previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -326,6 +326,23 @@ Detail in [localization-parity.md](localization-parity.md).
   (Noto CJK is excluded by the asset policy), so the web build draws Korean file names, notes and
   outline text as boxes; desktop borrows Malgun Gothic, Apple SD Gothic Neo or Noto Sans CJK.
   Adding an openly licensed Korean face (e.g. Nanum Gothic, OFL) to craft-fonts: 1–2 h.
+- **Font names: only some lists are collation-aware.** The installed-family list
+  (`FontDb::families`), `font.used`, the missing-fonts list and Replace Fonts sort and match by base
+  letter first, then accent marks (case ignored, and NFC against NFD for the precomposed Latin
+  letters of U+00C0..=U+024F and U+1E00..=U+1EFF only: Cyrillic `й` against `и` + U+0306 or
+  Greek `ά` against `α` + U+0301 stay two entries; other characters by code point; the first
+  spelling met is kept; the lists never rewrite a name). This is collation layer 1, not the
+  CLDR/UCA root order (`ø`, `ł`, `æ`, `ß`, Cyrillic, CJK, digits and punctuation order by code
+  point). The ribbon font menu puts the two theme fonts first and removes only adjacent duplicates,
+  so a theme font that is a case or NFD variant of an installed family still shows twice, and the
+  Replace Fonts "With" filter still uses `to_lowercase().contains`. Looking an installed font up by
+  name (`has_family`, face and document-face lookup) still ignores ASCII case only, so a document
+  that names an installed non-ASCII font in NFD still draws in a stand-in. The missing-fonts list
+  judges each exact spelling by that lookup before merging, so it lists that NFD spelling as
+  missing even when its NFC spelling is installed (Replace Fonts "X with X" rewrites such variant
+  spellings to X). There is no Vietnamese
+  tailoring (no interface language yet), and Find and Replace text is not covered. Making the
+  lookups use the same comparison is a small fix (about 1 h, estimate).
 - **UI isn't mirrored for right-to-left languages.** 6–10 h.
 - **Browser build draws Arabic and Hebrew as missing-glyph boxes in exports** (#81). 1–2 h.
 
@@ -356,6 +373,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | trivial | Localization: font-name lists sort and merge by base letter, then accent; catalog lookups, Vietnamese tailoring and Find are listed as the remaining work. Scores and ranking unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |

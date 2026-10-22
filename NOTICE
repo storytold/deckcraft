@@ -19,6 +19,12 @@ list (author, source, license) is in ATTRIBUTION.md.
   ATTRIBUTION.md (Inter, Carlito, Caladea, Liberation, Montserrat, Lato, Open Sans, Roboto,
   Merriweather, Playfair Display, Poppins, Nunito Sans, BIZ UD, Shippori Mincho, Noto Sans
   Arabic) under the SIL Open Font License 1.1; their licence texts ship with release packages.
+- Unicode Character Database 17.0 data as packaged in ICU4X icu_normalizer_data 2.3.0
+  (crates/collate/src/ucd.rs) — Unicode License v3 (Unicode-3.0), Copyright © 2020-2024 Unicode,
+  Inc. The canonical decomposition and combining-class tables behind text collation (Latin
+  letters and U+0300..=U+036F). The licence text is the header of that file, the notice that
+  ships with icu_normalizer_data 2.3.0. It is Rust source, not a visual asset, so it has no row
+  in ATTRIBUTION.md.
 - Lucide icon paths embedded in crates/engine/src/icon_data.rs (Insert › Icons), release 1.56.0,
   commit 440a1e1dfb1e712505308da46bead3c28b1f1398, https://github.com/lucide-icons/lucide.
   ISC License, Copyright (c) 2026 Lucide Icons and Contributors. Icons Lucide derives from Feather

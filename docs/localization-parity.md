@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (font-name lists ordered and merged by base letter, then accent (NFC = NFD for Latin letters); previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
 no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
@@ -54,10 +54,28 @@ PowerPoint checks spelling in dozens of languages and lets each run carry a proo
 DeckCraft keeps `a:rPr/@lang` on round trip but its spelling check is a small English list of
 common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#proofing-spelling-thesaurus-autocorrect).
 
+## Sorting and matching names
+
+The font lists (the installed-family list, `font.used`, the missing-fonts list) and Replace Fonts
+use the std-only crate `crates/collate` (`deckcraft-collate`): names sort by base letter first,
+then accent marks (`Ánh` beside `Anh`, `đ` as `d` plus a mark), and names that differ only by case
+or by NFC against NFD are one entry (the first spelling met is kept; the lists never rewrite a name).
+Canonical equivalence covers the precomposed Latin letters of U+00C0..=U+024F and U+1E00..=U+1EFF
+only: a precomposed letter of another script is not decomposed, so Cyrillic `й` against `и` +
+U+0306 or Greek `ά` against `α` + U+0301 stay two entries.
+Other characters (`ø`, `ł`, Cyrillic, CJK, digits, punctuation) go by code point, so this is
+collation layer 1, not the CLDR root order. Pure-ASCII lists keep their order. There is no
+Vietnamese or other tailored order until the interface has languages. The ribbon font menu still
+puts the theme fonts first and removes only adjacent duplicates. Not covered: looking an installed
+font up by name (ASCII case only; so the missing-fonts list, which checks each exact spelling
+before merging, lists an NFD variant of an installed font as missing, and Replace Fonts "X with X"
+rewrites such variants to X) and Find and Replace on slide text.
+
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | trivial | Font-name lists and Replace Fonts sort and match by base letter, then accent (NFC = NFD for the precomposed Latin letters of U+00C0..=U+024F and U+1E00..=U+1EFF, case-insensitive; other characters by code point). Scores unchanged |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
 | 2026-10-10 | major | Created: twelve-language table, ~1,050 UI strings measured, PowerPoint for Mac's 26 languages from its bundle |

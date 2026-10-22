@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 
+use deckcraft_collate::{Collation, TextKey, text_key};
 use kurbo::BezPath;
 use skrifa::instance::{Location, LocationRef, Size};
 use skrifa::outline::{DrawSettings, OutlinePen};
@@ -772,6 +773,18 @@ fn style_italic(style: &str) -> bool {
     s.contains("italic") || s.contains("oblique") || s == "it"
 }
 
+/// Font family names in list order: sorted by collation (layer 1: accented letters beside their
+/// base letter, case and NFC/NFD ignored; pure ASCII names keep the lowercase byte order), and
+/// merged when two names are the same text, keeping the spelling met first. Names are never
+/// rewritten.
+pub fn sorted_unique_names(v: Vec<String>) -> Vec<String> {
+    let mut keyed: Vec<(TextKey, String)> = v.into_iter().map(|s| (text_key(&s, Collation::Root), s)).collect();
+    // A stable sort leaves equal names in the order they came, so the first one met survives.
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    keyed.dedup_by(|later, earlier| later.0 == earlier.0);
+    keyed.into_iter().map(|(_, s)| s).collect()
+}
+
 impl FontDb {
     /// A database holding the bundled fonts, then the craft-fonts Japanese faces (Mincho first,
     /// so they are the fallback for Japanese text after the requested and bundled fonts; empty
@@ -837,9 +850,7 @@ impl FontDb {
         let mut v: Vec<String> = self.read_faces().iter().map(|f| f.family.clone()).collect();
         #[cfg(not(target_arch = "wasm32"))]
         v.extend(self.read_catalog().iter().map(|c| c.family.clone()));
-        v.sort_by_key(|a| a.to_lowercase());
-        v.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-        v
+        sorted_unique_names(v)
     }
 
     /// Style names available for `family` (Regular first, then by weight).
@@ -1475,5 +1486,38 @@ mod font_dir_tests {
         u.sort();
         u.dedup();
         assert_eq!(u.len(), d.len());
+    }
+}
+
+#[cfg(test)]
+mod name_list_tests {
+    use super::sorted_unique_names;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn font_lists_merge_case_and_nfd() {
+        let got = sorted_unique_names(names(&["Zapfino", "Đồ Hoạ", "arial", "Ánh Sáng", "Arial", "đồ hoạ", "A\u{301}nh Sáng"]));
+        assert_eq!(got, names(&["Ánh Sáng", "arial", "Đồ Hoạ", "Zapfino"]));
+        // The first spelling met is the one kept, whichever it is.
+        assert_eq!(sorted_unique_names(names(&["Đô\u{300} Hoa\u{323}", "Đồ Hoạ", "ĐỒ HOẠ"])), names(&["Đô\u{300} Hoa\u{323}"]));
+    }
+
+    #[test]
+    fn ascii_font_order_unchanged() {
+        let got = sorted_unique_names(names(&["Times New Roman", "calibri", "Arial", "arial black"]));
+        assert_eq!(got, names(&["Arial", "arial black", "calibri", "Times New Roman"]));
+    }
+
+    #[test]
+    fn font_names_hostile_never_panic() {
+        let marks = format!("e{}", "\u{301}".repeat(10_000));
+        let big = "Ế".repeat(1 << 19);
+        let got = sorted_unique_names(names(&["\u{10FFFF}", &marks, "", "  ", &big, &marks, &big, "\u{0}", "e\u{301}"]));
+        // Equal names merge even when huge; nothing is dropped but duplicates.
+        assert_eq!(got.len(), 7, "{}", got.len());
+        assert!(got.iter().any(|n| n == "\u{10FFFF}"));
     }
 }

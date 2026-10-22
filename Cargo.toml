@@ -13,6 +13,7 @@ repository = "https://github.com/storytold/deckcraft"
 [workspace.dependencies]
 # internal
 deckcraft-geom = { path = "crates/geom" }
+deckcraft-collate = { path = "crates/collate" }
 deckcraft-color = { path = "crates/color" }
 deckcraft-metafile = { path = "crates/metafile" }
 deckcraft-model = { path = "crates/model" }
@@ -50,6 +51,11 @@ unicode-bidi = "0.3"
 unicode-segmentation = "1"
 unicode-linebreak = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Test-only oracles for deckcraft-collate (never shipped): the Unicode data behind its tables, and
+# the ICU4X collation compared with ours in crates/collate/tests/collate_icu.rs.
+icu_normalizer = { version = "=2.3.0", default-features = false, features = ["compiled_data"] }
+icu_collator = { version = "=2.3.1", default-features = false, features = ["compiled_data"] }
+icu_locale_core = { version = "=2.3.0", default-features = false }
 
 # text / rendering / formats
 skrifa = "0.47"
