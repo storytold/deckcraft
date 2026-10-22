@@ -188,6 +188,8 @@ fn artistic_effect(s: &mut Session, p: &Value) -> Result<Value> {
                     (Some(m), Some(e)) => {
                         fill.media = m;
                         fill.artistic = Some(Artistic { effect: e.clone(), original });
+                        // The effect is drawn on the raster picture; an SVG would show without it.
+                        fill.svg = None;
                     }
                     _ => {
                         fill.media = original;

@@ -189,6 +189,10 @@ fn compress(s: &mut Session, p: &Value) -> Result<Value> {
                 if let Some((id, new_crop, _)) = hit {
                     changed.push(media);
                     fill.media = id;
+                    // A cropped-away area is gone from the raster but not from the SVG.
+                    if new_crop != crop {
+                        fill.svg = None;
+                    }
                     fill.crop = new_crop;
                     count += 1;
                     touched = true;
