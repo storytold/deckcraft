@@ -58,7 +58,7 @@ animated GIF with one frame per slide. Other extensions are refused. Prints OUT.
     },
     Subcommand {
         name: "run",
-        usage: "run [--in FILE | --sample] [--cmd COMMAND[=PARAMS]]... [--save OUT] [--export OUT [--export-params JSON]] [--print]",
+        usage: "run [--in FILE | --sample] [--cmd COMMAND[=PARAMS] | --cmd-file FILE]... [--save OUT] [--export OUT [--export-params JSON]] [--print]",
         summary: "run commands on a presentation, then save or export it",
         details: "Runs commands, in order, on one presentation: FILE with --in, the sample presentation with --sample,
 else a new one with an empty title slide. Then --save writes the presentation: .deckcraft keeps
@@ -70,6 +70,14 @@ slide). --export-params passes file.export options as one JSON object, such as
 
 Each --cmd is one command: COMMAND is a command id, then `=`, then the command's parameters as one
 JSON object. Quote it for the shell. A command that needs no parameters is just its id.
+
+--cmd-file FILE reads the same commands from a UTF-8 text file, one per line, avoiding shell quoting
+and command-line length limits. Blank lines and full-line # comments are ignored, as is surrounding
+whitespace. CRLF line endings and an optional UTF-8 BOM at the start of the file are accepted.
+Repeat --cmd-file or mix it with --cmd: commands execute in the order those options appear.
+File errors name the path; line-reading, JSON and command errors also name the line number.
+
+  deckcraft-cli run --cmd-file commands.txt --cmd slide.next --save result.deckcraft
 
   deckcraft-cli run \\
     --cmd 'slide.new={\"layout\":\"titleOnly\",\"title\":\"Q3 results\"}' \\

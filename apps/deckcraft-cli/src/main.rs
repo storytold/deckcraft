@@ -450,6 +450,41 @@ fn output_format(path: &str) -> Result<&'static str, String> {
     })
 }
 
+enum CommandSource {
+    Inline(String),
+    File(String),
+}
+
+/// The same command syntax and execution path for --cmd and each command-file line.
+fn run_command(s: &mut Session, command: &str, print: bool) -> Result<(), String> {
+    let (id, params) = match command.split_once('=') {
+        Some((id, j)) => (id, serde_json::from_str::<Value>(j).map_err(|e| format!("{id}: bad JSON: {e}"))?),
+        None => (command, json!({})),
+    };
+    let r = s.execute(id, &params).map_err(|e| e.to_string())?;
+    if print {
+        outln!("{id} → {r}");
+    }
+    Ok(())
+}
+
+fn run_command_file(s: &mut Session, path: &str, print: bool) -> Result<(), String> {
+    use std::io::{BufRead, BufReader};
+
+    let file = std::fs::File::open(path).map_err(|e| format!("{path}: {e}"))?;
+    for (index, line) in BufReader::new(file).lines().enumerate() {
+        let line_number = index + 1;
+        let line = line.map_err(|e| format!("{path}:{line_number}: {e}"))?;
+        let line = if index == 0 { line.trim_start_matches('\u{feff}') } else { &line };
+        let command = line.trim();
+        if command.is_empty() || command.starts_with('#') {
+            continue;
+        }
+        run_command(s, command, print).map_err(|e| format!("{path}:{line_number}: {e}"))?;
+    }
+    Ok(())
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let mut input = None;
     let mut sample = false;
@@ -463,7 +498,8 @@ fn run(args: &[String]) -> Result<(), String> {
         match a.as_str() {
             "--in" => input = Some(it.next().cloned().ok_or("--in needs a file")?),
             "--sample" => sample = true,
-            "--cmd" => cmds.push(it.next().cloned().ok_or("--cmd needs COMMAND[=PARAMS]")?),
+            "--cmd" => cmds.push(CommandSource::Inline(it.next().cloned().ok_or("--cmd needs COMMAND[=PARAMS]")?)),
+            "--cmd-file" => cmds.push(CommandSource::File(it.next().cloned().ok_or("--cmd-file needs a file")?)),
             "--save" => save = Some(it.next().cloned().ok_or("--save needs a path")?),
             "--export" => export = Some(it.next().cloned().ok_or("--export needs a path")?),
             "--export-params" => {
@@ -486,14 +522,10 @@ fn run(args: &[String]) -> Result<(), String> {
     }
     let mut s = Session::new();
     open(&mut s, input.as_deref(), sample)?;
-    for c in cmds {
-        let (id, p) = match c.split_once('=') {
-            Some((id, j)) => (id.to_string(), serde_json::from_str::<Value>(j).map_err(|e| format!("{id}: bad JSON: {e}"))?),
-            None => (c.clone(), json!({})),
-        };
-        let r = s.execute(&id, &p).map_err(|e| e.to_string())?;
-        if print {
-            outln!("{id} → {r}");
+    for source in cmds {
+        match source {
+            CommandSource::Inline(command) => run_command(&mut s, &command, print)?,
+            CommandSource::File(path) => run_command_file(&mut s, &path, print)?,
         }
     }
     if let Some(p) = save {
