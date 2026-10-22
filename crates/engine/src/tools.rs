@@ -404,7 +404,8 @@ impl Session {
                     }
                 }
                 let (pts, rot) = box_handles(&x);
-                if (rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
+                // Also while typing in it, as PowerPoint's text boxes rotate mid-edit (#470).
+                if (rot - p).hypot() <= tol * 1.8 {
                     return Some(Hit::Rotate { id: *id });
                 }
                 for (i, q) in pts.iter().enumerate() {

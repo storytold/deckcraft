@@ -283,6 +283,9 @@ fn text_box(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").unwrap_or("");
     let rect = rect_param(p, "rect").unwrap_or_else(|| default_rect(s, 216.0, 36.0));
     let mut shape = new_text_box(rect, text);
+    if let Some(body) = shape.text.as_mut() {
+        super::format::apply_text_default(s, body);
+    }
     // Click-to-create (no width) text boxes grow sideways without wrapping.
     if rect.w < 1.0 {
         shape.xfrm = Some(Xfrm { w: 100.0, ..rect });

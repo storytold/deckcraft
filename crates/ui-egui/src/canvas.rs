@@ -875,7 +875,7 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
         if st.selection.shapes.len() == 1 || !editing_this {
             let (hs, rot) = box_handles(&x);
             let rot_s = xf.to_screen(rot);
-            if !editing_this && sh.ph.as_ref().is_none_or(|_| true) {
+            if sh.ph.as_ref().is_none_or(|_| true) {
                 let top_mid = xf.to_screen(hs[1]);
                 painter.line_segment([top_mid, rot_s], sel_stroke);
                 rotate_handle(painter, rot_s, t);

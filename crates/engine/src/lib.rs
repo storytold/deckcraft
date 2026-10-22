@@ -460,6 +460,8 @@ pub struct Session {
     pub anim_painter: Option<(Vec<deckcraft_model::anim::Animation>, bool)>,
     /// Set as Default Shape: the look new shapes get.
     pub default_look: Option<cmd::format::Painted>,
+    /// Font and size picked with nothing selected: what new text boxes start with (#470).
+    pub text_default: deckcraft_model::text::RunProps,
     /// Nesting of commands run by commands: only the outermost one is an undo step and a journal
     /// entry.
     depth: u32,
@@ -499,6 +501,7 @@ impl Session {
             tool: tools::ToolState::default(),
             untitled: 0,
             default_look: None,
+            text_default: Default::default(),
             painter: None,
             anim_painter: None,
             depth: 0,

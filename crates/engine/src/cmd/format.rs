@@ -37,8 +37,16 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
-        cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family} (with nothing selected: the font new text boxes start with)", has_doc, font),
+        cmd!(
+            "format.size",
+            "Font Size",
+            ["Home", "Font"],
+            None,
+            "{size: pt} (with nothing selected: the size new text boxes start with)",
+            has_doc,
+            size
+        ),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
         cmd!("format.color", "Font Color", ["Home", "Font"], None, "{color: #RRGGBB|accent1..6|tx1…|{scheme, lumMod…}}", has_text_or_shapes, color),
@@ -233,9 +241,10 @@ fn current_run(s: &Session) -> RunProps {
             (st.shape(t.shape).cloned().unwrap_or_default(), para, rp)
         }
         None => {
-            let Some(sh) = st.selected_shapes().first().map(|x| (*x).clone()) else { return RunProps::default() };
+            let Some(sh) = st.selected_shapes().first().map(|x| (*x).clone()) else { return s.text_default.clone() };
             let para = sh.text.as_ref().and_then(|t| t.paragraphs.first().cloned()).unwrap_or_default();
-            let rp = para.runs.first().map(|r| r.props.clone()).unwrap_or_default();
+            // An empty box's formatting is on its end mark (what typing will use).
+            let rp = para.runs.first().map(|r| r.props.clone()).unwrap_or_else(|| para.end_props.clone());
             (sh, para, rp)
         }
     };
@@ -303,11 +312,40 @@ fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
+    if nothing_selected(s) {
+        s.text_default.font = Some(f);
+        return ok();
+    }
     format_run(s, &move |r| r.font = Some(f.clone()))
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
+    if nothing_selected(s) {
+        s.text_default.size = Some(v);
+        return ok();
+    }
     format_run(s, &move |r| r.size = Some(v))
+}
+
+/// No text and no shapes selected: font choices then set up the next text box.
+fn nothing_selected(s: &Session) -> bool {
+    s.active().is_none_or(|d| d.selection.text.is_none() && d.selection.shapes.is_empty())
+}
+
+/// Give a new text box's text the font and size picked with nothing selected.
+pub(crate) fn apply_text_default(s: &Session, body: &mut deckcraft_model::text::TextBody) {
+    let d = s.text_default.clone();
+    if d.font.is_none() && d.size.is_none() {
+        return;
+    }
+    ed::format_all(body, &move |r| {
+        if d.font.is_some() {
+            r.font.clone_from(&d.font);
+        }
+        if d.size.is_some() {
+            r.size = d.size;
+        }
+    });
 }
 
 /// PowerPoint's font size list (grow/shrink steps through it).
@@ -1194,7 +1232,11 @@ fn state(s: &mut Session, _p: &Value) -> Result<Value> {
     let r = current_run(s);
     let pp = current_para(s);
     let st = s.doc()?;
-    let family = super::text::ctx_for(&st.doc, &st.selection).map(|c| resolve::font_family(&c, &r)).unwrap_or_default();
+    let family = match super::text::ctx_for(&st.doc, &st.selection) {
+        Some(c) => resolve::font_family(&c, &r),
+        // Nothing selected: the font the next text box gets (the picked one, else the theme's body font).
+        None => r.font.clone().or_else(|| st.doc.masters.first().map(|m| m.theme.fonts.minor.latin.clone())).unwrap_or_default(),
+    };
     Ok(json!({
         "font": family,
         "fontRef": r.font,

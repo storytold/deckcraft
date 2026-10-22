@@ -1477,6 +1477,83 @@ fn slide_ranges_parse_like_powerpoints_print_box() {
     assert_eq!(opts.slides, Some(vec![0, 1]), "indices past the end are dropped");
 }
 
+#[test]
+fn an_empty_text_box_takes_and_shows_a_font() {
+    // #470: picking a font for a selected empty text box looked like it did nothing.
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.textBox", &json!({"rect": [100, 100, 200, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    s.execute("format.font", &json!({"family": "Lora"})).unwrap();
+    assert_eq!(s.execute("format.state", &json!({})).unwrap()["font"], "Lora", "the ribbon shows the empty box's font");
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("text.insert", &json!({"text": "Hi"})).unwrap();
+    let sh = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| u64::from(x.id.0) == id).unwrap().clone();
+    assert_eq!(sh.text.unwrap().paragraphs[0].runs[0].props.font.as_deref(), Some("Lora"));
+}
+
+#[test]
+fn a_font_picked_with_nothing_selected_starts_the_next_text_boxes() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+    assert!(crate::cmd::has_doc(&s).is_ok());
+    s.execute("format.font", &json!({"family": "Caveat"})).unwrap();
+    s.execute("format.size", &json!({"size": 28})).unwrap();
+    let st = s.execute("format.state", &json!({})).unwrap();
+    assert_eq!((st["font"].as_str(), st["size"].as_f64()), (Some("Caveat"), Some(28.0)));
+    // Typed into a new box, and given to a box created with text, on any slide.
+    s.execute("insert.textBox", &json!({"rect": [100, 100, 200, 50]})).unwrap();
+    s.execute("text.insert", &json!({"text": "Typed"})).unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.textBox", &json!({"rect": [100, 200, 200, 50], "text": "Given"})).unwrap();
+    for slide in s.doc().unwrap().doc.slides.iter().rev().take(2) {
+        let sh = slide.shapes.last().unwrap();
+        let r = &sh.text.as_ref().unwrap().paragraphs[0].runs[0].props;
+        assert_eq!((r.font.as_deref(), r.size), (Some("Caveat"), Some(28.0)));
+    }
+    // Existing text is untouched.
+    assert!(
+        s.doc().unwrap().doc.slides[0].shapes.iter().all(|x| x.text.as_ref().is_none_or(|t| t.paragraphs.iter().all(|p| p.runs.iter().all(|r| r
+            .props
+            .font
+            .as_deref()
+            != Some("Caveat")))))
+    );
+}
+
+#[test]
+fn a_text_box_being_edited_moves_by_its_edge_and_rotates() {
+    // #470: once typing in a text box, it could neither be moved nor rotated.
+    use crate::tools::{PointerEvent, PointerKind, box_handles};
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.textBox", &json!({"rect": [100, 100, 200, 60], "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+    let ev = |kind, x, y| PointerEvent { kind, x, y, mods: Default::default(), tol: 4.0, pressure: None };
+    let xf = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| u64::from(x.id.0) == id).unwrap().xfrm.unwrap();
+    let h = xf(&s).h;
+    let drag = |s: &mut Session, from: (f64, f64), to: (f64, f64)| {
+        s.pointer(ev(PointerKind::Down, from.0, from.1)).unwrap();
+        s.pointer(ev(PointerKind::Drag, to.0, to.1)).unwrap();
+        s.pointer(ev(PointerKind::Up, to.0, to.1)).unwrap();
+    };
+    // Dragging inside the text still selects text.
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    drag(&mut s, (110.0, 100.0 + h / 2.0), (160.0, 100.0 + h / 2.0));
+    assert_eq!((xf(&s).x, xf(&s).y), (100.0, 100.0));
+    assert!(s.doc().unwrap().selection.text.as_ref().is_some_and(|t| t.is_range()));
+    // Dragging the top edge (away from the handles) moves the box.
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    drag(&mut s, (150.0, 101.0), (200.0, 151.0));
+    assert_eq!((xf(&s).x, xf(&s).y), (150.0, 150.0));
+    // The rotation handle turns it while editing.
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    let (_, rot) = box_handles(&xf(&s));
+    let c = xf(&s).center();
+    drag(&mut s, (rot.x, rot.y), (c.x + 100.0, c.y));
+    assert!((xf(&s).rot - 90.0).abs() < 1.0, "rot {}", xf(&s).rot);
+}
+
 /// #725: a layout with a small body placeholder ahead of its content placeholder (as Keynote
 /// exports "Title & Bullets") still gets the body in the content placeholder (`idx="1"`).
 #[test]
@@ -3030,7 +3107,7 @@ fn what_a_command_acts_on_names_only_keys_it_takes() {
     assert_eq!(acts("shape.resize").as_deref(), Some("Acts on the shapes in `ids`, else on the selected shapes."));
     assert_eq!(acts("table.style").as_deref(), Some("Acts on the shape in `id`, else on the selected shapes."));
     assert_eq!(acts("shape.setDefault").as_deref(), Some("Acts on the selected shapes."));
-    assert_eq!(acts("format.size").as_deref(), Some("Acts on the selected text or shapes."));
+    assert_eq!(acts("format.grow").as_deref(), Some("Acts on the selected text or shapes."));
     assert_eq!(acts("slide.new"), None);
 }
 

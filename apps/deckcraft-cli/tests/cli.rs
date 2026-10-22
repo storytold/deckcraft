@@ -99,7 +99,7 @@ Run it with: deckcraft-cli run --cmd 'shape.insert={…}'
 
 Parameters:
   size  pt
-Acts on the selected text or shapes.
+Note: with nothing selected: the size new text boxes start with
 
 Run it with: deckcraft-cli run --cmd 'format.size={…}'
 "
@@ -133,7 +133,10 @@ fn describe_shows_alternative_sets_of_parameters() {
 
 #[test]
 fn commands_lists_one_line_per_command() {
-    assert_eq!(stdout(&cli(&["commands", "format.size"])), "format.size — Font Size: {size: pt}\n");
+    assert_eq!(
+        stdout(&cli(&["commands", "format.size"])),
+        "format.size — Font Size: {size: pt} (with nothing selected: the size new text boxes start with)\n"
+    );
     assert_eq!(stdout(&cli(&["commands", "slide.next"])), "slide.next — Next Slide\n");
     assert_eq!(stdout(&cli(&["commands", "shape.presets"])), "shape.presets — Shape Gallery → [{name, label, category}]\n");
 }
