@@ -167,7 +167,8 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
             if let Some((art, orig)) = &art {
                 w.open("a:ext", A::new().a("uri", "{BEBA8EAE-BF5A-486C-A8C5-ECC9F3942E4B}"));
                 w.open("a14:imgProps", A::new().a("xmlns:a14", crate::opc::NS_A14));
-                w.open("a14:imgLayer", A::new().a("r:embed", orig));
+                let original_linked = x.p.media(art.original).is_some_and(|m| m.data.is_empty() && m.link.is_some());
+                w.open("a14:imgLayer", A::new().a(if original_linked { "r:link" } else { "r:embed" }, orig));
                 w.open0("a14:imgEffect");
                 w.empty0(&format!("a14:{}", art.effect));
                 w.close("a14:imgEffect");
