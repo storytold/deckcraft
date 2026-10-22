@@ -212,6 +212,8 @@ pub struct Services {
     /// Hand bytes to the user as a named file (browser download).
     pub download: Option<DownloadFn>,
     pub inbox: Option<Inbox>,
+    /// Plain text on the system clipboard, when the host can read one.
+    pub clipboard_text: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Image on the system clipboard (PNG bytes), when the host can read one.
     pub clipboard_image: Option<Box<dyn FnMut() -> Option<Vec<u8>>>>,
     /// HTML on the system clipboard (Pages, Keynote, and other apps that write `public.html`).
@@ -654,7 +656,25 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
+        let r = if id == "edit.paste" && params.as_object().is_none_or(|m| m.is_empty()) {
+            let text = self.services.clipboard_text.as_mut().and_then(|f| f()).unwrap_or_default();
+            let text = if text == OBJECTS_MARKER { String::new() } else { text };
+            if text.is_empty() {
+                if let Some(png) = self.services.clipboard_image.as_mut().and_then(|f| f()) {
+                    let data = deckcraft_engine::cmd::base64_encode(&png);
+                    self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})).map_err(|e| e.to_string())
+                } else {
+                    self.session.execute(id, &params).map_err(|e| e.to_string())
+                }
+            } else {
+                let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
+                let mut params = json!({"text": text});
+                if let Some(h) = html {
+                    params["html"] = Value::String(h);
+                }
+                self.session.execute("edit.paste", &params).map_err(|e| e.to_string())
+            }
+        } else if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
@@ -2475,6 +2495,62 @@ mod tests {
         harness.event(v(false));
         harness.run_steps(2);
         assert_eq!(pictures(harness.state()), 1);
+    }
+
+    /// Paste from the ribbon, menus or context menu pastes the clipboard image when one is available (#53).
+    #[test]
+    fn menu_paste_inserts_an_image_when_available() {
+        let session = Session::with_new();
+        let png = {
+            let d = session.active().unwrap();
+            deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+        };
+        assert!(!png.is_empty());
+        let services = Services { clipboard_image: Some(Box::new(move || Some(png.clone()))), ..Default::default() };
+        let mut app = SlideApp::new(session, services);
+        let pictures = |app: &SlideApp| {
+            let d = app.session.active().unwrap();
+            d.doc.slides[0].shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count()
+        };
+        assert_eq!(pictures(&app), 0);
+        app.run("edit.paste", json!({})).unwrap();
+        assert_eq!(pictures(&app), 1, "menu paste should insert the clipboard image");
+    }
+
+    /// Menu paste prioritizes clipboard text over an available image.
+    #[test]
+    fn menu_paste_prioritizes_clipboard_text_over_image() {
+        let session = Session::with_new();
+        let png = {
+            let d = session.active().unwrap();
+            deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+        };
+        let services = Services {
+            clipboard_text: Some(Box::new(|| Some("External note".to_string()))),
+            clipboard_image: Some(Box::new(move || Some(png.clone()))),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(session, services);
+        app.run("edit.paste", json!({})).unwrap();
+        let d = app.session.active().unwrap();
+        let shape = d.doc.slides[0].shapes.last().unwrap();
+        assert!(matches!(shape.kind, deckcraft_model::ShapeKind::Shape));
+        assert_eq!(shape.text.as_ref().map(|t| t.text()).as_deref(), Some("External note"));
+    }
+
+    /// Menu paste with OBJECTS_MARKER falls back to internal shapes on the session clipboard.
+    #[test]
+    fn menu_paste_with_objects_marker_pastes_internal_shapes() {
+        let mut session = Session::with_new();
+        session.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+        session.execute("edit.copy", &json!({})).unwrap();
+        let initial_count = session.active().unwrap().doc.slides[0].shapes.len();
+
+        let services = Services { clipboard_text: Some(Box::new(|| Some(OBJECTS_MARKER.to_string()))), ..Default::default() };
+        let mut app = SlideApp::new(session, services);
+        app.run("edit.paste", json!({})).unwrap();
+        let new_count = app.session.active().unwrap().doc.slides[0].shapes.len();
+        assert_eq!(new_count, initial_count + 1);
     }
 
     /// #78: after Tab in a text box, typing and deleting no longer reached the text.
