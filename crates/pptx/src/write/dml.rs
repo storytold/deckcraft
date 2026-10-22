@@ -388,7 +388,10 @@ pub fn xfrm(w: &mut W, tag: &str, x: &Xfrm, child: Option<&Xfrm>) {
 // ---------------------------------------------------------------------------------------------
 // Text
 
-pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) {
+/// The extension that makes a link keep its text's colour (`ahyp:hlinkClr`).
+const HLINK_COLOR_EXT: &str = "{A12FA001-AC4F-418D-AE19-62706E023703}";
+
+pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink, keeps_color: bool) {
     let (rid, action) = match &h.action {
         Action::Url { url } => {
             if url.is_empty() {
@@ -429,13 +432,23 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
         .t("highlightClick", h.highlight_click)
         .t("endSnd", h.stop_sound);
     let sound = h.sound.and_then(|id| x.media_rel(o, id, "audio").map(|rid| (rid, id)));
-    let Some((sound_rid, sound_id)) = sound else {
+    if sound.is_none() && !keeps_color {
         w.empty(tag, attrs);
         return;
-    };
+    }
     w.open(tag, attrs);
-    let name = x.p.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
-    w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
+    // Schema order: snd, then extLst.
+    if let Some((sound_rid, sound_id)) = sound {
+        let name = x.p.media(sound_id).map(|m| sound_label(&m.name)).unwrap_or_else(|| "sound.wav".into());
+        w.empty("a:snd", A::new().a("r:embed", sound_rid).a("name", name));
+    }
+    if keeps_color {
+        w.open0("a:extLst");
+        w.open("a:ext", A::new().a("uri", HLINK_COLOR_EXT));
+        w.empty("ahyp:hlinkClr", A::new().a("xmlns:ahyp", "http://schemas.microsoft.com/office/drawing/2018/hyperlinkcolor").a("val", "tx"));
+        w.close("a:ext");
+        w.close("a:extLst");
+    }
     w.close(tag);
 }
 
@@ -689,11 +702,11 @@ pub fn rpr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, r: &RunProps) {
     typeface(w, "a:cs", &r.font_cs);
     typeface(w, "a:sym", &r.font_sym);
     if let Some(h) = &r.link {
-        hyperlink(w, x, o, "a:hlinkClick", h);
+        hyperlink(w, x, o, "a:hlinkClick", h, r.link_keeps_color == Some(true));
     }
     // Schema order: hlinkClick, hlinkMouseOver.
     if let Some(h) = &r.hover {
-        hyperlink(w, x, o, "a:hlinkMouseOver", h);
+        hyperlink(w, x, o, "a:hlinkMouseOver", h, false);
     }
     w.close(tag);
 }

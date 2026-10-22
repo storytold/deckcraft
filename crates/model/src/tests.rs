@@ -201,13 +201,30 @@ fn hyperlinked_runs_take_the_theme_hyperlink_look() {
         zoom_return: None,
     });
     assert_eq!(resolve::run(&ctx, title, &para, &RunProps { link: slide, ..Default::default() }).fill, hlink);
-    // The run's own colour and underline win; u="none" removes the underline.
+    // The run's own colour gives way to hlink unless the link keeps its text colour
+    // (`ahyp:hlinkClr val="tx"`); the run's underline wins: u="none" removes it.
     let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
     let own = RunProps { link: link.clone(), fill: red.clone(), underline: Some("none".into()), ..Default::default() };
     let r = resolve::run(&ctx, title, &para, &own);
-    assert_eq!((r.fill, r.underline.as_deref()), (red, Some("none")));
-    let dbl = resolve::run(&ctx, title, &para, &RunProps { link, underline: Some("dbl".into()), ..Default::default() });
-    assert_eq!((dbl.fill, dbl.underline.as_deref()), (hlink, Some("dbl")));
+    assert_eq!((r.fill, r.underline.as_deref()), (hlink.clone(), Some("none")));
+    let r = resolve::run(&ctx, title, &para, &RunProps { link_keeps_color: Some(true), ..own });
+    assert_eq!((r.fill, r.underline.as_deref()), (red.clone(), Some("none")));
+    let dbl = resolve::run(&ctx, title, &para, &RunProps { link: link.clone(), underline: Some("dbl".into()), ..Default::default() });
+    assert_eq!((dbl.fill, dbl.underline.as_deref()), (hlink.clone(), Some("dbl")));
+    // A link from the paragraph's defRPr or the list style keeps the text colour by its own
+    // hlinkClr, not by a flag the run carries without a link.
+    let keeps = RunProps { link: link.clone(), link_keeps_color: Some(true), fill: red.clone(), ..Default::default() };
+    let from_def = Paragraph { def_props: keeps.clone(), ..Default::default() };
+    assert_eq!(resolve::run(&ctx, title, &from_def, &RunProps::default()).fill, red);
+    let stray = RunProps { link_keeps_color: Some(true), ..Default::default() };
+    let def_link = Paragraph { def_props: RunProps { link: link.clone(), ..Default::default() }, ..Default::default() };
+    assert_eq!(resolve::run(&ctx, title, &def_link, &stray).fill, hlink);
+    let mut p2 = p.clone();
+    let lvl = crate::text::LevelStyle { run: keeps, ..Default::default() };
+    std::sync::Arc::make_mut(&mut p2.slides[0]).shapes[0].text.as_mut().unwrap().list_style.set(0, lvl);
+    let ctx2 = Ctx::for_slide(&p2, &p2.slides[0]).unwrap();
+    let r = resolve::run(&ctx2, &p2.slides[0].shapes[0], &para, &RunProps::default());
+    assert_eq!((r.fill, r.underline.as_deref()), (red, Some("sng")));
 }
 
 #[test]

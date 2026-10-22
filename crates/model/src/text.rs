@@ -383,6 +383,9 @@ pub struct RunProps {
     pub outline: Option<Line>,
     pub highlight: Option<ColorRef>,
     pub link: Option<Hyperlink>,
+    /// The link keeps the text's colour instead of the theme's hyperlink colour
+    /// (`ahyp:hlinkClr val="tx"`, which PowerPoint 2019 and later write when a link is given a colour).
+    pub link_keeps_color: Option<bool>,
     /// Action on mouse over (Insert ▸ Action ▸ Mouse Over on selected text, `a:hlinkMouseOver`).
     pub hover: Option<Hyperlink>,
     pub lang: Option<String>,
@@ -421,6 +424,7 @@ impl RunProps {
             outline,
             highlight,
             link,
+            link_keeps_color,
             hover,
             lang,
             shadow,
