@@ -1289,6 +1289,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         big(app, ui, Icon::TextBox, "Text\nBox", "insert.textBox", json!({}));
         big(app, ui, Icon::HeaderFooter, "Header &\nFooter", "app.dialog", json!({"id": "headerFooter"}));
+        big(app, ui, Icon::Grid, "QR\nCode", "app.dialog", json!({"id": "qrCode"}));
         let r = big_button(ui, Icon::WordArt, "WordArt", enabled(app, "insert.wordArt"));
         egui::Popup::menu(&r).show(|ui| {
             for i in 0..6 {

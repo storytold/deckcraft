@@ -17,6 +17,7 @@ pub mod media;
 pub mod merge;
 pub mod picture_style;
 pub mod points;
+pub mod qr;
 pub mod recolor;
 pub mod reuse;
 pub mod review;
@@ -168,6 +169,7 @@ pub fn command_specs() -> &'static [CommandSpec] {
         v.extend(reuse::specs());
         v.extend(insert::specs());
         v.extend(smartart::specs());
+        v.extend(qr::specs());
         v.extend(shape::specs());
         v.extend(background::specs());
         v.extend(picture_style::specs());
