@@ -70,7 +70,10 @@ fn slides_scope(s: &Session, p: &Value) -> bool {
 pub(crate) fn media_of_shapes(shapes: &[Shape], out: &mut Vec<MediaId>) {
     deckcraft_model::walk(shapes, &mut |s, _| {
         match &s.kind {
-            deckcraft_model::ShapeKind::Picture { fill } => out.push(fill.media),
+            deckcraft_model::ShapeKind::Picture { fill } => {
+                out.push(fill.media);
+                out.extend(fill.svg);
+            }
             deckcraft_model::ShapeKind::Media(m) => {
                 out.push(m.media);
                 if let Some(p) = m.poster {
@@ -87,6 +90,7 @@ pub(crate) fn media_of_shapes(shapes: &[Shape], out: &mut Vec<MediaId>) {
         }
         if let Some(deckcraft_model::Fill::Picture(pf)) = &s.fill {
             out.push(pf.media);
+            out.extend(pf.svg);
         }
     });
 }
@@ -114,6 +118,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             media_of_shapes(&sl.shapes, &mut mids);
             if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &sl.background {
                 mids.push(pf.media);
+                mids.extend(pf.svg);
             }
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
@@ -260,7 +265,12 @@ fn remap_media(shapes: &mut [Shape], map: &HashMap<MediaId, MediaId>) {
     };
     walk_mut(shapes, &mut |s| {
         match &mut s.kind {
-            deckcraft_model::ShapeKind::Picture { fill } => m(&mut fill.media),
+            deckcraft_model::ShapeKind::Picture { fill } => {
+                m(&mut fill.media);
+                if let Some(svg) = fill.svg.as_mut() {
+                    m(svg);
+                }
+            }
             deckcraft_model::ShapeKind::Media(c) => {
                 m(&mut c.media);
                 if let Some(p) = c.poster.as_mut() {
@@ -272,6 +282,9 @@ fn remap_media(shapes: &mut [Shape], map: &HashMap<MediaId, MediaId>) {
         }
         if let Some(deckcraft_model::Fill::Picture(pf)) = &mut s.fill {
             m(&mut pf.media);
+            if let Some(svg) = pf.svg.as_mut() {
+                m(svg);
+            }
         }
     });
 }
@@ -327,10 +340,11 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                 let map = reid("edit.paste", doc, &mut sl.shapes)?;
                 remap_animations(&mut sl.animations, &map);
                 remap_media(&mut sl.shapes, &media);
-                if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &mut sl.background
-                    && let Some(n) = media.get(&pf.media)
-                {
-                    pf.media = *n;
+                if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &mut sl.background {
+                    if let Some(n) = media.get(&pf.media) {
+                        pf.media = *n;
+                    }
+                    pf.svg = pf.svg.map(|s| media.get(&s).copied().unwrap_or(s));
                 }
                 if doc.layout(sl.layout).is_none() {
                     sl.layout = doc.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();

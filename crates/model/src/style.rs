@@ -147,6 +147,10 @@ pub struct PictureFill {
     /// picture; the original is kept to change or remove the effect.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub artistic: Option<Artistic>,
+    /// The picture's SVG, from Office's SVG extension (`asvg:svgBlip`), written back the same
+    /// way. When the file has no raster fallback, `media` is this SVG too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub svg: Option<MediaId>,
 }
 
 /// An applied artistic effect: its `a14` name (e.g. `artisticBlur`) and the original picture.
