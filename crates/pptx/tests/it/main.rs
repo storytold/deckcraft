@@ -21,6 +21,7 @@ mod roundtrip;
 mod sample;
 mod smartart;
 mod sniff;
+mod svg_pictures;
 mod table_styles;
 mod tags;
 mod transition_xml;

@@ -66,6 +66,7 @@ pub(super) fn picture_change(s: &mut Session, p: &Value) -> Result<Value> {
             fill.media = media;
             fill.crop = [0.0; 4];
             fill.artistic = None;
+            fill.svg = None;
         }
         Ok(())
     })
