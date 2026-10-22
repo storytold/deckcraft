@@ -765,6 +765,7 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
             _ => egui::CursorIcon::ResizeHorizontal,
         },
         (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
+        (_, Some(Hit::Rotate3d { .. })) => egui::CursorIcon::Grab,
         (_, Some(Hit::TableColumn { .. })) => egui::CursorIcon::ResizeColumn,
         (_, Some(Hit::TableRow { .. })) => egui::CursorIcon::ResizeRow,
         (_, Some(Hit::Adjust { .. } | Hit::Warp { .. } | Hit::LineEnd { .. })) => egui::CursorIcon::PointingHand,
@@ -887,6 +888,9 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
             for hd in &geo.handles {
                 let q = xf.to_screen(a * hd.pos);
                 painter.circle(q, 4.5, Color32::from_rgb(0xFF, 0xD2, 0x3F), Stroke::new(1.0, Color32::from_rgb(0x8A, 0x6A, 0x00)));
+            }
+            if matches!(sh.kind, deckcraft_model::ShapeKind::Model3d(_)) && !editing_this {
+                rotate3d_handle(painter, xf.to_screen(x.center()), t);
             }
             for hd in deckcraft_engine::tools::wordart_handles(&st.doc, &st.selection, sh, x.w, x.h) {
                 let q = xf.to_screen(a * hd.pos);
@@ -1045,6 +1049,18 @@ fn rotate_handle(p: &egui::Painter, c: Pos2, t: &Tokens) {
     }));
 }
 
+/// The 3-D rotation handle in the middle of a 3-D model: a knob with two crossed orbits.
+fn rotate3d_handle(p: &egui::Painter, c: Pos2, t: &Tokens) {
+    p.circle(c, 11.0, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
+    let orbit = |rx: f32, ry: f32| -> Vec<Pos2> {
+        (0..32).map(|i| i as f32 / 32.0 * std::f32::consts::TAU).map(|a| pos2(c.x + rx * a.cos(), c.y + ry * a.sin())).collect()
+    };
+    let stroke = Stroke::new(1.2, t.selection);
+    p.add(egui::Shape::closed_line(orbit(7.0, 2.8), stroke));
+    p.add(egui::Shape::closed_line(orbit(2.8, 7.0), stroke));
+    p.circle_filled(c, 1.6, t.selection);
+}
+
 fn draw_preview(app: &SlideApp, p: &egui::Painter, xf: Xf, x: Xfrm, t: &Tokens) {
     let preset = match &app.session.tool.kind {
         ToolKind::Shape { preset } => preset.clone(),
@@ -1070,6 +1086,57 @@ fn draw_preview(app: &SlideApp, p: &egui::Painter, xf: Xf, x: Xfrm, t: &Tokens) 
         return;
     }
     crate::ribbon::paint_preset(p, r, &preset, t.accent.gamma_multiply(0.25), t.accent);
+}
+
+/// The menu for selected 3-D models, as PowerPoint's: arrange, lock, link, picture, alt text,
+/// size and the 3D Model page of the Format pane.
+fn model3d_menu(app: &mut SlideApp, ui: &mut Ui) {
+    use crate::icons::Icon;
+    use crate::ribbon::menu_item;
+    ui.menu_button("Group", |ui| {
+        menu_item(app, ui, Icon::Group, "Group", "arrange.group", json!({}));
+        menu_item(app, ui, Icon::Ungroup, "Ungroup", "arrange.ungroup", json!({}));
+    });
+    ui.menu_button("Bring to Front", |ui| {
+        menu_item(app, ui, Icon::BringToFront, "Bring to Front", "arrange.bringToFront", json!({}));
+        menu_item(app, ui, Icon::BringForward, "Bring Forward", "arrange.bringForward", json!({}));
+    });
+    ui.menu_button("Send to Back", |ui| {
+        menu_item(app, ui, Icon::SendToBack, "Send to Back", "arrange.sendToBack", json!({}));
+        menu_item(app, ui, Icon::SendBackward, "Send Backward", "arrange.sendBackward", json!({}));
+    });
+    ui.separator();
+    let locked = app.session.active().is_some_and(|d| d.selected_shapes().iter().all(|s| s.locked));
+    if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+        let _ = app.run("shape.lock", json!({"locked": !locked}));
+        ui.close();
+    }
+    if ui.button("Link…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("Save as Picture…").clicked() {
+        app.save_shape_picture();
+        ui.close();
+    }
+    if ui.button("View Alt Text…").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::new("altText"));
+        ui.close();
+    }
+    if ui.button("Size and Position…").clicked() {
+        let _ = app.run("view.pane", json!({"pane": "format", "tab": "size"}));
+        ui.close();
+    }
+    if ui.button("Format 3D Model…").clicked() {
+        let _ = app.run("view.pane", json!({"pane": "format", "tab": "model3d"}));
+        ui.close();
+    }
+    ui.separator();
+    if ui.button("New Comment").clicked() {
+        app.dialog = Some(crate::dialogs::Dialog::new("comment"));
+        ui.close();
+    }
 }
 
 fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
@@ -1173,7 +1240,28 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
             }
             ui.separator();
         }
-        let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
+        use deckcraft_model::ShapeKind;
+        let (has_sel, models, text) = app
+            .session
+            .active()
+            .map(|d| {
+                let sel = d.selected_shapes();
+                let models = !sel.is_empty() && sel.iter().all(|s| matches!(s.kind, ShapeKind::Model3d(_)));
+                // Pictures, media, models, charts, ink and foreign objects hold no text.
+                let text = sel.iter().any(|s| {
+                    !matches!(
+                        s.kind,
+                        ShapeKind::Picture { .. }
+                            | ShapeKind::Media(_)
+                            | ShapeKind::Model3d(_)
+                            | ShapeKind::Chart(_)
+                            | ShapeKind::Ink { .. }
+                            | ShapeKind::Opaque { .. }
+                    )
+                });
+                (!sel.is_empty(), models, text)
+            })
+            .unwrap_or((false, false, false));
         for (l, id) in [("Cut", "edit.cut"), ("Copy", "edit.copy"), ("Paste", "edit.paste")] {
             if ui.add_enabled(crate::ribbon::enabled(app, id), egui::Button::new(l)).clicked() {
                 let _ = app.run(id, json!({}));
@@ -1203,8 +1291,10 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 let _ = app.run("view.pane", json!({"pane": "format"}));
                 ui.close();
             }
+        } else if models {
+            model3d_menu(app, ui);
         } else if has_sel {
-            if ui.button("Edit Text").clicked() {
+            if text && ui.button("Edit Text").clicked() {
                 let _ = app.run("text.edit", json!({}));
                 ui.close();
             }
@@ -1346,6 +1436,10 @@ fn draw_grid(painter: &egui::Painter, slide: Rect, step: f32) {
 fn grid_fits(span: f32, step: f32) -> bool {
     span.is_finite() && span > 0.0 && step >= 1.0 && span / step <= 800.0
 }
+
+#[cfg(test)]
+#[path = "canvas_tests.rs"]
+mod menu_tests;
 
 #[cfg(test)]
 mod tests {

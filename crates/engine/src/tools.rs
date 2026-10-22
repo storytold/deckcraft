@@ -79,6 +79,10 @@ pub enum Hit {
     Rotate {
         id: ShapeId,
     },
+    /// The 3-D rotation handle in the middle of a 3-D model.
+    Rotate3d {
+        id: ShapeId,
+    },
     Adjust {
         id: ShapeId,
         index: usize,
@@ -153,6 +157,17 @@ enum Drag {
         center: Point,
         start: f64,
         origs: Vec<(ShapeId, Xfrm)>,
+    },
+    /// Turning a 3-D model: tumbling it with the 3-D handle (`spin` off), or about the view's axis
+    /// with the rotation handle (`spin` on, `start` the pointer's angle round `center`).
+    Turn3d {
+        id: ShapeId,
+        spin: bool,
+        start: Point,
+        center: Point,
+        rot: [f64; 3],
+        frame: Xfrm,
+        viewport: f64,
     },
     Adjust {
         id: ShapeId,
@@ -294,6 +309,18 @@ impl ToolState {
     }
 }
 
+/// Radius of the 3-D rotation handle in the middle of a selected 3-D model, in hit tolerances
+/// (about 14 screen pixels).
+pub const ROTATE3D_RADIUS: f64 = 3.5;
+
+/// The drag that turns 3-D model `id` from pointer position `p`.
+fn turn3d_drag(st: &crate::DocState, id: ShapeId, p: Point, spin: bool) -> Option<Drag> {
+    let sh = st.shape(id)?;
+    let ShapeKind::Model3d(m) = &sh.kind else { return None };
+    let frame = xfrm_of(&st.doc, &st.selection, sh);
+    Some(Drag::Turn3d { id, spin, start: p, center: frame.center(), rot: m.rot, frame, viewport: m.viewport })
+}
+
 /// Handle positions in slide coordinates for a box (8 resize + rotate).
 pub fn box_handles(x: &Xfrm) -> ([Point; 8], Point) {
     let a = x.affine();
@@ -411,6 +438,11 @@ impl Session {
                     if (*q - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Resize { id: *id, handle: i as u8 });
                     }
+                }
+                // After the resize handles: on a small (or zoomed-out) model the side handles lie
+                // inside the 3-D handle's zone, and they win there.
+                if matches!(sh.kind, ShapeKind::Model3d(_)) && (x.center() - p).hypot() <= tol * ROTATE3D_RADIUS {
+                    return Some(Hit::Rotate3d { id: *id });
                 }
             }
         }
@@ -599,6 +631,19 @@ impl Session {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Size");
                 self.tool.drag = Some(Drag::LineEnd { id, end, orig });
+            }
+            Some(Hit::Rotate { id }) if st.shape(id).is_some_and(|s| matches!(s.kind, ShapeKind::Model3d(_))) => {
+                // A 3-D model turns about the view's axis instead of tilting its frame.
+                if let Some(d) = turn3d_drag(st, id, p, true) {
+                    self.begin("3-D Rotation");
+                    self.tool.drag = Some(d);
+                }
+            }
+            Some(Hit::Rotate3d { id }) => {
+                if let Some(d) = turn3d_drag(st, id, p, false) {
+                    self.begin("3-D Rotation");
+                    self.tool.drag = Some(d);
+                }
             }
             Some(Hit::Rotate { id }) => {
                 let ids: Vec<ShapeId> = if st.selection.shapes.contains(&id) { st.selection.shapes.clone() } else { vec![id] };
@@ -810,6 +855,43 @@ impl Session {
                     }
                     self.set_xfrm(*id, nx)?;
                 }
+            }
+            Drag::Turn3d { id, spin, start, center, rot, frame, viewport } => {
+                let to = if spin {
+                    // Clockwise on the slide is clockwise on the model: negative about +Z (towards the viewer).
+                    let a = (p.y - center.y).atan2(p.x - center.x) - (start.y - center.y).atan2(start.x - center.x);
+                    let mut d = a.to_degrees();
+                    if mods.shift {
+                        d = (d / 15.0).round() * 15.0;
+                    }
+                    deckcraft_geom::space::turn(rot, [0.0, 0.0, 1.0], -d)
+                } else {
+                    // Dragging across the frame turns the model half way round.
+                    let k = 180.0 / frame.w.max(frame.h).max(1.0);
+                    // Right: the front turns to the right (about the view's up axis); down: the top
+                    // comes forward (about its horizontal axis).
+                    let (mut about_y, mut about_x) = ((p.x - start.x) * k, (p.y - start.y) * k);
+                    if mods.shift {
+                        // One axis at a time, in 15° steps.
+                        if about_y.abs() > about_x.abs() {
+                            about_x = 0.0;
+                        } else {
+                            about_y = 0.0;
+                        }
+                        about_x = (about_x / 15.0).round() * 15.0;
+                        about_y = (about_y / 15.0).round() * 15.0;
+                    }
+                    deckcraft_geom::space::turn(deckcraft_geom::space::turn(rot, [0.0, 1.0, 0.0], about_y), [1.0, 0.0, 0.0], about_x)
+                };
+                let st = self.doc()?;
+                let scene = st.shape(id).and_then(|sh| cmd::model3d::scene_of(&st.doc, sh));
+                self.edit(|doc, sel| {
+                    let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("rotate", "no slide"))?;
+                    if let Some(sh) = deckcraft_model::find_shape_mut(list, id) {
+                        cmd::model3d::turn_to(sh, frame, viewport, to, scene.as_deref());
+                    }
+                    Ok(())
+                })?;
             }
             Drag::Adjust { id, index, orig } => {
                 let st = self.doc()?;
@@ -1195,6 +1277,7 @@ impl Session {
                 Hit::Shape { id, .. }
                 | Hit::Resize { id, .. }
                 | Hit::Rotate { id }
+                | Hit::Rotate3d { id }
                 | Hit::Adjust { id, .. }
                 | Hit::LineEnd { id, .. }
                 | Hit::Handle { id, .. }
@@ -1315,7 +1398,9 @@ impl Session {
     }
 
     fn is_picture(&self, id: ShapeId) -> bool {
-        self.active().and_then(|d| d.shape(id)).is_some_and(|s| matches!(s.kind, ShapeKind::Picture { .. } | ShapeKind::Media(_)))
+        self.active()
+            .and_then(|d| d.shape(id))
+            .is_some_and(|s| matches!(s.kind, ShapeKind::Picture { .. } | ShapeKind::Media(_) | ShapeKind::Model3d(_)))
     }
 
     /// End the freeform being drawn: create the shape (if it has at least two points).
@@ -1888,7 +1973,7 @@ fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<Hit
                         | ShapeKind::Table(_)
                         | ShapeKind::Chart(_)
                         | ShapeKind::Media(_)
-                        | ShapeKind::Model3d { .. }
+                        | ShapeKind::Model3d(_)
                         | ShapeKind::Opaque { .. }
                 )
                 || (filled && in_geo)

@@ -291,7 +291,9 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
 /// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
-        f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
+        // 3-D models get a freshly drawn fallback picture, at 2 pixels per point like PowerPoint's.
+        f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_with_previews(doc, f, &|m, w, h| deckcraft_render::model_png(doc, m, w, h, 2.0))
+            .map_err(|e| EngineError::Other(e.to_string())),
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),
         "gif" => gif_bytes(doc, &Value::Null),

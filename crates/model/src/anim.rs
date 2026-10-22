@@ -342,6 +342,12 @@ pub static ANIMATIONS: &[(&str, &str, AnimClass, u32, u32, &[&str])] = &[
     ("expand", "Expand", AnimClass::Entrance, 55, 500, &[]),
     ("rise", "Rise Up", AnimClass::Entrance, 37, 1000, &[]),
     ("spinner", "Spinner", AnimClass::Entrance, 49, 1000, &[]),
+    // 3-D effects (3-D models only).
+    ("arrive", "Arrive", AnimClass::Entrance, 60, 1000, &[]),
+    ("turntable", "Turntable", AnimClass::Emphasis, 37, 20_000, &[]),
+    ("swing", "Swing", AnimClass::Emphasis, 38, 5000, &[]),
+    ("jumpTurn", "Jump & Turn", AnimClass::Emphasis, 39, 2000, &[]),
+    ("leave", "Leave", AnimClass::Exit, 60, 1000, &[]),
     ("pulse", "Pulse", AnimClass::Emphasis, 26, 500, &[]),
     ("colorPulse", "Color Pulse", AnimClass::Emphasis, 27, 500, &[]),
     ("teeter", "Teeter", AnimClass::Emphasis, 32, 1000, &[]),

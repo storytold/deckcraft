@@ -69,6 +69,12 @@ pub struct InboxFile {
 #[derive(Clone, Debug)]
 pub enum InboxEvent {
     File(InboxFile),
+    /// Several files read together for request `id` (name, bytes): a 3-D model with the
+    /// materials and textures it names.
+    Files {
+        id: u64,
+        files: Vec<(String, Vec<u8>)>,
+    },
     /// The picker was dismissed or the file could not be read. `id` will not be applied.
     Cancelled {
         id: u64,
@@ -86,6 +92,7 @@ enum FilePurpose {
     Picture,
     Audio,
     Video,
+    Model3d,
     /// Change Picture: the picture replaces the selected one (`picture.change`).
     ChangePicture,
     /// A drop, or any other purpose: decide from the name and bytes.
@@ -137,6 +144,7 @@ fn purpose_of(purpose: &str) -> FilePurpose {
         "picture" => FilePurpose::Picture,
         "audio" => FilePurpose::Audio,
         "video" => FilePurpose::Video,
+        "model3d" => FilePurpose::Model3d,
         _ => FilePurpose::Infer,
     }
 }
@@ -162,11 +170,15 @@ fn open_command(name: &str) -> Option<&'static str> {
 }
 
 /// A drop has no requested operation, so the name and bytes decide: a presentation opens,
-/// then a recognised picture, sound or video is inserted, then an outline becomes slides.
+/// then a recognised 3-D model, picture, sound or video is inserted, then an outline becomes
+/// slides.
 fn infer_command(name: &str, bytes: &[u8]) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     if is_presentation_name(&lower) {
         return Some("file.openBytes");
+    }
+    if deckcraft_engine::cmd::model3d::is_model_file(name, bytes) {
+        return Some("insert.model3d");
     }
     let ct = deckcraft_engine::cmd::insert::content_type(name, bytes);
     if ct.starts_with("image/") {
@@ -187,6 +199,7 @@ fn command_for(purpose: FilePurpose, name: &str, bytes: &[u8]) -> Result<&'stati
         FilePurpose::Picture => Some("insert.picture"),
         FilePurpose::Audio => Some("insert.audio"),
         FilePurpose::Video => Some("insert.video"),
+        FilePurpose::Model3d => Some("insert.model3d"),
         FilePurpose::ChangePicture => deckcraft_engine::cmd::insert::content_type(name, bytes).starts_with("image/").then_some("picture.change"),
         FilePurpose::Open => open_command(name),
         FilePurpose::Infer => infer_command(name, bytes),
@@ -402,6 +415,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
+    ("app.insertModel3dDialog", "3D Models from This Device…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
@@ -785,6 +799,39 @@ impl SlideApp {
         self.download(&suggested, bytes)
     }
 
+    /// Save as Picture (the context menu of 3-D models and pictures): the selected object's picture
+    /// to a file the user picks, or downloaded on the web.
+    pub fn save_shape_picture(&mut self) {
+        let r = self.session.execute("shape.saveAsPicture", &json!({}));
+        let (name, bytes) = match r {
+            Ok(v) => match v.get("data").and_then(Value::as_str).and_then(deckcraft_engine::cmd::base64_decode).filter(|b| !b.is_empty()) {
+                Some(bytes) => (v.get("name").and_then(Value::as_str).unwrap_or("Picture.png").to_string(), bytes),
+                None => {
+                    // Never save an empty file as if it were the picture.
+                    self.set_status("Save as Picture: no picture to save".to_string());
+                    return;
+                }
+            },
+            Err(e) => {
+                self.set_status(e.to_string());
+                return;
+            }
+        };
+        if let Some(pick) = self.services.pick_save.as_mut() {
+            let Some(path) = pick(&name) else { return };
+            let r = match self.services.write.as_mut() {
+                Some(w) => w(&path, &bytes),
+                None => Err("no way to write files".into()),
+            };
+            match r {
+                Ok(()) => self.set_status(format!("Saved {path}")),
+                Err(e) => self.set_status(format!("{path}: {e}")),
+            }
+            return;
+        }
+        self.download(&name, Ok(bytes));
+    }
+
     /// Hands `bytes` to the browser as a download (web); false (with the reason in the status
     /// bar) when there are no bytes or no way to download.
     fn download(&mut self, name: &str, bytes: deckcraft_engine::Result<Vec<u8>>) -> bool {
@@ -1016,6 +1063,7 @@ impl SlideApp {
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
+            "app.insertModel3dDialog" => self.pick_and_insert("model3d", "insert.model3d"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
@@ -1253,6 +1301,10 @@ impl SlideApp {
                         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                         args["name"] = json!(name);
                         args["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+                        // A 3-D model's materials and textures are found next to it.
+                        if cmd == "insert.model3d" {
+                            args["path"] = json!(path);
+                        }
                         self.session.execute(cmd, &args)
                     }
                     _ => {
@@ -1365,6 +1417,7 @@ impl SlideApp {
             match event {
                 InboxEvent::Cancelled { id } => self.pending_files.retain(|r| r.id != id),
                 InboxEvent::File(file) => self.apply_external_file(file.id, &file.name, &file.bytes),
+                InboxEvent::Files { id, files } => self.apply_external_files(id, files.into_iter().map(|(n, b)| (n, b, None)).collect()),
             }
         }
     }
@@ -1374,9 +1427,14 @@ impl SlideApp {
     /// echo on the [`InboxEvent`]. Call this when the pick or the drop starts, not when the
     /// bytes arrive.
     pub fn begin_external_file(&mut self, purpose: &str) -> u64 {
+        let target = self.capture_file_target();
+        self.queue_external_file(purpose_of(purpose), target)
+    }
+
+    fn queue_external_file(&mut self, purpose: FilePurpose, target: FileTarget) -> u64 {
         let id = self.next_file_id;
         self.next_file_id = self.next_file_id.wrapping_add(1).max(1);
-        self.pending_files.push(PendingFile { id, purpose: purpose_of(purpose), target: self.capture_file_target() });
+        self.pending_files.push(PendingFile { id, purpose, target });
         id
     }
 
@@ -1385,6 +1443,73 @@ impl SlideApp {
     pub fn open_or_insert_bytes(&mut self, name: &str, bytes: &[u8]) {
         let id = self.begin_external_file("drop");
         self.apply_external_file(id, name, bytes);
+    }
+
+    /// Files dropped or picked together (name, bytes, path when known), on the slide that is
+    /// current now: see [`SlideApp::apply_external_files`].
+    pub fn open_or_insert_files(&mut self, files: Vec<(String, Vec<u8>, Option<String>)>) {
+        let id = self.begin_external_file("drop");
+        self.apply_external_files(id, files);
+    }
+
+    /// The files of request `id`, read together. 3-D models are inserted; when one of them names
+    /// other files (an OBJ, PLY or glTF model, or a GLB with external buffers or images), the
+    /// other files are offered to it, and the ones a model uses are its materials, buffers and
+    /// textures. Every other file is applied as if it came alone: a photo dropped with an OBJ is
+    /// still a picture.
+    fn apply_external_files(&mut self, id: u64, files: Vec<(String, Vec<u8>, Option<String>)>) {
+        use deckcraft_engine::cmd::model3d::{is_model_file, needs_companions};
+        let Some(pos) = self.pending_files.iter().position(|r| r.id == id) else { return };
+        let req = self.pending_files.remove(pos);
+        let mut target = req.target;
+        let models: Vec<bool> = files.iter().map(|(n, b, _)| is_model_file(n, b)).collect();
+        let grouped = files.iter().zip(&models).any(|((n, b, _), m)| *m && needs_companions(n, b));
+        let companions: serde_json::Map<String, Value> = if grouped {
+            files
+                .iter()
+                .zip(&models)
+                .filter(|(_, m)| !**m)
+                .map(|((n, b, _), _)| (n.clone(), Value::String(deckcraft_engine::cmd::base64_encode(b))))
+                .collect()
+        } else {
+            serde_json::Map::new()
+        };
+        // Grouped, the models go first, so it is known which files they used.
+        let order: Vec<usize> = if grouped {
+            (0..files.len()).filter(|i| models.get(*i) == Some(&true)).chain((0..files.len()).filter(|i| models.get(*i) != Some(&true))).collect()
+        } else {
+            (0..files.len()).collect()
+        };
+        let mut used: Vec<String> = Vec::new();
+        for i in order {
+            let (Some((name, bytes, path)), Some(model)) = (files.get(i), models.get(i).copied()) else { continue };
+            if model {
+                let mut p = json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes), "files": companions.clone()});
+                // Where its materials and textures are, when it came from the disk.
+                if let (Some(path), Some(o)) = (path, p.as_object_mut()) {
+                    o.insert("path".into(), json!(path));
+                }
+                let r = self.run_external_file(&target, name, "insert.model3d", &p);
+                let took = r.as_ref().and_then(|v| v.get("companions")).and_then(Value::as_array).into_iter().flatten();
+                used.extend(took.filter_map(Value::as_str).map(String::from));
+            } else if grouped && infer_command(name, bytes).is_none() {
+                // A material or buffer file no model used: nothing to do with it on its own.
+                if !used.contains(name) {
+                    log::info!("{name}: not used by the 3-D model it came with");
+                }
+            } else if !used.contains(name) {
+                // A file of its own. In a grouped batch it came with a model that didn't use it:
+                // judged by what it is, not by the 3D Models picker it came from.
+                let purpose = if grouped { FilePurpose::Infer } else { req.purpose };
+                let fid = self.queue_external_file(purpose, target);
+                self.apply_external_file(fid, name, bytes);
+            }
+            // The first file made a presentation: the others go into it.
+            if target == FileTarget::Absent {
+                target = self.capture_file_target();
+            }
+        }
+        self.drain_requests();
     }
 
     fn capture_file_target(&self) -> FileTarget {
@@ -1446,25 +1571,37 @@ impl SlideApp {
         } else {
             json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes)})
         };
-        let result = if cmd == "file.openBytes" || self.viewing_target(&req.target) {
-            self.session.execute(cmd, &params).map(|_| ()).map_err(|e| e.to_string())
+        self.run_external_file(&req.target, name, cmd, &params);
+        self.drain_requests();
+    }
+
+    /// Run `cmd` for a file on the place its request captured, and report a failure. The
+    /// command's answer, when it ran.
+    fn run_external_file(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Option<Value> {
+        let result = if cmd == "file.openBytes" || self.viewing_target(target) {
+            self.session.execute(cmd, params).map_err(|e| e.to_string())
         } else {
-            self.execute_on_target(&req.target, name, cmd, &params)
+            self.execute_on_target(target, name, cmd, params)
         };
         match result {
-            Err(e) if cmd == "file.openBytes" => self.notify(e),
-            Err(e) => self.set_status(e),
-            Ok(()) => {}
+            Err(e) if cmd == "file.openBytes" => {
+                self.notify(e);
+                None
+            }
+            Err(e) => {
+                self.set_status(e);
+                None
+            }
+            Ok(v) => Some(v),
         }
-        self.drain_requests();
     }
 
     /// Run `cmd` on the document and slide captured for the request, then put the view back
     /// if the user has since moved. A missing document or slide cancels the file.
-    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<(), String> {
+    fn execute_on_target(&mut self, target: &FileTarget, name: &str, cmd: &str, params: &Value) -> Result<Value, String> {
         let FileTarget::Document { doc, place } = target else {
             self.session.execute("file.new", &json!({})).map_err(|e| e.to_string())?;
-            return self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
+            return self.session.execute(cmd, params).map_err(|e| e.to_string());
         };
         let Some(idx) = self.session.documents().iter().position(|d| d.uid == *doc) else {
             return Err(format!("{name} was not applied: the presentation it was chosen for is closed"));
@@ -1489,7 +1626,7 @@ impl SlideApp {
             st.selection.text = None;
             st.selection.cells = None;
         }
-        let result = self.session.execute(cmd, params).map(|_| ()).map_err(|e| e.to_string());
+        let result = self.session.execute(cmd, params).map_err(|e| e.to_string());
         if view == Some(idx) {
             if let (Some(sel), Some(st)) = (saved, self.session.active_mut()) {
                 st.selection = sel;
@@ -1592,11 +1729,17 @@ impl SlideApp {
         // On the web, dropped files can only be read asynchronously: the host reads them and
         // delivers them through `Services::inbox`, tagged with the request captured at the drop.
         #[cfg(not(target_arch = "wasm32"))]
-        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
-            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
-            match f.bytes() {
-                Ok(bytes) => self.open_or_insert_bytes(&name, &bytes),
-                Err(e) => self.set_status(e),
+        {
+            let mut files = Vec::new();
+            for f in ctx.input(|i| i.raw.dropped_files.clone()) {
+                let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
+                match f.bytes() {
+                    Ok(bytes) => files.push((name, bytes, Some(f.path().to_string_lossy().to_string()))),
+                    Err(e) => self.set_status(e),
+                }
+            }
+            if !files.is_empty() {
+                self.open_or_insert_files(files);
             }
         }
         canvas::trackpad_twist(self, ctx);

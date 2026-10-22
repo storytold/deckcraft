@@ -11,7 +11,7 @@ use deckcraft_color::Rgba;
 use deckcraft_geom::Xfrm;
 use deckcraft_model::anim::{AnimClass, Animation};
 use deckcraft_model::text::{Run, RunKind, RunProps, TextBody};
-use deckcraft_model::{Geom, InkStroke, MediaClip, Presentation, Section, Shape, ShapeId, ShapeKind, Slide, SlideId, defaults};
+use deckcraft_model::{Geom, InkStroke, MediaClip, Model3d, Presentation, Section, Shape, ShapeId, ShapeKind, Slide, SlideId, defaults};
 
 fn png(rgb: [u8; 3]) -> Vec<u8> {
     let mut out = Cursor::new(vec![]);
@@ -67,9 +67,9 @@ fn corpus() -> (Presentation, Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut embedded = shape(&mut p, "Embedded", 340.0, 80.0, 144.0, 72.0);
     embedded.kind = ShapeKind::Opaque { xml: OLE.into(), preview: None, label: "DeckCraft.Note.1".into(), parts: vec![] };
     let mut block_shape = shape(&mut p, "Block", 40.0, 240.0, 120.0, 90.0);
-    block_shape.kind = ShapeKind::Model3d { media: block_id, poster: None };
+    block_shape.kind = ShapeKind::Model3d(Box::new(Model3d { media: block_id, ..Default::default() }));
     let mut globe_shape = shape(&mut p, "Globe", 180.0, 240.0, 160.0, 120.0);
-    globe_shape.kind = ShapeKind::Model3d { media: globe_id, poster: Some(poster_id) };
+    globe_shape.kind = ShapeKind::Model3d(Box::new(Model3d { media: globe_id, poster: Some(poster_id), ..Default::default() }));
     let mut number = shape(&mut p, "Slide number", 360.0, 240.0, 80.0, 28.0);
     number.text = Some(field("4", "slidenum"));
     let mut date = shape(&mut p, "Date", 360.0, 276.0, 160.0, 28.0);
@@ -168,7 +168,8 @@ fn by_name<'a>(p: &'a Presentation, name: &str) -> &'a Shape {
 
 fn media_bytes(p: &Presentation, shape: &str) -> Vec<u8> {
     let id = match &by_name(p, shape).kind {
-        ShapeKind::Model3d { media, .. } | ShapeKind::Media(MediaClip { media, .. }) => *media,
+        ShapeKind::Model3d(m) => m.media,
+        ShapeKind::Media(MediaClip { media, .. }) => *media,
         other => panic!("{shape} has no media: {other:?}"),
     };
     p.media(id).expect("media").data.as_ref().clone()
@@ -191,7 +192,8 @@ fn object_corpus_round_trips() {
     let (p, block, globe, poster) = corpus();
     let bytes = deckcraft_pptx::export(&p).expect("export");
     let types = zip_text(&bytes, "[Content_Types].xml");
-    assert!(types.contains("model/gltf-binary"), "{types}");
+    // PowerPoint's content type for a 3-D model part.
+    assert!(types.contains("model/gltf.binary"), "{types}");
     assert!(zip_has_payload(&bytes, &block), "block model was not written");
     assert!(zip_has_payload(&bytes, &globe), "globe model was not written");
     let once = deckcraft_pptx::import(&bytes).expect("import");
@@ -211,16 +213,17 @@ fn object_corpus_round_trips() {
         assert!(!xml.contains("r:id"), "an embedding part is issue #203");
 
         let block_shape = by_name(q, "Block");
-        assert!(matches!(block_shape.kind, ShapeKind::Model3d { poster: None, .. }), "{:?}", block_shape.kind);
+        assert!(matches!(&block_shape.kind, ShapeKind::Model3d(m) if m.poster.is_none()), "{:?}", block_shape.kind);
         assert_eq!(block_shape.xfrm, Some(Xfrm::new(40.0, 240.0, 120.0, 90.0)));
         assert_eq!(media_bytes(q, "Block"), block);
-        let ShapeKind::Model3d { media, .. } = &block_shape.kind else { panic!("{:?}", block_shape.kind) };
-        let block_media = q.media(*media).expect("block media");
-        assert_eq!(block_media.content_type, "model/gltf-binary");
+        let ShapeKind::Model3d(m) = &block_shape.kind else { panic!("{:?}", block_shape.kind) };
+        let block_media = q.media(m.media).expect("block media");
+        assert_eq!(block_media.content_type, "model/gltf.binary");
         assert!(block_media.name.to_ascii_lowercase().ends_with(".glb"), "{}", block_media.name);
 
         let globe_shape = by_name(q, "Globe");
-        let ShapeKind::Model3d { media, poster: Some(poster_media) } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
+        let ShapeKind::Model3d(m) = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
+        let (media, Some(poster_media)) = (&m.media, &m.poster) else { panic!("{m:?}") };
         assert_eq!(globe_shape.xfrm, Some(Xfrm::new(180.0, 240.0, 160.0, 120.0)));
         assert_eq!(q.media(*media).expect("globe").data.as_ref(), globe.as_slice());
         assert_eq!(q.media(*poster_media).expect("poster").data.as_ref(), poster.as_slice());
@@ -339,11 +342,12 @@ fn an_alternate_content_model_keeps_the_glb_and_its_poster() {
     for q in [&once, &twice] {
         assert!(q.slides[0].shapes.iter().all(|s| s.name != "Model poster"), "the fallback picture replaced the model");
         let s = by_name(q, "Model from file");
-        let ShapeKind::Model3d { media, poster: Some(poster_id) } = &s.kind else { panic!("{:?}", s.kind) };
+        let ShapeKind::Model3d(m) = &s.kind else { panic!("{:?}", s.kind) };
+        let (media, Some(poster_id)) = (&m.media, &m.poster) else { panic!("{m:?}") };
         assert_eq!(s.xfrm, Some(Xfrm::new(40.0, 50.0, 120.0, 90.0)));
         let model_item = q.media(*media).expect("glb");
         assert_eq!(model_item.data.as_ref(), model.as_slice());
-        assert_eq!(model_item.content_type, "model/gltf-binary");
+        assert_eq!(model_item.content_type, "model/gltf.binary");
         assert_eq!(q.media(*poster_id).expect("poster").data.as_ref(), poster.as_slice());
     }
 }

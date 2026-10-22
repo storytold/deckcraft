@@ -99,6 +99,12 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
             ShapeKind::Media(m) => {
                 o.insert("media".into(), json!({"id": m.media, "video": m.video, "autoplay": m.autoplay, "loop": m.loop_play}));
             }
+            ShapeKind::Model3d(m) => {
+                o.insert(
+                    "model3d".into(),
+                    json!({"media": m.media, "rotation": m.rot.map(round), "fov": round(m.camera.fov), "autoFit": m.auto_fit}),
+                );
+            }
             _ => {}
         }
     }

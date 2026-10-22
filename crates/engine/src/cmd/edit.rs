@@ -77,10 +77,10 @@ pub(crate) fn media_of_shapes(shapes: &[Shape], out: &mut Vec<MediaId>) {
                     out.push(p);
                 }
             }
-            deckcraft_model::ShapeKind::Model3d { media, poster } => {
-                out.push(*media);
-                if let Some(p) = poster {
-                    out.push(*p);
+            deckcraft_model::ShapeKind::Model3d(m) => {
+                out.push(m.media);
+                if let Some(p) = m.poster {
+                    out.push(p);
                 }
             }
             _ => {}
@@ -264,6 +264,12 @@ fn remap_media(shapes: &mut [Shape], map: &HashMap<MediaId, MediaId>) {
             deckcraft_model::ShapeKind::Media(c) => {
                 m(&mut c.media);
                 if let Some(p) = c.poster.as_mut() {
+                    m(p);
+                }
+            }
+            deckcraft_model::ShapeKind::Model3d(md) => {
+                m(&mut md.media);
+                if let Some(p) = md.poster.as_mut() {
                     m(p);
                 }
             }

@@ -176,6 +176,39 @@ fn reshaped(a: &Shape, b: &Shape) -> bool {
     a.geom != b.geom && outlined(a) && outlined(b) && Shape { geom: Geom::default(), ..content(a) } == Shape { geom: Geom::default(), ..content(b) }
 }
 
+/// When `a` and `b` show the same 3-D model (the same file, otherwise alike), the model `s` of the
+/// way between them: turned along the shortest rotation, its camera, placement and size on the
+/// slide (`xa`, `xb` are the frames) interpolated.
+fn turned_model(pres: &Presentation, a: &Shape, b: &Shape, s: f64, xa: Option<Xfrm>, xb: Option<Xfrm>) -> Option<deckcraft_model::Model3d> {
+    let (ShapeKind::Model3d(ma), ShapeKind::Model3d(mb)) = (&a.kind, &b.kind) else { return None };
+    let same_file =
+        ma.media == mb.media || matches!((pres.media(ma.media), pres.media(mb.media)), (Some(x), Some(y)) if !x.data.is_empty() && x.data == y.data);
+    let rest = |x: &Shape| Shape { kind: ShapeKind::Shape, ..content(x) };
+    if !same_file || rest(a) != rest(b) {
+        return None;
+    }
+    let (xa, xb) = (xa?, xb?);
+    let l3 = |p: [f64; 3], q: [f64; 3]| [0, 1, 2].map(|k| lerp(p[k], q[k], s));
+    let mut m = (**mb).clone();
+    m.rot = deckcraft_geom::space::slerp_euler(ma.rot, mb.rot, s);
+    m.meter_per_unit = lerp(ma.meter_per_unit, mb.meter_per_unit, s);
+    m.pre = l3(ma.pre, mb.pre);
+    m.scale = l3(ma.scale, mb.scale);
+    m.post = l3(ma.post, mb.post);
+    m.camera.pos = l3(ma.camera.pos, mb.camera.pos);
+    m.camera.look_at = l3(ma.camera.look_at, mb.camera.look_at);
+    m.camera.up = l3(ma.camera.up, mb.camera.up);
+    m.camera.fov = lerp(ma.camera.fov, mb.camera.fov, s);
+    m.camera.ortho = lerp(ma.camera.ortho, mb.camera.ortho, s);
+    // The model's size on the slide (the view's span) changes evenly, whatever the frames do.
+    let h = morph_xfrm(xa, xb, s).h;
+    let span = lerp(ma.span(xa.h), mb.span(xb.h), s);
+    if h.is_finite() && h > 1e-9 && span.is_finite() {
+        m.viewport = span / h;
+    }
+    Some(m)
+}
+
 /// The content of a shape apart from what Morph interpolates, with a picture's crop left out.
 fn uncropped(s: &Shape) -> Shape {
     let mut c = content(s);
@@ -276,7 +309,10 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
         };
         let reshape = reshaped(sa, sb);
         let recrop = recropped(sa, sb);
-        if reshape || recrop || content(sa) == content(sb) {
+        if let (Some(m), Some(xa), Some(xb)) = (turned_model(pres, sa, sb, s, xa, xb), xa, xb) {
+            // The same 3-D model on both slides: it turns, moves and grows from one pose to the other.
+            push(Shape { xfrm: Some(morph_xfrm(xa, xb, s)), kind: ShapeKind::Model3d(Box::new(m)), ..sb.clone() }, false, 1.0);
+        } else if reshape || recrop || content(sa) == content(sb) {
             let mut m = Shape { xfrm: x, ..sb.clone() };
             if recrop && let ShapeKind::Picture { fill } = &mut m.kind {
                 fill.crop = match (xa, xb, x) {

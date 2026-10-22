@@ -1,0 +1,16 @@
+[package]
+name = "deckcraft-mesh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft 3-D models: glTF/GLB, OBJ (with MTL), STL, PLY and 3MF readers, a GLB writer and a software renderer"
+
+[lints]
+workspace = true
+
+[dependencies]
+image = { workspace = true, features = ["tga"] }
+zip = { workspace = true }
+quick-xml = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }

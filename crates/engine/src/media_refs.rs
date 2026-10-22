@@ -158,9 +158,9 @@ macro_rules! walkers {
                         f(p);
                     }
                 }
-                ShapeKind::Model3d { media, poster } => {
-                    f(media);
-                    if let Some(p) = poster {
+                ShapeKind::Model3d(m) => {
+                    f(&$($m)? m.media);
+                    if let Some(p) = &$($m)? m.poster {
                         f(p);
                     }
                 }

@@ -49,6 +49,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("color", Class::Layer(0)),
     // WMF/EMF reader (ported from WordCraft).
     ("metafile", Class::Layer(0)),
+    // 3-D model files (glTF, OBJ, STL, PLY, 3MF) and their software renderer.
+    ("mesh", Class::Standalone),
     ("model", Class::Layer(1)),
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),

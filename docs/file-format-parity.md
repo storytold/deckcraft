@@ -64,7 +64,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | Online video (YouTube embeds) | yes | no | Cloud feature |
 | Embedded OLE objects | yes | kept on round trip (opaque), not insertable or editable | `ShapeKind::Opaque` |
 | Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn |
-| 3-D models (`.glb`) | yes | kept | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Not drawn as a mesh and not inserted from the ribbon |
+| 3-D models: GLB, glTF, OBJ (with MTL and textures), STL, PLY, 3MF | yes (not glTF) | yes | Kept as glTF binary like PowerPoint: GLB as it is, the others converted on insert (`crates/mesh`). Textures, vertex colours and materials are kept; PowerPoint's own conversion drops PLY vertex colours and 3MF textures. Drawn by a software renderer whose lighting was measured against PowerPoint's. Not drawn: Draco or meshopt compression; skinned and animated models show at rest |
 
 ## PPTX coverage (PresentationML / DrawingML)
 
@@ -83,6 +83,7 @@ the round trip even though DeckCraft doesn't model it.
 | Fills: solid, gradient, picture (stretch/tile/crop), pattern, group | yes | yes | |
 | Lines: dash, compound, caps, joins, arrowheads | yes | yes | |
 | Text: runs, paragraphs, bullets, numbering, levels, autofit, columns, vertical, RTL, script fonts, fields, hyperlinks | yes | yes | Round-trip tests incl. `justLow`, date fields and paragraph `defRPr` (the defaults a placeholder's runs inherit, including a link). A click or hover action keeps its sound, `endSnd`, and a custom show's "Show and return". Gradient and outline on a run, autofit, columns, vertical and RTL text, tab stops and line spacing round-trip (`corpus_style.rs`) |
+| 3-D models (`am3d:model3d` in `mc:AlternateContent`, `model/gltf.binary` part, picture fallback) | yes | yes | Camera, model transform, rotation, `objViewport` and lights read and written in PowerPoint's element order; a file's own lights are written back unchanged; a fresh fallback picture (2 px/pt), which PowerPoint shows until the model is edited. `attrSrcUrl`, `winViewport` and extensions are dropped. A model in a `p:contentPart` (with its fallback picture) is read too, placed as on insert, and written back as `am3d:model3d`. Checked by opening DeckCraft's files in PowerPoint and PowerPoint's in DeckCraft (2026-10-14) |
 | Effects: shadow, glow, soft edges, reflection | yes | yes | On a run, inner shadow, reflection and soft edges are kept along with the outer shadow and glow |
 | 3-D: `scene3d`, `sp3d` | kept | kept | A bevel preset with no `sp3d` of its own is written back on shapes and theme effect styles. Bevels, cameras, face lighting and extrusion sides draw approximately |
 | Text warp (`prstTxWarp`) | yes | yes | All 40 presets rendered (`crates/geom/src/warp.rs`); adjust values (`avLst`) round-trip |
@@ -140,6 +141,7 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-13 | minor | Owned corpus round-trip for tables, charts, animations, media, sections and masters. Handout-master header, footer, date and slide-number text is written back |
 | 2026-10-14 | minor | PNG and JPEG slide export record their resolution (`scale` × 72 dpi; the default 2× picture is 144 dpi) |
 | 2026-10-13 | trivial | Unchanged charts keep the embedded workbook (`ppt/embeddings/`) and chart relationships (#335) |
+| 2026-10-14 | minor | 3-D models: six model formats inserted, `am3d:model3d` read and written, checked both ways against PowerPoint |
 | 2026-10-12 | minor | EMF/WMF text and pattern brushes drawn; OLE (VML) and ActiveX previews read |
 | 2026-10-12 | minor | Text warps rendered; their adjust values read and written |
 | 2026-10-12 | trivial | Groups with a small legacy child coordinate space draw outlines, dashes, arrowheads and ink at their own width (#233) |

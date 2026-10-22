@@ -174,7 +174,7 @@ mainstream number leaves out.
 
 Breadth is measured from the checklist; "ready" adds depth and is estimated. Hours are to
 PowerPoint parity for that area. **Weight** is how much a PowerPoint user relies on the area
-(points out of 110); the total "ready" is the weighted mean of the rows (6,905 / 110 = 62.8%; the
+(points out of 110); the total "ready" is the weighted mean of the rows (6,913 / 110 = 62.8%; the
 Features row of the dimension table keeps ~62% until the next full re-measure). Automation and Platforms are scored elsewhere.
 
 | Area | Weight | Breadth (measured) | Ready (est.) | Hours | Main shortfalls | Doc |
@@ -192,9 +192,9 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Charts | 7 | 65% | ~45% | 12–20 | Data grid editing, chart elements, the `chartex` types (waterfall, funnel, treemap, sunburst, histogram, box) | [parity-checklist.md](parity-checklist.md) |
 | SmartArt | 4 | 50% | ~35% | 8–14 | PowerPoint diagrams editable (read their data model), the data model on save, more layouts | [parity-checklist.md](parity-checklist.md) |
 | Pictures | 7 | 60% | ~45% | 12–20 | SVG, EMF+ records, clipboard paste on Windows/Linux (#53), remove background, artistic-effect and correction depth | [file-format-parity.md](file-format-parity.md) |
-| Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
+| Media | 4 | 71% | ~62% | 6–12 | WMA/WMV decode, record audio/screen, stock content, 3-D models' Pan & Zoom and glTF animations, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
-| Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, Animation Pane timeline, preview from the selected effect, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
+| Animations | 6 | 85% | ~65% | 10–16 | 69 of PowerPoint's ~195 effects, Animation Pane timeline, preview from the selected effect, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
 | Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
@@ -233,8 +233,8 @@ Carried from the 2026-10-07 ROADMAP status and updated with what has landed sinc
 - **Editing:** select, marquee, move, resize, rotate, adjust; smart guides; nudge; duplicate;
   z-order; group/ungroup; align/distribute; Format Painter; Selection pane; clipboard.
 - **Transitions and animations:** 48 transitions including Morph (objects, words, characters,
-  geometry outlines), 64 animation effects (entrance, emphasis, exit, motion paths, media),
-  triggers, by-paragraph builds, Animation Painter, on a shared timeline engine.
+  geometry outlines, 3-D models), 69 animation effects (entrance, emphasis, exit, motion paths,
+  media, 3D), triggers, by-paragraph builds, Animation Painter, on a shared timeline engine.
 - **Slide show:** full screen, keyboard/mouse navigation, blank screens, go-to-slide (the typed
   number is shown), See All Slides, click-to-zoom, pen, laser pointer, presenter window (black,
   white, zoom, the slide grid, a timer that pauses and resets, a local clock, and notes size),
@@ -317,6 +317,7 @@ scored done (16 open issues).
 | 2026-10-13 | minor | Views: Grid Options dialog landed (spacing, snap, display). Remaining in that row: New Window. Percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed: yellow adjust handles drag; the gallery and command remain |
 | 2026-10-14 | trivial | Draw and hardware blurbs: pen pressure scales ink width when reported; percentages and hour ranges unchanged |
+| 2026-10-14 | trivial | Media row re-scored for 3-D models (insert, turn, 3-D effects, Morph, PPTX): breadth 67% → 71%, ready ~60% → ~62%, hours 8–14 → 6–12, matching ROADMAP and the checklist. Feature-area mean 6,913 / 110, still 62.8%; animation effects 64 → 69 of ~195 |
 | 2026-10-10 | minor | Added the readiness-by-audience table: each number gets its own hours to ~95% (full 340–600, mainstream 150–250, essentials 50–90). The full number stays an additive weighted sum; no change to the percentages |
 | 2026-10-10 | minor | Added the mainstream practitioner (~53%) and essentials user (~62%) numbers with written weights, discounts and user evidence. Features dimension recomputed from written area weights (66% judgement → 62.4% weighted mean), which moves ready for real work from ~56% to ~55%; stage unchanged |
 | 2026-10-10 | minor | Stage checked against the core-workflow gate (all six pass); stays alpha |

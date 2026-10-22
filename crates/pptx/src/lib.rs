@@ -74,21 +74,35 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
     read::import_theme(bytes)
 }
 
-/// Write a `.pptx` package.
+/// Write a `.pptx` package. 3-D models get their stored poster picture (or none) as the fallback
+/// picture older readers show; [`export_with_previews`] draws fresh ones.
 pub fn export(p: &Presentation) -> Result<Vec<u8>, PptxError> {
-    write::export(p, write::CT_PRES)
+    export_as(p, "pptx")
 }
 
 /// Write a package for `ext`: `potx` (template) and `ppsx` (slide show) differ from `pptx` only in
 /// the main part's content type.
 pub fn export_as(p: &Presentation, ext: &str) -> Result<Vec<u8>, PptxError> {
+    export_with_previews(p, ext, &|_, _, _| None)
+}
+
+/// [`export_as`], drawing each 3-D model's fallback picture with `model_preview` (PNG bytes for the
+/// model and its frame's width and height in points).
+pub fn export_with_previews(p: &Presentation, ext: &str, model_preview: ModelPreview) -> Result<Vec<u8>, PptxError> {
     let ct = match ext {
         "potx" => write::CT_TEMPLATE,
         "ppsx" => write::CT_SHOW,
         _ => write::CT_PRES,
     };
-    write::export(p, ct)
+    write::export(p, ct, model_preview)
 }
+
+/// Draws a 3-D model's fallback picture: PNG bytes for the model and its frame's width and height
+/// (points), or `None`.
+pub type ModelPreview<'a> = &'a dyn Fn(&deckcraft_model::Model3d, f64, f64) -> Option<Vec<u8>>;
+
+/// Content type of a glTF binary 3-D model part, as PowerPoint writes it.
+pub(crate) const CT_GLB: &str = "model/gltf.binary";
 
 /// Content type for a file name's extension.
 pub(crate) fn mime_for(name: &str) -> &'static str {
@@ -114,9 +128,9 @@ pub(crate) fn mime_for(name: &str) -> &'static str {
         "wma" => "audio/x-ms-wma",
         "ogg" => "audio/ogg",
         "flac" => "audio/flac",
-        "glb" => "model/gltf-binary",
         "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "fntdata" => "application/x-fontdata",
+        "glb" => CT_GLB,
         _ => "application/octet-stream",
     }
 }

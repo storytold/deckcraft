@@ -240,6 +240,7 @@ fn accessibility(s: &mut Session, _p: &Value) -> Result<Value> {
                 deckcraft_model::ShapeKind::Picture { .. }
                     | deckcraft_model::ShapeKind::Chart(_)
                     | deckcraft_model::ShapeKind::Media(_)
+                    | deckcraft_model::ShapeKind::Model3d(_)
                     | deckcraft_model::ShapeKind::Group { .. }
             );
             if needs_alt && sh.descr.trim().is_empty() && !sh.decorative {

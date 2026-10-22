@@ -356,6 +356,7 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
         rotate: a.rotate,
         clip: a.clip,
         tint: a.tint,
+        model: a.model,
         paras: tl
             .paragraph_targets(id)
             .into_iter()

@@ -286,6 +286,12 @@ pub fn transition_to_xml(w: &mut W, kind: &str, option: &str) -> Option<&'static
 
 /// Effect options ↔ preset subtypes.
 const SUBTYPES: &[(&str, &[(&str, u32)])] = &[
+    // The 3-D effects: PowerPoint's default variants.
+    ("arrive", &[("", 128)]),
+    ("leave", &[("", 128)]),
+    ("turntable", &[("", 128)]),
+    ("swing", &[("", 128)]),
+    ("jumpTurn", &[("", 2)]),
     ("fly", DIR8),
     ("flyOut", DIR8),
     ("peek", DIR4),

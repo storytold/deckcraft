@@ -962,6 +962,7 @@ dependencies = [
  "deckcraft-format",
  "deckcraft-geom",
  "deckcraft-media",
+ "deckcraft-mesh",
  "deckcraft-model",
  "deckcraft-pdf",
  "deckcraft-pptx",
@@ -1067,6 +1068,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckcraft-mesh"
+version = "0.9.0"
+dependencies = [
+ "image",
+ "log",
+ "quick-xml",
+ "serde_json",
+ "zip",
+]
+
+[[package]]
 name = "deckcraft-metafile"
 version = "0.9.0"
 dependencies = [
@@ -1117,9 +1129,11 @@ dependencies = [
 name = "deckcraft-pptx"
 version = "0.9.0"
 dependencies = [
+ "deckcraft-anim",
  "deckcraft-color",
  "deckcraft-engine",
  "deckcraft-geom",
+ "deckcraft-mesh",
  "deckcraft-model",
  "image",
  "log",
@@ -1137,6 +1151,7 @@ dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-geom",
+ "deckcraft-mesh",
  "deckcraft-metafile",
  "deckcraft-model",
  "deckcraft-text",
@@ -1172,6 +1187,7 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-media",
+ "deckcraft-mesh",
  "deckcraft-model",
  "deckcraft-render",
  "deckcraft-text",

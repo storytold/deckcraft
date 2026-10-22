@@ -19,6 +19,7 @@ mod compound;
 mod extent;
 mod images;
 mod metafile;
+mod model3d;
 mod morph_path;
 mod morph_text;
 mod paint;
@@ -51,6 +52,7 @@ use vello_cpu::{RenderContext, Resources, peniko};
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
 pub use images::{decode as decode_image, gif_frame};
+pub use model3d::{camera_for as model_camera, camera_lights as model_lights, model_png, model_scene, render_model};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts, place_slide, text_outline};
@@ -186,11 +188,23 @@ pub struct ShapeState {
     pub tint: Option<Rgba>,
     /// Per-paragraph states of by-paragraph text builds (paragraph index, state).
     pub paras: Vec<(usize, ParaState)>,
+    /// What a 3-D effect does to a 3-D model.
+    pub model: deckcraft_anim::ModelAnim,
 }
 
 impl Default for ShapeState {
     fn default() -> Self {
-        ShapeState { visible: true, opacity: 1.0, offset: Vec2::ZERO, scale: (1.0, 1.0), rotate: 0.0, clip: None, tint: None, paras: vec![] }
+        ShapeState {
+            visible: true,
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: (1.0, 1.0),
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            paras: vec![],
+            model: deckcraft_anim::ModelAnim::default(),
+        }
     }
 }
 
@@ -940,6 +954,10 @@ impl Renderer {
             ShapeKind::Chart(c) => {
                 self.track(m, Rect::new(0.0, 0.0, x.w, x.h));
                 chart::draw(ctx, rctx, c, m, x.w, x.h)
+            }
+            ShapeKind::Model3d(md) => {
+                self.track(m, Rect::new(0.0, 0.0, x.w, x.h));
+                model3d::draw(ctx, f.pres, md, x.w, x.h, m, &st.model);
             }
             ShapeKind::Ink { strokes } => {
                 for sk in strokes {

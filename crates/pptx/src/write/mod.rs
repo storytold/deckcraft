@@ -2,6 +2,7 @@
 
 pub(crate) mod chart;
 pub(crate) mod dml;
+mod model3d;
 mod shapes;
 mod theme;
 mod timing;
@@ -16,9 +17,9 @@ use deckcraft_model::{
     Background, Comment, Layout, LayoutId, Master, MediaId, PhType, Placeholder, Presentation, Shape, ShapeId, Slide, SlideId, defaults,
 };
 
-use crate::PptxError;
 use crate::opc::{self, NS_A, NS_P, NS_P14, NS_P188, NS_R, PackageOut, RelsOut};
 use crate::xml::{A, W};
+use crate::{ModelPreview, PptxError};
 
 pub(crate) const CT_PRES: &str = "application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml";
 pub(crate) const CT_TEMPLATE: &str = "application/vnd.openxmlformats-officedocument.presentationml.template.main+xml";
@@ -55,7 +56,9 @@ pub struct Exp<'a> {
     media_parts: HashMap<MediaId, String>,
     n_image: u32,
     n_media: u32,
+    n_model: u32,
     n_chart: u32,
+    pub model_preview: ModelPreview<'a>,
     n_diagram: u32,
     n_tags: u32,
     n_chartex: u32,
@@ -100,7 +103,7 @@ fn ext_for(content_type: &str, name: &str, data: &[u8]) -> String {
         "audio/x-ms-wma" => "wma",
         "audio/ogg" => "ogg",
         "audio/flac" => "flac",
-        "model/gltf-binary" => "glb",
+        crate::CT_GLB | "model/gltf-binary" => "glb",
         _ => "",
     };
     if !by_ct.is_empty() {
@@ -129,7 +132,10 @@ impl Exp<'_> {
             return None;
         }
         let ext = ext_for(&m.content_type, &m.name, &m.data);
-        let ct = if m.content_type.is_empty() || !m.content_type.contains('/') {
+        let ct = if ext == "glb" {
+            // PowerPoint's type for a 3-D model, whatever the item was given.
+            crate::CT_GLB.to_string()
+        } else if m.content_type.is_empty() || !m.content_type.contains('/') {
             crate::mime_for(&format!("x.{ext}")).to_string()
         } else {
             m.content_type.clone()
@@ -137,6 +143,9 @@ impl Exp<'_> {
         let name = if ct.starts_with("image/") {
             self.n_image += 1;
             format!("ppt/media/image{}.{ext}", self.n_image)
+        } else if ext == "glb" {
+            self.n_model += 1;
+            format!("ppt/media/model3d{}.glb", self.n_model)
         } else {
             self.n_media += 1;
             format!("ppt/media/media{}.{ext}", self.n_media)
@@ -162,6 +171,13 @@ impl Exp<'_> {
         }
         let part = self.media_part(id)?;
         Some(o.rels.add(kind, &opc::relative(&o.name, &part), false))
+    }
+    /// A relationship from `o` to a new picture part holding `png`.
+    pub fn png_rel(&mut self, o: &mut Out, png: Vec<u8>) -> String {
+        self.n_image += 1;
+        let name = format!("ppt/media/image{}.png", self.n_image);
+        self.pkg.binary(&name, "image/png", png);
+        o.rels.add("image", &opc::relative(&o.name, &name), false)
     }
     /// A tiny transparent PNG for pictures whose image is missing.
     pub fn placeholder_rel(&mut self, o: &mut Out) -> String {
@@ -525,7 +541,7 @@ fn sanitized(p: &Presentation) -> std::borrow::Cow<'_, Presentation> {
     std::borrow::Cow::Owned(q)
 }
 
-pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
+pub fn export(p: &Presentation, main_ct: &str, model_preview: ModelPreview) -> Result<Vec<u8>, PptxError> {
     let p = sanitized(p);
     let p: &Presentation = &p;
     let mut x = Exp {
@@ -534,7 +550,9 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
         media_parts: HashMap::new(),
         n_image: 0,
         n_media: 0,
+        n_model: 0,
         n_chart: 0,
+        model_preview,
         n_diagram: 0,
         n_tags: 0,
         n_chartex: 0,

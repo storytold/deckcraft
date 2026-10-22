@@ -118,6 +118,8 @@ icons! {
     Screenshot => "screenshot",
     Icons => "icons",
     Models3d => "models-3d",
+    Model3dViews => "model-3d-views",
+    ResetModel3d => "reset-model-3d",
     SmartArt => "smart-art",
     Chart => "chart",
     Zoom => "zoom",
@@ -382,6 +384,18 @@ const N: C = C::None;
 /// Light tint of an accent, for fills behind outlines.
 fn t(c: C) -> C {
     c.a(0.25)
+}
+
+/// The 3-D model cube: three shaded faces outlined, centred on `c`, `k` times full size.
+fn cube(p: &Pen<'_>, c: P2, k: f32) {
+    let at = |dx: f32, dy: f32| (c.0 + dx * k, c.1 + dy * k);
+    let (top, ur, lr, bot, ll, ul, mid) = (at(0.0, -9.5), at(8.5, -4.8), at(8.5, 4.8), at(0.0, 9.5), at(-8.5, 4.8), at(-8.5, -4.8), at(0.0, -0.1));
+    p.poly(&[top, ur, mid, ul], t(B), N);
+    p.poly(&[ul, mid, bot, ll], B.a(0.55), N);
+    p.poly(&[mid, ur, lr, bot], B, N);
+    p.shape_w(&[top, ur, lr, bot, ll, ul], N, K, 1.0);
+    p.line(&[ul, mid, ur], K);
+    p.seg(mid, bot, K);
 }
 
 type P2 = (f32, f32);
@@ -1407,14 +1421,17 @@ fn draw(p: &Pen<'_>, icon: Icon) {
             p.shape(&heart, R, N);
             p.rshape(&[(17.0, 12.5), (21.5, 17.0), (17.0, 21.5), (12.5, 17.0)], 0.8, G, N);
         }
-        I::Models3d => {
-            let (top, ur, lr, bot, ll, ul, mid) = ((12.0, 2.5), (20.5, 7.2), (20.5, 16.8), (12.0, 21.5), (3.5, 16.8), (3.5, 7.2), (12.0, 11.9));
-            p.poly(&[top, ur, mid, ul], t(B), N);
-            p.poly(&[ul, mid, bot, ll], B.a(0.55), N);
-            p.poly(&[mid, ur, lr, bot], B, N);
-            p.shape_w(&[top, ur, lr, bot, ll, ul], N, K, 1.0);
-            p.line(&[ul, mid, ur], K);
-            p.seg(mid, bot, K);
+        I::Models3d => cube(p, (12.0, 12.0), 1.0),
+        I::Model3dViews => {
+            // The cube, and an orbit round it with the way it turns.
+            cube(p, (12.0, 12.5), 0.68);
+            p.line(&arc_pts((12.0, 12.5), 10.5, 3.6, 200.0, 340.0), O);
+            p.line(&arc_pts((12.0, 12.5), 10.5, 3.6, 20.0, 160.0), O);
+            p.head((21.9, 13.6), 100.0, p.head_size(), O);
+        }
+        I::ResetModel3d => {
+            cube(p, (10.0, 10.0), 0.72);
+            p.arc_arrow((17.0, 17.5), 4.0, -10.0, -260.0, B);
         }
         I::SmartArt => {
             p.rect(8.5, 2.5, 15.5, 8.5, 1.0, G, N);

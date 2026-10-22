@@ -12,6 +12,7 @@ workspace = true
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-metafile = { workspace = true }
+deckcraft-mesh = { workspace = true }
 deckcraft-model = { workspace = true }
 deckcraft-anim = { workspace = true }
 deckcraft-fonts = { workspace = true }

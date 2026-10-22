@@ -4,9 +4,9 @@ use std::f64::consts::PI;
 
 use deckcraft_model::{AnimClass, Rgba, Xfrm};
 
-use crate::AnimState;
 use crate::easing::{bounce_out, ease, smooth};
 use crate::path::{MotionPath, default_path};
+use crate::{AnimState, ModelAnim};
 
 /// Everything an effect needs besides its progress.
 #[derive(Clone, Debug)]
@@ -95,6 +95,9 @@ impl EffectSpec {
     /// current fill colour (for colour emphasis).
     pub fn eval(&self, p: f64, cur: Rgba) -> AnimState {
         let p = crate::clampf(p, 0.0, 1.0, 0.0);
+        if is_model_effect(&self.effect) {
+            return self.model3d(p).sanitized();
+        }
         let s = match self.class {
             AnimClass::Entrance => self.entrance(p, false),
             AnimClass::Exit => self.entrance(1.0 - p, true),
@@ -250,6 +253,17 @@ impl EffectSpec {
         st
     }
 
+    /// A 3-D effect: the model's turn, move and scale, and the fade of Arrive and Leave.
+    fn model3d(&self, p: f64) -> AnimState {
+        let model = model_effect(&self.effect, self.eased(p), self.amount).unwrap_or_default();
+        let opacity = match self.effect.as_str() {
+            "arrive" => p,
+            "leave" => 1.0 - p,
+            _ => 1.0,
+        };
+        AnimState { opacity, model, ..Default::default() }
+    }
+
     fn emphasis(&self, p: f64, cur: Rgba) -> AnimState {
         let e = self.eased(p);
         let bump = (p * PI).sin();
@@ -316,6 +330,81 @@ impl EffectSpec {
         };
         AnimState { offset_x: fx * self.slide_w, offset_y: fy * self.slide_h, ..Default::default() }
     }
+}
+
+/// The 3-D effects, which animate 3-D models only.
+pub const MODEL_EFFECTS: [&str; 5] = ["arrive", "turntable", "swing", "jumpTurn", "leave"];
+
+pub fn is_model_effect(effect: &str) -> bool {
+    MODEL_EFFECTS.contains(&effect)
+}
+
+fn smoothstep(x: f64) -> f64 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// 0 to 1 along a smoothstep while `x` goes from `x0` to `x1`.
+fn ramp(x: f64, x0: f64, x1: f64) -> f64 {
+    smoothstep((x - x0) / (x1 - x0))
+}
+
+/// What 3-D effect `effect` does to a model at progress `t` (0..1, after the effect's own easing),
+/// along curves shaped after PowerPoint's (observed black-box). `amount` is Turntable's turn in
+/// degrees. `None` for an effect that isn't a 3-D effect.
+pub fn model_effect(effect: &str, t: f64, amount: Option<f64>) -> Option<ModelAnim> {
+    let t = crate::clampf(t, 0.0, 1.0, 0.0);
+    let mut m = ModelAnim::default();
+    match effect {
+        // Turns the last 20° towards the viewer and grows from 80 % (while it fades in).
+        "arrive" => {
+            m.view_turn[1] = -20.0 * (1.0 - smoothstep(t));
+            m.scale = [0.8 + 0.2 * (t * PI / 2.0).sin(); 3];
+        }
+        // Turns on 20° and shrinks to 80 % (while it fades out).
+        "leave" => {
+            m.view_turn[1] = 20.0 * smoothstep(t);
+            m.scale = [1.0 - 0.2 * (t * PI / 2.0).sin(); 3];
+        }
+        // Turns about the vertical axis, as on a turntable: once round by default.
+        "turntable" => {
+            let amt = amount.filter(|a| a.is_finite()).unwrap_or(360.0).clamp(-36_000.0, 36_000.0);
+            m.view_turn[1] = amt * t;
+        }
+        // Swings 20° each way and back: each quarter eases out to a side or eases back in.
+        "swing" => {
+            let q = (t * 4.0).min(3.999_999);
+            let (k, u) = (q.floor(), q - q.floor());
+            let out = 1.0 - (1.0 - u).powi(3);
+            let back = 1.0 - u.powi(3);
+            let side = match k as u8 {
+                0 => out,
+                1 => back,
+                2 => -out,
+                _ => -back,
+            };
+            m.view_turn[1] = 20.0 * side;
+        }
+        // Crouches, hops half its size while it turns once round its own axis (overshooting a
+        // little), and lands with a squash.
+        "jumpTurn" => {
+            let crouch = if t < 0.25 { ramp(t, 0.0, 0.25) } else { 1.0 - ramp(t, 0.25, 0.30) };
+            let land = if t < 0.80 { ramp(t, 0.70, 0.80) } else { 1.0 - ramp(t, 0.80, 0.90) };
+            let squash = crouch + land;
+            m.scale = [1.0 + 0.05 * squash, 1.0 - 0.1 * squash, 1.0 + 0.05 * squash];
+            let hop = if (0.27..0.73).contains(&t) { 0.5 * (PI * (t - 0.27) / 0.46).sin() } else { 0.0 };
+            m.shift[1] = hop - 0.025 * squash;
+            m.own_turn[1] = if t < 0.25 {
+                -3.5 * ramp(t, 0.0, 0.25)
+            } else if t < 0.76 {
+                -3.5 + 367.0 * ramp(t, 0.25, 0.76)
+            } else {
+                363.5 - 3.5 * ramp(t, 0.76, 0.90)
+            };
+        }
+        _ => return None,
+    }
+    Some(m)
 }
 
 /// The path for a motion-path animation: its own, or the preset default.

@@ -900,6 +900,57 @@ fn show_follows_links() {
     assert_eq!(s.slide, 3);
 }
 
+#[test]
+fn model_effect_curves() {
+    // Arrive: from turned 20° back at 80 % to the model as it is.
+    let a = model_effect("arrive", 0.0, None).unwrap();
+    assert_eq!(a.view_turn[1], -20.0);
+    assert!((a.scale[0] - 0.8).abs() < 1e-9);
+    assert!(model_effect("arrive", 1.0, None).unwrap().is_identity());
+    // Leave: turned on 20° at 80 % when it is gone.
+    let l = model_effect("leave", 1.0, None).unwrap();
+    assert!((l.view_turn[1] - 20.0).abs() < 1e-9 && (l.scale[1] - 0.8).abs() < 1e-9);
+    // Turntable: half a turn half way; another amount when given.
+    assert_eq!(model_effect("turntable", 0.5, None).unwrap().view_turn[1], 180.0);
+    assert_eq!(model_effect("turntable", 1.0, Some(-90.0)).unwrap().view_turn[1], -90.0);
+    // Swing: 20° one way at a quarter, the other at three quarters, back at the end.
+    assert!((model_effect("swing", 0.25, None).unwrap().view_turn[1] - 20.0).abs() < 1e-6);
+    assert!((model_effect("swing", 0.75, None).unwrap().view_turn[1] + 20.0).abs() < 1e-6);
+    assert!(model_effect("swing", 1.0, None).unwrap().view_turn[1].abs() < 1e-3);
+    // Jump & Turn: up high in the middle, once round and down again at the end.
+    let mid = model_effect("jumpTurn", 0.5, None).unwrap();
+    assert!(mid.shift[1] > 0.45 && mid.own_turn[1] > 90.0 && mid.own_turn[1] < 270.0, "{mid:?}");
+    let end = model_effect("jumpTurn", 1.0, None).unwrap();
+    assert!((end.own_turn[1] - 360.0).abs() < 1e-9 && end.shift[1].abs() < 1e-9 && end.scale == [1.0; 3]);
+    assert!(model_effect("fade", 0.5, None).is_none());
+    // Hostile numbers stay finite.
+    for e in MODEL_EFFECTS {
+        let m = model_effect(e, f64::NAN, Some(f64::INFINITY)).unwrap();
+        assert!(m.view_turn.iter().chain(m.own_turn.iter()).chain(m.shift.iter()).chain(m.scale.iter()).all(|v| v.is_finite()), "{e}");
+    }
+}
+
+#[test]
+fn model_effects_play_in_the_timeline() {
+    let slide = slide_with(vec![
+        anim(1, AnimClass::Entrance, "arrive", AnimStart::OnClick),
+        Animation { duration_ms: 2000, ..anim(1, AnimClass::Emphasis, "turntable", AnimStart::OnClick) },
+        anim(1, AnimClass::Exit, "leave", AnimStart::OnClick),
+    ]);
+    let tl = Timeline::new(&slide, W, H);
+    // Arrive fades in while it turns into place.
+    let s = tl.state(ShapeId(1), None, 0, 0.25);
+    assert!(s.visible && s.opacity > 0.1 && s.opacity < 0.5 && s.model.view_turn[1] < -10.0, "{s:?}");
+    assert!(tl.state(ShapeId(1), None, 1, 0.0).model.is_identity());
+    // Turntable half way: half a turn; done: as it was.
+    let s = tl.state(ShapeId(1), None, 1, 1.0);
+    assert!((s.model.view_turn[1] - 180.0).abs() < 1e-6, "{s:?}");
+    assert!(tl.state(ShapeId(1), None, 2, 0.0).model.is_identity());
+    // Leave fades out and is gone.
+    assert!(tl.state(ShapeId(1), None, 2, 0.5).opacity < 0.9);
+    assert!(!tl.state(ShapeId(1), None, 3, 0.0).visible);
+}
+
 /// #420: late in the Honeycomb every cell has settled, so the incoming hexagons must cover the
 /// whole slide — the old row count stopped at ~75% of a 16:9 slide and left the bottom black.
 #[test]

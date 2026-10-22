@@ -310,7 +310,8 @@ fn content_part(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<S
     if let Some(x) = e.child("xfrm") {
         s.xfrm = Some(dml::xfrm(x).0);
     }
-    s.kind = ShapeKind::Model3d { media, poster: None };
+    let (w, h) = s.xfrm.map(|x| (x.w, x.h)).unwrap_or((0.0, 0.0));
+    s.kind = ShapeKind::Model3d(Box::new(super::model3d::unplaced(imp, media, w, h)));
     Some(s)
 }
 
@@ -325,8 +326,8 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
             fb.find_all("blip", &mut pics);
             pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
         });
-        if let ShapeKind::Model3d { media, .. } = s.kind {
-            s.kind = ShapeKind::Model3d { media, poster };
+        if let ShapeKind::Model3d(m) = &mut s.kind {
+            m.poster = poster;
         }
         return Some(s);
     }
@@ -432,6 +433,12 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             && let Some(g) = smartart(imp, part, gd, &s, depth)
         {
             return g;
+        }
+        if let Some(m3) = gd.child("model3d")
+            && let Some(m) = super::model3d::model3d(imp, part, m3, s.xfrm.map(|x| x.h).unwrap_or(0.0))
+        {
+            s.kind = ShapeKind::Model3d(Box::new(m));
+            return s;
         }
     }
     // Something we don't model: keep its XML and show a preview picture when it has one.

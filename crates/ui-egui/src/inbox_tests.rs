@@ -186,3 +186,125 @@ fn a_dropped_file_stays_on_the_slide_it_was_dropped_on() {
     assert_eq!(pictures(&app, uid, slide0), 1, "{status}");
     assert_eq!(pictures(&app, uid, slide1), 0);
 }
+
+fn models(app: &SlideApp, doc: u64, slide: deckcraft_model::SlideId) -> Vec<deckcraft_model::Model3d> {
+    let st = app.session.documents().iter().find(|d| d.uid == doc).expect("document");
+    let i = st.doc.slide_index(slide).expect("slide");
+    st.doc.slides[i]
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.kind {
+            ShapeKind::Model3d(m) => Some((**m).clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A 3-D model picked with the files it names comes back as one request: one model, on the
+/// slide that asked, wearing its texture; the material and texture files are not inserted.
+#[test]
+fn a_model_picked_with_its_companions_is_one_model_on_the_slide_that_asked() {
+    let (mut app, inbox, started) = setup();
+    let uid = app.session.active().unwrap().uid;
+    let slide0 = app.session.active().unwrap().current_slide().unwrap().id;
+    app.pick_and_insert("model3d", "insert.model3d");
+    let (purpose, id) = started.lock().expect("request log").last().cloned().unwrap();
+    assert_eq!(purpose, "model3d");
+    app.session.execute("slide.new", &json!({})).unwrap();
+    let slide1 = app.session.active().unwrap().current_slide().unwrap().id;
+
+    let obj = b"mtllib tri.mtl\nusemtl skin\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n".to_vec();
+    let mtl = b"newmtl skin\nKd 1 1 1\nmap_Kd skin.png\n".to_vec();
+    let files = vec![("tri.obj".to_string(), obj), ("tri.mtl".to_string(), mtl), ("skin.png".to_string(), png())];
+    inbox.lock().expect("inbox").push(InboxEvent::Files { id, files });
+    app.drain_inbox();
+
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    let placed = models(&app, uid, slide0);
+    assert_eq!(placed.len(), 1, "{status}");
+    assert!(models(&app, uid, slide1).is_empty());
+    assert_eq!(pictures(&app, uid, slide0) + pictures(&app, uid, slide1), 0, "the texture belongs to the model");
+    let st = app.session.documents().iter().find(|d| d.uid == uid).unwrap();
+    let glb = st.doc.media(placed[0].media).expect("model part").data.clone();
+    let scene = deckcraft_mesh::load("tri.glb", &glb, &deckcraft_mesh::no_files).expect("glb");
+    assert_eq!(scene.textures.len(), 1, "the material file was read with the model");
+}
+
+/// A one-triangle GLB whose positions are in the external `tri.bin`, and that buffer.
+fn glb_with_external_buffer() -> (Vec<u8>, Vec<u8>) {
+    let mut bin = Vec::new();
+    for v in [[0.0f32, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]] {
+        for c in v {
+            bin.extend_from_slice(&c.to_le_bytes());
+        }
+    }
+    let mut js = json!({
+        "asset": {"version": "2.0"},
+        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}}]}],
+        "accessors": [{"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3"}],
+        "bufferViews": [{"buffer": 0, "byteLength": 36}],
+        "buffers": [{"byteLength": 36, "uri": "tri.bin"}],
+    })
+    .to_string()
+    .into_bytes();
+    while !js.len().is_multiple_of(4) {
+        js.push(b' ');
+    }
+    let mut glb = b"glTF".to_vec();
+    glb.extend_from_slice(&2u32.to_le_bytes());
+    glb.extend_from_slice(&((20 + js.len()) as u32).to_le_bytes());
+    glb.extend_from_slice(&(js.len() as u32).to_le_bytes());
+    glb.extend_from_slice(&0x4E4F_534Au32.to_le_bytes());
+    glb.extend_from_slice(&js);
+    (glb, bin)
+}
+
+/// A GLB picked with the buffer it names gets it; a GLB that holds everything, dropped with a
+/// photo, leaves the photo a picture of its own.
+#[test]
+fn a_glb_takes_its_buffer_but_not_unrelated_pictures() {
+    let (mut app, inbox, started) = setup();
+    let uid = app.session.active().unwrap().uid;
+    let slide = app.session.active().unwrap().current_slide().unwrap().id;
+    app.pick_and_insert("model3d", "insert.model3d");
+    let (_, id) = started.lock().expect("request log").last().cloned().unwrap();
+    let (glb, bin) = glb_with_external_buffer();
+    inbox.lock().expect("inbox").push(InboxEvent::Files { id, files: vec![("tri.glb".into(), glb), ("tri.bin".into(), bin)] });
+    app.drain_inbox();
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(models(&app, uid, slide).len(), 1, "{status}");
+
+    let mut p = deckcraft_mesh::Primitive { material: None, ..Default::default() };
+    p.positions = vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
+    p.indices = vec![0, 1, 2];
+    let whole = deckcraft_mesh::to_glb(&deckcraft_mesh::Scene { primitives: vec![p], ..Default::default() });
+    app.open_or_insert_files(vec![("whole.glb".into(), whole, None), ("photo.png".into(), png(), None)]);
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert_eq!(models(&app, uid, slide).len(), 2, "{status}");
+    assert_eq!(pictures(&app, uid, slide), 1, "{status}");
+}
+
+/// An OBJ dropped with its material, its texture and an unrelated photo: one textured model,
+/// and the photo is still a picture; the material file is quietly the model's.
+#[test]
+fn an_obj_keeps_its_files_and_leaves_an_unrelated_photo_a_picture() {
+    let (mut app, _inbox, _started) = setup();
+    let uid = app.session.active().unwrap().uid;
+    let slide = app.session.active().unwrap().current_slide().unwrap().id;
+    let obj = b"mtllib tri.mtl\nusemtl skin\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nf 1/1 2/2 3/3\n".to_vec();
+    let mtl = b"newmtl skin\nKd 1 1 1\nmap_Kd skin.png\n".to_vec();
+    app.open_or_insert_files(vec![
+        ("tri.obj".into(), obj, None),
+        ("tri.mtl".into(), mtl, None),
+        ("skin.png".into(), png(), None),
+        ("holiday.png".into(), png(), None),
+    ]);
+    let status = app.status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    let placed = models(&app, uid, slide);
+    assert_eq!(placed.len(), 1, "{status}");
+    assert_eq!(pictures(&app, uid, slide), 1, "the unrelated photo: {status}");
+    assert!(!status.contains("can't open"), "{status}");
+    let st = app.session.documents().iter().find(|d| d.uid == uid).unwrap();
+    let glb = st.doc.media(placed[0].media).expect("model part").data.clone();
+    assert_eq!(deckcraft_mesh::load("tri.glb", &glb, &deckcraft_mesh::no_files).expect("glb").textures.len(), 1);
+}

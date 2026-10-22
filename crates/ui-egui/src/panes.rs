@@ -231,6 +231,11 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         {
             app.ui.format_tab = "picture".into();
         }
+        if matches!(sh.kind, ShapeKind::Model3d(_))
+            && widgets::icon_toggle(ui, Icon::Models3d, "3D Model", true, app.ui.format_tab == "model3d").clicked()
+        {
+            app.ui.format_tab = "model3d".into();
+        }
     });
     ui.separator();
     match app.ui.format_tab.as_str() {
@@ -414,6 +419,33 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     if ui.small_button(n.to_string()).clicked() {
                         run(app, "format.columns", json!({"count": n, "spacing": 18}));
                     }
+                }
+            });
+        }
+        // Only for a model: any other shape falls through to the default page.
+        "model3d" if matches!(sh.kind, ShapeKind::Model3d(_)) => {
+            let ShapeKind::Model3d(m) = &sh.kind else { return };
+            ui.label(egui::RichText::new("Model Rotation").font(theme::bold(13.0)));
+            for (k, (key, label)) in [("x", "X Rotation"), ("y", "Y Rotation"), ("z", "Z Rotation")].into_iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+                    if let Some(nv) = widgets::spinner(ui, &format!("f3d{key}"), m.rot[k], 5.0, "°", 70.0) {
+                        run(app, "model3d.rotate", json!({ key: nv }));
+                    }
+                });
+            }
+            ui.add_space(6.0);
+            ui.label(
+                egui::RichText::new("Drag the handle in the middle of the model to turn it freely; Shift turns one axis at a time in 15° steps.")
+                    .color(t.text_dim),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button("Reset 3D Model").clicked() {
+                    run(app, "model3d.reset", json!({}));
+                }
+                if ui.button("Reset 3D Model and Size").clicked() {
+                    run(app, "model3d.reset", json!({"size": true}));
                 }
             });
         }

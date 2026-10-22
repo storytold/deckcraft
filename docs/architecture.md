@@ -4,7 +4,7 @@
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
-exists. 202k lines of Rust in 24 crates, 3 apps and `xtask`; 1,641 `#[test]` functions
+exists. 202k lines of Rust in 25 crates, 3 apps and `xtask`; 1,641 `#[test]` functions
 (`cargo xtask stats` counts them per crate).
 
 ## Layers
@@ -15,7 +15,7 @@ nothing below L6 uses egui, eframe, winit or rfd.
 
 | Layer | Crates | What they do |
 |---|---|---|
-| L0 | `geom`, `color`, `metafile`; standalone `bitstream`, `matroska`, `ogg`, `opus` | EMU/pt units, transforms, ~180 preset shape generators re-derived from ECMA-376, adjust handles, hit testing; RGB/HSL and DrawingML colour transforms; MKV/WebM and Ogg demuxers, the Opus decoder; EMF/WMF read into a neutral vector model (`metafile`) |
+| L0 | `geom`, `color`, `metafile`; standalone `bitstream`, `matroska`, `ogg`, `opus`, `mesh` | EMU/pt units, transforms, 3-D rotations and cameras (`geom::space`), ~180 preset shape generators re-derived from ECMA-376, adjust handles, hit testing; RGB/HSL and DrawingML colour transforms; MKV/WebM and Ogg demuxers, the Opus decoder; EMF/WMF read into a neutral vector model (`metafile`) |
 | L1 | `model`, `fonts`; `h264`, `hevc`, `vp9`, `av1`, `isobmff` | Presentation, masters, layouts, slides, shapes, text, themes, tables, charts, transitions, animations, placeholder inheritance (`resolve`); font database (craft-fonts + system) with metric-compatible substitutes for Office fonts (Carlito for Calibri, Caladea for Cambria, Liberation for Arial/Times); video decoders and the MP4/MOV demuxer |
 | L2 | `text`, `anim`, `format`, `media` | Shaping (HarfRust), UAX #9 bidi, UAX #14 line breaking, autofit, caret hit testing; per-shape animation state over time, the show state machine, transition frame layouts, Morph matching; `.deckcraft` (zip + JSON + media) and outline text; media probing, decoding, mixer and clock |
 | L3 | `render`, `pptx` | `vello_cpu` raster of slides, masters and layouts (fills, outlines, effects, pictures, tables, charts, Morph frames); PPTX import/export from ECMA-376 |
@@ -31,7 +31,8 @@ FilmCraft.
 
 A `Presentation` holds a theme set, slide masters with their layouts, slides, sections, custom
 shows, comments, media and document properties. Shapes are a tree (`ShapeKind`: preset or custom
-geometry, picture, table, chart, group, connector, ink, media, SmartArt-as-group, and `Opaque` for
+geometry, picture, table, chart, group, connector, ink, media, 3-D model (a GLB in the media with
+PowerPoint's `am3d` pose, camera and lights), SmartArt-as-group, and `Opaque` for
 anything read from PPTX that DeckCraft doesn't model: its XML is kept and written back). Text
 bodies hold paragraphs of runs with DrawingML properties; formatting resolves slide → layout →
 master → theme at render time. Transitions live on slides; animations are the flat ordered list the
@@ -55,8 +56,10 @@ effects project cards through a perspective camera and `anim::layer_mesh` subdiv
 textures stay straight; soft edges are per-corner opacities. The show renders the slides once per
 transition and only composites cached textures each frame; `render::composite_transition` is the
 CPU twin used by `deckcraft-cli render-transition` and the tests. The show window and the presenter view are egui viewports; animation state per shape
-comes from `anim::timeline` each frame. Animations ▸ Preview plays that same state on the editor
-canvas for the current slide, then draws the slide at rest. PDF export renders each slide at print resolution and
+comes from `anim::timeline` each frame (3-D effects add a turn, move and scale of a 3-D model).
+Animations ▸ Preview plays that same state on the editor canvas for the current slide, then draws
+the slide at rest. 3-D models are rendered by `deckcraft-mesh` at the output's resolution and
+cached; their lighting was measured against PowerPoint's. PDF export renders each slide at print resolution and
 overlays an invisible real-text layer with embedded font subsets.
 
 ## File I/O
@@ -95,6 +98,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 | 2026-10-13 | trivial | Animation preview draws the current slide's timeline on the editor canvas |
 | 2026-10-14 | minor | Paragraph and Tabs dialogs; command registry 229; 29 dialogs |
 | 2026-10-14 | minor | Font dialog; command registry 227; 28 dialogs |
+| 2026-10-14 | minor | 3-D models: `mesh` crate (readers, GLB writer, renderer), `geom::space`, `ShapeKind::Model3d`, 3-D effects in the timeline |
 | 2026-10-13 | minor | Transitions: perspective meshes, background/content parts, CPU compositor |
 | 2026-10-10 | major | Created from the code on main (d556ff9) and AGENTS.md §4 |
 

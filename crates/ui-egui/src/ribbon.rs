@@ -148,6 +148,9 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_))) {
         v.push("Playback");
     }
+    if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Model3d(_))) {
+        v.push("3D Model");
+    }
     v
 }
 
@@ -242,6 +245,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             "Chart Design" => chart_design(app, ui),
             "SmartArt Design" => smartart_design(app, ui),
             "Playback" => playback(app, ui),
+            "3D Model" => model3d(app, ui),
             "Slide Master" => slide_master(app, ui),
             "Handout Master" => handout_master(app, ui),
             "Notes Master" => notes_master(app, ui),
@@ -1250,6 +1254,11 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
         });
         let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
         egui::Popup::menu(&r).width(340.0).show(|ui| icon_library(app, ui));
+        let r = big_button(ui, Icon::Models3d, "3D\nModels", enabled(app, "insert.model3d"))
+            .on_hover_text("Insert a 3-D model you can turn: GLB, glTF, OBJ, STL, PLY or 3MF");
+        egui::Popup::menu(&r).show(|ui| {
+            menu_item(app, ui, Icon::Models3d, "This Device…", "app.insertModel3dDialog", json!({}));
+        });
         big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
         let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
         egui::Popup::menu(&r).show(|ui| {
@@ -1876,6 +1885,8 @@ pub fn paint_transition_tile(p: &egui::Painter, r: Rect, (id, label): (&str, &st
 
 fn animations(app: &mut SlideApp, ui: &mut Ui) {
     let has_sel = app.session.active().is_some_and(|d| !d.selection.shapes.is_empty());
+    // A 3-D model selected: the 3-D effects come first; otherwise they aren't offered.
+    let model_sel = app.session.active().is_some_and(|d| d.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Model3d(_))));
     let cur: Option<deckcraft_model::Animation> = app.session.active().and_then(|d| {
         let s = d.current_slide()?;
         let id = d.selection.shapes.first()?;
@@ -1910,6 +1921,11 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 )
             })
             .collect();
+        let quick: Vec<_> = if model_sel {
+            deckcraft_model::anim::ANIMATIONS.iter().filter(|a| deckcraft_anim::is_model_effect(a.0)).chain(quick).collect()
+        } else {
+            quick
+        };
         let sel = cur.as_ref().and_then(|c| quick.iter().position(|a| a.0 == c.effect));
         if let Some(i) = widgets::gallery(
             ui,
@@ -1918,7 +1934,7 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
             sel,
             |p, r, i| {
                 if let Some(a) = quick.get(i) {
-                    paint_anim_tile(p, r, a.1, a.2, has_sel);
+                    paint_effect_tile(p, r, a, has_sel);
                 }
             },
             |i| quick.get(i).map(|a| a.1.to_string()).unwrap_or_default(),
@@ -1928,17 +1944,29 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
         }
         let more = widgets::drop_button(ui, "", vec2(14.0, 52.0), has_sel);
         egui::Popup::menu(&more).width(420.0).show(|ui| {
-            for (cls, label) in
-                [(AnimClass::Entrance, "Entrance"), (AnimClass::Emphasis, "Emphasis"), (AnimClass::Exit, "Exit"), (AnimClass::Path, "Motion Paths")]
-            {
+            // `None`: the 3-D effects.
+            for (cls, label) in [
+                (None, "3D"),
+                (Some(AnimClass::Entrance), "Entrance"),
+                (Some(AnimClass::Emphasis), "Emphasis"),
+                (Some(AnimClass::Exit), "Exit"),
+                (Some(AnimClass::Path), "Motion Paths"),
+            ] {
+                if cls.is_none() && !model_sel {
+                    continue;
+                }
                 ui.label(egui::RichText::new(label).font(theme::bold(12.0)));
                 ui.horizontal_wrapped(|ui| {
-                    for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 == cls) {
+                    let in_section = |a: &&(&str, &str, AnimClass, u32, u32, &[&str])| match cls {
+                        None => deckcraft_anim::is_model_effect(a.0),
+                        Some(c) => a.2 == c && !deckcraft_anim::is_model_effect(a.0),
+                    };
+                    for a in deckcraft_model::anim::ANIMATIONS.iter().filter(in_section) {
                         let (r, resp) = ui.allocate_exact_size(vec2(56.0, 54.0), Sense::click());
                         if resp.hovered() {
                             ui.painter().rect_filled(r, CornerRadius::same(4), Tokens::get(ui.ctx()).hover);
                         }
-                        paint_anim_tile(ui.painter(), r.shrink(2.0), a.1, a.2, true);
+                        paint_effect_tile(ui.painter(), r.shrink(2.0), a, true);
                         if resp.clicked() {
                             run(app, "animation.set", json!({"effect": a.0, "class": a.2.xml()}));
                             ui.close();
@@ -1971,12 +1999,17 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
         egui::Popup::menu(&r).width(260.0).show(|ui| {
-            for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 != AnimClass::Media) {
+            let all = deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 != AnimClass::Media);
+            type Info = (&'static str, &'static str, AnimClass, u32, u32, &'static [&'static str]);
+            let (three_d, rest): (Vec<&Info>, Vec<&Info>) = all.partition(|a| deckcraft_anim::is_model_effect(a.0));
+            let list: Vec<_> = if model_sel { three_d.into_iter().chain(rest).collect() } else { rest };
+            for a in list {
                 if ui
                     .button(format!(
                         "{} — {}",
                         a.1,
                         match a.2 {
+                            _ if deckcraft_anim::is_model_effect(a.0) => "3D",
                             AnimClass::Entrance => "Entrance",
                             AnimClass::Emphasis => "Emphasis",
                             AnimClass::Exit => "Exit",
@@ -2049,6 +2082,27 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
             });
         });
     });
+}
+
+/// A gallery tile for effect `a`: the 3-D effects show the model cube, marked in their class's
+/// colour.
+fn paint_effect_tile(p: &egui::Painter, r: Rect, a: &(&str, &str, AnimClass, u32, u32, &[&str]), enabled: bool) {
+    if !deckcraft_anim::is_model_effect(a.0) {
+        paint_anim_tile(p, r, a.1, a.2, enabled);
+        return;
+    }
+    let t = Tokens::get(p.ctx());
+    let ir = Rect::from_center_size(pos2(r.center().x, r.min.y + 18.0), vec2(28.0, 28.0));
+    icons::paint(p, ir, Icon::Models3d, t.text, !enabled);
+    let mark = match a.2 {
+        AnimClass::Entrance => icons::GREEN,
+        AnimClass::Exit => icons::RED,
+        _ => icons::GOLD,
+    };
+    p.circle_filled(ir.right_bottom() - vec2(3.0, 3.0), 4.0, if enabled { mark } else { t.text_faint });
+    // Longer names (Jump & Turn) in a smaller size, to fit the tile.
+    let size = if a.1.chars().count() > 9 { 8.5 } else { 10.0 };
+    p.text(pos2(r.center().x, r.max.y - 8.0), Align2::CENTER_CENTER, a.1, theme::font(size), if enabled { t.text } else { t.text_faint });
 }
 
 pub fn paint_anim_tile(p: &egui::Painter, r: Rect, label: &str, class: AnimClass, enabled: bool) {
@@ -2558,6 +2612,8 @@ fn size_group(app: &mut SlideApp, ui: &mut Ui) {
         .session
         .active()
         .and_then(|d| d.selection.shapes.first().and_then(|id| d.shape(*id).map(|s| deckcraft_engine::cmd::xfrm_of(&d.doc, &d.selection, s))));
+    // A 3-D model keeps its proportions, like its corner handles.
+    let lock = app.session.active().is_some_and(|d| d.selected_shapes().iter().any(|s| matches!(s.kind, ShapeKind::Model3d(_))));
     group(ui, |ui| {
         rows(ui, |ui| {
             let Some(x) = bx else {
@@ -2568,13 +2624,13 @@ fn size_group(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 ui.label("Height:");
                 if let Some(v) = widgets::spinner(ui, "sh", x.h / 72.0, 0.1, "\"", 54.0) {
-                    run(app, "shape.resize", json!({"h": v.max(0.0) * 72.0}));
+                    run(app, "shape.resize", json!({"h": v.max(0.0) * 72.0, "lockAspect": lock}));
                 }
             });
             ui.horizontal(|ui| {
                 ui.label("Width: ");
                 if let Some(v) = widgets::spinner(ui, "sw", x.w / 72.0, 0.1, "\"", 54.0) {
-                    run(app, "shape.resize", json!({"w": v.max(0.0) * 72.0}));
+                    run(app, "shape.resize", json!({"w": v.max(0.0) * 72.0, "lockAspect": lock}));
                 }
             });
         });
@@ -2582,6 +2638,65 @@ fn size_group(app: &mut SlideApp, ui: &mut Ui) {
             run(app, "shape.sizePosition", json!({}));
         }
     });
+}
+
+/// The 3D Model tab: views, rotation, reset, alt text, arrange and size.
+fn model3d(app: &mut SlideApp, ui: &mut Ui) {
+    let rot = app
+        .session
+        .active()
+        .and_then(|d| d.selected_shapes().iter().find_map(|s| if let ShapeKind::Model3d(m) = &s.kind { Some(m.rot) } else { None }));
+    group(ui, |ui| {
+        let r = big_button(
+            ui,
+            Icon::Model3dViews,
+            "3D Model
+Views",
+            enabled(app, "model3d.view"),
+        );
+        egui::Popup::menu(&r).show(|ui| {
+            for (id, label, ..) in deckcraft_engine::cmd::model3d::VIEWS {
+                if ui.button(*label).clicked() {
+                    run(app, "model3d.view", json!({"view": id}));
+                }
+            }
+        });
+        rows(ui, |ui| {
+            for (k, (key, label)) in [("x", "X Rotation:"), ("y", "Y Rotation:"), ("z", "Z Rotation:")].into_iter().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label(label);
+                    let v = rot.map(|r| r[k]).unwrap_or(0.0);
+                    if let Some(n) = widgets::spinner(ui, &format!("m3d{key}"), v, 5.0, "°", 54.0) {
+                        run(app, "model3d.rotate", json!({ key: n }));
+                    }
+                });
+            }
+        });
+    });
+    group(ui, |ui| {
+        let r = big_button(
+            ui,
+            Icon::ResetModel3d,
+            "Reset 3D
+Model",
+            enabled(app, "model3d.reset"),
+        );
+        egui::Popup::menu(&r).show(|ui| {
+            menu_item(app, ui, Icon::ResetModel3d, "Reset 3D Model", "model3d.reset", json!({}));
+            menu_item(app, ui, Icon::ResetModel3d, "Reset 3D Model and Size", "model3d.reset", json!({"size": true}));
+        });
+        big(
+            app,
+            ui,
+            Icon::AltText,
+            "Alt
+Text",
+            "app.dialog",
+            json!({"id": "altText"}),
+        );
+    });
+    arrange_group(app, ui);
+    size_group(app, ui);
 }
 
 fn picture_format(app: &mut SlideApp, ui: &mut Ui) {

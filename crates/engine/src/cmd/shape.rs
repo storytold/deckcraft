@@ -3,7 +3,7 @@
 
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::style::{Dash, Glow, Gradient, GradientShape, GradientStop, LineEnd, PatternFill, PictureFill, PictureMode, Reflection, Shadow};
-use deckcraft_model::{ColorRef, Effects, Fill, Geom, Line, ShapeStyle};
+use deckcraft_model::{ColorRef, Effects, Fill, Geom, Line, ShapeId, ShapeKind, ShapeStyle};
 use serde_json::{Value, json};
 
 use super::*;
@@ -401,7 +401,19 @@ fn rotate(s: &mut Session, p: &Value) -> Result<Value> {
         s.begin("Rotation");
     }
     let (abs, by) = (f64_param(p, "deg"), f64_param(p, "by"));
-    edit_geometry(s, p, "shape.rotate", |sh| {
+    // A 3-D model turns about the view's axis; its frame stays upright, as PowerPoint files keep it.
+    let ids = targets(s, p)?;
+    let st = s.doc()?;
+    let (models, rest): (Vec<ShapeId>, Vec<ShapeId>) =
+        ids.iter().partition(|id| st.shape(**id).is_some_and(|x| matches!(x.kind, ShapeKind::Model3d(_))));
+    if !models.is_empty() {
+        let n = super::model3d::spin(s, &models, abs, by)?;
+        if rest.is_empty() {
+            return Ok(n);
+        }
+    }
+    let p = if models.is_empty() { p.clone() } else { with_param(p, "ids", Value::from(rest.iter().map(|i| i.0).collect::<Vec<_>>())) };
+    edit_geometry(s, &p, "shape.rotate", |sh| {
         if let Some(x) = sh.xfrm.as_mut() {
             let r = abs.unwrap_or(x.rot) + by.unwrap_or(0.0);
             x.rot = ((r % 360.0) + 360.0) % 360.0;
@@ -413,6 +425,10 @@ fn rotate(s: &mut Session, p: &Value) -> Result<Value> {
 fn flip(s: &mut Session, p: &Value) -> Result<Value> {
     let v = str_param(p, "axis").unwrap_or("horizontal").starts_with('v');
     edit_geometry(s, p, "shape.flip", |sh| {
+        // 3-D models don't flip (PowerPoint keeps their frames upright and unmirrored).
+        if matches!(sh.kind, ShapeKind::Model3d(_)) {
+            return Ok(());
+        }
         if let Some(x) = sh.xfrm.as_mut() {
             if v {
                 x.flip_v = !x.flip_v;

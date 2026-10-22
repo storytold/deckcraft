@@ -3,6 +3,7 @@
 pub(crate) mod chart;
 mod chartex;
 pub(crate) mod dml;
+mod model3d;
 mod shapes;
 mod theme;
 mod timing;
@@ -36,6 +37,9 @@ pub struct Imp<'a> {
     pub table_style_ids: Vec<String>,
     /// Per legacy VML drawing part: shape id → preview picture part (see `shapes::vml_preview`).
     pub vml_previews: HashMap<String, HashMap<String, String>>,
+    /// Per 3-D model read without a scene (`p:contentPart`): its bounds and outline when placed
+    /// as on insert (`None`: it can't be read). Each model file is read once however often used.
+    pub model_fits: HashMap<MediaId, Option<model3d::Fit>>,
 }
 
 impl Imp<'_> {
@@ -157,7 +161,7 @@ pub fn keep_xml(el: &El, ns: &[(String, String)]) -> String {
 }
 
 /// Namespace prefixes whose `mc:Choice` content we understand.
-const SUPPORTED_MC: [&str; 10] = ["p14", "p15", "p159", "a14", "a16", "p1510", "a15", "c14", "p188", "cx1"];
+const SUPPORTED_MC: [&str; 11] = ["p14", "p15", "p159", "a14", "a16", "p1510", "a15", "c14", "p188", "cx1", "am3d"];
 
 /// Office 2016 charts sit in a `cx1` choice; take it only for a layout DeckCraft reads (the
 /// fallback is a picture or "this chart isn't available" text). The part is checked later, when
@@ -380,6 +384,7 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         custom_show_names: HashMap::new(),
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
+        model_fits: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -448,6 +453,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         custom_show_names: HashMap::new(),
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
+        model_fits: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let mut slide_ids: Vec<(u32, String, SlideId)> = vec![];

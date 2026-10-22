@@ -78,8 +78,10 @@ Today it can:
 - **Write**: in-place text editing with full font and paragraph formatting, bullets and numbering,
   columns, autofit, vertical text, fields and hyperlinks.
 - **Add content**: pictures with crop and corrections, tables with styles, charts, SmartArt basics,
-  audio and video (MP3, AAC, FLAC, ALAC, Ogg, Opus, WAV, AIFF; H.264, HEVC, VP9, AV1).
-- **Present**: transitions (including Morph), entrance/emphasis/exit and motion-path animations,
+  3-D models you can turn (GLB, glTF, OBJ, STL, PLY, 3MF), audio and video (MP3, AAC, FLAC, ALAC,
+  Ogg, Opus, WAV, AIFF; H.264, HEVC, VP9, AV1).
+- **Present**: transitions (including Morph, which turns 3-D models), entrance/emphasis/exit, 3-D
+  and motion-path animations,
   by-paragraph builds, full-screen slide show, presenter view, pen, rehearse timings, media playback.
 - **Exchange files**: open and save .pptx presentations, export PDF (slides, notes pages, handouts
   with selectable text), PNG/JPEG, an animated GIF of the deck and outlines. Unsaved work is kept by AutoRecover.

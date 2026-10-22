@@ -420,7 +420,6 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             media(w, x, o, id, s, m);
         }
-        ShapeKind::Model3d { media, poster } => write_model(w, x, o, cx, s, *media, *poster),
         ShapeKind::Ink { strokes } => {
             // Ink becomes a group of freeform lines.
             let id = cx.id_for(s);
@@ -441,64 +440,115 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             }
             w.close("p:grpSp");
         }
+        ShapeKind::Model3d(m) => {
+            let id = cx.id_for(s);
+            model3d_frame(w, x, o, id, s, m);
+        }
         ShapeKind::Opaque { xml, preview, label, parts } => opaque(w, x, o, cx, s, xml, *preview, label, parts),
     }
 }
 
-fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Option<String> {
-    if x.p.media(media).is_none_or(|m| m.data.is_empty()) {
-        return None;
-    }
-    x.media_rel(o, media, crate::opc::RT_MODEL3D)
-}
-
-fn write_model_part(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, rid: &str) {
-    w.open("p:contentPart", A::new().a("r:id", rid));
-    w.open0("p:nvContentPartPr");
-    cnvpr(w, x, o, id, s);
-    w.empty0("p:cNvContentPartPr");
-    w.empty0("p:nvPr");
-    w.close("p:nvContentPartPr");
-    if let Some(xf) = &s.xfrm {
-        dml::xfrm(w, "p:xfrm", xf, None);
-    }
-    w.close("p:contentPart");
-}
-
-fn write_model(
-    w: &mut W,
-    x: &mut Exp,
-    o: &mut Out,
-    cx: &mut Ctx,
-    s: &Shape,
-    media: deckcraft_model::MediaId,
-    poster: Option<deckcraft_model::MediaId>,
-) {
-    let Some(rid) = model_rel(x, o, media) else {
-        log::warn!("pptx: 3-D model '{}' has no embedded part", s.name);
+/// A 3-D model: the `am3d` graphic frame for readers that know it, its picture for the others.
+fn model3d_frame(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_model::Model3d) {
+    let mut xf = s.xfrm.unwrap_or_default();
+    xf.rot = 0.0;
+    xf.flip_h = false;
+    xf.flip_v = false;
+    // The picture: freshly drawn, else the one read with the model, else none.
+    let raster = match (x.model_preview)(m, xf.w, xf.h) {
+        Some(png) => Some(x.png_rel(o, png)),
+        None => m.poster.and_then(|p| x.media_rel(o, p, "image")),
+    };
+    let pic_box = |w: &mut W| {
+        w.open0("p:spPr");
+        dml::xfrm(w, "a:xfrm", &xf, None);
+        w.open("a:prstGeom", A::new().a("prst", "rect"));
+        w.empty0("a:avLst");
+        w.close("a:prstGeom");
+        w.close("p:spPr");
+    };
+    // Only an embedded model: a link would point at a file PowerPoint doesn't load.
+    let embedded = x.p.media(m.media).is_some_and(|it| !it.data.is_empty());
+    let model = if embedded { x.media_rel(o, m.media, crate::opc::RT_MODEL3D) } else { None };
+    let Some(model) = model else {
+        // The model's file is missing: keep its picture (a transparent pixel if it has none).
+        log::warn!("pptx: 3-D model '{}' has no model data; written as its picture", s.name);
+        let raster = raster.unwrap_or_else(|| x.placeholder_rel(o));
+        w.open0("p:pic");
+        w.open0("p:nvPicPr");
+        cnvpr(w, x, o, id, s);
+        w.open0("p:cNvPicPr");
+        w.empty("a:picLocks", A::new().a("noChangeAspect", "1"));
+        w.close("p:cNvPicPr");
+        w.empty0("p:nvPr");
+        w.close("p:nvPicPr");
+        w.open0("p:blipFill");
+        w.empty("a:blip", A::new().a("r:embed", &raster));
+        w.open0("a:stretch");
+        w.empty0("a:fillRect");
+        w.close("a:stretch");
+        w.close("p:blipFill");
+        pic_box(w);
+        w.close("p:pic");
         return;
     };
-    let id = cx.id_for(s);
-    let poster = poster.filter(|p| x.p.media(*p).is_some_and(|m| !m.data.is_empty()));
-    let Some(poster) = poster else {
-        write_model_part(w, x, o, id, s, &rid);
-        return;
-    };
-    // Older readers draw the fallback picture; readers that know `am3d` use the model.
     w.open("mc:AlternateContent", A::new().a("xmlns:mc", NS_MC));
-    w.open("mc:Choice", A::new().a("xmlns:am3d", "http://schemas.microsoft.com/office/drawing/2017/model3d").a("Requires", "am3d"));
-    write_model_part(w, x, o, id, s, &rid);
+    w.open("mc:Choice", A::new().a("xmlns:am3d", super::model3d::NS_AM3D).a("Requires", "am3d"));
+    w.open0("p:graphicFrame");
+    w.open0("p:nvGraphicFramePr");
+    cnvpr(w, x, o, id, s);
+    w.open0("p:cNvGraphicFramePr");
+    w.empty(
+        "a:graphicFrameLocks",
+        A::new().t("noGrp", s.locked).t("noDrilldown", s.locked).a("noChangeAspect", "1").t("noMove", s.locked).t("noResize", s.locked),
+    );
+    w.close("p:cNvGraphicFramePr");
+    nv_pr(w, x, o, s);
+    w.close("p:nvGraphicFramePr");
+    dml::xfrm(w, "p:xfrm", &xf, None);
+    w.open0("a:graphic");
+    w.open("a:graphicData", A::new().a("uri", super::model3d::NS_AM3D));
+    let (ecx, ecy) = (deckcraft_geom::pt_to_emu(xf.w).max(1), deckcraft_geom::pt_to_emu(xf.h).max(1));
+    super::model3d::model3d(w, m, &model, raster.as_deref(), ecx, ecy, xf.h);
+    w.close("a:graphicData");
+    w.close("a:graphic");
+    w.close("p:graphicFrame");
     w.close("mc:Choice");
-    w.open0("mc:Fallback");
-    let pic = Shape {
-        id: ShapeId(0),
-        name: s.name.clone(),
-        xfrm: s.xfrm,
-        kind: ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: poster, ..Default::default() } },
-        ..Default::default()
+    // Without a picture, readers that don't know `am3d` show nothing.
+    let Some(raster) = raster else {
+        w.close("mc:AlternateContent");
+        return;
     };
-    let pid = cx.ids.fresh();
-    shape_with_id(w, x, o, cx, &pic, pid);
+    w.open0("mc:Fallback");
+    w.open0("p:pic");
+    w.open0("p:nvPicPr");
+    cnvpr(w, x, o, id, s);
+    w.open0("p:cNvPicPr");
+    w.empty(
+        "a:picLocks",
+        A::new()
+            .a("noGrp", "1")
+            .a("noRot", "1")
+            .a("noChangeAspect", "1")
+            .a("noMove", "1")
+            .a("noResize", "1")
+            .a("noEditPoints", "1")
+            .a("noAdjustHandles", "1")
+            .a("noChangeArrowheads", "1")
+            .a("noChangeShapeType", "1")
+            .a("noCrop", "1"),
+    );
+    w.close("p:cNvPicPr");
+    w.empty0("p:nvPr");
+    w.close("p:nvPicPr");
+    w.open0("p:blipFill");
+    w.empty("a:blip", A::new().a("r:embed", &raster));
+    w.open0("a:stretch");
+    w.empty0("a:fillRect");
+    w.close("a:stretch");
+    w.close("p:blipFill");
+    pic_box(w);
+    w.close("p:pic");
     w.close("mc:Fallback");
     w.close("mc:AlternateContent");
 }

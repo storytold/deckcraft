@@ -192,6 +192,48 @@ fn anim_prop(w: &mut W, ids: &mut Ids, e: &Eff, dur: u32, attr: &str, from: &str
     w.close("p:anim");
 }
 
+/// A 3-D effect's curves as keyframed values of the model's attributes, sampled from the same
+/// curves the show plays (`deckcraft_anim::model_effect`), the way PowerPoint writes them.
+fn model_curves(w: &mut W, ids: &mut Ids, e: &Eff, dur: u32) {
+    let a = e.a;
+    let n = if a.effect == "jumpTurn" { 60 } else { 30 };
+    let samples: Vec<(u32, deckcraft_anim::ModelAnim)> = (0..=n)
+        .map(|i| {
+            let t = i as f64 / n as f64;
+            ((t * 100_000.0).round() as u32, deckcraft_anim::model_effect(&a.effect, t, a.amount).unwrap_or_default())
+        })
+        .collect();
+    let axes = ["x", "y", "z"];
+    let mut curves: Vec<(String, &str, Vec<f64>)> = Vec::new();
+    for (k, axis) in axes.iter().enumerate() {
+        curves.push((format!("3d.view.rotation.{axis}"), "sum", samples.iter().map(|(_, m)| m.view_turn[k]).collect()));
+        curves.push((format!("3d.object.rotation.{axis}"), "sum", samples.iter().map(|(_, m)| m.own_turn[k]).collect()));
+        curves.push((format!("3d.object.translation.{axis}"), "sum", samples.iter().map(|(_, m)| m.shift[k]).collect()));
+    }
+    for (k, axis) in axes.iter().enumerate() {
+        curves.push((format!("3d.object.scale.{axis}"), "mult", samples.iter().map(|(_, m)| m.scale[k]).collect()));
+    }
+    for (attr, additive, vals) in curves {
+        let rest = if additive == "mult" { 1.0 } else { 0.0 };
+        if vals.iter().all(|v| (v - rest).abs() < 1e-9) {
+            continue;
+        }
+        w.open("p:anim", A::new().a("calcmode", "lin").a("valueType", "num"));
+        cbhvr(w, ids, e, dur, None, &[attr.as_str()], Some(additive));
+        w.open0("p:tavLst");
+        for ((tm, _), v) in samples.iter().zip(vals.iter()) {
+            let v = if v.is_finite() { (v * 10_000.0).round() / 10_000.0 } else { rest };
+            w.open("p:tav", A::new().a("tm", tm));
+            w.open0("p:val");
+            w.empty("p:fltVal", A::new().a("val", if v == 0.0 { 0.0 } else { v }));
+            w.close("p:val");
+            w.close("p:tav");
+        }
+        w.close("p:tavLst");
+        w.close("p:anim");
+    }
+}
+
 fn filter_for(effect: &str, option: &str) -> &'static str {
     match effect {
         "wipe" | "wipeOut" => match option {
@@ -322,6 +364,10 @@ fn behaviors(w: &mut W, x: &mut Exp, ids: &mut Ids, e: &Eff) {
                     anim_prop(w, ids, e, dur, "ppt_y", if a.option == "d" { "#ppt_y-.1" } else { "#ppt_y+.1" }, "#ppt_y");
                     anim_effect(w, ids, e, dur, "fade", false);
                 }
+                "arrive" => {
+                    anim_effect(w, ids, e, dur, "fade", false);
+                    model_curves(w, ids, e, dur);
+                }
                 other => anim_effect(w, ids, e, dur, filter_for(other, &a.option), false),
             }
         }
@@ -343,11 +389,22 @@ fn behaviors(w: &mut W, x: &mut Exp, ids: &mut Ids, e: &Eff) {
                     anim_prop(w, ids, e, dur, "ppt_h", "#ppt_h", "0");
                     anim_effect(w, ids, e, dur, "fade", true);
                 }
+                "leave" => {
+                    anim_effect(w, ids, e, dur, "fade", true);
+                    model_curves(w, ids, e, dur);
+                }
                 other => anim_effect(w, ids, e, dur, filter_for(other, &a.option), true),
             }
             set_vis(w, ids, e, if a.effect == "disappear" { 0 } else { dur.saturating_sub(1) }, false);
         }
         AnimClass::Emphasis => match a.effect.as_str() {
+            "turntable" => {
+                let deg = a.amount.filter(|v| v.is_finite()).unwrap_or(360.0).clamp(-36_000.0, 36_000.0);
+                w.open("p:animRot", A::new().a("by", (deg * 60_000.0).round() as i64));
+                cbhvr(w, ids, e, dur, None, &["3d.view.rotation.y"], None);
+                w.close("p:animRot");
+            }
+            "swing" | "jumpTurn" => model_curves(w, ids, e, dur),
             "spin" | "teeter" => {
                 let deg = a.amount.unwrap_or(if a.effect == "teeter" { 4.0 } else { 360.0 });
                 let deg = if a.option == "counterClockwise" { -deg.abs() } else { deg };
