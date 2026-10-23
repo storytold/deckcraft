@@ -94,5 +94,9 @@ lto = "thin"
 codegen-units = 16
 debug = 0
 
+[patch."https://github.com/storytold/craft-libs"]
+craft-ui = { git = "https://github.com/wdunn001/craft-libs", rev = "d0e2e20f7ac22ccf1a404fddf888b4ece36c78b1" }
+craft-cloud = { git = "https://github.com/wdunn001/craft-libs", rev = "d0e2e20f7ac22ccf1a404fddf888b4ece36c78b1" }
+
 [patch.crates-io]
 krilla = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8", version = "=0.8.2" }

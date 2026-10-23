@@ -177,6 +177,9 @@ pub struct Backstage {
     pub pdf_hidden: bool,
     /// Export › Change File Type › PNG: leave the slide background out (#784).
     pub png_transparent: bool,
+    /// Save As: which destination is chosen. None until the user picks one, and the cloud is
+    /// offered first for a presentation that came from there.
+    pub save_to_cloud: Option<bool>,
 }
 
 impl Backstage {
@@ -200,6 +203,7 @@ impl Backstage {
             handouts_per_page: 3,
             pdf_hidden: false,
             png_transparent: false,
+            save_to_cloud: None,
         }
     }
 
@@ -254,14 +258,17 @@ fn act(app: &mut SlideApp, nav: Nav, current: Page) -> Option<Page> {
         Nav::Page(p) => Some(p),
         Nav::Save => {
             let web = app.services.pick_save.is_none() && app.services.download.is_some();
-            let has_path = app.session.active().is_some_and(|d| d.path.is_some());
+            // A presentation that came from the cloud already has somewhere to go. The write is
+            // asynchronous, so the view closes on the request rather than on the outcome.
+            let to_cloud = app.session.active().is_some_and(|d| d.path.is_none()) && crate::cloud::has_target(app);
+            let has_path = app.session.active().is_some_and(|d| d.path.is_some()) || to_cloud;
             if !has_path && !web {
                 // A presentation that was never saved goes to Save As first, as in PowerPoint.
                 return Some(Page::SaveAs);
             }
             app.save();
             let saved = app.session.active().is_some_and(|d| !d.is_dirty());
-            if saved || web { None } else { Some(current) }
+            if saved || web || to_cloud { None } else { Some(current) }
         }
         Nav::Close => {
             app.close_presentation();
@@ -767,39 +774,73 @@ fn new_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     }
 }
 
-/// Open: Recent and Browse on the left; the recent presentations (with a search box) on the right.
+/// Open: Recent and Browse on the left; the recent presentations (with a search box) on the
+/// right, and the cloud's own file lists under both.
 fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(230.0);
-            place_row(ui, Icon::Recent, "Recent", true, 220.0);
-            if place_row(ui, Icon::OpenFolder, "Browse", false, 220.0).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
-                let _ = app.run("app.openDialog", json!({}));
-            }
-            if app.session.recovery_dir.is_some() {
-                ui.add_space(24.0);
-                if ui.button("Recover Unsaved Presentations").clicked() {
-                    match app.run("file.recovery.open", json!({})) {
-                        Ok(v) if v.get("opened").and_then(Value::as_array).is_some_and(|a| a.is_empty()) => {
-                            app.set_status("There are no unsaved presentations to recover");
-                        }
-                        _ => {}
+    const PLACES_W: f32 = 230.0;
+    const BETWEEN: f32 = 24.0;
+    let page_w = ui.available_width();
+    // Side-by-side needs room for the places column, rule, and a usable list column. Below that,
+    // stack so cloud content is not given a 420-point minimum on a 320-point page.
+    let side_by_side = page_w >= PLACES_W + BETWEEN + 1.0 + BETWEEN + 280.0;
+    if side_by_side {
+        let rest = page_w - PLACES_W - BETWEEN - 1.0 - BETWEEN;
+        ui.horizontal_top(|ui| {
+            ui.set_width(PLACES_W);
+            open_places(app, ui, true);
+            let h = ui.available_height().max(320.0);
+            let (r, _) = ui.allocate_exact_size(vec2(1.0, h), Sense::hover());
+            ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
+            ui.add_space(BETWEEN);
+            ui.vertical(|ui| {
+                ui.set_max_width(rest);
+                open_lists(app, ui, bs);
+            });
+        });
+    } else {
+        open_places(app, ui, false);
+        ui.add_space(18.0);
+        open_lists(app, ui, bs);
+    }
+}
+
+fn open_places(app: &mut SlideApp, ui: &mut Ui, side_by_side: bool) {
+    ui.vertical(|ui| {
+        let row_w = if side_by_side { 220.0 } else { ui.available_width().min(420.0) };
+        ui.set_width(row_w.max(180.0));
+        place_row(ui, Icon::Recent, "Recent", true, row_w);
+        if place_row(ui, Icon::OpenFolder, "Browse", false, row_w).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
+            let _ = app.run("app.openDialog", json!({}));
+        }
+        if app.session.recovery_dir.is_some() {
+            ui.add_space(24.0);
+            if ui.button("Recover Unsaved Presentations").clicked() {
+                match app.run("file.recovery.open", json!({})) {
+                    Ok(v) if v.get("opened").and_then(Value::as_array).is_some_and(|a| a.is_empty()) => {
+                        app.set_status("There are no unsaved presentations to recover");
                     }
+                    _ => {}
                 }
             }
-        });
-        let h = ui.available_height().max(320.0);
-        let (r, _) = ui.allocate_exact_size(vec2(1.0, h), Sense::hover());
-        ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
-        ui.add_space(24.0);
-        ui.vertical(|ui| {
-            search(ui, &mut bs.query, "Search for a file", 380.0);
-            ui.add_space(12.0);
-            heading(ui, "Presentations");
-            let q = bs.query.clone();
-            recent_list(app, ui, &q, usize::MAX);
-        });
+        }
+    });
+}
+
+fn open_lists(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    ui.vertical(|ui| {
+        ui.set_max_width(ui.available_width());
+        search(ui, &mut bs.query, "Search for a file", 380.0);
+        ui.add_space(12.0);
+        heading(ui, "Presentations");
+        let q = bs.query.clone();
+        recent_list(app, ui, &q, usize::MAX);
+        if crate::cloud::available(app) {
+            ui.add_space(26.0);
+            heading(ui, "Cloud");
+            ui.add_space(6.0);
+            crate::cloud::open_page(app, ui);
+        }
     });
 }
 
@@ -932,6 +973,29 @@ fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: &mut Outcom
     ui.label(RichText::new(&title).font(theme::font(15.0)).color(t.text));
     dim(ui, path.as_deref().unwrap_or("Not saved yet"));
     ui.add_space(14.0);
+    // Where to save, when there is more than one answer to that.
+    if crate::cloud::available(app) {
+        let to_cloud = bs.save_to_cloud.unwrap_or_else(|| crate::cloud::prefers_cloud(app));
+        heading(ui, "Where");
+        ui.add_space(6.0);
+        // Named here, before anything is picked, so the destination reads as the user's own
+        // account and not as a generic place.
+        crate::cloud::start(app);
+        let account = crate::cloud::destination_name(app);
+        if place_row(ui, Icon::Save, "This Computer", !to_cloud, 300.0).on_hover_text("A folder on this computer").clicked() {
+            bs.save_to_cloud = Some(false);
+        }
+        if place_row(ui, Icon::Share, &account, to_cloud, 300.0).on_hover_text("Your cloud account").clicked() {
+            bs.save_to_cloud = Some(true);
+        }
+        ui.add_space(18.0);
+        if to_cloud {
+            if crate::cloud::save_page(app, ui) {
+                out.close = true;
+            }
+            return;
+        }
+    }
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {
         egui::ComboBox::from_id_salt("backstage_save_type").width(340.0).selected_text(current).show_ui(ui, |ui| {

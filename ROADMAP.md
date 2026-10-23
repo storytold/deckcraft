@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (hours to ~95% per audience added; ready 56% → 55%; stage stays alpha; previous: major, full re-measure against PowerPoint for Mac 16.113.4; restructured to the craftrules progress-docs standard) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -14,8 +14,8 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 
 | | Value | Kind |
 |---|---|---|
-| **Feature breadth** | **84%** weighted over 191 PowerPoint features (P0 92%, P1 82%, P2 55%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
-| Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands at d556ff9 (the registry has grown since; not re-measured) |
+| **Feature breadth** | **79%** weighted over 191 PowerPoint features (P0 92%, P1 75%, P2 36%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
+| Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands |
 | **Ready for real work** | **~55%** | estimated: weighted dimensions below |
 | Mainstream practitioner | ~53% | estimated: weekly-use areas × discounts for interaction (×0.92), stability (×0.92) and `.pptx` exchange (×0.88), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
 | Essentials user | ~62% | estimated: core features × discounts for launch (×0.90), clarity (×0.95) and opening received files (×0.90), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
@@ -45,7 +45,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 | Dimension | Ready | Hours to full | Doc |
 |---|---:|---|---|
-| Features (breadth 84% measured, with depth) | ~62% | 140–240 | [docs/parity-checklist.md](docs/parity-checklist.md) |
+| Features (breadth 79% measured, with depth) | ~62% | 140–240 | [docs/parity-checklist.md](docs/parity-checklist.md) |
 | UI/UX fidelity | ~60% | 30–50 | [docs/ui-parity.md](docs/ui-parity.md) |
 | File formats (PPTX, PDF, legacy, export) | ~58% | 60–110 | [docs/file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (GPU raster, video decode, displays, pens) | ~40% | 25–45 | [docs/hardware-parity.md](docs/hardware-parity.md) |
@@ -61,26 +61,26 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 | Area | Breadth (measured) | Ready (est.) | Hours | Doc |
 |---|---:|---:|---|---|
-| Application shell | 81% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
-| Slides and sections | 92% | ~85% | 3–5 | [checklist](docs/parity-checklist.md) |
-| Views | 98% | ~80% | 3–6 | [ui-parity](docs/ui-parity.md) |
-| Masters and themes | 92% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
-| Shapes | 91% | ~75% | 8–14 | [ui-parity](docs/ui-parity.md) |
-| Format (fill, line, effects) | 83% | ~65% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Application shell | 71% | ~55% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Slides and sections | 90% | ~85% | 3–5 | [checklist](docs/parity-checklist.md) |
+| Views | 90% | ~80% | 3–6 | [ui-parity](docs/ui-parity.md) |
+| Masters and themes | 85% | ~70% | 8–14 | [checklist](docs/parity-checklist.md) |
+| Shapes | 86% | ~75% | 8–14 | [ui-parity](docs/ui-parity.md) |
+| Format (fill, line, effects) | 81% | ~65% | 8–14 | [ui-parity](docs/ui-parity.md) |
 | Arrange | 100% | ~90% | 1–2 | [ui-parity](docs/ui-parity.md) |
-| Text | 83% | ~62% | 18–30 | [gaps](docs/gaps.md#features) |
-| Tables | 97% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
+| Text | 80% | ~62% | 18–30 | [gaps](docs/gaps.md#features) |
+| Tables | 89% | ~75% | 3–6 | [checklist](docs/parity-checklist.md) |
 | Charts | 65% | ~45% | 12–20 | [gaps](docs/gaps.md#charts-data-grid-elements-and-the-newer-chart-types) |
-| SmartArt | 50% | ~35% | 8–14 | [gaps](docs/gaps.md#smartart-editing-is-shallow) |
-| Pictures | 60% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
+| SmartArt | 33% | ~25% | 10–16 | [gaps](docs/gaps.md#smartart-is-pre-drawn-shapes-only) |
+| Pictures | 48% | ~45% | 12–20 | [file formats](docs/file-format-parity.md) |
 | Media | 67% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
-| Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
-| Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
-| Slide show and presenter view | 68% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
-| Review | 70% | ~45% | 8–14 | [gaps](docs/gaps.md) |
-| Draw (ink) | 50% | ~30% | 5–9 | [hardware-parity](docs/hardware-parity.md) |
-| Undo and clipboard | 100% | ~75% | 3–5 | [ui-parity](docs/ui-parity.md) |
-| Files (commands; formats above) | 75% | ~50% | in file formats | [file formats](docs/file-format-parity.md) |
+| Transitions | 92% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
+| Animations | 79% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
+| Slide show and presenter view | 66% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
+| Review | 60% | ~45% | 8–14 | [gaps](docs/gaps.md) |
+| Draw (ink) | 33% | ~30% | 5–9 | [hardware-parity](docs/hardware-parity.md) |
+| Undo and clipboard | 88% | ~75% | 3–5 | [ui-parity](docs/ui-parity.md) |
+| Files (commands; formats above) | 69% | ~50% | in file formats | [file formats](docs/file-format-parity.md) |
 
 ## Languages
 
@@ -111,11 +111,8 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
 
 1. **No data loss, no startup crashes:** Close's save prompt (#60), Windows GPU crashes (#40, #59),
    image paste (#53), editor soak tests. 10–20 h.
-2. **PPTX on real decks:** the owned corpus now round-trips comments, links and actions, custom
-   shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
-   fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
-   and animation bounce end. Still open: a corpus of real decks, #70, #74, #77, EMF+ records,
-   MicroType Express font subsets and SVG. 36–64 h.
+2. **PPTX on real decks:** owned corpus, round-trip checks, fixes; #70, #74, #77; EMF/WMF and SVG.
+   36–64 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
@@ -209,17 +206,10 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | Saving a presentation keeps the embedded workbook behind an unchanged chart, and the chart part's relationships (#335). Editing the chart drops that workbook instead of writing numbers that no longer match it |
 | 2026-10-13 | A presentation whose object ids are used up refuses to grow instead of handing out duplicate ids (#407) |
 | 2026-10-13 | macOS: a Finder double-click, Open With, a drop on the Dock icon and `open -a DeckCraft deck.pptx` open the file (#138, #347). `Info.plist` now declares the documents DeckCraft opens (`.deckcraft`, `.pptx`, `.potx`, `.ppsx`, the same set as the Windows installer and the Linux desktop file, kept equal by a test), and the `kAEOpenDocuments` Apple event is handled through the pinned `fmv-macos-events` crate as in GridCraft; the `-psn_` argument older macOS adds on a Finder launch is ignored. PowerPoint stays the default until the user picks DeckCraft |
+| 2026-10-14 | Cloud documents, sharing and working together. File › Open gains a Cloud section with your own files beside what other people shared with you. Save As offers the same account. The title bar gains an account badge that signs in and says who, Share as a split button whose chevron offers Work together and the Save a Copy formats, and a presence row for who else is in the deck. Each cloud presentation carries an overflow menu. A save refuses to overwrite somebody else's work. The pages are `craft-ui`'s. Every Craft app offers the same ones. DeckCraft answers only what a presentation is (`crates/ui-egui/src/cloud.rs`) and how to reach the service (`apps/deckcraft/src/cloud.rs`) |
 | 2026-10-13 | Slide transitions like PowerPoint: every transition and option measured frame by frame against PowerPoint's video export and retuned (curves, directions, soft edges, 3-D perspective, contents moving over backgrounds); PowerPoint's own XML elements and defaults read and written (diagonal Wipe, Zoom, Shape In/Out, Glitter Hexagons, Shred In/Out, Page Curl Single); `deckcraft-cli render-transition` renders frames headless |
 | 2026-10-13 | Wild text cases measured against PowerPoint (102 synthetic slides): bidi by run language, East Asian vertical text upright, mongolianVert/wordArtVert/wordArtVertRtl, underline styles and strikethrough at the font's metrics, centre/right/decimal tabs, East Asian, Thai, Hindi, Arabic and Hebrew numbering, small caps, all-caps "ß", transparent text, soft hyphens, kinsoku, rtlCol and just/dist anchoring, emoji presentation, fallback faces that no longer move the baseline |
 | 2026-10-13 | Render matches PowerPoint more closely on wild shape, picture and table cases: even-odd custom paths, dashes and caps, arrowheads, radial and path gradients, tile rects, rotWithShape, gradient lines, shadows cast by what is drawn (group and perspective too), group fill, picture borders, tiles, reflection, recolour (biLevel, alphaInv, brightness/contrast), table borders and grid default, 20+ preset shapes by their ECMA formulas, default miter joins, and approximate 3-D bevels, cameras and face lighting |
-| 2026-10-13 | Slide show for interactive decks: click-triggered animations play (one step per click, repeating, applied in click order), a slide the show returns to keeps its state and its triggered animations go on where they stopped, shapes an animation has hidden cannot be clicked, a shape without an action blocks the one beneath it, hand cursor over clickable shapes, "advance on click" off respected |
-| 2026-10-12 | SmartArt import: text laid out on its `dsp:txXfrm` text rectangle, not squeezed into the shape (list layouts no longer show text in narrow columns) |
-| 2026-10-12 | Title bar: Export button next to Save, opening the Export dialog on every platform (a shortcut beside File › Export) |
-| 2026-10-13 | PPTX export writes modern threaded comments (`p188`) next to the flattened legacy part; replies and resolved state survive a round trip, and real PowerPoint decks stop importing their comments twice (#70) |
-| 2026-10-12 | Canvas: a right click selects the shape under the pointer before the context menu opens (`contextclick` pointer kind for the control channel and MCP); in edited text the menu offers text items |
-| 2026-10-12 | Canvas: dragging the frame of a text box being edited moves it (move cursor on the frame, one undo step); the caret zone follows rotated boxes |
-| 2026-10-13 | Start screen: a missing Recent file is marked and its click shows the error there; entries can be removed from the list (#172) |
-| 2026-10-12 | Tables: the caret and text selection show in the cell being edited; clicks and double-clicks place the caret in the clicked cell (and select the word); dragging inner column borders, the right edge and row borders resizes them in one undo step; Tab skips cells hidden under a merge |
 | 2026-10-12 | Objects off the slide show and can be selected and moved around it in Normal view, as in PowerPoint; the show, exports and thumbnails still clip to the slide (#270) |
 | 2026-10-12 | Korean, Japanese and Chinese input: IME composition shown in place and underlined, one undo step per composition, candidate window at the caret (slide text, notes, fields); interface text (title, notes, outline, sections, comments) borrows installed fonts for scripts the interface fonts lack (#101) |
 | 2026-10-12 | Selection Pane like PowerPoint (#133): front-most first, groups fold, drag and drop restacks among siblings, Bring Forward / Send Backward, Show All / Hide All, eye, rename in place, keyboard; Lock (pane padlock, canvas menu) keeps objects from moving, sizing or rotating and round-trips PowerPoint's locking attributes |
@@ -228,8 +218,6 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-12 | File tab (Backstage) like PowerPoint's (#76): File or Alt+F opens Home, New, Open, Info, Save, Save As, Print, Export, Close, Account and Options over the window, Esc or Back returns, arrows walk the side menu; the start screen is File › Home. Pages run the existing file commands; new `file.info`, print slide ranges (`"1-3, 5"`), Print through a PDF, Ctrl+P, and Close/Ctrl+W ask about unsaved changes |
 | 2026-10-12 | WordArt text warps (`prstTxWarp`): all 40 presets drawn, curves fitted to PowerPoint by observation; warp adjusts round-trip |
 | 2026-10-12 | Render: line widths, dashes and arrowheads inside a group no longer scale with the group's child-coordinate mapping, so a group in a small legacy child space (scale about 1600) draws thin lines instead of covering the slide (#233) |
-| 2026-10-12 | `deckcraft-cli help` and each subcommand's `--help` explain the CLI to an agent; `describe` spells out a command's parameters and what it acts on; `commands` lists one command per line |
-| 2026-10-11 | Animated GIF export of the deck: the Export… dialog (Animated GIF), `file.export` format `gif`, CLI and MCP (#171) |
 | 2026-10-10 | Progress docs restructured to the craftrules standard; full re-measure (breadth 79%, ready ~55%, mainstream ~53%, essentials ~62%, alpha). Landed: Animation Painter (#54), Morph geometry outlines (#27), animated GIF playback (#39), hyperlink colour and following links in the show (#37, #45), date fields in their own format (#36), flipped shapes keep readable text (#35), show transition fix (#46), start screen from the Home button (#49), MCP export lists PDF (#65), OmaStore manifest (#57) |
 | 2026-10-09 | v0.4.0 released. UAX #9 bidi and Arabic shaping (#4), Morph with Words and Characters (#5), tables grow to fit and PDF cell text (#14), rotating log file (#7), DX12 default on Windows (#16), H.264/HEVC overflow hardening (#2), PPTX sniffing anywhere in the zip (#19) |
 | 2026-10-08 | v0.2.0 and v0.3.0 released: Windows arm64, Flatpak aarch64, AppImage zsync updates, branded DMG |
@@ -301,12 +289,10 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | trivial | Progress log: pen pressure scales ink width |
 | 2026-10-13 | trivial | Progress log: chart workbook round-trip (#335) |
 | 2026-10-13 | trivial | Progress log: Finder opens presentations on macOS (#138) |
+| 2026-10-14 | trivial | Progress log: cloud documents, sharing and working together |
 | 2026-10-13 | trivial | Progress log: wild text cases |
-| 2026-10-13 | trivial | Progress log: slide show for interactive decks |
-| 2026-10-12 | minor | Progress log: table cell editing and border resizing |
 | 2026-10-12 | trivial | Progress log: File tab (Backstage, #76) |
 | 2026-10-12 | trivial | Progress log: lines in scaled groups (#233) |
-| 2026-10-11 | minor | Progress log: animated GIF export (#171); P2 breadth 36% → 37%, overall breadth stays 79% |
 | 2026-10-10 | minor | Readiness-by-audience table with hours to ~95% for full, mainstream and essentials |
 | 2026-10-10 | minor | Added mainstream practitioner (~53%) and essentials user (~62%); features recomputed from written area weights, ready ~56% → ~55% |
 | 2026-10-10 | minor | Stage checked against the new core-workflow gate: passes, stays alpha |

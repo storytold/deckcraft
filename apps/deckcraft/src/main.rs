@@ -17,6 +17,7 @@
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod audio;
+mod cloud;
 mod control_server;
 #[cfg(all(unix, not(target_os = "macos")))]
 mod display;
@@ -267,6 +268,14 @@ fn main() -> eframe::Result {
                 }
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
+            // Open and Save against cloud storage, when a CollabCraft service is configured.
+            // Every call it makes blocks, so it runs on a worker and answers reach the window on
+            // a channel. Without a service the application is local-only and offers nothing
+            // cloud-shaped.
+            if let Some(backend) = cloud::service(cc.egui_ctx.clone()) {
+                app.cloud.connect(backend);
+            }
+            app.share.connect(collabcraft_share::CollabCraft::from_fn(cloud::client).for_app("deckcraft"));
             if let Some(port) = control_port {
                 let rx = control_server::start(port, cc.egui_ctx.clone());
                 app = app.with_control(rx);

@@ -521,7 +521,7 @@ fn print_previews_pages_and_prints_a_pdf() {
     h.run_steps(2);
     click_on_page(&h, "Print");
     h.run_steps(2);
-    let url = h.state().pending_urls.first().cloned().unwrap_or_default();
+    let url = h.state().opened_urls.first().cloned().unwrap_or_default();
     // The URL was handed to egui at the end of the frame; check what it pointed at.
     let printed = std::env::temp_dir().join(format!("{} (print).pdf", h.state().session.active().unwrap().title()));
     assert!(printed.is_file(), "the PDF to print was written: {url}");

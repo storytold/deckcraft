@@ -51,5 +51,21 @@ Coordinates are slide points (1/72 inch; a 16:9 slide is 960 × 540) unless note
 | `show.start` / `show.end` | `{from?: slide index, custom?: name, reading?}` | Slide show. `custom` plays that custom show from its first slide and does not change Set Up. With no `from` and no `custom`, playback starts at the first slide of the show order |
 | `app.open` / `app.save` / `app.export` / `app.quit` | `{path, …}` | Files (export takes the `file.export` params, e.g. `{"path": "deck.pdf", "layout": "handouts", "perPage": 3}` or `{"path": "deck.gif", "width": "large", "secondsPerSlide": 3, "loop": false}`, or `{"path": "slide.png", "transparentBackground": true}` for a PNG without the slide background) |
 
+Cloud storage is reached through `engine.execute` like any other command. Every one of these
+answers with the whole cloud state. They do nothing without a CollabCraft service configured
+(`DECKCRAFT_CLOUD_URL`). They say so when there is none.
+
+| Command | Params | What it does |
+|---|---|---|
+| `cloud.status` | — | The account, what the provider can do, the folder being browsed, what other people shared, transfers in flight, where the open presentation came from |
+| `cloud.open` | — | Opens File › Open and asks the service who is signed in |
+| `cloud.browse` | `{path}` | Lists one folder; an empty path is the root |
+| `cloud.shared` | — | Lists what other people shared with this user |
+| `cloud.link` | — | Begins linking a cloud account. It takes a browser round trip |
+| `cloud.openFile` | `{id?, name?}` | Opens something already listed, by handle or by name |
+| `cloud.save` | — | Writes back over the entry the presentation came from, under the version it was read at |
+| `cloud.saveAs` | `{folder?, name?}` | Saves a new presentation into a folder; without both it opens the Save As page on the cloud |
+| `cloud.reload` | — | Reads the stored copy again, discarding local edits |
+
 The MCP server (`deckcraft-cli mcp`, see [mcp.md](mcp.md)) wraps the same methods for Claude
 and other agents; `deckcraft-cli app --method METHOD [PARAMS]` sends one request from a shell.

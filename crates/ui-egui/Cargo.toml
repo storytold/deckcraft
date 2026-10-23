@@ -18,6 +18,15 @@ deckcraft-render = { workspace = true }
 deckcraft-anim = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-media = { workspace = true }
+# The share dialog, the account badge, the presence row and the cloud Open and Save pages, so
+# DeckCraft offers the same ones as every other Craft app. Pinned by revision because a path
+# would only resolve where somebody has craft-libs checked out beside this repository. The
+# interface half opens no socket, so this builds for the web. The host application supplies the
+# backend that reaches the service (see `cloud`).
+craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "289d562cc6e8b567819aee51f759a78f41a65454", features = ["cloud"] }
+# The vendor-neutral cloud types (a file entry, a capability). Types and contracts only: the
+# crate opens no socket and names no provider, so this builds for the web too.
+craft-cloud = { git = "https://github.com/storytold/craft-libs", rev = "289d562cc6e8b567819aee51f759a78f41a65454" }
 egui = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
