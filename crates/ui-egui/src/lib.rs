@@ -15,6 +15,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -274,6 +275,8 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Interface language: `system` (follow the system's), `en` or `ko`.
+    pub language: String,
 }
 
 impl Default for UiState {
@@ -305,6 +308,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: "system".into(),
         }
     }
 }
@@ -345,6 +349,9 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
+        if !i18n::SETTINGS.contains(&self.language.as_str()) {
+            self.language = d.language;
+        }
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
@@ -395,6 +402,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.about", "About DeckCraft", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
+    ("app.language", "Interface Language", None, "{lang: system|en|ko}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
     ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
@@ -760,7 +768,7 @@ impl SlideApp {
             }
             return match self.run("file.export", params) {
                 Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
+                    self.set_status(i18n::trf("Exported {}", &[&path]));
                     true
                 }
                 Err(_) => false,
@@ -1004,6 +1012,15 @@ impl SlideApp {
             "app.about" => self.dialog = Some(dialogs::Dialog::new("about")),
             "app.palette" => self.palette = Some((String::new(), 0)),
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
+            "app.language" => {
+                let lang = p.get("lang").and_then(Value::as_str).unwrap_or_default();
+                if !i18n::SETTINGS.contains(&lang) {
+                    return Err(format!("unknown language `{lang}`: system, en or ko"));
+                }
+                self.ui.language = lang.into();
+                i18n::set(i18n::resolve(lang));
+                return Ok(json!({ "lang": lang }));
+            }
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {
@@ -1286,7 +1303,7 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status(i18n::trf("Saved {}", &[&path]));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }
@@ -1538,6 +1555,7 @@ impl SlideApp {
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        i18n::set(i18n::resolve(&self.ui.language));
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -1616,6 +1634,9 @@ impl SlideApp {
                 .collect()
         });
         self.ui_fonts.note(ctx, &typed);
+        if i18n::current() == i18n::Lang::Ko {
+            self.ui_fonts.note(ctx, i18n::ko_text());
+        }
         for d in self.session.documents() {
             self.ui_fonts.note(ctx, &d.title());
         }
@@ -2632,6 +2653,41 @@ mod tests {
         assert!(harness.state().dialog.is_none(), "Cancel closes Grid Options");
         assert!(harness.state().ui.gridlines, "Cancel leaves the grid on");
         assert!((harness.state().session.prefs.grid_spacing - 6.0).abs() < 1e-9);
+    }
+
+    /// The interface in Korean: `app.language` (and Preferences › Language) switch the ribbon,
+    /// dialogs and placeholder prompts; Cancel in Preferences puts the language back.
+    #[test]
+    fn korean_interface_switches_and_cancel_restores_it() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        assert!(harness.query_all_by_label("File").next().is_some(), "English by default");
+        assert!(harness.state_mut().run("app.language", json!({"lang": "ja"})).is_err(), "only system, en and ko");
+        harness.state_mut().run("app.language", json!({"lang": "ko"})).unwrap();
+        harness.run_steps(2);
+        assert_eq!(harness.state().ui.language, "ko", "saved with the UI state");
+        assert!(harness.query_all_by_label("파일").next().is_some(), "the File tab reads 파일");
+        assert!(harness.query_all_by_label("File").next().is_none());
+        assert_eq!(i18n::prompts().and_then(|f| f(deckcraft_model::PhType::Title.prompt())), Some("제목을 입력하십시오"));
+
+        // Preferences opens in Korean; switching to English there and cancelling keeps Korean.
+        harness.state_mut().run("app.preferences", json!({})).unwrap();
+        harness.run_steps(2);
+        harness.state_mut().run("app.language", json!({"lang": "en"})).unwrap();
+        harness.run_steps(2);
+        harness.query_all_by_role_and_label(egui::accesskit::Role::Button, "Cancel").next().unwrap().click_accesskit();
+        harness.run_steps(2);
+        assert_eq!(harness.state().ui.language, "ko", "Cancel restores the language");
+        harness.state_mut().run("app.language", json!({"lang": "en"})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.query_all_by_label("File").next().is_some(), "English again");
     }
 
     /// Preferences (#752): Cancel, Esc and the window's close button put back what the dialog

@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::SlideApp;
+use crate::i18n::tr;
 use crate::icons::Icon;
 
 /// One toolbar button: a command, its parameters, and how it looks.
@@ -105,8 +106,8 @@ fn tip(q: &QatItem) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));
     match sc {
-        Some(s) => format!("{} ({})", q.label, crate::ribbon::pretty_shortcut(s)),
-        None => q.label.clone(),
+        Some(s) => format!("{} ({})", tr(&q.label), crate::ribbon::pretty_shortcut(s)),
+        None => tr(&q.label).to_string(),
     }
 }
 
@@ -125,18 +126,18 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             run(app, q);
         }
         r.context_menu(|ui| {
-            if ui.button("Remove from Quick Access Toolbar").clicked() {
+            if ui.button(tr("Remove from Quick Access Toolbar")).clicked() {
                 let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 ui.close();
             }
         });
     }
-    let r = crate::widgets::icon_toggle(ui, Icon::ChevronDown, "Customize Quick Access Toolbar", true, false);
+    let r = crate::widgets::icon_toggle(ui, Icon::ChevronDown, tr("Customize Quick Access Toolbar"), true, false);
     egui::Popup::menu(&r).show(|ui| {
-        ui.label(egui::RichText::new("Customize Quick Access Toolbar").strong());
+        ui.label(egui::RichText::new(tr("Customize Quick Access Toolbar")).strong());
         for c in common() {
             let mut on = app.ui.qat.iter().any(|q| q.same(&c.id, &Value::Null));
-            if ui.checkbox(&mut on, &c.label).changed() {
+            if ui.checkbox(&mut on, tr(&c.label)).changed() {
                 let key = if on { "add" } else { "remove" };
                 let _ = command(app, &json!({key: c.id}));
             }
@@ -146,14 +147,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             for q in extra {
                 let mut on = true;
-                if ui.checkbox(&mut on, &q.label).changed() {
+                if ui.checkbox(&mut on, tr(&q.label)).changed() {
                     let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 }
             }
         }
         ui.separator();
-        ui.label(egui::RichText::new("Right-click any ribbon button to add it.").weak());
-        if ui.button("Reset to Defaults").clicked() {
+        ui.label(egui::RichText::new(tr("Right-click any ribbon button to add it.")).weak());
+        if ui.button(tr("Reset to Defaults")).clicked() {
             let _ = command(app, &json!({"reset": true}));
             ui.close();
         }
@@ -164,8 +165,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 pub fn ribbon_menu(app: &mut SlideApp, r: &egui::Response, icon: Icon, label: &str, id: &str, p: &Value) {
     r.context_menu(|ui| {
         let has = app.ui.qat.iter().any(|q| q.same(id, p));
-        let text = if has { "Remove from Quick Access Toolbar" } else { "Add to Quick Access Toolbar" };
-        if ui.button(text).clicked() {
+        let text = tr(if has { "Remove from Quick Access Toolbar" } else { "Add to Quick Access Toolbar" });
+        if ui.button(tr(text)).clicked() {
             let label = label.replace('\n', " ");
             let key = if has { "remove" } else { "add" };
             let _ = command(app, &json!({key: id, "params": p, "label": label, "icon": icon.name()}));

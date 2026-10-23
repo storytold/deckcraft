@@ -1,11 +1,15 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-15 · **Last updated:** 2026-10-15 · **Change:** major (string catalog, system language and the Korean interface; previous: minor, IME composition underlined in table cells) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+DeckCraft's interface is in English and Korean. The English text in the code is the key: `tr()`
+looks it up in a per-language catalog (`crates/ui-egui/src/i18n/ko.tsv`) and falls back to the
+English, so an untranslated string still reads. The language follows the system (#15) or
+Preferences › Language (`app.language`: `system`, `en` or `ko`) and is saved in `ui.json`. Tests
+check that every string passed to `tr()`, every command label, ribbon tab, dialog title, menu
+item and placeholder prompt has a Korean row. Requests: #30 and PR #34 (Ukrainian, open).
+Dimension score: **~15% ready** (estimated: English and Korean complete, slide-text script support
+partly there), **45–80 h** to parity plus native-speaker review.
 
 ## How the numbers are measured
 
@@ -34,17 +38,18 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
-| Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
+| Korean | ko | ~1,480 (~95%) | yes / yes / no help | system Hangul fonts, in the interface too; IME composition (#101) | no | **full** (review pending) | yes | 0.5–1 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
 
 Other languages shipped: **0** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
 than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
 Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
 
-Per-language hours assume the infrastructure exists: **8–14 h** once for a string catalog (copy a
-sibling app's approach, e.g. EffectCraft's menu and panel catalogs), a language setting that follows
-the system (#15), plural and number formatting, and an `xtask` check that every key has a
-translation. IME composition landed with #101 (slide text, table cells, notes and text fields;
+Per-language hours assume the infrastructure, which is in: a catalog keyed by the English text,
+a language setting that follows the system (#15) and coverage tests. A new language is a
+`<code>.tsv` beside `ko.tsv` and a `Lang` variant. Still English in Korean: engine error messages
+shown in the status bar, the native macOS menu bar, a few formatted status lines (opening,
+AutoRecover, export errors), language and font names. IME composition landed with #101 (slide text, table cells, notes and text fields;
 one undo step per composition, underlined in place); the hours that included it are kept until
 the next re-measure.
 
@@ -58,6 +63,7 @@ common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#p
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-15 | major | String catalog keyed by English text, system language (#15) and Preferences › Language, Korean interface (~1,480 strings); Localization ~8% → ~15% |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
 | 2026-10-10 | major | Created: twelve-language table, ~1,050 UI strings measured, PowerPoint for Mac's 26 languages from its bundle |
