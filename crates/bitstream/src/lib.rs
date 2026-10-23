@@ -41,11 +41,24 @@ pub struct BitReader<'a> {
     data: &'a [u8],
     /// Position in bits.
     pos: usize,
+    /// Bit position of the rbsp_stop_one_bit (last set bit), computed on the first `more_rbsp_data` call.
+    stop_bit: std::cell::OnceCell<Option<usize>>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Number of trailing-zero scans performed on this thread.
+    static STOP_BIT_SCANS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 impl<'a> BitReader<'a> {
     pub fn new(data: &'a [u8]) -> Self {
-        Self { data, pos: 0 }
+        Self { data, pos: 0, stop_bit: std::cell::OnceCell::new() }
+    }
+    fn find_stop_bit(&self) -> Option<usize> {
+        #[cfg(test)]
+        STOP_BIT_SCANS.with(|c| c.set(c.get() + 1));
+        self.data.iter().enumerate().rev().find(|(_, b)| **b != 0).map(|(i, b)| i * 8 + 7 - b.trailing_zeros() as usize)
     }
     pub fn data(&self) -> &'a [u8] {
         self.data
@@ -164,15 +177,7 @@ impl<'a> BitReader<'a> {
         if self.pos >= total {
             return false;
         }
-        // find last set bit (the rbsp_stop_one_bit)
-        let mut last = None;
-        for (i, &b) in self.data.iter().enumerate().rev() {
-            if b != 0 {
-                last = Some(i * 8 + 7 - b.trailing_zeros() as usize);
-                break;
-            }
-        }
-        match last {
+        match *self.stop_bit.get_or_init(|| self.find_stop_bit()) {
             Some(stop) => self.pos < stop,
             None => false,
         }
@@ -363,6 +368,39 @@ pub fn crc32(data: &[u8]) -> u32 {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+
+    #[test]
+    fn more_rbsp_data_does_not_rescan_trailing_zeros() {
+        let mut data = vec![0u8; 8 << 20];
+        data[0] = 0x80;
+        let r = BitReader::new(&data);
+        let before = STOP_BIT_SCANS.with(|c| c.get());
+        let mut trues = 0;
+        for _ in 0..1000 {
+            trues += r.more_rbsp_data() as u32;
+        }
+        assert_eq!(trues, 0);
+        let scans = STOP_BIT_SCANS.with(|c| c.get()) - before;
+        assert!(scans <= 1, "more_rbsp_data rescans the buffer: {scans} scans");
+    }
+
+    #[test]
+    fn new_does_not_scan() {
+        let data = vec![0u8; 1024];
+        let before = STOP_BIT_SCANS.with(|c| c.get());
+        let _ = BitReader::new(&data);
+        assert_eq!(STOP_BIT_SCANS.with(|c| c.get()), before);
+    }
+
+    #[test]
+    fn more_rbsp_data_positions() {
+        let r = BitReader::new(&[0b1010_0000, 0x00]);
+        assert!(r.more_rbsp_data());
+        let mut r2 = r.clone();
+        r2.seek_bits(2);
+        assert!(!r2.more_rbsp_data());
+        assert!(!BitReader::new(&[0, 0]).more_rbsp_data());
+    }
 
     #[test]
     fn read_ue_plus_rejects_overflow() {
