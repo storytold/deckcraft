@@ -22,7 +22,7 @@ fn browse_button_applies_the_picked_files_theme() {
     let log = asked.clone();
     let p2 = path.to_string_lossy().to_string();
     let services = Services {
-        pick_open: Some(Box::new(move |purpose: &str| {
+        pick_open: Some(Box::new(move |purpose: &str, _| {
             log.borrow_mut().push(purpose.to_string());
             Some(p2.clone())
         })),

@@ -217,8 +217,8 @@ fn album_item_label(v: &Value) -> String {
 }
 
 fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
-    let path = if let Some(pick) = app.services.pick_open.as_mut() {
-        pick("picture")
+    let path = if app.services.pick_open.is_some() {
+        app.pick_open_file("picture")
     } else {
         app.set_status("Pass pictures to insert.photoAlbum");
         None
@@ -3401,7 +3401,7 @@ mod tests {
         let suggested = std::rc::Rc::new(RefCell::new(String::new()));
         let seen = suggested.clone();
         let services = crate::Services {
-            pick_save: Some(Box::new(move |s: &str| {
+            pick_save: Some(Box::new(move |s: &str, _| {
                 *seen.borrow_mut() = s.to_string();
                 Some(picked.clone())
             })),
@@ -3459,7 +3459,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("slide.png");
         let picked = path.to_string_lossy().to_string();
-        let services = crate::Services { pick_save: Some(Box::new(move |_: &str| Some(picked.clone()))), ..Default::default() };
+        let services = crate::Services { pick_save: Some(Box::new(move |_: &str, _| Some(picked.clone()))), ..Default::default() };
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
                 app.logic(ui.ctx());

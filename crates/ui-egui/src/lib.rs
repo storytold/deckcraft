@@ -49,7 +49,8 @@ pub use control::{ControlRequest, ControlResponse};
 
 pub type ReadFn = Box<dyn Fn(&str) -> Result<Vec<u8>, String>>;
 pub type WriteFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
-pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
+/// Purpose or suggested name, starting directory → selected path. `None` keeps the OS default.
+pub type PickFn = Box<dyn FnMut(&str, Option<&std::path::Path>) -> Option<String>>;
 /// `(purpose, request id)`. The host shows a picker and later pushes an [`InboxEvent`]
 /// carrying that same id. Completing a cancelled or unknown id does nothing: the file is
 /// not applied to whichever document happens to be active.
@@ -200,9 +201,9 @@ const STATUS_LINGER_MS: f64 = 6000.0;
 /// Platform services injected by the host (desktop or web).
 #[derive(Default)]
 pub struct Services {
-    /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
+    /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) and directory → path.
     pub pick_open: Option<PickFn>,
-    /// Save dialog with a suggested name → path.
+    /// Save dialog with a suggested name and directory → path.
     pub pick_save: Option<PickFn>,
     pub read: Option<ReadFn>,
     pub write: Option<WriteFn>,
@@ -258,6 +259,8 @@ pub struct UiState {
     pub zoom: Option<f32>,
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
+    /// Last directory selected through a native file dialog, shared by Open and Save As.
+    pub file_dialog_directory: Option<std::path::PathBuf>,
     pub presenter_view: bool,
     pub ui_scale: f32,
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
@@ -296,6 +299,7 @@ impl Default for UiState {
             zoom: None,
             sorter_zoom: 1.0,
             recent: vec![],
+            file_dialog_directory: None,
             presenter_view: true,
             ui_scale: 1.0,
             format_tab: "fill".into(),
@@ -752,8 +756,8 @@ impl SlideApp {
             }
         };
         let suggested = self.suggested_name(ext);
-        if let Some(pick) = self.services.pick_save.as_mut() {
-            let Some(path) = pick(&suggested) else { return false };
+        if self.services.pick_save.is_some() {
+            let Some(path) = self.pick_save_file(&suggested) else { return false };
             let mut params = json!({"path": path, "format": format, "all": all});
             if let (Some(o), Some(x)) = (params.as_object_mut(), extra.as_object()) {
                 o.extend(x.clone());
@@ -1169,9 +1173,42 @@ impl SlideApp {
         Ok(json!({"playing": true, "slide": slide, "duration": duration}))
     }
 
+    /// Valid dialog selection first, then the active presentation, then recent files in order.
+    fn file_dialog_directory(&self) -> Option<std::path::PathBuf> {
+        self.ui.file_dialog_directory.clone().filter(|p| p.is_dir()).or_else(|| {
+            self.session
+                .active()
+                .and_then(|d| d.path.as_deref())
+                .and_then(file_parent_directory)
+                .or_else(|| self.ui.recent.iter().find_map(|p| file_parent_directory(p)))
+        })
+    }
+
+    fn remember_file_directory(&mut self, path: &str) {
+        if let Some(directory) = file_parent_directory(path) {
+            self.ui.file_dialog_directory = Some(directory);
+        }
+    }
+
+    pub(crate) fn pick_open_file(&mut self, purpose: &str) -> Option<String> {
+        let directory = self.file_dialog_directory();
+        let pick = self.services.pick_open.as_mut()?;
+        let path = pick(purpose, directory.as_deref())?;
+        self.remember_file_directory(&path);
+        Some(path)
+    }
+
+    fn pick_save_file(&mut self, name: &str) -> Option<String> {
+        let directory = self.file_dialog_directory();
+        let pick = self.services.pick_save.as_mut()?;
+        let path = pick(name, directory.as_deref())?;
+        self.remember_file_directory(&path);
+        Some(path)
+    }
+
     fn pick_and_open(&mut self) {
-        if let Some(pick) = self.services.pick_open.as_mut() {
-            if let Some(path) = pick("open") {
+        if self.services.pick_open.is_some() {
+            if let Some(path) = self.pick_open_file("open") {
                 self.open_path_in_background(&path);
             }
         } else if self.services.open_async.is_some() {
@@ -1228,11 +1265,11 @@ impl SlideApp {
     /// Home › New Slide › Reuse Slides…: pick a presentation and insert all its slides after the
     /// current one (desktop only: the browser picker opens what it picks as a document).
     fn pick_and_reuse(&mut self, keep: bool) {
-        let Some(pick) = self.services.pick_open.as_mut() else {
+        if self.services.pick_open.is_none() {
             self.set_status("Reuse Slides needs the desktop app".to_string());
             return;
-        };
-        let Some(path) = pick("open") else { return };
+        }
+        let Some(path) = self.pick_open_file("open") else { return };
         match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep})) {
             Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
             Err(e) => self.set_status(e.to_string()),
@@ -1245,8 +1282,8 @@ impl SlideApp {
 
     /// Pick a file and run `cmd` with it (`name` + `data`, or `path`) added to `extra`.
     fn pick_and_run(&mut self, purpose: &str, cmd: &str, extra: &Value) {
-        if let Some(pick) = self.services.pick_open.as_mut() {
-            if let Some(path) = pick(purpose) {
+        if self.services.pick_open.is_some() {
+            if let Some(path) = self.pick_open_file(purpose) {
                 let mut args = if extra.is_object() { extra.clone() } else { json!({}) };
                 let r = match self.services.read.as_ref().map(|r| r(&path)) {
                     Some(Ok(bytes)) => {
@@ -1282,8 +1319,8 @@ impl SlideApp {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
         let suggested = format!("{name}.{ext}");
-        if let Some(pick) = self.services.pick_save.as_mut() {
-            if let Some(path) = pick(&suggested) {
+        if self.services.pick_save.is_some() {
+            if let Some(path) = self.pick_save_file(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
                         self.set_status(format!("Saved {path}"));
@@ -1973,6 +2010,13 @@ impl SlideApp {
     }
 }
 
+/// An existing parent directory, resolving relative file names against the working directory.
+fn file_parent_directory(path: &str) -> Option<std::path::PathBuf> {
+    let path = std::path::Path::new(path);
+    let absolute = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir().ok()?.join(path) };
+    absolute.parent().filter(|p| p.is_dir()).map(std::path::Path::to_path_buf)
+}
+
 /// Engine key name for an egui key.
 pub fn key_name(key: egui::Key) -> &'static str {
     use egui::Key::*;
@@ -2262,7 +2306,7 @@ mod tests {
         // Desktop: the file dialog returns a path.
         let blue = svg("blue");
         let services = Services {
-            pick_open: Some(Box::new(|_: &str| Some("b.svg".into()))),
+            pick_open: Some(Box::new(|_: &str, _| Some("b.svg".into()))),
             read: Some(Box::new(move |_: &str| Ok(blue.clone()))),
             ..Default::default()
         };

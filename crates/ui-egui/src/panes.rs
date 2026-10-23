@@ -641,8 +641,7 @@ fn fx_slider(
 
 /// Asks for a picture file and makes it the selected shapes' fill.
 fn pick_fill_picture(app: &mut SlideApp) {
-    if let Some(pick) = app.services.pick_open.as_mut()
-        && let Some(path) = pick("picture")
+    if let Some(path) = app.pick_open_file("picture")
         && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
     {
         run(app, "shape.fill", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)}));
@@ -834,8 +833,7 @@ fn background(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "design.background", json!({"gradient": crate::fillui::gradient_json(&g)}));
                 }
                 "picture" => {
-                    if let Some(pick) = app.services.pick_open.as_mut()
-                        && let Some(path) = pick("picture")
+                    if let Some(path) = app.pick_open_file("picture")
                         && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
                     {
                         let _ = app.run("design.background", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)}));
@@ -894,8 +892,7 @@ fn background(app: &mut SlideApp, ui: &mut Ui) {
         }
         Some(Fill::Picture(pf)) => {
             if ui.button("Insert picture from file…").clicked()
-                && let Some(pick) = app.services.pick_open.as_mut()
-                && let Some(path) = pick("picture")
+                && let Some(path) = app.pick_open_file("picture")
                 && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
             {
                 let _ = app.run("design.background", json!({"picture": deckcraft_engine::cmd::base64_encode(&bytes)}));

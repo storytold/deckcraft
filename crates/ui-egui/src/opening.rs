@@ -213,6 +213,116 @@ mod tests {
         path
     }
 
+    /// #1078: native Open and Save As share their last selected directory.
+    #[test]
+    fn open_and_save_as_share_directory_and_cancellation_preserves_it() {
+        let source = saved_as("dialog-source.deckcraft", 1);
+        let a = std::path::Path::new(&source).parent().unwrap().to_path_buf();
+        let b = a.join("dialog-save");
+        std::fs::create_dir_all(&b).unwrap();
+        let destination = b.join("copy.deckcraft").to_string_lossy().into_owned();
+        let picked = source.clone();
+        let services = crate::Services {
+            pick_open: Some(Box::new(move |purpose, directory| {
+                assert_eq!(purpose, "open");
+                assert_eq!(directory, None);
+                Some(picked.clone())
+            })),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::new(), services);
+        app.pick_and_open();
+        wait(&mut app);
+        assert_eq!(app.session.active().unwrap().path.as_deref(), Some(source.as_str()));
+        assert_eq!(app.ui.file_dialog_directory.as_ref(), Some(&a));
+
+        let expected = a.clone();
+        let picked = destination.clone();
+        app.services.pick_save = Some(Box::new(move |name, directory| {
+            assert_eq!(name, "dialog-source.deckcraft");
+            assert_eq!(directory, Some(expected.as_path()));
+            Some(picked.clone())
+        }));
+        app.save_as_dialog("deckcraft");
+        assert_eq!(app.session.active().unwrap().path.as_deref(), Some(destination.as_str()));
+        assert_eq!(app.ui.file_dialog_directory.as_ref(), Some(&b));
+        assert!(std::path::Path::new(&destination).is_file());
+
+        // Switching documents does not displace the last dialog selection; neither does Cancel.
+        app.session.active_mut().unwrap().path = Some(source.clone());
+        let expected = b.clone();
+        app.services.pick_open = Some(Box::new(move |purpose, directory| {
+            assert_eq!(purpose, "open");
+            assert_eq!(directory, Some(expected.as_path()));
+            None
+        }));
+        let expected = b.clone();
+        app.services.pick_save = Some(Box::new(move |_, directory| {
+            assert_eq!(directory, Some(expected.as_path()));
+            None
+        }));
+        app.pick_and_open();
+        app.save_as_dialog("deckcraft");
+        assert_eq!(app.ui.file_dialog_directory.as_ref(), Some(&b));
+        assert_eq!(app.session.active().unwrap().path.as_deref(), Some(source.as_str()));
+        std::fs::remove_file(source).unwrap();
+        std::fs::remove_file(destination).unwrap();
+        std::fs::remove_dir(b).unwrap();
+    }
+
+    #[test]
+    fn file_dialogs_fall_back_to_active_then_recent_directories() {
+        let root = std::env::temp_dir();
+        let expected = root.clone();
+        let services = crate::Services {
+            pick_open: Some(Box::new(move |_, directory| {
+                assert_eq!(directory, Some(expected.as_path()));
+                None
+            })),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(Session::with_new(), services);
+        app.session.active_mut().unwrap().path = Some(root.join("active.pptx").to_string_lossy().into_owned());
+        let current = std::env::current_dir().unwrap();
+        app.ui.recent = vec![current.join("recent.pptx").to_string_lossy().into_owned()];
+        app.pick_and_open();
+        assert_eq!(app.ui.file_dialog_directory, None, "a fallback is not a selection");
+
+        // A missing remembered directory is ignored; relative recent files resolve against cwd.
+        let missing = root.join(format!("deckcraft-dialog-missing-{}", std::process::id()));
+        assert!(!missing.exists());
+        app.ui.file_dialog_directory = Some(missing.clone());
+        app.session.active_mut().unwrap().path = Some(missing.join("active.pptx").to_string_lossy().into_owned());
+        app.ui.recent = vec![missing.join("recent.pptx").to_string_lossy().into_owned(), "relative.pptx".into()];
+        app.services.pick_save = Some(Box::new(move |_, directory| {
+            assert_eq!(directory, Some(current.as_path()));
+            None
+        }));
+        app.save_as_dialog("deckcraft");
+        assert_eq!(app.ui.file_dialog_directory, Some(missing));
+    }
+
+    #[test]
+    fn file_dialogs_without_valid_directories_keep_the_os_default() {
+        let mut app = SlideApp::new(Session::with_new(), crate::Services::default());
+        let missing = std::env::temp_dir().join(format!("deckcraft-dialog-default-missing-{}", std::process::id()));
+        assert!(!missing.exists());
+        app.ui.file_dialog_directory = Some(missing.clone());
+        app.session.active_mut().unwrap().path = Some(missing.join("active.pptx").to_string_lossy().into_owned());
+        app.ui.recent = vec![missing.join("recent.pptx").to_string_lossy().into_owned()];
+        app.services.pick_open = Some(Box::new(|_, directory| {
+            assert_eq!(directory, None);
+            None
+        }));
+        app.services.pick_save = Some(Box::new(|_, directory| {
+            assert_eq!(directory, None);
+            None
+        }));
+        app.pick_and_open();
+        app.save_as_dialog("deckcraft");
+        assert_eq!(app.ui.file_dialog_directory, Some(missing));
+    }
+
     /// #862: a PowerPoint Show handed over by the system (command line, double-click) starts its
     /// slide show at once, full screen and from the first slide.
     #[test]

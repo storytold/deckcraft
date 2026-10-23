@@ -46,7 +46,7 @@ fn saving_into(dir: &std::path::Path) -> (Services, Rc<RefCell<Vec<String>>>) {
     let log = asked.clone();
     let dir = dir.to_path_buf();
     let services = Services {
-        pick_save: Some(Box::new(move |suggested: &str| {
+        pick_save: Some(Box::new(move |suggested: &str, _| {
             log.borrow_mut().push(suggested.to_string());
             Some(dir.join(suggested).to_string_lossy().to_string())
         })),
@@ -464,7 +464,7 @@ fn a_file_that_cant_be_opened_says_why() {
     let path = dir.join("Notes.pptx");
     std::fs::write(&path, b"not a presentation").unwrap();
     let picked = path.to_string_lossy().to_string();
-    let services = Services { pick_open: Some(Box::new(move |_: &str| Some(picked.clone()))), ..Default::default() };
+    let services = Services { pick_open: Some(Box::new(move |_: &str, _| Some(picked.clone()))), ..Default::default() };
     let mut h = harness(SlideApp::new(Session::new(), services));
     h.state_mut().run("app.backstage", json!({"page": "open"})).unwrap();
     h.run_steps(2);

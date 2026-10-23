@@ -120,17 +120,21 @@ mod tests {
         assert_eq!(prefs.author.chars().count(), 256);
         // A zero or negative zoom means "fit".
         std::fs::write(d.join(UI_FILE), r#"{"zoom": 0}"#).unwrap();
-        assert_eq!(load(&d).0.unwrap().zoom, None);
+        let ui = load(&d).0.unwrap();
+        assert_eq!(ui.zoom, None);
+        assert_eq!(ui.file_dialog_directory, None);
     }
 
     #[test]
     fn saving_round_trips_and_leaves_no_temporary_file() {
         let d = dir("save");
-        let ui = UiState { zoom: Some(1.5), recent: vec!["/a.pptx".into()], ..Default::default() };
+        let ui = UiState { zoom: Some(1.5), recent: vec!["/a.pptx".into()], file_dialog_directory: Some(d.clone()), ..Default::default() };
         let prefs = Prefs { author: "Ann".into(), ..Default::default() };
         save(&d.join("nested"), &ui, &prefs);
         let (u, p) = load(&d.join("nested"));
-        assert_eq!(u.unwrap().zoom, Some(1.5));
+        let u = u.unwrap();
+        assert_eq!(u.zoom, Some(1.5));
+        assert_eq!(u.file_dialog_directory, Some(d.clone()));
         assert_eq!(p.unwrap().author, "Ann");
         let names: Vec<String> =
             std::fs::read_dir(d.join("nested")).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
