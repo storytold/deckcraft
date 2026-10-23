@@ -120,6 +120,12 @@ fn services() -> Services {
             };
             d.pick_file().map(|p| p.to_string_lossy().to_string())
         })),
+        pick_pictures: Some(Box::new(|directory, multiple| {
+            let dialog = rfd::FileDialog::new().add_filter("Pictures", &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"]);
+            let dialog = if let Some(directory) = directory { dialog.set_directory(directory) } else { dialog };
+            let paths = if multiple { dialog.pick_files() } else { dialog.pick_file().map(|p| vec![p]) };
+            paths.map(|paths| paths.into_iter().map(|p| p.to_string_lossy().into_owned()).collect())
+        })),
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),

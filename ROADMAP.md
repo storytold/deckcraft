@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** minor (picture cut/paste clipboard routing fixed; desktop picture import supports multiple files and remembers its directory; native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -131,6 +131,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-20 | Cut/copy of pictures publishes a nonempty clipboard marker through commands as well as keyboard events; pasting that marker restores internal objects and media without querying unrelated system clipboard formats |
+| 2026-10-20 | Desktop picture import selects multiple files, remembers the last picture folder in preferences, and defaults to the active presentation folder. Change Picture remains single-select |
 | 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
 | 2026-10-18 | Slide thumbnails and the Slide Sorter render only the slides in view: on a deck of more than 600 slides they used to evict their own thumbnails, so the pane flashed white and never finished (#969) |
 | 2026-10-17 | Opening a file caps absurd effect sizes (glow, soft edges, shadows, reflections, on shapes, text and table text) at what Format Shape allows: a glow of 10^18 pt in a .pptx made rendering ask for 34 GB and abort |
@@ -241,6 +243,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Picture cut/paste clipboard regressions fixed |
+| 2026-10-20 | minor | Desktop picture picker: multiple selection and directory memory |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Progress log: chart package parts survive a native save. Scores and milestone names unchanged |
 | 2026-10-18 | trivial | Progress log: thumbnails of huge decks render only the slides in view (#969) |
