@@ -3894,6 +3894,55 @@ fn table_insert_below_or_right_of_a_huge_index_appends_at_the_end() {
 }
 
 #[test]
+fn table_row_col_commands_reject_an_invalid_index() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"], ["e", "f"]]));
+    for (cmd, key) in [
+        ("table.deleteRow", "row"),
+        ("table.deleteColumn", "col"),
+        ("table.insertRowAbove", "row"),
+        ("table.insertColumnLeft", "col"),
+        ("table.split", "row"),
+    ] {
+        for bad in [json!(-1), json!(1.5), json!("1")] {
+            let r = s.execute(cmd, &json!({"id": id.0, key: bad}));
+            assert!(r.is_err(), "{cmd} {key}={bad} should be rejected, got {r:?}");
+            let t = table_of(&s, id);
+            assert_eq!((t.n_rows(), t.n_cols()), (3, 2), "{cmd} {key}={bad} must leave the table unchanged");
+        }
+    }
+}
+
+#[test]
+fn table_cell_commands_reject_an_invalid_cell_and_name_the_registered_command() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"], ["e", "f"]]));
+    s.execute("table.selectCells", &json!({"id": id.0, "from": [0, 0], "to": [1, 1]})).unwrap();
+    for (cmd, params) in [
+        ("table.split", json!({"id": id.0, "cell": [-1, 0]})),
+        ("table.merge", json!({"id": id.0, "from": [-1, 0], "to": [1, 1]})),
+        ("table.merge", json!({"id": id.0, "from": [0, 0], "to": "x"})),
+        ("table.rowHeight", json!({"id": id.0, "row": -1, "height": 50.0})),
+        ("table.rowHeight", json!({"id": id.0, "row": 1.5, "height": 50.0})),
+        ("table.columnWidth", json!({"id": id.0, "col": -1, "width": 50.0})),
+        ("table.columnWidth", json!({"id": id.0, "col": "1", "width": 50.0, "keepTotal": true})),
+    ] {
+        let before = table_of(&s, id);
+        let (rows, cols) = (before.rows.iter().map(|r| r.height).collect::<Vec<_>>(), before.cols.clone());
+        let r = s.execute(cmd, &params);
+        assert!(r.is_err(), "{cmd} {params} should be rejected, got {r:?}");
+        let t = table_of(&s, id);
+        assert_eq!((t.n_rows(), t.n_cols()), (3, 2), "{cmd} {params} must leave the table unchanged");
+        assert_eq!(t.rows.iter().map(|r| r.height).collect::<Vec<_>>(), rows, "{cmd} {params} must not change row heights");
+        assert_eq!(t.cols, cols, "{cmd} {params} must not change column widths");
+    }
+    let e = s.execute("table.deleteRow", &json!({"id": id.0, "row": -1})).unwrap_err().to_string();
+    assert!(e.contains("table.deleteRow"), "error should name the registered command: {e}");
+    let e = s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": -1})).unwrap_err().to_string();
+    assert!(e.contains("table.insertColumnLeft"), "error should name the registered command: {e}");
+}
+
+#[test]
 fn table_column_width_of_a_huge_column_is_ignored() {
     let mut s = session();
     let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
