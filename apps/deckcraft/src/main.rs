@@ -27,6 +27,7 @@ mod logging;
 mod pasteboard;
 
 use deckcraft_engine::Session;
+use deckcraft_ui_egui::displays::{Display, Displays};
 use deckcraft_ui_egui::{Services, SlideApp};
 
 struct App(
@@ -45,7 +46,27 @@ impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw: &mut egui::RawInput) {
         self.0.raw_input_hook(raw);
     }
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        // The slide show and Presenter View choose their displays from these.
+        if let Some(w) = frame.winit_window() {
+            let list: Vec<_> = w.available_monitors().collect();
+            let current = w.current_monitor();
+            self.0.displays = Displays {
+                editor: list.iter().position(|m| Some(m) == current.as_ref()),
+                list: list
+                    .iter()
+                    .map(|m| {
+                        let (at, size) = (m.position(), m.size());
+                        Display {
+                            x: at.x,
+                            y: at.y,
+                            w: i32::try_from(size.width).unwrap_or(i32::MAX),
+                            h: i32::try_from(size.height).unwrap_or(i32::MAX),
+                        }
+                    })
+                    .collect(),
+            };
+        }
         self.0.ui(ui);
     }
     fn on_exit(&mut self) {

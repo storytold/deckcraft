@@ -12,6 +12,7 @@ pub mod canvas;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
+pub mod displays;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
@@ -259,6 +260,10 @@ pub struct UiState {
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
     pub presenter_view: bool,
+    /// Where Presenter View's window was left: outer position and inner size in physical pixels.
+    pub presenter_window: Option<[i32; 4]>,
+    /// The display the show last filled with Presenter View on, when there were several.
+    pub show_display: Option<usize>,
     pub ui_scale: f32,
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
     pub format_tab: String,
@@ -297,6 +302,8 @@ impl Default for UiState {
             sorter_zoom: 1.0,
             recent: vec![],
             presenter_view: true,
+            presenter_window: None,
+            show_display: None,
             ui_scale: 1.0,
             format_tab: "fill".into(),
             smartart_row: 0,
@@ -345,6 +352,8 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
+        self.presenter_window = self.presenter_window.filter(|r| (200..=20_000).contains(&r[2]) && (150..=20_000).contains(&r[3]));
+        self.show_display = self.show_display.filter(|&d| d < 16);
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
@@ -515,6 +524,8 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The displays, kept current by the desktop app; empty where it cannot tell ([`displays`]).
+    pub displays: displays::Displays,
 }
 
 fn grid_options_touched(p: &Value) -> bool {
@@ -583,6 +594,7 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            displays: displays::Displays::default(),
         }
     }
 

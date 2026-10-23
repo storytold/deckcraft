@@ -67,6 +67,13 @@ pub struct Show {
     media_clock: Option<(usize, f64)>,
     /// Media effects set off and not yet carried out: (shape, effect id).
     media_cues: Vec<(ShapeId, String)>,
+    /// The display the show fills, when there are several ([`crate::displays`]).
+    display: Option<usize>,
+    /// Where to put Presenter View's window, and whether it has been moved there (it is sized on
+    /// the next frame, once it has the new display's scale).
+    presenter_place: Option<([i32; 4], bool)>,
+    /// Where Presenter View's window is, in physical pixels ([`crate::displays`]).
+    presenter_at: Option<[i32; 4]>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -208,6 +215,9 @@ impl Show {
             links: None,
             media_clock: None,
             media_cues: vec![],
+            display: None,
+            presenter_place: None,
+            presenter_at: None,
         }
     }
 
@@ -378,10 +388,10 @@ fn fit(avail: Rect, doc: &Presentation) -> Rect {
 /// A transition layer as an egui mesh: [`deckcraft_anim::layer_mesh`]'s triangles (perspective
 /// cards subdivided so their pictures stay straight) with per-vertex opacity.
 /// Where presenter view's "Next" preview goes: the column's width below its label, kept inside
-/// the top 60% of the column. A portrait slide used to get the full width and a height many
-/// times the window (a white slab over the notes and past the window edge).
+/// the column. A portrait slide used to get the full width and a height many times the window
+/// (a white slab over the notes and past the window edge).
 fn next_rect(right: Rect, doc: &Presentation) -> Rect {
-    let area = Rect::from_min_max(right.min + vec2(0.0, 22.0), pos2(right.max.x, right.min.y + 22.0 + (right.height() - 22.0).max(0.0) * 0.6));
+    let area = Rect::from_min_max(right.min + vec2(0.0, 22.0), pos2(right.max.x, right.max.y.max(right.min.y + 22.0)));
     Rect::from_min_size(area.min, fit(area, doc).size())
 }
 
@@ -527,6 +537,17 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let now = ctx.input(|i| i.time);
     let Some(mut show) = app.show.take() else { return };
     if !show.started {
+        // With Presenter View and several displays, ask which display the show fills.
+        if !show.reading && show.presenter && show.display.is_none() && app.displays.list.len() > 1 {
+            match ask_display(&ctx, ui, &app.displays, app.ui.show_display) {
+                None => {
+                    app.show = Some(show);
+                    return;
+                }
+                Some(None) => return,
+                Some(Some(d)) => show.display = Some(d),
+            }
+        }
         show.started = true;
         show.slide_start = now;
         show.step_start = now;
@@ -534,7 +555,15 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
         if !show.reading {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            ctx.send_viewport_cmd(match show.display {
+                Some(i) => egui::ViewportCommand::SetMonitor(i),
+                None => egui::ViewportCommand::Fullscreen(true),
+            });
+            if show.presenter {
+                let px = |v: f32| (v * ctx.pixels_per_point()).round() as i32;
+                let size = [px(PRESENTER_SIZE[0]), px(PRESENTER_SIZE[1])];
+                show.presenter_place = app.displays.presenter(app.ui.presenter_window, show.display, size).map(|r| (r, false));
+            }
         }
         show.after_enter(&doc, now);
     }
@@ -1036,7 +1065,14 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     // Presenter view in a second window.
     if keep && show.presenter && !show.reading {
-        presenter_window(&ctx, &mut show, &doc, now, &mut keep);
+        presenter_window(&ctx, &mut show, &doc, &app.displays, now, &mut keep);
+        // Remembered for the next show, as PowerPoint does.
+        if show.presenter_at.is_some() {
+            app.ui.presenter_window = show.presenter_at;
+        }
+        if show.display.is_some() {
+            app.ui.show_display = show.display;
+        }
     }
     if keep {
         app.show = Some(show);
@@ -1444,6 +1480,8 @@ const GOTO_DIGITS: usize = 4;
 const ZOOM_SCALE: f32 = 2.0;
 const GRID_CAP: usize = 48;
 const TOOL_BAR_W: f32 = 520.0;
+/// Presenter View's window size the first time, in points.
+const PRESENTER_SIZE: [f32; 2] = [1100.0, 700.0];
 const NOTES_DEFAULT: f32 = 18.0;
 const NOTES_MIN: f32 = 12.0;
 const NOTES_MAX: f32 = 48.0;
@@ -1725,7 +1763,84 @@ fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usi
     Some(tex)
 }
 
-fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, keep: &mut bool) {
+/// Asks which display the show fills: one button per display, the one chosen last time marked;
+/// Enter takes it, 1–9 pick a display and Esc cancels the show. `None` while asking, `Some(None)`
+/// when cancelled.
+fn ask_display(ctx: &egui::Context, ui: &mut Ui, displays: &crate::displays::Displays, last: Option<usize>) -> Option<Option<usize>> {
+    ui.painter().rect_filled(ui.max_rect(), CornerRadius::ZERO, Color32::from_gray(24));
+    let first = displays.first_choice(last);
+    let mut choice = None;
+    egui::Modal::new(egui::Id::new("deckcraft-show-display")).show(ctx, |ui| {
+        ui.set_width(360.0);
+        ui.label(egui::RichText::new("Slide Show").strong().size(15.0));
+        ui.add_space(4.0);
+        ui.label("Which display should the slide show fill? Presenter View stays on top of it.");
+        ui.add_space(8.0);
+        for (i, d) in displays.list.iter().enumerate() {
+            let here = if displays.editor == Some(i) { ", this window" } else { "" };
+            let text = format!("{}   Display {}   ({} × {}{here})", i + 1, i + 1, d.w, d.h);
+            if ui.add_sized([ui.available_width(), 30.0], egui::Button::new(text).selected(i == first)).clicked() {
+                choice = Some(Some(i));
+            }
+        }
+        ui.add_space(6.0);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button("Cancel").clicked() {
+                choice = Some(None);
+            }
+        });
+    });
+    use egui::Key::*;
+    ctx.input_mut(|i| {
+        if i.consume_key(egui::Modifiers::NONE, Escape) {
+            choice = Some(None);
+        } else if i.consume_key(egui::Modifiers::NONE, Enter) {
+            choice = Some(Some(first));
+        }
+        for (n, k) in [Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9].into_iter().enumerate().take(displays.list.len()) {
+            if i.consume_key(egui::Modifiers::NONE, k) {
+                choice = Some(Some(n));
+            }
+        }
+    });
+    choice
+}
+
+/// Moves Presenter View's window to `show.presenter_place` (one frame to move it, the next to size
+/// it at the new display's scale), else notes where it is (`show.presenter_at`). Runs in its viewport.
+fn place_presenter(ctx: &egui::Context, show: &mut Show) {
+    let ppp = ctx.pixels_per_point();
+    let points = |px: i32| px as f32 / ppp;
+    match show.presenter_place {
+        Some((r, false)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos2(points(r[0]), points(r[1]))));
+            show.presenter_place = Some((r, true));
+            ctx.request_repaint();
+        }
+        Some((r, true)) => {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(vec2(points(r[2]), points(r[3]))));
+            show.presenter_place = None;
+            show.presenter_at = Some(r);
+        }
+        None => {
+            let at = ctx.input(|i| {
+                let v = i.viewport();
+                // A minimized window sits far off screen.
+                if v.minimized == Some(true) || v.fullscreen == Some(true) {
+                    return None;
+                }
+                let (outer, inner) = (v.outer_rect?, v.inner_rect?);
+                let px = |v: f32| (v * ppp).round() as i32;
+                Some([px(outer.min.x), px(outer.min.y), px(inner.width()), px(inner.height())])
+            });
+            if at.is_some() {
+                show.presenter_at = at;
+            }
+        }
+    }
+}
+
+fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, displays: &crate::displays::Displays, now: f64, keep: &mut bool) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
@@ -1756,11 +1871,16 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
     };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
+        // On top, so the full-screen show never hides it when they share a display.
+        egui::ViewportBuilder::default()
+            .with_title("Presenter View — DeckCraft")
+            .with_inner_size(PRESENTER_SIZE)
+            .with_window_level(egui::WindowLevel::AlwaysOnTop),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now) {
                 *keep = false;
             }
+            place_presenter(ui.ctx(), show);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
             let elapsed = show.timer.elapsed(now);
             let paused = show.timer.paused();
@@ -1806,12 +1926,24 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
                     }
+                    // Swap Displays (PowerPoint's Display Settings), with more than one display.
+                    if let Some(d) = show.display
+                        && button(ui, "Swap Displays").clicked()
+                        && let Some((to, r)) = show.presenter_at.and_then(|at| displays.swap(d, at))
+                    {
+                        ui.ctx().send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::SetMonitor(to));
+                        ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
+                        show.display = Some(to);
+                        show.presenter_place = Some((r, false));
+                    }
                 });
                 ui.add_space(8.0);
+                // The current and next slides side by side on top, the notes across the bottom.
                 let avail = ui.available_rect_before_wrap();
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
-                let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
+                let top = avail.min.y + avail.height() * 0.62;
+                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, top));
+                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), pos2(avail.max.x, top));
+                let cr = fit(left, doc);
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
@@ -1845,24 +1977,26 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                         ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
                     }
                 }
-                let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
+                let notes_head = Rect::from_min_size(pos2(avail.min.x, cr.max.y.max(nr.max.y) + 12.0), vec2(avail.width(), 32.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
                     ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
+                    if button(ui, "A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
                     ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
+                    if button(ui, "A+").clicked() {
                         show.nudge_notes(NOTES_STEP);
                     }
                 });
-                let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
+                // Black on white, like a printed page, for reading at a glance.
+                let notes_rect = Rect::from_min_max(pos2(avail.min.x, notes_head.max.y + 4.0), avail.max);
+                ui.painter().rect_filled(notes_rect, CornerRadius::same(4), Color32::WHITE);
+                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect.shrink(12.0)));
                 egui::ScrollArea::vertical().show(&mut child, |ui| {
-                    ui.label(
-                        egui::RichText::new(if notes.is_empty() { "No notes." } else { &notes }).size(show.notes_px).color(Color32::from_gray(230)),
-                    );
+                    ui.set_width(ui.available_width());
+                    let (text, color) = if notes.is_empty() { ("No notes.", Color32::from_gray(120)) } else { (notes.as_str(), Color32::BLACK) };
+                    ui.label(egui::RichText::new(text).size(show.notes_px).color(color));
                 });
             });
             if ui.input(|i| i.viewport().close_requested()) {
@@ -1922,7 +2056,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
             |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
                 let now = ui.input(|i| i.time);
-                presenter_window(ui.ctx(), show, doc, now, keep);
+                presenter_window(ui.ctx(), show, doc, &crate::displays::Displays::default(), now, keep);
             },
             (doc, show, true),
         );
@@ -1965,6 +2099,53 @@ mod tests {
         harness.key_press(egui::Key::Escape);
         harness.run_steps(2);
         assert!(!harness.state().2, "Escape from Presenter View ends the show");
+    }
+
+    /// With two displays the show asks which one to fill and remembers the answer; Esc cancels it.
+    #[test]
+    fn with_two_displays_the_show_asks_which_one_to_fill() {
+        use crate::displays::{Display, Displays};
+        use egui_kittest::kittest::Queryable;
+
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        app.ui.presenter_view = true;
+        app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        assert!(harness.query_by_label_contains("Which display").is_some(), "it asks");
+        assert!(!harness.state().show.as_ref().unwrap().started, "and waits for the answer");
+        harness.query_by_label_contains("Display 2").unwrap().click();
+        harness.run_steps(3);
+        let show = harness.state().show.as_ref().unwrap();
+        assert!(show.started);
+        assert_eq!(show.display, Some(1));
+        assert_eq!(harness.state().ui.show_display, Some(1), "remembered for the next show");
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(harness.state().show.is_none());
+
+        // Esc at the question cancels the show; the editor stays.
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        assert!(harness.query_by_label_contains("Which display").is_some());
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(harness.state().show.is_none());
+
+        // One display: no question.
+        harness.state_mut().displays.list.truncate(1);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        assert!(harness.state().show.as_ref().unwrap().started);
+        assert!(harness.query_by_label_contains("Which display").is_none());
     }
 
     #[test]

@@ -63,7 +63,11 @@ fn presenter_view_keeps_a_portrait_next_slide_in_its_column() {
     h.state_mut().run("show.start", json!({"from": 0})).unwrap();
     h.run_steps(4);
     let img = h.render().unwrap();
-    // Right of the Next column's narrow preview, below where a landscape one would end.
-    let px = img.get_pixel(1000, 600).0;
+    // Right of the Next column's narrow preview, below where a landscape one would end (and above
+    // the notes across the bottom).
+    let px = img.get_pixel(1000, 470).0;
     assert!(px[0] < 128 && px[1] < 128 && px[2] < 128, "the Next preview spills over the column: {px:?}");
+    // The notes run across the bottom, black on white.
+    let px = img.get_pixel(600, 650).0;
+    assert!(px[0] > 240 && px[1] > 240 && px[2] > 240, "the notes area is white: {px:?}");
 }
