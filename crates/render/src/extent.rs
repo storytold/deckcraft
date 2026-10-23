@@ -51,8 +51,14 @@ pub(crate) fn spill(line: Option<&Line>, effects: Option<&Effects>, w: f64, h: f
 }
 
 /// Slide-space box a top-level shape draws into, its spill included.
-fn shape_box(rctx: &Ctx, s: &Shape) -> Option<Rect> {
-    if s.hidden {
+pub(crate) fn shape_box(rctx: &Ctx, s: &Shape) -> Option<Rect> {
+    shape_box_in(rctx, s, 0)
+}
+
+/// [`shape_box`] in the space of the shape's parent: a group takes in what its children draw,
+/// their spill scaled with them from the child space.
+fn shape_box_in(rctx: &Ctx, s: &Shape, depth: usize) -> Option<Rect> {
+    if depth > 32 || s.hidden {
         return None;
     }
     let x: Xfrm = resolve::xfrm(rctx, s);
@@ -72,7 +78,16 @@ fn shape_box(rctx: &Ctx, s: &Shape) -> Option<Rect> {
     let (line, _) = resolve::line(rctx, s);
     let (fx, _) = resolve::effects(rctx, s);
     let d = spill(Some(&line), fx.as_ref(), x.w, x.h);
-    Some(b.inflate(d, d))
+    let mut r = b.inflate(d, d);
+    if let ShapeKind::Group { children, child } = &s.kind {
+        let gm = deckcraft_geom::group_child_affine(&x, Rect::new(child.x, child.y, child.x + child.w, child.y + child.h));
+        for c in children {
+            if let Some(cb) = shape_box_in(rctx, c, depth + 1).map(|cb| gm.transform_rect_bbox(cb)).filter(|cb| cb.is_finite()) {
+                r = r.union(cb);
+            }
+        }
+    }
+    Some(r)
 }
 
 fn union_boxes<'a>(rctx: &Ctx, shapes: impl IntoIterator<Item = &'a Shape>, into: Rect) -> Rect {

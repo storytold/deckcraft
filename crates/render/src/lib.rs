@@ -2306,6 +2306,12 @@ fn draw_glyph_with(
 
 /// Render `ids` together onto a transparent canvas, in their slide positions (copy as a picture).
 pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale: f64) -> Option<Image> {
+    render_shapes_scaled(pres, slide, ids, scale).map(|(img, _)| img)
+}
+
+/// [`render_shapes`], with the pixels per point it drew at: less than `scale` when the
+/// picture's longer side would pass 2048 px.
+pub fn render_shapes_scaled(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale: f64) -> Option<(Image, f64)> {
     if ids.is_empty() || !scale.is_finite() || scale <= 0.0 {
         return None;
     }
@@ -2318,13 +2324,18 @@ pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale:
         if !b.width().is_finite() || !b.height().is_finite() || b.width() < 0.0 || b.height() < 0.0 {
             continue;
         }
+        // At least 8 pt around the box, more where the outline or effects reach further.
+        let b = match extent::shape_box(&rctx, s).filter(|r| r.is_finite()) {
+            Some(drawn) => drawn.union(b.inflate(8.0, 8.0)),
+            None => b.inflate(8.0, 8.0),
+        };
         bounds = Some(match bounds {
             Some(u) => u.union(b),
             None => b,
         });
         items.push(s);
     }
-    let b = bounds?.inflate(8.0, 8.0);
+    let b = bounds?;
     if !(b.width() > 0.0 && b.height() > 0.0 && b.width().is_finite() && b.height().is_finite()) {
         return None;
     }
@@ -2343,7 +2354,7 @@ pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale:
         for s in items {
             r.shape(&mut ctx, &f, &rctx, s, view, 0);
         }
-        Some(r.finish(ctx, w, h))
+        Some((r.finish(ctx, w, h), fit))
     })
 }
 

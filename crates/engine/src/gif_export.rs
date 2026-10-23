@@ -33,7 +33,7 @@ pub const MAX_FRAMES: usize = 500;
 /// Cap on frames × width × height (≈ 96 Full HD frames or 480 frames at 960×540).
 pub const MAX_TOTAL_PIXELS: u64 = 200_000_000;
 /// NeuQuant sampling: 1 is slowest and best, 30 fastest; 10 is the usual balance.
-const QUANTIZER_SPEED: i32 = 10;
+pub(crate) const QUANTIZER_SPEED: i32 = 10;
 
 /// What to export.
 #[derive(Clone, Debug, PartialEq)]
@@ -181,7 +181,7 @@ pub fn frame_size(doc: &Presentation, width: u32) -> (u32, u32) {
 
 /// Straight RGBA of a premultiplied render composited onto white (GIF has no partial alpha, and
 /// fully transparent pixels would otherwise become see-through).
-fn on_white(img: &deckcraft_render::Image, w: u32, h: u32) -> Vec<u8> {
+pub(crate) fn on_white(img: &deckcraft_render::Image, w: u32, h: u32) -> Vec<u8> {
     let len = (w as usize).saturating_mul(h as usize).saturating_mul(4);
     if img.width != w || img.height != h || img.pixels.len() != len {
         log::error!("GIF export: a slide rendered at {}×{} instead of {w}×{h}; writing a blank frame", img.width, img.height);

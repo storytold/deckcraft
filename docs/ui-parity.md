@@ -93,7 +93,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Exact size/position, lock aspect | yes | yes — Size and Position dialog (height, width, rotation, scale %, lock aspect, position from the top-left), one undo step; ribbon spinners still resize one side at a time |
 | Drag the frame of a text box being edited to move it | yes | yes |
 | Table cells: caret and selection in the cell, click into another cell, drag row and column borders | yes | yes; no cell-range selection by dragging across cells |
-| Context menus on shapes, slides, text, thumbnails | yes | yes, shorter; a right click selects the shape under the pointer first |
+| Context menus on shapes, slides, text, thumbnails | yes | yes, shorter; a right click selects the shape under the pointer first. Save as Picture… on shapes writes PNG, JPEG, GIF, TIFF or BMP (no SVG, EMF or WMF yet) |
 | WordArt transform | Transform gallery | Shape Format ▸ Text Effects ▸ Transform (`format.textWarp`): No Transform, Follow Path and the other 36 presets. Adjust handles: see WordArt adjust handles |
 | Rulers with indent markers and tab stops | yes | yes: indent markers and tab stops drag on the ruler (a click adds a tab, the corner selector picks its kind); Tabs dialog from Home › Paragraph and the Paragraph dialog |
 | Drag and drop of files and between thumbnails | yes | yes |

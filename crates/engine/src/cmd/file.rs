@@ -35,6 +35,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
         cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
+            noundo "shape.saveAsPicture",
+            "Save as Picture…",
+            [],
+            None,
+            "{path, format?: png|jpeg|gif|tiff|bmp (else by the path's extension), ids?: [shape id] (else the selection), scale?: px per pt (2; the longer side stops at 2048 px)} → {path, bytes, width, height}: the shapes as one picture cut to them (with what their outlines and effects draw outside them, at least 8 pt); PNG and TIFF keep the background see-through, JPEG, GIF and BMP put the shapes on white",
+            has_selection,
+            save_as_picture
+        ),
+        cmd!(
             query "file.info",
             "Info",
             ["File"],
@@ -482,6 +491,152 @@ fn picture_bytes(img: &deckcraft_render::Image, format: &str, scale: f64) -> Vec
     if format == "png" { img.to_png_at(dpi) } else { img.to_jpeg_at(92, Some(dpi)) }
 }
 
+/// The right-click menu's Save as Picture… (#1073): the shapes, not the slide, as one picture.
+fn save_as_picture(s: &mut Session, p: &Value) -> Result<Value> {
+    let path = str_param(p, "path").ok_or_else(|| bad(SAVE_AS_PICTURE, "missing `path`"))?.to_string();
+    let format = match str_param(p, "format") {
+        Some(f) => f.to_ascii_lowercase(),
+        None => picture_format_for_path(&path).ok_or_else(|| bad(SAVE_AS_PICTURE, PICTURE_TYPES))?.to_string(),
+    };
+    let ids = targets(s, p)?;
+    let (bytes, width, height) = shapes_picture(s.doc()?, &ids, &format, finite_scale(f64_or(p, "scale", 2.0)))?;
+    write_file(&path, &bytes)?;
+    Ok(json!({"path": path, "bytes": bytes.len(), "width": width, "height": height}))
+}
+
+const SAVE_AS_PICTURE: &str = "shape.saveAsPicture";
+const PICTURE_TYPES: &str = "Save as Picture writes PNG, JPEG, GIF, TIFF or BMP: end the file name with .png, .jpg, .gif, .tif or .bmp";
+
+/// The picture type Save as Picture writes for a file name, by its extension.
+pub fn picture_format_for_path(path: &str) -> Option<&'static str> {
+    let ext = std::path::Path::new(path).extension()?.to_str()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "png",
+        "jpg" | "jpeg" | "jpe" | "jfif" => "jpeg",
+        "gif" => "gif",
+        "tif" | "tiff" => "tiff",
+        "bmp" | "dib" => "bmp",
+        _ => return None,
+    })
+}
+
+/// Every shape id of `shapes`, groups before their children, back to front.
+fn paint_order(shapes: &[deckcraft_model::Shape]) -> Vec<deckcraft_model::ShapeId> {
+    fn walk(shapes: &[deckcraft_model::Shape], depth: usize, out: &mut Vec<deckcraft_model::ShapeId>) {
+        if depth > 64 {
+            return;
+        }
+        for s in shapes {
+            out.push(s.id);
+            walk(s.children(), depth + 1, out);
+        }
+    }
+    let mut out = vec![];
+    walk(shapes, 0, &mut out);
+    out
+}
+
+/// Whether a group holding `id`, at any depth, is among `ids`.
+fn has_ancestor_in(
+    shapes: &[deckcraft_model::Shape],
+    id: deckcraft_model::ShapeId,
+    ids: &std::collections::HashSet<deckcraft_model::ShapeId>,
+) -> bool {
+    let mut parent = deckcraft_model::parent_of(shapes, id).flatten();
+    while let Some(g) = parent {
+        if ids.contains(&g) {
+            return true;
+        }
+        parent = deckcraft_model::parent_of(shapes, g).flatten();
+    }
+    false
+}
+
+/// Shape `id` of the page being edited with its box in page space: a shape inside groups gets
+/// the box their transforms give it. `None` when the page has no such shape.
+fn on_the_page(st: &DocState, id: deckcraft_model::ShapeId) -> Option<deckcraft_model::Shape> {
+    let shapes = st.shapes();
+    let mut shape = deckcraft_model::find_shape(shapes, id)?.clone();
+    let mut parent = deckcraft_model::parent_of(shapes, id)?;
+    // parent_of stops at 64 levels, so this walk does too.
+    while let Some(g) = parent {
+        let group = deckcraft_model::find_shape(shapes, g)?;
+        if let (deckcraft_model::ShapeKind::Group { child, .. }, Some(gx), Some(x)) = (&group.kind, group.xfrm, shape.xfrm) {
+            shape.xfrm = Some(super::arrange::child_to_parent(&gx, child, &x));
+        }
+        parent = deckcraft_model::parent_of(shapes, g)?;
+    }
+    Some(shape)
+}
+
+/// The shapes `ids` of the page being edited drawn as one picture file in `format`, with its
+/// width and height in pixels. Shared by Save as Picture and the web app's download.
+pub fn shapes_picture(st: &DocState, ids: &[deckcraft_model::ShapeId], format: &str, scale: f64) -> Result<(Vec<u8>, u32, u32)> {
+    if ids.is_empty() {
+        return Err(bad(SAVE_AS_PICTURE, NOTHING_SELECTED));
+    }
+    if !matches!(format, "png" | "jpeg" | "jpg" | "gif" | "tiff" | "tif" | "bmp") {
+        return Err(bad(SAVE_AS_PICTURE, format!("{PICTURE_TYPES}, not “{format}”")));
+    }
+    let shapes = st.shapes();
+    // Back to front as the page stacks them, whatever order they were picked in, and a shape
+    // whose group is picked too only once, with the group.
+    let order: std::collections::HashMap<deckcraft_model::ShapeId, usize> =
+        paint_order(shapes).into_iter().enumerate().map(|(i, id)| (id, i)).collect();
+    if let Some(id) = ids.iter().find(|id| !order.contains_key(id)) {
+        return Err(bad(SAVE_AS_PICTURE, format!("unknown shape id {}", id.0)));
+    }
+    let picked: std::collections::HashSet<deckcraft_model::ShapeId> = ids.iter().copied().collect();
+    let mut ids: Vec<deckcraft_model::ShapeId> = ids.iter().copied().filter(|id| !has_ancestor_in(shapes, *id, &picked)).collect();
+    ids.sort_by_key(|id| order.get(id).copied());
+    ids.dedup();
+    // The shapes are drawn on a copy of the current slide (a master or layout is not a slide),
+    // each lifted out of its groups to where the slide shows it, as Ungroup would place it.
+    let mut page = st.current_slide().cloned().unwrap_or_default();
+    page.shapes = ids.iter().filter_map(|id| on_the_page(st, *id)).collect();
+    let (img, drawn) =
+        deckcraft_render::render_shapes_scaled(&st.doc, &page, &ids, scale).ok_or_else(|| bad(SAVE_AS_PICTURE, "the shapes could not be drawn"))?;
+    let (w, h) = (img.width, img.height);
+    let dpi = deckcraft_render::dpi_for_scale(drawn);
+    // JPEG and BMP have no transparency and GIF only an on/off one: the shapes go on white, as
+    // in File › Export, rather than on the black a dropped alpha channel leaves.
+    let on_white = || deckcraft_render::Image { width: w, height: h, pixels: crate::gif_export::on_white(&img, w, h) };
+    let encode_err = |e: image::ImageError| EngineError::Other(format!("the picture could not be written: {e}"));
+    let bytes = match format {
+        "png" => img.to_png_at(dpi),
+        "jpeg" | "jpg" => on_white().to_jpeg_at(92, Some(dpi)),
+        "gif" => {
+            let mut buf = Vec::new();
+            let mut enc = image::codecs::gif::GifEncoder::new_with_speed(&mut buf, crate::gif_export::QUANTIZER_SPEED);
+            enc.encode(&on_white().pixels, w, h, image::ExtendedColorType::Rgba8).map_err(encode_err)?;
+            drop(enc);
+            buf
+        }
+        "bmp" => {
+            let rgb: Vec<u8> = on_white().pixels.as_chunks::<4>().0.iter().flat_map(|p| [p[0], p[1], p[2]]).collect();
+            let mut buf = Vec::new();
+            image::codecs::bmp::BmpEncoder::new(&mut buf).encode(&rgb, w, h, image::ExtendedColorType::Rgb8).map_err(encode_err)?;
+            buf
+        }
+        _ => {
+            let mut buf = std::io::Cursor::new(Vec::new());
+            image::ImageEncoder::write_image(
+                image::codecs::tiff::TiffEncoder::new(&mut buf),
+                &img.to_straight(),
+                w,
+                h,
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(encode_err)?;
+            buf.into_inner()
+        }
+    };
+    if bytes.is_empty() {
+        return Err(bad(SAVE_AS_PICTURE, "the picture could not be written"));
+    }
+    Ok((bytes, w, h))
+}
+
 fn render(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
@@ -706,6 +861,10 @@ fn recovery_discard(s: &mut Session, p: &Value) -> Result<Value> {
 #[cfg(test)]
 #[path = "color_at_tests.rs"]
 mod color_at_tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "tests_save_picture.rs"]
+mod save_picture_tests;
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {

@@ -1252,6 +1252,10 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
                 ui.close();
             }
+            if ui.button("Save as Picture…").clicked() {
+                let _ = app.run("app.saveAsPictureDialog", json!({}));
+                ui.close();
+            }
             if ui.button("Edit Alt Text…").clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("altText"));
                 ui.close();
@@ -1593,6 +1597,51 @@ mod tests {
         assert!(super::grid_line_step(1_000.0, 1.0).is_none());
         assert!(super::grid_line_step(6.0, 0.0).is_none());
         assert!(super::grid_line_step(6.0, 0.1).is_none(), "a 6 pt grid at 10% zoom is finer than one screen point");
+    }
+
+    /// Right-clicking a shape offers Save as Picture…, which asks where to save with a PNG name
+    /// and writes the shape alone, not the slide (#1073).
+    #[test]
+    fn right_click_save_as_picture_writes_the_shape() {
+        use egui_kittest::kittest::Queryable as _;
+        let dir = std::env::temp_dir().join(format!("deckcraft-ui-save-picture-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("shape.png");
+        let picked = path.to_string_lossy().to_string();
+        let suggested = std::rc::Rc::new(std::cell::RefCell::new(String::new()));
+        let seen = suggested.clone();
+        let services = Services {
+            pick_save: Some(Box::new(move |s: &str| {
+                *seen.borrow_mut() = s.to_string();
+                Some(picked.clone())
+            })),
+            ..Default::default()
+        };
+        let mut s = Session::with_new();
+        s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let mut h = Harness::builder().with_size(vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(s, services),
+        );
+        h.run_steps(3);
+        let p = screen(h.state(), 200.0, 150.0);
+        h.event(Event::PointerMoved(p));
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos: p, button: egui::PointerButton::Secondary, pressed, modifiers: Modifiers::NONE });
+        }
+        h.run_steps(3);
+        h.get_by_label("Save as Picture…").click();
+        h.run_steps(3);
+        assert_eq!(suggested.borrow().as_str(), "Picture.png");
+        let img = deckcraft_render::decode_image(&std::fs::read(&path).unwrap()).unwrap();
+        // 200 × 100 pt plus the 8 pt margin on each side, at 2 px per pt.
+        assert_eq!((img.width(), img.height()), (432, 232));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

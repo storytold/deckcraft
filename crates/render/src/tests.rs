@@ -52,6 +52,36 @@ fn render_shapes_draws_the_selection_on_a_transparent_canvas() {
 }
 
 #[test]
+fn a_group_picture_takes_in_the_glow_of_a_child_at_its_edge() {
+    // The child fills the group and glows 40 units in a child space twice the group's size: 20 pt
+    // on the slide, past the 8 pt margin, and not 40.
+    let mut child = Shape {
+        id: ShapeId(882),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 200.0, 100.0)),
+        fill: Some(deckcraft_model::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)))),
+        line: Some(deckcraft_model::Line::none()),
+        ..Default::default()
+    };
+    child.effects = Some(deckcraft_model::Effects {
+        glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 255)), radius: 40.0 }),
+        ..Default::default()
+    });
+    let g = Shape {
+        id: ShapeId(881),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 100.0, 50.0)),
+        kind: ShapeKind::Group { children: vec![child], child: Xfrm::new(0.0, 0.0, 200.0, 100.0) },
+        ..Default::default()
+    };
+    let p = deck_with(vec![g]);
+    let (img, k) = render_shapes_scaled(&p, &p.slides[0], &[ShapeId(881)], 1.0).expect("picture");
+    assert_eq!(k, 1.0);
+    assert!((140..150).contains(&img.width), "{}", img.width);
+    // 12 pt left of the group's box, where the 8 pt margin alone would have cut: still glowing.
+    let px = img.pixel(img.width / 2 - 62, img.height / 2);
+    assert!(px[3] > 0 && px[2] > px[0], "{px:?}");
+}
+
+#[test]
 fn ink_pressure_tapers_the_stroke_and_a_flat_half_stays_full_width() {
     let opts = RenderOpts { scale: 1.0, ..Default::default() };
     let tapered = render_slide(&ink_line(1.0, 0.12), 0, &opts);

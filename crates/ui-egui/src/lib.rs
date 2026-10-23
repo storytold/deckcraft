@@ -54,7 +54,7 @@ pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 /// carrying that same id. Completing a cancelled or unknown id does nothing: the file is
 /// not applied to whichever document happens to be active.
 pub type OpenAsyncFn = Box<dyn FnMut(&str, u64)>;
-pub type DownloadFn = Box<dyn FnMut(&str, &[u8])>;
+pub type DownloadFn = Box<dyn FnMut(&str, &[u8]) -> Result<(), String>>;
 
 /// A file the host finished reading for the request `id` from [`SlideApp::begin_external_file`].
 #[derive(Clone, Debug)]
@@ -404,6 +404,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
+    ("app.saveAsPictureDialog", "Save as Picture…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
     ("app.compareDialog", "Compare…", None, "{}"),
     ("app.dialog", "Open Dialog", None, "{id}"),
@@ -789,10 +790,13 @@ impl SlideApp {
     /// bar) when there are no bytes or no way to download.
     fn download(&mut self, name: &str, bytes: deckcraft_engine::Result<Vec<u8>>) -> bool {
         match (bytes, self.services.download.as_mut()) {
-            (Ok(b), Some(dl)) => {
-                dl(name, &b);
-                true
-            }
+            (Ok(b), Some(dl)) => match dl(name, &b) {
+                Ok(()) => true,
+                Err(e) => {
+                    self.set_status(e);
+                    false
+                }
+            },
             (Err(e), _) => {
                 self.set_status(e.to_string());
                 false
@@ -1018,6 +1022,7 @@ impl SlideApp {
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
+            "app.saveAsPictureDialog" => return self.save_as_picture_dialog(),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
             "app.browseThemeDialog" => {
                 if self.session.active().is_none() {
@@ -1278,6 +1283,40 @@ impl SlideApp {
         }
     }
 
+    /// Save as Picture… on the slide's right-click menu (#1073): the selected shapes as one
+    /// picture, through the save picker on the desktop or as a PNG download on the web.
+    fn save_as_picture_dialog(&mut self) -> Result<Value, String> {
+        let Some(d) = self.session.active() else { return Err("open a presentation first".into()) };
+        if d.selection.shapes.is_empty() {
+            return Err(deckcraft_engine::cmd::NOTHING_SELECTED.into());
+        }
+        // PNG first, as in PowerPoint: it keeps the background around the shapes see-through.
+        let suggested = "Picture.png";
+        if let Some(pick) = self.services.pick_save.as_mut() {
+            let Some(mut path) = pick(suggested) else { return Ok(Value::Null) };
+            if std::path::Path::new(&path).extension().is_none() {
+                path.push_str(".png");
+            }
+            return match self.session.execute("shape.saveAsPicture", &json!({"path": path})) {
+                Ok(v) => {
+                    self.set_status(format!("Saved {path}"));
+                    Ok(v)
+                }
+                Err(e) => {
+                    self.set_status(e.to_string());
+                    Err(e.to_string())
+                }
+            };
+        }
+        let bytes = deckcraft_engine::cmd::file::shapes_picture(d, &d.selection.shapes, "png", 2.0).map(|(b, _, _)| b);
+        if self.download(suggested, bytes) {
+            Ok(Value::Null)
+        } else {
+            // download() has put the reason in the status bar; run() would overwrite it with this.
+            Err(self.status.as_ref().map(|s| s.0.clone()).unwrap_or_else(|| "could not save the picture".into()))
+        }
+    }
+
     pub fn save_as_dialog(&mut self, format: &str) {
         let name = self.session.active().map(|d| d.title()).unwrap_or_else(|| "Presentation".into());
         let ext = if format == "pptx" { "pptx" } else { "deckcraft" };
@@ -1297,7 +1336,11 @@ impl SlideApp {
             && let Some(d) = self.session.active()
         {
             match deckcraft_engine::cmd::file::save_bytes(&d.doc, ext) {
-                Ok(bytes) => dl(&suggested, &bytes),
+                Ok(bytes) => {
+                    if let Err(e) = dl(&suggested, &bytes) {
+                        self.set_status(e);
+                    }
+                }
                 Err(e) => self.set_status(e.to_string()),
             }
         }
@@ -2148,7 +2191,10 @@ mod tests {
         let got: Rc<RefCell<Vec<(String, Vec<u8>)>>> = Rc::default();
         let log = got.clone();
         let services = Services {
-            download: Some(Box::new(move |name: &str, b: &[u8]| log.borrow_mut().push((name.to_string(), b.to_vec())))),
+            download: Some(Box::new(move |name: &str, b: &[u8]| {
+                log.borrow_mut().push((name.to_string(), b.to_vec()));
+                Ok(())
+            })),
             ..Default::default()
         };
         let mut app = SlideApp::new(Session::with_new(), services);
@@ -2161,6 +2207,42 @@ mod tests {
         assert_eq!(corner_alpha(&got[0].1), 255, "opaque by default");
         assert_eq!(corner_alpha(&got[1].1), 0, "transparent background");
         assert_eq!(corner_alpha(&got[2].1), 255, "JPEG has no transparency");
+    }
+
+    /// Save as Picture… on the web hands the PNG to the browser; when nothing can take it (no
+    /// download hook), the command fails rather than answering Ok as if it had saved.
+    #[test]
+    fn save_as_picture_on_the_web_reports_a_download_that_did_not_happen() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let selected = || {
+            let mut s = Session::with_new();
+            s.execute("slide.layout", &json!({"layout": "blank"})).unwrap();
+            s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+            s
+        };
+        let got: Rc<RefCell<Vec<String>>> = Rc::default();
+        let log = got.clone();
+        let services = Services {
+            download: Some(Box::new(move |name: &str, _: &[u8]| {
+                log.borrow_mut().push(name.to_string());
+                Ok(())
+            })),
+            ..Default::default()
+        };
+        let mut app = SlideApp::new(selected(), services);
+        assert!(app.run("app.saveAsPictureDialog", json!({})).is_ok());
+        assert_eq!(*got.borrow(), ["Picture.png"]);
+
+        let mut app = SlideApp::new(selected(), Services::default());
+        let err = app.run("app.saveAsPictureDialog", json!({})).unwrap_err();
+        assert!(err.contains("file picker"), "{err}");
+
+        // The browser refused the download (Blob or DOM setup failed): the error comes through.
+        let services = Services { download: Some(Box::new(|_: &str, _: &[u8]| Err("blob failed".to_string()))), ..Default::default() };
+        let mut app = SlideApp::new(selected(), services);
+        let err = app.run("app.saveAsPictureDialog", json!({})).unwrap_err();
+        assert!(err.contains("blob failed"), "{err}");
     }
 
     fn title_text(app: &SlideApp) -> String {
