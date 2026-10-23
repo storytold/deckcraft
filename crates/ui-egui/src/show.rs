@@ -688,7 +688,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         painter.text(
             pos2(full.center().x, full.min.y + 40.0),
             Align2::CENTER_CENTER,
-            "End of slide show, click to exit.",
+            crate::i18n::tr("End of slide show, click to exit."),
             theme::font(18.0),
             Color32::from_gray(200),
         );
@@ -944,7 +944,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         painter.text(
             pos2(full.center().x, full.min.y + 36.0),
             Align2::CENTER_CENTER,
-            "Click the slide to zoom in. Esc cancels.",
+            crate::i18n::tr("Click the slide to zoom in. Esc cancels."),
             theme::font(16.0),
             Color32::WHITE,
         );
@@ -956,7 +956,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         painter.text(
             pos2(bar.min.x + 14.0, bar.center().y),
             Align2::LEFT_CENTER,
-            format!("Slide {} of {}", show.state.slide + 1, doc.slides.len()),
+            if crate::i18n::is_korean() { let __i18n_0 = &(show.state.slide + 1); let __i18n_1 = &(doc.slides.len()); crate::i18n::format_fields("Slide {} of {}", &[("", format!("{}", __i18n_0)), ("", format!("{}", __i18n_1))]) } else { format!("Slide {} of {}", show.state.slide + 1, doc.slides.len()) },
             theme::font(12.0),
             Color32::from_gray(200),
         );
@@ -1028,7 +1028,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         painter.text(
             r.center(),
             Align2::CENTER_CENTER,
-            format!("Slide {:02}:{:04.1}   Total {:02}:{:02}", (t / 60.0) as u32, t % 60.0, (total / 60.0) as u32, (total % 60.0) as u32),
+            if crate::i18n::is_korean() { let __i18n_0 = &((t / 60.0) as u32); let __i18n_1 = &(t % 60.0); let __i18n_2 = &((total / 60.0) as u32); let __i18n_3 = &((total % 60.0) as u32); crate::i18n::format_fields("Slide {:02}:{:04.1}   Total {:02}:{:02}", &[(":02", format!("{:02}", __i18n_0)), (":04.1", format!("{:04.1}", __i18n_1)), (":02", format!("{:02}", __i18n_2)), (":02", format!("{:02}", __i18n_3))]) } else { format!("Slide {:02}:{:04.1}   Total {:02}:{:02}", (t / 60.0) as u32, t % 60.0, (total / 60.0) as u32, (total % 60.0) as u32) },
             theme::font(13.0),
             Color32::WHITE,
         );
@@ -1667,7 +1667,7 @@ fn paint_grid(painter: &egui::Painter, ctx: &egui::Context, show: &mut Show, doc
         painter.text(
             pos2(full.center().x, full.min.y + 50.0),
             Align2::CENTER_CENTER,
-            format!("First {GRID_CAP} slides"),
+            if crate::i18n::is_korean() {  crate::i18n::format_fields("First {GRID_CAP} slides", &[("GRID_CAP", format!("{}", &GRID_CAP))]) } else { format!("First {GRID_CAP} slides") },
             theme::font(13.0),
             Color32::from_gray(180),
         );
@@ -1774,33 +1774,33 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                     ui.add_space(12.0);
                     ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
                     ui.add_space(20.0);
-                    ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
+                    ui.label(egui::RichText::new(if crate::i18n::is_korean() { let __i18n_0 = &(cur + 1); let __i18n_1 = &(doc.slides.len()); crate::i18n::format_fields("Slide {} of {}", &[("", format!("{}", __i18n_0)), ("", format!("{}", __i18n_1))]) } else { format!("Slide {} of {}", cur + 1, doc.slides.len()) }).size(16.0).color(Color32::from_gray(200)));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if button(ui, "End Show").clicked() {
+                        if button(ui, crate::i18n::tr("End Show")).clicked() {
                             *keep = false;
                         }
-                        if button(ui, "Next ▶").clicked() {
+                        if button(ui, crate::i18n::tr("Next ▶")).clicked() {
                             actions.push(show.state.next(doc));
                         }
-                        if button(ui, "◀ Previous").clicked() {
+                        if button(ui, crate::i18n::tr("◀ Previous")).clicked() {
                             actions.push(show.state.prev(doc));
                         }
                     });
                 });
                 ui.horizontal(|ui| {
-                    if button(ui, if paused { "Resume" } else { "Pause" }).clicked() {
+                    if button(ui, if paused { crate::i18n::tr("Resume") } else { "Pause" }).clicked() {
                         show.timer.toggle(now);
                     }
                     if button(ui, "Reset").clicked() {
                         show.timer.reset(now);
                     }
-                    if button(ui, if show.blank == Some(Color32::BLACK) { "Black on" } else { "Black" }).clicked() {
+                    if button(ui, if show.blank == Some(Color32::BLACK) { crate::i18n::tr("Black on") } else { crate::i18n::tr("Black") }).clicked() {
                         toggle_blank(show, Color32::BLACK);
                     }
-                    if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
+                    if button(ui, if show.blank == Some(Color32::WHITE) { crate::i18n::tr("White on") } else { crate::i18n::tr("White") }).clicked() {
                         toggle_blank(show, Color32::WHITE);
                     }
-                    if button(ui, if show.grid { "All slides on" } else { "All slides" }).clicked() {
+                    if button(ui, if show.grid { crate::i18n::tr("All slides on") } else { "All slides" }).clicked() {
                         show.grid = !show.grid;
                     }
                     if button(ui, show.zoom_label()).clicked() {
@@ -1842,7 +1842,7 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                     }
                     None => {
                         ui.painter().rect_filled(nr, CornerRadius::ZERO, Color32::from_gray(40));
-                        ui.painter().text(nr.center(), Align2::CENTER_CENTER, "End of slide show", theme::font(13.0), Color32::from_gray(170));
+                        ui.painter().text(nr.center(), Align2::CENTER_CENTER, crate::i18n::tr("End of slide show"), theme::font(13.0), Color32::from_gray(170));
                     }
                 }
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
@@ -1861,7 +1861,7 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
                 egui::ScrollArea::vertical().show(&mut child, |ui| {
                     ui.label(
-                        egui::RichText::new(if notes.is_empty() { "No notes." } else { &notes }).size(show.notes_px).color(Color32::from_gray(230)),
+                        egui::RichText::new(if notes.is_empty() { crate::i18n::tr("No notes.") } else { &notes }).size(show.notes_px).color(Color32::from_gray(230)),
                     );
                 });
             });

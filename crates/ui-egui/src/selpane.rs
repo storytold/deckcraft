@@ -386,7 +386,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
             app.selpane.rename_started = false;
             ui.close();
         }
-        if ui.button(if row.hidden { "Show" } else { "Hide" }).clicked() {
+        if ui.button(if row.hidden { "Show" } else { crate::i18n::tr("Hide") }).clicked() {
             run(app, "shape.visible", json!({"id": row.id, "visible": row.hidden}));
             ui.close();
         }

@@ -94,10 +94,10 @@ impl SlideApp {
             ui.set_width(320.0);
             ui.horizontal(|ui| {
                 ui.add(egui::Spinner::new().size(18.0));
-                ui.label(format!("Opening {name}…"));
+                ui.label(if crate::i18n::is_korean() {  crate::i18n::format_fields("Opening {name}…", &[("name", format!("{}", &name))]) } else { format!("Opening {name}…") });
             });
             ui.add_space(6.0);
-            ui.weak(format!("Reading the file: {secs:.0} s"));
+            ui.weak(if crate::i18n::is_korean() {  crate::i18n::format_fields("Reading the file: {secs:.0} s", &[("secs:.0", format!("{:.0}", &secs))]) } else { format!("Reading the file: {secs:.0} s") });
             ui.add_space(6.0);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 cancel = ui.button("Cancel").clicked();

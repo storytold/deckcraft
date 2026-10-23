@@ -172,7 +172,8 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
     for (i, f) in deckcraft_fonts::CRAFT_FONTS.iter().enumerate() {
         let wanted = (f.family == "Inter" && (f.style == "Regular" || f.style == "SemiBold" || f.style == "Bold"))
             || (f.family == "BIZ UDPGothic" && f.style == "Regular")
-            || (f.family == "Noto Sans Arabic");
+            || (f.family == "Noto Sans Arabic")
+            || (f.family == "Nanum Gothic");
         if !wanted {
             continue;
         }
@@ -180,7 +181,11 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
         defs.font_data.insert(name.clone(), std::sync::Arc::new(FontData::from_static(f.bytes)));
         names.push((f.family, f.style, name));
     }
-    let regular: Vec<String> = names.iter().filter(|(fam, st, _)| !(*fam == "Inter" && *st != "Regular")).map(|(_, _, n)| n.clone()).collect();
+    // Prefer Korean Han glyphs in Korean; retain the historic order in English.
+    if crate::i18n::is_korean() {
+        names.sort_by_key(|(family, _, _)| match *family { "Inter" => 0, "Nanum Gothic" => 1, _ => 2 });
+    }
+    let regular: Vec<String> = names.iter().filter(|(fam, st, _)| !((*fam == "Inter" || *fam == "Nanum Gothic") && *st != "Regular")).map(|(_, _, n)| n.clone()).collect();
     if let Some(list) = defs.families.get_mut(&FontFamily::Proportional) {
         for (k, n) in regular.iter().enumerate() {
             list.insert(k, n.clone());
@@ -188,6 +193,7 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
     }
     // A bold family for headings and selected tabs.
     let mut bold: Vec<String> = names.iter().filter(|(fam, st, _)| *fam == "Inter" && *st == "SemiBold").map(|(_, _, n)| n.clone()).collect();
+    bold.extend(names.iter().filter(|(family, style, _)| *family == "Nanum Gothic" && *style == "Bold").map(|(_, _, name)| name.clone()));
     bold.extend(defs.families.get(&FontFamily::Proportional).cloned().unwrap_or_default());
     defs.families.insert(FontFamily::Name("bold".into()), bold);
     add_fallback_faces(&mut defs, extra);
