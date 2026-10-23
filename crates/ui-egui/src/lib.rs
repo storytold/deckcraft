@@ -15,6 +15,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -191,7 +192,7 @@ fn command_for(purpose: FilePurpose, name: &str, bytes: &[u8]) -> Result<&'stati
         FilePurpose::Open => open_command(name),
         FilePurpose::Infer => infer_command(name, bytes),
     };
-    cmd.ok_or_else(|| format!("{name}: DeckCraft can't open this kind of file"))
+    cmd.ok_or_else(|| crate::i18n::format("{name}: DeckCraft can't open this kind of file", &[name.to_string()]))
 }
 
 /// How long a transient status message stays visible.
@@ -200,6 +201,8 @@ const STATUS_LINGER_MS: f64 = 6000.0;
 /// Platform services injected by the host (desktop or web).
 #[derive(Default)]
 pub struct Services {
+    /// Host locale (OS on desktop, navigator.language on the web).
+    pub system_locale: Option<String>,
     /// Open-file dialog for a purpose (`open`, `picture`, `audio`, `video`) → path.
     pub pick_open: Option<PickFn>,
     /// Save dialog with a suggested name → path.
@@ -237,6 +240,7 @@ pub enum ViewMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
+    pub interface_language: i18n::Language,
     pub brightness: theme::Brightness,
     pub tab: String,
     pub ribbon_collapsed: bool,
@@ -279,6 +283,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
+            interface_language: i18n::Language::System,
             brightness: theme::Brightness::Light,
             tab: "Home".into(),
             ribbon_collapsed: false,
@@ -395,6 +400,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.about", "About DeckCraft", None, "{}"),
     ("app.palette", "Command Palette", Some("Cmd+Shift+P"), "{}"),
     ("app.preferences", "Preferences…", Some("Cmd+,"), "{}"),
+    ("app.language", "Interface Language", None, "{language: system|en|uk|pl}"),
     ("app.openDialog", "Open…", None, "{purpose?}"),
     ("app.insertPictureDialog", "Picture from File…", None, "{}"),
     ("app.smartArtPictureDialog", "Insert Picture in SmartArt…", None, "{id?, index}"),
@@ -592,7 +598,9 @@ impl SlideApp {
     }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
-        self.status = Some((msg.into(), now_ms()));
+        i18n::set_current(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
+        let msg = msg.into();
+        self.status = Some((i18n::tr(&msg).to_string(), now_ms()));
     }
 
     /// A message that must be seen wherever the user is: a toast, which also shows over the start
@@ -654,6 +662,7 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        i18n::set_current(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -760,7 +769,7 @@ impl SlideApp {
             }
             return match self.run("file.export", params) {
                 Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
+                    self.set_status(crate::i18n::format("Exported {path}", std::slice::from_ref(&path)));
                     true
                 }
                 Err(_) => false,
@@ -1003,6 +1012,17 @@ impl SlideApp {
             }
             "app.about" => self.dialog = Some(dialogs::Dialog::new("about")),
             "app.palette" => self.palette = Some((String::new(), 0)),
+            "app.language" => {
+                let language = p.get("language").and_then(Value::as_str).unwrap_or("system");
+                self.ui.interface_language = match language {
+                    "system" => i18n::Language::System,
+                    "en" => i18n::Language::En,
+                    "uk" => i18n::Language::Uk,
+                    "pl" => i18n::Language::Pl,
+                    _ => return Err("unknown interface language".into()),
+                };
+                i18n::set_current(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
+            }
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
@@ -1286,7 +1306,7 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status(crate::i18n::format("Saved {path}", std::slice::from_ref(&path)));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }
@@ -1538,6 +1558,7 @@ impl SlideApp {
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        i18n::set_current(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -1586,7 +1607,7 @@ impl SlideApp {
             if self.session.documents().iter().any(|d| d.is_dirty())
                 && let Err(e) = self.session.execute("file.recovery.save", &json!({}))
             {
-                self.set_status(format!("Couldn't save AutoRecover information: {e}"));
+                self.set_status(crate::i18n::format("Couldn't save AutoRecover information: {e}", &[(e).to_string()]));
             }
         }
         // On the web, dropped files can only be read asynchronously: the host reads them and
@@ -1796,6 +1817,7 @@ impl SlideApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        i18n::set_current(self.ui.interface_language.resolve(self.services.system_locale.as_deref()));
         let ctx = ui.ctx().clone();
         if !self.fonts_ready {
             ctx.request_repaint();
@@ -2636,6 +2658,31 @@ mod tests {
 
     /// Preferences (#752): Cancel, Esc and the window's close button put back what the dialog
     /// changed while it was open; Done keeps it.
+    #[test]
+    fn preferences_cancel_restores_the_interface_language() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let before = harness.state().ui.interface_language;
+        harness.state_mut().run("app.preferences", json!({})).unwrap();
+        harness.run_steps(2);
+        // The language list applies a choice at once, as the other Preferences controls do.
+        harness.state_mut().run("app.language", json!({"language": "pl"})).unwrap();
+        harness.run_steps(2);
+        assert_eq!(harness.state().ui.interface_language, i18n::Language::Pl);
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        let s = harness.state_mut();
+        assert!(s.dialog.is_none(), "Esc closes Preferences");
+        assert_eq!(s.ui.interface_language, before, "Esc restores the interface language");
+        let _ = s.run("app.language", json!({"language": "en"}));
+    }
+
     #[test]
     fn preferences_cancel_restores_the_settings_done_keeps_them() {
         use egui_kittest::kittest::Queryable;
