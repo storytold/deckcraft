@@ -262,7 +262,7 @@ pub fn text_frame(st: &DocState, t: &TextSel) -> Option<(deckcraft_text::TextLay
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
     let l = lay(sh, body, tr);
-    let m = deckcraft_render::text_transform(x.affine(), tr, l.rotation);
+    let m = deckcraft_render::text_transform(super::shape_to_slide(st, sh), tr, l.rotation);
     Some((l, m))
 }
 
@@ -308,7 +308,7 @@ pub fn caret_line(st: &DocState, t: &TextSel) -> Option<(deckcraft_geom::Point, 
     // After End on a wrapped line the caret is drawn at that line's end.
     let aff = if t.at_line_end() { deckcraft_text::Affinity::Upstream } else { deckcraft_text::Affinity::Downstream };
     let (cx, top, bot) = l.caret_drawn(deckcraft_text::Pos { para: t.caret.0, ch: t.caret.1 }, aff)?;
-    let m = deckcraft_render::text_transform(x.affine(), geo.text_rect, l.rotation);
+    let m = deckcraft_render::text_transform(super::shape_to_slide(st, sh), geo.text_rect, l.rotation);
     Some((m * deckcraft_geom::Point::new(cx, top), m * deckcraft_geom::Point::new(cx, bot)))
 }
 
@@ -908,7 +908,7 @@ pub fn range_underlines(
     let Some(l) = layout_for(st, &TextSel { shape: id, ..Default::default() }) else { return vec![] };
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let m = deckcraft_render::text_transform(x.affine(), tr, l.rotation);
+    let m = deckcraft_render::text_transform(super::shape_to_slide(st, sh), tr, l.rotation);
     let mut out = vec![];
     for &(para, a, b) in ranges {
         for (x0, x1, y) in l.composition_underlines(deckcraft_text::Pos { para, ch: a }, deckcraft_text::Pos { para, ch: b }) {
@@ -941,8 +941,7 @@ pub fn cell_range_underlines(
         &body,
         &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
     );
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let m = deckcraft_render::text_transform(x.affine(), rect, l.rotation);
+    let m = deckcraft_render::text_transform(super::shape_to_slide(st, sh), rect, l.rotation);
     let mut out = vec![];
     for &(para, a, b) in ranges {
         for (x0, x1, y) in l.composition_underlines(deckcraft_text::Pos { para, ch: a }, deckcraft_text::Pos { para, ch: b }) {
@@ -968,7 +967,7 @@ pub fn composition_underlines(st: &DocState) -> Vec<(deckcraft_geom::Point, deck
     let Some(l) = layout_for(st, t) else { return vec![] };
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let tr = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
-    let m = deckcraft_render::text_transform(x.affine(), tr, l.rotation);
+    let m = deckcraft_render::text_transform(super::shape_to_slide(st, sh), tr, l.rotation);
     underline_segments(&l, m, c)
 }
 
@@ -1010,8 +1009,7 @@ fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) -> Option<C
         &body,
         &deckcraft_text::Opts { rect, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
     );
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    let to_slide = deckcraft_render::text_transform(x.affine(), rect, layout.rotation);
+    let to_slide = deckcraft_render::text_transform(super::shape_to_slide(st, sh), rect, layout.rotation);
     Some(CellText { layout, to_slide })
 }
 

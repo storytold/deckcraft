@@ -383,8 +383,9 @@ impl Session {
                     continue;
                 }
                 let x = xfrm_of(&st.doc, &st.selection, sh);
+                let parent = cmd::parent_transform(st, *id);
                 if sh.is_line() {
-                    let a = x.affine();
+                    let a = parent * x.affine();
                     for (end, q) in [(0u8, a * Point::new(0.0, 0.0)), (1u8, a * Point::new(x.w, x.h))] {
                         if (q - p).hypot() <= tol * 1.6 {
                             return Some(Hit::LineEnd { id: *id, end });
@@ -394,21 +395,21 @@ impl Session {
                 }
                 let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
                 for hd in &geo.handles {
-                    if (x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
+                    if (parent * x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Adjust { id: *id, index: hd.index });
                     }
                 }
                 for hd in wordart_handles(&st.doc, &st.selection, sh, x.w, x.h) {
-                    if (x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
+                    if (parent * x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Warp { id: *id, index: hd.index });
                     }
                 }
                 let (pts, rot) = box_handles(&x);
-                if (rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
+                if (parent * rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
                     return Some(Hit::Rotate { id: *id });
                 }
                 for (i, q) in pts.iter().enumerate() {
-                    if (*q - p).hypot() <= tol * 1.6 {
+                    if (parent * *q - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Resize { id: *id, handle: i as u8 });
                     }
                 }
@@ -418,7 +419,7 @@ impl Session {
         // of the text covers that spot (#931).
         if let Some(e) = edited_box(st)
             && e.movable
-            && edit_zone(&e.xfrm, p, tol) == EditZone::Frame
+            && e.zone(p, tol) == EditZone::Frame
             && !shape_in_front(st, st.shapes(), e.id, p, tol, 0)
         {
             return Some(Hit::Frame { id: e.id });
@@ -593,7 +594,8 @@ impl Session {
             Some(Hit::Resize { id, handle }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Size");
-                self.tool.drag = Some(Drag::Resize { id, handle, orig, start: p });
+                let start = cmd::parent_transform(self.doc()?, id).inverse() * p;
+                self.tool.drag = Some(Drag::Resize { id, handle, orig, start });
             }
             Some(Hit::LineEnd { id, end }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
@@ -604,7 +606,8 @@ impl Session {
                 let ids: Vec<ShapeId> = if st.selection.shapes.contains(&id) { st.selection.shapes.clone() } else { vec![id] };
                 let origs: Vec<(ShapeId, Xfrm)> = ids.iter().filter_map(|i| st.shape(*i).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
                 let center = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s).center()).unwrap_or(p);
-                let start = (p.y - center.y).atan2(p.x - center.x);
+                let local = cmd::parent_transform(st, id).inverse() * p;
+                let start = (local.y - center.y).atan2(local.x - center.x);
                 self.begin("Rotate");
                 self.tool.drag = Some(Drag::Rotate { ids, center, start, origs });
             }
@@ -734,18 +737,31 @@ impl Session {
                     }
                 }
                 // Smart guides on the moved group's bounds.
-                let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
+                let st = self.doc()?;
+                let bounds = origs
+                    .iter()
+                    .map(|(id, x)| (cmd::parent_transform(st, *id) * x.affine()).transform_rect_bbox(Rect::new(0.0, 0.0, x.w, x.h)))
+                    .reduce(|a, b| a.union(b))
+                    .unwrap_or_default();
                 let moved_b = bounds + d;
                 let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
                 d += snap;
                 self.tool.guides = guides;
                 let origs2: Vec<(ShapeId, Xfrm)> =
                     if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
+                let st = self.doc()?;
+                let deltas: Vec<_> = origs2
+                    .iter()
+                    .map(|(id, _)| {
+                        let inv = cmd::parent_transform(st, *id).inverse();
+                        inv * (Point::ZERO + d) - inv * Point::ZERO
+                    })
+                    .collect();
                 self.edit(|doc, sel| {
                     let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
-                    for (id, o) in &origs2 {
+                    for ((id, o), delta) in origs2.iter().zip(&deltas) {
                         if let Some(sh) = deckcraft_model::find_shape_mut(list, *id) {
-                            sh.xfrm = Some(Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o });
+                            sh.xfrm = Some(Xfrm { x: o.x + delta.x, y: o.y + delta.y, ..*o });
                         }
                     }
                     // A connector dragged away from shapes that stay put comes unglued at those ends.
@@ -765,11 +781,14 @@ impl Session {
                     Some(Drag::Move { ids: ids_now, start, origs: origs2, moved: true, duplicate: false, enter_text: enter_text.filter(|_| false) });
             }
             Drag::Resize { id, handle, orig, start } => {
-                let nx = resize_box(&orig, handle, p - start, mods.shift || self.is_picture(id), mods.alt);
-                let nx = self.snap_resize(nx, &orig, handle, id, tol);
+                let parent = cmd::parent_transform(self.doc()?, id);
+                let local = parent.inverse() * p;
+                let nx = resize_box(&orig, handle, local - start, mods.shift || self.is_picture(id), mods.alt);
+                let nx = if parent == Affine::IDENTITY { self.snap_resize(nx, &orig, handle, id, tol) } else { nx };
                 self.set_xfrm(id, nx)?;
             }
             Drag::LineEnd { id, end, orig } => {
+                let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
                 let a = orig.affine();
                 let (p0, p1) = (a * Point::new(0.0, 0.0), a * Point::new(orig.w, orig.h));
                 let mut q = p;
@@ -791,6 +810,9 @@ impl Session {
                 })?;
             }
             Drag::Rotate { ids, center, start, origs } => {
+                let st = self.doc()?;
+                let parent = ids.first().map(|id| cmd::parent_transform(st, *id));
+                let p = parent.unwrap_or(Affine::IDENTITY).inverse() * p;
                 let ang = (p.y - center.y).atan2(p.x - center.x);
                 let mut delta = (ang - start).to_degrees();
                 for (id, o) in &origs {
@@ -812,6 +834,7 @@ impl Session {
                 }
             }
             Drag::Adjust { id, index, orig } => {
+                let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
                 let st = self.doc()?;
                 let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
                 let local = orig.affine().inverse() * p;
@@ -858,6 +881,7 @@ impl Session {
                 return Ok(Value::Null);
             }
             Drag::Warp { id, index, name, base, orig } => {
+                let p = cmd::parent_transform(self.doc()?, id).inverse() * p;
                 let v = {
                     let st = self.doc()?;
                     let Some(sh) = st.shape(id) else { return Ok(Value::Null) };
@@ -1184,8 +1208,7 @@ impl Session {
         if let Some(t) = &st.selection.text
             && !t.notes
             && t.cell.is_none()
-            && let Some(sh) = st.shape(t.shape)
-            && xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p)
+            && edited_box(st).is_some_and(|e| e.zone(p, tol) != EditZone::Outside)
         {
             return Ok(json!({"hit": {"kind": "text", "id": t.shape}, "selected": [t.shape], "editing": true}));
         }
@@ -1232,7 +1255,7 @@ impl Session {
         // A text box: in its own (rotated) frame, short of the band that moves it (`Hit::Frame`).
         // A table cell: anywhere over the table.
         let inside = match t.cell {
-            None => edited_box(st).is_some_and(|e| edit_zone(&e.xfrm, p, tol) != EditZone::Outside),
+            None => edited_box(st).is_some_and(|e| e.zone(p, tol) != EditZone::Outside),
             Some(_) => xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p),
         };
         // A shape in front of the edited text takes the click, as in PowerPoint (#931).
@@ -1656,6 +1679,7 @@ fn member_at(children: &[Shape], to_abs: Affine, p: Point, tol: f64) -> Option<S
 struct EditedBox {
     id: ShapeId,
     xfrm: Xfrm,
+    parent: Affine,
     /// Its frame can be grabbed to move it: not a line (no frame to grab) and not locked.
     movable: bool,
 }
@@ -1687,7 +1711,21 @@ fn edited_box(st: &crate::DocState) -> Option<EditedBox> {
         return None;
     }
     let sh = st.shape(t.shape)?;
-    Some(EditedBox { id: t.shape, xfrm: xfrm_of(&st.doc, &st.selection, sh), movable: !sh.is_line() && !sh.locked })
+    Some(EditedBox {
+        id: t.shape,
+        xfrm: xfrm_of(&st.doc, &st.selection, sh),
+        parent: cmd::parent_transform(st, t.shape),
+        movable: !sh.is_line() && !sh.locked,
+    })
+}
+
+impl EditedBox {
+    fn zone(&self, p: Point, tol: f64) -> EditZone {
+        let inv = self.parent.inverse();
+        let [a, b, c, d, _, _] = inv.as_coeffs();
+        let scale = a.hypot(b).max(c.hypot(d));
+        edit_zone(&self.xfrm, inv * p, tol * scale)
+    }
 }
 
 /// Where a point falls against the box of the text being edited.
