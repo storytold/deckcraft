@@ -1,0 +1,1408 @@
+# Russian interface catalog. English source<TAB>translation; \n denotes a line break.
+# Contributor-original translation, MIT OR Apache-2.0.
+  Fixed date (empty = update automatically):	  Фиксированная дата (пустое поле = обновлять автоматически):
+  Footer text:	  Текст нижнего колонтитула:
+  Present  	  Показать  
+ pt	 пт
+ — Edited	 — Изменено
+"Not Allowed" Symbol	Знак «Не разрешено»
+% of all commits	% всех коммитов
++ New Comment	+ Новый комментарий
++ New Slide	+ Новый слайд
++ Row	+ Строка
++ Series	+ Ряд данных
++Bin	+Интервал
+100% Stacked Bar	Нормированная линейчатая с накоплением
+100% Stacked Column	Нормированная гистограмма с накоплением
+35mm Slides	Слайды 35 мм
+@ribbon:Home	Главная
+@ribbon:Insert	Вставка
+@{}: {} PRs, {} commits, +{} / −{} lines (Δ {}), +{} / −{} binary assets, {} – {}	@{}: запросы на слияние: {}, коммитов: {}, строк: +{} / −{} (Δ {}), двоичных файлов: +{} / −{}, {} – {}
+A3 Paper (297x420 mm)	Бумага A3 (297x420 мм)
+A4 Paper (210x297 mm)	Бумага A4 (210x297 мм)
+Aa	Aa
+Abc	Abc
+About	О программе
+About DeckCraft	О DeckCraft
+Accent 1	Акцент 1
+Accent 2	Акцент 2
+Accent 3	Акцент 3
+Accent 4	Акцент 4
+Accent 5	Акцент 5
+Accent 6	Акцент 6
+Accessibility Checker	Проверка читаемости
+Across	Поперек
+Action	Действие
+Action Button: Custom	Кнопка действия: Настраиваемая
+Action Button: Document	Кнопка действия: Документ
+Action Button: Get Information	Кнопка действия: Сведения
+Action Button: Go Back	Кнопка действия: Назад
+Action Button: Go Back or Previous	Кнопка действия: Назад или предыдущий
+Action Button: Go Forward or Next	Кнопка действия: Вперед или следующий
+Action Button: Go Home	Кнопка действия: Домой
+Action Button: Go to Beginning	Кнопка действия: В начало
+Action Button: Go to End	Кнопка действия: В конец
+Action Button: Help	Кнопка действия: Справка
+Action Button: Sound	Кнопка действия: Звук
+Action Button: Video	Кнопка действия: Видео
+Action Button: {k}	Кнопка действия: {k}
+Action Buttons	Кнопки действий
+Add Animation	Добавить анимацию
+Add Section	Добавить раздел
+Add\nAnimation	Добавить анимацию
+Address:	Адрес:
+Adjust Shape	Изменить фигуру
+After Previous	После предыдущего
+After:	После:
+Airplane	Самолет
+Align	Выровнять
+Align Bottom	Выровнять по нижнему краю
+Align Center	Выровнять по центру
+Align Left	Выровнять по левому краю
+Align Middle	Выровнять по середине
+Align Right	Выровнять по правому краю
+Align Text	Выровнять текст
+Align Top	Выровнять по верхнему краю
+Alt Text	Замещающий текст
+Alt+	Alt+
+Alt+F9	Alt+F9
+Alt\nText	Замещающий текст
+An open-source, clean-room project. Not affiliated with Microsoft.	Независимый проект с открытым исходным кодом. Не связан с Microsoft.
+Angle	Угол
+Animation Gallery	Галерея анимации
+Animation Pane	Область анимации
+Animation Styles	Стили анимации
+Animation\nPane	Область анимации
+Animations	Анимация
+Animation Painter	Формат по образцу анимации
+Apply Animation	Применить анимацию
+Play/Pause GIF	Воспроизвести/приостановить GIF
+Animations on Slide	Анимация на слайде
+Appear	Появление
+Apply	Применить
+Apply To All	Применить ко всем
+Apply to All	Применить ко всем
+Apply\nTo All	Применить ко всем
+Arc	Дуга
+Arcs	Дуги
+Area	С областями
+Arrange	Упорядочить
+Arrow	Стрелка
+Arrow at end	Стрелка в конце
+Arrow at start	Стрелка в начале
+Arrow: Bent	Стрелка: Изогнутая
+Arrow: Bent-Up	Стрелка: Изогнутая вверх
+Arrow: Chevron	Стрелка: Шеврон
+Arrow: Down	Стрелка: Вниз
+Arrow: Left	Стрелка: Влево
+Arrow: Left-Right	Стрелка: Влево-вправо
+Arrow: Left-Right-Up	Стрелка: Влево-вправо-вверх
+Arrow: Left-Up	Стрелка: Влево-вверх
+Arrow: Notched Right	Стрелка: Вправо с выемкой
+Arrow: Pentagon	Стрелка: Пятиугольник
+Arrow: Quad	Стрелка: Четырехсторонняя
+Arrow: Right	Стрелка: Вправо
+Arrow: Striped Right	Стрелка: Полосатая вправо
+Arrow: U-Turn	Стрелка: Разворот
+Arrow: Up	Стрелка: Вверх
+Arrow: Up-Down	Стрелка: Вверх-вниз
+Arrows	Стрелки
+Arrows at both ends	Стрелки на обоих концах
+As One Object	Как один объект
+Audio	Звук
+Audio from File…	Звук из файла…
+AutoCorrect as you type	Автозамена при вводе
+Autofit	Автоподбор
+Automatic	Автоматически
+B4 (ISO) Paper (250x353 mm)	Бумага B4 (ISO) (250x353 мм)
+B5 (ISO) Paper (176x250 mm)	Бумага B5 (ISO) (176x250 мм)
+Background	Фон
+Background Styles	Стили фона
+Background\nStyles	Стили фона
+Backspace	Backspace
+Banded Columns	Чередующиеся столбцы
+Banded Rows	Чередующиеся строки
+Banner	Лента
+Basic Cycle	Простой цикл
+Basic List	Простой список
+Basic Process	Простой процесс
+Basic Shapes	Основные фигуры
+Before text (in):	Перед текстом (дюймы):
+Bevel	Фаска
+Binary assets added	Добавленные двоичные файлы
+Binary assets removed	Удаленные двоичные файлы
+Black Left	Через черное влево
+Black Pen	Черное перо
+Black Right	Через черное вправо
+Blinds	Жалюзи
+Block Arc	Блочная дуга
+Block Arrows	Блочные стрелки
+Blue	Синий
+Blue Pen	Синее перо
+Bold	Полужирный
+Bold Flash	Полужирная вспышка
+Both	Оба
+Bottom	Низ
+Bounce	Отскок
+Box	Коробка
+Box In	Коробка внутрь
+Box Out	Коробка наружу
+Box and Whisker	Ящик с усами
+Brightness	Яркость
+Brightness {:+}%	Яркость {:+}%
+Bring Forward	Переместить вперед
+Bring to Front	На передний план
+Bring\nForward	Переместить вперед
+Browsed at a kiosk (full screen)	Просмотр в киоске (полный экран)
+Browsed by an individual (window)	Индивидуальный просмотр (в окне)
+Bubble	Пузырьковая
+Bullets	Маркеры
+Burst	Взрыв
+By Paragraph	По абзацам
+Callout: Down Arrow	Выноска: Стрелка вниз
+Callout: Left Arrow	Выноска: Стрелка влево
+Callout: Line	Выноска: Линия
+Callout: Right Arrow	Выноска: Стрелка вправо
+Callout: Up Arrow	Выноска: Стрелка вверх
+Callouts	Выноски
+Cameo	Камео
+Camera capture is not available yet	Захват с камеры пока недоступен
+Cancel	Отмена
+Capitalize Each Word	Каждое Слово С Прописной
+Caps	Прописные
+Center	По центру
+Centered	По центру
+Change Case	Изменить регистр
+Change Chart Type	Изменить тип диаграммы
+Change Picture	Изменить рисунок
+Change Shape	Изменить фигуру
+Change\nChart Type	Изменить тип диаграммы
+Character Spacing	Межзнаковый интервал
+Characters	Символы
+Chart	Диаграмма
+Chart Data	Данные диаграммы
+Chart Design	Конструктор диаграмм
+Chart Elements	Элементы диаграммы
+Chart…	Диаграмма…
+Check Accessibility	Проверить читаемость
+Check\nAccessibility	Проверить доступность
+Checkerboard	Шахматная доска
+Chevron	Шеврон
+Choose a SmartArt Graphic	Выберите графический элемент SmartArt
+Chord	Хорда
+Circle	Круг
+Circle In	Круг внутрь
+Circle Out	Круг наружу
+Clear All Formatting	Очистить все форматирование
+Click a symbol to insert it at the insertion point.	Нажмите символ, чтобы вставить его в позицию курсора.
+Click icon to add SmartArt graphic	Щелкните значок, чтобы добавить графический элемент SmartArt
+Click icon to add chart	Щелкните значок, чтобы добавить диаграмму
+Click icon to add media	Щелкните значок, чтобы добавить медиафайл
+Click icon to add picture	Щелкните значок, чтобы добавить рисунок
+Click icon to add table	Щелкните значок, чтобы добавить таблицу
+Click to add first slide	Щелкните, чтобы добавить первый слайд
+Click to add notes	Щелкните, чтобы добавить заметки
+Click to add subtitle	Щелкните, чтобы добавить подзаголовок
+Click to add text	Щелкните, чтобы добавить текст
+Click to add title	Щелкните, чтобы добавить заголовок
+Click to edit Master text styles	Щелкните, чтобы изменить стили текста образца
+Click to edit Master title style	Щелкните, чтобы изменить стиль заголовка образца
+Clock	Часы
+Clockwise	По часовой стрелке
+Close	Закрыть
+Close Master View	Закрыть режим образца
+Close\nMaster View	Закрыть режим образца
+Cloud	Облако
+Clustered Bar	Линейчатая с группировкой
+Clustered Column	Гистограмма с группировкой
+Cmd+	Cmd+
+Cmd+,	Cmd+,
+Cmd+-	Cmd+-
+Cmd+=	Cmd+=
+Cmd+F1	Cmd+F1
+Cmd+Shift+P	Cmd+Shift+P
+Collapse the Ribbon	Свернуть ленту
+Color	Цвет
+Color Pulse	Пульсация цвета
+Colors	Цвета
+Columns	Столбцы
+Comb	Гребенка
+Combo	Комбинированная
+Command Palette	Палитра команд
+Comment	Комментарий
+Comments	Комментарии
+Commits	Коммиты
+Community Links	Ссылки сообщества
+Company	Компания
+Complementary Color	Дополнительный цвет
+Connect Shapes	Соединить фигуры
+Connection Sites	Точки соединения
+Connector: Curved	Соединитель: Кривая
+Connector: Elbow	Соединитель: Ломаная
+Connector: Elbow (one bend)	Соединитель: Ломаная (один излом)
+Content	Содержимое
+Contrast	Контраст
+Contrast {:+}%	Контраст {:+}%
+Contributors	Участники
+Conveyor	Конвейер
+Copy	Копировать
+Corrections	Коррекция
+Couldn't save AutoRecover information: {e}	Не удалось сохранить данные автовосстановления: {e}
+Counter Clockwise	Против часовой стрелки
+Cover	Покрытие
+Create	Создать
+Crop	Обрезать
+Crop 10% each side	Обрезать по 10% с каждой стороны
+Crop 20% each side	Обрезать по 20% с каждой стороны
+Crop to Shape	Обрезать по фигуре
+Cross	Крест
+Crush	Смятие
+Ctrl+	Ctrl+
+Cube	Куб
+Currency	Денежный
+Curtains	Шторы
+Custom	Настраиваемый
+Custom Path	Настраиваемый путь
+Custom Show	Настраиваемый показ
+Custom Show 1	Настраиваемый показ 1
+Custom Shows	Настраиваемые показы
+Custom Slide Show	Настраиваемый показ слайдов
+Custom\nShow	Настраиваемый показ
+Cut	Вырезать
+Cylinder	Цилиндр
+Dark Blue	Темно-синий
+Dark Mode	Темный режим
+Dark Red	Темно-красный
+Dark appearance	Темное оформление
+Dark\nMode	Темный режим
+Darken	Затемнение
+Dash	Штрих
+Dash Dot	Штрих-точка
+Dashes	Штрихи
+Database	База данных
+Date	Дата
+Date & Time	Дата и время
+Date &\nTime	Дата и время
+Date and Time	Дата и время
+Date and time	Дата и время
+Decagon	Десятиугольник
+Decision	Решение
+DeckCraft	DeckCraft
+Decrease Font Size	Уменьшить размер шрифта
+Decrease List Level	Уменьшить уровень списка
+Delay:	Задержка:
+Delete	Удалить
+Delete Columns	Удалить столбцы
+Delete Comment	Удалить комментарий
+Delete Layout	Удалить макет
+Delete Rows	Удалить строки
+Delete Slide	Удалить слайд
+Delete Table	Удалить таблицу
+Delete Text	Удалить текст
+Desaturate	Обесцвечивание
+Deselect	Снять выделение
+Design	Дизайн
+Design Ideas	Идеи для дизайна
+Design\nIdeas	Идеи для дизайна
+Deutsch	Deutsch
+Diagonal Stripe	Диагональная полоса
+Diamond	Ромб
+Diamond In	Ромб внутрь
+Diamond Out	Ромб наружу
+Direction	Направление
+Disappear	Исчезновение
+Discard Recovered Presentations	Отменить восстановленные презентации
+Display name	Отображаемое имя
+Dissolve	Растворение
+Dissolve In	Растворение внутрь
+Dissolve Out	Растворение наружу
+Distribute	Распределить
+Distribute Columns	Распределить столбцы
+Distribute Horizontally	Распределить по горизонтали
+Distribute Rows	Распределить строки
+Distribute Vertically	Распределить по вертикали
+Division Sign	Знак деления
+Do not Autofit	Не подгонять
+Do you want to save the changes you made to {what}?	Сохранить изменения, внесенные в {what}?
+Document	Документ
+Dodecagon	Двенадцатиугольник
+Don't Save	Не сохранять
+Don't show on title slide	Не показывать на титульном слайде
+Done	Готово
+Donut	Кольцо
+Doors	Двери
+Double Brace	Двойная фигурная скобка
+Double Bracket	Двойная квадратная скобка
+Double Wave	Двойная волна
+Doughnut	Кольцевая
+Down	Вниз
+Drape	Занавес
+Draw	Рисование
+Drop Shadow Rectangle	Прямоугольник с тенью
+Duplicate	Дублировать
+Duplicate Selected Slides	Дублировать выбранные слайды
+Duplicate Slide	Дублировать слайд
+Duration:	Длительность:
+Dynamic Content	Динамическое содержимое
+Edit	Правка
+Edit Alt Text…	Изменить альтернативный текст…
+Edit Data	Изменить данные
+Edit Shape	Изменить фигуру
+Edit Text	Изменить текст
+Edit the data: first row = series names, first column = categories.	Измените данные: первая строка — имена рядов, первый столбец — категории.
+Edit\nData	Изменить данные
+Edit\nShape	Изменить фигуру
+Editing	Редактирование
+Effect Options	Параметры эффекта
+Effect\nOptions	Параметры эффекта
+Effects	Эффекты
+Email Address	Адрес электронной почты
+Email address:	Адрес электронной почты:
+Emphasis	Выделение
+End	Конец
+End Show	Завершить показ
+End of slide show	Конец показа слайдов
+End of slide show, click to exit.	Конец показа слайдов. Щелкните, чтобы выйти.
+End trim (s):	Обрезка в конце (с):
+English (United Kingdom)	Английский (Великобритания)
+English (United States)	Английский (США)
+Enter	Enter
+Entrance	Появление
+Equals	Равно
+Equation	Уравнение
+Equation Shapes	Фигуры уравнений
+Eraser	Ластик
+Escape	Escape
+Español	Español
+Exciting	Выразительные
+Exit	Исчезновение
+Expand	Развернуть
+Explosion: 14 Points	Взрыв: 14 лучей
+Explosion: 8 Points	Взрыв: 8 лучей
+Export	Экспорт
+Export the presentation as:	Экспортировать презентацию как:
+Exported {path}	Экспортировано: {path}
+Export…	Экспортировать…
+Fade	Затухание
+Fade in (s):	Появление (с):
+Fade out (s):	Исчезновение (с):
+Fall Over	Падение
+Ferris Wheel	Чертово колесо
+File	Файл
+Fill	Заливка
+Fill & Line	Заливка и линия
+Fill Color	Цвет заливки
+Filled Radar	Заполненная лепестковая
+Find…	Найти…
+First	Первый
+First Column	Первый столбец
+First Slide	Первый слайд
+First commit	Первый коммит
+Fit	Вписать
+Fit slide to current window	Вписать слайд в текущее окно
+Fit to Window	Вписать в окно
+Fit to\nWindow	Вписать в окно
+Flash	Вспышка
+Flip	Отразить
+Flip Horizontal	Отразить горизонтально
+Flip Vertical	Отразить вертикально
+Float In	Плавное появление
+Float Out	Плавное исчезновение
+Flowchart	Блок-схема
+Flowchart: Alternate Process	Блок-схема: Альтернативный процесс
+Flowchart: Card	Блок-схема: Карточка
+Flowchart: Collate	Блок-схема: Сопоставление
+Flowchart: Connector	Блок-схема: Соединитель
+Flowchart: Data	Блок-схема: Данные
+Flowchart: Decision	Блок-схема: Решение
+Flowchart: Delay	Блок-схема: Задержка
+Flowchart: Direct Access Storage	Блок-схема: Хранилище прямого доступа
+Flowchart: Display	Блок-схема: Дисплей
+Flowchart: Document	Блок-схема: Документ
+Flowchart: Extract	Блок-схема: Извлечение
+Flowchart: Internal Storage	Блок-схема: Внутреннее хранилище
+Flowchart: Magnetic Disk	Блок-схема: Магнитный диск
+Flowchart: Manual Input	Блок-схема: Ручной ввод
+Flowchart: Manual Operation	Блок-схема: Ручная операция
+Flowchart: Merge	Блок-схема: Объединение
+Flowchart: Multidocument	Блок-схема: Несколько документов
+Flowchart: Off-page Connector	Блок-схема: Соединитель между страницами
+Flowchart: Or	Блок-схема: Или
+Flowchart: Predefined Process	Блок-схема: Заранее определенный процесс
+Flowchart: Preparation	Блок-схема: Подготовка
+Flowchart: Process	Блок-схема: Процесс
+Flowchart: Punched Tape	Блок-схема: Перфолента
+Flowchart: Sequential Access Storage	Блок-схема: Хранилище последовательного доступа
+Flowchart: Sort	Блок-схема: Сортировка
+Flowchart: Stored Data	Блок-схема: Сохраненные данные
+Flowchart: Summing Junction	Блок-схема: Узел суммирования
+Flowchart: Terminator	Блок-схема: Начало/конец
+Fly In	Вылет
+Fly Out	Улет
+Fly Through	Пролет
+Folded Corner	Согнутый угол
+Follow the layout	Как в макете
+Followed Hyperlink	Посещенная гиперссылка
+Font	Шрифт
+Font Color	Цвет шрифта
+Font Size	Размер шрифта
+Fonts	Шрифты
+Footer	Нижний колонтитул
+Foreground	Передний план
+Format	Формат
+Format Background	Формат фона
+Format Background…	Формат фона…
+Format Painter	Формат по образцу
+Format Painter (double-click to keep it on)	Формат по образцу (двойной щелчок для постоянного режима)
+Format Pane	Область форматирования
+Format Shape	Формат фигуры
+Format Shape…	Формат фигуры…
+Format\nBackground	Формат фона
+Format\nPane	Область форматирования
+Formatting State	Состояние форматирования
+Fracture	Разлом
+Frame	Рамка
+Français	Français
+Freeform	Произвольная фигура
+From 	Из 
+From Beginning	С начала
+From Bottom	Снизу
+From Bottom Left	Снизу слева
+From Bottom Right	Снизу справа
+From Current Slide	С текущего слайда
+From Left	Слева
+From Right	Справа
+From Top	Сверху
+From Top Left	Сверху слева
+From Top Right	Сверху справа
+From bottom left	Снизу слева
+From bottom right	Снизу справа
+From center	Из центра
+From top left	Сверху слева
+From top right	Сверху справа
+From\nBeginning	С начала
+From\nCurrent Slide	С текущего слайда
+Full	Полная
+Full Page Slides	Слайды на всю страницу
+Funnel	Воронка
+Gallery	Галерея
+General	Общие
+Get Text	Получить текст
+Glitter	Блеск
+Glow	Свечение
+Go to	Перейти
+Go to Slide	Перейти к слайду
+Grab bag	Случайная подборка
+Gradient fill	Градиентная заливка
+Gradient stops	Точки градиента
+Gradient…	Градиент…
+Grayscale	Оттенки серого
+Greek	Греческий
+Green	Зеленый
+Gridlines	Линии сетки
+Group	Группировать
+Group Objects	Группировать объекты
+Grow & Turn	Увеличение и поворот
+Grow/Shrink	Увеличение/уменьшение
+Guides	Направляющие
+Half	Половина
+Half Frame	Половина рамки
+Handout Master	Образец выдачи
+Handout Master (coming soon)	Образец выдачи (скоро)
+Handout\nMaster	Образец выдачи
+Handouts (1 slide per page)	Выдача (1 слайд на страницу)
+Handouts (2 slides per page)	Выдача (2 слайда на страницу)
+Handouts (3 slides per page)	Выдача (3 слайда на страницу)
+Handouts (4 slides per page)	Выдача (4 слайда на страницу)
+Handouts (6 slides per page)	Выдача (6 слайдов на страницу)
+Handouts (9 slides per page)	Выдача (9 слайдов на страницу)
+Header	Верхний колонтитул
+Header & Footer	Колонтитулы
+Header &\nFooter	Колонтитулы
+Header Row	Строка заголовка
+Header and Footer	Колонтитулы
+Header and Footer…	Колонтитулы…
+Heart	Сердце
+Height	Высота
+Height (in):	Высота (дюймы):
+Height:	Высота:
+Help	Справка
+Heptagon	Семиугольник
+Hexagon	Шестиугольник
+Hide All	Скрыть все
+Hide Background Graphics	Скрыть графику фона
+Hide During Show	Скрыть во время показа
+Hide Slide	Скрыть слайд
+Hide background graphics	Скрыть графику фона
+Hide\nSlide	Скрыть слайд
+Hierarchy	Иерархия
+High	Высокий
+Highlighter	Маркер
+Histogram	Гистограмма
+Home	Главная
+Honeycomb	Соты
+Horizontal	Горизонтально
+Horz In	Горизонтально внутрь
+Horz Out	Горизонтально наружу
+How would you describe this object and its context to someone who is blind or has low vision?	Как бы вы описали этот объект и его контекст человеку с нарушением зрения?
+Hyperlink	Гиперссылка
+Icons	Значки
+In	Внутрь
+In Bounce	Внутрь с отскоком
+Include hidden slides	Включить скрытые слайды
+Increase Font Size	Увеличить размер шрифта
+Increase List Level	Повысить уровень списка
+Ink to Math	Рукописный ввод в уравнение
+Ink to Math (coming soon)	Рукописный ввод в уравнение (скоро)
+Ink to Shape	Рукописный ввод в фигуру
+Ink to Shape (coming soon)	Рукописный ввод в фигуру (скоро)
+Ink to Text	Рукописный ввод в текст
+Ink to Text (coming soon)	Рукописный ввод в текст (скоро)
+Ink to\nMath	Рукописный ввод в уравнение
+Ink to\nShape	Рукописный ввод в фигуру
+Ink to\nText	Рукописный ввод в текст
+Inner	Внутренняя
+Insert	Вставить
+Insert Above	Вставить выше
+Insert Below	Вставить ниже
+Insert Hyperlink	Вставить гиперссылку
+Insert Layout	Вставить макет
+Insert Left	Вставить слева
+Insert Placeholder	Вставить заполнитель
+Insert Right	Вставить справа
+Insert Table	Вставить таблицу
+Insert Table…	Вставить таблицу…
+Insert picture from file…	Вставить рисунок из файла…
+Insert\nAbove	Вставить выше
+Insert\nBelow	Вставить ниже
+Insert\nLayout	Вставить макет
+Insert\nLeft	Вставить слева
+Insert\nPlaceholder	Вставить заполнитель
+Insert\nRight	Вставить справа
+Inspect Presentation	Сведения о презентации
+Inspect Shape	Сведения о фигуре
+Inspect Slide	Сведения о слайде
+Interface Language	Язык интерфейса
+Interface language:	Язык интерфейса:
+Interface size	Размер интерфейса
+Isosceles Triangle	Равнобедренный треугольник
+Italiano	Italiano
+Italic	Курсив
+JPEG image (current slide)	Изображение JPEG (текущий слайд)
+Join our community on Discord	Присоединяйтесь к нашему сообществу в Discord
+Join the ArtCraft community on Discord	Присоединяйтесь к сообществу ArtCraft в Discord
+Justify	По ширине
+L-Shape	Г-образная фигура
+Language	Язык
+Last	Последний
+Last Column	Последний столбец
+Last Slide	Последний слайд
+Last commit	Последний коммит
+Layout	Макет
+Learn More	Подробнее
+Learn\nMore	Подробнее
+Ledger Paper (11x17 in)	Бумага Ledger (11×17 дюймов)
+Left	Слева
+Left Brace	Левая фигурная скобка
+Left Bracket	Левая квадратная скобка
+Letter Paper (8.5x11 in)	Бумага Letter (8,5×11 дюймов)
+Liberation Serif	Liberation Serif
+Light Blue	Светло-синий
+Light Green	Светло-зеленый
+Light/Dark appearance	Светлое/темное оформление
+Lighten	Осветление
+Lightning	Молния
+Lightning Bolt	Молния
+Line	Линия
+Line Color	Цвет линии
+Line Spacing	Междустрочный интервал
+Line Spacing Options…	Параметры междустрочного интервала…
+Line delta	Разница строк
+Line spacing (lines):	Междустрочный интервал (строки):
+Line with Markers	Линейная с маркерами
+Linear	Линейный
+Lines	Линии
+Lines +/−	Строки +/−
+Lines added	Добавленные строки
+Lines deleted	Удаленные строки
+Link	Ссылка
+Link…	Ссылка…
+List Commands	Список команд
+Lock	Заблокировать
+Long Dash	Длинный штрих
+Long Dash Dot	Длинный штрих и точка
+Loop continuously until 'Esc'	Повторять непрерывно до нажатия «Esc»
+Loop until Stopped	Повторять до остановки
+Loops	Петли
+Loose	Разреженный
+Low	Низкий
+MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors	MIT OR Apache-2.0 · © 2026 команда ArtCraft и участники DeckCraft
+Margins (pt)	Поля (пт)
+Mark as decorative	Пометить как декоративный
+Mark selected text as:	Пометить выделенный текст как:
+Math	Математика
+Matrix	Матрица
+Maximize content (else ensure fit)	Увеличить содержимое (иначе вписать)
+Media	Медиа
+Media Info	Сведения о мультимедиа
+Medium	Средний
+Merge Cells	Объединить ячейки
+Merge Shapes	Объединить фигуры
+Merge\nCells	Объединить ячейки
+Merge\nShapes	Объединить фигуры
+Merged PRs	Принятые запросы на слияние
+Middle	Посередине
+Minus Sign	Знак минуса
+Model	Модель
+Models	Модели
+Moon	Луна
+More Colors… #	Другие цвета… #
+Morph	Преобразование
+Motion	Движение
+Motion Paths	Траектории движения
+Move	Перемещение
+Move Down	Переместить вниз
+Move Insertion Point	Переместить точку ввода
+Move Section	Переместить раздел
+Move Section Down	Переместить раздел вниз
+Move Section Up	Переместить раздел вверх
+Move Slide	Переместить слайд
+Move Up	Переместить вверх
+Multiplication Sign	Знак умножения
+Multiply	Умножение
+Mute	Без звука
+Name	Имя
+Name (A–Z)	Имя (А–Я)
+Name:	Название:
+New Comment	Новый комментарий
+New Presentation	Новая презентация
+New Slide	Новый слайд
+New Slide (⇧⌘N)	Новый слайд (⇧⌘N)
+New presentation	Новая презентация
+New show name:	Название нового показа:
+New\nComment	Новый комментарий
+New\nSlide	Новый слайд
+Next	Далее
+Next Slide	Следующий слайд
+Next Window	Следующее окно
+Next ▶	Далее ▶
+No Color	Нет цвета
+No Fill	Нет заливки
+No Glow	Нет свечения
+No Outline	Нет контура
+No Reflection	Нет отражения
+No Shadow	Нет тени
+No Soft Edges	Нет размытия краев
+No accessibility issues found. People with disabilities should not have difficulty reading this document.	Проблем с читаемостью не найдено. У людей с ограниченными возможностями не должно возникнуть трудностей при чтении этой презентации.
+No comments on this slide.	На этом слайде нет комментариев.
+No contributor data was built into this copy.	В эту копию не встроены данные об участниках.
+No fill	Нет заливки
+No line	Нет линии
+No model credits were built into this copy.	В эту копию не встроены данные об использованных моделях.
+No notes.	Нет заметок.
+No sound: {err}	Нет звука: {err}
+None	Нет
+Normal	Обычный
+Not Equal	Не равно
+Not allowed	Не разрешено
+Notes	Заметки
+Notes Master	Образец заметок
+Notes Master (coming soon)	Образец заметок (скоро)
+Notes Page	Страница заметок
+Notes Pages	Страницы заметок
+Notes\nMaster	Образец заметок
+Notes\nPage	Страница заметок
+Nudge	Сдвинуть
+Number of columns:	Количество столбцов:
+Number of rows:	Количество строк:
+Numbering	Нумерация
+Object Color	Цвет объекта
+Objects	Объекты
+Octagon	Восьмиугольник
+On Click	По щелчку
+On Click of {name}	По щелчку на {name}
+On Click of… (none)	По щелчку на… (нет)
+On Mouse Click	По щелчку мыши
+On-screen Show (16:10)	Экранный показ (16:10)
+Open Data	Открыть данные
+Open Dialog	Открыть диалог
+Open Recovered Presentations	Открыть восстановленные презентации
+Open the sample deck	Открыть образец презентации
+Open…	Открыть…
+Orange	Оранжевый
+Orbit	Орбита
+Order Objects	Порядок объектов
+Origami	Оригами
+Out	Наружу
+Out Bounce	Наружу с отскоком
+Outer	Внешняя
+Outline	Структура
+Outline (.txt)	Структура (.txt)
+Outline View	Режим структуры
+Outline\nView	Режим структуры
+Oval	Овал
+Oval ends	Овальные концы
+Overhead	Диапроектор
+PDF document (.pdf)	Документ PDF (.pdf)
+PNG images (all slides)	Изображения PNG (все слайды)
+PNG images (current slide)	Изображения PNG (текущий слайд)
+PRs	Запросы на слияние
+Page Curl	Сворачивание страницы
+Page Setup…	Параметры страницы…
+PageDown	PageDown
+PageUp	PageUp
+Pan	Панорамирование
+Pane	Область
+Paragraph	Абзац
+Paragraph…	Абзац…
+Parallelogram	Параллелограмм
+Pareto	Парето
+Partial Circle	Часть круга
+Particles	Частицы
+Paste	Вставить
+Paste (⌘V)	Вставить (⌘V)
+Paste Formatting	Вставить форматирование
+Paste and Match Formatting	Вставить с совпадающим форматированием
+Paste or type an outline. Unindented lines become slide titles; tab-indented lines become bullets.	Вставьте или введите структуру. Строки без отступа станут заголовками слайдов; строки с отступом табуляции — пунктами списка.
+Pasted image.png	Вставленное изображение.png
+Path	Путь
+Pattern fill	Узорная заливка
+Pause	Пауза
+Peek In	Подглядывание
+Peel Off	Отслоение
+Pencil	Карандаш
+Pentagon	Пятиугольник
+Perspective	Перспектива
+Pick a graphic; type one item per line.	Выберите графику; введите по одному элементу в строке.
+Pick a look for your slides. Ideas are generated on your device.	Выберите оформление слайдов. Идеи создаются на вашем устройстве.
+Picture	Рисунок
+Picture Format	Формат рисунка
+Picture Styles	Стили рисунка
+Picture from File…	Рисунок из файла…
+Picture or texture fill	Заливка рисунком или текстурой
+Picture\nStyles	Стили рисунка
+Pictures	Рисунки
+Pie	Круговая
+Pin	Закрепить
+Placeholder colour	Цвет заполнителя
+Plan\nBuild\nLaunch	План\nРазработка\nЗапуск
+Plaque	Табличка
+Play	Воспроизвести
+Play Across Slides	Воспроизводить на нескольких слайдах
+Play Full Screen	Воспроизводить на весь экран
+Play Narrations	Воспроизводить звуковое сопровождение
+Play from Current Slide	Воспроизвести с текущего слайда
+Play from Start	Воспроизвести с начала
+Play from Start (F5)	Воспроизвести с начала (F5)
+Play from\nCurrent Slide	Воспроизвести с текущего слайда
+Play from\nStart	Воспроизвести с начала
+Play/Pause	Воспроизвести/приостановить
+Playback	Воспроизведение
+Plus	Плюс
+Plus In	Плюс внутрь
+Plus Out	Плюс наружу
+Plus Sign	Знак плюса
+Portrait (9:16)	Портретный (9:16)
+Português	Português
+Position	Положение
+Position Objects	Положение объектов
+Position and Size	Положение и размер
+Post	Отправить
+Poster Frame	Кадр афиши
+PowerPoint Presentation (.pptx)	Презентация PowerPoint (.pptx)
+Preferences	Параметры
+Preferences…	Параметры…
+Presentation	Презентация
+Presentations	Презентации
+Presentations and slide shows, rebuilt from scratch in pure Rust.	Презентации и показы слайдов, созданные с нуля на чистом Rust.
+Presented by a speaker (full screen)	Докладчиком (полноэкранный режим)
+Presenter View	Режим докладчика
+Presenter View — DeckCraft	Режим докладчика — DeckCraft
+Presenter\nView	Режим докладчика
+Preset gradients	Готовые градиенты
+Prestige	Престиж
+Preview	Предварительный просмотр
+Previous Slide	Предыдущий слайд
+Print layout:	Макет печати:
+Properties	Свойства
+Pulse	Пульсация
+Punctuation	Пунктуация
+Purple	Фиолетовый
+Push	Вытеснение
+Pyramid	Пирамида
+Quick Styles	Экспресс-стили
+Quick\nStyles	Экспресс-стили
+Radar	Лепестковая
+Radial	Радиальный
+Random	Случайный
+Random Bars	Случайные полосы
+Reading View	Режим чтения
+Reading\nView	Режим чтения
+Real name	Настоящее имя
+Recent	Недавние
+Record	Запись
+Recording narration needs audio capture (coming soon)	Для записи звукового сопровождения нужен захват аудио (скоро)
+Recovered Presentations	Восстановленные презентации
+Recovered {} from the last session	Восстановлено {} с прошлой сессии
+Rectangle	Прямоугольник
+Rectangle: Diagonal Corners Rounded	Прямоугольник: скругленные диагональные углы
+Rectangle: Diagonal Corners Snipped	Прямоугольник: срезанные диагональные углы
+Rectangle: Rounded Corners	Прямоугольник: скругленные углы
+Rectangle: Single Corner Rounded	Прямоугольник: один скругленный угол
+Rectangle: Single Corner Snipped	Прямоугольник: один срезанный угол
+Rectangle: Top Corners One Rounded and One Snipped	Прямоугольник: один верхний угол скругленный, другой срезанный
+Rectangle: Top Corners Rounded	Прямоугольник: скругленные верхние углы
+Rectangle: Top Corners Snipped	Прямоугольник: срезанные верхние углы
+Rectangles	Прямоугольники
+Rectangular	Прямоугольный
+Red	Красный
+Red Pen	Красное перо
+Redo	Вернуть
+Redo (⌘Y)	Вернуть (⌘Y)
+Reflected Rounded Rectangle	Скругленный прямоугольник с отражением
+Reflection	Отражение
+Regroup	Перегруппировать
+Regular Pentagon	Правильный пятиугольник
+Rehearse Timings	Репетиция хронометража
+Rehearse\nTimings	Репетиция хронометража
+Remove	Удалить
+Remove All Animations	Удалить все анимации
+Remove All Sections	Удалить все разделы
+Remove Animation	Удалить анимацию
+Remove Background	Удалить фон
+Remove Background (coming soon)	Удаление фона (скоро)
+Remove Section	Удалить раздел
+Remove Section & Slides	Удалить раздел и слайды
+Remove stop	Удалить точку
+Remove\nBackground	Удалить фон
+Rename	Переименовать
+Rename Layout	Переименовать макет
+Rename Section	Переименовать раздел
+Rename Section…	Переименовать раздел…
+Rename Slide	Переименовать слайд
+Rename…	Переименовать…
+Render Slide	Отрисовать слайд
+Reopen	Открыть снова
+Reorder Animation	Изменить порядок анимации
+Reorder Objects	Изменить порядок объектов
+Replace straight quotes with smart quotes	Заменять прямые кавычки типографскими
+Reply	Ответить
+Reply…	Ответить…
+Reset	Сбросить
+Reset Background	Сбросить фон
+Reset Crop	Сбросить обрезку
+Reset Effects	Сбросить эффекты
+Reset Picture	Сбросить рисунок
+Reset Slide	Сбросить слайд
+Reset Slide Background	Сбросить фон слайда
+Resize shape to fit text	Изменить размер фигуры по тексту
+Resolve	Пометить решенным
+Resolve Thread	Завершить обсуждение
+Return	Вернуться
+Reveal	Раскрытие
+Reverse the order	Обратный порядок
+Revert	Вернуть прежнюю версию
+Review	Рецензирование
+Rewind after Playing	Перемотать после воспроизведения
+Ribbon Tab	Вкладка ленты
+Ribbon: Tilted Down	Лента: наклон вниз
+Ribbon: Tilted Up	Лента: наклон вверх
+Right	Справа
+Right Brace	Правая фигурная скобка
+Right Bracket	Правая квадратная скобка
+Right Triangle	Прямоугольный треугольник
+Right-to-Left Text Direction	Направление текста справа налево
+Ring	Кольцо
+Ripple	Рябь
+Rise Up	Подъем
+Rotate	Повернуть
+Rotate Left 90°	Повернуть влево на 90°
+Rotate Right 90°	Повернуть вправо на 90°
+Rotate all text 270°	Повернуть весь текст на 270°
+Rotate all text 90°	Повернуть весь текст на 90°
+Rotate with shape	Поворачивать вместе с фигурой
+Rotation	Поворот
+Round Dot	Круглая точка
+Rounded Diagonal Corner	Скругленный диагональный угол
+Ruler	Линейка
+Saturation	Насыщенность
+Saturation {}%	Насыщенность {}%
+Save	Сохранить
+Save (⌘S)	Сохранить (⌘S)
+Save As…	Сохранить как…
+Save AutoRecover Information	Сохранить данные автовосстановления
+Save as Template…	Сохранить как шаблон…
+Save to Data	Сохранить в данные
+Saved	Сохранено
+Saved {path}	Сохранено: {path}
+Scatter	Точечная
+ScreenTip:	Всплывающая подсказка:
+Screenshot	Снимок экрана
+Screenshot (not available yet)	Снимок экрана (пока недоступно)
+Scroll: Horizontal	Свиток: горизонтальный
+Scroll: Vertical	Свиток: вертикальный
+Search commands (⇧⌘P)	Поиск команд (⇧⌘P)
+Search commands…	Поиск команд…
+Section	Раздел
+Seek	Перейти к позиции
+Select	Выделение
+Select All	Выделить все
+Select All Text	Выделить весь текст
+Select Cells	Выбрать ячейки
+Select Objects	Выбрать объекты
+Select Paragraph	Выбрать абзац
+Select Slides	Выбрать слайды
+Select Text	Выбрать текст
+Select Word	Выбрать слово
+Select a chart first.	Сначала выберите диаграмму.
+Select a shape to format it.	Выберите фигуру для форматирования.
+Select an object on the slide and add an animation from the Animations tab.	Выберите объект на слайде и добавьте анимацию на вкладке «Анимация».
+Selection	Выделение
+Selection Pane	Область выделения
+Selection Pane…	Область выделения…
+Selection\nPane	Область выделения
+Send Backward	Переместить назад
+Send to Back	На задний план
+Send\nBackward	Переместить назад
+Sentence case.	Как в предложениях.
+Set Text	Задать текст
+Set Up Show…	Настроить показ…
+Set Up Slide Show	Настроить показ слайдов
+Set Up Slide Show…	Настроить показ слайдов…
+Set Up\nSlide Show	Настроить показ слайдов
+Set as Default Shape	Сделать стандартной фигурой
+Shading	Затенение
+Shadow	Тень
+Shape	Фигура
+Shape Effects	Эффекты фигуры
+Shape Fill	Заливка фигуры
+Shape Format	Формат фигуры
+Shape Gallery	Галерея фигур
+Shape Outline	Контур фигуры
+Shape Styles	Стили фигур
+Shape {}	Фигура {}
+Shape\nStyles	Стили фигур
+Shapes	Фигуры
+Shift+	Shift+
+Shift+F9	Shift+F9
+Show	Показать
+Show All	Показать все
+Show Comments	Показать комментарии
+Show Media Controls	Показать элементы управления медиа
+Show Slide	Показать слайд
+Show smart guides	Показывать смарт-направляющие
+Show type	Тип показа
+Show without animation	Показ без анимации
+Show without narration	Показ без звукового сопровождения
+Show/Hide	Показать/скрыть
+Show\nComments	Показать комментарии
+Shred	Измельчение
+Shrink & Turn	Уменьшение и поворот
+Shrink text on overflow	Сжимать текст при переполнении
+Simple Frame, White	Простая рамка, белая
+Size	Размер
+Size & Properties	Размер и свойства
+Slide Master	Образец слайдов
+Slide Number	Номер слайда
+Slide Show	Показ слайдов
+Slide Size	Размер слайда
+Slide Sorter	Сортировщик слайдов
+Slide number	Номер слайда
+Slide timings recorded.	Хронометраж слайдов записан.
+Slide {:02}:{:04.1}   Total {:02}:{:02}	Слайд {:02}:{:04.1}   Всего {:02}:{:02}
+Slide {} of {}	Слайд {} из {}
+Slide {}: {}{}	Слайд {}: {}{}
+Slide {}: “{w}”	Слайд {}: «{w}»
+Slide\nMaster	Образец слайдов
+Slide\nNumber	Номер слайда
+Slide\nSize	Размер слайда
+Slide\nSorter	Сортировщик слайдов
+Slides (e.g. 1,3,5):	Слайды (например, 1,3,5):
+Slides from Outline	Слайды из структуры
+Slides from Outline…	Слайды из структуры…
+Slides sized for:	Размер слайдов:
+SmartArt	SmartArt
+Smile	Улыбка
+Smiley Face	Улыбающееся лицо
+Smoothly	Плавно
+Smoothly Left	Плавно влево
+Smoothly Right	Плавно вправо
+Snap objects to grid	Привязывать объекты к сетке
+Soft Edge Rectangle	Прямоугольник с размытыми краями
+Soft Edges	Размытые края
+Solid	Сплошной
+Solid fill	Сплошная заливка
+Solid line	Сплошная линия
+Sort	Сортировка
+Source on GitHub	Исходный код на GitHub
+Space	Space
+Spacing after (pt):	Интервал после (пт):
+Spacing before (pt):	Интервал перед (пт):
+Special — hanging (in):	Специальное — выступ (дюймы):
+Speech	Речь
+Speech Bubble: Oval	Выноска: овальная
+Speech Bubble: Rectangle	Выноска: прямоугольная
+Speech Bubble: Rectangle with Corners Rounded	Выноска: прямоугольная со скругленными углами
+Spelling	Орфография
+Spin	Вращение
+Spinner	Круговое вращение
+Split	Разделение
+Split Cells	Разделить ячейки
+Split\nCells	Разделить ячейки
+Square	Квадрат
+Square (1:1)	Квадрат (1:1)
+Square Dot	Квадратная точка
+Stacked	С накоплением
+Stacked Area	С областями с накоплением
+Stacked Bar	Линейчатая с накоплением
+Stacked Column	Гистограмма с накоплением
+Stacked Line	График с накоплением
+Standard (4:3)	Стандартный (4:3)
+Standard Colors	Стандартные цвета
+Star	Звезда
+Star: 10 Points	Звезда: 10 лучей
+Star: 12 Points	Звезда: 12 лучей
+Star: 16 Points	Звезда: 16 лучей
+Star: 24 Points	Звезда: 24 луча
+Star: 32 Points	Звезда: 32 луча
+Star: 4 Points	Звезда: 4 луча
+Star: 5 Points	Звезда: 5 лучей
+Star: 6 Points	Звезда: 6 лучей
+Star: 7 Points	Звезда: 7 лучей
+Star: 8 Points	Звезда: 8 лучей
+Stars and Banners	Звезды и ленты
+Start After Previous	После предыдущего
+Start Automatically	Автоматически
+Start On Click	По щелчку
+Start With Previous	Вместе с предыдущим
+Start a conversation	Начните обсуждение
+Start time (s):	Время начала (с):
+Start:	Начало:
+Stealth end	Остроконечный конец
+Stock	Биржевая
+Stop	Остановить
+Stop Editing Text	Завершить редактирование текста
+Strikethrough	Зачеркнутый
+Strips	Полосы
+Style {i}	Стиль {i}
+Subscript	Подстрочный знак
+Subtle	Сдержанные
+Sun	Солнце
+Sunburst	Солнечные лучи
+Superscript	Надстрочный знак
+Surface	Поверхностная
+Switch	Переключение
+Swivel	Поворот
+Symbol	Символ
+System language	Системный язык
+Tab	Tab
+Table	Таблица
+Table Design	Конструктор таблиц
+Table Style Options	Параметры стиля таблицы
+Table Styles	Стили таблицы
+Table…	Таблица…
+Task Pane	Область задач
+Teardrop	Капля
+Teeter	Качание
+Text	Текст
+Text Box	Надпись
+Text Box Margins	Поля текстового блока
+Text Direction	Направление текста
+Text Effects	Текстовые эффекты
+Text Fill	Заливка текста
+Text Highlight Color	Цвет выделения текста
+Text Options	Параметры текста
+Text Outline	Контур текста
+Text Shadow	Тень текста
+Text/Background - Dark 1	Текст/фон — темный 1
+Text/Background - Dark 2	Текст/фон — темный 2
+Text/Background - Light 1	Текст/фон — светлый 1
+Text/Background - Light 2	Текст/фон — светлый 2
+Text\nBox	Надпись
+The spelling check is complete. No issues found.	Проверка орфографии завершена. Ошибок не найдено.
+Theme Colors	Цвета темы
+Theme Gallery	Галерея тем
+Themes	Темы
+Thesaurus	Тезаурус
+Thesaurus (coming soon)	Тезаурус (скоро)
+This Document	Этот документ
+Thought	Мысль
+Thought Bubble: Cloud	Мысль: облако
+Through Black	Через черный
+Tight	Плотный
+Timing	Время показа
+Top	Верх
+Total Row	Строка итогов
+Transition	Переход
+Transition Gallery	Галерея переходов
+Transitions	Переходы
+Translate	Перевести
+Translation needs a language model (not bundled)	Для перевода нужна языковая модель (не входит в комплект)
+Transparency	Прозрачность
+Trapezoid	Трапеция
+Treemap	Древовидная
+Triangle	Треугольник
+Trigger	Триггер
+Trim	Обрезать
+Trim Media	Обрезать медиа
+Turns	Повороты
+Type	Тип
+Type Text	Ввести текст
+Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).	Введите уравнение в линейном виде (например, a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).
+Uncover	Открывание
+Underline	Подчеркнутый
+Undo	Отменить
+Undo (⌘Z)	Отменить (⌘Z)
+Ungroup	Разгруппировать
+Up	Вверх
+Use Timings	Использовать время показа
+Use timings, if present	Использовать время показа, если задано
+Username	Имя пользователя
+Version	Версия
+Version {}	Версия {}
+Vert In	Вертикально внутрь
+Vert Out	Вертикально наружу
+Vertical	Вертикально
+Vertical alignment	Вертикальное выравнивание
+Very Loose	Очень разреженный
+Very Tight	Очень плотный
+Video	Видео
+Video from File…	Видео из файла…
+View	Вид
+Volume	Громкость
+Vortex	Вихрь
+Waterfall	Каскадная
+Wave	Волна
+Web Page or File	Веб-страница или файл
+Wedge	Клин
+Weight	Толщина
+Wheel	Колесо
+Widescreen (13.333x7.5 in)	Широкоэкранный (13,333×7,5 дюймов)
+Widescreen (16:9)	Широкоэкранный (16:9)
+Width	Ширина
+Width (in):	Ширина (дюймы):
+Width:	Ширина:
+Width: 	Ширина: 
+Wind	Ветер
+Window	Окно
+Wipe	Стирание
+With Previous	Вместе с предыдущим
+WordArt	WordArt
+WordArt style {}	Стиль WordArt {}
+Words	Слова
+Wrap Text in Shape	Переносить текст в фигуре
+Wrap text in shape	Переносить текст в фигуре
+Yellow	Желтый
+Your changes will be lost if you don't save them.	Если не сохранить, изменения будут потеряны.
+Your name (comments):	Ваше имя (комментарии):
+Zoom	Масштаб
+Zoom In	Увеличить
+Zoom Out	Уменьшить
+Zoom…	Масштаб…
+a) b) c)	a) b) c)
+a. b. c.	a. b. c.
+Accept Revision	Принять исправление
+Action Settings	Настройка действия
+Add Font	Добавить шрифт
+Add Guide	Добавить направляющую
+Add Point	Добавить точку
+Add Shape	Добавить фигуру
+Add to Dictionary	Добавить в словарь
+Align Cell Text	Выровнять текст ячейки
+Apply Design Idea	Применить идею дизайна
+Arrow: Circular	Стрелка: Круговая
+Arrow: Circular Counter-clockwise	Стрелка: Круговая против часовой стрелки
+Arrow: Circular Two-headed	Стрелка: Круговая двусторонняя
+Arrow: Curved Down	Стрелка: Дуговая вниз
+Arrow: Curved Left	Стрелка: Дуговая влево
+Arrow: Curved Right	Стрелка: Дуговая вправо
+Arrow: Curved Up	Стрелка: Дуговая вверх
+Arrow: Swoosh	Стрелка: Взмах
+Artistic Effects	Художественные эффекты
+AutoCorrect Options	Параметры автозамены
+Bean	Фасолина
+Borders	Границы
+Bounce Left	Отскок влево
+Bounce Right	Отскок вправо
+Browse for Themes…	Обзор тем…
+Callout: Bent Line	Выноска: Ломаная линия
+Callout: Bent Line with Accent Bar	Выноска: Ломаная линия с акцентной полосой
+Callout: Bent Line with Border and Accent Bar	Выноска: Ломаная линия с контуром и акцентной полосой
+Callout: Bent Line with No Border	Выноска: Ломаная линия без контура
+Callout: Double Bent Line	Выноска: Двойная ломаная линия
+Callout: Double Bent Line with Accent Bar	Выноска: Двойная ломаная линия с акцентной полосой
+Callout: Double Bent Line with Border and Accent Bar	Выноска: Двойная ломаная линия с контуром и акцентной полосой
+Callout: Double Bent Line with No Border	Выноска: Двойная ломаная линия без контура
+Callout: Left-Right Arrow	Выноска: Стрелка влево-вправо
+Callout: Line with Accent Bar	Выноска: Линия с акцентной полосой
+Callout: Line with Border and Accent Bar	Выноска: Линия с контуром и акцентной полосой
+Callout: Line with No Border	Выноска: Линия без контура
+Callout: Quad Arrow	Выноска: Четырехсторонняя стрелка
+Callout: Up-Down Arrow	Выноска: Стрелка вверх-вниз
+Cell Margins	Поля ячейки
+Change Colors	Изменить цвета
+Change Layout	Изменить макет
+Change Picture…	Изменить рисунок…
+Change Spelling	Изменить написание
+Chart Marker: Cross Lines	Маркер диаграммы: Крест из линий
+Chart Marker: Plus Lines	Маркер диаграммы: Плюс из линий
+Chart Marker: Star Lines	Маркер диаграммы: Звезда из линий
+Color At	Цвет в точке
+Commit Composition	Подтвердить ввод
+Compare	Сравнить
+Compare…	Сравнить…
+Compose Text	Составить текст
+Compress Pictures	Сжать рисунки
+Contract	Сжатие
+Convert to Shapes	Преобразовать в фигуры
+Convert to SmartArt	Преобразовать в SmartArt
+Convert to Text	Преобразовать в текст
+Corner Tabs: Quarter Circles	Фотоуголки: Четверть круга
+Corner Tabs: Squares	Фотоуголки: Квадраты
+Corner Tabs: Triangles	Фотоуголки: Треугольники
+Crescent Moon	Полумесяц
+Curved Square	Изогнутый квадрат
+Decaying Wave	Затухающая волна
+Delete Guide	Удалить направляющую
+Delete Point	Удалить точку
+Demote	Понизить уровень
+Diagonal Down Right	Вниз по диагонали вправо
+Diagonal Up Right	Вверх по диагонали вправо
+Draw Table	Нарисовать таблицу
+dropped file	перетащенный файл
+Edit Photo Album…	Изменить фотоальбом…
+Edit Points	Изменить точки
+Edit SmartArt Text	Изменить текст SmartArt
+End Review	Завершить проверку
+Find	Найти
+Flowchart: Offline Storage	Блок-схема: Автономное хранилище
+Fonts in Presentation	Шрифты в презентации
+Font…	Шрифт…
+Football	Регбийный мяч
+Gear: 6 Teeth	Шестерня: 6 зубьев
+Gear: 9 Teeth	Шестерня: 9 зубьев
+Grid and Guides	Сетка и направляющие
+Grid Options…	Параметры сетки…
+Handout Placeholders	Заполнители выдачи
+Heartbeat	Сердцебиение
+Hex D	Шестиугольник снизу
+Hex L	Шестиугольник слева
+Hex R	Шестиугольник справа
+Hex U	Шестиугольник сверху
+Horizontal Figure 8	Горизонтальная восьмерка
+i. ii. iii.	i. ii. iii.
+Icon Gallery	Галерея значков
+Info	Сведения
+Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes	Рукописный ввод в фигуру: превращает нарисованные линии, прямоугольники, овалы и треугольники в фигуры
+Insert Picture in SmartArt	Вставить рисунок в SmartArt
+Insert Picture in SmartArt…	Вставить рисунок в SmartArt…
+Insert Synonym	Вставить синоним
+Layout Placeholders	Заполнители макета
+Line: Rising	Линия: Восходящая
+Loop de Loop	Мертвая петля
+Move Guide	Переместить направляющую
+Move Handle	Переместить маркер
+Move Point	Переместить точку
+Neutron	Нейтрон
+New Window	Новое окно
+Next Comment	Следующий комментарий
+No comments.	Комментариев нет.
+no presentation open	Нет открытой презентации
+no slides	Нет слайдов
+no text insertion point	Нет точки ввода текста
+Notes Placeholders	Заполнители заметок
+nothing selected	Ничего не выбрано
+nothing to redo	Нет действий для повтора
+nothing to undo	Нет действий для отмены
+Open	Открыть
+Particles In	Частицы, появление
+Particles Out	Частицы, исчезновение
+Paste Special	Специальная вставка
+Paste Special…	Специальная вставка…
+Peanut	Арахис
+Peek Out	Подглядывание наружу
+Photo Album…	Фотоальбом…
+Pick a design for this slide. Ideas are generated on your device.	Выберите дизайн для этого слайда. Идеи генерируются на вашем устройстве.
+Picture Style Gallery	Галерея стилей рисунков
+Point Type	Тип точки
+Points	Точки
+Preserve	Сохранить
+Preview Animations	Просмотр анимации
+Previous Comment	Предыдущий комментарий
+Print	Печать
+Print…	Печать…
+Promote	Повысить уровень
+Quarter Wedge	Четверть клина
+Quick Access Toolbar	Панель быстрого доступа
+Recolor	Перекрасить
+Recolor Gallery	Галерея перекраски
+Remove Shape	Удалить фигуру
+Replace	Заменить
+Replace Fonts	Замена шрифтов
+Replace…	Заменить…
+Rescan Installed Fonts	Пересканировать установленные шрифты
+Reuse Slides…	Повторное использование слайдов…
+Revisions	Исправления
+Ribbon: Curved and Tilted Down	Лента: изогнутая с наклоном вниз
+Ribbon: Curved and Tilted Up	Лента: изогнутая с наклоном вверх
+Ribbon: Left-Right Fold	Лента: сгиб влево-вправо
+S Curve 1	S-кривая 1
+S Curve 2	S-кривая 2
+select text or a shape	Выберите текст или фигуру
+select two or more objects	Выберите два или более объектов
+Set Transparent Color	Установить прозрачный цвет
+Set Zoom	Задать масштаб
+Sine Wave	Синусоида
+Single L	Одиночный слева
+Single R	Одиночный справа
+Sink Down	Погружение
+size (pt)	размер (пт)
+Size and Position…	Размер и положение…
+SmartArt Styles	Стили SmartArt
+Smooth Corners	Скругленные углы
+Sound	Звук
+Spelling Dictionary	Орфографический словарь
+Spiral Left	Спираль влево
+Spiral Right	Спираль вправо
+Spring	Пружина
+Stairs Down	Ступени вниз
+Starter Templates	Стартовые шаблоны
+Strips In	Полосы, появление
+Strips Out	Полосы, исчезновение
+Swoosh	Взмах
+Table Eraser	Ластик таблиц
+Tabs…	Табуляция…
+Text Pane	Область текста
+Text Transform	Преобразовать текст
+Text Transparency	Прозрачность текста
+tOGGLE cASE	иЗМЕНИТЬ рЕГИСТР
+Trapezoid: Uneven Sides	Трапеция: Неравные стороны
+unknown interface language	Неизвестный язык интерфейса
+Unlock	Разблокировать
+Variant Gallery	Галерея вариантов
+Variants	Варианты
+Vertical Figure 8	Вертикальная восьмерка
+Zigzag	Зигзаг
+ (not checked)	 (не проверено)
+4 Point Star	Звезда с 4 лучами
+5 Point Star	Звезда с 5 лучами
+6 Point Star	Звезда с 6 лучами
+8 Point Star	Звезда с 8 лучами
+{ch}  Bullet	{ch}  Маркер
+{f} (Body)	{f} (Основной текст)
+{f} (Headings)	{f} (Заголовки)
+{name}: DeckCraft can't open this kind of file	{name}: DeckCraft не может открыть файл этого типа
+{n} Column{}	{n} Столбец{}
+{r} pt	{r} пт
+{r} pt glow	Свечение {r} пт
+{w} pt	{w} пт
+{} ({} slides)	{} ({} слайдов)
+{} Slide Master	Образец слайдов {}
+{} contributors · {} commits	Участники: {} · Коммиты: {}
+{} presentations	{} презентаций
+{}x{} Table	Таблица {}×{}
+“{}” is not available yet.	«{}» пока недоступно.
+−Bin	−Интервал
+▶ Play All	▶ Воспроизвести все
+◀ Previous	◀ Назад
+✏ on	✏ включено
