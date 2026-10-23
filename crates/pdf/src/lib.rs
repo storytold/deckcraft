@@ -79,6 +79,13 @@ pub struct PdfOptions {
     pub title: Option<String>,
     /// Handout/notes page size in points (default US Letter portrait; see [`paper_size`]).
     pub paper: (f64, f64),
+    /// Grayscale output: every slide's artwork is converted to gray (the same weights as the Print
+    /// page's grayscale preview), so a printer that ignores a monochrome request still prints gray.
+    pub grayscale: bool,
+    /// Link annotations for hyperlinks and shape actions (default on). A print job turns them off:
+    /// they are clickable, not printed, and the Windows spooler's shrink-to-fit (and any exact fit
+    /// with a non-printing annotation) refuses a page that has any. Link styling is page content and stays.
+    pub annotations: bool,
 }
 
 impl Default for PdfOptions {
@@ -92,6 +99,8 @@ impl Default for PdfOptions {
             frame_slides: true,
             title: None,
             paper: (612.0, 792.0),
+            grayscale: false,
+            annotations: true,
         }
     }
 }
@@ -189,7 +198,9 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
             let mut s = page.surface();
             for (i, b) in v {
                 ex.slide(&mut s, *i, *b)?;
-                annots.extend(ex.links(*i, *b, &page_of));
+                if opts.annotations {
+                    annots.extend(ex.links(*i, *b, &page_of));
+                }
             }
             match opts.layout {
                 PageLayout::Notes => {
@@ -444,7 +455,10 @@ impl Exporter<'_> {
         // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
         // on every slide that shares its layout, so the writer stores it once, and the slide's own
         // shapes draw over it (#845).
-        let back = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Backdrop, &ropts);
+        let mut back = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Backdrop, &ropts);
+        if self.opts.grayscale {
+            deckcraft_render::gray_rgba_in_place(&mut back.pixels);
+        }
         let front = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Content, &ropts);
         let (w, h) = (back.width, back.height);
         if w > 0
@@ -457,6 +471,9 @@ impl Exporter<'_> {
             let mut rgba = front.pixels;
             if rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0) {
                 straight(&mut rgba);
+                if self.opts.grayscale {
+                    deckcraft_render::gray_rgba_in_place(&mut rgba);
+                }
                 s.draw_image(Image::from_rgba8(rgba, w, h), size);
             }
             s.pop();
@@ -520,8 +537,15 @@ impl Exporter<'_> {
             s.push_transform(&tf(view * pt.transform * Affine::translate((x0, y0))));
             s.set_fill(Some(if visible {
                 let c = run.color;
+                // The same conversion as the artwork, so a theme-coloured header stays gray in a gray PDF.
+                let (r, g, b) = if self.opts.grayscale {
+                    let y = deckcraft_render::gray_of(c.r, c.g, c.b);
+                    (y, y, y)
+                } else {
+                    (c.r, c.g, c.b)
+                };
                 Fill {
-                    paint: krilla::color::rgb::Color::new(c.r, c.g, c.b).into(),
+                    paint: krilla::color::rgb::Color::new(r, g, b).into(),
                     opacity: NormalizedF32::new((f64::from(c.a) / 255.0 * run.alpha) as f32).unwrap_or(NormalizedF32::ONE),
                     ..Default::default()
                 }

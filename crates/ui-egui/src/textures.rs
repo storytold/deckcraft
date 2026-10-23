@@ -19,6 +19,9 @@ struct Key {
     size: (u32, u32),
     edit: bool,
     extra: u64,
+    /// Drawn in gray. A field of its own, never folded into `extra`: a bit shared with the GIF frame
+    /// or animation counter would hand back a texture of the other mode.
+    gray: bool,
     /// The pasteboard region the slide's drawing calls for (canvas only).
     want: Region,
     editing_text: Option<ShapeId>,
@@ -46,7 +49,9 @@ pub struct Textures {
     drawn: Option<(usize, Rect)>,
     /// Canvas renders so far (tests, performance checks).
     pub canvas_renders: u64,
-    thumbs: HashMap<usize, Entry>,
+    /// Thumbnails by the slide's address and whether they are gray: a colour and a gray one of the
+    /// same slide are different entries, so neither is ever shown for the other.
+    thumbs: HashMap<(usize, bool), Entry>,
     /// SmartArt gallery pictures by layout, style and colours (and, for hover previews, the
     /// outline's hash).
     smartart: HashMap<String, TextureHandle>,
@@ -139,7 +144,8 @@ pub fn to_color_image(img: &Image, grayscale: bool) -> ColorImage {
     for c in img.pixels.as_chunks::<4>().0 {
         let (r, g, b, a) = (c[0], c[1], c[2], c[3]);
         if grayscale {
-            let y = ((r as u32 * 77 + g as u32 * 150 + b as u32 * 29) >> 8) as u8;
+            // The conversion the printed PDF uses, so the preview shows what prints.
+            let y = deckcraft_render::gray_of(r, g, b);
             px.push(egui::Color32::from_rgba_premultiplied(y, y, y, a));
         } else {
             px.push(egui::Color32::from_rgba_premultiplied(r, g, b, a));
@@ -287,7 +293,8 @@ impl Textures {
             master: master.as_ref().map(|m| Arc::as_ptr(m) as usize).unwrap_or(0),
             size,
             edit,
-            extra: extra ^ grayscale as u64 ^ anim_key(anim),
+            extra: extra ^ anim_key(anim),
+            gray: grayscale,
             want,
             editing_text,
         };
@@ -356,6 +363,21 @@ impl Textures {
     /// A thumbnail texture; renders at most `budget` new thumbnails per frame (returns None when
     /// it is over budget, so the caller draws a placeholder and asks for another frame).
     pub fn thumb(&mut self, ctx: &egui::Context, p: &Presentation, index: usize, width_px: u32, budget: &mut u32) -> Option<TextureHandle> {
+        self.thumb_in(ctx, p, index, width_px, budget, false)
+    }
+
+    /// [`Self::thumb`], in gray when `gray` (the Print page's Grayscale preview). The gray and colour
+    /// thumbnails of a slide are cached apart, and a stale one of the other mode is never shown while
+    /// the right one waits for the render budget.
+    pub fn thumb_in(
+        &mut self,
+        ctx: &egui::Context,
+        p: &Presentation,
+        index: usize,
+        width_px: u32,
+        budget: &mut u32,
+        gray: bool,
+    ) -> Option<TextureHandle> {
         let slide = p.slides.get(index)?.clone();
         let master = master_of(p, &slide);
         let h = (width_px as f64 * p.slide_size.height / p.slide_size.width.max(1.0)).round().max(1.0) as u32;
@@ -365,12 +387,13 @@ impl Textures {
             size: (width_px, h),
             edit: false,
             extra: 0,
+            gray,
             want: Region::slide(width_px, h),
             editing_text: None,
         };
         self.clock += 1;
         let clock = self.clock;
-        if let Some(e) = self.thumbs.get_mut(&key.slide)
+        if let Some(e) = self.thumbs.get_mut(&(key.slide, gray))
             && e.key == key
         {
             e.stamp = clock;
@@ -378,18 +401,18 @@ impl Textures {
         }
         if *budget == 0 {
             // Keep showing the stale thumbnail while the new one waits.
-            return self.thumbs.get(&key.slide).map(|e| e.tex.clone());
+            return self.thumbs.get(&(key.slide, gray)).map(|e| e.tex.clone());
         }
         *budget -= 1;
         let (tw, th) = fit_size((width_px, h), max_side(ctx));
         let scale = tw as f64 / p.slide_size.width.max(1.0);
         let img = deckcraft_render::render_slide(p, index, &RenderOpts { scale, size: Some((tw, th)), threads: 0, ..Default::default() });
-        let tex = upload_editor(ctx, format!("thumb-{index}"), to_color_image(&img, false));
+        let tex = upload_editor(ctx, format!("thumb-{index}"), to_color_image(&img, gray));
         // Drop the old entry for this slide address; entries for slides that no longer exist age out.
         let region = key.want;
-        self.thumbs.insert(key.slide, Entry { key, tex: tex.clone(), region, _slide: slide, _master: master, stamp: clock });
+        self.thumbs.insert((key.slide, gray), Entry { key, tex: tex.clone(), region, _slide: slide, _master: master, stamp: clock });
         if self.thumbs.len() > 600 {
-            let mut v: Vec<(usize, u64)> = self.thumbs.iter().map(|(k, e)| (*k, e.stamp)).collect();
+            let mut v: Vec<((usize, bool), u64)> = self.thumbs.iter().map(|(k, e)| (*k, e.stamp)).collect();
             v.sort_by_key(|x| x.1);
             for (k, _) in v.into_iter().take(200) {
                 self.thumbs.remove(&k);
@@ -401,8 +424,53 @@ impl Textures {
 
 #[cfg(test)]
 mod tests {
-    use super::device_pixel_rect;
+    use super::{Textures, device_pixel_rect, to_color_image};
     use egui::{Rect, pos2, vec2};
+
+    #[test]
+    fn grayscale_images_have_equal_channels_and_colour_ones_do_not() {
+        let img = deckcraft_render::Image { width: 3, height: 1, pixels: vec![220, 30, 40, 255, 0, 200, 0, 255, 10, 20, 250, 255] };
+        let gray = to_color_image(&img, true);
+        assert!(gray.pixels.iter().all(|c| c.r() == c.g() && c.g() == c.b() && c.a() == 255), "{:?}", gray.pixels);
+        let colour = to_color_image(&img, false);
+        assert!(colour.pixels.iter().any(|c| c.r() != c.g()));
+    }
+
+    #[test]
+    fn a_gray_preview_is_its_own_cache_entry_and_never_serves_the_other_mode() {
+        let ctx = egui::Context::default();
+        let p = deckcraft_model::defaults::new_presentation(None);
+        let mut t = Textures::default();
+        let mut budget = 4;
+        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut budget, false).is_some());
+        assert_eq!((budget, t.thumb_count()), (3, 1));
+        // Toggling to gray with no render budget left: nothing is shown, not the colour thumbnail.
+        let mut none = 0;
+        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut none, true).is_none(), "no flash of the colour thumbnail");
+        // With budget, the gray raster is requested (rendered), and cached next to the colour one.
+        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut budget, true).is_some());
+        assert_eq!((budget, t.thumb_count()), (2, 2));
+        // Both modes now hit their own entries without rendering.
+        let mut none = 0;
+        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut none, true).is_some());
+        assert!(t.thumb_in(&ctx, &p, 0, 120, &mut none, false).is_some());
+        // And back to colour after gray is not stale either.
+        assert_eq!(t.thumb_count(), 2);
+    }
+
+    #[test]
+    fn the_canvas_gray_flag_cannot_collide_with_the_gif_frame_counter() {
+        let ctx = egui::Context::default();
+        let p = deckcraft_model::defaults::new_presentation(None);
+        let mut t = Textures::default();
+        let size = (160, 90);
+        let visible = deckcraft_render::Region::slide(size.0, size.1);
+        // `extra` is the GIF frame key: 1 in colour and 0 in gray used to be the same key.
+        assert!(t.slide(&ctx, &p, 0, size, visible, false, 1, false, &[], None, None).is_some());
+        let n = t.canvas_renders;
+        assert!(t.slide(&ctx, &p, 0, size, visible, false, 0, true, &[], None, None).is_some());
+        assert!(t.canvas_renders > n, "gray with another frame key is a new raster, not the colour one");
+    }
 
     fn on_grid(v: f32, ppp: f32) -> bool {
         let px = v * ppp;

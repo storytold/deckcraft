@@ -16,12 +16,19 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
 pub mod icons;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod localprint;
 pub mod media;
 pub mod menus;
+#[cfg(network_print)]
+pub mod netprint;
+#[cfg(network_print)]
+mod network_glue;
 pub mod notes;
 pub mod opening;
 pub mod panes;
 mod preview;
+pub mod print_dest;
 pub mod qat;
 pub mod ribbon;
 pub mod selpane;
@@ -475,6 +482,12 @@ pub struct SlideApp {
     /// slides and status bar until Esc or Back; with nothing open it is the start screen. Opening,
     /// creating or closing a presentation leaves it.
     pub backstage: Option<backstage::Backstage>,
+    /// File > Print > Network printer: the address, what the printer lists, the job and its progress.
+    #[cfg(network_print)]
+    pub(crate) net_print: network_glue::NetTasks,
+    /// File > Print > a printer of this computer: its list, settings and job.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) local_print: localprint::Local,
     pending_urls: Vec<String>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
@@ -559,6 +572,10 @@ impl SlideApp {
             palette: None,
             integrated_titlebar: false,
             backstage: None,
+            #[cfg(network_print)]
+            net_print: network_glue::NetTasks::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            local_print: localprint::Local::default(),
             pending_urls: vec![],
             pending_copy: None,
             shot_token: 0,
@@ -1561,6 +1578,10 @@ impl SlideApp {
         self.last_time = now;
         self.drain_control(ctx);
         self.poll_opening();
+        #[cfg(network_print)]
+        self.poll_network();
+        #[cfg(not(target_arch = "wasm32"))]
+        self.poll_local_print();
         if self.fonts_ready {
             self.drain_inbox();
         }

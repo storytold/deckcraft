@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (printing landed: row 6 is now the Outline layout and cancelling a local job; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -22,7 +22,7 @@ revision history.
 | 3 | PPTX round trip drops media options and rewind (#74, #77) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
-| 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
+| 6 | Printing: no Outline layout; a job to a local printer can't be cancelled | Feature | | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 8 | Image paste fails on Windows and Linux (#53) | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
 | 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
@@ -133,10 +133,13 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** large PDFs; blurry when zoomed or printed.
 - **Estimate:** 5–8 h (vector paths, fills and text through the PDF writer). **Beta blocker.**
 
-### No printing
-- **Evidence:** checklist row "Print" is missing; PR #66 (browser print) is open.
-- **Impact:** handouts and speaker notes are printed in many workplaces.
-- **Estimate:** 5–8 h (print through the PDF path and each OS's print dialog). **Beta blocker.**
+### Printing: no Outline layout, no cancel for a local job
+- **Evidence:** File › Print sends slides, notes pages and handouts to the PDF viewer, a printer of
+  this computer (CUPS or the Windows spooler) or a network printer (WS-Print, IPP); checklist row
+  "Print" is partial. There is no Outline layout, a job handed to a local spooler can't be
+  cancelled from DeckCraft, and the print PDF is built on the UI thread.
+- **Impact:** small: handouts and speaker notes print; an outline has to be exported instead.
+- **Estimate:** 2–4 h.
 
 ### No video export; the animated GIF has no transitions or builds
 - **Evidence:** checklist row "Export video (MP4) / animated GIF" is partial: `file.export` writes
@@ -356,6 +359,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Printing landed (File › Print to the PDF viewer, a local printer or a network printer): "No printing" (row 6) is now the Outline layout and cancelling a local job, no longer a beta blocker |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |
