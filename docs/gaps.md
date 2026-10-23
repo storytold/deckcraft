@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 路 **Last updated:** 2026-10-18 路 **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) 路 **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 路 **Last updated:** 2026-10-23 路 **Change:** minor (Interactive decks: media actions and action sounds play in the show; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) 路 **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -211,8 +211,13 @@ of the effect gallery. Detail in [animation-parity.md](animation-parity.md). 8鈥
 - **Evidence:** the slide show plays click-triggered animations, keeps each slide's state across
   visits and ignores shapes an animation has hidden (`crates/anim/src/interact.rs`). Still open,
   found by running three classroom game decks (Jeopardy-style boards, hide-and-reveal, score
-  counters): a click on a shape whose action is "play sound" (`ppaction://media`, 126 and 486
-  shapes in two decks) does nothing; triggers that start on `onStopAudio` or `begin` conditions are
+  counters): two decks have 126 and 486 shapes whose action plays their clip
+  (`ppaction://media`) and were seen doing nothing. A clip directly on the slide already played
+  when clicked, and those decks have not been run again, so why is not known. What the show does
+  now (`crates/ui-egui/src/show.rs`): a media action plays its clip also inside a group, an
+  action's sound (`a:snd`) plays with the action, and Stop Previous Sound stops the sounds and
+  audio clips that are playing. A sound-only action (`ppaction://noaction`) is kept from PPTX.
+  Still open: hover sounds do not play; triggers that start on `onStopAudio` or `begin` conditions are
   not read as triggers; click boxes are the shape's bounding box (a hexagon's corners count) and do
   not follow a shape that a motion path has moved. Trigger sequences now keep their separate
   click steps on PPTX save, including paragraph builds (`crates/pptx/tests/trigger_steps.rs`).
@@ -356,6 +361,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-23 | minor | Interactive decks: media actions play clips in groups, action sounds play with their action and Stop Previous Sound stops sounds and audio clips; sound-only actions are read from PPTX. The two game decks were not run again, so the entry stays open with hover sounds, audio-started triggers and click boxes |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |

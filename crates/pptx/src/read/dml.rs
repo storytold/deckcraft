@@ -447,6 +447,7 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
     let rid = h.attr("r:id").unwrap_or("");
     let rel = part.rels.get(rid);
     let action = h.attr("action").unwrap_or("");
+    let stop_sound = h.bool("endSnd").unwrap_or(false);
     let a = if let Some(rest) = action.strip_prefix("ppaction://hlinkshowjump?jump=") {
         match rest {
             "nextslide" => Action::NextSlide,
@@ -468,6 +469,14 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
         Action::Program { path: rel.map(|r| r.target.clone()).unwrap_or_default() }
     } else if action.starts_with("ppaction://media") {
         Action::PlayMedia
+    } else if action.starts_with("ppaction://noaction") {
+        // Action: None with Play Sound or Stop Previous Sound. Without either (or with a sound
+        // that does not resolve, such as a missing part) it does nothing, and a link would only
+        // swallow the click. A linked (external) sound resolves and is kept.
+        if !stop_sound && h.child("snd").and_then(|s| media_ref(imp, part, s)).is_none() {
+            return None;
+        }
+        Action::NoAction
     } else if action.is_empty() || action.starts_with("ppaction://hlinkfile") {
         let r = rel?;
         if r.target.is_empty() {
@@ -487,7 +496,7 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
         action: a,
         tooltip: h.attr("tooltip").unwrap_or("").to_string(),
         highlight_click: h.bool("highlightClick").unwrap_or(false),
-        stop_sound: h.bool("endSnd").unwrap_or(false),
+        stop_sound,
         sound: h.child("snd").and_then(|s| media_ref(imp, part, s)),
         zoom_return: None,
     })

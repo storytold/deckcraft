@@ -297,6 +297,19 @@ fn a_shape_with_a_link_and_an_animation_follows_the_link_without_waiting() {
 }
 
 #[test]
+fn a_play_media_action_plays_the_clicked_shape_and_stays_on_the_slide() {
+    // ppaction://media: the clip is the clicked shape's own. The click is on the shape, so the
+    // background's "next" must not happen too.
+    let s1 = slide(1000, vec![shape(1), shape(2)], vec![], true);
+    let s2 = slide(1001, vec![], vec![], true);
+    let pres = Presentation { slides: vec![s1, s2], ..Default::default() };
+    let mut r = Run::new(pres, vec![vec![hit(1, Some(Action::PlayMedia)), hit(2, None)], vec![]]);
+    r.hits[0][1].under_pointer = false;
+    assert_eq!(r.click(), Click::Media(ShapeId(1)));
+    assert_eq!(r.show.slide, 0);
+}
+
+#[test]
 fn a_slide_comes_back_the_way_it_was_left() {
     let steps: Vec<Animation> = (1..=3)
         .map(|i| Animation { shape: ShapeId(i), class: AnimClass::Entrance, effect: "appear".into(), duration_ms: 0, ..Default::default() })

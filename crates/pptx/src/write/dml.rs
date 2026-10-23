@@ -421,6 +421,7 @@ pub fn hyperlink(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, h: &Hyperlink) 
             (o.rels.add("hyperlink", path, true), Some("ppaction://program".into()))
         }
         Action::PlayMedia => (String::new(), Some("ppaction://media".into())),
+        Action::NoAction => (String::new(), Some("ppaction://noaction".into())),
     };
     let attrs = A::new()
         .a("r:id", rid)

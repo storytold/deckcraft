@@ -1384,7 +1384,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 })
                 .unwrap_or_default();
             let (cur_kind, cur_arg) = match cur.as_ref().map(|h| &h.action) {
-                None => ("none", String::new()),
+                None | Some(Action::NoAction) => ("none", String::new()),
                 Some(Action::NextSlide) => ("next", String::new()),
                 Some(Action::PreviousSlide) => ("previous", String::new()),
                 Some(Action::FirstSlide) => ("first", String::new()),

@@ -67,6 +67,17 @@ pub struct Show {
     media_clock: Option<(usize, f64)>,
     /// Media effects set off and not yet carried out: (shape, effect id).
     media_cues: Vec<(ShapeId, String)>,
+    /// What clicked actions did to the show's sound, not yet carried out.
+    sound_cues: Vec<SoundCue>,
+}
+
+/// A clicked action's effect on the sound voice the show shares with transition sounds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum SoundCue {
+    /// `a:snd`: play this sound in place of the one playing.
+    Play(deckcraft_model::MediaId),
+    /// Stop Previous Sound (`endSnd`).
+    Stop,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -208,6 +219,7 @@ impl Show {
             links: None,
             media_clock: None,
             media_cues: vec![],
+            sound_cues: vec![],
         }
     }
 
@@ -567,8 +579,13 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     if let Some(id) = gif_click {
         let _ = app.run("media.gifPlay", json!({"id": id}));
     } else if let Some((id, clip)) = media_click {
+        // The clip's own action is not followed here, but its sound goes with the click.
+        if let Some(l) = doc.slides.get(show.state.slide).and_then(|s| s.shapes.iter().find(|sh| sh.id == id)).and_then(|sh| sh.click.clone()) {
+            show.cue_link_sound(&l);
+        }
         app.media.toggle(doc_uid, &doc, id, &clip, crate::media::Owner::Show);
     } else if clicked && let Some(Pick::Text(l)) = under.as_ref().and_then(|u| u.pick.clone()) {
+        show.cue_link_sound(&l);
         let last = show.last_viewed;
         match show.state.follow_link(&doc, &l, last) {
             LinkJump::Show(a) => actions.push(a),
@@ -609,6 +626,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 Click::Show(a) => actions.push(a),
                 Click::Open(url) => ctx.open_url(egui::OpenUrl::new_tab(url)),
                 Click::Exit => keep = false,
+                Click::Media(id) => show.media_cues.push((id, "play".into())),
                 Click::Animated | Click::None => {}
             }
         }
@@ -672,6 +690,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         let step = show.state.step;
         show.cue_media(&doc, step, now - show.step_start);
     }
+    // Before the new slide's media: a transition sound of the slide the click moved to replaces
+    // the action's sound.
+    run_sound_cues(app, &mut show, doc_uid, &doc);
     show_media(app, &mut show, doc_uid, &doc);
     run_media_cues(app, &mut show, doc_uid, &doc);
     // Draw.
@@ -1060,8 +1081,31 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
-/// The media-host voice for slide transition sounds (no shape has this id).
+/// The media-host voice for slide transition sounds and the sounds of clicked actions (no shape
+/// has this id). One voice: a new sound replaces the one playing.
 pub(crate) const TRANSITION_SOUND: ShapeId = ShapeId(u32::MAX);
+
+/// Carry out the sounds of clicked actions: Stop Previous Sound, then the action's own sound.
+fn run_sound_cues(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation) {
+    for cue in std::mem::take(&mut show.sound_cues) {
+        match cue {
+            // `endSnd` "should stop all sounds that are playing when it is clicked" (ECMA-376
+            // Part 1, hlinkClick): the show's sound and its audio clips. Videos keep playing.
+            SoundCue::Stop => {
+                for id in app.media.ids() {
+                    let audio = crate::media::find_clip(doc, id).is_some_and(|c| !c.video);
+                    if id == TRANSITION_SOUND || (audio && app.media.owner(id) == Some(crate::media::Owner::Show)) {
+                        app.media.stop(id);
+                    }
+                }
+            }
+            SoundCue::Play(media) => {
+                let clip = deckcraft_model::MediaClip { media, volume: 1.0, ..Default::default() };
+                app.media.play(doc_uid, doc, TRANSITION_SOUND, &clip, Some(0.0), crate::media::Owner::Show);
+            }
+        }
+    }
+}
 
 /// Start the media of a newly shown slide: media from the previous slide stops unless it plays
 /// across slides; media set to start automatically plays. Everything stops at the end.
@@ -1284,9 +1328,24 @@ impl Show {
     fn click_slide(&mut self, doc: &Presentation, under: &Under, now: f64) -> Click {
         self.timeline(doc);
         let last = self.last_viewed;
-        match &self.timeline {
-            Some((_, tl)) => self.state.click(doc, tl, &under.shapes, &|id| under.visible(id), now, last),
-            None => Click::None,
+        let Some((_, tl)) = &self.timeline else { return Click::None };
+        // The sound goes with the clicked shape's action, whatever the action does.
+        let target = self.state.target(doc, tl, &under.shapes, &|id| under.visible(id));
+        let link = target.and_then(|t| self.links.as_ref()?.2.iter().find(|s| s.id == t.shape)?.link.clone());
+        let click = self.state.click(doc, tl, &under.shapes, &|id| under.visible(id), now, last);
+        if let Some(l) = link {
+            self.cue_link_sound(&l);
+        }
+        click
+    }
+
+    /// Queue what a followed link does to the show's sound.
+    fn cue_link_sound(&mut self, link: &Hyperlink) {
+        if link.stop_sound {
+            self.sound_cues.push(SoundCue::Stop);
+        }
+        if let Some(media) = link.sound {
+            self.sound_cues.push(SoundCue::Play(media));
         }
     }
 }
@@ -2076,6 +2135,188 @@ mod tests {
         assert!(show.apply(a, &doc, 3.0));
         show.cue_media(&doc, 1, 9.0);
         assert!(show.media_cues.is_empty());
+    }
+
+    /// 16-bit mono silent WAV, `secs` long at 8 kHz.
+    fn wav(secs: f64) -> Vec<u8> {
+        let len = (8_000.0 * secs) as u32 * 2;
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + len).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        // PCM, mono, 8 kHz, 16 000 bytes a second, 2-byte frames, 16 bits.
+        for v in [16u32, 1 | (1 << 16), 8_000, 16_000, 2 | (16 << 16)] {
+            b.extend_from_slice(&v.to_le_bytes());
+        }
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&len.to_le_bytes());
+        b.resize(b.len() + len as usize, 0);
+        b
+    }
+
+    fn action(action: deckcraft_model::text::Action, sound: Option<deckcraft_model::MediaId>, stop_sound: bool) -> Hyperlink {
+        Hyperlink { action, tooltip: String::new(), highlight_click: false, sound, stop_sound, zoom_return: None }
+    }
+
+    /// A slide show of `doc` in a 1000×700 window, the slides filling it.
+    fn show_harness(doc: Presentation) -> egui_kittest::Harness<'static, SlideApp> {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.active_mut().unwrap().doc = std::sync::Arc::new(doc);
+        let app = SlideApp::new(session, crate::Services::default());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        harness
+    }
+
+    fn click_middle(harness: &mut egui_kittest::Harness<'static, SlideApp>) {
+        let p = pos2(500.0, 350.0);
+        harness.hover_at(p);
+        harness.run_steps(1);
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        }
+        harness.run_steps(2);
+    }
+
+    fn slide_shape(id: u32, doc: &Presentation, click: Hyperlink) -> deckcraft_model::Shape {
+        let (w, h) = (doc.slide_size.width, doc.slide_size.height);
+        deckcraft_model::Shape { id: ShapeId(id), xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, w, h)), click: Some(click), ..Default::default() }
+    }
+
+    /// The show's sound voice is playing (headless: what would play, no speaker needed).
+    fn sound_playing(harness: &egui_kittest::Harness<'static, SlideApp>) -> bool {
+        harness.state().media.is_playing(TRANSITION_SOUND)
+    }
+
+    #[test]
+    fn a_clicked_action_plays_its_sound_and_stop_previous_sound_ends_it() {
+        use deckcraft_model::text::Action;
+        let mut doc = Presentation::default();
+        doc.slides.push(std::sync::Arc::new(deckcraft_model::Slide { id: deckcraft_model::SlideId(7001), ..Default::default() }));
+        let chime = doc.add_media("chime.wav", "audio/wav", wav(30.0)).unwrap();
+        // Slide 1: Next Slide with a sound, the sound goes on over slide 2 (PowerPoint plays the
+        // sound and does the action). Slide 2: Previous Slide with Stop Previous Sound.
+        let next = slide_shape(9001, &doc, action(Action::NextSlide, Some(chime), false));
+        let back = slide_shape(9002, &doc, action(Action::PreviousSlide, None, true));
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(next);
+        std::sync::Arc::make_mut(&mut doc.slides[1]).shapes.push(back);
+        let mut harness = show_harness(doc);
+        assert!(!sound_playing(&harness));
+        click_middle(&mut harness);
+        assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(1), "the action still runs");
+        assert!(sound_playing(&harness), "the action's sound plays");
+        click_middle(&mut harness);
+        assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(0));
+        assert!(!sound_playing(&harness), "Stop Previous Sound ends it");
+    }
+
+    #[test]
+    fn stop_previous_sound_also_stops_audio_clips() {
+        use deckcraft_model::text::Action;
+        // Background music that plays across slides, and a Next button with Stop Previous Sound.
+        let mut doc = Presentation::default();
+        doc.slides.push(std::sync::Arc::new(deckcraft_model::Slide { id: deckcraft_model::SlideId(7001), ..Default::default() }));
+        let tune = doc.add_media("tune.wav", "audio/wav", wav(30.0)).unwrap();
+        let clip = deckcraft_model::MediaClip { media: tune, volume: 1.0, autoplay: true, play_across_slides: true, ..Default::default() };
+        let music = deckcraft_model::Shape {
+            id: ShapeId(9020),
+            xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, 20.0, 20.0)),
+            kind: deckcraft_model::ShapeKind::Media(clip),
+            ..Default::default()
+        };
+        let next = slide_shape(9021, &doc, action(Action::NextSlide, None, true));
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.extend([music, next]);
+        let mut harness = show_harness(doc);
+        assert!(harness.state().media.is_playing(ShapeId(9020)), "the music starts with the slide");
+        click_middle(&mut harness);
+        assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(1));
+        assert!(!harness.state().media.is_playing(ShapeId(9020)), "Stop Previous Sound stops it");
+    }
+
+    #[test]
+    fn the_next_slides_transition_sound_replaces_the_actions_sound() {
+        use deckcraft_model::text::Action;
+        let mut doc = Presentation::default();
+        let chime = doc.add_media("chime.wav", "audio/wav", wav(30.0)).unwrap();
+        let whoosh = doc.add_media("whoosh.wav", "audio/wav", wav(2.0)).unwrap();
+        let transition = deckcraft_model::anim::Transition { sound: Some(whoosh), ..Default::default() };
+        doc.slides.push(std::sync::Arc::new(deckcraft_model::Slide {
+            id: deckcraft_model::SlideId(7001),
+            transition: Some(transition),
+            ..Default::default()
+        }));
+        let next = slide_shape(9001, &doc, action(Action::NextSlide, Some(chime), false));
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(next);
+        let mut harness = show_harness(doc);
+        click_middle(&mut harness);
+        assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(1));
+        // One voice: the later sound, the transition's 2 s one, is what plays.
+        let length = harness.state().media.status(TRANSITION_SOUND).map(|s| s.duration);
+        assert!(length.is_some_and(|d| (d - 2.0).abs() < 0.1), "{length:?}");
+    }
+
+    #[test]
+    fn a_sound_only_action_plays_its_sound_and_stays_on_the_slide() {
+        use deckcraft_model::text::Action;
+        let mut doc = Presentation::default();
+        doc.slides.push(std::sync::Arc::new(deckcraft_model::Slide { id: deckcraft_model::SlideId(7001), ..Default::default() }));
+        let buzz = doc.add_media("buzz.wav", "audio/wav", wav(30.0)).unwrap();
+        let button = slide_shape(9001, &doc, action(Action::NoAction, Some(buzz), false));
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(button);
+        let mut harness = show_harness(doc);
+        click_middle(&mut harness);
+        assert!(sound_playing(&harness));
+        assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(0), "a click on the button is not a click on the slide");
+    }
+
+    #[test]
+    fn a_play_media_action_plays_a_clip_inside_a_group() {
+        use deckcraft_model::text::Action;
+        // A click on a clip that is on the slide itself toggles it already (`media_hit`); one
+        // inside a group is only reached through its action.
+        let mut doc = Presentation::default();
+        let media = doc.add_media("clip.wav", "audio/wav", wav(30.0)).unwrap();
+        let clip = deckcraft_model::MediaClip { media, volume: 1.0, ..Default::default() };
+        let mut audio = slide_shape(9011, &doc, action(Action::PlayMedia, None, false));
+        audio.kind = deckcraft_model::ShapeKind::Media(clip);
+        let (w, h) = (doc.slide_size.width, doc.slide_size.height);
+        let group = deckcraft_model::Shape {
+            id: ShapeId(9010),
+            xfrm: Some(deckcraft_geom::Xfrm::new(0.0, 0.0, w, h)),
+            kind: deckcraft_model::ShapeKind::Group { children: vec![audio], child: deckcraft_geom::Xfrm::new(0.0, 0.0, w, h) },
+            ..Default::default()
+        };
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(group);
+        let mut harness = show_harness(doc);
+        assert!(!harness.state().media.is_playing(ShapeId(9011)));
+        click_middle(&mut harness);
+        assert!(harness.state().media.is_playing(ShapeId(9011)), "the clip plays");
+        assert_eq!(harness.state().show.as_ref().map(|s| s.state.slide), Some(0), "and the show stays on the slide");
+    }
+
+    #[test]
+    fn a_clip_on_the_slide_plays_its_action_sound_when_clicked() {
+        use deckcraft_model::text::Action;
+        // `media_hit` takes this click, not the shape's action: the sound has to go with it.
+        let mut doc = Presentation::default();
+        let media = doc.add_media("clip.wav", "audio/wav", wav(30.0)).unwrap();
+        let chime = doc.add_media("chime.wav", "audio/wav", wav(30.0)).unwrap();
+        let clip = deckcraft_model::MediaClip { media, volume: 1.0, ..Default::default() };
+        let mut audio = slide_shape(9031, &doc, action(Action::PlayMedia, Some(chime), false));
+        audio.kind = deckcraft_model::ShapeKind::Media(clip);
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(audio);
+        let mut harness = show_harness(doc);
+        click_middle(&mut harness);
+        assert!(harness.state().media.is_playing(ShapeId(9031)), "the clip plays");
+        assert!(sound_playing(&harness), "and so does its action's sound");
     }
 
     #[test]

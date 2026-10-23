@@ -72,6 +72,8 @@ pub enum Click {
     Show(ShowAction),
     /// Open this URL outside the show.
     Open(String),
+    /// Play the media of this shape (its action is `ppaction://media`).
+    Media(ShapeId),
     /// End the show.
     Exit,
 }
@@ -249,6 +251,8 @@ impl ShowState {
             }
         }
         match t.link {
+            // The clip is the clicked shape's own, which `follow` does not know.
+            Some(Action::PlayMedia) => Click::Media(t.shape),
             // The link is followed at once, whatever the animation still has to play.
             Some(a) => self.follow(pres, &a, last_viewed).into(),
             None if animated => Click::Animated,

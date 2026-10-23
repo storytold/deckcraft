@@ -326,6 +326,8 @@ pub enum Action {
         path: String,
     },
     PlayMedia,
+    /// Action: None, kept for its sound or Stop Previous Sound (`ppaction://noaction`).
+    NoAction,
 }
 
 fn custom_show_returns() -> bool {

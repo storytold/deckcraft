@@ -1344,6 +1344,45 @@ fn transition_sound_options_round_trip() {
     assert!(s.execute("transition.sound", &json!({"builtin": "foghorn"})).is_err());
 }
 
+#[test]
+fn a_sound_only_action_is_kept() {
+    // Action Settings with Action: None and Play Sound. PowerPoint writes `ppaction://noaction`,
+    // which "will continue to respect highlight attribute and snd element" ([MS-OI29500] 21.1.2.3.5).
+    let mut p = Presentation::default();
+    let chime = p.add_media("chime.wav", "audio/wav", b"RIFFdeckcraft-chime-WAVEfmt ".to_vec()).expect("media");
+    let next =
+        |sound| Hyperlink { action: Action::NextSlide, tooltip: String::new(), highlight_click: false, sound, stop_sound: false, zoom_return: None };
+    let mut buzz = shape(&mut p, "Buzz", 10.0, 10.0, 100.0, 50.0);
+    buzz.click = Some(next(Some(chime)));
+    let mut plain = shape(&mut p, "Plain", 10.0, 100.0, 100.0, 50.0);
+    plain.click = Some(next(None));
+    Arc::make_mut(&mut p.slides[0]).shapes = vec![buzz, plain];
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let bytes = patch_slides(bytes, "ppaction://hlinkshowjump?jump=nextslide", "ppaction://noaction");
+    let back = deckcraft_pptx::import(&bytes).expect("import");
+    let click = |name: &str| back.slides[0].shapes.iter().find(|s| s.name == name).expect(name).click.clone();
+    let buzz = click("Buzz").expect("the sound-only action is kept");
+    assert_eq!(buzz.action, Action::NoAction);
+    assert!(buzz.sound.is_some());
+    assert_eq!(click("Plain"), None, "a link that does nothing at all is not kept");
+    // And it is saved the way PowerPoint writes it.
+    let again = deckcraft_pptx::export(&back).expect("export");
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&again)).expect("zip");
+    let mut x = String::new();
+    std::io::Read::read_to_string(&mut z.by_name("ppt/slides/slide1.xml").expect("slide"), &mut x).expect("read");
+    assert!(x.contains(r#"action="ppaction://noaction""#), "{x}");
+
+    // A sound that is not in the file leaves nothing to do: the link would only swallow the click.
+    let mut ghost = shape(&mut p, "Ghost", 10.0, 200.0, 100.0, 50.0);
+    ghost.click = Some(next(Some(chime)));
+    Arc::make_mut(&mut p.slides[0]).shapes = vec![ghost];
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let bytes = patch_slides(bytes, "ppaction://hlinkshowjump?jump=nextslide", "ppaction://noaction");
+    let bytes = patch_slides(bytes, r#"<a:snd r:embed=""#, r#"<a:snd r:embed="rIdMissing" data-was=""#);
+    let back = deckcraft_pptx::import(&bytes).expect("import");
+    assert_eq!(back.slides[0].shapes.iter().find(|s| s.name == "Ghost").expect("Ghost").click, None);
+}
+
 /// Replace `from` with `to` in every slide part of an exported deck.
 fn patch_slides(bytes: Vec<u8>, from: &str, to: &str) -> Vec<u8> {
     use std::io::{Read, Write};
