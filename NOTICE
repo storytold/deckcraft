@@ -19,13 +19,22 @@ list (author, source, license) is in ATTRIBUTION.md.
   ATTRIBUTION.md (Inter, Carlito, Caladea, Liberation, Montserrat, Lato, Open Sans, Roboto,
   Merriweather, Playfair Display, Poppins, Nunito Sans, BIZ UD, Shippori Mincho, Noto Sans
   Arabic) under the SIL Open Font License 1.1; their licence texts ship with release packages.
-- Lucide icon paths embedded in crates/engine/src/icon_data.rs (Insert › Icons), release 1.56.0,
-  commit 440a1e1dfb1e712505308da46bead3c28b1f1398, https://github.com/lucide-icons/lucide.
-  ISC License, Copyright (c) 2026 Lucide Icons and Contributors. Icons Lucide derives from Feather
-  are MIT, Copyright (c) 2013-present Cole Bemis; which names those are is the list in Lucide's
-  LICENSE at that commit. Among the paths embedded here, the Feather-derived names are arrow-down,
-  arrow-left, arrow-right, arrow-up, at-sign, calendar, check, chevron-right, clipboard, clock,
-  compass, download, info, key, link, lock, minus, moon, move, music, plus, search, target and x.
+- Lucide icon paths embedded in crates/engine/src/icon_data.rs (Insert › Icons): the full Lucide
+  1.56.0 set, commit 440a1e1dfb1e712505308da46bead3c28b1f1398,
+  https://github.com/lucide-icons/lucide. ISC License, Copyright (c) 2026 Lucide Icons and
+  Contributors. Icons Lucide derives from Feather are MIT, Copyright (c) 2013-present Cole Bemis;
+  which names those are is the list in Lucide's LICENSE at that commit. Among the paths embedded
+  here, the Feather-derived names are airplay, aperture, arrow-down, arrow-down-left,
+  arrow-down-right, arrow-left, arrow-right, arrow-up, arrow-up-left, arrow-up-right, at-sign,
+  calendar, cast, check, chevron-down, chevron-left, chevron-right, chevron-up, chevrons-down,
+  chevrons-left, chevrons-right, chevrons-up, circle, clipboard, clock, code, command, compass,
+  corner-down-left, corner-down-right, corner-left-down, corner-left-up, corner-right-down,
+  corner-right-up, corner-up-left, corner-up-right, crosshair, database, dollar-sign, download,
+  external-link, feather, hash, headphones, info, italic, key, life-buoy, link, link-2, loader,
+  lock, log-in, log-out, maximize, minimize, minimize-2, minus, monitor, moon, move, music,
+  navigation, navigation-2, octagon, percent, plus, power, radio, rss, search, server, share,
+  shopping-bag, smartphone, square, table-2, tablet, target, terminal, trash, triangle, tv, type,
+  upload, x, zoom-in and zoom-out.
 
   ISC License
 

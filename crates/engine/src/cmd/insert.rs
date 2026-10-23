@@ -2,10 +2,11 @@
 
 use deckcraft_color::SchemeSlot;
 use deckcraft_geom::Xfrm;
+use deckcraft_geom::preset::FillMode;
 use deckcraft_model::chart::ChartType;
 use deckcraft_model::style::PictureFill;
 use deckcraft_model::text::{AutoFit, RunKind, TextBody};
-use deckcraft_model::{Chart, ColorRef, Fill, Geom, Line, MediaClip, Shape, ShapeId, ShapeKind, ShapeStyle, Table};
+use deckcraft_model::{Chart, ColorBase, ColorRef, CustomPath, Fill, Geom, Line, MediaClip, Shape, ShapeId, ShapeKind, ShapeStyle, Table};
 use serde_json::{Value, json};
 
 use super::*;
@@ -27,11 +28,21 @@ pub fn specs() -> Vec<CommandSpec> {
             "Icons",
             ["Insert", "Illustrations"],
             None,
-            "{name: star|arrow-right|… (see insert.icons), rect?: [x,y,w,h]}",
+            "{name: star|arrow-right|… (see insert.icons), rect?: [x,y,w,h], color?: #RRGGBB|tx1|accent1, fill?: bool|none|colour}",
             has_slide,
             insert_icon
         ),
-        cmd!(query "insert.icons", "Icon Gallery", [], None, "{} → [{name, label, category}]", always, list_icons),
+        cmd!(
+            "insert.iconStyle",
+            "Icon Colour",
+            ["Insert", "Illustrations"],
+            None,
+            "{color?: #RRGGBB|tx1|accent1|…, fill?: bool|none|colour, ids?}",
+            has_selection,
+            icon_style
+        ),
+        cmd!("insert.iconToShapes", "Convert Icon to Shapes", ["Insert", "Illustrations"], None, "{ids?}", has_selection, icon_to_shapes),
+        cmd!(query "insert.icons", "Icon Gallery", [], None, "{} → [{name, label, category, tags}]", always, list_icons),
         cmd!(query "shape.presets", "Shape Gallery", [], None, "{} → [{name, label, category}]", always, presets),
         cmd!("insert.textBox", "Text Box", ["Insert", "Text"], None, "{rect?: [x,y,w,h], text?: string}", has_slide, text_box),
         cmd!(
@@ -233,10 +244,101 @@ fn presets(_s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn list_icons(_s: &mut Session, _p: &Value) -> Result<Value> {
-    Ok(Value::Array(crate::icons::icons().iter().map(|i| json!({"name": i.name, "label": i.label, "category": i.category})).collect()))
+    Ok(Value::Array(
+        crate::icons::icons().iter().map(|i| json!({"name": i.name, "label": i.label, "category": i.category, "tags": i.tags})).collect(),
+    ))
 }
 
-/// A Lucide stroke icon: custom geometry, no fill, round line scaled from the 24-unit design.
+/// How `fill` was asked for. `Same` uses the line colour (the new one, when `color` is set).
+enum IconFill {
+    Unset,
+    Off,
+    Same,
+    Color(ColorRef),
+}
+
+fn icon_color(cmd: &str, p: &Value) -> Result<ColorRef> {
+    match p.get("color") {
+        None => Ok(ColorRef::scheme(SchemeSlot::Tx1)),
+        Some(v) => color_value(v).ok_or_else(|| bad(cmd, "colour is not #RRGGBB or a scheme colour")),
+    }
+}
+
+fn icon_fill(cmd: &str, p: &Value) -> Result<IconFill> {
+    let Some(v) = p.get("fill") else { return Ok(IconFill::Unset) };
+    match v {
+        Value::Bool(true) => Ok(IconFill::Same),
+        Value::Bool(false) => Ok(IconFill::Off),
+        Value::String(s) if s.eq_ignore_ascii_case("true") => Ok(IconFill::Same),
+        Value::String(s) if s.eq_ignore_ascii_case("false") || s.eq_ignore_ascii_case("none") => Ok(IconFill::Off),
+        other => color_value(other).map(IconFill::Color).ok_or_else(|| bad(cmd, "fill is not a colour, true, or none")),
+    }
+}
+
+/// One path when unfilled (so a stroke icon stays a single shape). A fill splits on `M` and paints
+/// only the closed pieces.
+fn icon_paths(cmd: &str, d: &str, filled: bool) -> Result<Vec<CustomPath>> {
+    if !filled {
+        return Ok(vec![CustomPath { w: crate::icons::VIEW, h: crate::icons::VIEW, d: d.to_string(), fill: FillMode::None, stroke: true }]);
+    }
+    let mut out = Vec::new();
+    for part in crate::icons::split_deck_path(d) {
+        if out.len() >= 64 {
+            return Err(bad(cmd, "icon has too many parts"));
+        }
+        let closed = crate::icons::path_is_closed(&part);
+        out.push(CustomPath {
+            w: crate::icons::VIEW,
+            h: crate::icons::VIEW,
+            d: part,
+            fill: if closed { FillMode::Norm } else { FillMode::None },
+            stroke: true,
+        });
+    }
+    if out.is_empty() { Err(bad(cmd, "icon has no path")) } else { Ok(out) }
+}
+
+fn paint_line(shape: &mut Shape, color: ColorRef) {
+    let mut line = shape.line.take().unwrap_or_default();
+    line.fill = Some(Fill::solid(color.clone()));
+    shape.line = Some(line);
+    if let ColorBase::Scheme { slot } = color.base
+        && color.mods.is_empty()
+    {
+        shape.style = Some(ShapeStyle::line(slot));
+    }
+}
+
+fn line_color_of(shape: &Shape) -> Option<ColorRef> {
+    match shape.line.as_ref().and_then(|l| l.fill.as_ref()) {
+        Some(Fill::Solid { color }) => Some(color.clone()),
+        _ => None,
+    }
+}
+
+fn apply_filled(shape: &mut Shape, color: ColorRef) -> Result<()> {
+    let Geom::Custom { paths } = &shape.geom else { return Ok(()) };
+    let mut out = Vec::new();
+    for p in paths {
+        for part in crate::icons::split_deck_path(&p.d) {
+            if out.len() >= 64 {
+                return Err(bad("insert.iconStyle", "icon has too many parts"));
+            }
+            let closed = crate::icons::path_is_closed(&part);
+            out.push(CustomPath { w: p.w, h: p.h, d: part, fill: if closed { FillMode::Norm } else { FillMode::None }, stroke: true });
+        }
+    }
+    if out.is_empty() {
+        return Err(bad("insert.iconStyle", "icon has no path"));
+    }
+    shape.fill = Some(Fill::solid(color));
+    if let Geom::Custom { paths } = &mut shape.geom {
+        *paths = out;
+    }
+    Ok(())
+}
+
+/// A Lucide icon: custom geometry in the 24×24 design box, round stroke scaled from that design.
 fn insert_icon(s: &mut Session, p: &Value) -> Result<Value> {
     let name = str_param(p, "name").ok_or_else(|| bad("insert.icon", "missing `name`"))?;
     let icon = crate::icons::find(name).ok_or_else(|| bad("insert.icon", format!("unknown icon `{name}`")))?;
@@ -245,31 +347,184 @@ fn insert_icon(s: &mut Session, p: &Value) -> Result<Value> {
     if rect.w < 1.0 || rect.h < 1.0 {
         return Err(bad("insert.icon", "rect needs a positive width and height"));
     }
-    let shape = Shape {
+    let color = icon_color("insert.icon", p)?;
+    let fill = icon_fill("insert.icon", p)?;
+    let filled = matches!(fill, IconFill::Same | IconFill::Color(_));
+    let paths = icon_paths("insert.icon", &d, filled)?;
+    let fill_color = match fill {
+        IconFill::Color(c) => Some(c),
+        IconFill::Same if paths.iter().any(|path| path.fill == FillMode::Norm) => Some(color.clone()),
+        _ => None,
+    };
+    let mut shape = Shape {
         name: icon.label.to_string(),
         xfrm: Some(rect),
-        geom: Geom::Custom {
-            paths: vec![deckcraft_model::CustomPath {
-                w: crate::icons::VIEW,
-                h: crate::icons::VIEW,
-                d,
-                fill: deckcraft_geom::preset::FillMode::None,
-                stroke: true,
-            }],
-        },
+        geom: Geom::Custom { paths },
         fill: Some(Fill::None),
         line: Some(Line {
-            fill: Some(Fill::solid(ColorRef::scheme(SchemeSlot::Tx1))),
             width: Some(crate::icons::stroke_width(icon, rect.w, rect.h)),
             cap: Some(deckcraft_model::style::LineCap::Round),
             join: Some(deckcraft_model::style::LineJoin::Round),
             ..Default::default()
         }),
-        style: Some(ShapeStyle::line(SchemeSlot::Tx1)),
         ..Default::default()
     };
+    paint_line(&mut shape, color);
+    if let Some(c) = fill_color {
+        shape.fill = Some(Fill::solid(c));
+    }
     let id = add_shape(s, "insert.icon", shape, true)?;
     Ok(json!({"id": id}))
+}
+
+/// Recolour an icon, and optionally fill its closed subpaths or clear that fill.
+fn icon_style(s: &mut Session, p: &Value) -> Result<Value> {
+    if p.get("color").is_none() && p.get("fill").is_none() {
+        return Err(bad("insert.iconStyle", "missing `color` or `fill`"));
+    }
+    let color = match p.get("color") {
+        None => None,
+        Some(v) => Some(color_value(v).ok_or_else(|| bad("insert.iconStyle", "colour is not #RRGGBB or a scheme colour"))?),
+    };
+    let fill = icon_fill("insert.iconStyle", p)?;
+    let ids = targets(s, p)?;
+    let st = s.doc()?;
+    let icons: Vec<ShapeId> = ids.into_iter().filter(|id| st.shape(*id).is_some_and(|sh| crate::icons::is_icon_geom(&sh.geom))).collect();
+    if icons.is_empty() {
+        return Err(bad("insert.iconStyle", "select an icon"));
+    }
+    s.edit(|doc, sel| {
+        let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("insert.iconStyle", "no slide"))?;
+        for id in &icons {
+            let Some(shape) = deckcraft_model::find_shape_mut(list, *id) else { continue };
+            if let Some(c) = &color {
+                paint_line(shape, c.clone());
+            }
+            match &fill {
+                IconFill::Unset => {}
+                IconFill::Off => {
+                    shape.fill = Some(Fill::None);
+                    if let Geom::Custom { paths } = &mut shape.geom {
+                        for path in paths {
+                            path.fill = FillMode::None;
+                        }
+                    }
+                }
+                IconFill::Same => {
+                    let c = line_color_of(shape).unwrap_or_else(|| ColorRef::scheme(SchemeSlot::Tx1));
+                    apply_filled(shape, c)?;
+                }
+                IconFill::Color(c) => apply_filled(shape, c.clone())?,
+            }
+        }
+        Ok(json!({"count": icons.len()}))
+    })
+}
+
+/// Replace each multi-part icon with a group of one shape per subpath. A single-path icon is
+/// already one editable shape and is left as it is. Children keep the icon's box, the same way
+/// Arrange › Group does, so the picture does not move.
+fn icon_to_shapes(s: &mut Session, p: &Value) -> Result<Value> {
+    let ids = targets(s, p)?;
+    let st = s.doc()?;
+    let mut plans: Vec<(ShapeId, Vec<CustomPath>)> = Vec::new();
+    let mut seen = Vec::new();
+    for id in ids {
+        if seen.contains(&id) {
+            continue;
+        }
+        seen.push(id);
+        let Some(sh) = st.shape(id) else { continue };
+        let Some(parts) = icon_pieces(sh) else { continue };
+        if parts.len() > 64 {
+            return Err(bad("insert.iconToShapes", "icon has too many parts"));
+        }
+        plans.push((id, parts));
+    }
+    if plans.is_empty() {
+        return Err(bad("insert.iconToShapes", "select an icon"));
+    }
+    let grouped = plans.iter().any(|(_, parts)| parts.len() >= 2);
+    let result = s.edit(|doc, sel| {
+        let needed = plans.iter().map(|(_, parts)| if parts.len() >= 2 { parts.len() + 1 } else { 0 }).sum::<usize>();
+        let mut budget = Vec::with_capacity(needed);
+        for _ in 0..needed {
+            budget.push(ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.iconToShapes", NO_ID_SPACE))?));
+        }
+        let mut next = 0;
+        let mut out = Vec::new();
+        let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("insert.iconToShapes", "no slide"))?;
+        for (id, parts) in &plans {
+            if parts.len() < 2 {
+                out.push(*id);
+                continue;
+            }
+            let child_ids = budget.get(next..next + parts.len()).ok_or_else(|| bad("insert.iconToShapes", "could not allocate shapes"))?.to_vec();
+            next += parts.len();
+            let group_id = *budget.get(next).ok_or_else(|| bad("insert.iconToShapes", "could not allocate shapes"))?;
+            next += 1;
+            let siblings = deckcraft_model::sibling_list_mut(list, *id).ok_or_else(|| bad("insert.iconToShapes", "no such shape"))?;
+            let idx = siblings.iter().position(|sh| sh.id == *id).ok_or_else(|| bad("insert.iconToShapes", "no such shape"))?;
+            let original = siblings.remove(idx);
+            let members: Vec<Shape> = child_ids
+                .iter()
+                .zip(parts.iter())
+                .enumerate()
+                .map(|(i, (cid, part))| Shape {
+                    id: *cid,
+                    name: format!("{} {}", original.name, i + 1),
+                    xfrm: original.xfrm,
+                    geom: Geom::Custom { paths: vec![part.clone()] },
+                    fill: original.fill.clone(),
+                    line: original.line.clone(),
+                    style: original.style.clone(),
+                    ..Default::default()
+                })
+                .collect();
+            let xs: Vec<Xfrm> = members.iter().filter_map(|m| m.xfrm).collect();
+            let gx = union_xfrm(&xs).ok_or_else(|| bad("insert.iconToShapes", "icon has no position"))?;
+            let group = Shape {
+                id: group_id,
+                name: original.name.clone(),
+                xfrm: Some(gx),
+                kind: ShapeKind::Group { children: members, child: gx },
+                ..Default::default()
+            };
+            siblings.insert(idx, group);
+            out.push(group_id);
+        }
+        sel.shapes = out.clone();
+        sel.text = None;
+        Ok(out)
+    })?;
+    Ok(json!({"grouped": grouped, "ids": result.iter().map(|id| id.0).collect::<Vec<_>>()}))
+}
+
+/// Subpaths of an icon, each still in the 24×24 box. `None` when `sh` is not an icon.
+fn icon_pieces(sh: &Shape) -> Option<Vec<CustomPath>> {
+    let Geom::Custom { paths } = &sh.geom else { return None };
+    if paths.is_empty() || !paths.iter().all(|p| crate::icons::is_icon_box(p.w, p.h)) {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for p in paths {
+        let bits = crate::icons::split_deck_path(&p.d);
+        if bits.is_empty() {
+            return None;
+        }
+        for d in bits {
+            parts.push(CustomPath { d, ..p.clone() });
+        }
+    }
+    if parts.is_empty() { None } else { Some(parts) }
+}
+
+fn union_xfrm(xs: &[Xfrm]) -> Option<Xfrm> {
+    let mut it = xs.iter().filter(|x| x.is_finite()).map(Xfrm::bounds);
+    let first = it.next()?;
+    let b = it.fold(first, |a, c| a.union(c));
+    let (w, h) = (b.width(), b.height());
+    if !w.is_finite() || !h.is_finite() || w < 0.0 || h < 0.0 { None } else { Some(Xfrm::new(b.x0, b.y0, w, h)) }
 }
 
 pub(crate) fn new_text_box(rect: Xfrm, text: &str) -> Shape {

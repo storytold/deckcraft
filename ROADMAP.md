@@ -165,6 +165,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | PPTX: an owned corpus round-trips SmartArt and OLE kept as XML, audio and video bookmarks and trims, a section with a hidden slide, slide-number and date fields, ink (as freeform lines), 3-D models (`.glb`, including the fallback picture) and animation repeat, bounce end and triggers. Relationship-bearing SmartArt and OLE (#203), playback options (#74) and rewind (#77) stay open |
 | 2026-10-14 | Chart trendlines are drawn: linear, exponential, logarithmic, polynomial, power and moving average, with forecast and the equation and R² label. The value axis grows to include the fit |
 | 2026-10-14 | Chart trendlines round-trip (type, polynomial order, moving-average period, forecast, intercept, equation and R²). An owned corpus slice also checks combo charts with data labels, merged tables with diagonal borders, and text columns, autofit, vertical text and a WordArt warp |
+| 2026-10-14 | Insert › Icons: the full Lucide 1.56.0 set, a colour and an optional fill on closed subpaths, and convert to an editable shape group. Stacked on the first icon gallery |
 | 2026-10-14 | Insert › Icons: a gallery of Lucide stroke icons (release 1.56.0) inserted as custom shapes, no fill, round stroke scaled from the 24-unit design |
 | 2026-10-14 | Size and Position dialog: height, width, rotation, scale and lock aspect ratio in one undo step, from Shape Format › Size and the shape menu |
 | 2026-10-14 | Review: Previous and Next comment walk every comment in the deck; the Comments pane lists every slide and highlights the one you landed on |
@@ -262,6 +263,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-14 | trivial | Progress log: PPTX corpus for 3-D models, media bookmarks and animation bounce end |
 | 2026-10-14 | trivial | Progress log: chart trendlines are drawn |
 | 2026-10-14 | trivial | Progress log: chart trendlines |
+| 2026-10-14 | trivial | Progress log: full Lucide icon set, colour, fill, convert to shapes |
 | 2026-10-14 | trivial | Progress log: Lucide icon gallery |
 | 2026-10-14 | trivial | Progress log: Size and Position dialog. Breadth stays 79%, ready stays ~55% |
 | 2026-10-14 | trivial | Progress log: previous and next comment |
