@@ -1901,6 +1901,7 @@ fn animations(app: &mut SlideApp, ui: &mut Ui) {
                         | "split"
                         | "wipe"
                         | "zoom"
+                        | "anvil"
                         | "pulse"
                         | "spin"
                         | "growShrink"

@@ -184,13 +184,25 @@ pub struct ShapeState {
     pub clip: Option<[f64; 4]>,
     /// Colour override for emphasis effects (fill).
     pub tint: Option<Rgba>,
+    /// Progress (0..1) of a dust puff at the shape's base (Anvil's landing); 0 = none.
+    pub dust: f64,
     /// Per-paragraph states of by-paragraph text builds (paragraph index, state).
     pub paras: Vec<(usize, ParaState)>,
 }
 
 impl Default for ShapeState {
     fn default() -> Self {
-        ShapeState { visible: true, opacity: 1.0, offset: Vec2::ZERO, scale: (1.0, 1.0), rotate: 0.0, clip: None, tint: None, paras: vec![] }
+        ShapeState {
+            visible: true,
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: (1.0, 1.0),
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            dust: 0.0,
+            paras: vec![],
+        }
     }
 }
 
@@ -502,6 +514,55 @@ fn output_size(pres: &Presentation, opts: &RenderOpts) -> (u16, u16) {
         .size
         .unwrap_or(((pres.slide_size.width * opts.scale).round().max(1.0) as u32, (pres.slide_size.height * opts.scale).round().max(1.0) as u32));
     (w.clamp(1, MAX_SIDE) as u16, h.clamp(1, MAX_SIDE) as u16)
+}
+
+/// Anvil's landing dust: soft grey clouds billowing out sideways from the base of the shape's box
+/// (`m`: shape-local points to output pixels), `u` the puff's progress 0..1. Deterministic, so
+/// every frame and export of the same moment match.
+fn dust_puff(ctx: &mut RenderContext, m: Affine, w: f64, h: f64, u: f64) {
+    if !(u.is_finite() && w.is_finite() && h.is_finite()) || w <= 0.0 || h <= 0.0 {
+        return;
+    }
+    // The ground: the lowest edge of the (possibly rotated) box, in slide space.
+    let corners = [Point::new(0.0, 0.0), Point::new(w, 0.0), Point::new(0.0, h), Point::new(w, h)].map(|p| m * p);
+    let (mut l, mut r, mut b) = (f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for p in corners {
+        l = l.min(p.x);
+        r = r.max(p.x);
+        b = b.max(p.y);
+    }
+    let bw = r - l;
+    if !(bw.is_finite() && b.is_finite()) || bw <= 0.0 {
+        return;
+    }
+    let cx = (l + r) / 2.0;
+    let out = 1.0 - (1.0 - u).powi(3);
+    let alpha = 0.6 * (u / 0.08).min(1.0) * (1.0 - u).powf(1.6);
+    // Size the clouds from the box width in output pixels, within sensible bounds.
+    let base = (bw * 0.09).clamp(4.0, 120.0);
+    let tone = Rgba::rgb(0xB9, 0xB4, 0xAC);
+    ctx.set_transform(Affine::IDENTITY);
+    const N: usize = 12;
+    for k in 0..N {
+        // Fixed pseudo-random spread per puff.
+        let a = ((k as f64 * 0.618_034) % 1.0 + 0.13 * (k % 3) as f64) % 1.0;
+        let side = if k % 2 == 0 { -1.0 } else { 1.0 };
+        let start = cx + side * bw / 2.0 * (0.25 + 0.75 * a);
+        let px = start + side * bw * (0.12 + 0.38 * a) * out;
+        let py = b - base * (0.2 + 0.9 * a) * out;
+        let rad = base * (0.8 + 0.9 * out) * (0.75 + 0.5 * ((k * 7 % 5) as f64 / 4.0));
+        if !(px.is_finite() && py.is_finite() && rad.is_finite()) || rad <= 0.0 {
+            continue;
+        }
+        let c = Point::new(px, py);
+        let stops = [
+            peniko::ColorStop { offset: 0.0, color: color(tone, alpha).into() },
+            peniko::ColorStop { offset: 0.55, color: color(tone, alpha * 0.55).into() },
+            peniko::ColorStop { offset: 1.0, color: color(tone, 0.0).into() },
+        ];
+        ctx.set_paint(peniko::Gradient::new_radial(c, rad as f32).with_stops(stops.as_slice()));
+        ctx.fill_rect(&Rect::new(px - rad, py - rad, px + rad, py + rad));
+    }
 }
 
 pub(crate) fn color(c: Rgba, alpha: f64) -> peniko::Color {
@@ -989,6 +1050,9 @@ impl Renderer {
         }
         if layered {
             ctx.pop_layer();
+        }
+        if st.dust > 0.0 && st.dust < 1.0 {
+            dust_puff(ctx, parent * x.affine(), x.w, x.h, st.dust);
         }
     }
 

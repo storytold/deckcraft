@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-19 · **Change:** trivial (Anvil, a Keynote-style entrance beyond PowerPoint; previous: minor, community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -57,6 +57,14 @@ perspective-correct subdivided meshes.
 | Motion paths | 64 presets + custom | 40 + Custom Path (Lines, Arcs, Turns, Loops, Basic shapes such as stars, heart, moon, teardrop; Lines & Curves such as zigzag, waves, S curves, spirals, bounces; Special such as figure 8, bean, peanut, neutron) | Remaining ~24 presets (some Basic shapes, Lines & Curves variants) |
 | Media (Play, Pause, Stop) | 3 (+ Seek) | 3 | Seek, bookmarks as triggers |
 
+Beyond PowerPoint: **Anvil** (entrance, in the ribbon's quick gallery), the effect Keynote users
+know. The shape free-falls from above the slide, squashes on landing with its base kept on the
+ground, and a puff of dust billows out sideways (`AnimState::dust`, drawn by the renderer). PowerPoint
+has no such preset, so PPTX stores it under DeckCraft's preset id 1001 with behaviours PowerPoint
+can play: the gravity drop as `ppt_y` key times and an `animScale` squash that springs back (no
+dust). DeckCraft reads id 1001 back as Anvil (`anvil_drops_from_above_squashes_and_puffs_dust`,
+`every_animation_effect_survives`). It is not counted in the PowerPoint scores above.
+
 By how often people use them, the effects present cover nearly all real decks (Appear, Fade, Fly
 In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85% of use; by count,
 ~34%.
@@ -94,6 +102,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | trivial | Anvil: a Keynote-style entrance beyond PowerPoint (drop, squash, dust), saved to PPTX as a drop PowerPoint can play; not counted in the scores |
 | 2026-10-15 | trivial | PPTX interactive sequences preserve later On Click effects and one click per paragraph; no change to playback or feature scores |
 | 2026-10-14 | trivial | Community PR wave folded: the Animation Pane timeline row says yes (it landed), preview split into canvas (yes) and from the selected effect (no); estimates drop the timeline and transition sounds (~15–27 h) |
 | 2026-10-14 | trivial | Repeat and bounce end round-trip through PPTX; rewind is still lost (#77) |

@@ -192,6 +192,25 @@ fn every_animation_evaluates_finite() {
 }
 
 #[test]
+fn anvil_drops_from_above_squashes_and_puffs_dust() {
+    let tl = Timeline::new(&slide_with(vec![anim(1, AnimClass::Entrance, "anvil", AnimStart::OnClick)]), W, H);
+    // Shape at y=100, h=100: starts fully above the slide, falling faster as it goes.
+    let s0 = tl.state(ShapeId(1), None, 0, 1e-6);
+    assert!(s0.visible && s0.offset_y <= -199.0, "{s0:?}");
+    let (a, b, c) = (tl.state(ShapeId(1), None, 0, 0.1), tl.state(ShapeId(1), None, 0, 0.2), tl.state(ShapeId(1), None, 0, 0.3));
+    assert!(b.offset_y - a.offset_y < c.offset_y - b.offset_y, "accelerates: {a:?} {b:?} {c:?}");
+    assert_eq!(a.dust, 0.0);
+    // Just after landing (45 %): flattened and widened with the base kept on the ground, dust rising.
+    let hit = tl.state(ShapeId(1), None, 0, 0.5);
+    assert!(hit.scale_y < 0.95 && hit.scale_x > 1.02, "{hit:?}");
+    assert!((hit.offset_y - 100.0 * (1.0 - hit.scale_y) / 2.0).abs() < 1e-9, "{hit:?}");
+    assert!(hit.dust > 0.0 && hit.dust < 1.0);
+    // Done: at rest, no dust.
+    let end = tl.state(ShapeId(1), None, 1, 0.0);
+    assert!(end.is_identity(), "{end:?}");
+}
+
+#[test]
 fn fly_starts_off_slide() {
     let mut a = anim(1, AnimClass::Entrance, "fly", AnimStart::OnClick);
     a.option = "l".into();

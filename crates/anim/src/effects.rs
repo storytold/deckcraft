@@ -239,6 +239,25 @@ impl EffectSpec {
                 st.scale_x = 0.3 + 0.7 * e;
                 st.opacity = e;
             }
+            "anvil" => {
+                // Keynote's Anvil: a free fall from above the slide (gravity: distance grows with t²),
+                // then a squash on impact that rings out, with a puff of dust at the base. The curve is
+                // the effect itself, so it ignores smoothing. Squashing keeps the base on the ground.
+                const LAND: f64 = 0.45;
+                if p < LAND {
+                    let t = p / LAND;
+                    st.offset_y = -(y + h) * (1.0 - t * t);
+                } else {
+                    let u = ((p - LAND) / (1.0 - LAND)).clamp(0.0, 1.0);
+                    let squash = 0.14 * (u / 0.05).min(1.0) * (-4.5 * u).exp() * (2.5 * PI * u).cos();
+                    st.scale_y = 1.0 - squash;
+                    st.scale_x = 1.0 + 0.6 * squash;
+                    st.offset_y = h * squash / 2.0;
+                    if !exit && u < 1.0 {
+                        st.dust = u.max(1e-3);
+                    }
+                }
+            }
             "spinner" => {
                 st.rotate = 360.0 * q;
                 st.scale_x = 0.5 + 0.5 * e;

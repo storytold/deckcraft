@@ -342,6 +342,10 @@ pub static ANIMATIONS: &[(&str, &str, AnimClass, u32, u32, &[&str])] = &[
     ("expand", "Expand", AnimClass::Entrance, 55, 500, &[]),
     ("rise", "Rise Up", AnimClass::Entrance, 37, 1000, &[]),
     ("spinner", "Spinner", AnimClass::Entrance, 49, 1000, &[]),
+    // Keynote-style Anvil: drops from above the slide, lands with a squash and a puff of dust.
+    // PowerPoint has no such preset; 1001 is a DeckCraft id outside PowerPoint's range, and the file
+    // carries a drop-and-squash PowerPoint can play.
+    ("anvil", "Anvil", AnimClass::Entrance, 1001, 1000, &[]),
     ("pulse", "Pulse", AnimClass::Emphasis, 26, 500, &[]),
     ("colorPulse", "Color Pulse", AnimClass::Emphasis, 27, 500, &[]),
     ("teeter", "Teeter", AnimClass::Emphasis, 32, 1000, &[]),

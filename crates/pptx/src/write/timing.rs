@@ -192,6 +192,48 @@ fn anim_prop(w: &mut W, ids: &mut Ids, e: &Eff, dur: u32, attr: &str, from: &str
     w.close("p:anim");
 }
 
+/// Anvil as PowerPoint can play it: a gravity drop from above the slide sampled as key times
+/// (distance grows with t²), landing at 45 % of the effect, then a squash flattened against the
+/// ground (the box shifted down while it shrinks) that springs back. No dust: PowerPoint has none.
+fn anvil(w: &mut W, ids: &mut Ids, e: &Eff, dur: u32) {
+    let mut keys: Vec<(u32, String)> = (0..=6)
+        .map(|k| {
+            let t = k as f64 / 6.0;
+            let tm = (t * 45_000.0).round() as u32;
+            let rest = 1.0 - t * t;
+            let v = if k == 6 { "#ppt_y".to_string() } else { format!("#ppt_y-(#ppt_y+#ppt_h/2)*{rest:.4}") };
+            (tm, v)
+        })
+        .collect();
+    keys.extend([(52_000, "#ppt_y+#ppt_h*0.06".to_string()), (60_000, "#ppt_y".to_string()), (100_000, "#ppt_y".to_string())]);
+    w.open("p:anim", A::new().a("calcmode", "lin").a("valueType", "num"));
+    cbhvr(w, ids, e, dur, None, &["ppt_y"], Some("base"));
+    w.open0("p:tavLst");
+    for (tm, v) in &keys {
+        w.open("p:tav", A::new().a("tm", *tm));
+        w.open0("p:val");
+        w.val("p:strVal", v);
+        w.close("p:val");
+        w.close("p:tav");
+    }
+    w.close("p:tavLst");
+    w.close("p:anim");
+    // The squash: from the landing, flatten and widen, then spring back (autoRev).
+    let at = (u64::from(dur) * 45 / 100) as u32;
+    let half = ((u64::from(dur) * 7 / 100) as u32).max(1);
+    w.open0("p:animScale");
+    w.open0("p:cBhvr");
+    w.open("p:cTn", A::new().a("id", ids.next()).a("dur", half).a("autoRev", "1").a("fill", "hold"));
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", at));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    tgt(w, e.spid, e.paragraph);
+    w.close("p:cBhvr");
+    w.empty("p:by", A::new().a("x", 108_000).a("y", 88_000));
+    w.close("p:animScale");
+}
+
 fn filter_for(effect: &str, option: &str) -> &'static str {
     match effect {
         "wipe" | "wipeOut" => match option {
@@ -318,6 +360,7 @@ fn behaviors(w: &mut W, x: &mut Exp, ids: &mut Ids, e: &Eff) {
                     anim_prop(w, ids, e, dur, "ppt_h", "0", "#ppt_h");
                     anim_effect(w, ids, e, dur, "fade", false);
                 }
+                "anvil" => anvil(w, ids, e, dur),
                 "float" | "rise" => {
                     anim_prop(w, ids, e, dur, "ppt_y", if a.option == "d" { "#ppt_y-.1" } else { "#ppt_y+.1" }, "#ppt_y");
                     anim_effect(w, ids, e, dur, "fade", false);

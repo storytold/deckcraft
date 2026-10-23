@@ -20,6 +20,7 @@ pub fn shape_state(tl: &Timeline, id: ShapeId, step: usize, t: f64) -> ShapeStat
         rotate: a.rotate,
         clip: a.clip,
         tint: a.tint,
+        dust: a.dust,
         paras: tl
             .paragraph_targets(id)
             .into_iter()
