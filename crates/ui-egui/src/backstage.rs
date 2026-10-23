@@ -784,62 +784,64 @@ fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     // Side-by-side needs room for the places column, rule, and a usable list column. Below that,
     // stack so cloud content is not given a 420-point minimum on a 320-point page.
     let side_by_side = page_w >= PLACES_W + BETWEEN + 1.0 + BETWEEN + 280.0;
-    let open_places = |ui: &mut Ui| {
-        ui.vertical(|ui| {
-            let row_w = if side_by_side { 220.0 } else { ui.available_width().min(420.0) };
-            ui.set_width(row_w.max(180.0));
-            place_row(ui, Icon::Recent, "Recent", true, row_w);
-            if place_row(ui, Icon::OpenFolder, "Browse", false, row_w).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
-                let _ = app.run("app.openDialog", json!({}));
-            }
-            if app.session.recovery_dir.is_some() {
-                ui.add_space(24.0);
-                if ui.button("Recover Unsaved Presentations").clicked() {
-                    match app.run("file.recovery.open", json!({})) {
-                        Ok(v) if v.get("opened").and_then(Value::as_array).is_some_and(|a| a.is_empty()) => {
-                            app.set_status("There are no unsaved presentations to recover");
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        });
-    };
-    let open_lists = |ui: &mut Ui| {
-        ui.vertical(|ui| {
-            ui.set_max_width(ui.available_width());
-            search(ui, &mut bs.query, "Search for a file", 380.0);
-            ui.add_space(12.0);
-            heading(ui, "Presentations");
-            let q = bs.query.clone();
-            recent_list(app, ui, &q, usize::MAX);
-            if crate::cloud::available(app) {
-                ui.add_space(26.0);
-                heading(ui, "Cloud");
-                ui.add_space(6.0);
-                crate::cloud::open_page(app, ui);
-            }
-        });
-    };
     if side_by_side {
         let rest = page_w - PLACES_W - BETWEEN - 1.0 - BETWEEN;
         ui.horizontal_top(|ui| {
             ui.set_width(PLACES_W);
-            open_places(ui);
+            open_places(app, ui, true);
             let h = ui.available_height().max(320.0);
             let (r, _) = ui.allocate_exact_size(vec2(1.0, h), Sense::hover());
             ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
             ui.add_space(BETWEEN);
             ui.vertical(|ui| {
                 ui.set_max_width(rest);
-                open_lists(ui);
+                open_lists(app, ui, bs);
             });
         });
     } else {
-        open_places(ui);
+        open_places(app, ui, false);
         ui.add_space(18.0);
-        open_lists(ui);
+        open_lists(app, ui, bs);
     }
+}
+
+fn open_places(app: &mut SlideApp, ui: &mut Ui, side_by_side: bool) {
+    ui.vertical(|ui| {
+        let row_w = if side_by_side { 220.0 } else { ui.available_width().min(420.0) };
+        ui.set_width(row_w.max(180.0));
+        place_row(ui, Icon::Recent, "Recent", true, row_w);
+        if place_row(ui, Icon::OpenFolder, "Browse", false, row_w).on_hover_text("Open a presentation from a folder (Ctrl+O)").clicked() {
+            let _ = app.run("app.openDialog", json!({}));
+        }
+        if app.session.recovery_dir.is_some() {
+            ui.add_space(24.0);
+            if ui.button("Recover Unsaved Presentations").clicked() {
+                match app.run("file.recovery.open", json!({})) {
+                    Ok(v) if v.get("opened").and_then(Value::as_array).is_some_and(|a| a.is_empty()) => {
+                        app.set_status("There are no unsaved presentations to recover");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
+}
+
+fn open_lists(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
+    ui.vertical(|ui| {
+        ui.set_max_width(ui.available_width());
+        search(ui, &mut bs.query, "Search for a file", 380.0);
+        ui.add_space(12.0);
+        heading(ui, "Presentations");
+        let q = bs.query.clone();
+        recent_list(app, ui, &q, usize::MAX);
+        if crate::cloud::available(app) {
+            ui.add_space(26.0);
+            heading(ui, "Cloud");
+            ui.add_space(6.0);
+            crate::cloud::open_page(app, ui);
+        }
+    });
 }
 
 /// Info: the presentation's name and location, Inspect and Manage on the left, its properties
