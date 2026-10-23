@@ -2,9 +2,9 @@
 //! that put real text over a raster (PDF text layer, links) and for text extraction.
 
 use deckcraft_model::resolve::{self, Ctx};
-use deckcraft_model::text::{Hyperlink, TextBody};
+use deckcraft_model::text::{Hyperlink, RunKind, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
-use deckcraft_text::{Opts, TextLayout};
+use deckcraft_text::{Fields, Opts, TextLayout};
 use kurbo::{Affine, Rect};
 
 use crate::{SlideFields, shape_geometry, table};
@@ -52,10 +52,16 @@ pub struct Placed {
 
 /// Text and links of slide `index` (master and layout graphics first, as rendered).
 pub fn place_slide(pres: &Presentation, index: usize) -> Placed {
+    place_slide_with(pres, index, &crate::RenderOpts::default())
+}
+
+/// [`place_slide`] with the render options the slide was drawn with, so date fields take the same
+/// date and time as the raster (`opts.now`).
+pub fn place_slide_with(pres: &Presentation, index: usize, opts: &crate::RenderOpts) -> Placed {
     let mut out = Placed::default();
     let Some(slide) = pres.slides.get(index) else { return out };
     let Some(rctx) = Ctx::for_slide(pres, slide) else { return out };
-    let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), &crate::RenderOpts::default());
+    let fields = SlideFields::new(pres.slide_number(index), pres.header_footer.footer_text.clone(), opts);
     let (show_layout, show_master) = resolve::show_master_shapes(slide, rctx.layout);
     if show_master {
         let mctx = Ctx::for_master(pres, rctx.master);
@@ -162,7 +168,22 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
         let r = Rect::new(x0, line.top, x1, line.bottom);
         out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
     }
-    out.texts.push(PlacedText { layout, transform: m, body: body.clone() });
+    // Field runs carry their saved text (`‹#›`); the layout drew their values, so the body that
+    // goes with it (character offsets, text layer) must hold the same values.
+    let mut placed = body.clone();
+    for (pi, para) in body.paragraphs.iter().enumerate() {
+        for (ri, run) in para.runs.iter().enumerate() {
+            let RunKind::Field { field } = &run.kind else { continue };
+            let lang = resolve::run(rctx, s, para, &run.props).lang;
+            if let Some(v) = fields.field_in(field, lang.as_deref())
+                && let Some(out_run) = placed.paragraphs.get_mut(pi).and_then(|p| p.runs.get_mut(ri))
+            {
+                out_run.text = v;
+                out_run.kind = RunKind::Text;
+            }
+        }
+    }
+    out.texts.push(PlacedText { layout, transform: m, body: placed });
 }
 
 /// The hyperlink of the model run containing character `at` of paragraph `para`.

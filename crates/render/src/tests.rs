@@ -2595,3 +2595,24 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(changed.iter().any(|(px, _)| px[0] == 179 && px[1] == 179 && px[2] == 179));
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
 }
+
+#[test]
+fn placed_text_holds_the_field_value_not_the_saved_placeholder() {
+    let mut p = deck_with(vec![field_shape(Some("slidenum"), "<#>")]);
+    let second = p.slides[0].clone();
+    p.slides.push(second);
+    let placed = place_slide(&p, 1);
+    assert_eq!(placed.texts.len(), 1);
+    assert_eq!(placed.texts[0].body.text(), "2");
+    // The layout was drawn from the same value, so the offsets agree with the body.
+    assert_eq!(placed.texts[0].layout.runs.iter().map(|r| r.chars.1).max(), Some(1));
+}
+
+#[test]
+fn placed_text_takes_its_date_from_the_given_render_options() {
+    use deckcraft_text::datetime::DateTime;
+    let p = deck_with(vec![field_shape(Some("datetime1"), "1/1/2000")]);
+    let at = |now: DateTime| place_slide_with(&p, 0, &RenderOpts { now: Some(now), ..Default::default() });
+    assert_eq!(at(DateTime::new(2026, 10, 9, 20, 5, 7)).texts[0].body.text(), "10/9/2026");
+    assert_eq!(at(DateTime::new(2027, 3, 4, 0, 0, 0)).texts[0].body.text(), "3/4/2027");
+}
