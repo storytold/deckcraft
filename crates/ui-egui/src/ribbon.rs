@@ -2735,19 +2735,51 @@ fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     arrange_group(app, ui);
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Crop, "Crop", true);
-        egui::Popup::menu(&r).show(|ui| {
-            ui.label("Crop to Shape");
-            if let Some(p) = shapes_gallery(ui) {
-                run(app, "shape.change", json!({"preset": p}));
-            }
-            ui.separator();
-            for (l, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
-                if ui.button(l).clicked() {
-                    run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
+        // Split like PowerPoint's: the top enters (or leaves) crop mode, the bottom opens the menu.
+        let en = enabled(app, "picture.cropMode");
+        let on = app.session.active().is_some_and(|d| app.session.tool.cropping(d).is_some());
+        let (main, arrow) = big_button_ex(ui, Icon::Crop, "Crop", en, true, on);
+        let main = main.on_hover_text(tip("picture.cropMode", "Crop"));
+        if main.clicked() {
+            run(app, "picture.cropMode", json!({}));
+        }
+        if let Some(a) = arrow {
+            egui::Popup::menu(&a).show(|ui| {
+                if ui.button("Crop").clicked() {
+                    run(app, "picture.cropMode", json!({"on": true}));
                 }
-            }
-        });
+                ui.menu_button("Crop to Shape", |ui| {
+                    if let Some(p) = shapes_gallery(ui) {
+                        run(app, "shape.change", json!({"preset": p}));
+                    }
+                });
+                ui.menu_button("Aspect Ratio", |ui| {
+                    for (head, ratios) in [
+                        ("Square", &["1:1"][..]),
+                        ("Portrait", &["2:3", "3:4", "3:5", "4:5"][..]),
+                        ("Landscape", &["3:2", "4:3", "5:3", "5:4", "16:9", "16:10"][..]),
+                    ] {
+                        ui.label(head);
+                        for r in ratios {
+                            if ui.button(*r).clicked() {
+                                run(app, "picture.cropAspect", json!({"ratio": r}));
+                            }
+                        }
+                    }
+                });
+                ui.separator();
+                if ui.button("Fill").on_hover_text("The picture covers the whole box").clicked() {
+                    run(app, "picture.cropFill", json!({"mode": "fill"}));
+                }
+                if ui.button("Fit").on_hover_text("The whole picture shows inside the box").clicked() {
+                    run(app, "picture.cropFill", json!({"mode": "fit"}));
+                }
+                ui.separator();
+                if ui.button("Reset Crop").clicked() {
+                    run(app, "picture.crop", json!({"left": 0.0, "top": 0.0, "right": 0.0, "bottom": 0.0}));
+                }
+            });
+        }
     });
     size_group(app, ui);
 }

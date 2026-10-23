@@ -125,6 +125,28 @@ pub enum Hit {
         id: ShapeId,
         row: usize,
     },
+    /// Crop mode: crop handle 0..8 (NW, N, NE, E, SE, S, SW, W) on the picture's box.
+    Crop {
+        id: ShapeId,
+        handle: u8,
+    },
+    /// Crop mode: handle 0..8 of the whole image, which scales it under the box.
+    CropImage {
+        id: ShapeId,
+        handle: u8,
+    },
+    /// Crop mode: the picture itself, which moves under the box.
+    CropPan {
+        id: ShapeId,
+    },
+}
+
+/// What a crop-mode drag changes.
+#[derive(Clone, Copy, Debug)]
+enum CropPart {
+    Frame(u8),
+    Image(u8),
+    Pan,
 }
 
 #[derive(Clone, Debug)]
@@ -207,6 +229,14 @@ enum Drag {
     Ink {
         points: Vec<(f64, f64, f32)>,
     },
+    /// Crop mode: `orig` is the box and `img` the whole image in its local points at the press.
+    Crop {
+        id: ShapeId,
+        part: CropPart,
+        orig: Xfrm,
+        img: Rect,
+        start: Point,
+    },
     /// Freeform drawing (`freeform` polygon, `curve`, `scribble`): placed points; `pressed` while
     /// the button is down (dragging adds scribbled points).
     Freeform {
@@ -271,6 +301,8 @@ pub struct ToolState {
     pub guide_hover: Option<usize>,
     /// Pressure from the pointer event being handled, if the device reported one.
     pressure: Option<f32>,
+    /// The picture in crop mode (Picture Format ▸ Crop): its crop handles replace the box's.
+    pub crop: Option<ShapeId>,
 }
 
 impl ToolState {
@@ -286,6 +318,22 @@ impl ToolState {
                 && st.selection.text.is_none()
                 && st.shape(*id).is_some_and(|sh| matches!(sh.geom, deckcraft_model::Geom::Custom { .. }))
         })
+    }
+
+    /// The picture in crop mode, while it is still the one selected shape.
+    pub fn cropping(&self, st: &crate::DocState) -> Option<ShapeId> {
+        self.crop.filter(|id| {
+            st.selection.shapes.as_slice() == [*id]
+                && st.selection.text.is_none()
+                && st.shape(*id).is_some_and(|s| matches!(s.kind, ShapeKind::Picture { .. }) && !s.locked)
+        })
+    }
+
+    /// Forget a crop drag without finishing it: its presentation is no longer the active one.
+    pub(crate) fn drop_crop_drag(&mut self) {
+        if matches!(self.drag, Some(Drag::Crop { .. })) {
+            self.drag = None;
+        }
     }
 
     /// A freeform path is being drawn (Enter/Escape/double-click finish it).
@@ -347,7 +395,34 @@ fn set_warp_adj(sh: &mut Shape, name: &str, base: &[f64], index: usize, value: f
 }
 
 impl Session {
+    /// End crop mode once its picture is no longer the one selected shape (Tab, a slide change,
+    /// Undo…), so its handles don't come back when the picture is selected again. Reselecting the
+    /// same picture keeps crop mode on.
+    pub(crate) fn settle_crop(&mut self) {
+        if self.tool.crop.is_some() && self.active().is_none_or(|st| self.tool.cropping(st).is_none()) {
+            self.exit_crop();
+        }
+    }
+
+    /// Leave crop mode. A crop gesture still in progress is finished first, as its own undo step.
+    /// Every way out of crop mode comes through here.
+    pub(crate) fn exit_crop(&mut self) {
+        self.end_crop_drag();
+        self.tool.crop = None;
+    }
+
+    /// Finish a crop gesture in the presentation it began in, as releasing the pointer does:
+    /// one undo step there, and later pointer events can't carry it on. Called wherever the
+    /// gesture can be cut short (leaving crop mode, Undo/Redo, another tool, another presentation).
+    pub(crate) fn end_crop_drag(&mut self) {
+        if matches!(self.tool.drag, Some(Drag::Crop { .. })) {
+            self.tool.drag = None;
+            self.commit_named("Crop");
+        }
+    }
+
     pub fn set_tool(&mut self, kind: ToolKind) {
+        self.end_crop_drag();
         self.tool.kind = kind;
         self.tool.drag = None;
         self.tool.preview = None;
@@ -357,6 +432,30 @@ impl Session {
     /// What's under `p` on the current slide.
     pub fn hit_test(&self, p: Point, tol: f64) -> Option<Hit> {
         let st = self.active()?;
+        // In crop mode the picture's crop handles, then the image's own, then the image itself.
+        if let Some(id) = self.tool.cropping(st)
+            && let Some(sh) = st.shape(id)
+            && let ShapeKind::Picture { fill } = &sh.kind
+        {
+            let x = xfrm_of(&st.doc, &st.selection, sh);
+            let a = x.affine();
+            let frame = Rect::new(0.0, 0.0, x.w, x.h);
+            for (i, q) in cmd::crop::rect_handles(frame).iter().enumerate() {
+                if (a * *q - p).hypot() <= tol * 2.0 {
+                    return Some(Hit::Crop { id, handle: i as u8 });
+                }
+            }
+            if let Some(img) = cmd::crop::image_rect(x.w, x.h, fill.crop) {
+                for (i, q) in cmd::crop::rect_handles(img).iter().enumerate() {
+                    if (a * *q - p).hypot() <= tol * 1.6 {
+                        return Some(Hit::CropImage { id, handle: i as u8 });
+                    }
+                }
+                if img.union(frame).contains(a.inverse() * p) {
+                    return Some(Hit::CropPan { id });
+                }
+            }
+        }
         // In Edit Points, the edited shape's vertices come first.
         if let Some(id) = self.tool.editing_points(st)
             && let Some(sh) = st.shape(id)
@@ -448,6 +547,7 @@ impl Session {
         if !matches!(ev.kind, PointerKind::Move) {
             self.end_composition();
         }
+        self.settle_crop();
         match ev.kind {
             PointerKind::Move => {
                 if let Some(Drag::Freeform { points, mode, .. }) = &self.tool.drag {
@@ -557,6 +657,30 @@ impl Session {
             return Ok(json!({"caret": [pos.0, pos.1]}));
         }
         let hit = self.hit_test(p, tol);
+        // Crop mode: the crop handles, the image's handles and the image itself; a press anywhere
+        // else ends it and goes on as a normal press.
+        if let Some(cid) = self.doc().ok().and_then(|st| self.tool.cropping(st)) {
+            let part = match hit {
+                Some(Hit::Crop { id, handle }) if id == cid => Some(CropPart::Frame(handle)),
+                Some(Hit::CropImage { id, handle }) if id == cid => Some(CropPart::Image(handle)),
+                Some(Hit::CropPan { id }) if id == cid => Some(CropPart::Pan),
+                _ => None,
+            };
+            let st = self.doc()?;
+            let found = st.shape(cid).and_then(|sh| match &sh.kind {
+                ShapeKind::Picture { fill } => {
+                    let x = xfrm_of(&st.doc, &st.selection, sh);
+                    cmd::crop::image_rect(x.w, x.h, fill.crop).map(|img| (x, img))
+                }
+                _ => None,
+            });
+            if let (Some(part), Some((orig, img))) = (part, found) {
+                self.begin("Crop");
+                self.tool.drag = Some(Drag::Crop { id: cid, part, orig, img, start: p });
+                return Ok(json!({"hit": serde_json::to_value(&hit).unwrap_or_default()}));
+            }
+            self.exit_crop();
+        }
         // Edit Points: drag a vertex, Ctrl-click one to delete it or the outline to add one;
         // a click anywhere else leaves Edit Points.
         if let Some(eid) = self.doc().ok().and_then(|st| self.tool.editing_points(st)) {
@@ -608,8 +732,8 @@ impl Session {
                 self.begin("Rotate");
                 self.tool.drag = Some(Drag::Rotate { ids, center, start, origs });
             }
-            // Only reached outside Edit Points (handled above).
-            Some(Hit::Vertex { .. } | Hit::Handle { .. }) => {}
+            // Only reached outside Edit Points and crop mode (handled above).
+            Some(Hit::Vertex { .. } | Hit::Handle { .. } | Hit::Crop { .. } | Hit::CropImage { .. } | Hit::CropPan { .. }) => {}
             Some(Hit::Adjust { id, index }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
                 self.begin("Adjust Shape");
@@ -763,6 +887,35 @@ impl Session {
                 })?;
                 self.tool.drag =
                     Some(Drag::Move { ids: ids_now, start, origs: origs2, moved: true, duplicate: false, enter_text: enter_text.filter(|_| false) });
+            }
+            Drag::Crop { id, part, orig, img, start } => {
+                let inv = orig.affine().inverse();
+                let mut d = inv * p - inv * start;
+                if !(d.x.is_finite() && d.y.is_finite()) {
+                    return Ok(Value::Null);
+                }
+                let (nx, nc) = match part {
+                    CropPart::Frame(h) => {
+                        let f = cmd::crop::drag_frame(orig.w, orig.h, h, d);
+                        let c = cmd::crop::crop_of(f.width(), f.height(), img - f.origin().to_vec2());
+                        (cmd::crop::frame_xfrm(&orig, f), c)
+                    }
+                    CropPart::Image(h) => (orig, cmd::crop::crop_of(orig.w, orig.h, cmd::crop::drag_image(img, h, d, mods.shift))),
+                    CropPart::Pan => {
+                        if mods.shift {
+                            if d.x.abs() > d.y.abs() {
+                                d.y = 0.0;
+                            } else {
+                                d.x = 0.0;
+                            }
+                        }
+                        (orig, cmd::crop::crop_of(orig.w, orig.h, img + d))
+                    }
+                };
+                // Stored as the renderer draws it, so the next gesture starts from what is shown.
+                if let Some(c) = nc.map(|c| c.map(|v| v.clamp(-10.0, 0.99))) {
+                    cmd::crop::store(self, "crop", &[(id, Some(nx), c)])?;
+                }
             }
             Drag::Resize { id, handle, orig, start } => {
                 let nx = resize_box(&orig, handle, p - start, mods.shift || self.is_picture(id), mods.alt);
@@ -1202,7 +1355,10 @@ impl Session {
                 | Hit::Frame { id }
                 | Hit::TableColumn { id, .. }
                 | Hit::TableRow { id, .. }
-                | Hit::Warp { id, .. },
+                | Hit::Warp { id, .. }
+                | Hit::Crop { id, .. }
+                | Hit::CropImage { id, .. }
+                | Hit::CropPan { id },
             ) => Some(*id),
             None => None,
         };

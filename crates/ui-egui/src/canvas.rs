@@ -758,7 +758,8 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
         (ToolKind::Shape { .. }, _) => egui::CursorIcon::Crosshair,
         (ToolKind::TextBox, _) => egui::CursorIcon::Text,
         (ToolKind::Ink { .. }, _) => egui::CursorIcon::Crosshair,
-        (_, Some(Hit::Resize { handle, .. })) => match handle {
+        (_, Some(Hit::CropPan { .. })) => egui::CursorIcon::Move,
+        (_, Some(Hit::Resize { handle, .. } | Hit::Crop { handle, .. } | Hit::CropImage { handle, .. })) => match handle {
             0 | 4 => egui::CursorIcon::ResizeNwSe,
             2 | 6 => egui::CursorIcon::ResizeNeSw,
             1 | 5 => egui::CursorIcon::ResizeVertical,
@@ -788,6 +789,114 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
     if app.session.tool.dragging() {
         ui.ctx().request_repaint();
     }
+}
+
+/// Crop mode, as in PowerPoint: the part of the picture outside its box shows faded with round
+/// handles at its edges (they scale it), and the box carries black crop marks.
+fn crop_overlay(
+    ctx: &egui::Context,
+    doc: &deckcraft_model::Presentation,
+    painter: &egui::Painter,
+    xf: Xf,
+    x: &Xfrm,
+    fill: &deckcraft_model::style::PictureFill,
+    t: &Tokens,
+) {
+    use deckcraft_engine::cmd::crop;
+    let a = x.affine();
+    let to = |q: Point| xf.to_screen(a * q);
+    let frame = deckcraft_geom::Rect::new(0.0, 0.0, x.w, x.h);
+    if let Some(img) = crop::image_rect(x.w, x.h, fill.crop) {
+        if let Some(tex) = crop_ghost(ctx, doc, fill.media) {
+            // The image outside the box, in bands above, below, left and right of it.
+            let (y0, y1) = (img.y0.max(frame.y0), img.y1.min(frame.y1));
+            let bands = [
+                (img.x0, img.y0, img.x1, img.y1.min(frame.y0)),
+                (img.x0, img.y0.max(frame.y1), img.x1, img.y1),
+                (img.x0, y0, img.x1.min(frame.x0), y1),
+                (img.x0.max(frame.x1), y0, img.x1, y1),
+            ];
+            let mut mesh = egui::Mesh::with_texture(tex.id());
+            let tint = Color32::from_white_alpha(120);
+            for (bx0, by0, bx1, by1) in bands {
+                if bx1 - bx0 <= 1e-6 || by1 - by0 <= 1e-6 {
+                    continue;
+                }
+                let base = mesh.vertices.len() as u32;
+                for (px, py) in [(bx0, by0), (bx1, by0), (bx1, by1), (bx0, by1)] {
+                    let uv = pos2(((px - img.x0) / img.width()) as f32, ((py - img.y0) / img.height()) as f32);
+                    mesh.vertices.push(egui::epaint::Vertex { pos: to(Point::new(px, py)), uv, color: tint });
+                }
+                mesh.add_triangle(base, base + 1, base + 2);
+                mesh.add_triangle(base, base + 2, base + 3);
+            }
+            painter.add(mesh);
+        }
+        let ic = [Point::new(img.x0, img.y0), Point::new(img.x1, img.y0), Point::new(img.x1, img.y1), Point::new(img.x0, img.y1)].map(to);
+        poly(painter, ic, Stroke::new(1.0, Color32::from_gray(150)));
+        for q in crop::rect_handles(img) {
+            painter.circle(to(q), 4.5, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
+        }
+    }
+    let fc = [Point::new(0.0, 0.0), Point::new(x.w, 0.0), Point::new(x.w, x.h), Point::new(0.0, x.h)].map(to);
+    poly(painter, fc, Stroke::new(1.0, t.selection));
+    // Crop marks: an L at each corner and a bar mid-side, along the box's edges.
+    let dir = |q: Point, d: deckcraft_geom::Vec2| {
+        let v = to(q + d) - to(q);
+        if v.length() > 1e-3 { v.normalized() } else { egui::Vec2::ZERO }
+    };
+    let (ux, uy) = (deckcraft_geom::Vec2::new(1.0, 0.0), deckcraft_geom::Vec2::new(0.0, 1.0));
+    let len = 12.0;
+    for (i, q) in crop::rect_handles(frame).into_iter().enumerate() {
+        let c = to(q);
+        let arms: Vec<(Pos2, Pos2)> = match i {
+            0 => vec![(c, c + dir(q, ux) * len), (c, c + dir(q, uy) * len)],
+            2 => vec![(c, c + dir(q, -ux) * len), (c, c + dir(q, uy) * len)],
+            4 => vec![(c, c + dir(q, -ux) * len), (c, c + dir(q, -uy) * len)],
+            6 => vec![(c, c + dir(q, ux) * len), (c, c + dir(q, -uy) * len)],
+            1 | 5 => vec![(c - dir(q, ux) * len * 0.75, c + dir(q, ux) * len * 0.75)],
+            _ => vec![(c - dir(q, uy) * len * 0.75, c + dir(q, uy) * len * 0.75)],
+        };
+        for (s, e) in &arms {
+            painter.line_segment([*s, *e], Stroke::new(6.0, Color32::WHITE));
+        }
+        for (s, e) in arms {
+            painter.line_segment([s, e], Stroke::new(4.0, Color32::BLACK));
+        }
+    }
+}
+
+/// The picture drawn whole, for the faded part outside the box in crop mode. Decoded once per
+/// picture and kept at most 1024 px on a side; `None` when it doesn't decode.
+fn crop_ghost(ctx: &egui::Context, doc: &deckcraft_model::Presentation, media: deckcraft_model::MediaId) -> Option<egui::TextureHandle> {
+    const SIDE: u32 = 1024;
+    let item = doc.media(media)?;
+    let key = egui::Id::new(("crop-ghost", std::sync::Arc::as_ptr(&item.data) as usize, item.data.len()));
+    if let Some(t) = ctx.data(|d| d.get_temp::<Option<egui::TextureHandle>>(key)) {
+        return t;
+    }
+    let tex = deckcraft_render::decode_image(&item.data).and_then(|im| {
+        let (w, h) = (im.width(), im.height());
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let k = (SIDE as f64 / w.max(h) as f64).min(1.0);
+        let (nw, nh) = (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1));
+        let raw = im.as_raw();
+        let mut px = Vec::with_capacity((nw as usize) * (nh as usize) * 4);
+        for y in 0..nh {
+            let sy = ((y as u64 * h as u64) / nh as u64).min(h as u64 - 1) as usize;
+            for x in 0..nw {
+                let sx = ((x as u64 * w as u64) / nw as u64).min(w as u64 - 1) as usize;
+                let i = (sy * w as usize + sx) * 4;
+                px.extend_from_slice(raw.get(i..i + 4).unwrap_or(&[0, 0, 0, 0]));
+            }
+        }
+        let image = egui::ColorImage::from_rgba_unmultiplied([nw as usize, nh as usize], &px);
+        Some(ctx.load_texture("crop-ghost", image, egui::TextureOptions::LINEAR))
+    });
+    ctx.data_mut(|d| d.insert_temp(key, tex.clone()));
+    tex
 }
 
 fn poly(p: &egui::Painter, pts: [Pos2; 4], stroke: Stroke) {
@@ -827,6 +936,12 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
             continue;
         }
         let editing_this = editing.as_ref().is_some_and(|e| e.shape == *id && !e.notes);
+        if app.session.tool.cropping(st) == Some(sh.id)
+            && let deckcraft_model::ShapeKind::Picture { fill } = &sh.kind
+        {
+            crop_overlay(ui.ctx(), &st.doc, painter, xf, &x, fill, t);
+            continue;
+        }
         if app.session.tool.editing_points(st) == Some(sh.id) {
             // Edit Points: the outline's vertices are the handles.
             // No selection box: the outline and its vertices are what's edited.
@@ -1246,6 +1361,10 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 .is_some_and(|d| d.selected_shapes().iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })));
             if picture && ui.button("Change Picture…").clicked() {
                 let _ = app.run("app.changePictureDialog", json!({}));
+                ui.close();
+            }
+            if picture && crate::ribbon::enabled(app, "picture.cropMode") && ui.button("Crop").clicked() {
+                let _ = app.run("picture.cropMode", json!({"on": true}));
                 ui.close();
             }
             if ui.button("Link…").clicked() {

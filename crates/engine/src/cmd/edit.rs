@@ -44,6 +44,8 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 fn restore(s: &mut Session, redo: bool) -> Result<Value> {
+    // A crop gesture in progress becomes its own step first, so Undo takes exactly that back.
+    s.end_crop_drag();
     let st = s.doc_mut()?;
     let (from, to) = if redo { (&mut st.history.redo, &mut st.history.undo) } else { (&mut st.history.undo, &mut st.history.redo) };
     let Some(e) = from.pop() else { return ok() };
@@ -52,6 +54,7 @@ fn restore(s: &mut Session, redo: bool) -> Result<Value> {
     st.selection = e.selection;
     st.interaction = None;
     st.revision += 1;
+    s.settle_crop();
     Ok(json!({"label": e.label}))
 }
 
