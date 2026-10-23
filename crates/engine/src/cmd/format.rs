@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family, eastAsia?: family, complexScript?: family}", has_text_or_shapes, font),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -303,7 +303,25 @@ fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    // A script face that is not a string is a mistake, not an omission: the caller asked for
+    // a face and would otherwise get a silent "done" without it.
+    let script_face = |key: &str| match p.get(key) {
+        None => Ok(None),
+        Some(Value::String(face)) => Ok(Some(face.clone())),
+        Some(_) => Err(bad("format.font", format!("`{key}` must be a family name"))),
+    };
+    let ea = script_face("eastAsia")?;
+    let cs = script_face("complexScript")?;
+    format_run(s, &move |r| {
+        r.font = Some(f.clone());
+        // Without ea/cs params the existing script faces are kept, as before (#786).
+        if ea.is_some() {
+            r.font_ea = ea.clone();
+        }
+        if cs.is_some() {
+            r.font_cs = cs.clone();
+        }
+    })
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);

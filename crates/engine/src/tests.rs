@@ -4072,3 +4072,64 @@ fn a_shape_in_front_of_edited_text_takes_the_click() {
     let st = s.doc().unwrap();
     assert!(st.selection.text.as_ref().is_none_or(|t| t.shape.0 as u64 != tb), "the click on the member in front left the text: {:?}", st.selection);
 }
+
+/// #786: format.font accepts optional eastAsia and complexScript faces, and a Latin-only call
+/// leaves the existing script faces untouched.
+#[test]
+fn format_font_east_asian_and_complex_script() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let id =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [50.0, 50.0, 200.0, 60.0], "text": "CJK test"})).unwrap()["id"].as_u64().unwrap();
+    let shape_id = deckcraft_model::ShapeId(id as u32);
+    s.execute("text.edit", &json!({"id": shape_id})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    // Explicit ea/cs: all three faces are set.
+    s.execute("format.font", &json!({"family": "Noto Sans CJK SC", "eastAsia": "Noto Sans CJK SC", "complexScript": "Noto Sans CJK SC"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0];
+    assert_eq!(run.props.font.as_deref(), Some("Noto Sans CJK SC"));
+    assert_eq!(run.props.font_ea.as_deref(), Some("Noto Sans CJK SC"));
+    assert_eq!(run.props.font_cs.as_deref(), Some("Noto Sans CJK SC"));
+    // Latin-only: the existing ea/cs faces are kept.
+    s.execute("format.font", &json!({"family": "Arial"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0];
+    assert_eq!(run.props.font.as_deref(), Some("Arial"));
+    assert_eq!(run.props.font_ea.as_deref(), Some("Noto Sans CJK SC"), "ea kept");
+    assert_eq!(run.props.font_cs.as_deref(), Some("Noto Sans CJK SC"), "cs kept");
+    // Selectively setting one script face: the other is untouched.
+    s.execute("format.font", &json!({"family": "Arial", "eastAsia": "Yu Gothic"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0];
+    assert_eq!(run.props.font_ea.as_deref(), Some("Yu Gothic"));
+    assert_eq!(run.props.font_cs.as_deref(), Some("Noto Sans CJK SC"), "cs untouched");
+}
+
+/// #786: a script face that is not a family name is refused, and nothing is changed.
+#[test]
+fn format_font_refuses_a_script_face_that_is_not_a_name() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let id =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [50.0, 50.0, 200.0, 60.0], "text": "CJK test"})).unwrap()["id"].as_u64().unwrap();
+    let shape_id = deckcraft_model::ShapeId(id as u32);
+    s.execute("text.edit", &json!({"id": shape_id})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.font", &json!({"family": "Arial", "eastAsia": "Yu Gothic"})).unwrap();
+
+    // A number where a family name belongs is an error, not an omission.
+    let err = s.execute("format.font", &json!({"family": "Arial", "eastAsia": 42})).unwrap_err().to_string();
+    assert!(err.contains("eastAsia"), "{err}");
+    let err = s.execute("format.font", &json!({"family": "Arial", "complexScript": null})).unwrap_err().to_string();
+    assert!(err.contains("complexScript"), "{err}");
+    // Nothing changed: the Latin face and the script faces are as they were.
+    let st = s.doc().unwrap();
+    let sh = st.current_slide().unwrap().shapes.iter().find(|x| x.id == shape_id).unwrap();
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0];
+    assert_eq!(run.props.font.as_deref(), Some("Arial"), "the Latin face is unchanged");
+    assert_eq!(run.props.font_ea.as_deref(), Some("Yu Gothic"), "the East Asian face is unchanged");
+}
