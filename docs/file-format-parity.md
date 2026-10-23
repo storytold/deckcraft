@@ -1,6 +1,6 @@
 # File-format parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-21 · **Change:** minor (PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` import; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every format PowerPoint reads or writes, DeckCraft's support, fidelity and how it is tested.
 Gaps are itemized in [gaps.md](gaps.md#file-formats). Dimension score: **~58% ready**
@@ -20,7 +20,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | `.potx` template | Editor | yes (as a presentation) | no: written with the `.pptx` content type | `file.saveTemplate` is Save As under another name | none |
 | `.ppsx` slide show | Editor | yes (as a presentation) | no: written as `.pptx` content | Handed over by the system (command line, file association) it starts the slide show, as in PowerPoint; File › Open opens it for editing. The macOS Finder event arrives with #432 | `crates/ui-egui/src/opening.rs` tests |
 | `.pptm` / `.potm` / `.ppsm` macro-enabled | Editor | no | no | Should open and keep `vbaProject.bin` without running it | none |
-| `.ppt` / `.pot` / `.pps` 97–2003 binary | Editor | no | no | Owner decision; import only would be enough | none |
+| `.ppt` / `.pot` / `.pps` 97–2003 binary | Editor | yes (`crates/ppt`, from [MS-PPT], [MS-ODRAW], [MS-CFB]) | no: Save asks for a new name and writes `.pptx` or `.deckcraft` | Masters (colours, fonts, text styles, background, decorations), title masters (as layouts), slides, placeholders, text with its paragraph and character formatting and the master styles resolved into it, bullets, slide-number and date fields, shapes (presets, freeforms, groups, rotation, flips), fills (solid, gradient, picture, texture), lines and arrowheads, shadows, pictures (PNG, JPEG, DIB, TIFF, EMF, WMF), notes, hidden slides. Not read: transitions, animations, hyperlinks and actions, sounds, tables (they arrive as grouped shapes), OLE objects and charts (their preview picture), WordArt (plain text), PICT pictures. A `.pps` handed over by the system starts the slide show | `crates/ppt` tests (files built from records, hostile-input sweep); a 71-slide lecture deck checked by eye 2026-10-21 |
 | `.odp` OpenDocument | Editor | no | no | | none |
 | `.thmx` Office theme | Viewer | no | no | Browse for themes is a P2 row | none |
 | `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible | `crates/format` tests |
@@ -119,6 +119,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-21 | minor | PowerPoint 97–2003 `.ppt`/`.pot`/`.pps` open (import only): masters, layouts from title masters, slides, text and styles, shapes, pictures, notes. Saving asks for a new name |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |

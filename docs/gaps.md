@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-21 · **Change:** minor (legacy `.ppt` import landed; its entry now lists what it leaves out; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -115,12 +115,14 @@ Detail in [file-format-parity.md](file-format-parity.md).
   opened even to view.
 - **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
 
-### No legacy `.ppt`/`.pot`/`.pps` import
-- **Evidence:** PowerPoint for Mac still opens and saves the 97–2003 binary formats
-  (`CFBundleDocumentTypes`); DeckCraft doesn't read them.
-- **Impact:** archives of older decks don't open.
-- **Estimate:** 20–35 h (import only, from the public [MS-PPT] spec). Owner decision whether it's
-  worth it.
+### Legacy `.ppt` import is partial
+- **Evidence:** `crates/ppt` opens PowerPoint 97–2003 files (slides, masters, text and styles, shapes,
+  pictures, notes) but leaves out transitions, animations, hyperlinks and actions, sounds and
+  video; tables arrive as grouped shapes, OLE objects and charts as their preview pictures, WordArt
+  as plain text; PICT pictures don't show. Only checked against decks built in tests and one
+  outside lecture deck.
+- **Impact:** old decks open and read correctly but lose their motion and links.
+- **Estimate:** 10–18 h (transitions and build effects, interactive info, tables, a corpus).
 
 ### No OpenDocument `.odp`
 - **Evidence:** PowerPoint opens and saves `.odp`.

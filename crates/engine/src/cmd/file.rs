@@ -161,6 +161,16 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     if deckcraft_pptx::is_encrypted(bytes) {
         return Err(EngineError::Other(format!("{name} is password-protected. DeckCraft can't open password-protected presentations yet.")));
     }
+    if deckcraft_ppt::sniff(bytes) {
+        let mut p = deckcraft_ppt::import(bytes).map_err(|e| match e {
+            deckcraft_ppt::PptError::Encrypted => {
+                EngineError::Other(format!("{name} is password-protected. DeckCraft can't open password-protected presentations yet."))
+            }
+            other => EngineError::Other(format!("{name}: {other}")),
+        })?;
+        deckcraft_format::repair(&mut p);
+        return Ok((p, vec![]));
+    }
     let lower = name.to_ascii_lowercase();
     if lower.ends_with(".txt") || lower.ends_with(".md") {
         let text = String::from_utf8_lossy(bytes);

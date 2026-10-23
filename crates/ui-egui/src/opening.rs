@@ -214,17 +214,19 @@ mod tests {
     }
 
     /// #862: a PowerPoint Show handed over by the system (command line, double-click) starts its
-    /// slide show at once, full screen and from the first slide.
+    /// slide show at once, full screen and from the first slide; so does a 97-2003 `.pps`.
     #[test]
     fn a_ppsx_from_the_system_starts_the_show() {
-        let path = saved_as("Talk.PPSX", 3);
-        let mut app = SlideApp::new(Session::new(), crate::Services::default());
-        assert!(app.open_from_system(std::slice::from_ref(&path)).is_empty());
-        assert_eq!(app.session.documents().len(), 1);
-        let show = app.show.as_ref().expect("the slide show started");
-        assert_eq!(show.state.slide, 0);
-        assert!(!show.reading, "full screen, not Reading View");
-        std::fs::remove_file(&path).ok();
+        for name in ["Talk.PPSX", "Old talk.pps"] {
+            let path = saved_as(name, 3);
+            let mut app = SlideApp::new(Session::new(), crate::Services::default());
+            assert!(app.open_from_system(std::slice::from_ref(&path)).is_empty());
+            assert_eq!(app.session.documents().len(), 1);
+            let show = app.show.as_ref().expect("the slide show started");
+            assert_eq!(show.state.slide, 0);
+            assert!(!show.reading, "full screen, not Reading View");
+            std::fs::remove_file(&path).ok();
+        }
     }
 
     /// #862: a `.pptx` from the system opens for editing, and so does a `.ppsx` followed by a

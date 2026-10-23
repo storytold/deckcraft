@@ -21,6 +21,7 @@ deckcraft-text = { path = "crates/text" }
 deckcraft-render = { path = "crates/render" }
 deckcraft-pdf = { path = "crates/pdf" }
 deckcraft-pptx = { path = "crates/pptx" }
+deckcraft-ppt = { path = "crates/ppt" }
 deckcraft-format = { path = "crates/format" }
 deckcraft-anim = { path = "crates/anim" }
 deckcraft-engine = { path = "crates/engine" }
@@ -63,6 +64,7 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
 
 # ui
 egui = "0.36"

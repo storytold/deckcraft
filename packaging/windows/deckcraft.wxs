@@ -5,7 +5,7 @@
     wix build deckcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
 
   Per-machine install into Program Files, a Start Menu shortcut, `.deckcraft` owned by
-  DeckCraft, and DeckCraft offered under "Open with" for .pptx/.potx/.ppsx (without taking over
+  DeckCraft, and DeckCraft offered under "Open with" for .pptx/.potx/.ppsx/.ppt/.pot/.pps (without taking over
   the user's default app for them).
 
   UpgradeCode is fixed for DeckCraft forever (playbook §6); never change it.
@@ -65,9 +65,15 @@
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\deckcraft.exe\SupportedTypes" Name=".pptx" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\deckcraft.exe\SupportedTypes" Name=".potx" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\Applications\deckcraft.exe\SupportedTypes" Name=".ppsx" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\deckcraft.exe\SupportedTypes" Name=".ppt" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\deckcraft.exe\SupportedTypes" Name=".pot" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\Applications\deckcraft.exe\SupportedTypes" Name=".pps" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.pptx\OpenWithProgids" Name="DeckCraft.Presentation" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.potx\OpenWithProgids" Name="DeckCraft.Presentation" Value="" Type="string" />
         <RegistryValue Root="HKLM" Key="Software\Classes\.ppsx\OpenWithProgids" Name="DeckCraft.Presentation" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.ppt\OpenWithProgids" Name="DeckCraft.Presentation" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pot\OpenWithProgids" Name="DeckCraft.Presentation" Value="" Type="string" />
+        <RegistryValue Root="HKLM" Key="Software\Classes\.pps\OpenWithProgids" Name="DeckCraft.Presentation" Value="" Type="string" />
 
         <RegistryValue Root="HKLM" Key="Software\Microsoft\Windows\CurrentVersion\App Paths\deckcraft.exe" Value="[#DeckcraftExe]" Type="string" />
       </Component>

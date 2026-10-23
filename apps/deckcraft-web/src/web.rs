@@ -4,7 +4,7 @@ use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
 
-const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
+const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "ppt", "pot", "pps", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];

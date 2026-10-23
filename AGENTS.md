@@ -118,7 +118,7 @@ Standard: craftrules `standards/never-crash.md`.
 | L1 | `model` (presentation, masters, layouts, slides, shapes, text, themes, inheritance, text edit ops) |
 | L2 | `fonts`, `text` (layout), |
 | L3 | `render` (vello_cpu) |
-| L4 | `format` (.deckcraft), `pptx` |
+| L4 | `format` (.deckcraft), `pptx`, `ppt` (97–2003 import) |
 | L5 | `engine` (session, history, commands, tools, keys, sample) |
 | L6 | `mcp` |
 | L7 | `ui-egui` (swappable; nothing below depends on egui/eframe/winit/rfd) |
