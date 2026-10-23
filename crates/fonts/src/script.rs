@@ -76,7 +76,8 @@ const RANGES: &[(u32, u32, ScriptTag)] = &[
     (0x3400, 0x4DBF, *b"Hani"),
     (0x4E00, 0x9FFF, *b"Hani"),
     (0xA720, 0xA7FF, *b"Latn"),
-    (0xAC00, 0xD7AF, *b"Hang"),
+    (0xA960, 0xA97F, *b"Hang"),
+    (0xAC00, 0xD7FF, *b"Hang"),
     (0xF900, 0xFAFF, *b"Hani"),
     (0xFB00, 0xFB06, *b"Latn"),
     (0xFB1D, 0xFB4F, *b"Hebr"),
@@ -85,6 +86,7 @@ const RANGES: &[(u32, u32, ScriptTag)] = &[
     (0xFF21, 0xFF3A, *b"Latn"),
     (0xFF41, 0xFF5A, *b"Latn"),
     (0xFF66, 0xFF9F, *b"Kana"),
+    (0xFFA0, 0xFFDC, *b"Hang"),
     (0x10E60, 0x10E7F, *b"Arab"),
     (0x1EE00, 0x1EEFF, *b"Arab"),
     (0x20000, 0x323AF, *b"Hani"),
@@ -142,6 +144,9 @@ pub fn default_language(s: ScriptTag) -> Option<&'static str> {
         b"Thaa" => "dv",
         b"Thai" => "th",
         b"Deva" => "hi",
+        // Fonts covering both pick Korean or Japanese forms of shared punctuation and Hanja.
+        b"Hang" => "ko",
+        b"Hira" | b"Kana" => "ja",
         _ => return None,
     })
 }

@@ -303,7 +303,27 @@ fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 }
 fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    // An East Asian font is the East Asian font too, as in PowerPoint: picking 맑은 고딕 or
+    // NanumGothic changes the Korean text, not only the Latin letters around it.
+    let ea = is_east_asian_font(&f);
+    format_run(s, &move |r| {
+        r.font = Some(f.clone());
+        if ea {
+            r.font_ea = Some(f.clone());
+        }
+    })
+}
+
+/// Does installed `family` draw Hangul, kana or CJK ideographs? Only the family's own face counts,
+/// never a stand-in the font database would substitute for it.
+fn is_east_asian_font(family: &str) -> bool {
+    let db = deckcraft_fonts::FontDb::global();
+    if !db.has_family(family) {
+        return false;
+    }
+    let face = db.face(family, "Regular");
+    let own = face.family.eq_ignore_ascii_case(&db.canonical(family)) || face.legacy.as_ref().is_some_and(|(f, _)| f.eq_ignore_ascii_case(family));
+    own && ['\u{ac00}', '\u{3042}', '\u{4e00}'].into_iter().any(|c| face.covers(c))
 }
 fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);

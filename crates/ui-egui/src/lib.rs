@@ -460,6 +460,13 @@ pub struct SlideApp {
     pub perf: Perf,
     /// Synthetic input events (control channel `ui.click` etc.), injected one per frame.
     pub synthetic: Vec<egui::Event>,
+    /// The preedit the system input method is composing on the slide, as last shown (#101).
+    pub ime_preedit: Option<String>,
+    /// A composition the app settled while the input method was still composing it (a click,
+    /// a command): the input method may still commit that text, which is already in place.
+    pub ime_settled: Option<String>,
+    /// The input method is to be told to stop composing (see [`SlideApp::settle_ime`]).
+    pub ime_interrupt: bool,
     /// Canvas screen rect and points-per-slide-point scale (for control & tests).
     pub canvas_rect: Option<egui::Rect>,
     /// The Eyedropper is waiting for a click on the slide.
@@ -551,6 +558,9 @@ impl SlideApp {
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],
+            ime_preedit: None,
+            ime_settled: None,
+            ime_interrupt: false,
             canvas_rect: None,
             eyedropper: None,
             canvas_scale: 1.0,
@@ -1538,6 +1548,7 @@ impl SlideApp {
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        self.settle_ime();
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -1631,11 +1642,28 @@ impl SlideApp {
     /// An input method's event for the slide's text (#101): the preedit is shown in the text and
     /// replaced on each update; the commit replaces it as one undo step.
     fn ime_event(&mut self, e: &egui::ImeEvent) {
+        // After the app settled a composition (see `canvas::ime_output`), the input method's
+        // commit of that same text comes late: it is already in the slide, so it is dropped
+        // rather than typed again at the new insertion point. Anything else ends the wait.
+        match e {
+            egui::ImeEvent::Preedit { text, .. } if text.is_empty() && self.ime_settled.is_some() => return,
+            egui::ImeEvent::Commit(text) if self.ime_settled.take().is_some_and(|s| s == *text) => return,
+            _ => self.ime_settled = None,
+        }
+        // A new composition (or a commit) is not the settled one: an interrupt still waiting for
+        // the slide to be drawn would cut it short.
+        if matches!(e, egui::ImeEvent::Preedit { text, .. } if !text.is_empty()) || matches!(e, egui::ImeEvent::Commit(_)) {
+            self.ime_interrupt = false;
+        }
         let r = match e {
             egui::ImeEvent::Preedit { text, active_range_chars } => {
+                self.ime_preedit = Some(text.clone()).filter(|t| !t.is_empty());
                 self.session.compose_text(text, active_range_chars.as_ref().map(|r| (r.start, r.end)))
             }
-            egui::ImeEvent::Commit(text) => self.session.commit_text(text),
+            egui::ImeEvent::Commit(text) => {
+                self.ime_preedit = None;
+                self.session.commit_text(text)
+            }
             #[allow(deprecated)]
             egui::ImeEvent::Disabled => {
                 self.session.end_composition();
@@ -1645,6 +1673,17 @@ impl SlideApp {
         };
         if let Err(e) = r {
             self.set_status(e.to_string());
+        }
+    }
+
+    /// The app settled a composition (a click, a command, undo) while the input method still
+    /// composes it: the input method is to stop, or its next keystroke would grow the settled
+    /// syllable (하 + ㄴ → 한) at the new insertion point, and its late commit of that text is
+    /// dropped. Checked every frame, whether or not the slide is drawn.
+    pub fn settle_ime(&mut self) {
+        if self.ime_preedit.is_some() && self.session.active().is_none_or(|d| d.composition.is_none()) {
+            self.ime_settled = self.ime_preedit.take();
+            self.ime_interrupt = true;
         }
     }
 
