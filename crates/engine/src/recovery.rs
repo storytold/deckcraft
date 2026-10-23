@@ -84,6 +84,11 @@ fn owner_alive(dir: &Path, owner: u64) -> bool {
 }
 
 /// Write `bytes` to `path` through a temporary file and a rename, so a crash never leaves it torn.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    crate::io::write_atomic(path, bytes)
+}
+#[cfg(target_arch = "wasm32")]
 fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
     let tmp = path.with_extension(format!("{}.tmp", path.extension().and_then(|e| e.to_str()).unwrap_or("")));
     std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, path)).map_err(|e| EngineError::Other(format!("{}: {e}", path.display())))
@@ -131,19 +136,32 @@ pub fn save(s: &Session, dir: &Path) -> Result<usize> {
     std::fs::create_dir_all(dir).map_err(|e| EngineError::Other(format!("{}: {e}", dir.display())))?;
     claim_dir(dir);
     let mut n = 0;
+    // One presentation that fails to write (too big for the disk, say) doesn't stop the rest.
+    let mut first_err = None;
     for d in s.documents() {
         if !d.is_dirty() {
             discard(dir, d.uid);
             continue;
         }
         let (doc, meta) = files(dir, d.uid);
-        let bytes = deckcraft_format::save(&d.doc).map_err(|e| EngineError::Other(e.to_string()))?;
-        write_atomic(&doc, &bytes)?;
-        let m = json!({"path": d.path, "title": d.title(), "saved": now_secs(), "owner": instance_id()});
-        write_atomic(&meta, m.to_string().as_bytes())?;
-        n += 1;
+        let written = deckcraft_format::save(&d.doc).map_err(|e| EngineError::Other(e.to_string())).and_then(|bytes| {
+            // Each file whole or not at all, flushed to the disk.
+            write_atomic(&doc, &bytes)?;
+            let m = json!({"path": d.path, "title": d.title(), "saved": now_secs(), "owner": instance_id()});
+            write_atomic(&meta, m.to_string().as_bytes())
+        });
+        match written {
+            Ok(()) => n += 1,
+            Err(e) => {
+                log::warn!("AutoRecover: {e}");
+                first_err.get_or_insert(e);
+            }
+        }
     }
-    Ok(n)
+    match first_err {
+        Some(e) if n == 0 => Err(e),
+        _ => Ok(n),
+    }
 }
 
 /// Entries in `dir`: (uid, metadata).
