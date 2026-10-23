@@ -131,6 +131,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-21 | Charts: a chart's text sizes survive an edit - the data labels', the legend's, the axis labels' and the title's own size are kept in the model and written back (#1046) |
+| 2026-10-20 | Charts: a chart's number formats survive an edit - the data labels' and the series' own format are kept in the model and written back, instead of every format becoming General (#1046) |
 | 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
 | 2026-10-18 | Slide thumbnails and the Slide Sorter render only the slides in view: on a deck of more than 600 slides they used to evict their own thumbnails, so the pane flashed white and never finished (#969) |
 | 2026-10-17 | Opening a file caps absurd effect sizes (glow, soft edges, shadows, reflections, on shapes, text and table text) at what Format Shape allows: a glow of 10^18 pt in a .pptx made rendering ask for 34 GB and abort |
