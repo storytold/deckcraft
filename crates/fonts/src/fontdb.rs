@@ -864,23 +864,60 @@ impl FontDb {
     /// Add a user font (TTF/OTF/TTC bytes). Returns the number of faces added (0 if unparseable or
     /// every face was already present).
     pub fn add_font(&self, bytes: Vec<u8>) -> usize {
-        self.add_fonts(vec![bytes])
+        self.add_fonts(std::iter::once((bytes, None)))
+    }
+
+    /// Register `(bytes, source_family, private_alias)` font files without exposing their original
+    /// typographic or Windows family names. Faces matching either source name are selected first;
+    /// if none match, a single-family file accepts the document's declared name.
+    ///
+    /// All selected styles are published together. Returns the number of faces added (0 for
+    /// unparseable files, unmatched multi-family collections, empty aliases or existing styles).
+    /// Names are trimmed; family/style deduplication is case-insensitive, as with [`Self::add_font`].
+    /// Aliases are caller-chosen names in this database, not access controls: use a distinct alias
+    /// for each document's subset/content, and resolve its text through that alias.
+    pub fn add_document_fonts(&self, files: Vec<(Vec<u8>, String, String)>) -> usize {
+        self.add_fonts(files.into_iter().map(|(bytes, family, alias)| (bytes, Some((family, alias)))))
     }
 
     /// Add font files together: lookups see all of their faces or none, never part of a family.
     /// Returns the number of faces added.
-    fn add_fonts(&self, files: Vec<Vec<u8>>) -> usize {
+    fn add_fonts(&self, files: impl IntoIterator<Item = (Vec<u8>, Option<(String, String)>)>) -> usize {
         let present = |faces: &[Arc<FontFace>], family: &str, style: &str| {
             faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && f.style.eq_ignore_ascii_case(style))
         };
         let mut new = Vec::new();
-        for bytes in files {
+        for (bytes, registration) in files {
+            if registration.as_ref().is_some_and(|(_, alias)| alias.trim().is_empty()) {
+                continue;
+            }
             let data = Arc::new(bytes);
-            for (i, family, style, coords) in enumerate_faces(&data) {
+            let found = enumerate_faces(&data);
+            let matches = |index, family: &str, source: &str| {
+                family.eq_ignore_ascii_case(source.trim())
+                    || skrifa::FontRef::from_index(&data, index)
+                        .ok()
+                        .and_then(|f| name(&f, &[StringId::FAMILY_NAME]))
+                        .is_some_and(|legacy| legacy.eq_ignore_ascii_case(source.trim()))
+            };
+            let source_matches = registration.as_ref().is_some_and(|(source, _)| found.iter().any(|(i, family, _, _)| matches(*i, family, source)));
+            let single_family = registration.is_some()
+                && !source_matches
+                && found.first().is_some_and(|(_, first, _, _)| found.iter().all(|(_, family, _, _)| family.eq_ignore_ascii_case(first)));
+            for (i, mut family, style, coords) in found {
+                if let Some((source, alias)) = &registration {
+                    if (source_matches && !matches(i, &family, source)) || (!source_matches && !single_family) {
+                        continue;
+                    }
+                    family = alias.trim().to_owned();
+                }
                 if present(&self.read_faces(), &family, &style) {
                     continue;
                 }
-                if let Some(f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
+                if let Some(mut f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
+                    if registration.is_some() {
+                        f.legacy = None;
+                    }
                     new.push(Arc::new(f));
                 }
             }
@@ -999,7 +1036,13 @@ impl FontDb {
             p.dedup();
             p
         };
-        self.add_fonts(paths.iter().filter(|p| std::fs::metadata(p).is_ok_and(|m| font_file_ok(&m))).filter_map(|p| std::fs::read(p).ok()).collect());
+        self.add_fonts(
+            paths
+                .iter()
+                .filter(|p| std::fs::metadata(p).is_ok_and(|m| font_file_ok(&m)))
+                .filter_map(|p| std::fs::read(p).ok())
+                .map(|bytes| (bytes, None)),
+        );
         self.is_loaded(family)
     }
 
