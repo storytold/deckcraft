@@ -413,6 +413,9 @@ struct ParaShaped {
     /// Size of the paragraph's first run (spacing percentages, empty lines).
     lead_size: f64,
     lead_face: Arc<FontFace>,
+    /// Size of the paragraph mark (`a:endParaRPr`): what an empty last line is sized by.
+    end_size: f64,
+    end_face: Arc<FontFace>,
     bullet: Option<(String, Style)>,
     #[allow(dead_code)]
     level: u8,
@@ -709,7 +712,9 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
             faces: vec![],
             props: ParaProps::default(),
             lead_size: 18.0,
-            lead_face: face,
+            lead_face: face.clone(),
+            end_size: 18.0,
+            end_face: face,
             bullet: None,
             level: 0,
             rtl: false,
@@ -741,6 +746,9 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
     let lead_style = make_style(ctx, &lead, scale, opts.prompt_color);
     let lead_size = lead_style.size;
     let lead_face = lead_style.face.clone();
+    // The paragraph mark, which ends the last line when no break does.
+    let end_style = make_style(ctx, &resolve::run(ctx, shape, para, &para.end_props), scale, opts.prompt_color);
+    let (end_size, end_face) = (end_style.size, end_style.face.clone());
     // Bullet.
     let bullet = match &props.bullet {
         Some(Bullet::Char { char }) => {
@@ -789,7 +797,7 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
         }
         _ => None,
     };
-    ParaShaped { cells, styles, faces, props, lead_size, lead_face, bullet, level: para.level, rtl }
+    ParaShaped { cells, styles, faces, props, lead_size, lead_face, end_size, end_face, bullet, level: para.level, rtl }
 }
 
 /// A face that draws the bullet `label` when the bullet's own can't (circled numbers ①, arrows
@@ -1712,10 +1720,21 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                 }
             }
             if size == 0.0 {
-                let (a, d) = line_metrics(&p.lead_face, p.lead_size);
+                // PowerPoint sizes an empty line by the mark that ends it: the `a:rPr` of the
+                // `a:br` that closes it, or `a:endParaRPr` for the paragraph's last line -- not
+                // by the paragraph's first run (#780). An empty *paragraph* already lands on
+                // `end_props` through `lead`, and keeps the same height here.
+                let brk = p.cells.get(rl.end).filter(|c| c.ch == '\u{b}').and_then(|c| p.styles.get(c.style));
+                let (face, sz) = match brk {
+                    Some(st) => (&st.face, st.size),
+                    None if rl.end >= p.cells.len() => (&p.end_face, p.end_size),
+                    // Anything else empty (a line of tabs alone) keeps the old measure.
+                    None => (&p.lead_face, p.lead_size),
+                };
+                let (a, d) = line_metrics(face, sz);
                 asc = a;
                 desc = d;
-                size = p.lead_size;
+                size = sz;
             }
             let natural = (asc + desc).max(size * 1.0);
             let lh = match props.line_spacing {

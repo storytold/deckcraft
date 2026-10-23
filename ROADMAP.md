@@ -128,6 +128,84 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
+| 2026-10-18 | Slide thumbnails and the Slide Sorter render only the slides in view: on a deck of more than 600 slides they used to evict their own thumbnails, so the pane flashed white and never finished (#969) |
+| 2026-10-17 | Opening a file caps absurd effect sizes (glow, soft edges, shadows, reflections, on shapes, text and table text) at what Format Shape allows: a glow of 10^18 pt in a .pptx made rendering ask for 34 GB and abort |
+| 2026-10-17 | Opening a .deckcraft file whose shapes repeat an id gives the repeats fresh ids (groups, layouts and masters too), so the deck validates and edits by id find one shape |
+| 2026-10-17 | Edit Points: turning a shape into a freeform is one undo step, so Undo brings the original shape back (it used to stay a freeform) |
+| 2026-10-17 | While a placeholder's text is being edited, a click on a shape in front of it selects that shape instead of moving the caret, as in PowerPoint (#931) |
+| 2026-10-15 | Native saves keep an imported chart's embedded workbook, drawings and relationships; headless PPTX → edit → native save/reopen → PPTX tests verify the payloads and stale-workbook rejection |
+| 2026-10-15 | PPTX trigger sequences keep separate On Click steps, including paragraph builds; synthetic import/edit/save/reopen and headless show regressions |
+| 2026-10-16 | Export: PNG with a transparent background — the slide background is left out, only the slide's content is drawn (Export… dialog, File › Export, web download, `file.export`/`file.render` `transparentBackground`, `deckcraft-cli render --transparent`) (#784) |
+| 2026-10-16 | Arrange ▸ Align: Align to Slide and Align Selected Objects, as in PowerPoint. One object aligns to the slide and several to each other until the other choice is ticked; the choice holds for that selection and also drives Distribute |
+| 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
+| 2026-10-15 | A `.pptx` slide that can't be read is reported, not dropped in silence: `lostSlides` from `file.open`, a message and a repaired copy in the app, a warning from `deckcraft-cli` (#203) |
+| 2026-10-16 | AutoFormat as you type: ordinals (1st, 22nd, 103rd) get superscript suffixes after a space or punctuation; Tools ▸ AutoCorrect and `text.autocorrect {ordinals}` turn it off |
+| 2026-10-16 | A PowerPoint Show (`.ppsx`) opened from the command line or the file association starts its slide show, as in PowerPoint; File › Open still opens it for editing (#862) |
+| 2026-10-15 | PDF export and rendering: `anchorCtr` centres the drawn text block — right-aligned text no longer ran past the box edge (#736) |
+| 2026-10-14 | connected MCP rejects unrelated, malformed, incomplete and oversized replies without replay; buffered unsolicited bytes force a fresh connection before sending (#718) |
+| 2026-10-14 | Empty bulleted and numbered paragraphs show gray markers while editing, including on first click and after Enter. Markers use the list style and stay out of slide shows and exports. |
+| 2026-10-13 | Interface font fallback continues to eligible installed faces when the first covering face is colour or exceeds the 48 MiB limit; document fallback order and the CJK/IME rendering assertions are retained (#101) |
+| 2026-10-13 | PDFW2: adopt the shared writer with native unwind recovery and explicit font-embedding failures; preserve app-owned export behavior and keep reader dependencies out of production |
+| 2026-10-13 | Eyedropper: Shape Fill, Shape Outline, Font Color and every other colour menu end with an Eyedropper that takes the colour drawn at a point of the slide (hover shows it, a click applies it, Esc cancels); `slide.colorAt` gives the same from scripts and MCP (#367) |
+| 2026-10-13 | Slide show: Honeycomb's hexagons cover the whole slide again — the bottom quarter stayed black until the endpoint (#420) |
+| 2026-10-13 | Copy and Cut from the ribbon, the slide's right-click menu and the menus put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431) |
+| 2026-10-13 | Video seeks and loops keep newly decoded frames and end-of-stream notifications; stale generations are filtered when consumed (upstream #416). Deterministic queue coverage and repeated seeks across H.264, HEVC, VP9 and AV1 |
+| 2026-10-14 | Presenter View handles the same keyboard navigation as the audience window, consumes handled keys before focused buttons, and remains available at the end screen. Regression tests cover presenter-only input, single-step navigation and Escape |
+| 2026-10-13 | EMF and WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records are still skipped |
+| 2026-10-13 | Embedded fonts (`p:embeddedFontLst`) are read, written and used to draw. TrueType, OpenType and Embedded OpenType faces load; MicroType Express subsets are kept for the round trip and still draw in a stand-in |
+| 2026-10-13 | Codec parsers (#426): H.264 and HEVC quantiser offsets, Matroska block times, Opus granule timing and QuickTime PCM frame sizes are range-checked before the arithmetic, so a hostile number is a format error instead of an overflow |
+| 2026-10-13 | WordArt Transform: Shape Format ▸ Text Effects shows the 40 text warps and No Transform; `format.textWarp` applies one to the selected text. Adjust handles are still open |
+| 2026-10-13 | PPTX corpus round-trip for decks we author (open → save → reopen, package parts and text). A notes master's header and footer are kept instead of being replaced by an empty notes master |
+| 2026-10-13 | PPTX round trip of comments, hyperlinks and actions, custom shows, rotated groups, and placeholders that inherit from the layout. Paragraph default formatting (`defRPr`, including a link) and action sounds (the clip, stop-previous, and a custom show's "Show and return") are kept. Embedded fonts and comment threads stay open |
+| 2026-10-13 | PPTX round trip of text effects, autofit, columns, vertical and RTL text, tab stops, line spacing, theme effects, gradient and pattern fills, 3-D bevels and connectors. A run keeps its inner shadow, reflection and soft edge, and a bevel preset with no kept 3-D XML is written back. Embedded fonts and #70, #74, #77 stay open |
+| 2026-10-14 | PPTX: an owned corpus round-trips SmartArt and OLE kept as XML, audio and video bookmarks and trims, a section with a hidden slide, slide-number and date fields, ink (as freeform lines), 3-D models (`.glb`, including the fallback picture) and animation repeat, bounce end and triggers. Relationship-bearing SmartArt and OLE (#203), playback options (#74) and rewind (#77) stay open |
+| 2026-10-14 | Chart trendlines are drawn: linear, exponential, logarithmic, polynomial, power and moving average, with forecast and the equation and R² label. The value axis grows to include the fit |
+| 2026-10-14 | Chart trendlines round-trip (type, polynomial order, moving-average period, forecast, intercept, equation and R²). An owned corpus slice also checks combo charts with data labels, merged tables with diagonal borders, and text columns, autofit, vertical text and a WordArt warp |
+| 2026-10-14 | Insert › Icons: a gallery of Lucide stroke icons (release 1.56.0) inserted as custom shapes, no fill, round stroke scaled from the 24-unit design |
+| 2026-10-14 | Size and Position dialog: height, width, rotation, scale and lock aspect ratio in one undo step, from Shape Format › Size and the shape menu |
+| 2026-10-14 | Review: Previous and Next comment walk every comment in the deck; the Comments pane lists every slide and highlights the one you landed on |
+| 2026-10-13 | View › New Window opens a second window on the same presentation. The window has its own slide and shows edits made in the first window. Arrange All is not included |
+| 2026-10-14 | File › New starter decks: Briefing, Lesson, Pitch, Field Notes, Quarterly and Evening Talk, original text on our themes (`file.new {template}`, `file.templates`). The large template gallery is still open |
+| 2026-10-14 | Slide Sorter sections: Add Section, rename in place, collapse a section, and drag the bar to move that section and its slides |
+| 2026-10-14 | Text: an input method's composition in a table cell is underlined in place, with the caret and candidate window in that cell |
+| 2026-10-14 | Edit Photo Album (`insert.photoAlbumEdit`): reopen the album's slides and re-flow them in one undo step, with black and white, rotation, brightness, contrast and an album theme |
+| 2026-10-14 | Photo Album dialog (`insert.photoAlbum`): pictures and text boxes become slides in the open presentation, one undo step |
+| 2026-10-14 | Design › Colors › Customize Colors… opens Create New Theme Colors: the open master's scheme name and twelve theme colours, applied in one undo |
+| 2026-10-14 | Design › Fonts › Customize Fonts… opens Create New Theme Fonts: the open master's scheme name and its heading and body latin faces, applied in one undo |
+| 2026-10-14 | Alt Text: Mark as decorative opens checked when the selection already is, so OK no longer clears it |
+| 2026-10-14 | Insert Hyperlink: address, email, slide and ScreenTip open from the selection, so OK no longer replaces them with `https://` and an empty tip |
+| 2026-10-14 | Insert › Date and Time: the ribbon and Insert menu open a format list (datetime1–datetime13) with a language and Update automatically. OK inserts one field, or the shown text when Update is off. English has every format; en-GB, French, Japanese and Swedish list the numeric date and 24-hour time |
+| 2026-10-14 | View: the Zoom dialog takes a percent or Fit and applies it on OK. View ▸ Zoom opens it; the arrow still lists the presets |
+| 2026-10-13 | PPTX corpus round-trip for tables, charts, animations, media, sections and masters/layouts (open → save → reopen, package parts and text). A handout master's header, footer, date and slide number are kept |
+| 2026-10-13 | Playback stays with its document and its clip (#415): switching decks or closing the last one stops the previous sound, replacing a clip plays the new one, and the duration and decode caches keep the bytes they are keyed by |
+| 2026-10-13 | Slide show: a laser pointer (Cmd/Ctrl+L, the show's laser colour, no ink). Checklist row Partial. The presenter window does not move the dot |
+| 2026-10-14 | Slide Show: Show Media Controls writes the show setting and hides the playback bar and GIF button during the show |
+| 2026-10-14 | During a show, a typed slide number is shown and Enter goes to that slide |
+| 2026-10-14 | A custom show plays only its slides: Show in the Custom Shows dialog, Set Up Slide Show, or a click action |
+| 2026-10-14 | Presenter view pauses and resets its timer (T, R) and changes notes size (A-/A+, brackets). The clock shows local time. Second-display placement stays with #433 |
+| 2026-10-14 | See All Slides and zoom during a show: a thumbnail grid (G, or All), click to jump, and click-to-zoom at 2× (Z). Presenter view has Black, White, All slides and Zoom |
+| 2026-10-13 | The command palette skips commands that need a value, so searching for Export runs the export dialog (#79) |
+| 2026-10-14 | PNG and JPEG slide export record their resolution. The default 2 pixels per point is 144 dpi, so Preview and print show the slide's real size instead of twice that |
+| 2026-10-14 | Design ▸ Effects: named effect schemes (DeckCraft, Soft, Crisp, Lift, Glow, Plain) replace the theme's fills, lines and effects and leave colours and fonts. `design.effects` |
+| 2026-10-14 | Slide Master: Preserve on the open master or layout, and Title and Footers placeholder checkboxes. Two commands (`master.preserve`, `master.placeholders`) |
+| 2026-10-14 | Trim Media: start, end and fades open from the selected clip, so OK no longer resets them to zero |
+| 2026-10-14 | Format Background: a solid fill's transparency, and for a picture transparency, tile, offset, scale, alignment and mirror. Apply to All copies a picture background onto every slide. The same `design.background` command; dialogs stay 27 |
+| 2026-10-13 | Editor slide rasters sit on the physical pixel grid, so small text stays sharp on a Retina display instead of being blurred by a linear filter between pixels (#184) |
+| 2026-10-14 | Copy and paste with other apps: bold, italic and underline travel as HTML (Pages keeps them); a shape with no text still copies as DeckCraft objects so Ctrl+V pastes it (#182) |
+| 2026-10-13 | Animations ▸ Preview plays the current slide's animations on the editor canvas (Play All does the same); Escape or a click stops it. Checklist row Preview in editor re-scored done |
+| 2026-10-14 | A two-finger twist on the trackpad rotates the selected shapes, as one undo step. Pinch-zoom is unchanged |
+| 2026-10-14 | A trackpad swipe turns the page: sideways when the slide fits the window, and any flick during the slide show. One gesture turns one page. Pinch-zoom is unchanged |
+| 2026-10-14 | Format Shape: the Fill transparency slider shows the selected solid fill, and leaving it no longer clears that transparency |
+| 2026-10-13 | Web file picker: a picture, sound, video or outline finishes on the document and slide that asked for it, and is dropped if that presentation was closed or the picker dismissed (#414) |
+| 2026-10-14 | Paragraph dialog (Home › Paragraph launcher): alignment, first-line and hanging indents, spacing before and after, line spacing, and a Tabs dialog, each applied in one undo step |
+| 2026-10-14 | Font dialog (Home › Font, the shape menu, Cmd+T): family, size, bold, italic, underline, colour, strikethrough, baseline, caps and character spacing, applied in one undo step |
+| 2026-10-13 | Grid Options: spacing, snap to grid, snap to other objects, and whether gridlines and guides are drawn; the on-screen grid uses that spacing |
+| 2026-10-13 | WordArt adjust handles: a selected text warp shows one yellow handle per adjust, and dragging it sets that guide value (one undo step) |
+| 2026-10-14 | Draw: pen pressure scales ink width when the pointer reports it (a mouse or a missing reading stays at the pen width; a stroke saved as a flat 0.5 still draws at the pen width). Tilt is not read |
+| 2026-10-13 | Saving a presentation keeps the embedded workbook behind an unchanged chart, and the chart part's relationships (#335). Editing the chart drops that workbook instead of writing numbers that no longer match it |
+| 2026-10-13 | A presentation whose object ids are used up refuses to grow instead of handing out duplicate ids (#407) |
+| 2026-10-13 | macOS: a Finder double-click, Open With, a drop on the Dock icon and `open -a DeckCraft deck.pptx` open the file (#138, #347). `Info.plist` now declares the documents DeckCraft opens (`.deckcraft`, `.pptx`, `.potx`, `.ppsx`, the same set as the Windows installer and the Linux desktop file, kept equal by a test), and the `kAEOpenDocuments` Apple event is handled through the pinned `fmv-macos-events` crate as in GridCraft; the `-psn_` argument older macOS adds on a Finder launch is ignored. PowerPoint stays the default until the user picks DeckCraft |
 | 2026-10-14 | Cloud documents, sharing and working together. File › Open gains a Cloud section with your own files beside what other people shared with you. Save As offers the same account. The title bar gains an account badge that signs in and says who, Share as a split button whose chevron offers Work together and the Save a Copy formats, and a presence row for who else is in the deck. Each cloud presentation carries an overflow menu. A save refuses to overwrite somebody else's work. The pages are `craft-ui`'s. Every Craft app offers the same ones. DeckCraft answers only what a presentation is (`crates/ui-egui/src/cloud.rs`) and how to reach the service (`apps/deckcraft/src/cloud.rs`) |
 | 2026-10-13 | Slide transitions like PowerPoint: every transition and option measured frame by frame against PowerPoint's video export and retuned (curves, directions, soft edges, 3-D perspective, contents moving over backgrounds); PowerPoint's own XML elements and defaults read and written (diagonal Wipe, Zoom, Shape In/Out, Glitter Hexagons, Shred In/Out, Page Curl Single); `deckcraft-cli render-transition` renders frames headless |
 | 2026-10-13 | Wild text cases measured against PowerPoint (102 synthetic slides): bidi by run language, East Asian vertical text upright, mongolianVert/wordArtVert/wordArtVertRtl, underline styles and strikethrough at the font's metrics, centre/right/decimal tabs, East Asian, Thai, Hindi, Arabic and Hebrew numbering, small caps, all-caps "ß", transparent text, soft hyphens, kinsoku, rtlCol and just/dist anchoring, emoji presentation, fallback faces that no longer move the baseline |
@@ -151,6 +229,66 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
+| 2026-10-15 | trivial | Progress log: chart package parts survive a native save. Scores and milestone names unchanged |
+| 2026-10-18 | trivial | Progress log: thumbnails of huge decks render only the slides in view (#969) |
+| 2026-10-15 | trivial | Progress log: PPTX trigger click-step round trip. Feature scores and milestone names unchanged |
+| 2026-10-16 | trivial | Progress log: PNG export with a transparent background (#784) |
+| 2026-10-16 | trivial | Progress log: a `.ppsx` from the system starts the slide show (#862) |
+| 2026-10-14 | trivial | remote MCP checks reply IDs, envelopes and bounded newline framing (#718) |
+| 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
+| 2026-10-14 | minor | Community PR wave folded: headline breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) and the feature-area breadths from `cargo xtask parity`; one row per area; Upcoming item 2 merged; per-PR count notes dropped from the progress log. Ready stays ~55%, stage alpha |
+| 2026-10-13 | trivial | Progress log: Eyedropper in the colour menus, slide.colorAt (#367) |
+| 2026-10-13 | trivial | Progress log: video seek frame-loss race and regression coverage |
+| 2026-10-14 | minor | Presenter keyboard navigation and end-screen controls |
+| 2026-10-13 | trivial | Progress log: EMF/WMF rectangle clip regions |
+| 2026-10-13 | trivial | Progress log: embedded fonts |
+| 2026-10-13 | trivial | Progress log: codec parsers reject overflowing numeric fields (#426) |
+| 2026-10-13 | trivial | Progress log: owned PPTX corpus round-trip; notes-master header and footer |
+| 2026-10-13 | trivial | Progress log: PPTX corpus for comments, links, custom shows, groups and inherited placeholders |
+| 2026-10-13 | trivial | Progress log: PPTX corpus for text effects, body layout, theme effects, fills, bevels and connectors |
+| 2026-10-14 | trivial | Progress log: PPTX corpus for 3-D models, media bookmarks and animation bounce end |
+| 2026-10-14 | trivial | Progress log: chart trendlines are drawn |
+| 2026-10-14 | trivial | Progress log: chart trendlines |
+| 2026-10-14 | trivial | Progress log: Lucide icon gallery |
+| 2026-10-14 | trivial | Progress log: Size and Position dialog. Breadth stays 79%, ready stays ~55% |
+| 2026-10-14 | trivial | Progress log: previous and next comment |
+| 2026-10-13 | trivial | Progress log: View › New Window |
+| 2026-10-14 | trivial | Progress log: six original starter decks |
+| 2026-10-14 | trivial | Progress log: Slide Sorter sections |
+| 2026-10-14 | trivial | Progress log: IME underlines in table cells |
+| 2026-10-14 | trivial | Progress log: Photo Album dialog. Breadth stays 79%, ready ~55% |
+| 2026-10-14 | trivial | Progress log: Edit Photo Album. Breadth stays 79%, ready ~55% |
+| 2026-10-14 | trivial | Progress log: Create New Theme Colors |
+| 2026-10-14 | trivial | Progress log: Create New Theme Fonts |
+| 2026-10-14 | trivial | Progress log: Alt Text decorative checkbox |
+| 2026-10-14 | trivial | Progress log: Hyperlink dialog follows the selection |
+| 2026-10-14 | trivial | Progress log: Insert › Date and Time dialog (28 dialogs, 226 commands; breadth and readiness unchanged) |
+| 2026-10-14 | trivial | Progress log: Zoom dialog |
+| 2026-10-13 | trivial | Progress log: owned PPTX corpus for more deck kinds; handout-master text |
+| 2026-10-13 | trivial | Progress log: media playback follows the open document and clip (#415) |
+| 2026-10-13 | trivial | Progress log: laser pointer. Headline P2 36% → 39% to match the checklist (the row moves P2 unweighted 38% → 39%; breadth stays 79%) |
+| 2026-10-14 | trivial | Progress log: Show Media Controls |
+| 2026-10-14 | trivial | Progress log: go to slide shows the typed number. Breadth stays 79% |
+| 2026-10-14 | trivial | Progress log: custom show playback. Breadth stays 79% |
+| 2026-10-14 | trivial | Progress log: presenter timer pause/reset, clock and notes size. Breadth stays 79% |
+| 2026-10-14 | trivial | Progress log: See All Slides and zoom during a show. Breadth stays 79% |
+| 2026-10-13 | trivial | Progress log: command palette Export (#79) |
+| 2026-10-14 | trivial | Progress log: Design ▸ Effects |
+| 2026-10-14 | trivial | Progress log: Slide Master Preserve and Title/Footers placeholders. Percentages unchanged |
+| 2026-10-14 | trivial | Progress log: Trim Media dialog follows the selection |
+| 2026-10-14 | trivial | Progress log: Format Background picture and solid options |
+| 2026-10-13 | trivial | Progress log: editor rasters on the Retina pixel grid (#184) |
+| 2026-10-14 | trivial | Progress log: copy and paste rich text and pictures with other apps |
+| 2026-10-13 | trivial | Progress log: animation preview on the editor canvas; breadth 80%, Animations 85% |
+| 2026-10-14 | trivial | Progress log: Format Shape fill transparency follows the selection |
+| 2026-10-13 | trivial | Progress log: web file picker keeps its document and slide (#414) |
+| 2026-10-14 | trivial | Progress log: Paragraph dialog |
+| 2026-10-14 | trivial | Progress log: Font dialog |
+| 2026-10-13 | trivial | Progress log: Grid Options dialog |
+| 2026-10-14 | trivial | Progress log: pen pressure scales ink width |
+| 2026-10-13 | trivial | Progress log: chart workbook round-trip (#335) |
+| 2026-10-13 | trivial | Progress log: Finder opens presentations on macOS (#138) |
 | 2026-10-14 | trivial | Progress log: cloud documents, sharing and working together |
 | 2026-10-13 | trivial | Progress log: wild text cases |
 | 2026-10-12 | trivial | Progress log: File tab (Backstage, #76) |

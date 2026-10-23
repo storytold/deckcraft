@@ -572,12 +572,24 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.edit(|doc, sel| {
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("edit.delete", "no slide"))?;
+        let mut before = Vec::new();
+        deckcraft_model::walk(shapes, &mut |s, _| before.push(s.id));
         let n = remove_shapes(shapes, &ids);
+        // Everything that is gone: the given ids plus group descendants and emptied groups.
+        let mut left = Vec::new();
+        deckcraft_model::walk(shapes, &mut |s, _| left.push(s.id));
+        let mut gone = ids.clone();
+        gone.extend(before.into_iter().filter(|i| !left.contains(i)));
         // Animations of deleted shapes go too.
         if sel.target == crate::Target::Slides
             && let Some(sl) = doc.slides.get_mut(sel.slide)
         {
-            Arc::make_mut(sl).animations.retain(|a| !ids.contains(&a.shape));
+            let sl = Arc::make_mut(sl);
+            sl.animations.retain(|a| !gone.contains(&a.shape));
+            // Effects triggered by a deleted shape fall back to the main sequence.
+            for a in sl.animations.iter_mut().filter(|a| a.trigger.is_some_and(|t| gone.contains(&t))) {
+                a.trigger = None;
+            }
         }
         sel.shapes.retain(|i| !ids.contains(i));
         sel.text = None;

@@ -7,6 +7,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png" width="128" height="128" alt="DeckCraft icon: a presentation screen with a bar chart on an orange tile">
+</p>
+
 <h1 align="center">DeckCraft</h1>
 
 <p align="center">

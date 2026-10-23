@@ -179,7 +179,7 @@ fn body_placeholder(shapes: &mut [deckcraft_model::Shape]) -> Option<&mut deckcr
 
 fn index_of(s: &Session, p: &Value) -> Result<usize> {
     let st = s.doc()?;
-    let i = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "index", "slide")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
         return Err(bad("slide", format!("no slide {i}")));
     }
@@ -187,7 +187,7 @@ fn index_of(s: &Session, p: &Value) -> Result<usize> {
 }
 
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
-    let indices: Vec<usize> = match usize_param(p, "index") {
+    let indices: Vec<usize> = match opt_usize_param(p, "index", "slide.duplicate")? {
         Some(i) => vec![i],
         None => {
             let st = s.doc()?;
@@ -240,7 +240,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         let st = s.doc()?;
         if let Some(a) = p.get("ids").and_then(Value::as_array) {
             a.iter().filter_map(Value::as_u64).filter_map(|v| u32::try_from(v).ok()).map(SlideId).collect()
-        } else if let Some(i) = usize_param(p, "index") {
+        } else if let Some(i) = opt_usize_param(p, "index", "slide.delete")? {
             st.doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default()
         } else if !st.selection.slides.is_empty() {
             st.selection.slides.clone()
@@ -266,7 +266,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
-    let from = usize_param(p, "from").unwrap_or(s.doc()?.selection.slide);
+    let from = opt_usize_param(p, "from", "slide.move")?.unwrap_or(s.doc()?.selection.slide);
     let to = usize_param(p, "to").ok_or_else(|| bad("slide.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         if from >= doc.slides.len() {
@@ -531,7 +531,7 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
-    let at = usize_param(p, "at").unwrap_or(s.doc()?.selection.slide);
+    let at = opt_usize_param(p, "at", "section.add")?.unwrap_or(s.doc()?.selection.slide);
     let name = str_param(p, "name").unwrap_or("Untitled Section").to_string();
     s.edit(|doc, _| {
         let at = at.min(doc.slides.len().saturating_sub(1));
@@ -647,6 +647,25 @@ mod tests {
     use serde_json::json;
 
     use crate::Session;
+
+    #[test]
+    fn invalid_index_params_are_rejected_not_defaulted_to_selection() {
+        let mut s = Session::with_new();
+        while s.doc().expect("doc").doc.slides.len() < 3 {
+            s.execute("slide.new", &json!({})).expect("new slide");
+        }
+        for bad in [json!(-1), json!(1.5)] {
+            for (cmd, p) in [
+                ("slide.delete", json!({"index": bad})),
+                ("slide.duplicate", json!({"index": bad})),
+                ("slide.move", json!({"from": bad, "to": 0})),
+                ("section.add", json!({"at": bad})),
+            ] {
+                assert!(s.execute(cmd, &p).is_err(), "{cmd} must reject {p}");
+                assert_eq!(s.doc().expect("doc").doc.slides.len(), 3, "{cmd} {p}");
+            }
+        }
+    }
 
     #[test]
     fn duplicate_keeps_section_order_in_step_with_slides() {

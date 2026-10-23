@@ -115,7 +115,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
             p.text(pos2(row.min.x + 14.0, img.min.y + 20.0), Align2::CENTER_TOP, "★", theme::font(10.0), t.text_faint);
         }
         let wpx = (img.width() * ppp).round() as u32;
-        match app.textures.thumb(ui.ctx(), &doc, i, wpx, &mut budget) {
+        // Only rows in view (plus a little margin) ask for a thumbnail: with every row asking, a
+        // deck bigger than the thumbnail cache evicts its own thumbnails and never settles (#969).
+        let near = ui.clip_rect().expand2(vec2(0.0, 2.0 * row.height())).intersects(row);
+        let tex = if near { app.textures.thumb(ui.ctx(), &doc, i, wpx, &mut budget) } else { None };
+        match tex {
             Some(tex) => {
                 p.image(
                     tex.id(),
@@ -126,7 +130,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
             }
             None => {
                 p.rect_filled(img, CornerRadius::ZERO, Color32::WHITE);
-                need_more = true;
+                need_more |= near;
             }
         }
         if selected {

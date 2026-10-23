@@ -1467,3 +1467,99 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
 }
+
+/// A run of `text` at `size` points.
+fn sized_run(text: &str, size: f64) -> Run {
+    let mut r = Run::new(text);
+    r.props.size = Some(size);
+    r
+}
+
+/// A line break whose own run properties are `size` points.
+fn sized_break(size: f64) -> Run {
+    let mut r = Run { text: String::new(), props: Default::default(), kind: deckcraft_model::text::RunKind::Break };
+    r.props.size = Some(size);
+    r
+}
+
+/// The height one line of `size`-point text takes in this shape: the yardstick the empty-line
+/// tests measure against, so they do not depend on the test font's ascent and descent.
+fn one_line_height(p: &Presentation, sh: &mut Shape, size: f64) -> f64 {
+    sh.text.as_mut().unwrap().paragraphs = vec![Paragraph { runs: vec![sized_run("X", size)], ..Default::default() }];
+    let l = lay(p, sh, 400.0, 400.0);
+    l.lines[0].bottom - l.lines[0].top
+}
+
+#[test]
+fn an_empty_line_is_sized_by_the_break_that_ends_it() {
+    // PowerPoint sizes an empty line by the mark that closes it, not by the paragraph's first
+    // run (#780). Case A of the report: 40pt text, a 40pt break, a 10pt break, 40pt text, so
+    // the empty second line is a 10pt line and not a 40pt one.
+    let (p, mut sh) = setup("x", 400.0, 400.0);
+    let (h10, h40, h60, h20) = (
+        one_line_height(&p, &mut sh, 10.0),
+        one_line_height(&p, &mut sh, 40.0),
+        one_line_height(&p, &mut sh, 60.0),
+        one_line_height(&p, &mut sh, 20.0),
+    );
+    let put = |sh: &mut Shape, runs: Vec<Run>| {
+        sh.text.as_mut().unwrap().paragraphs = vec![Paragraph { runs, ..Default::default() }];
+    };
+
+    put(&mut sh, vec![sized_run("A1", 40.0), sized_break(40.0), sized_break(10.0), sized_run("A2", 40.0)]);
+    let a = lay(&p, &sh, 400.0, 400.0);
+    assert_eq!(a.lines.len(), 3, "{:?}", a.lines.iter().map(|l| l.top).collect::<Vec<_>>());
+    let empty_a = a.lines[2].top - a.lines[1].top;
+    assert!((empty_a - h10).abs() < 0.5, "a 10pt break should give a 10pt line ({h10}), got {empty_a}");
+    assert!((empty_a - h40).abs() > 1.0, "and not the 40pt first run's line ({h40})");
+
+    // Case C: a 60pt break closing the empty line of a 20pt paragraph pushes the third line
+    // down, the opposite direction from the first run's size -- so this cannot pass by the old
+    // behaviour under a different font.
+    put(&mut sh, vec![sized_run("C1", 20.0), sized_break(20.0), sized_break(60.0), sized_run("C2", 20.0)]);
+    let c = lay(&p, &sh, 400.0, 400.0);
+    let empty_c = c.lines[2].top - c.lines[1].top;
+    assert!((empty_c - h60).abs() < 0.5, "a 60pt break should give a 60pt line ({h60}), got {empty_c}");
+    assert!((empty_c - h20).abs() > 1.0, "and not the 20pt first run's line ({h20})");
+}
+
+#[test]
+fn an_empty_last_line_is_sized_by_the_paragraph_mark() {
+    // Case B: 40pt text and a trailing 40pt break, with the paragraph mark at 10pt. No break
+    // closes the empty last line, so it takes the mark's size.
+    let (p, mut sh) = setup("x", 400.0, 400.0);
+    let (h10, h40) = (one_line_height(&p, &mut sh, 10.0), one_line_height(&p, &mut sh, 40.0));
+    {
+        let t = sh.text.as_mut().unwrap();
+        let mut para = Paragraph { runs: vec![sized_run("B1", 40.0), sized_break(40.0)], ..Default::default() };
+        para.end_props.size = Some(10.0);
+        t.paragraphs = vec![para];
+    }
+    let l = lay(&p, &sh, 400.0, 400.0);
+    assert_eq!(l.lines.len(), 2, "the trailing break leaves an empty last line");
+    let h = l.lines[1].bottom - l.lines[1].top;
+    assert!((h - h10).abs() < 0.5, "a 10pt paragraph mark should give {h10}, got {h}");
+    assert!((h - h40).abs() > 1.0, "and not the 40pt first run's line ({h40})");
+}
+
+#[test]
+fn an_empty_paragraph_keeps_its_paragraph_mark_height() {
+    // Case D, the control: an empty *paragraph* already took `end_props` before this change,
+    // through `lead`, and must be unaffected by it.
+    let (p, mut sh) = setup("x", 400.0, 400.0);
+    let h10 = one_line_height(&p, &mut sh, 10.0);
+    {
+        let t = sh.text.as_mut().unwrap();
+        let mut empty = Paragraph::default();
+        empty.end_props.size = Some(10.0);
+        t.paragraphs = vec![
+            Paragraph { runs: vec![sized_run("D1", 40.0)], ..Default::default() },
+            empty,
+            Paragraph { runs: vec![sized_run("D2", 40.0)], ..Default::default() },
+        ];
+    }
+    let l = lay(&p, &sh, 400.0, 400.0);
+    assert_eq!(l.lines.len(), 3);
+    let h = l.lines[1].bottom - l.lines[1].top;
+    assert!((h - h10).abs() < 0.5, "a 10pt empty paragraph should give {h10}, got {h}");
+}
