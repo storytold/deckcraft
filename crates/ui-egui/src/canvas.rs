@@ -1490,6 +1490,14 @@ mod tests {
         let id = sh.id;
         let x = deckcraft_engine::cmd::xfrm_of(&st.doc, &st.selection, sh);
         let p = screen(h.state(), x.x + 40.0, x.y + 20.0);
+        // The first click selects the shape (#787); the second enters text editing.
+        click(&mut h, p);
+        h.run_steps(3);
+        {
+            let st = h.state().session.active().unwrap();
+            assert!(st.selection.text.is_none(), "the first click selects, it does not start typing");
+            assert!(st.selection.shapes.contains(&id), "the first click selects the placeholder");
+        }
         click(&mut h, p);
         h.run_steps(3);
         let caret = |h: &Harness<'_, SlideApp>| {

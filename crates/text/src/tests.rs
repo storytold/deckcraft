@@ -1346,6 +1346,38 @@ fn stacked_combining_marks_take_a_face_that_draws_them() {
     let _ = f;
 }
 
+/// #811: an empty paragraph in a bullet list must produce an `empty_bullets` entry so the
+/// editor can show the bullet preview after Enter. It used to be skipped when the bullet list
+/// came from the body rather than from per-paragraph props.
+#[test]
+fn empty_bullet_paragraph_produces_a_preview_bullet() {
+    let bullet = Bullet::Char { char: "\u{2022}".into() };
+    let text = "First item";
+    let (p, mut sh) = setup(text, 600.0, 300.0);
+    sh.text = Some(TextBody {
+        body: BodyProps::default(),
+        paragraphs: vec![
+            Paragraph { props: ParaProps { bullet: Some(bullet.clone()), ..Default::default() }, runs: vec![Run::new(text)], ..Default::default() },
+            // The empty paragraph after pressing Enter.
+            Paragraph { props: ParaProps { bullet: Some(bullet), ..Default::default() }, runs: vec![], ..Default::default() },
+        ],
+        ..Default::default()
+    });
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let l = layout(
+        &ctx,
+        &sh,
+        sh.text.as_ref().unwrap(),
+        &Opts { rect: Rect::new(0.0, 0.0, 600.0, 300.0), fields: &NoFields, prompt_color: None, no_shrink: false },
+    );
+    assert!(
+        !l.empty_bullets.is_empty(),
+        "the empty paragraph should produce a bullet preview, got empty_bullets={} runs={}",
+        l.empty_bullets.len(),
+        l.runs.len()
+    );
+}
+
 /// #736: `anchorCtr` centres the text block horizontally, whatever the paragraphs' own
 /// alignment, and overflowing content centres symmetrically past both edges.
 #[test]

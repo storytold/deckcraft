@@ -657,11 +657,12 @@ impl Session {
                 // Locked objects stay put when the selection is dragged.
                 let origs: Vec<(ShapeId, Xfrm)> =
                     ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
-                // A click (no drag) on text puts the caret there; unselected text boxes and
-                // placeholders take the caret straight away like PowerPoint. A click in a selected
-                // table puts the caret in the clicked cell.
+                // A click (no drag) on a selected shape's text puts the caret there, as in
+                // PowerPoint: the first click selects the shape, a second click on the text
+                // enters edit mode. A click in a selected table puts the caret in the clicked
+                // cell (#787, #764).
                 let table = st.shape(id).is_some_and(|s| matches!(s.kind, ShapeKind::Table(_)));
-                let enter_text = (!toggle && ((text && (selected || is_text_first(st, id))) || (table && selected))).then_some((id, p));
+                let enter_text = (!toggle && ((text && selected) || (table && selected))).then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;
@@ -1613,10 +1614,6 @@ impl Session {
         }
         Ok(Value::Null)
     }
-}
-
-fn is_text_first(st: &crate::DocState, id: ShapeId) -> bool {
-    st.shape(id).is_some_and(|s| s.ph.is_some() || s.text_box)
 }
 
 /// The topmost text-holding shape under `p` inside group `sh`, recursing into nested groups.
