@@ -10,6 +10,7 @@ const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus",
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
 const CANVAS_ID: &str = "deckcraft_canvas";
 const LOADING_ID: &str = "deckcraft_loading";
+const LANGUAGE_KEY: &str = "deckcraft.interfaceLanguage";
 
 pub fn start() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
@@ -38,6 +39,12 @@ pub fn start() {
                     }
                     let inbox: Inbox = Inbox::default();
                     let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
+                    app.services.system_locale = web_sys::window().and_then(|w| w.navigator().language());
+                    if let Some(saved) = browser_storage().and_then(|storage| storage.get_item(LANGUAGE_KEY).ok().flatten()).filter(|s| s.len() < 32)
+                        && let Ok(language) = serde_json::from_str(&saved)
+                    {
+                        app.ui.interface_language = language;
+                    }
                     let q = query();
                     if !q.contains("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
@@ -49,7 +56,7 @@ pub fn start() {
                     if q.contains("show") {
                         app.start_show(0, false);
                     }
-                    Ok(Box::new(WebShell { app, inbox }))
+                    Ok(Box::new(WebShell { saved_language: app.ui.interface_language, app, inbox }))
                 }),
             )
             .await;
@@ -62,6 +69,10 @@ pub fn start() {
     });
 }
 
+fn browser_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
 fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
@@ -71,6 +82,7 @@ fn query() -> String {
 struct WebShell {
     app: SlideApp,
     inbox: Inbox,
+    saved_language: deckcraft_ui_egui::i18n::Language,
 }
 
 impl eframe::App for WebShell {
@@ -106,6 +118,14 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        let language = self.app.ui.interface_language;
+        if language != self.saved_language {
+            if let (Some(storage), Ok(json)) = (browser_storage(), serde_json::to_string(&language))
+                && storage.set_item(LANGUAGE_KEY, &json).is_ok()
+            {
+                self.saved_language = language;
+            }
+        }
     }
 }
 
@@ -118,10 +138,10 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             let inbox = open_inbox.clone();
             let ctx = ctx.clone();
             let dialog = match purpose {
-                "picture" => rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS),
-                "audio" => rfd::AsyncFileDialog::new().add_filter("Audio", AUDIO_EXTS),
-                "video" => rfd::AsyncFileDialog::new().add_filter("Video", VIDEO_EXTS),
-                _ => rfd::AsyncFileDialog::new().add_filter("Presentations", PRESENTATION_EXTS),
+                "picture" => rfd::AsyncFileDialog::new().add_filter(deckcraft_ui_egui::i18n::tr("Pictures"), PICTURE_EXTS),
+                "audio" => rfd::AsyncFileDialog::new().add_filter(deckcraft_ui_egui::i18n::tr("Audio"), AUDIO_EXTS),
+                "video" => rfd::AsyncFileDialog::new().add_filter(deckcraft_ui_egui::i18n::tr("Video"), VIDEO_EXTS),
+                _ => rfd::AsyncFileDialog::new().add_filter(deckcraft_ui_egui::i18n::tr("Presentations"), PRESENTATION_EXTS),
             };
             wasm_bindgen_futures::spawn_local(async move {
                 let Some(file) = dialog.pick_file().await else {

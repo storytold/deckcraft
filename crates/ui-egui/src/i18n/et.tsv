@@ -1,0 +1,1839 @@
+# Estonian interface text. English source<TAB>translation; \n denotes a line break.
+# Contributor-original translation, MIT OR Apache-2.0.
+  Fixed date (empty = update automatically):	  Kindel kuupäev (tühi = automaatne uuendus):
+  Footer text:	  Jaluse tekst:
+  Present  	Esita
+ (not checked)	 (ei kontrollita)
+ pt	 pt
+ — Edited	 — Muudetud
+"Not Allowed" Symbol	Keelumärk
+%	%
+% of all commits	% kõigist muudatustest
+(no spelling suggestions)	(õigekirjasoovitused puuduvad)
+(none)	(puudub)
++ Add	+ Lisa
++ New Comment	+ Uus kommentaar
++ New Slide	+ Uus slaid
++ Row	+ Rida
++ Series	+ Sari
++Bin	+Vahemik
+100% Stacked Bar	100% virnastatud riba
+100% Stacked Column	100% virnastatud tulp
+3-D	3D
+3-D Format	3D-vorming
+3-D Rotation	3D-pööre
+35mm Slides	35 mm slaidid
+4 Point Star	4-tipuline täht
+5 Point Star	5-tipuline täht
+6 Point Star	6-tipuline täht
+8 Point Star	8-tipuline täht
+@ribbon:Draw	Joonistamine
+@ribbon:Home	Avaleht
+@ribbon:Insert	Lisamine
+@ribbon:Record	Salvestamine
+@{}: {} PRs, {} commits, +{} / −{} lines (Δ {}), +{} / −{} binary assets, {} – {}	@{}: {} PR-i, {} muudatust, +{} / −{} rida (Δ {}), +{} / −{} kahendvara, {} – {}
+A	A
+A fixed copy that keeps its layout on any device	Kindla paigutusega koopia kõigi seadmete jaoks
+A+	A+
+A-	A-
+A3 Paper (297x420 mm)	A3-paber (297 × 420 mm)
+A4 Paper (210x297 mm)	A4-paber (210 × 297 mm)
+Aa	Aa
+AaBbCcDd	AaBbCcDd
+Abc	Abc
+About	Teave
+About DeckCraft	Teave DeckCrafti kohta
+Accent 1	Rõhuvärv 1
+Accent 2	Rõhuvärv 2
+Accent 3	Rõhuvärv 3
+Accent 4	Rõhuvärv 4
+Accent 5	Rõhuvärv 5
+Accent 6	Rõhuvärv 6
+Accept	Nõustu
+Accept Revision	Võta muudatus vastu
+Accessibility Checker	Hõlbustuskontroll
+Account	Konto
+Across	Risti
+Action	Toiming
+Action Button: Custom	Toimingunupp: kohandatud
+Action Button: Document	Toimingunupp: dokument
+Action Button: Get Information	Toimingunupp: teave
+Action Button: Go Back	Toimingunupp: tagasi
+Action Button: Go Back or Previous	Toimingunupp: tagasi või eelmine
+Action Button: Go Forward or Next	Toimingunupp: edasi või järgmine
+Action Button: Go Home	Toimingunupp: avaleht
+Action Button: Go to Beginning	Toimingunupp: algusse
+Action Button: Go to End	Toimingunupp: lõppu
+Action Button: Help	Toimingunupp: abi
+Action Button: Sound	Toimingunupp: heli
+Action Button: Video	Toimingunupp: video
+Action Button: {k}	Toimingunupp: {k}
+Action Buttons	Toimingunupud
+Action Settings	Toimingu sätted
+Action Settings…	Toimingu sätted…
+Add	Lisa
+Add Animation	Lisa animatsioon
+Add Assistant	Lisa abiline
+Add Font	Lisa font
+Add Guide	Lisa abijoon
+Add Horizontal Guide	Lisa rõhtne abijoon
+Add Pictures…	Lisa pilte…
+Add Point	Lisa punkt
+Add Section	Lisa jaotis
+Add Shape	Lisa kujund
+Add Shape Above	Lisa kujund üles
+Add Shape After	Lisa kujund järele
+Add Shape Before	Lisa kujund ette
+Add Shape Below	Lisa kujund alla
+Add Vertical Guide	Lisa püstine abijoon
+Add a category	Lisa kategooria
+Add a tag	Lisa silt
+Add a title	Lisa pealkiri
+Add a title with a picture or some text to get layout ideas.	Paigutusideede saamiseks lisa pealkiri ning pilt või tekst.
+Add an author	Lisa autor
+Add comments	Lisa kommentaarid
+Add to Dictionary	Lisa sõnastikku
+Add to Quick Access Toolbar	Lisa kiirpääsuribale
+Add\nAnimation	Lisa animatsioon
+Address:	Aadress:
+Adjust Shape	Kohanda kujundit
+After Previous	Pärast eelmist
+After text	Pärast teksti
+After:	Pärast:
+Airplane	Lennuk
+Album theme	Albumi kujundus
+Align	Joonda
+Align Bottom	Joonda alla
+Align Cell Text	Joonda lahtri tekst
+Align Center	Joonda keskele
+Align Left	Joonda vasakule
+Align Middle	Joonda püstsuunas keskele
+Align Right	Joonda paremale
+Align Selected Objects	Joonda valitud objektid
+Align Text	Joonda tekst
+Align Top	Joonda üles
+Align to Slide	Joonda slaidi suhtes
+Alignment	Joondus
+Alignment:	Joondus:
+All Borders	Kõik äärised
+All caps	Kõik suurtähed
+All slides	Kõik slaidid
+All slides on	Kõik slaidid sees
+Alt Text	Asendustekst
+Alt+	Alt+
+Alt+F9	Alt+F9
+Alt\nText	Asendustekst
+An open-source, clean-room project. Not affiliated with Microsoft.	Avatud lähtekoodiga sõltumatu teostus. Projekt ei ole Microsoftiga seotud.
+Angle	Nurk
+Animation Gallery	Animatsioonigalerii
+Animation Painter	Animatsioonipintsel
+Animation Painter (double-click to keep it on)	Animatsioonipintsel (püsivaks kasutamiseks tee topeltklõps)
+Animation Pane	Animatsioonipaan
+Animation Styles	Animatsioonilaadid
+Animation\nPane	Animatsioonipaan
+Animations	Animatsioonid
+Animations on Slide	Slaidi animatsioonid
+Appear	Ilmumine
+Applies to this presentation's theme colours.	Kehtib selle esitluse kujunduse värvidele.
+Apply	Rakenda
+Apply Animation	Rakenda animatsioon
+Apply Design Idea	Rakenda kujundusidee
+Apply To All	Rakenda kõigile
+Apply to All	Rakenda kõigile
+Apply\nTo All	Rakenda kõigile
+Arc	Kaar
+Arcs	Kaared
+Area	Pindala
+Arrange	Korralda
+Arrow	Nool
+Arrow at end	Nool lõpus
+Arrow at start	Nool alguses
+Arrow: Bent	Nool: painutatud
+Arrow: Bent-Up	Nool: painutatud üles
+Arrow: Chevron	Nool: noolsulg
+Arrow: Circular	Nool: ringikujuline
+Arrow: Circular Counter-clockwise	Nool: ringikujuline vastupäeva
+Arrow: Circular Two-headed	Nool: ringikujuline kahe otsaga
+Arrow: Curved Down	Nool: kaardus alla
+Arrow: Curved Left	Nool: kaardus vasakule
+Arrow: Curved Right	Nool: kaardus paremale
+Arrow: Curved Up	Nool: kaardus üles
+Arrow: Down	Nool: alla
+Arrow: Left	Nool: vasakule
+Arrow: Left-Right	Nool: vasakule-paremale
+Arrow: Left-Right-Up	Nool: vasakule-paremale-üles
+Arrow: Left-Up	Nool: vasakule-üles
+Arrow: Notched Right	Nool: sälguga paremale
+Arrow: Pentagon	Nool: viisnurk
+Arrow: Quad	Nool: neljas suunas
+Arrow: Right	Nool: paremale
+Arrow: Striped Right	Nool: triibuline paremale
+Arrow: Swoosh	Nool: hoogne kaar
+Arrow: U-Turn	Nool: tagasipööre
+Arrow: Up	Nool: üles
+Arrow: Up-Down	Nool: üles-alla
+Arrows	Nooled
+Arrows at both ends	Nooled mõlemas otsas
+Artistic Effects	Kunstilised efektid
+As One Object	Ühe objektina
+As:	Kujul:
+Audio	Heli
+Audio from File…	Heli failist…
+AutoCorrect Options	Automaatkorrektuuri valikud
+AutoCorrect Options…	Automaatkorrektuuri valikud…
+AutoCorrect as you type	Paranda teksti sisestamisel automaatselt
+Autofit	Automaatmahutus
+Automatic	Automaatne
+Available formats:	Saadaolevad vormingud:
+B4 (ISO) Paper (250x353 mm)	B4 (ISO) paber (250 × 353 mm)
+B5 (ISO) Paper (176x250 mm)	B5 (ISO) paber (176 × 250 mm)
+Back (Esc)	Tagasi (Esc)
+Background	Taust
+Background Styles	Taustalaadid
+Background\nStyles	Taustalaadid
+Backspace	Backspace
+Banded Columns	Triibulised veerud
+Banded Rows	Triibulised read
+Banner	Lint
+Baseline	Alusjoon
+Basic Cycle	Lihttsükkel
+Basic List	Lihtloend
+Basic Process	Lihtprotsess
+Basic Shapes	Põhikujundid
+Bean	Uba
+Before text	Enne teksti
+Before text (in):	Enne teksti (tolli):
+Before you share it, check the presentation for things people with disabilities might find hard to read.	Enne jagamist kontrolli, kas puudega inimestel on esitlust lihtne lugeda.
+Begin arrow	Algusnool
+Begin size	Alguse suurus
+Bevel	Servalõige
+Binary assets added	Lisatud kahendvarad
+Binary assets removed	Eemaldatud kahendvarad
+Black Left	Läbi musta vasakule
+Black Pen	Must pliiats
+Black Right	Läbi musta paremale
+Black on	Must sees
+Blank Presentation	Tühi esitlus
+Blinds	Ruloo
+Block Arc	Plokkkaar
+Block Arrows	Plokknooled
+Blue	Sinine
+Blue Pen	Sinine pliiats
+Body:	Põhitekst:
+Bold	Paks
+Bold Flash	Paksu kirja sähvatus
+Borders	Äärised
+Both	Mõlemad
+Bottom	All
+Bottom Border	Alumine ääris
+Bottom Left	All vasakul
+Bottom Right	All paremal
+Bottom bevel	Alumine servalõige
+Bottom left	All vasakul
+Bottom right	All paremal
+Bounce	Põrge
+Bounce Left	Põrge vasakule
+Bounce Right	Põrge paremale
+Box	Kast
+Box In	Kast sisse
+Box Out	Kast välja
+Box and Whisker	Karp-vurrud
+Brightness	Heledus
+Brightness {:+}%	Heledus {:+}%
+Bring Forward	Too ettepoole
+Bring to Front	Too esiplaanile
+Bring\nForward	Too ettepoole
+Browse for Themes needs the desktop app for now	Kujunduste sirvimine vajab praegu töölauarakendust
+Browse for Themes…	Sirvi kujundusi…
+Browsed at a kiosk (full screen)	Automaatne sirvimine (täisekraanil)
+Browsed by an individual (window)	Iseseisev sirvimine (aknas)
+Bubble	Mull
+Bullets	Täpploend
+Bullets and Numbering	Täpid ja nummerdus
+Bullets and Numbering…	Täpid ja nummerdus…
+Burst	Puhang
+By Paragraph	Lõigu kaupa
+Callout: Bent Line	Viiktekst: murtud joon
+Callout: Bent Line with Accent Bar	Viiktekst: murtud joon rõhutusjoonega
+Callout: Bent Line with Border and Accent Bar	Viiktekst: äärise ja rõhutusjoonega murtud joon
+Callout: Bent Line with No Border	Viiktekst: ääriseta murtud joon
+Callout: Double Bent Line	Viiktekst: topeltmurtud joon
+Callout: Double Bent Line with Accent Bar	Viiktekst: topeltmurtud joon rõhutusjoonega
+Callout: Double Bent Line with Border and Accent Bar	Viiktekst: äärise ja rõhutusjoonega topeltmurtud joon
+Callout: Double Bent Line with No Border	Viiktekst: ääriseta topeltmurtud joon
+Callout: Down Arrow	Viiktekst: allanool
+Callout: Left Arrow	Viiktekst: vasaknool
+Callout: Left-Right Arrow	Viiktekst: vasak-parem nool
+Callout: Line	Viiktekst: joon
+Callout: Line with Accent Bar	Viiktekst: joon rõhutusjoonega
+Callout: Line with Border and Accent Bar	Viiktekst: äärise ja rõhutusjoonega joon
+Callout: Line with No Border	Viiktekst: ääriseta joon
+Callout: Quad Arrow	Viiktekst: neljasuunaline nool
+Callout: Right Arrow	Viiktekst: paremnool
+Callout: Up Arrow	Viiktekst: ülesnool
+Callout: Up-Down Arrow	Viiktekst: üles-alla nool
+Callouts	Viiktekstid
+Cameo	Kaamerapilt
+Camera capture is not available yet	Kaamerasalvestus pole veel saadaval
+Cancel	Loobu
+Cap type	Otsa tüüp
+Capitalize Each Word	Iga Sõna Suurtähega
+Capitalize first letter of sentences	Muuda lause esimene täht suureks
+Capitalize names of days	Muuda nädalapäevade algustähed suureks
+Caps	Suurtähed
+Cell Margins	Lahtri veerised
+Center	Keskel
+Center Tab	Keskjoonduse tabeldus
+Centered	Keskel
+Change Case	Muuda tähesuurust
+Change Chart Type	Muuda diagrammi tüüpi
+Change Colors	Muuda värve
+Change File Type	Muuda failitüüpi
+Change Layout	Muuda paigutust
+Change Picture	Muuda pilti
+Change Picture…	Muuda pilti…
+Change Shape	Muuda kujundit
+Change Spelling	Paranda õigekiri
+Change to:	Asendus:
+Change\nChart Type	Muuda diagrammi tüüpi
+Character Spacing	Märkide vahe
+Character spacing must be a number	Märkide vahe peab olema arv
+Characters	Märgid
+Chart	Diagramm
+Chart Data	Diagrammi andmed
+Chart Design	Diagrammi kujundus
+Chart Elements	Diagrammi elemendid
+Chart Marker: Cross Lines	Diagrammimarker: ristjooned
+Chart Marker: Plus Lines	Diagrammimarker: plussjooned
+Chart Marker: Star Lines	Diagrammimarker: tähtjooned
+Chart…	Diagramm…
+Check Accessibility	Kontrolli hõlbustatust
+Check for Issues	Kontrolli probleeme
+Check\nAccessibility	Kontrolli hõlbustatust
+Checkerboard	Malelaud
+Chevron	Noolsulg
+Choose a SmartArt Graphic	Vali SmartArt-graafika
+Choose a font	Vali font
+Choose where to save	Vali salvestuskoht
+Choosing a presentation to reuse needs the desktop app	Taaskasutatava esitluse valimine vajab töölauarakendust
+Choosing a sound file needs the desktop app	Helifaili valimine vajab töölauarakendust
+Chord	Kõõl
+Circle	Ring
+Circle In	Ring sisse
+Circle Out	Ring välja
+Clear	Tühjenda
+Clear All	Tühjenda kõik
+Clear All Formatting	Eemalda kogu vormindus
+Click a symbol to insert it at the insertion point.	Sümboli lisamiseks kursori asukohta klõpsa sümbolil.
+Click icon to add SmartArt graphic	SmartArt-graafika lisamiseks klõpsa ikoonil
+Click icon to add chart	Diagrammi lisamiseks klõpsa ikoonil
+Click icon to add media	Meedia lisamiseks klõpsa ikoonil
+Click icon to add picture	Pildi lisamiseks klõpsa ikoonil
+Click icon to add table	Tabeli lisamiseks klõpsa ikoonil
+Click the slide to take the colour under the pointer	Kursori all oleva värvi võtmiseks klõpsa slaidil
+Click the slide to zoom in. Esc cancels.	Suurendamiseks klõpsa slaidil. Esc tühistab.
+Click to add first slide	Esimese slaidi lisamiseks klõpsa
+Click to add notes	Märkmete lisamiseks klõpsa
+Click to add subtitle	Alapealkirja lisamiseks klõpsa
+Click to add text	Teksti lisamiseks klõpsa
+Click to add title	Pealkirja lisamiseks klõpsa
+Click to change this one; Shift-click to change all	Selle muutmiseks klõpsa. Kõigi muutmiseks hoia all Shift ja klõpsa
+Click to edit Master text styles	Juhtslaidi tekstilaadide muutmiseks klõpsa
+Click to edit Master title style	Juhtslaidi pealkirjalaadi muutmiseks klõpsa
+Clock	Kell
+Clockwise	Päripäeva
+Close	Sulge
+Close Master View	Sulge juhtslaidivaade
+Close\nMaster View	Sulge juhtslaidivaade
+Cloud	Pilv
+Clustered Bar	Rühmitatud riba
+Clustered Column	Rühmitatud tulp
+Cmd+	Cmd+
+Cmd+,	Cmd+,
+Cmd+-	Cmd+-
+Cmd+=	Cmd+=
+Cmd+F1	Cmd+F1
+Cmd+Shift+P	Cmd+Shift+P
+Collapse the Ribbon	Ahenda menüülint
+Color	Värv
+Color At	Värv asukohas
+Color Pulse	Värvipulss
+Color:	Värv:
+Colors	Värvid
+Columns	Veerud
+Comb	Kamm
+Combo	Liitdiagramm
+Command Palette	Käsupalett
+Comment	Kommentaar
+Comments	Kommentaarid
+Commit Composition	Kinnita sisestus
+Commits	Muudatused
+Community Links	Kogukonna lingid
+Company	Ettevõte
+Compare	Võrdle
+Compare needs the desktop app for now	Võrdlemine vajab praegu töölauarakendust
+Compare this presentation with a revised copy from Review › Compare.	Võrdle esitlust muudetud koopiaga käsuga Läbivaatus › Võrdle.
+Compare…	Võrdle…
+Complementary Color	Täiendvärv
+Compose Text	Koosta tekst
+Compound type	Liitjoone tüüp
+Compress Pictures	Tihenda pildid
+Connect Shapes	Ühenda kujundid
+Connection Sites	Ühenduspunktid
+Connector: Curved	Ühendusjoon: kõver
+Connector: Elbow	Ühendusjoon: nurk
+Connector: Elbow (one bend)	Ühendusjoon: üks nurk
+Content	Sisu
+Contract	Kokkutõmbumine
+Contrast	Kontrast
+Contrast {:+}%	Kontrast {:+}%
+Contributors	Kaasautorid
+Convert to Shapes	Teisenda kujunditeks
+Convert to SmartArt	Teisenda SmartArtiks
+Convert to Text	Teisenda tekstiks
+Conveyor	Konveier
+Copied the path	Tee on kopeeritud
+Copy	Kopeeri
+Copy path	Kopeeri tee
+Corner Point	Nurgapunkt
+Corner Tabs: Quarter Circles	Nurgasakid: veerandringid
+Corner Tabs: Squares	Nurgasakid: ruudud
+Corner Tabs: Triangles	Nurgasakid: kolmnurgad
+Correct TWo INitial CApitals	Paranda kaks suurtähte sõna alguses
+Correct accidental use of cAPS LOCK key	Paranda juhuslik suurtäheluku kasutamine
+Corrections	Parandused
+Couldn't save AutoRecover information: {e}	Automaattaaste teavet ei saanud salvestada: {e}
+Counter Clockwise	Vastupäeva
+Counterclockwise	Vastupäeva
+Cover	Katmine
+Create	Loo
+Create Handouts	Loo jaotusmaterjal
+Create New Theme Colors	Loo kujunduse uued värvid
+Create New Theme Fonts	Loo kujunduse uued fondid
+Create PDF	Loo PDF
+Create PDF Document	Loo PDF-dokument
+Create a PDF Document	Loo PDF-dokument
+Crescent Moon	Kuusirp
+Crop	Kärbi
+Crop 10% each side	Kärbi igast servast 10%
+Crop 20% each side	Kärbi igast servast 20%
+Crop to Shape	Kärbi kujundiks
+Cross	Rist
+Crush	Muljumine
+Ctrl+	Ctrl+
+Cube	Kuup
+Currency	Valuuta
+Curtains	Kardinad
+Curved Square	Kaardus ruut
+Custom	Kohandatud
+Custom Path	Kohandatud tee
+Custom Range	Kohandatud vahemik
+Custom Show	Kohandatud seanss
+Custom Show 1	Kohandatud seanss 1
+Custom Shows	Kohandatud seansid
+Custom Slide Show	Kohandatud slaidiseanss
+Custom\nShow	Kohandatud seanss
+Customize Colors…	Kohanda värve…
+Customize Fonts…	Kohanda fonte…
+Customize Quick Access Toolbar	Kohanda kiirpääsuriba
+Cut	Lõika
+Cycle	Tsükkel
+Cylinder	Silinder
+Dark Blue	Tumesinine
+Dark Mode	Tume režiim
+Dark Red	Tumepunane
+Dark appearance	Tume välimus
+Dark\nMode	Tume režiim
+Darken	Tumendamine
+Dash	Kriips
+Dash Dot	Kriips-punkt
+Dashes	Kriipsjooned
+Database	Andmebaas
+Date	Kuupäev
+Date & Time	Kuupäev ja kellaaeg
+Date &\nTime	Kuupäev ja kellaaeg
+Date and Time	Kuupäev ja kellaaeg
+Date and time	Kuupäev ja kellaaeg
+Decagon	Kümmenurk
+Decaying Wave	Sumbuv laine
+Decision	Otsus
+DeckCraft	DeckCraft
+DeckCraft Presentation (*.deckcraft)	DeckCrafti esitlus (*.deckcraft)
+DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.	DeckCraftil pole kontosid. Sisselogimist pole vaja ja esitlused jäävad sinu seadmesse.
+DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer.	DeckCraft laadib printimiseks alla PDF-i. Prindi see brauseris või PDF-vaaturis.
+DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer.	DeckCraft avab printimiseks PDF-i. Vali printer PDF-vaaturis.
+DeckCraft's own format: everything is kept	DeckCrafti oma vorming: kõik säilib
+Decrease Font Size	Vähenda fonti
+Decrease List Level	Vähenda loenditaset
+Default tab stops (in):	Vaiketabelduskohad (tolli):
+Delay:	Viivitus:
+Delete	Kustuta
+Delete Columns	Kustuta veerud
+Delete Comment	Kustuta kommentaar
+Delete Guide	Kustuta abijoon
+Delete Layout	Kustuta paigutus
+Delete Point	Kustuta punkt
+Delete Repeated Word	Kustuta korduv sõna
+Delete Rows	Kustuta read
+Delete Slide	Kustuta slaid
+Delete Table	Kustuta tabel
+Delete Text	Kustuta tekst
+Demote	Alanda taset
+Desaturate	Eemalda värvid
+Deselect	Tühista valik
+Design	Kujundus
+Design Ideas	Kujundusideed
+Design\nIdeas	Kujundusideed
+Deutsch	Deutsch
+Diagonal Down Border	Laskuv diagonaalääris
+Diagonal Down Right	Diagonaalis alla paremale
+Diagonal Stripe	Diagonaaltriip
+Diagonal Up Border	Tõusev diagonaalääris
+Diagonal Up Right	Diagonaalis üles paremale
+Diamond	Romb
+Diamond In	Romb sisse
+Diamond Out	Romb välja
+Diamonds From Bottom	Rombid alt
+Diamonds From Left	Rombid vasakult
+Diamonds From Right	Rombid paremalt
+Diamonds From Top	Rombid ülalt
+Direction	Suund
+Disappear	Kadumine
+Discard Recovered Presentations	Loobu taastatud esitlustest
+Display	Kuva
+Display drawing guides on screen	Näita ekraanil joonistuse abijooni
+Display grid on screen	Näita ekraanil ruudustikku
+Display name	Kuvatav nimi
+Dissolve	Hajumine
+Dissolve In	Sissehajumine
+Dissolve Out	Väljahajumine
+Distance from ground	Kaugus alusest
+Distribute	Jaota
+Distribute Columns	Jaota veerud
+Distribute Horizontally	Jaota rõhtsuunas
+Distribute Rows	Jaota read
+Distribute Vertically	Jaota püstsuunas
+Division Sign	Jagamismärk
+Do not Autofit	Ära mahuta automaatselt
+Do not check spelling or grammar	Ära kontrolli õigekirja ega grammatikat
+Do you want to save the changes you made to {what}?	Kas soovid salvestada esitluse {what} muudatused?
+Document	Dokument
+Dodecagon	Kaksteistnurk
+Don't Save	Ära salvesta
+Don't show on title slide	Ära näita tiitelslaidil
+Done	Valmis
+Donut	Rõngas
+Doors	Uksed
+Double Brace	Topeltloogeline sulg
+Double Bracket	Topeltnurksulg
+Double Left	Kaks vasakule
+Double Right	Kaks paremale
+Double Wave	Topeltlaine
+Doughnut	Rõngas
+Down	Alla
+Download	Laadi alla
+Download the file	Laadi fail alla
+Drape	Eesriie
+Draw	Joonista
+Draw Table	Joonista tabel
+Drop Shadow Rectangle	Varjuga ristkülik
+Duplicate	Tee koopia
+Duplicate Selected Slides	Tee valitud slaididest koopiad
+Duplicate Slide	Tee slaidist koopia
+Duration:	Kestus:
+Dynamic Content	Dünaamiline sisu
+Edit	Redigeerimine
+Edit Alt Text…	Muuda asendusteksti…
+Edit Data	Muuda andmeid
+Edit Header & Footer	Muuda päist ja jalust
+Edit Photo Album…	Muuda fotoalbumit…
+Edit Points	Muuda punkte
+Edit Shape	Muuda kujundit
+Edit SmartArt Text	Muuda SmartArti teksti
+Edit Text	Muuda teksti
+Edit the data: first row = series names, first column = categories.	Muuda andmeid: esimene rida sisaldab sarjade nimesid, esimene veerg kategooriaid.
+Edit\nData	Muuda andmeid
+Edit\nShape	Muuda kujundit
+Editing	Redigeerimine
+Effect Options	Efekti valikud
+Effect\nOptions	Efekti valikud
+Effects	Efektid
+Email Address	E-posti aadress
+Email address:	E-posti aadress:
+Emphasis	Rõhutus
+End	Lõpp
+End Review	Lõpeta läbivaatus
+End Show	Lõpeta seanss
+End arrow	Lõpunool
+End of slide show	Slaidiseansi lõpp
+End of slide show, click to exit.	Slaidiseansi lõpp. Väljumiseks klõpsa.
+End size	Lõpu suurus
+End trim (s):	Lõpukärbe (s):
+English (United Kingdom)	Inglise (Ühendkuningriik)
+English (United States)	Inglise (Ameerika Ühendriigid)
+Enter	Enter
+Entrance	Sisenemine
+Equals	Võrdub
+Equation	Võrrand
+Equation Shapes	Võrrandikujundid
+Eraser	Kustutuskumm
+Escape	Escape
+Español	Español
+Exciting	Silmatorkav
+Exit	Väljumine
+Exit Edit Points	Lõpeta punktide muutmine
+Expand	Laienda
+Explosion: 14 Points	Plahvatus: 14 tippu
+Explosion: 8 Points	Plahvatus: 8 tippu
+Export	Ekspordi
+Export the presentation as:	Esitluse ekspordivorming:
+Exported {path}	Eksporditud: {path}
+Export…	Ekspordi…
+Eyedropper	Värvipipett
+Eyedropper: click the slide (Esc cancels)	Värvipipett: klõpsa slaidil (Esc tühistab)
+Fade	Hääbumine
+Fade in (s):	Heli sujuv algus (s):
+Fade out (s):	Heli sujuv lõpp (s):
+Fall Over	Kukkumine
+Ferris Wheel	Vaateratas
+File	Fail
+File (Alt+F)	Fail (Alt+F)
+Fill	Täide
+Fill & Line	Täide ja joon
+Fill Color	Täitevärv
+Filled Radar	Täidetud radar
+Find	Otsi
+Find Next	Otsi järgmine
+Find and Replace	Otsimine ja asendamine
+Find what:	Otsi teksti:
+Find whole words only	Otsi ainult terveid sõnu
+Find…	Otsi…
+First	Esimene
+First Column	Esimene veerg
+First Slide	Esimene slaid
+First commit	Esimene muudatus
+First line	Esimene rida
+Fit	Mahuta
+Fit slide to current window	Mahuta slaid praegusesse aknasse
+Fit to Window	Mahuta aknasse
+Fit to\nWindow	Mahuta aknasse
+Flash	Sähvatus
+Flip	Peegelda
+Flip Horizontal	Peegelda rõhtsuunas
+Flip Vertical	Peegelda püstsuunas
+Float In	Sissehõljumine
+Float Out	Väljahõljumine
+Flowchart	Vooskeem
+Flowchart: Alternate Process	Vooskeem: alternatiivne protsess
+Flowchart: Card	Vooskeem: kaart
+Flowchart: Collate	Vooskeem: komplekteerimine
+Flowchart: Connector	Vooskeem: ühendus
+Flowchart: Data	Vooskeem: andmed
+Flowchart: Decision	Vooskeem: otsus
+Flowchart: Delay	Vooskeem: viivitus
+Flowchart: Direct Access Storage	Vooskeem: otsepöördusmälu
+Flowchart: Display	Vooskeem: kuva
+Flowchart: Document	Vooskeem: dokument
+Flowchart: Extract	Vooskeem: eraldamine
+Flowchart: Internal Storage	Vooskeem: sisemälu
+Flowchart: Magnetic Disk	Vooskeem: magnetketas
+Flowchart: Manual Input	Vooskeem: käsitsisisestus
+Flowchart: Manual Operation	Vooskeem: käsitsitoiming
+Flowchart: Merge	Vooskeem: liitmine
+Flowchart: Multidocument	Vooskeem: mitu dokumenti
+Flowchart: Off-page Connector	Vooskeem: leheväline ühendus
+Flowchart: Offline Storage	Vooskeem: ühenduseta salvestus
+Flowchart: Or	Vooskeem: või
+Flowchart: Predefined Process	Vooskeem: eelmääratud protsess
+Flowchart: Preparation	Vooskeem: ettevalmistus
+Flowchart: Process	Vooskeem: protsess
+Flowchart: Punched Tape	Vooskeem: perfolint
+Flowchart: Sequential Access Storage	Vooskeem: järjestikpöördusmälu
+Flowchart: Sort	Vooskeem: sortimine
+Flowchart: Stored Data	Vooskeem: salvestatud andmed
+Flowchart: Summing Junction	Vooskeem: summeerimine
+Flowchart: Terminator	Vooskeem: algus/lõpp
+Fly In	Sisselend
+Fly Out	Väljalend
+Fly Through	Läbilend
+Folded Corner	Murtud nurk
+Follow Path	Järgi teed
+Follow the layout	Järgi paigutust
+Followed Hyperlink	Külastatud hüperlink
+Font	Font
+Font Color	Fondi värv
+Font Size	Fondi suurus
+Font name	Fondi nimi
+Font size must be a number	Fondi suurus peab olema arv
+Fonts	Fondid
+Fonts in Presentation	Esitluse fondid
+Font…	Font…
+Football	Jalgpall
+Footer	Jalus
+Footers	Jalused
+Foreground	Esiplaan
+Format	Vorming
+Format Background	Tausta vorming
+Format Background…	Tausta vorming…
+Format Painter	Vormingupintsel
+Format Painter (double-click to keep it on)	Vormingupintsel (püsivaks kasutamiseks tee topeltklõps)
+Format Pane	Vorminduspaan
+Format Shape	Kujundi vorming
+Format Shape…	Kujundi vorming…
+Format\nBackground	Tausta vorming
+Format\nPane	Vorminduspaan
+Formatting State	Vormindusolek
+Fracture	Murdumine
+Frame	Raam
+Frame Slides	Raamista slaidid
+Frame shape	Raami kuju
+Français	Français
+Freeform	Vabakujund
+French (France)	Prantsuse (Prantsusmaa)
+From 	Alates
+From Beginning	Algusest
+From Bottom	Alt
+From Bottom Left	Alt vasakult
+From Bottom Right	Alt paremalt
+From Bottom-Left	Alt vasakult
+From Bottom-Right	Alt paremalt
+From Current Slide	Praegusest slaidist
+From Left	Vasakult
+From Right	Paremalt
+From Top	Ülalt
+From Top Left	Ülalt vasakult
+From Top Right	Ülalt paremalt
+From Top-Left	Ülalt vasakult
+From Top-Right	Ülalt paremalt
+From bottom left	Alt vasakult
+From bottom right	Alt paremalt
+From center	Keskelt
+From the top-left corner of the slide	Slaidi vasakust ülanurgast
+From top left	Ülalt vasakult
+From top right	Ülalt paremalt
+From\nBeginning	Algusest
+From\nCurrent Slide	Praegusest slaidist
+Full	Täielik
+Full Page Slides	Täisleheslaidid
+Funnel	Lehter
+Gallery	Galerii
+Gear: 6 Teeth	Hammasratas: 6 hammast
+Gear: 9 Teeth	Hammasratas: 9 hammast
+General	Üldine
+Get Text	Hangi tekst
+Glitter	Sädelus
+Glow	Kuma
+Go to	Mine
+Go to Slide	Mine slaidile
+Grab bag	Kaardivaade
+Gradient fill	Astmiktäide
+Gradient stops	Värviülemineku punktid
+Gradient…	Värviüleminek…
+Grayscale	Halltoonid
+Greek	Kreeka
+Green	Roheline
+Grid Options	Ruudustiku valikud
+Grid Options…	Ruudustiku valikud…
+Grid and Guides	Ruudustik ja abijooned
+Gridlines	Ruudujooned
+Group	Rühmita
+Group Objects	Rühmita objektid
+Grow & Turn	Kasvamine ja pööramine
+Grow/Shrink	Kasvamine/kahanemine
+Guides	Abijooned
+Half	Pool
+Half Frame	Poolraam
+Handout Master	Jaotusmaterjali juhtleht
+Handout Master (coming soon)	Jaotusmaterjali juhtleht (lisandub hiljem)
+Handout Placeholders	Jaotusmaterjali kohatäited
+Handout\nMaster	Jaotusmaterjali juhtleht
+Handouts (1 slide per page)	Jaotusmaterjal (1 slaid lehel)
+Handouts (2 slides per page)	Jaotusmaterjal (2 slaidi lehel)
+Handouts (3 slides per page)	Jaotusmaterjal (3 slaidi lehel)
+Handouts (4 slides per page)	Jaotusmaterjal (4 slaidi lehel)
+Handouts (6 slides per page)	Jaotusmaterjal (6 slaidi lehel)
+Handouts (9 slides per page)	Jaotusmaterjal (9 slaidi lehel)
+Header	Päis
+Header & Footer	Päis ja jalus
+Header &\nFooter	Päis ja jalus
+Header Row	Päiserida
+Header and Footer	Päis ja jalus
+Header and Footer…	Päis ja jalus…
+Heading and body fonts for this presentation.	Selle esitluse pealkirja- ja põhitekstifondid.
+Heading:	Pealkiri:
+Heart	Süda
+Heartbeat	Südamelöök
+Height	Kõrgus
+Height (in):	Kõrgus (tolli):
+Height:	Kõrgus:
+Help	Abi
+Heptagon	Seitsenurk
+Hex D	Kuusnurgad alla
+Hex L	Kuusnurgad vasakule
+Hex R	Kuusnurgad paremale
+Hex U	Kuusnurgad üles
+Hexagon	Kuusnurk
+Hexagons From Bottom	Kuusnurgad alt
+Hexagons From Left	Kuusnurgad vasakult
+Hexagons From Right	Kuusnurgad paremalt
+Hexagons From Top	Kuusnurgad ülalt
+Hidden slides	Peidetud slaidid
+Hide All	Peida kõik
+Hide Background Graphics	Peida taustagraafika
+Hide During Show	Peida slaidiseansi ajal
+Hide Slide	Peida slaid
+Hide background graphics	Peida taustagraafika
+Hide\nSlide	Peida slaid
+Hierarchy	Hierarhia
+High	Kõrge
+Highlighter	Marker
+Histogram	Histogramm
+Home	Avaleht
+Honeycomb	Kärg
+Horizontal	Rõhtne
+Horizontal (in):	Rõhtsuunas (tolli):
+Horizontal Figure 8	Rõhtne kaheksa
+Horizontal In	Rõhtsalt sisse
+Horizontal Out	Rõhtsalt välja
+Horz In	Rõhtsalt sisse
+Horz Out	Rõhtsalt välja
+How would you describe this object and its context to someone who is blind or has low vision?	Kirjelda seda objekti ja selle konteksti inimesele, kes ei näe või näeb halvasti.
+Hyperlink	Hüperlink
+Hyperlink to:	Hüperlingi siht:
+Icon Gallery	Ikoonigalerii
+Icons	Ikoonid
+Ignore All	Eira kõiki
+In	Sisse
+In Bounce	Sissepõrge
+In with Bounce	Sisse põrkega
+Include hidden slides	Kaasa peidetud slaidid
+Increase Font Size	Suurenda fonti
+Increase List Level	Suurenda loenditaset
+Indent after text must be a number of inches	Tekstijärgne taane peab olema arv tollides
+Indent before text must be a number of inches	Tekstieelne taane peab olema arv tollides
+Indentation	Taane
+Info	Teave
+Ink to Math	Käsikiri valemiks
+Ink to Math (coming soon)	Käsikiri valemiks (lisandub hiljem)
+Ink to Shape	Käsikiri kujundiks
+Ink to Shape (coming soon)	Käsikiri kujundiks (lisandub hiljem)
+Ink to Shape: turn drawn lines, rectangles, ovals and triangles into shapes	Käsikiri kujundiks: teisenda joonistatud jooned, ristkülikud, ovaalid ja kolmnurgad kujunditeks
+Ink to Text	Käsikiri tekstiks
+Ink to Text (coming soon)	Käsikiri tekstiks (lisandub hiljem)
+Ink to\nMath	Käsikiri valemiks
+Ink to\nShape	Käsikiri kujundiks
+Ink to\nText	Käsikiri tekstiks
+Inner	Sisemine
+Insert	Lisa
+Insert Above	Lisa üles
+Insert Below	Lisa alla
+Insert Hyperlink	Lisa hüperlink
+Insert Layout	Lisa paigutus
+Insert Left	Lisa vasakule
+Insert Picture	Lisa pilt
+Insert Picture in SmartArt	Lisa SmartArti pilt
+Insert Picture in SmartArt…	Lisa SmartArti pilt…
+Insert Placeholder	Lisa kohatäide
+Insert Right	Lisa paremale
+Insert Synonym	Lisa sünonüüm
+Insert Table	Lisa tabel
+Insert Table…	Lisa tabel…
+Insert picture from file…	Lisa pilt failist…
+Insert\nAbove	Lisa üles
+Insert\nBelow	Lisa alla
+Insert\nLayout	Lisa paigutus
+Insert\nLeft	Lisa vasakule
+Insert\nPlaceholder	Lisa kohatäide
+Insert\nRight	Lisa paremale
+Insert…	Lisa…
+Inside Borders	Siseäärised
+Inside Horizontal Border	Rõhtne siseääris
+Inside Vertical Border	Püstine siseääris
+Inspect Presentation	Vaata esitluse andmeid
+Inspect Shape	Vaata kujundi andmeid
+Inspect Slide	Vaata slaidi andmeid
+Interface Language	Kasutajaliidese keel
+Interface language:	Kasutajaliidese keel:
+Interface size	Kasutajaliidese suurus
+Isosceles Triangle	Võrdhaarne kolmnurk
+Italiano	Italiano
+Italic	Kursiiv
+JPEG Picture (*.jpg)	JPEG-pilt (*.jpg)
+JPEG image (current slide)	JPEG-pilt (praegune slaid)
+Japanese	Jaapani
+Join our community on Discord	Liitu meie kogukonnaga Discordis
+Join the ArtCraft community on Discord	Liitu ArtCrafti kogukonnaga Discordis
+Join type	Ühenduse tüüp
+Justify	Rööpjoonda
+Justify low	Madal rööpjoondus
+Keeps the layout, fonts and pictures	Säilitab paigutuse, fondid ja pildid
+L-Shape	L-kujund
+Landscape	Rõhtpaigutus
+Landscape Orientation	Rõhtpaigutus
+Language	Keel
+Language:	Keel:
+Last	Viimane
+Last Column	Viimane veerg
+Last Slide	Viimane slaid
+Last commit	Viimane muudatus
+Layout	Paigutus
+Layout Placeholders	Paigutuse kohatäited
+Learn More	Lisateave
+Learn\nMore	Lisateave
+Leave the slide background out: only what is on the slide is drawn	Jäta slaidi taust välja. Joonistatakse ainult slaidil olevad objektid
+Ledger Paper (11x17 in)	Ledger-paber (11 × 17 tolli)
+Left	Vasak
+Left Border	Vasak ääris
+Left Brace	Vasak looksulg
+Left Bracket	Vasak nurksulg
+Left Tab	Vasakjoonduse tabeldus
+Left-to-Right Text Direction	Teksti suund vasakult paremale
+Less Brightness	Vähem heledust
+Less Contrast	Vähem kontrasti
+Letter Paper (8.5x11 in)	Letter-paber (8,5 × 11 tolli)
+Liberation Serif	Liberation Serif
+Light Blue	Helesinine
+Light Green	Heleroheline
+Light/Dark appearance	Hele/tume välimus
+Lighten	Helendamine
+Lightning	Välk
+Lightning Bolt	Välgunool
+Line	Joon
+Line Color	Joone värv
+Line Spacing	Reavahe
+Line Spacing Options…	Reavahe valikud…
+Line delta	Ridade muutus
+Line spacing	Reavahe
+Line spacing (lines):	Reavahe ridades:
+Line spacing must be a number	Reavahe peab olema arv
+Line with Markers	Markeritega joon
+Line: Rising	Joon: tõusev
+Linear	Lineaarne
+Lines	Read
+Lines +/−	Read +/−
+Lines added	Lisatud read
+Lines deleted	Kustutatud read
+Link	Link
+Link…	Link…
+List Commands	Loetle käsud
+Lock	Lukusta
+Lock aspect ratio	Lukusta küljesuhe
+Long Dash	Pikk kriips
+Long Dash Dot	Pikk kriips-punkt
+Loop Until Next Sound	Korda järgmise helini
+Loop continuously until 'Esc'	Korda kuni vajutatakse Esc
+Loop de Loop	Silmusring
+Loop until Stopped	Korda peatamiseni
+Loops	Silmused
+Loose	Hõre
+Low	Madal
+MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors	MIT OR Apache-2.0 · © 2026 ArtCrafti meeskond ja DeckCrafti kaasautorid
+Manage Presentation	Halda esitlust
+Margins (pt)	Veerised (pt)
+Mark as decorative	Märgi dekoratiivseks
+Mark selected text as:	Valitud teksti keel:
+Match case	Erista suur- ja väiketähti
+Math	Matemaatika
+Matrix	Maatriks
+Maximize content (else ensure fit)	Suurenda sisu (muidu mahuta)
+Media	Meedia
+Media Info	Meedia teave
+Medium	Keskmine
+Merge Cells	Ühenda lahtrid
+Merge Shapes	Ühenda kujundid
+Merge\nCells	Ühenda lahtrid
+Merge\nShapes	Ühenda kujundid
+Merged PRs	Liidetud PR-id
+Middle	Keskel
+Minus Sign	Miinusmärk
+Mirror	Peegelda
+Mirror type	Peegeldamise tüüp
+Model	Mudel
+Models	Mudelid
+Month names and AM/PM are listed for English. Other languages list the numeric date and 24-hour time.	Kuude nimed ja AM/PM on inglise keeles. Teistes keeltes kasutatakse numbrilist kuupäeva ja 24 tunni kellaaega.
+Moon	Kuu
+More Brightness	Rohkem heledust
+More Colors…	Veel värve…
+More Colors… #	Veel värve… #
+More Contrast	Rohkem kontrasti
+More presentations	Veel esitlusi
+More templates	Veel malle
+More themes	Veel kujundusi
+Morph	Sujuv teisendus
+Motion	Liikumine
+Motion Paths	Liikumisteed
+Move	Teisalda
+Move Down	Teisalda alla
+Move Guide	Teisalda abijoon
+Move Handle	Liiguta pidet
+Move Insertion Point	Liiguta sisestuskohta
+Move Point	Liiguta punkti
+Move Section	Teisalda jaotis
+Move Section Down	Teisalda jaotis alla
+Move Section Up	Teisalda jaotis üles
+Move Slide	Teisalda slaid
+Move Up	Teisalda üles
+Multiplication Sign	Korrutusmärk
+Multiply	Paljunemine
+Mute	Vaigista
+Name	Nimi
+Name (A–Z)	Nimi (A–Z)
+Name:	Nimi:
+Neutron	Neutron
+New	Uus
+New Comment	Uus kommentaar
+New Photo Album…	Uus fotoalbum…
+New Presentation	Uus esitlus
+New Slide	Uus slaid
+New Slide (⇧⌘N)	Uus slaid (⇧⌘N)
+New Text Box	Uus tekstiväli
+New Window	Uus aken
+New Window needs a slide	Uus aken vajab slaidi
+New Window needs an open presentation	Uus aken vajab avatud esitlust
+New presentation	Uus esitlus
+New show name:	Uue seansi nimi:
+New\nComment	Uus kommentaar
+New\nSlide	Uus slaid
+Next	Järgmine
+Next Comment	Järgmine kommentaar
+Next Page	Järgmine lehekülg
+Next Slide	Järgmine slaid
+Next Window	Järgmine aken
+Next ▶	Järgmine ▶
+No Border	Ääris puudub
+No Color	Värv puudub
+No Fill	Täide puudub
+No Glow	Kuma puudub
+No Outline	Kontuur puudub
+No Recolor	Värvitooni muutus puudub
+No Reflection	Peegeldus puudub
+No Shadow	Vari puudub
+No Soft Edges	Pehmed servad puuduvad
+No Transform	Teisendus puudub
+No accessibility issues found. People with disabilities should not have difficulty reading this document.	Hõlbustusprobleeme ei leitud. Puudega inimesed peaksid saama seda dokumenti lugeda.
+No comments on this slide.	Sellel slaidil pole kommentaare.
+No comments.	Kommentaarid puuduvad.
+No contributor data was built into this copy.	See koopia ei sisalda kaasautorite andmeid.
+No differences left.	Erinevusi ei ole enam.
+No fill	Täide puudub
+No icons match.	Sobivaid ikoone ei leitud.
+No line	Joon puudub
+No model credits were built into this copy.	See koopia ei sisalda mudelite andmeid.
+No notes.	Märkmed puuduvad.
+No pictures yet	Pilte pole veel
+No presentation is open.	Ühtegi esitlust pole avatud.
+No sound: {err}	Heli puudub: {err}
+None	Puudub
+Normal	Tavaline
+Not Equal	Ei võrdu
+Not a copy of this presentation: slides are matched by position.	See ei ole selle esitluse koopia. Slaidid vastendatakse asukoha järgi.
+Not allowed	Pole lubatud
+Not saved yet	Veel salvestamata
+Notes	Märkmed
+Notes Master	Märkmete juhtleht
+Notes Master (coming soon)	Märkmete juhtleht (lisandub hiljem)
+Notes Page	Märkmeleht
+Notes Pages	Märkmelehed
+Notes Placeholders	Märkmete kohatäited
+Notes\nMaster	Märkmete juhtleht
+Notes\nPage	Märkmeleht
+Nothing to print: every slide in the range is hidden.	Pole midagi printida. Kõik vahemiku slaidid on peidetud.
+Nudge	Nihuta
+Number of columns:	Veergude arv:
+Number of rows:	Ridade arv:
+Numbering	Nummerdus
+Object Color	Objekti värv
+Objects	Objektid
+Octagon	Kaheksanurk
+Offset X	X-nihe
+Offset Y	Y-nihe
+Offset bottom	Alumine nihe
+Offset left	Vasak nihe
+Offset right	Parem nihe
+Offset top	Ülemine nihe
+On Click	Klõpsul
+On Click of {name}	Objekti {name} klõpsul
+On Click of… (none)	Objekti klõpsul… (puudub)
+On Mouse Click	Hiireklõpsul
+On-screen Show (16:10)	Ekraaniesitlus (16:10)
+Online Pictures	Veebipildid
+Open	Ava
+Open Arrow	Avatud nool
+Open Data	Ava andmed
+Open Dialog	Ava dialoog
+Open Recovered Presentations	Ava taastatud esitlused
+Open a presentation from a folder (Ctrl+O)	Ava esitlus kaustast (Ctrl+O)
+Open another window on this presentation	Ava selle esitluse teine aken
+Open file location	Ava faili asukoht
+Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.	Avatud lähtekood litsentsiga MIT OR Apache-2.0. Projekt ei ole Microsoftiga seotud.
+Open the sample deck	Ava näidisesitlus
+Opened the presentation as a PDF to print	Esitlus avati printimiseks PDF-ina
+Opens in PowerPoint and other presentation apps	Avaneb PowerPointis ja teistes esitlustarkvarades
+Opens on any device with a PDF viewer	Avaneb kõigis PDF-vaaturiga seadmetes
+Open…	Ava…
+Options	Valikud
+Orange	Oranž
+Orbit	Orbiit
+Order Objects	Järjesta objektid
+Ordinals (1st) with superscript	Järgarvude lõpud ülaindeksina (1st)
+Orientation:	Paigutuse suund:
+Origami	Origami
+Other Sound…	Muu heli…
+Out	Välja
+Out Bounce	Väljapõrge
+Out with Bounce	Välja põrkega
+Outer	Välimine
+Outline	Liigendus
+Outline (*.txt)	Liigendus (*.txt)
+Outline (.txt)	Liigendus (.txt)
+Outline View	Liigendusvaade
+Outline\nView	Liigendusvaade
+Outside Borders	Välisäärised
+Oval	Ovaal
+Oval ends	Ovaalsed otsad
+Overhead	Lüümik
+PDF (*.pdf)	PDF (*.pdf)
+PDF document (.pdf)	PDF-dokument (.pdf)
+PNG Picture (*.png)	PNG-pilt (*.png)
+PNG images (all slides)	PNG-pildid (kõik slaidid)
+PNG images (current slide)	PNG-pildid (praegune slaid)
+PRs	PRs
+Page Curl	Lehe keeramine
+Page Number	Lehekülje number
+Page Setup…	Lehekülje häälestus…
+PageDown	PageDown
+PageUp	PageUp
+Pan	Nihutamine
+Pane	Paan
+Paragraph	Lõik
+Paragraph…	Lõik…
+Parallelogram	Rööpkülik
+Pareto	Pareto
+Partial Circle	Ringiosa
+Particles	Osakesed
+Particles In	Osakesed sisse
+Particles Out	Osakesed välja
+Paste	Kleebi
+Paste (⌘V)	Kleebi (⌘V)
+Paste Formatting	Kleebi vormindus
+Paste Special	Erikleepimine
+Paste Special…	Erikleepimine…
+Paste and Match Formatting	Kleebi sihtvormindusega
+Paste or type an outline. Unindented lines become slide titles; tab-indented lines become bullets.	Kleebi või sisesta liigendus. Taandeta read muutuvad slaidipealkirjadeks. Tabeldusmärgiga taandatud read muutuvad loendipunktideks.
+Pasted image.png	Kleebitud pilt.png
+Path	Tee
+Pattern fill	Mustertäide
+Pause	Peata
+Peanut	Maapähkel
+Peek In	Sissepiilumine
+Peek Out	Väljapiilumine
+Peel Off	Mahakoorumine
+Pen Color	Pliiatsi värv
+Pen Style	Pliiatsi laad
+Pen Weight	Pliiatsi jämedus
+Pencil	Pliiats
+Pentagon	Viisnurk
+Percent:	Protsent:
+Perspective	Perspektiiv
+Perspective heroic left facing	Esiletõstetud perspektiiv vasakule
+Photo Album	Fotoalbum
+Photo Album options	Fotoalbumi valikud
+Photo Album…	Fotoalbum…
+Pick a design for this slide. Ideas are generated on your device.	Vali sellele slaidile kujundus. Ideed luuakse sinu seadmes.
+Pick a graphic; type one item per line.	Vali graafika. Sisesta iga üksus eraldi reale.
+Pick a look for your slides. Ideas are generated on your device.	Vali slaididele kujundus. Ideed luuakse sinu seadmes.
+Picture	Pilt
+Picture Border	Pildi ääris
+Picture Format	Pildi vorming
+Picture Style Gallery	Pildilaadide galerii
+Picture Styles	Pildilaadid
+Picture from File…	Pilt failist…
+Picture layout	Piltide paigutus
+Picture or texture fill	Pilt- või tekstuurtäide
+Picture source	Pildi allikas
+Picture\nStyles	Pildilaadid
+Pictures	Pildid
+Pictures in album	Albumi pildid
+Pie	Sektor
+Pin	Kinnita
+Pixels of this colour become transparent:	Seda värvi pikslid muutuvad läbipaistvaks:
+Placeholder colour	Kohatäite värv
+Plan\nBuild\nLaunch	Kavanda\nLoo\nAvalda
+Plaque	Naast
+Play	Esita
+Play Across Slides	Esita üle slaidide
+Play Full Screen	Esita täisekraanil
+Play Narrations	Esita jutustus
+Play from Current Slide	Esita praegusest slaidist
+Play from Start	Esita algusest
+Play from Start (F5)	Esita algusest (F5)
+Play from\nCurrent Slide	Esita praegusest slaidist
+Play from\nStart	Esita algusest
+Play this slide's animations on the canvas	Esita selle slaidi animatsioonid lõuendil
+Play/Pause	Esita/peata
+Play/Pause GIF	Esita/peata GIF
+Playback	Taasesitus
+Plus	Pluss
+Plus In	Pluss sisse
+Plus Out	Pluss välja
+Plus Sign	Plussmärk
+Point Type	Punkti tüüp
+Points	Punktid
+Portrait	Püstpaigutus
+Portrait (9:16)	Püstpaigutus (9:16)
+Portrait Orientation	Püstpaigutus
+Português	Português
+Position	Asukoht
+Position Objects	Määra objektide asukoht
+Position and Size	Asukoht ja suurus
+Post	Postita
+Poster Frame	Tiitrikaader
+PowerPoint Presentation (*.pptx)	PowerPointi esitlus (*.pptx)
+PowerPoint Presentation (.pptx)	PowerPointi esitlus (.pptx)
+Preferences	Eelistused
+Preferences…	Eelistused…
+Presentation	Esitlus
+Presentations	Esitlused
+Presentations and slide shows, rebuilt from scratch in pure Rust.	Esitlused ja slaidiseansid. Algusest peale Rustis loodud.
+Presentations you open show up here. Use Open to browse for one.	Avatud esitlused kuvatakse siin. Esitluse otsimiseks vali Ava.
+Presented by a speaker (full screen)	Esineja juhitud (täisekraanil)
+Presenter View	Esinejavaade
+Presenter View — DeckCraft	Esinejavaade — DeckCraft
+Presenter\nView	Esinejavaade
+Preserve	Säilita
+Preserve Master	Säilita juhtslaid
+Preset gradients	Valmis värviüleminekud
+Prestige	Esinduslik
+Preview	Eelvaade
+Preview Animations	Animatsioonide eelvaade
+Previewing animations	Animatsioonide eelvaade käib
+Previous	Eelmine
+Previous Comment	Eelmine kommentaar
+Previous Page	Eelmine lehekülg
+Previous Slide	Eelmine slaid
+Print	Prindi
+Print All Slides	Prindi kõik slaidid
+Print Current Slide	Prindi praegune slaid
+Print Hidden Slides	Prindi peidetud slaidid
+Print layout:	Prindipaigutus:
+Print them for your audience	Prindi publikule
+Print…	Prindi…
+Process	Protsess
+Product Information	Tooteteave
+Promote	Tõsta taset
+Properties	Omadused
+Pulse	Pulss
+Punctuation	Kirjavahemärgid
+Purple	Lilla
+Push	Lüke
+Put a picture in the selected node's picture placeholder	Lisa pilt valitud sõlme pildikohatäitesse
+Pyramid	Püramiid
+Quarter Wedge	Veerandkiil
+Quick Access Toolbar	Kiirpääsuriba
+Quick Styles	Kiirlaadid
+Quick\nStyles	Kiirlaadid
+Quit DeckCraft	Välju DeckCraftist
+RRGGBB	RRGGBB
+Radar	Radar
+Radial	Radiaalne
+Random	Juhuslik
+Random Bars	Juhuslikud ribad
+Reading View	Lugemisvaade
+Reading\nView	Lugemisvaade
+Real name	Tegelik nimi
+Recent	Hiljutised
+Recolor	Muuda värvitooni
+Recolor Gallery	Värvitoonide galerii
+Record	Salvesta
+Recording narration needs audio capture (coming soon)	Jutustuse salvestamine vajab helisisendit (lisandub hiljem)
+Recover Unsaved Presentations	Taasta salvestamata esitlused
+Recovered Presentations	Taastatud esitlused
+Recovered {} from the last session	Eelmisest seansist taastati {}
+Rectangle	Ristkülik
+Rectangle: Diagonal Corners Rounded	Ristkülik: vastasnurgad ümardatud
+Rectangle: Diagonal Corners Snipped	Ristkülik: vastasnurgad lõigatud
+Rectangle: Rounded Corners	Ristkülik: ümardatud nurgad
+Rectangle: Single Corner Rounded	Ristkülik: üks ümardatud nurk
+Rectangle: Single Corner Snipped	Ristkülik: üks lõigatud nurk
+Rectangle: Top Corners One Rounded and One Snipped	Ristkülik: üks ülanurk ümardatud, teine lõigatud
+Rectangle: Top Corners Rounded	Ristkülik: ümardatud ülanurgad
+Rectangle: Top Corners Snipped	Ristkülik: lõigatud ülanurgad
+Rectangles	Ristkülikud
+Rectangular	Ristkülikukujuline
+Red	Punane
+Red Pen	Punane pliiats
+Redo	Tee uuesti
+Redo (⌘Y)	Tee uuesti (⌘Y)
+Reflected Rounded Rectangle	Peegeldusega ümar ristkülik
+Reflection	Peegeldus
+Regroup	Rühmita uuesti
+Regular Pentagon	Korrapärane viisnurk
+Rehearse Timings	Harjuta ajastusi
+Rehearse\nTimings	Harjuta ajastusi
+Relationship	Seos
+Remove	Eemalda
+Remove All Animations	Eemalda kõik animatsioonid
+Remove All Sections	Eemalda kõik jaotised
+Remove Animation	Eemalda animatsioon
+Remove Background	Eemalda taust
+Remove Background (coming soon)	Tausta eemaldamine (lisandub hiljem)
+Remove Less (tighter)	Eemalda vähem (täpsem)
+Remove More (looser)	Eemalda rohkem (laiem)
+Remove Section	Eemalda jaotis
+Remove Section & Slides	Eemalda jaotis ja slaidid
+Remove Shape	Eemalda kujund
+Remove bullets and numbering	Eemalda täpid ja nummerdus
+Remove from Quick Access Toolbar	Eemalda kiirpääsuribalt
+Remove from Recent	Eemalda hiljutiste loendist
+Remove stop	Eemalda punkt
+Remove the picture style	Eemalda pildilaad
+Remove\nBackground	Eemalda taust
+Rename	Nimeta ümber
+Rename Layout	Nimeta paigutus ümber
+Rename Section	Nimeta jaotis ümber
+Rename Section…	Nimeta jaotis ümber…
+Rename Slide	Nimeta slaid ümber
+Rename…	Nimeta ümber…
+Render Slide	Renderda slaid
+Reopen	Ava uuesti
+Reorder Animation	Muuda animatsioonide järjekorda
+Reorder Objects	Muuda objektide järjekorda
+Repeated word	Korduv sõna
+Replace	Asenda
+Replace All	Asenda kõik
+Replace Font	Asenda font
+Replace Fonts	Asenda fondid
+Replace Fonts…	Asenda fondid…
+Replace fractions (1/2) with fraction characters (½)	Asenda murrud (1/2) murrumärkidega (½)
+Replace straight quotes with smart quotes	Asenda sirged jutumärgid tüpograafilistega
+Replace text as you type	Asenda tekst sisestamisel
+Replace with:	Asenda tekstiga:
+Replace:	Asenda:
+Replace…	Asenda…
+Reply	Vasta
+Reply…	Vasta…
+Rescan Installed Fonts	Otsi paigaldatud fonte uuesti
+Reset	Lähtesta
+Reset 3-D	Lähtesta 3D
+Reset Background	Lähtesta taust
+Reset Crop	Lähtesta kärbe
+Reset Effects	Lähtesta efektid
+Reset Picture	Lähtesta pilt
+Reset Slide	Lähtesta slaid
+Reset Slide Background	Lähtesta slaidi taust
+Reset Style	Lähtesta laad
+Reset to Defaults	Taasta vaikesätted
+Resize shape to fit text	Sobita kujundi suurus tekstiga
+Resolve	Märgi lahendatuks
+Resolve Thread	Lõpeta arutelu
+Return	Tagasi
+Reuse Slides (Keep Source Formatting)…	Taaskasuta slaide (säilita lähtevormindus)…
+Reuse Slides needs the desktop app	Slaidide taaskasutus vajab töölauarakendust
+Reuse Slides…	Taaskasuta slaide…
+Reveal	Ilmutamine
+Reverse the order	Pööra järjestus ümber
+Revert	Taasta varasem
+Review	Läbivaatus
+Revisions	Muudatused
+Rewind after Playing	Keri pärast esitamist algusse
+Ribbon Tab	Menüülindi vahekaart
+Ribbon: Curved and Tilted Down	Lint: kaardus ja alla kaldu
+Ribbon: Curved and Tilted Up	Lint: kaardus ja üles kaldu
+Ribbon: Left-Right Fold	Lint: vasak-parem volt
+Ribbon: Tilted Down	Lint: kaldu alla
+Ribbon: Tilted Up	Lint: kaldu üles
+Right	Parem
+Right Border	Parem ääris
+Right Brace	Parem looksulg
+Right Bracket	Parem nurksulg
+Right Tab	Paremjoonduse tabeldus
+Right Triangle	Täisnurkne kolmnurk
+Right-click any ribbon button to add it.	Lisamiseks paremklõpsa menüülindi nupul.
+Right-to-Left Text Direction	Teksti suund paremalt vasakule
+Ring	Rõngas
+Ripple	Virvendus
+Rise Up	Tõusmine
+Rotate	Pööra
+Rotate Left	Pööra vasakule
+Rotate Left 90°	Pööra vasakule 90°
+Rotate Right	Pööra paremale
+Rotate Right 90°	Pööra paremale 90°
+Rotate all text 270°	Pööra kogu tekst 270°
+Rotate all text 90°	Pööra kogu tekst 90°
+Rotate with shape	Pööra koos kujundiga
+Rotation	Pööre
+Rotation (°):	Pööre (°):
+Round Dot	Ümar punkt
+Rounded Diagonal Corner	Ümardatud vastasnurk
+Ruler	Joonlaud
+S	S
+S Curve 1	S-kõver 1
+S Curve 2	S-kõver 2
+Sample deck: Northern Lights	Näidisesitlus: Virmalised
+Saturation	Küllastus
+Saturation {}%	Küllastus {}%
+Save	Salvesta
+Save (⌘S)	Salvesta (⌘S)
+Save As	Salvesta nimega
+Save As…	Salvesta nimega…
+Save AutoRecover Information	Salvesta automaattaaste teave
+Save as Template…	Salvesta mallina…
+Save to Data	Salvesta andmeteks
+Saved	Salvestatud
+Saved {path}	Salvestatud: {path}
+Saving a copy needs a file picker, which this window doesn't have.	Koopia salvestamine vajab failivalijat, mida sellel aknal pole.
+Scale X	X-mõõtkava
+Scale Y	Y-mõõtkava
+Scale height	Kõrguse mõõtkava
+Scale height (%):	Kõrguse mõõtkava (%):
+Scale width	Laiuse mõõtkava
+Scale width (%):	Laiuse mõõtkava (%):
+Scatter	Punkt
+ScreenTip:	Kohtspikker:
+Screenshot	Kuvatõmmis
+Screenshot (not available yet)	Kuvatõmmis (pole veel saadaval)
+Scroll: Horizontal	Rull: rõhtne
+Scroll: Vertical	Rull: püstine
+Search commands (⇧⌘P)	Otsi käske (⇧⌘P)
+Search commands…	Otsi käske…
+Search for a file	Otsi faili
+Search for themes and templates	Otsi kujundusi ja malle
+Search icons	Otsi ikoone
+Section	Jaotis
+Seek	Mine ajakohta
+Select	Vali
+Select All	Vali kõik
+Select All Text	Vali kogu tekst
+Select Cells	Vali lahtrid
+Select Objects	Vali objektid
+Select Paragraph	Vali lõik
+Select Slides	Vali slaidid
+Select Text	Vali tekst
+Select Word	Vali sõna
+Select a SmartArt graphic to edit its text.	Teksti muutmiseks vali SmartArt-graafika.
+Select a chart first.	Vali esmalt diagramm.
+Select a shape to format it.	Vormindamiseks vali kujund.
+Select an object on the slide and add an animation from the Animations tab.	Vali slaidil objekt. Lisa animatsioon vahekaardilt Animatsioonid.
+Selection	Valik
+Selection Pane	Valikupaan
+Selection Pane…	Valikupaan…
+Selection\nPane	Valikupaan
+Send Backward	Vii tahapoole
+Send to Back	Vii tagaplaanile
+Send\nBackward	Vii tahapoole
+Sentence case.	Lause alguses suurtäht.
+Set	Määra
+Set Text	Määra tekst
+Set Transparent Color	Määra läbipaistev värv
+Set Up Show…	Seadista seanss…
+Set Up Slide Show	Seadista slaidiseanss
+Set Up Slide Show…	Seadista slaidiseanss…
+Set Up\nSlide Show	Seadista slaidiseanss
+Set Zoom	Määra suum
+Set as Default Shape	Määra vaikekujundiks
+Several slides on each page of a PDF	Mitu slaidi igal PDF-i lehel
+Shading	Varjustus
+Shadow	Vari
+Shape	Kujund
+Shape Effects	Kujundi efektid
+Shape Fill	Kujundi täide
+Shape Format	Kujundi vorming
+Shape Gallery	Kujundigalerii
+Shape Outline	Kujundi kontuur
+Shape Styles	Kujundilaadid
+Shape {}	Kujund {}
+Shape\nStyles	Kujundilaadid
+Shapes	Kujundid
+Shift+	Shift+
+Shift+F9	Shift+F9
+Show	Näita
+Show All	Näita kõiki
+Show Comments	Näita kommentaare
+Show Media Controls	Näita meedia juhtelemente
+Show Slide	Näita slaidi
+Show smart guides	Näita nutikaid abijooni
+Show type	Seansi tüüp
+Show without animation	Esita animatsioonita
+Show without narration	Esita jutustuseta
+Show/Hide	Näita/peida
+Show\nComments	Näita kommentaare
+Shred	Ribastamine
+Shrink & Turn	Kahanemine ja pööramine
+Shrink text on overflow	Vähenda ülevoolavat teksti
+Simple Frame, White	Lihtne valge raam
+Sine Wave	Siinuslaine
+Single L	Üks vasakule
+Single Left	Üks vasakule
+Single R	Üks paremale
+Single Right	Üks paremale
+Sink Down	Vajumine
+Size	Suurus
+Size & Properties	Suurus ja omadused
+Size and Position	Suurus ja asukoht
+Size and Position…	Suurus ja asukoht…
+Slide Image	Slaidi pilt
+Slide Master	Juhtslaid
+Slide Number	Slaidi number
+Slide Show	Slaidiseanss
+Slide Size	Slaidi suurus
+Slide Sorter	Slaidisortija
+Slide number	Slaidi number
+Slide timings recorded.	Slaidide ajastused on salvestatud.
+Slide {:02}:{:04.1}   Total {:02}:{:02}	Slaid {:02}:{:04.1}   Kokku {:02}:{:02}
+Slide {} of {}	Slaid {} / {}
+Slide {}: {}{}	Slaid {}: {}{}
+Slide {}: “{w}”	Slaid {}: „{w}”
+Slide\nMaster	Juhtslaid
+Slide\nNumber	Slaidi number
+Slide\nSize	Slaidi suurus
+Slide\nSorter	Slaidisortija
+Slides	Slaidid
+Slides (e.g. 1,3,5):	Slaidid (nt 1,3,5):
+Slides from Outline	Slaidid liigendusest
+Slides from Outline…	Slaidid liigendusest…
+Slides sized for:	Slaidide suurus:
+Slides:	Slaidid:
+Small caps	Kapiteelkiri
+SmartArt	SmartArt
+SmartArt Design	SmartArti kujundus
+SmartArt Styles	SmartArti laadid
+Smile	Naeratus
+Smiley Face	Naerunägu
+Smooth Corners	Ümarda nurgad
+Smooth Point	Sujuv punkt
+Smoothly	Sujuvalt
+Smoothly From Left	Sujuvalt vasakult
+Smoothly From Right	Sujuvalt paremalt
+Smoothly Left	Sujuvalt vasakule
+Smoothly Right	Sujuvalt paremale
+Snap	Haara
+Snap objects to grid	Joonda objektid ruudustikule
+Snap objects to other objects	Joonda objektid teiste objektide järgi
+Soft Edge Rectangle	Pehmete servadega ristkülik
+Soft Edges	Pehmed servad
+Solid	Ühtlane
+Solid fill	Ühtlane täide
+Solid line	Pidevjoon
+Sort	Sordi
+Sound	Heli
+Sound:	Heli:
+Source on GitHub	Lähtekood GitHubis
+Space	Space
+Spacing	Vahed
+Spacing (pt):	Vahe (pt):
+Spacing after	Vahe pärast
+Spacing after (pt):	Vahe pärast (pt):
+Spacing after must be a number	Järgnev vahe peab olema arv
+Spacing before	Vahe enne
+Spacing before (pt):	Vahe enne (pt):
+Spacing before must be a number	Eelnev vahe peab olema arv
+Special	Eriline
+Special indent must be a number of inches	Eritaane peab olema arv tollides
+Special — hanging (in):	Eend (tolli):
+Specify the company	Määra ettevõte
+Specify the subject	Määra teema
+Speech	Kõne
+Speech Bubble: Oval	Jutumull: ovaal
+Speech Bubble: Rectangle	Jutumull: ristkülik
+Speech Bubble: Rectangle with Corners Rounded	Jutumull: ümarnurkne ristkülik
+Spelling	Õigekiri
+Spelling Dictionary	Õigekirjasõnastik
+Spelling is checked for languages marked (dictionary).	Õigekirja kontrollitakse keeltes, mille juures on märge (sõnastik).
+Spin	Pöörlemine
+Spinner	Pööris
+Spiral Left	Spiraal vasakule
+Spiral Right	Spiraal paremale
+Split	Lõhestumine
+Split Cells	Tükelda lahtrid
+Split\nCells	Tükelda lahtrid
+Spring	Vedru
+Square	Ruut
+Square (1:1)	Ruut (1:1)
+Square Dot	Ruutpunkt
+Stacked	Virnastatud
+Stacked Area	Virnastatud pindala
+Stacked Bar	Virnastatud riba
+Stacked Column	Virnastatud tulp
+Stacked Line	Virnastatud joon
+Stairs Down	Trepid alla
+Standard (4:3)	Tavaline (4:3)
+Standard Colors	Standardvärvid
+Star	Täht
+Star: 10 Points	Täht: 10 tippu
+Star: 12 Points	Täht: 12 tippu
+Star: 16 Points	Täht: 16 tippu
+Star: 24 Points	Täht: 24 tippu
+Star: 32 Points	Täht: 32 tippu
+Star: 4 Points	Täht: 4 tippu
+Star: 5 Points	Täht: 5 tippu
+Star: 6 Points	Täht: 6 tippu
+Star: 7 Points	Täht: 7 tippu
+Star: 8 Points	Täht: 8 tippu
+Stars and Banners	Tähed ja lindid
+Start After Previous	Alusta pärast eelmist
+Start Automatically	Alusta automaatselt
+Start On Click	Alusta klõpsul
+Start With Previous	Alusta koos eelmisega
+Start a conversation	Alusta arutelu
+Start from Beginning	Alusta algusest
+Start time (s):	Algusaeg (s):
+Start:	Algus:
+Starter Templates	Algmallid
+Stealth end	Terav ots
+Stock	Börs
+Stop	Lõpeta
+Stop Editing Text	Lõpeta teksti muutmine
+Straight Point	Sirgpunkt
+Strikethrough	Läbikriipsutus
+Strips	Ribad
+Strips In	Ribad sisse
+Strips Out	Ribad välja
+Style {i}	Laad {i}
+Subscript	Alaindeks
+Subtle	Tagasihoidlik
+Sun	Päike
+Sunburst	Päikesekiired
+Superscript	Ülaindeks
+Surface	Pind
+Swedish	Rootsi
+Switch	Vahetus
+Swivel	Keerdumine
+Swoosh	Hoogne kaar
+Symbol	Sümbol
+System language	Süsteemi keel
+Tab	Tab
+Tab stop position (in):	Tabelduskoha asukoht (tolli):
+Tab stops:	Tabelduskohad:
+Table	Tabel
+Table Design	Tabeli kujundus
+Table Eraser	Tabeli kustutuskumm
+Table Style Options	Tabelilaadi valikud
+Table Styles	Tabelilaadid
+Table…	Tabel…
+Tabs…	Tabelduskohad…
+Task Pane	Tööpaan
+Teardrop	Pisar
+Teeter	Kõikumine
+Templates	Mallid
+Text	Tekst
+Text Box	Tekstiväli
+Text Box Margins	Tekstivälja veerised
+Text Direction	Teksti suund
+Text Effects	Teksti efektid
+Text Fill	Teksti täide
+Text Highlight Color	Teksti esiletõstu värv
+Text Options	Teksti valikud
+Text Outline	Teksti kontuur
+Text Pane	Tekstipaan
+Text Shadow	Teksti vari
+Text Transform	Teksti teisendus
+Text Transparency	Teksti läbipaistvus
+Text/Background - Dark 1	Tekst/taust – tume 1
+Text/Background - Dark 2	Tekst/taust – tume 2
+Text/Background - Light 1	Tekst/taust – hele 1
+Text/Background - Light 2	Tekst/taust – hele 2
+Text\nBox	Tekstiväli
+The Eyedropper takes colours from a slide	Värvipipett võtab värve slaidilt
+The current slide as a compressed picture	Praegune slaid tihendatud pildina
+The current slide as a picture	Praegune slaid pildina
+The presentation keeps its own file	Esitlus säilitab oma faili
+The slide titles and bullet text as plain text	Slaidide pealkirjad ja loenditekst lihttekstina
+The spelling check is complete. No issues found.	Õigekirjakontroll on valmis. Vigu ei leitud.
+The version, the people and models who built it, and where to find us.	Versioon, autorid, kasutatud mudelid ja meie kontaktid.
+Theme Colors	Kujunduse värvid
+Theme Gallery	Kujundusgalerii
+Themes	Kujundused
+Themes (whole presentation)	Kujundused (kogu esitlus)
+There are no unsaved changes.	Salvestamata muudatusi pole.
+There are no unsaved presentations to recover	Taastatavaid salvestamata esitlusi pole
+Thesaurus	Sünonüümid
+Thesaurus (coming soon)	Sünonüümid (lisanduvad hiljem)
+Thick Thin	Paks-peenike
+Thin Thick	Peenike-paks
+This Document	See dokument
+This presentation has never been saved.	Seda esitlust pole veel salvestatud.
+This presentation has no custom shows (Slide Show ▸ Custom Slide Show).	Sellel esitlusel pole kohandatud seansse (Slaidiseanss ▸ Kohandatud slaidiseanss).
+This presentation has unsaved changes. Revert goes back to the saved file.	Esitlusel on salvestamata muudatusi. Taastamine avab viimati salvestatud faili.
+This slide has no animations	Sellel slaidil pole animatsioone
+Thought	Mõte
+Thought Bubble: Cloud	Mõttemull: pilv
+Three a page leaves lines for notes	Kolm slaidi lehel jätab ruumi märkmetele
+Through Black	Läbi musta
+Through Black From Left	Läbi musta vasakult
+Through Black From Right	Läbi musta paremalt
+Tight	Tihe
+Tile picture as texture	Korda pilti tekstuurina
+Timing	Ajastus
+Title	Pealkiri
+Top	Ülal
+Top Border	Ülemine ääris
+Top Left	Ülal vasakul
+Top Right	Ülal paremal
+Top bevel	Ülemine servalõige
+Top left	Ülal vasakul
+Top right	Ülal paremal
+Total Row	Kokkuvõtterida
+Transform	Teisenda
+Transition	Üleminek
+Transition Gallery	Üleminekugalerii
+Transitions	Üleminekud
+Translate	Tõlgi
+Translation needs a language model (not bundled)	Tõlkimine vajab keelemudelit (ei kuulu paketti)
+Transparency	Läbipaistvus
+Transparent background	Läbipaistev taust
+Trapezoid	Trapets
+Trapezoid: Uneven Sides	Trapets: erikülgne
+Treemap	Puukaart
+Triangle	Kolmnurk
+Trigger	Käivitaja
+Trim	Kärbi
+Trim Media	Kärbi meediat
+Turns	Pöörded
+Type	Tüüp
+Type Text	Sisesta tekst
+Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).	Sisesta võrrand lineaarsel kujul (nt a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).
+Type and organise the diagram's text	Sisesta ja korralda skeemi tekst
+Type your text here	Sisesta tekst siia
+Uncover	Paljastamine
+Underline	Allakriipsutus
+Undo	Võta tagasi
+Undo (⌘Z)	Võta tagasi (⌘Z)
+Ungroup	Tühista rühmitus
+Up	Üles
+Update automatically	Uuenda automaatselt
+Use Timings	Kasuta ajastusi
+Use timings, if present	Kasuta ajastusi, kui need on olemas
+User Information	Kasutajateave
+Username	Kasutajanimi
+Variant Gallery	Variantide galerii
+Variants	Variandid
+Version	Versioon
+Version {}	Versioon {}
+Vert In	Püstiselt sisse
+Vert Out	Püstiselt välja
+Vertical	Püstine
+Vertical (in):	Püstsuunas (tolli):
+Vertical Figure 8	Püstine kaheksa
+Vertical In	Püstiselt sisse
+Vertical Out	Püstiselt välja
+Vertical alignment	Püstjoondus
+Very Loose	Väga hõre
+Very Tight	Väga tihe
+Very loose	Väga hõre
+Very tight	Väga tihe
+Video	Video
+Video from File…	Video failist…
+View	Vaade
+Volume	Helitugevus
+Vortex	Keeris
+Warp	Moonuta
+Waterfall	Kaskaad
+Wave	Laine
+Web Page or File	Veebileht või fail
+Wedge	Kiil
+Weight	Jämedus
+Wheel	Ratas
+White on	Valge sees
+Widescreen (13.333x7.5 in)	Laiekraan (13,333 × 7,5 tolli)
+Widescreen (16:9)	Laiekraan (16:9)
+Width	Laius
+Width (in):	Laius (tolli):
+Width:	Laius:
+Width: 	Laius:
+Wind	Tuul
+Window	Aken
+Wipe	Pühkimine
+With	Millega
+With Previous	Koos eelmisega
+With:	Millega:
+WordArt	WordArt
+WordArt style {}	WordArti laad {}
+Words	Sõnad
+Wrap Text in Shape	Murra tekst kujundis
+Wrap text in shape	Murra tekst kujundis
+X Rotation	Pööre X-teljel
+Y Rotation	Pööre Y-teljel
+Yellow	Kollane
+Your changes will be lost if you don't save them.	Kui sa ei salvesta, lähevad muudatused kaotsi.
+Your name (comments):	Sinu nimi kommentaarides:
+Z Rotation	Pööre Z-teljel
+Zigzag	Siksak
+Zoom	Suum
+Zoom In	Suurenda
+Zoom Out	Vähenda
+Zoom and Rotate	Suumimine ja pööramine
+Zoom on	Suum sees
+Zoom to	Suumi väärtusele
+Zoom…	Suum…
+[No Sound]	[Helita]
+[Stop Previous Sound]	[Peata eelmine heli]
+a	a
+a) b) c)	a) b) c)
+a. b. c.	a. b. c.
+ab	ab
+abc	abc
+circle	Ring
+command_palette	command_palette
+diamond	Romb
+dropped file	lohistatud fail
+e.g. 1-3, 5	nt 1–3, 5
+g	g
+getartcraft.com/apps/deckcraft	getartcraft.com/apps/deckcraft
+i. ii. iii.	i. ii. iii.
+in	tolli
+interface language must be system, en or et	Kasutajaliidese keel peab olema system, en või et
+no presentation open	Ühtegi esitlust pole avatud
+no slides	Slaide pole
+no text insertion point	Teksti sisestuskoht puudub
+nothing selected	Midagi pole valitud
+nothing to redo	Pole midagi uuesti teha
+nothing to undo	Pole midagi tagasi võtta
+plus	Pluss
+pt	pt
+select text or a shape	Vali tekst või kujund
+select two or more objects	Vali vähemalt kaks objekti
+size (pt)	Suurus (pt)
+tOGGLE cASE	tOGGLE cASE
+unknown interface language	Tundmatu kasutajaliidese keel
+{ch}  Bullet	{ch}  Täpp
+{f} (Body)	{f} (Põhitekst)
+{f} (Headings)	{f} (Pealkirjad)
+{name}: DeckCraft can't open this kind of file	{name}: DeckCraft ei saa seda tüüpi faili avada
+{n} Column{}	{n} veerg{}
+{r} pt	{r} pt
+{r} pt glow	{r} pt kuma
+{w} pt	{w} pt
+{} ({} slides)	{} ({} slaidi)
+{} Slide Master	{} juhtslaid
+{} contributors · {} commits	{} kaasautorit · {} muudatust
+{} presentations	{} esitlust
+{}x{} Table	{} × {} tabel
+·	·
+Ω	Ω
+Українська	Українська
+“{}” is not available yet.	„{}” pole veel saadaval.
+•	•
+−Bin	−Vahemik
+▶ Play All	▶ Esita kõik
+◀ Previous	◀ Eelmine
+✏ on	✏ sees
+🗑	🗑
+No recent presentations match “{}”.	Otsingule „{}” vastavaid hiljutisi esitlusi ei leitud.
+No themes or templates match “{}”.	Otsingule „{}” vastavaid kujundusi ega malle ei leitud.
+Resume	Jätka
+center	keskel
+top left	ülal vasakul
+top right	ülal paremal
+bottom left	all vasakul
+bottom right	all paremal
+◉ on	◉ sees
+Black	Must
+White	Valge
+All	Kõik
+Letter (8.5 × 11 in)	Letter (8,5 × 11 tolli)
+A4 (210 × 297 mm)	A4 (210 × 297 mm)
+Legal (8.5 × 14 in)	Legal (8,5 × 14 tolli)
+A3 (297 × 420 mm)	A3 (297 × 420 mm)
+Go to slide {}	Mine slaidile {}
+First {} slides	Esimesed {} slaidi
+{}  Hidden	{}  Peidetud

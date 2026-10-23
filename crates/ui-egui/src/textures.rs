@@ -18,6 +18,7 @@ struct Key {
     master: usize,
     size: (u32, u32),
     edit: bool,
+    language: crate::i18n::Language,
     extra: u64,
     /// The pasteboard region the slide's drawing calls for (canvas only).
     want: Region,
@@ -287,6 +288,7 @@ impl Textures {
             master: master.as_ref().map(|m| Arc::as_ptr(m) as usize).unwrap_or(0),
             size,
             edit,
+            language: if edit { crate::i18n::current() } else { crate::i18n::Language::En },
             extra: extra ^ grayscale as u64 ^ anim_key(anim),
             want,
             editing_text,
@@ -303,6 +305,7 @@ impl Textures {
             let opts = RenderOpts {
                 scale,
                 edit,
+                placeholder_prompt: Some(crate::i18n::prompt_provider()),
                 gif_times,
                 threads: threads(),
                 offset: region.offset(),
@@ -364,6 +367,7 @@ impl Textures {
             master: master.as_ref().map(|m| Arc::as_ptr(m) as usize).unwrap_or(0),
             size: (width_px, h),
             edit: false,
+            language: crate::i18n::Language::En,
             extra: 0,
             want: Region::slide(width_px, h),
             editing_text: None,

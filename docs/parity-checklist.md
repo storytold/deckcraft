@@ -1,6 +1,6 @@
 # PowerPoint feature checklist
 
-> **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Generated:** 2026-10-20 (preferences language support added, #1066; score remains P) (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
@@ -52,7 +52,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Application shell | Status bar (slide counter, notes, comments, views, zoom) | P0 | D |
 | Application shell | Light and dark appearance | P1 | D |
 | Application shell | Multiple open presentations | P1 | P |
-| Application shell | Preferences (autosave, units, defaults) | P2 | P |
+| Application shell | Preferences (autosave, units, defaults; persisted interface language, #1066) | P2 | P |
 | Files | New blank presentation | P0 | D |
 | Files | Native file format (open/save; chart package parts retained, `crates/engine/tests/it/chart_native.rs`) | P0 | D |
 | Files | Open PowerPoint .pptx | P0 | D |

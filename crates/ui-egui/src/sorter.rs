@@ -144,31 +144,31 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
     let index = h.index;
     let name = h.name.to_string();
     resp.context_menu(|ui| {
-        if ui.button("Rename Section…").clicked() {
+        if ui.button(crate::i18n::tr("Rename Section…")).clicked() {
             let mut d = crate::dialogs::Dialog::new("renameSection");
             d.params = json!({"index": index, "name": name});
             app.dialog = Some(d);
             ui.close();
         }
-        if ui.button("Add Section").clicked() {
+        if ui.button(crate::i18n::tr("Add Section")).clicked() {
             if let Some(at) = app.session.active().map(|st| st.selection.slide) {
                 let _ = app.run("section.add", json!({"at": at}));
             }
             ui.close();
         }
-        if ui.button("Remove Section").clicked() {
+        if ui.button(crate::i18n::tr("Remove Section")).clicked() {
             let _ = app.run("section.remove", json!({"index": index}));
             ui.close();
         }
-        if ui.button("Remove Section & Slides").clicked() {
+        if ui.button(crate::i18n::tr("Remove Section & Slides")).clicked() {
             let _ = app.run("section.remove", json!({"index": index, "slides": true}));
             ui.close();
         }
-        if ui.button("Move Section Up").clicked() {
+        if ui.button(crate::i18n::tr("Move Section Up")).clicked() {
             let _ = app.run("section.move", json!({"index": index, "to": index.saturating_sub(1)}));
             ui.close();
         }
-        if ui.button("Move Section Down").clicked() {
+        if ui.button(crate::i18n::tr("Move Section Down")).clicked() {
             let _ = app.run("section.move", json!({"index": index, "to": index + 1}));
             ui.close();
         }
@@ -224,7 +224,7 @@ fn place_slides(app: &mut SlideApp, ui: &mut Ui, g: &Grid<'_>, budget: &mut u32,
                     Stroke::new(if selected { 3.0 } else { 1.0 }, if selected { t.accent } else { t.border }),
                     egui::StrokeKind::Outside,
                 );
-                p.text(pos2(img.min.x, img.max.y + 12.0), Align2::LEFT_CENTER, format!("{}", i + 1), theme::font(12.0), t.text_dim);
+                p.text(pos2(img.min.x, img.max.y + 12.0), Align2::LEFT_CENTER, (i + 1).to_string(), theme::font(12.0), t.text_dim);
                 if let Some(tr) = g.doc.slides.get(i).and_then(|s| s.transition.as_ref()).filter(|tr| tr.kind != "none") {
                     p.text(pos2(img.max.x, img.max.y + 12.0), Align2::RIGHT_CENTER, format!("★ {}", tr.kind), theme::font(10.5), t.text_faint);
                 }
@@ -276,7 +276,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.add_space(24.0);
-            if ui.add(egui::Button::new("Add Section").stroke(Stroke::new(1.0, t.border))).clicked() {
+            if ui.add(egui::Button::new(crate::i18n::tr("Add Section")).stroke(Stroke::new(1.0, t.border))).clicked() {
                 let _ = app.run("section.add", json!({"at": cur}));
             }
         });
@@ -417,7 +417,7 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let look = crate::notes::Look { size: 14.0, color: Some(Color32::from_gray(30)) };
     let width = notes_rect.width();
     let r = crate::notes::editor(&mut child, &mut draft, &look, |e| {
-        e.id(edit_id).hint_text("Click to add text").desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
+        e.id(edit_id).hint_text(crate::i18n::tr("Click to add text")).desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
     })
     .response
     .response;
@@ -490,7 +490,7 @@ fn outline_estimate(s: &deckcraft_model::Slide) -> f32 {
 fn outline_slide(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, i: usize, s: &deckcraft_model::Slide, cur: usize) {
     let title_shape = s.shapes.iter().find(|x| x.ph_type().is_some_and(|k| k.is_title())).map(|x| x.id.0);
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new(format!("{}", i + 1)).color(t.text_dim));
+        ui.label(egui::RichText::new((i + 1).to_string()).color(t.text_dim));
         let (r, _) = ui.allocate_exact_size(vec2(14.0, 10.0), Sense::hover());
         ui.painter().rect_stroke(r, CornerRadius::same(1), Stroke::new(1.0, if i == cur { t.accent } else { t.text_dim }), egui::StrokeKind::Inside);
         let id = egui::Id::new(("ol-title", s.id.0));

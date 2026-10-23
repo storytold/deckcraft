@@ -233,6 +233,7 @@ pub const LANGS: &[(&str, &str)] = &[
     ("Dansk", "da-DK"),
     ("Norsk bokmål", "nb-NO"),
     ("Suomi", "fi-FI"),
+    ("Eesti", "et-EE"),
     ("Čeština", "cs-CZ"),
     ("Українська", "uk-UA"),
     ("Русский", "ru-RU"),

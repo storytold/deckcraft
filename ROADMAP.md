@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-23 · **Change:** minor (translated slideshow overlays and retryable browser language persistence, #1066; previous: PR #1070 review fixes: missing translations and localization scope; previous: Estonian interface and language selection, #1066; previous: native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft aims at full PowerPoint parity, and to be better: faster, open (a documented zip+JSON
 format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and available everywhere
@@ -84,12 +84,14 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+English and Estonian interfaces are available. Preferences stores a System/English/Eesti selection;
+uncataloged runtime messages fall back to English. Ukrainian remains in review as PR #34. Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
 |---|---|---:|---|---|
 | English | en | 100% | full | 0 |
+| Estonian | et | catalog translated | review pending | review |
 | Simplified Chinese | zh-Hans | 0% | none | 6–10 |
 | Spanish | es | 0% | none | 3–5 |
 | Hindi | hi | 0% | none | 4–7 |
@@ -102,8 +104,9 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | Korean | ko | 0% | none | 4–7 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
-ships 26.
+The interface catalog and system-language selection are implemented (#1066). Estonian is the
+first additional interface language. Native-speaker review and remaining runtime messages still
+need review. PowerPoint for Mac ships 26.
 
 ## Upcoming
 
@@ -131,6 +134,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-23 | PR #1070 follow-up: translate slide-number, zoom and grid overlays; retry browser language persistence after failed writes (#1066) |
+| 2026-10-22 | PR #1070 review: translate search results, selected options, Close, gradient directions and presenter controls; clarify localization estimates and proofing fallbacks (#1066) |
+| 2026-10-20 | Estonian interface catalog and persisted language selection; translated menus, ribbon, dialogs and File pages; et-EE proofing/date selection. Interface changes keep document content and command ids intact (#1066) |
 | 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
 | 2026-10-18 | Slide thumbnails and the Slide Sorter render only the slides in view: on a deck of more than 600 slides they used to evict their own thumbnails, so the pane flashed white and never finished (#969) |
 | 2026-10-17 | Opening a file caps absurd effect sizes (glow, soft edges, shadows, reflections, on shapes, text and table text) at what Format Shape allows: a glow of 10^18 pt in a .pptx made rendering ask for 34 GB and abort |
@@ -241,6 +247,9 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-23 | minor | Translate slideshow overlays and keep failed browser language writes eligible for retry (#1066, PR #1070) |
+| 2026-10-22 | minor | PR #1070 review fixes: missing interface translations, consistent remaining localization scope and explicit proofing fallbacks (#1066) |
+| 2026-10-20 | minor | Estonian interface catalog, persisted System/English/Eesti selection, worker-safe placeholder prompts and et-EE proofing selection (#1066) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Progress log: chart package parts survive a native save. Scores and milestone names unchanged |
 | 2026-10-18 | trivial | Progress log: thumbnails of huge decks render only the slides in view (#969) |
