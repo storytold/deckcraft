@@ -15,6 +15,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -274,6 +275,13 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// UI display language (`"auto"`, `"en"`, `"vi"`).
+    #[serde(default = "default_language", alias = "interfaceLanguage")]
+    pub language: String,
+}
+
+fn default_language() -> String {
+    "auto".to_owned()
 }
 
 impl Default for UiState {
@@ -305,6 +313,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: default_language(),
         }
     }
 }
@@ -348,6 +357,7 @@ impl UiState {
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
+        self.language = i18n::Lang::normalize_pref(&self.language).to_owned();
         self
     }
 }
@@ -412,6 +422,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
     ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
+    ("ui.language", "Language", None, "{language: auto|en|vi}"),
 ];
 
 pub struct Perf {
@@ -654,7 +665,7 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
+        let r = if UI_COMMANDS.iter().any(|c| c.0 == id) || id == "app.language" {
             self.run_ui(id, &params)
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
@@ -747,7 +758,7 @@ impl SlideApp {
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
-                self.set_status(format!("DeckCraft can't export “{other}”"));
+                self.set_status(tl!("DeckCraft can't export “{}”", other));
                 return false;
             }
         };
@@ -760,7 +771,7 @@ impl SlideApp {
             }
             return match self.run("file.export", params) {
                 Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
+                    self.set_status(tl!("Exported {}", path));
                     true
                 }
                 Err(_) => false,
@@ -798,7 +809,7 @@ impl SlideApp {
                 false
             }
             (Ok(_), None) => {
-                self.set_status("Saving a copy needs a file picker, which this window doesn't have.");
+                self.set_status(tl!("Saving a copy needs a file picker, which this window doesn't have."));
                 false
             }
         }
@@ -824,7 +835,7 @@ impl SlideApp {
         match self.run("file.export", params) {
             Ok(_) => {
                 self.open_url(&format!("file:///{}", path.replace('\\', "/").trim_start_matches('/')));
-                self.set_status("Opened the presentation as a PDF to print");
+                self.set_status(tl!("Opened the presentation as a PDF to print"));
                 true
             }
             Err(_) => false,
@@ -1003,7 +1014,7 @@ impl SlideApp {
             }
             "app.about" => self.dialog = Some(dialogs::Dialog::new("about")),
             "app.palette" => self.palette = Some((String::new(), 0)),
-            "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
+            "app.preferences" => self.dialog = Some(dialogs::Dialog::preferences(self)),
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {
@@ -1027,7 +1038,7 @@ impl SlideApp {
                     self.pick_and_insert("theme", "design.browseTheme");
                 } else {
                     // The browser's asynchronous picker would open the file as a new document.
-                    self.set_status("Browse for Themes needs the desktop app for now".to_string());
+                    self.set_status(tl!("Browse for Themes needs the desktop app for now").to_string());
                 }
             }
             "app.qat" => return qat::command(self, p),
@@ -1045,7 +1056,7 @@ impl SlideApp {
                     self.pick_and_insert("open", "review.compare");
                 } else {
                     // The browser's asynchronous picker would open the file as a new document.
-                    self.set_status("Compare needs the desktop app for now".to_string());
+                    self.set_status(tl!("Compare needs the desktop app for now").to_string());
                 }
             }
             "app.dialog" => {
@@ -1055,6 +1066,24 @@ impl SlideApp {
             "app.links" => {
                 use deckcraft_engine::links::*;
                 return Ok(json!({"discord": DISCORD, "website": WEBSITE, "apps": APPS, "appPage": APP_PAGE, "github": GITHUB}));
+            }
+            "ui.language" | "app.language" => {
+                if let Some(lang) = p
+                    .get("language")
+                    .or_else(|| p.get("lang"))
+                    .or_else(|| p.get("value"))
+                    .and_then(Value::as_str)
+                {
+                    let norm = i18n::Lang::normalize_pref(lang);
+                    self.ui.language = norm.to_owned();
+                    i18n::set_current(i18n::Lang::from_pref(norm));
+                }
+                let active = i18n::Lang::from_pref(&self.ui.language);
+                return Ok(json!({
+                    "language": self.ui.language,
+                    "resolved": active.code(),
+                    "nativeName": active.native_name(),
+                }));
             }
             _ => return Err(format!("unknown UI command `{id}`")),
         }
@@ -1156,7 +1185,7 @@ impl SlideApp {
         };
         if timeline.is_empty() {
             self.anim_preview = None;
-            self.set_status("This slide has no animations");
+            self.set_status(tl!("This slide has no animations"));
             return Ok(json!({"playing": false}));
         }
         if matches!(self.ui.view, ViewMode::Sorter | ViewMode::NotesPage) {
@@ -1165,7 +1194,7 @@ impl SlideApp {
         self.close_backstage();
         let duration = timeline.total_duration();
         self.anim_preview = Some(AnimPreview { uid, slide, slide_ptr: ptr, started: None, elapsed: 0.0, timeline });
-        self.set_status("Previewing animations");
+        self.set_status(tl!("Previewing animations"));
         Ok(json!({"playing": true, "slide": slide, "duration": duration}))
     }
 
@@ -1229,12 +1258,12 @@ impl SlideApp {
     /// current one (desktop only: the browser picker opens what it picks as a document).
     fn pick_and_reuse(&mut self, keep: bool) {
         let Some(pick) = self.services.pick_open.as_mut() else {
-            self.set_status("Reuse Slides needs the desktop app".to_string());
+            self.set_status(tl!("Reuse Slides needs the desktop app").to_string());
             return;
         };
         let Some(path) = pick("open") else { return };
         match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep})) {
-            Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
+            Ok(r) => self.set_status(tl!("Inserted {} slides from {}", r["slides"], path)),
             Err(e) => self.set_status(e.to_string()),
         }
     }
@@ -1286,7 +1315,7 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status(tl!("Saved {}", path));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }
@@ -1320,7 +1349,7 @@ impl SlideApp {
     pub fn save(&mut self) {
         if self.session.active().and_then(|d| d.path.clone()).is_some() {
             match self.session.execute("file.save", &json!({})) {
-                Ok(_) => self.set_status("Saved"),
+                Ok(_) => self.set_status(tl!("Saved")),
                 Err(e) => self.set_status(e.to_string()),
             }
         } else {
@@ -1538,6 +1567,8 @@ impl SlideApp {
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        let lang = i18n::Lang::from_pref(&self.ui.language);
+        i18n::set_current(lang);
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -1586,7 +1617,7 @@ impl SlideApp {
             if self.session.documents().iter().any(|d| d.is_dirty())
                 && let Err(e) = self.session.execute("file.recovery.save", &json!({}))
             {
-                self.set_status(format!("Couldn't save AutoRecover information: {e}"));
+                self.set_status(tl!("Couldn't save AutoRecover information: {}", e));
             }
         }
         // On the web, dropped files can only be read asynchronously: the host reads them and
@@ -1796,6 +1827,8 @@ impl SlideApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let lang = i18n::Lang::from_pref(&self.ui.language);
+        i18n::set_current(lang);
         let ctx = ui.ctx().clone();
         if !self.fonts_ready {
             ctx.request_repaint();

@@ -282,15 +282,28 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             if let Some(ft) = s("formatTab") {
                 app.ui.format_tab = ft.to_string();
             }
+            if let Some(lang) = s("language").or(s("lang")) {
+                let norm = crate::i18n::Lang::normalize_pref(lang);
+                app.ui.language = norm.to_owned();
+                crate::i18n::set_current(crate::i18n::Lang::from_pref(norm));
+            }
             ok(serde_json::to_value(&app.ui).unwrap_or_default())
         }
         "ui.dialog.close" => {
-            app.dialog = None;
+            if let Some(d) = app.dialog.take()
+                && d.id == "preferences"
+            {
+                crate::dialogs::restore_preferences(app, &d);
+            }
             ok(Value::Null)
         }
         "ui.dialog.open" => {
             let Some(id) = s("id") else { return err("missing `id`") };
-            let mut d = crate::dialogs::Dialog::new(id);
+            let mut d = if id == "preferences" {
+                crate::dialogs::Dialog::preferences(app)
+            } else {
+                crate::dialogs::Dialog::new(id)
+            };
             if let Some(fields) = p.get("fields").and_then(Value::as_object) {
                 for (k, v) in fields {
                     let v = v.as_str().map_or_else(|| v.to_string(), str::to_string);

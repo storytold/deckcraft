@@ -493,7 +493,7 @@ pub fn control_bar(ui: &mut Ui, rect: Rect, status: Option<&VoiceStatus>, clip: 
         painter.text(
             pos2(rect.min.x, rect.max.y + 3.0),
             Align2::LEFT_TOP,
-            format!("No sound: {err}"),
+            crate::i18n::tf("No sound: {err}", &[("err", err.as_str())]),
             egui::FontId::proportional(10.0),
             Color32::from_rgb(0xC0, 0x40, 0x40),
         );
