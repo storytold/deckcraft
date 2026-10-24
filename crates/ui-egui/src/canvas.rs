@@ -1227,6 +1227,29 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                         ui.close();
                     }
                 }
+                // Each of these renumbers the points, so the picked segment is dropped.
+                if ui.button("Add Point").clicked() {
+                    let t = app.session.tool.edit_segment_t.unwrap_or(0.5);
+                    let _ = app.run("shape.addPoint", json!({"path": path, "segment": index, "t": t}));
+                    app.session.tool.edit_segment = None;
+                    ui.close();
+                }
+                let closed = deckcraft_engine::cmd::points::closed_at(&sh, path, index);
+                if ui.add_enabled(closed == Some(true), egui::Button::new("Delete Segment")).clicked() {
+                    let _ = app.run("shape.deleteSegment", json!({"path": path, "segment": index}));
+                    app.session.tool.edit_segment = None;
+                    ui.close();
+                }
+                // Open Path opens the outline at the segment's start point.
+                let (label, id, at) = match closed {
+                    Some(false) => ("Close Path", "shape.closePath", index),
+                    _ => ("Open Path", "shape.openPath", deckcraft_engine::cmd::points::segment_start_of(&sh, path, index).unwrap_or(index)),
+                };
+                if ui.button(label).clicked() {
+                    let _ = app.run(id, json!({"path": path, "index": at}));
+                    app.session.tool.edit_segment = None;
+                    ui.close();
+                }
                 ui.separator();
             } else if let Some((path, index)) = app.session.tool.edit_vertex {
                 let cur = deckcraft_engine::cmd::points::kind_of(&sh, path, index);
@@ -1563,7 +1586,7 @@ mod tests {
     use deckcraft_engine::Session;
     use egui::{Event, Modifiers, MouseWheelUnit, Pos2, TouchPhase, pos2, vec2};
     use egui_kittest::Harness;
-    use egui_kittest::kittest::Queryable;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
     use crate::{Services, SlideApp};
@@ -2039,6 +2062,46 @@ mod tests {
         h.get_by_label("Close Path").click();
         h.run_steps(3);
         assert_eq!(q(&mut h)["paths"][0].as_array().map(Vec::len), Some(4));
+    }
+
+    /// In Edit Points, right-clicking a segment offers Add Point at the pointer, Delete Segment on
+    /// a closed outline, and Open Path at the segment's start point.
+    #[test]
+    fn edit_points_segment_menu_adds_points_and_deletes_segments() {
+        let mut h = harness();
+        h.state_mut().run("slide.layout", json!({"layout": "blank"})).unwrap();
+        h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [200, 150, 300, 200]})).unwrap();
+        h.state_mut().run("shape.editPoints", json!({"on": true})).unwrap();
+        h.run_steps(3);
+        let q = |h: &mut Harness<'_, SlideApp>| h.state_mut().session.execute("shape.points", &json!({})).unwrap();
+        // A quarter of the way along the top edge: the new point goes there.
+        let p = screen(h.state(), 275.0, 150.0);
+        right_click(&mut h, p);
+        h.get_by_label("Add Point").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0], json!([[200.0, 150.0], [275.0, 150.0], [500.0, 150.0], [500.0, 350.0], [200.0, 350.0]]));
+        // The right edge: Open Path opens the outline at its top end.
+        let p = screen(h.state(), 500.0, 250.0);
+        right_click(&mut h, p);
+        h.get_by_label("Open Path").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0][0], json!([500.0, 150.0]));
+        assert_eq!(q(&mut h)["paths"][0].as_array().map(Vec::len), Some(6));
+        h.state_mut().run("edit.undo", json!({})).unwrap();
+        h.run_steps(3);
+        // Delete Segment removes the right edge: the outline now runs from its bottom end to its top end.
+        right_click(&mut h, p);
+        h.get_by_label("Delete Segment").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0], json!([[500.0, 350.0], [200.0, 350.0], [200.0, 150.0], [275.0, 150.0], [500.0, 150.0]]));
+        assert_eq!(q(&mut h)["segments"][0][0], json!(null));
+        // On the open outline Delete Segment is grayed out; Close Path joins the ends again.
+        let p = screen(h.state(), 350.0, 350.0);
+        right_click(&mut h, p);
+        assert!(h.get_by_label("Delete Segment").accesskit_node().is_disabled());
+        h.get_by_label("Close Path").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["segments"][0][0], json!("straight"));
     }
 
     #[test]

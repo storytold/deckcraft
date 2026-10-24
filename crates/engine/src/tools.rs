@@ -269,6 +269,8 @@ pub struct ToolState {
     /// The segment (path, index of the vertex ending it) last right-clicked in Edit Points, for
     /// the segment menu.
     pub edit_segment: Option<(usize, usize)>,
+    /// Where on that segment the right click was (0..1), where Add Point puts the new point.
+    pub edit_segment_t: Option<f64>,
     /// The point type last chosen for a vertex (path, index, type): handle drags follow it.
     pub vertex_kind: Option<(usize, usize, String)>,
     /// Drawing guides are shown (View › Guides): they can be dragged and shapes snap to them.
@@ -1255,7 +1257,7 @@ impl Session {
         let picked = self.tool.editing_points(st).and_then(|eid| st.shape(eid)).map(|sh| match &hit {
             Some(Hit::Vertex { path, index, .. }) => (Some((*path, *index)), None),
             Some(Hit::Handle { .. }) => (None, None),
-            _ => (None, cmd::points::segment_at(&st.doc, &st.selection, sh, p, tol * 1.6).map(|(path, seg, _)| (path, seg))),
+            _ => (None, cmd::points::segment_at(&st.doc, &st.selection, sh, p, tol * 1.6)),
         });
         if !id.is_some_and(|id| st.selection.shapes.contains(&id)) {
             self.select(|_, sel| {
@@ -1269,7 +1271,8 @@ impl Session {
             if !matches!(hit, Some(Hit::Handle { .. })) {
                 self.tool.edit_vertex = vertex;
             }
-            self.tool.edit_segment = segment;
+            self.tool.edit_segment = segment.map(|(path, seg, _)| (path, seg));
+            self.tool.edit_segment_t = segment.map(|(_, _, t)| t);
         }
         let st = self.doc()?;
         Ok(json!({

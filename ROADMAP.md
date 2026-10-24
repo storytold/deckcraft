@@ -179,6 +179,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-16 | A PowerPoint Show (`.ppsx`) opened from the command line or the file association starts its slide show, as in PowerPoint; File › Open still opens it for editing (#862) |
 | 2026-10-15 | Canvas: the Format and Animation Painter override the cursor to show the tool is armed (#830) |
 | 2026-10-15 | Edit Points: right-click a segment for Straight/Curved Segment, a point for Open/Close Path (`shape.segmentType`, `shape.openPath`, `shape.closePath`); Delete Segment and Add Point in the menu still to come |
+| 2026-10-24 | Edit Points: right-click a segment for Add Point (at the pointer), Delete Segment (a closed outline opens there; grayed out on an open one) and Open/Close Path, as in PowerPoint (`shape.deleteSegment`) |
 | 2026-10-15 | Design › Browse for Themes… with a `.pptx` or `.potx` brings its slide master and layouts, not just the theme: the master the current slide uses is replaced (a preserved one stays beside it), the template stretches to the deck's slide size, and each slide moves to the layout with the same name or kind and keeps its content. One undo step (#807) |
 | 2026-10-15 | Clicking the frame of a text box or placeholder selects the box whole, so it can be moved, duplicated or deleted; only a click inside puts the caret in the text (#787) |
 | 2026-10-15 | Review › Compare: Reject and Reject All drop revisions without applying them (`review.reject`); Accept All skips what was rejected |

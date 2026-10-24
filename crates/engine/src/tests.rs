@@ -2275,6 +2275,115 @@ fn edit_points_open_and_close_path() {
 }
 
 #[test]
+fn edit_points_delete_segment_opens_the_outline() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let pts =
+        |s: &mut Session| -> Vec<[f64; 2]> { serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][0].clone()).unwrap() };
+    let d = |s: &Session| match &s.doc().unwrap().selected_shapes()[0].geom {
+        deckcraft_model::Geom::Custom { paths } => paths[0].d.clone(),
+        g => panic!("{g:?}"),
+    };
+    // A point type remembered for handle drags belongs to the old numbering: deleting forgets it.
+    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    // The right edge ends at point 2: the outline now starts at its end and ends at its start.
+    s.execute("shape.deleteSegment", &json!({"segment": 2})).unwrap();
+    assert!(!d(&s).contains('Z'), "{}", d(&s));
+    assert_eq!(s.tool.vertex_kind, None);
+    assert_eq!(pts(&mut s), vec![[300.0, 200.0], [100.0, 200.0], [100.0, 100.0], [300.0, 100.0]]);
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["segments"][0], json!([null, "straight", "straight", "straight"]));
+    // A segment of an open outline cannot be deleted, as in PowerPoint, where the item is grayed out.
+    assert!(s.execute("shape.deleteSegment", &json!({"segment": 1})).is_err());
+    // One undo step brings the closed outline back.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(d(&s).ends_with('Z'), "{}", d(&s));
+    assert_eq!(pts(&mut s), vec![[100.0, 100.0], [300.0, 100.0], [300.0, 200.0], [100.0, 200.0]]);
+    // The closing edge ends at point 0.
+    s.execute("shape.deleteSegment", &json!({"segment": 0})).unwrap();
+    assert!(!d(&s).contains('Z'), "{}", d(&s));
+    assert_eq!(pts(&mut s), vec![[100.0, 100.0], [300.0, 100.0], [300.0, 200.0], [100.0, 200.0]]);
+    assert!(s.execute("shape.deleteSegment", &json!({"segment": 0})).is_err(), "the first point of an open outline ends no segment");
+    assert!(s.execute("shape.deleteSegment", &json!({"segment": 9})).is_err());
+}
+
+/// Adding or deleting a point renumbers the points: a point type remembered for handle drags is
+/// forgotten, as it is when the outline opens or closes.
+#[test]
+fn edit_points_add_and_delete_point_forget_the_point_type() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
+    assert!(s.tool.vertex_kind.is_some());
+    s.execute("shape.addPoint", &json!({"segment": 1})).unwrap();
+    assert_eq!(s.tool.vertex_kind, None);
+    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
+    s.execute("shape.deletePoint", &json!({"index": 1})).unwrap();
+    assert_eq!(s.tool.vertex_kind, None);
+}
+
+/// A right click on a segment records where on it the click was, for Add Point.
+#[test]
+fn edit_points_right_click_records_the_place_on_the_segment() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    // A quarter of the way along the top edge, which ends at point 1.
+    right_click(&mut s, 150.0, 100.0);
+    assert_eq!(s.tool.edit_segment, Some((0, 1)));
+    let t = s.tool.edit_segment_t.expect("the place on the segment");
+    assert!((t - 0.25).abs() < 1e-9, "{t}");
+    s.execute("shape.addPoint", &json!({"segment": 1, "t": t})).unwrap();
+    let v = s.execute("shape.points", &json!({})).unwrap()["paths"][0].clone();
+    assert_eq!(v, json!([[100.0, 100.0], [150.0, 100.0], [300.0, 100.0], [300.0, 200.0], [100.0, 200.0]]));
+    // Between the places the hit test samples (40% of the way along the edge that now ends at
+    // point 2) and on a curve, the new point goes where the click was.
+    let added = |s: &mut Session, x: f64, y: f64| {
+        right_click(s, x, y);
+        let (path, seg) = s.tool.edit_segment.expect("a segment is picked");
+        let t = s.tool.edit_segment_t.expect("the place on the segment");
+        let before: Vec<[f64; 2]> = serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][path].clone()).unwrap();
+        s.execute("shape.addPoint", &json!({"path": path, "segment": seg, "t": t})).unwrap();
+        let after: Vec<[f64; 2]> = serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][path].clone()).unwrap();
+        let new = after.iter().find(|q| !before.contains(q)).copied().expect("a new point");
+        ((new[0] - x).hypot(new[1] - y), new)
+    };
+    let (miss, new) = added(&mut s, 210.0, 100.0);
+    assert!(miss < 1e-3, "{new:?}");
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 300, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    // 30° up from the right-most point; the outline is a Bézier copy of the ellipse.
+    let (x, y) = (200.0 + 100.0 * 30f64.to_radians().cos(), 350.0 - 50.0 * 30f64.to_radians().sin());
+    let (miss, new) = added(&mut s, x, y);
+    assert!(miss < 0.1, "{new:?}");
+}
+
+/// No segment ends at the first point of an open outline, also when a closed outline follows it
+/// in the same path: Add Point there returns an error and leaves the path unchanged.
+#[test]
+fn edit_points_add_point_at_the_start_of_an_open_outline() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    // The donut's two rings are one path.
+    s.execute("shape.insert", &json!({"preset": "donut", "rect": [100, 100, 200, 200]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let d = |s: &Session| match &s.doc().unwrap().selected_shapes()[0].geom {
+        deckcraft_model::Geom::Custom { paths } => paths[0].d.clone(),
+        g => panic!("{g:?}"),
+    };
+    s.execute("shape.openPath", &json!({"index": 0})).unwrap();
+    let before = d(&s);
+    assert_eq!(before.matches('Z').count(), 1, "{before}");
+    assert!(s.execute("shape.addPoint", &json!({"segment": 0})).is_err());
+    assert_eq!(d(&s), before);
+}
+
+#[test]
 fn edit_points_right_click_picks_the_point_or_the_segment() {
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();

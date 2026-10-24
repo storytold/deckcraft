@@ -235,8 +235,8 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 ### Edit points, text warp, 3-D
 - **Evidence:** checklist rows "Edit points" (P1 partial: Edit Points converts a shape to a
   freeform, vertices drag, Ctrl/Cmd-click adds or deletes, smooth/straight/corner points and Bézier
-  handles, Straight/Curved Segment on a segment and Open/Close Path on a point; the menu has no
-  Delete Segment or Add Point), "Text warp transforms" (partial: all 40
+  handles, Add Point, Delete Segment (closed outlines), Straight/Curved Segment and Open/Close Path
+  on a segment, and Open/Close Path on a point), "Text warp transforms" (partial: all 40
   `prstTxWarp` presets render, their adjusts round-trip, Shape Format ▸ Text Effects ▸ Transform
   applies one with `format.textWarp`, and a selected warp shows a yellow handle per adjust that
   dragging sets; arc/circle placement can differ from PowerPoint by 1–3 % of the path length),
@@ -246,8 +246,7 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   shade bevels and sides approximately (fitted to PowerPoint for three-point/matte only); contours
   draw as a band round the face outline (not round the extruded silhouette); Format Shape ▸
   Effects has 3-D Format and 3-D Rotation).
-- **Estimate:** 1 h (edit points: Delete Segment and Add Point in the menu), 1–2 h (fitting the
-  other rigs and materials to PowerPoint renders).
+- **Estimate:** 1–2 h (fitting the other rigs and materials to PowerPoint renders).
 
 ### Proofing: spelling, thesaurus, AutoCorrect
 - **Evidence:** `review.spelling` checks with Hunspell-format dictionaries the system already has
