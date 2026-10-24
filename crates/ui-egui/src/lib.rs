@@ -220,6 +220,8 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// How many displays are connected, when the host can tell: Presenter View needs a second.
+    pub displays: Option<Box<dyn FnMut() -> Option<usize>>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1100,8 +1102,9 @@ impl SlideApp {
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
+        let presenter = self.ui.presenter_view && !reading && self.second_display();
         if let Some(d) = self.session.active() {
-            self.show = Some(show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading));
+            self.show = Some(show::Show::new(&d.doc, from, reading, presenter));
         }
     }
 
@@ -1198,6 +1201,14 @@ impl SlideApp {
         self.anim_preview = Some(AnimPreview { uid, slide, slide_ptr: ptr, started: None, from: from_secs, elapsed: from_secs, timeline });
         self.set_status("Previewing animations");
         Ok(json!({"playing": true, "slide": slide, "duration": duration, "from": from_secs}))
+    }
+
+    /// Whether a second display can take Presenter View. Like PowerPoint, one display shows only
+    /// the slides: the presenter window would open on the same screen, and whichever of the two
+    /// windows ends up behind the other stalls the show (the compositor stops pacing a hidden
+    /// window). Hosts that can't count displays keep Presenter View.
+    fn second_display(&mut self) -> bool {
+        self.services.displays.as_mut().and_then(|f| f()).is_none_or(|n| n >= 2)
     }
 
     fn pick_and_open(&mut self) {
@@ -2237,6 +2248,26 @@ mod tests {
         // An older settings file without the toolbar gets the defaults.
         let old: UiState = serde_json::from_value(json!({"tab": "Home"})).unwrap();
         assert_eq!(old.qat.len(), 6);
+    }
+
+    #[test]
+    fn presenter_view_needs_a_second_display() {
+        // One display: the presenter window covered the show (or the show covered it) and the
+        // hidden window stalled every frame.
+        let presenter = |displays: Option<usize>| {
+            let services = Services { displays: Some(Box::new(move || displays)), ..Default::default() };
+            let mut app = SlideApp::new(Session::with_new(), services);
+            app.ui.presenter_view = true;
+            app.start_show(0, false);
+            app.show.as_ref().map(|s| s.presenter)
+        };
+        assert_eq!(presenter(Some(1)), Some(false));
+        assert_eq!(presenter(Some(2)), Some(true));
+        assert_eq!(presenter(None), Some(true), "a host that can't count displays keeps Presenter View");
+        let mut app = SlideApp::new(Session::with_new(), Services { displays: Some(Box::new(|| Some(2))), ..Default::default() });
+        app.ui.presenter_view = false;
+        app.start_show(0, false);
+        assert_eq!(app.show.as_ref().map(|s| s.presenter), Some(false), "the setting still turns it off");
     }
 
     #[test]

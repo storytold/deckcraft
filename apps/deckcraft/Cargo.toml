@@ -39,3 +39,6 @@ fmv-macos-events = "=0.1.0"
 
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }
+# Counting displays for Presenter View (src/displays.rs); both already come with winit.
+wayland-client = "0.31"
+x11rb = { version = "0.13", features = ["randr"] }
