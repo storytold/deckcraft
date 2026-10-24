@@ -1334,7 +1334,9 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             let (y1, y2) = (h / 2.0 - h * k / 2.0, h / 2.0 + h * k / 2.0);
             let dx = (ss * a(1).max(0.0) / 1e5).min(w);
             if name == "notchedRightArrow" {
-                let n = dx * (k / 2.0) * 0.9;
+                // x1 = dy1 · dx2 / hd2 in presetShapeDefinitions, with dy1 = h·k/2: the notch's
+                // edges run parallel to the head's
+                let n = dx * k;
                 let pts = [(0.0, y1), (w - dx, y1), (w - dx, 0.0), (w, h / 2.0), (w - dx, h), (w - dx, y2), (0.0, y2), (n, h / 2.0)];
                 g.paths = vec![fill(Pb::new().poly(&pts).take())];
             } else {
@@ -2452,6 +2454,20 @@ mod tests {
         assert!(on_path(&g, Point::new(w / 4.0, h / 5.0), 1e-3) && on_path(&g, Point::new(w * 0.75, 0.0), 1e-3));
         let g = build("flowChartMultidocument", w, h, &[]).unwrap();
         assert!(on_path(&g, at(2972.0, 0.0), 1e-6) && on_path(&g, at(18595.0, 18022.0), 1e-6));
+    }
+
+    #[test]
+    fn notched_arrow_notch_parallels_the_head() {
+        // presetShapeDefinitions: the notch's point is at x1 = dy1 · dx2 / hd2, so its edges run
+        // parallel to the head's (25 on a 200 × 100 arrow at the default adjusts).
+        for (w, h, adj, x1) in [(200.0, 100.0, [50000.0, 50000.0], 25.0), (300.0, 120.0, [80000.0, 30000.0], 28.8)] {
+            let g = build("notchedRightArrow", w, h, &adj).unwrap();
+            let notch = g.paths[0].path.elements().iter().find_map(|e| match e {
+                kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) if (p.y - h / 2.0).abs() < 1e-9 && p.x < w / 2.0 => Some(*p),
+                _ => None,
+            });
+            assert!(notch.is_some_and(|p| (p.x - x1).abs() < 1e-6), "{w}x{h} {adj:?}: notch at {notch:?}, want x = {x1}");
+        }
     }
 
     #[test]
