@@ -76,7 +76,8 @@ fn fallback_alias_collision_does_not_change_configured_line_metrics() {
             let case = slot_index * 2 + order;
             let configured = format!("DeckCraft Ownership Canonical {case}");
             let fallback = format!("DeckCraft Ownership Fallback {case}");
-            let character = char::from_u32(0xf0840 + case as u32).unwrap();
+            let code = if slot == "sym" { 0xf084 } else { 0xf0840 };
+            let character = char::from_u32(code + case as u32).unwrap();
             let primary = test_font::font_with_chars(&configured, "Regular", 400, &[], (600, 400), false, &['A']);
             let other = test_font::font_with_chars(&fallback, "Regular", 400, &[&configured], (900, 100), false, &[character]);
             for font in if fallback_first { [other, primary] } else { [primary, other] } {
