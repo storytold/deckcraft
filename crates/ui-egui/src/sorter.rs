@@ -229,8 +229,10 @@ fn place_slides(app: &mut SlideApp, ui: &mut Ui, g: &Grid<'_>, budget: &mut u32,
                     p.text(pos2(img.max.x, img.max.y + 12.0), Align2::RIGHT_CENTER, format!("★ {}", tr.kind), theme::font(10.5), t.text_faint);
                 }
                 if resp.clicked() {
-                    let add = ui.input(|inp| inp.modifiers.command);
-                    if add {
+                    let (shift, add) = ui.input(|inp| (inp.modifiers.shift, inp.modifiers.command));
+                    if shift {
+                        let _ = app.run("slide.selectRange", json!({"to": i, "add": add}));
+                    } else if add {
                         if let Some(id) = id {
                             let _ = app.run("slide.selectSlides", json!({"ids": [id.0], "add": true}));
                         }

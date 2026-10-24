@@ -146,14 +146,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         if resp.clicked() {
             let (shift, cmd) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
             if let Some(id) = id {
-                if cmd {
+                if shift {
+                    // Shift: the slides between the current one and this one. Ctrl+Shift keeps what is selected.
+                    let _ = app.run("slide.selectRange", json!({"to": i, "add": cmd}));
+                } else if cmd {
                     let _ = app.run("slide.selectSlides", json!({"ids": [id.0], "add": true}));
-                } else if shift {
-                    let (a, b) = (cur.min(i), cur.max(i));
-                    let ids: Vec<u32> = doc.slides.iter().skip(a).take(b - a + 1).map(|s| s.id.0).collect();
-                    let _ = app.run("slide.selectSlides", json!({"ids": ids}));
-                    let _ = app.run("slide.go", json!({"index": i}));
-                    let _ = app.run("slide.selectSlides", json!({"ids": ids}));
                 } else {
                     let _ = app.run("slide.go", json!({"index": i}));
                 }
