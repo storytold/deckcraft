@@ -558,10 +558,13 @@ pub fn sane_numbers(p: &mut Presentation) {
 /// level (Insert ▸ Slides from Outline, View ▸ Outline copy).
 pub fn outline_to_slides(p: &mut Presentation, text: &str) -> usize {
     let mut slides: OutlineSlides = Vec::new();
+    let mut after_blank = false;
     for raw in text.lines() {
         if raw.trim().is_empty() {
+            after_blank = true;
             continue;
         }
+        let blank_before = std::mem::take(&mut after_blank);
         let tabs = raw.chars().take_while(|c| *c == '\t').count();
         let spaces = raw.chars().take_while(|c| *c == ' ').count() / 2;
         let level = tabs.max(spaces);
@@ -573,6 +576,9 @@ pub fn outline_to_slides(p: &mut Presentation, text: &str) -> usize {
         .to_string();
         if level == 0 {
             slides.push((line, Vec::new()));
+        } else if blank_before && raw.starts_with('\t') {
+            // A blank line then a tab-indented line is how an empty title is exported.
+            slides.push((String::new(), vec![((level - 1).min(8) as u8, line)]));
         } else if let Some((_, body)) = slides.last_mut() {
             body.push(((level - 1).min(8) as u8, line));
         }
@@ -1029,6 +1035,18 @@ mod tests {
         assert_eq!(n, 2);
         let o = slides_to_outline(&p);
         assert!(o.contains("Intro\n\tPoint one\n\t\tSub point\nSecond"), "{o}");
+    }
+
+    #[test]
+    fn outline_roundtrip_keeps_slide_with_empty_title() {
+        let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut p, "A\n\tx\nB\n\ty"), 2);
+        let title = Arc::make_mut(&mut p.slides[1]).shapes.iter_mut().find(|s| s.ph_type().is_some_and(|k| k.is_title())).expect("title placeholder");
+        title.text = Some(TextBody::from_text(""));
+        let o = slides_to_outline(&p);
+        let mut q = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut q, &o), 2, "outline={o:?}");
+        assert_eq!(slides_to_outline(&q), o);
     }
 
     #[test]
