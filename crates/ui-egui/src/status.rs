@@ -24,6 +24,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         // Left to right: slide counter, language, status message. Each starts at its usual column, or
         // after the one before it when that runs long ("Slide 100 of 120", "… (not checked)").
         let sr = p.text(pos2(rect.min.x + 14.0, rect.center().y), Align2::LEFT_CENTER, &left, theme::font(12.0), t.text_dim);
+        shown_text(ui, sr, "status_slide", &left);
         // Where the controls on the right begin; nothing on the left paints or clicks past it.
         let right_x = rect.max.x - 560.0;
         // The selection's proofing language; a click opens Review › Language.
@@ -33,14 +34,19 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let lclip = Rect::from_min_max(pos2(lx - 3.0, rect.min.y), pos2(right_x.max(lx - 3.0), rect.max.y));
         let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
         let hit = lr.expand(3.0).intersect(lclip);
-        if hit.is_positive() && ui.interact(hit, ui.id().with("status_lang"), Sense::click()).on_hover_text("Language").clicked() {
-            app.dialog = Some(crate::dialogs::Dialog::new("language"));
+        if hit.is_positive() {
+            let resp = ui.interact(hit, ui.id().with("status_lang"), Sense::click()).on_hover_text("Language");
+            resp.widget_info(|| named_with_value("Language", &name));
+            if resp.clicked() {
+                app.dialog = Some(crate::dialogs::Dialog::new("language"));
+            }
         }
         // Transient status message, clipped before the controls on the right.
         if let Some(msg) = app.fresh_status() {
             let mx = (rect.min.x + 290.0).max(lr.max.x + 16.0);
             let clip = Rect::from_min_max(pos2(mx, rect.min.y), pos2(right_x.max(mx), rect.max.y));
-            p.with_clip_rect(clip).text(pos2(mx, rect.center().y), Align2::LEFT_CENTER, &msg, theme::font(12.0), t.accent);
+            let mr = p.with_clip_rect(clip).text(pos2(mx, rect.center().y), Align2::LEFT_CENTER, &msg, theme::font(12.0), t.accent);
+            shown_text(ui, mr.intersect(clip), "status_message", &msg);
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
         }
         let mut right = ui.new_child(
@@ -54,6 +60,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         }
         let pct = (app.canvas_scale * 100.0).round();
         let lbl = right.add(egui::Label::new(egui::RichText::new(format!("{pct}%")).size(12.0).color(t.text_dim)).sense(Sense::click()));
+        lbl.widget_info(|| named_with_value("Zoom level", &format!("{pct}%")));
         if lbl.clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
@@ -62,10 +69,12 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         }
         // Slider 10%–400% (log scale).
         let mut z = app.ui.zoom.unwrap_or(app.canvas_scale).clamp(0.1, 4.0);
-        let mut lz = z.ln();
-        let s = right.add_sized(vec2(110.0, 18.0), egui::Slider::new(&mut lz, (0.1f32).ln()..=(4.0f32).ln()).show_value(false));
+        let mut zp = z * 100.0;
+        let s = right.add_sized(vec2(110.0, 18.0), egui::Slider::new(&mut zp, 10.0..=400.0).logarithmic(true).show_value(false));
+        let shown = format!("{}%", zp.round());
+        s.widget_info(|| egui::WidgetInfo { current_text_value: Some(shown.clone()), ..egui::WidgetInfo::slider(true, f64::from(zp), "Zoom") });
         if s.changed() {
-            z = lz.exp();
+            z = zp / 100.0;
             app.ui.zoom = Some(z);
         }
         if small_icon(&mut right, Icon::ZoomOut, "Zoom Out", false).clicked() {
@@ -73,17 +82,17 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         }
         right.add_space(8.0);
         let view = app.ui.view;
-        if small_icon(&mut right, Icon::ViewShowSmall, "Slide Show", false).clicked() {
+        if view_icon(&mut right, Icon::ViewShowSmall, "Slide Show", false).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             app.start_show(i, false);
         }
-        if small_icon(&mut right, Icon::ViewReadingSmall, "Reading View", false).clicked() {
+        if view_icon(&mut right, Icon::ViewReadingSmall, "Reading View", view == ViewMode::Reading).clicked() {
             let _ = app.run("view.reading", json!({}));
         }
-        if small_icon(&mut right, Icon::ViewSorterSmall, "Slide Sorter", view == ViewMode::Sorter).clicked() {
+        if view_icon(&mut right, Icon::ViewSorterSmall, "Slide Sorter", view == ViewMode::Sorter).clicked() {
             app.ui.view = ViewMode::Sorter;
         }
-        if small_icon(&mut right, Icon::ViewNormalSmall, "Normal", view == ViewMode::Normal).clicked() {
+        if view_icon(&mut right, Icon::ViewNormalSmall, "Normal", view == ViewMode::Normal).clicked() {
             app.ui.view = ViewMode::Normal;
         }
         right.add_space(8.0);
@@ -100,13 +109,39 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 fn small_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
+    let resp = icon_button(ui, icon, on);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tip));
+    resp.on_hover_text(tip)
+}
+
+/// A view button: screen readers hear its name and whether its view is the one shown.
+fn view_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
+    let resp = icon_button(ui, icon, on);
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, tip));
+    resp.on_hover_text(tip)
+}
+
+fn icon_button(ui: &mut Ui, icon: Icon, on: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 20.0), Sense::click());
     if on || resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(4), if on { t.selected } else { t.hover });
     }
     icons::paint(ui.painter(), Rect::from_center_size(r.center(), vec2(16.0, 16.0)), icon, t.text_dim, false);
-    resp.on_hover_text(tip)
+    resp
+}
+
+/// A clickable status-bar text: screen readers hear `label` as its name and `text` as its value.
+fn named_with_value(label: &str, text: &str) -> egui::WidgetInfo {
+    egui::WidgetInfo { current_text_value: Some(text.to_string()), ..egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label) }
+}
+
+/// Painted status-bar text: screen readers read `text` from a label over `rect`.
+fn shown_text(ui: &Ui, rect: Rect, id: &str, text: &str) {
+    if rect.is_positive() {
+        let resp = ui.interact(rect, ui.id().with(id), Sense::hover());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    }
 }
 
 fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
@@ -265,11 +300,13 @@ mod tests {
     #![allow(clippy::unwrap_used)]
 
     use deckcraft_engine::Session;
+    use egui::accesskit::{Role, Toggled};
     use egui::{Event, Modifiers, PointerButton};
     use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
-    use crate::{Services, SlideApp};
+    use crate::{Services, SlideApp, ViewMode};
 
     /// A long proofing language in a narrow window must not take clicks meant for the controls on
     /// the right: Notes toggles the notes pane and the Language dialog stays closed.
@@ -308,5 +345,50 @@ mod tests {
         click(&mut h, 200.0);
         assert!(h.state().ui.notes, "the click reached the Notes button");
         assert!(h.state().dialog.is_none(), "the Language dialog stayed closed");
+    }
+
+    /// Screen readers find each status-bar control by name, hear the language and zoom it shows,
+    /// hear which view button is on, and read the slide counter and the status message.
+    #[test]
+    fn status_bar_controls_have_names() {
+        use egui_kittest::kittest::NodeT;
+
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        h.run_steps(3);
+        for name in ["Fit slide to current window", "Zoom In", "Zoom Out", "Slide Show", "Reading View"] {
+            h.get_by_role_and_label(Role::Button, name);
+        }
+        let pct = format!("{}%", (h.state().canvas_scale * 100.0).round());
+        assert_eq!(h.get_by_role_and_label(Role::Button, "Zoom level").value().as_deref(), Some(pct.as_str()));
+        let zoom = h.get_by_role_and_label(Role::Slider, "Zoom");
+        assert_eq!(zoom.value().as_deref(), Some(pct.as_str()));
+        // Its number and range are in percent, as the value text is.
+        let node = zoom.accesskit_node();
+        assert_eq!(node.numeric_value().map(f64::round), Some((h.state().canvas_scale * 100.0).round().into()));
+        assert_eq!((node.min_numeric_value(), node.max_numeric_value()), (Some(10.0), Some(400.0)));
+        assert_eq!(h.get_by_role_and_label(Role::Button, "Language").value().as_deref(), Some("English (United States)"));
+        let toggled = |h: &Harness<'_, SlideApp>, name: &str| h.get_by_role_and_label(Role::Button, name).accesskit_node().toggled();
+        assert_eq!(toggled(&h, "Normal"), Some(Toggled::True));
+        assert_eq!(toggled(&h, "Slide Sorter"), Some(Toggled::False));
+        h.get_by_role_and_label(Role::Button, "Slide Sorter").click();
+        h.run_steps(3);
+        assert_eq!(h.state().ui.view, ViewMode::Sorter, "the click by name reached the Slide Sorter button");
+        assert_eq!(toggled(&h, "Slide Sorter"), Some(Toggled::True));
+        assert_eq!(toggled(&h, "Normal"), Some(Toggled::False));
+        assert_eq!(toggled(&h, "Reading View"), Some(Toggled::False));
+        h.state_mut().ui.view = ViewMode::Reading;
+        h.run_steps(3);
+        assert_eq!(toggled(&h, "Reading View"), Some(Toggled::True));
+        assert_eq!(toggled(&h, "Slide Sorter"), Some(Toggled::False));
+        assert_eq!(h.get_by_value("Slide 1 of 1").accesskit_node().role(), Role::Label);
+        h.state_mut().set_status("Saved a copy");
+        h.run_steps(3);
+        assert_eq!(h.get_by_value("Saved a copy").accesskit_node().role(), Role::Label);
     }
 }
