@@ -1843,6 +1843,67 @@ mod copy_remap {
     }
 
     #[test]
+    fn a_pasted_picture_brings_its_svg_along() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (pa, ..) = populate(&mut a, b"raster");
+        populate(&mut b, b"deck b picture");
+        {
+            let doc = Arc::make_mut(&mut a.doc_mut().unwrap().doc);
+            let svg = doc.add_media("p.svg", "image/svg+xml", b"<svg/>".to_vec()).expect("media");
+            let slide = Arc::make_mut(&mut doc.slides[0]);
+            let Some(Shape { kind: ShapeKind::Picture { fill }, .. }) = slide.shapes.iter_mut().find(|x| x.id == pa) else { panic!() };
+            fill.svg = Some(svg);
+        }
+        select(&mut a, &[pa]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let new = shape(&b, 0, ShapeId(r["ids"][0].as_u64().unwrap() as u32));
+        let ShapeKind::Picture { fill } = &new.kind else { panic!("not a picture") };
+        let svg = fill.svg.and_then(|m| b.doc().unwrap().doc.media(m)).map(|m| m.data.as_ref().clone());
+        assert_eq!(svg.as_deref(), Some(&b"<svg/>"[..]));
+    }
+
+    #[test]
+    fn a_pasted_table_cell_remaps_its_svg_fill() {
+        use deckcraft_model::style::{Fill, PictureFill};
+        use deckcraft_model::table::{Cell, Row, Table};
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (id, ..) = populate(&mut a, b"raster a");
+        populate(&mut b, b"raster b");
+        {
+            let doc = Arc::make_mut(&mut a.doc_mut().unwrap().doc);
+            let svg = doc.add_media("cell.svg", "image/svg+xml", b"<svg/>".to_vec()).expect("media");
+            let slide = Arc::make_mut(&mut doc.slides[0]);
+            let sh = slide.shapes.iter_mut().find(|s| s.id == id).expect("shape");
+            sh.kind = ShapeKind::Table(Table {
+                cols: vec![80.0],
+                rows: vec![Row {
+                    height: 40.0,
+                    cells: vec![Cell {
+                        fill: Some(Fill::Picture(PictureFill { media: svg, svg: Some(svg), ..Default::default() })),
+                        ..Default::default()
+                    }],
+                }],
+                ..Default::default()
+            });
+        }
+        select(&mut a, &[id]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let copied = shape(&b, 0, ShapeId(r["ids"][0].as_u64().unwrap() as u32));
+        let ShapeKind::Table(table) = copied.kind else { panic!("not a table") };
+        let Some(Fill::Picture(fill)) = &table.rows[0].cells[0].fill else { panic!("not a picture fill") };
+        assert_eq!(fill.svg, Some(fill.media));
+        assert_eq!(b.doc().unwrap().doc.media(fill.media).unwrap().data.as_slice(), b"<svg/>");
+    }
+
+    #[test]
     fn copied_connectors_follow_copied_ends_and_detach_from_the_rest() {
         let mut s = Session::with_new();
         let (p, b, c) = populate(&mut s, b"x");
@@ -3076,6 +3137,51 @@ fn artistic_effects_apply_change_remove_and_round_trip() {
     s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur"})).unwrap();
     s.execute("picture.reset", &json!({})).unwrap();
     assert_eq!((fill(&s).media, fill(&s).artistic), (original, None));
+}
+
+#[test]
+fn artistic_effect_removal_and_reset_restore_svg() {
+    use deckcraft_model::ShapeKind;
+    let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([20, 30, 40, 255]));
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    let mut s = Session::with_new();
+    s.execute("insert.picture", &json!({"name": "a.png", "data": cmd::base64_encode(&png)})).unwrap();
+    let svg = {
+        let doc = Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let svg = doc.add_media("a.svg", "image/svg+xml", b"<svg/>".to_vec()).unwrap();
+        let slide = Arc::make_mut(&mut doc.slides[0]);
+        let sh = slide.shapes.iter_mut().find(|sh| matches!(sh.kind, ShapeKind::Picture { .. })).unwrap();
+        let ShapeKind::Picture { fill } = &mut sh.kind else { panic!() };
+        fill.svg = Some(svg);
+        svg
+    };
+    for clear in ["none", "reset"] {
+        s.execute("picture.artisticEffect", &json!({"effect": "artisticBlur"})).unwrap();
+        let fill = match &s.doc().unwrap().selected_shapes()[0].kind {
+            ShapeKind::Picture { fill } => fill,
+            _ => panic!(),
+        };
+        assert_eq!(fill.artistic.as_ref().and_then(|a| a.svg), Some(svg));
+        if clear == "none" {
+            s.execute("picture.artisticEffect", &json!({"effect": "none"})).unwrap();
+        } else {
+            s.execute("picture.reset", &json!({})).unwrap();
+        }
+        let fill = match &s.doc().unwrap().selected_shapes()[0].kind {
+            ShapeKind::Picture { fill } => fill,
+            _ => panic!(),
+        };
+        assert_eq!(fill.svg, Some(svg));
+        assert!(fill.artistic.is_none());
+        let bytes = cmd::file::save_bytes(&s.doc().unwrap().doc, "pptx").unwrap();
+        let reopened = deckcraft_pptx::import(&bytes).unwrap();
+        let restored = reopened.slides.iter().flat_map(|sl| &sl.shapes).find_map(|sh| match &sh.kind {
+            ShapeKind::Picture { fill } => fill.svg.and_then(|id| reopened.media(id)),
+            _ => None,
+        });
+        assert_eq!(restored.map(|m| m.data.as_slice()), Some(&b"<svg/>"[..]));
+    }
 }
 
 #[test]
