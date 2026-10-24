@@ -17,15 +17,34 @@ use super::*;
 use crate::{Result, Session, media_refs};
 
 pub fn specs() -> Vec<CommandSpec> {
-    vec![cmd!(
-        "slide.reuse",
-        "Reuse Slides…",
-        ["Home", "Slides", "New Slide"],
-        None,
-        "{path? | data: base64, name?, slides?: [index] (0-based, default all), keepFormatting?: bool (default false: use the destination theme), at?: index (default after the current slide)}",
-        has_doc,
-        reuse
-    )]
+    vec![
+        cmd!(
+            query "slide.reuseList",
+            "List Slides to Reuse",
+            [],
+            None,
+            "{path | data: base64, name?} → {name, slides: [{index, title, hidden}]}: the slides of another presentation, for choosing which ones `slide.reuse` brings in",
+            has_doc,
+            reuse_list
+        ),
+        cmd!(
+            "slide.reuse",
+            "Reuse Slides…",
+            ["Home", "Slides", "New Slide"],
+            None,
+            "{path? | data: base64, name?, slides?: [index] (0-based, default all), keepFormatting?: bool (default false: use the destination theme), at?: index (default after the current slide)}",
+            has_doc,
+            reuse
+        ),
+    ]
+}
+
+fn reuse_list(_s: &mut Session, p: &Value) -> Result<Value> {
+    let (name, bytes) = super::insert::media_bytes(p, "slide.reuseList")?;
+    let src = super::file::open_presentation(&name, &bytes)?;
+    let slides: Vec<Value> =
+        src.slides.iter().enumerate().map(|(index, sl)| json!({"index": index, "title": sl.title(), "hidden": sl.hidden})).collect();
+    Ok(json!({"name": name, "slides": slides}))
 }
 
 /// Point every media id under `x` at its copy in the destination (`map`: source → destination).
@@ -396,5 +415,35 @@ mod tests {
         assert_eq!(run_link, to(1), "text link follows the copy");
         assert_eq!(click(first.shapes.get(2)), Some(Action::Slide { slide: left_behind }), "a slide not reused keeps its link");
         assert_eq!(click(copy(1).shapes.first()), to(0), "a link back to an earlier copy follows too");
+    }
+
+    /// The list that lets a dialog offer the slides of the other file; picking from it brings in
+    /// exactly those.
+    #[test]
+    fn reuse_list_names_the_slides_and_the_picked_ones_come_in() {
+        let mut src = Session::with_new();
+        for t in ["Alpha", "Beta", "Gamma"] {
+            src.execute("slide.new", &json!({"layout": "titleAndContent", "title": t})).expect("new");
+        }
+        let last_slide = src.doc().expect("doc").doc.slides.len() - 1;
+        src.execute("slide.hide", &json!({"index": last_slide})).expect("hide");
+        let bytes = crate::cmd::file::save_bytes(&src.doc().expect("doc").doc, "deckcraft").expect("save");
+        let data = super::super::base64_encode(&bytes);
+
+        let mut s = Session::with_new();
+        let listed = s.execute("slide.reuseList", &json!({"data": data, "name": "src.deckcraft"})).expect("list");
+        let slides = listed["slides"].as_array().expect("slides");
+        let title = |i: usize| slides.iter().find(|x| x["index"] == i).and_then(|x| x["title"].as_str()).unwrap_or_default().to_string();
+        assert!(slides.len() >= 3);
+        let (a, b, g) = (title(slides.len() - 3), title(slides.len() - 2), title(slides.len() - 1));
+        assert_eq!((a.as_str(), b.as_str(), g.as_str()), ("Alpha", "Beta", "Gamma"));
+        assert_eq!(slides.last().map(|x| x["hidden"].clone()), Some(json!(true)));
+        assert_eq!(s.doc().expect("doc").doc.slides.len(), 1, "listing changes nothing");
+
+        let last = slides.len() - 1;
+        s.execute("slide.reuse", &json!({"data": data, "name": "src.deckcraft", "slides": [last - 2, last]})).expect("reuse");
+        let titles: Vec<String> = s.doc().expect("doc").doc.slides.iter().map(|x| x.title()).collect();
+        assert!(titles.iter().any(|t| t == "Alpha") && titles.iter().any(|t| t == "Gamma"));
+        assert!(!titles.iter().any(|t| t == "Beta"), "a slide that was not picked stays out");
     }
 }

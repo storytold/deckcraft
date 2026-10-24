@@ -1264,9 +1264,47 @@ impl SlideApp {
             return;
         };
         let Some(path) = pick("open") else { return };
-        match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep})) {
-            Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
+        // Read the file once: the list shown and the slides inserted come from the same bytes, even
+        // if the file changes while the dialog is open. Without a reader the path is used as is.
+        let mut source = json!({});
+        match self.services.read.as_ref().map(|r| r(&path)) {
+            Some(Ok(bytes)) => {
+                let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                source["name"] = json!(name);
+                source["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+            }
+            Some(Err(e)) => {
+                self.set_status(e.to_string());
+                return;
+            }
+            None => source["path"] = json!(path),
+        }
+        // Offer the file's slides to choose from; all of them are ticked to begin with.
+        match self.session.execute("slide.reuseList", &source) {
+            Ok(list) => {
+                let mut d = dialogs::Dialog::new("reuseSlides");
+                d.params = json!({"path": path, "source": source, "keep": keep, "slides": list["slides"]});
+                self.dialog = Some(d);
+            }
             Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    /// Insert the slides `picked` (indices) of `source` (the `name` + `data`, or `path`, that
+    /// `slide.reuseList` listed) after the current slide. Returns whether they were inserted.
+    pub fn reuse_slides(&mut self, source: &Value, keep: bool, picked: &[usize]) -> bool {
+        let mut args = if source.is_object() { source.clone() } else { json!({}) };
+        args["keepFormatting"] = json!(keep);
+        args["slides"] = json!(picked);
+        match self.session.execute("slide.reuse", &args) {
+            Ok(r) => {
+                self.set_status(format!("Inserted {} slides", r["slides"]));
+                true
+            }
+            Err(e) => {
+                self.set_status(e.to_string());
+                false
+            }
         }
     }
 
@@ -2093,6 +2131,8 @@ mod ime_tests;
 mod last_color_tests;
 #[cfg(test)]
 mod replacefonts_tests;
+#[cfg(test)]
+mod reuse_picker_tests;
 #[cfg(test)]
 mod slide_size_tests;
 #[cfg(test)]

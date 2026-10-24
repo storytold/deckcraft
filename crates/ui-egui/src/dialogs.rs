@@ -42,6 +42,7 @@ fn title(id: &str) -> &'static str {
         "altText" => "Alt Text",
         "outline" => "Slides from Outline",
         "renameSection" => "Rename Section",
+        "reuseSlides" => "Reuse Slides",
         "renameShape" => "Rename",
         "renameLayout" => "Rename Layout",
         "paragraph" => "Paragraph",
@@ -1536,6 +1537,68 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 run(app, "slide.fromOutline", json!({"text": v}));
             }
             ok || cancel
+        }
+        "reuseSlides" => {
+            let path = d.params.get("path").and_then(Value::as_str).unwrap_or("").to_string();
+            let slides: Vec<(usize, String)> = d
+                .params
+                .get("slides")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| {
+                            Some((usize::try_from(x.get("index")?.as_u64()?).ok()?, x.get("title").and_then(Value::as_str).unwrap_or("").to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(path.clone());
+            ui.label(format!("Insert slides from {name} after the current slide:"));
+            // Unticked slides are remembered by index; everything starts ticked.
+            let off = |d: &Dialog, i: usize| d.fields.get(&format!("off{i}")).is_some_and(|v| v == "1");
+            ui.horizontal(|ui| {
+                if ui.small_button("Select All").clicked() {
+                    for (i, _) in &slides {
+                        d.fields.remove(&format!("off{i}"));
+                    }
+                }
+                if ui.small_button("Select None").clicked() {
+                    for (i, _) in &slides {
+                        d.fields.insert(format!("off{i}"), "1".into());
+                    }
+                }
+            });
+            egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                for (i, title) in &slides {
+                    let mut on = !off(d, *i);
+                    let label = if title.trim().is_empty() { format!("{}  (no title)", i + 1) } else { format!("{}  {}", i + 1, title.trim()) };
+                    if ui.checkbox(&mut on, label).changed() {
+                        if on {
+                            d.fields.remove(&format!("off{i}"));
+                        } else {
+                            d.fields.insert(format!("off{i}"), "1".into());
+                        }
+                    }
+                }
+            });
+            let mut keep = d.params.get("keep").and_then(Value::as_bool).unwrap_or(false);
+            if ui.checkbox(&mut keep, "Keep source formatting").changed()
+                && let Some(o) = d.params.as_object_mut()
+            {
+                o.insert("keep".into(), json!(keep));
+            }
+            let picked: Vec<usize> = slides.iter().map(|(i, _)| *i).filter(|i| !off(d, *i)).collect();
+            let (ok, cancel) = buttons(ui, "Insert");
+            if ok {
+                if picked.is_empty() {
+                    app.set_status("Tick at least one slide to insert".to_string());
+                    return false;
+                }
+                // A failed insert keeps the dialog (and the ticked slides) open; the error is in the status bar.
+                let source = d.params.get("source").cloned().unwrap_or_default();
+                return app.reuse_slides(&source, keep, &picked);
+            }
+            cancel
         }
         "renameSection" | "renameShape" | "renameLayout" => {
             let cur = d.params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
