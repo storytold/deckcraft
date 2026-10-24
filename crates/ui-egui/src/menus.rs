@@ -81,14 +81,24 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
 /// The palette's entries for the lowercase query `q`. An engine command is hidden when a UI command has the same label: Open…, Save As…,
 /// Export… and Audio/Video from File… need a `path` the palette can't give, so the one entry left opens the dialog instead of failing.
 fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, String, Option<&'static str>)> {
+    // Search the English label (the catalog key) and the translated one, so a query typed in either
+    // language finds the command; what is listed is the current interface language's label.
+    let matched = |label: &str, id: &str| {
+        q.is_empty() || label.to_lowercase().contains(q) || crate::i18n::t(label).to_lowercase().contains(q) || id.to_lowercase().contains(q)
+    };
     let mut items: Vec<(String, String, Option<&'static str>)> = session
         .commands()
         .into_iter()
         // Commands that need a path or other value fail when the palette runs them with `{}`.
         .filter(|c| c.enabled && !crate::UI_COMMANDS.iter().any(|u| u.1 == c.label) && !deckcraft_engine::cmd::needs_arguments(c.params))
-        .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
-        .chain(crate::UI_COMMANDS.iter().filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3)).map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
-        .filter(|(id, label, _)| q.is_empty() || label.to_lowercase().contains(q) || id.to_lowercase().contains(q))
+        .filter(|c| matched(c.label, c.id))
+        .map(|c| (c.id.to_string(), tl!(c.label).to_string(), c.shortcut))
+        .chain(
+            crate::UI_COMMANDS
+                .iter()
+                .filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3) && matched(c.1, c.0))
+                .map(|c| (c.0.to_string(), tl!(c.1).to_string(), c.2)),
+        )
         .collect();
     items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(q));
     items.truncate(60);
@@ -106,7 +116,8 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 90.0))
         .fixed_size(egui::vec2(520.0, 380.0))
         .show(ctx, |ui| {
-            let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search commands…").desired_width(f32::INFINITY).font(theme::font(15.0)));
+            let r = ui
+                .add(egui::TextEdit::singleline(&mut query).hint_text(tl!("Search commands…")).desired_width(f32::INFINITY).font(theme::font(15.0)));
             r.request_focus();
             let q = query.to_lowercase();
             let items = palette_items(&app.session, &q);
@@ -161,135 +172,135 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
 pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
     vec![
         (
-            "File",
+            tl!("File"),
             vec![
-                ("New Presentation", "file.new"),
-                ("Open…", "app.openDialog"),
+                (tl!("New Presentation"), "file.new"),
+                (tl!("Open…"), "app.openDialog"),
                 ("-", ""),
-                ("Close", "app.closePresentation"),
-                ("Save", "file.save"),
-                ("Save As…", "app.saveAsDialog"),
-                ("Export…", "app.exportDialog"),
-                ("Print…", "app.print"),
+                (tl!("Close"), "app.closePresentation"),
+                (tl!("Save"), "file.save"),
+                (tl!("Save As…"), "app.saveAsDialog"),
+                (tl!("Export…"), "app.exportDialog"),
+                (tl!("Print…"), "app.print"),
                 ("-", ""),
-                ("Properties", "file.properties"),
+                (tl!("Properties"), "file.properties"),
             ],
         ),
         (
-            "Edit",
+            tl!("Edit"),
             vec![
-                ("Undo", "edit.undo"),
-                ("Redo", "edit.redo"),
+                (tl!("Undo"), "edit.undo"),
+                (tl!("Redo"), "edit.redo"),
                 ("-", ""),
-                ("Cut", "edit.cut"),
-                ("Copy", "edit.copy"),
-                ("Paste", "edit.paste"),
-                ("Paste and Match Formatting", "edit.pasteText"),
-                ("Paste Special…", "app.pasteSpecial"),
+                (tl!("Cut"), "edit.cut"),
+                (tl!("Copy"), "edit.copy"),
+                (tl!("Paste"), "edit.paste"),
+                (tl!("Paste and Match Formatting"), "edit.pasteText"),
+                (tl!("Paste Special…"), "app.pasteSpecial"),
                 ("-", ""),
-                ("Select All", "edit.selectAll"),
-                ("Duplicate", "edit.duplicate"),
-                ("Delete Slide", "slide.delete"),
+                (tl!("Select All"), "edit.selectAll"),
+                (tl!("Duplicate"), "edit.duplicate"),
+                (tl!("Delete Slide"), "slide.delete"),
                 ("-", ""),
-                ("Find…", "app.find"),
-                ("Replace…", "app.replace"),
+                (tl!("Find…"), "app.find"),
+                (tl!("Replace…"), "app.replace"),
             ],
         ),
         (
-            "View",
+            tl!("View"),
             vec![
-                ("Normal", "view.normal"),
-                ("Slide Sorter", "view.sorter"),
-                ("Notes Page", "view.notesPage"),
-                ("Outline View", "view.outline"),
-                ("Reading View", "view.reading"),
-                ("Slide Show", "show.start"),
+                (tl!("Normal"), "view.normal"),
+                (tl!("Slide Sorter"), "view.sorter"),
+                (tl!("Notes Page"), "view.notesPage"),
+                (tl!("Outline View"), "view.outline"),
+                (tl!("Reading View"), "view.reading"),
+                (tl!("Slide Show"), "show.start"),
                 ("-", ""),
-                ("Slide Master", "view.slideMaster"),
-                ("Handout Master", "view.handoutMaster"),
-                ("Notes Master", "view.notesMaster"),
+                (tl!("Slide Master"), "view.slideMaster"),
+                (tl!("Handout Master"), "view.handoutMaster"),
+                (tl!("Notes Master"), "view.notesMaster"),
                 ("-", ""),
-                ("Ruler", "view.ruler"),
-                ("Gridlines", "view.gridlines"),
-                ("Guides", "view.guides"),
-                ("Grid Options…", "view.gridOptions"),
+                (tl!("Ruler"), "view.ruler"),
+                (tl!("Gridlines"), "view.gridlines"),
+                (tl!("Guides"), "view.guides"),
+                (tl!("Grid Options…"), "view.gridOptions"),
                 ("-", ""),
-                ("Zoom…", "view.zoomDialog"),
-                ("Zoom In", "view.zoomIn"),
-                ("Zoom Out", "view.zoomOut"),
-                ("Fit to Window", "view.fit"),
+                (tl!("Zoom…"), "view.zoomDialog"),
+                (tl!("Zoom In"), "view.zoomIn"),
+                (tl!("Zoom Out"), "view.zoomOut"),
+                (tl!("Fit to Window"), "view.fit"),
                 ("-", ""),
-                ("New Window", "view.newWindow"),
+                (tl!("New Window"), "view.newWindow"),
             ],
         ),
         (
-            "Insert",
+            tl!("Insert"),
             vec![
-                ("New Slide", "slide.new"),
-                ("Duplicate Slide", "slide.duplicate"),
+                (tl!("New Slide"), "slide.new"),
+                (tl!("Duplicate Slide"), "slide.duplicate"),
                 ("-", ""),
-                ("Section", "section.add"),
-                ("Text Box", "insert.textBox"),
-                ("WordArt", "insert.wordArt"),
-                ("Date and Time", "insert.dateTime"),
-                ("Slide Number", "insert.slideNumber"),
+                (tl!("Section"), "section.add"),
+                (tl!("Text Box"), "insert.textBox"),
+                (tl!("WordArt"), "insert.wordArt"),
+                (tl!("Date and Time"), "insert.dateTime"),
+                (tl!("Slide Number"), "insert.slideNumber"),
                 ("-", ""),
-                ("Table…", "insert.table"),
-                ("Chart", "insert.chart"),
-                ("Picture from File…", "app.insertPictureDialog"),
-                ("Photo Album…", "insert.photoAlbum"),
-                ("Edit Photo Album…", "insert.photoAlbumEdit"),
-                ("Audio from File…", "app.insertAudioDialog"),
-                ("Video from File…", "app.insertVideoDialog"),
+                (tl!("Table…"), "insert.table"),
+                (tl!("Chart"), "insert.chart"),
+                (tl!("Picture from File…"), "app.insertPictureDialog"),
+                (tl!("Photo Album…"), "insert.photoAlbum"),
+                (tl!("Edit Photo Album…"), "insert.photoAlbumEdit"),
+                (tl!("Audio from File…"), "app.insertAudioDialog"),
+                (tl!("Video from File…"), "app.insertVideoDialog"),
             ],
         ),
         (
-            "Format",
+            tl!("Format"),
             vec![
-                ("Font…", "format.fontDialog"),
-                ("Paragraph…", "format.paragraphDialog"),
-                ("Bold", "format.bold"),
-                ("Italic", "format.italic"),
-                ("Underline", "format.underline"),
+                (tl!("Font…"), "format.fontDialog"),
+                (tl!("Paragraph…"), "format.paragraphDialog"),
+                (tl!("Bold"), "format.bold"),
+                (tl!("Italic"), "format.italic"),
+                (tl!("Underline"), "format.underline"),
                 ("-", ""),
-                ("Align Left", "format.alignLeft"),
-                ("Center", "format.alignCenter"),
-                ("Align Right", "format.alignRight"),
-                ("Justify", "format.justify"),
+                (tl!("Align Left"), "format.alignLeft"),
+                (tl!("Center"), "format.alignCenter"),
+                (tl!("Align Right"), "format.alignRight"),
+                (tl!("Justify"), "format.justify"),
                 ("-", ""),
-                ("Size and Position…", "shape.sizePosition"),
-                ("Right-to-Left Text Direction", "format.rtl"),
+                (tl!("Size and Position…"), "shape.sizePosition"),
+                (tl!("Right-to-Left Text Direction"), "format.rtl"),
             ],
         ),
         (
-            "Arrange",
+            tl!("Arrange"),
             vec![
-                ("Bring to Front", "arrange.bringToFront"),
-                ("Send to Back", "arrange.sendToBack"),
-                ("Bring Forward", "arrange.bringForward"),
-                ("Send Backward", "arrange.sendBackward"),
+                (tl!("Bring to Front"), "arrange.bringToFront"),
+                (tl!("Send to Back"), "arrange.sendToBack"),
+                (tl!("Bring Forward"), "arrange.bringForward"),
+                (tl!("Send Backward"), "arrange.sendBackward"),
                 ("-", ""),
-                ("Group", "arrange.group"),
-                ("Ungroup", "arrange.ungroup"),
-                ("Regroup", "arrange.regroup"),
+                (tl!("Group"), "arrange.group"),
+                (tl!("Ungroup"), "arrange.ungroup"),
+                (tl!("Regroup"), "arrange.regroup"),
                 ("-", ""),
-                ("Rotate Left 90°", "arrange.rotateLeft"),
-                ("Rotate Right 90°", "arrange.rotateRight"),
-                ("Flip Horizontal", "arrange.flipHorizontal"),
-                ("Flip Vertical", "arrange.flipVertical"),
+                (tl!("Rotate Left 90°"), "arrange.rotateLeft"),
+                (tl!("Rotate Right 90°"), "arrange.rotateRight"),
+                (tl!("Flip Horizontal"), "arrange.flipHorizontal"),
+                (tl!("Flip Vertical"), "arrange.flipVertical"),
             ],
         ),
         (
-            "Slide Show",
+            tl!("Slide Show"),
             vec![
-                ("Play from Start", "show.fromStart"),
-                ("Play from Current Slide", "show.fromCurrent"),
+                (tl!("Play from Start"), "show.fromStart"),
+                (tl!("Play from Current Slide"), "show.fromCurrent"),
                 ("-", ""),
-                ("Hide Slide", "slide.hide"),
-                ("Set Up Show…", "show.setup"),
+                (tl!("Hide Slide"), "slide.hide"),
+                (tl!("Set Up Show…"), "show.setup"),
             ],
         ),
-        ("Help", vec![("About DeckCraft", "app.about"), ("Command Palette", "app.palette")]),
+        ("Help", vec![(tl!("About DeckCraft"), "app.about"), (tl!("Command Palette"), "app.palette")]),
     ]
 }
 

@@ -6,6 +6,14 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+/// An English UI string in the current interface language ([`i18n::t`]).
+#[macro_export]
+macro_rules! tl {
+    ($s:expr) => {
+        $crate::i18n::t($s)
+    };
+}
+
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
@@ -15,6 +23,7 @@ pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
+pub mod i18n;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -238,6 +247,10 @@ pub enum ViewMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    /// Interface language setting: [`i18n::AUTO`] follows the system, otherwise a language code
+    /// (`ja`, `en`). Menus, the ribbon, the status bar and the command labels are drawn in it;
+    /// command ids, the presentation and file names are not.
+    pub language: String,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -280,6 +293,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            language: i18n::AUTO.into(),
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -344,6 +358,8 @@ impl UiState {
         if !short(&self.format_tab) {
             self.format_tab = d.format_tab;
         }
+        // A hand-edited or newer `language` value falls back to following the system.
+        self.language = crate::i18n::normalize_pref(&self.language).unwrap_or(crate::i18n::AUTO).to_string();
         self.pane = self.pane.filter(short);
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
@@ -376,6 +392,9 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("review.thesaurusPane", "Thesaurus", Some("Shift+F7"), "{word?}: open the Thesaurus pane on the selected word"),
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
+    // Interface language: `auto` follows the system; `en`/`ja` pick a catalog. Menus, the ribbon,
+    // the status bar and command labels change; command ids, the presentation and file names don't.
+    ("ui.language", "Interface Language", None, "{value: auto|en|ja}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
@@ -845,6 +864,16 @@ impl SlideApp {
 
     fn run_ui(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         match id {
+            "ui.language" => {
+                let value = p.get("value").and_then(Value::as_str).ok_or("`value` must be \"auto\", \"en\" or \"ja\"")?;
+                let pref = crate::i18n::normalize_pref(value).ok_or_else(|| {
+                    format!("`value` must be \"auto\" or one of {:?}", crate::i18n::Lang::all().map(crate::i18n::Lang::code).collect::<Vec<_>>())
+                })?;
+                self.ui.language = pref.to_string();
+                // The next frame draws in it; tests and the control channel see it at once.
+                crate::i18n::set_current(crate::i18n::Lang::from_pref(pref));
+                return Ok(json!({"language": pref}));
+            }
             "view.normal" => self.ui.view = ViewMode::Normal,
             "view.outline" => self.ui.view = ViewMode::Outline,
             "view.sorter" => self.ui.view = ViewMode::Sorter,
@@ -1570,6 +1599,9 @@ impl SlideApp {
 
     /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        // The interface language is drawn from this frame on; `ui()` sets it too, for callers that
+        // lay the window out without running `logic` first (`ui_shot`, tests).
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -1656,6 +1688,11 @@ impl SlideApp {
         }
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);
+        }
+        // The interface's own text in a CJK language needs a face for the characters the embedded
+        // faces lack (a build without craft-fonts); borrow one from the installed fonts.
+        if crate::i18n::current().uses_cjk() {
+            self.ui_fonts.note(ctx, crate::i18n::current().catalog_text());
         }
         self.ui_fonts.apply(ctx);
     }
@@ -1828,6 +1865,7 @@ impl SlideApp {
 
     /// Lay out the whole window.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         let ctx = ui.ctx().clone();
         if !self.fonts_ready {
             ctx.request_repaint();
@@ -2106,6 +2144,9 @@ mod datetime_tests;
 
 #[cfg(test)]
 mod inbox_tests;
+
+#[cfg(test)]
+mod language_tests;
 
 #[cfg(test)]
 mod tests {

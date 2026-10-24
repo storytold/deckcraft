@@ -79,7 +79,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let mut window = egui::Window::new(tl!(title(&d.id)))
         .id(egui::Id::new(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
@@ -140,6 +140,7 @@ fn credits_block(ui: &mut Ui, models: bool) -> Rect {
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
+    let ok_label = tl!(ok_label);
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let t = Tokens::get(ui.ctx());
@@ -148,7 +149,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(tl!("Cancel")).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });
@@ -160,6 +161,7 @@ fn preferences_snapshot(app: &SlideApp) -> Value {
     json!({
         "dark": app.ui.brightness == theme::Brightness::Dark,
         "uiScale": app.ui.ui_scale,
+        "language": app.ui.language,
         "prefs": serde_json::to_value(&app.session.prefs).unwrap_or(Value::Null),
     })
 }
@@ -174,6 +176,11 @@ fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     }
     if let Some(scale) = before.get("uiScale").and_then(Value::as_f64) {
         app.ui.ui_scale = scale as f32;
+    }
+    if let Some(language) = before.get("language").and_then(Value::as_str)
+        && language != app.ui.language
+    {
+        let _ = app.run("ui.language", json!({ "value": language }));
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;
@@ -2163,9 +2170,9 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             if d.params.get("before").is_none() {
                 d.params = json!({ "before": preferences_snapshot(app) });
             }
-            ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+            ui.label(egui::RichText::new(tl!("General")).font(theme::bold(13.0)));
             let mut dark = app.ui.brightness == theme::Brightness::Dark;
-            if ui.checkbox(&mut dark, "Dark appearance").changed() {
+            if ui.checkbox(&mut dark, tl!("Dark appearance")).changed() {
                 let _ = app.run("view.dark", json!({"on": dark}));
             }
             // While the pointer holds the slider its value only waits in the dialog: applying it
@@ -2173,7 +2180,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             // on release, and at once from the keyboard.
             let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
             let mut scale = pending.unwrap_or(app.ui.ui_scale);
-            let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text("Interface size"));
+            let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text(tl!("Interface size")));
             if r.is_pointer_button_down_on() {
                 if r.changed() || pending.is_some() {
                     d.fields.insert("uiScale".into(), scale.to_string());
@@ -2184,13 +2191,40 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
                 d.fields.remove("uiScale");
             }
-            ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-            ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-            ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-            ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+            // Interface language: follow the system (the default) or pick a catalog by hand. It
+            // applies at once, so the dialog's own text changes with it; Cancel puts the opening
+            // setting back (`restore_preferences`).
+            ui.label(egui::RichText::new(tl!("Interface language:")).font(theme::bold(13.0)));
+            let auto = crate::i18n::fmt(tl!("Automatic ({language})"), &[("language", crate::i18n::system_lang().english_name())]);
+            let current =
+                if app.ui.language == crate::i18n::AUTO { auto.clone() } else { crate::i18n::Lang::from_pref(&app.ui.language).name().to_string() };
+            let current_label = current.clone();
+            let opened = egui::ComboBox::from_id_salt("interface_language").selected_text(current).width(220.0).show_ui(ui, |ui| {
+                if ui.selectable_label(app.ui.language == crate::i18n::AUTO, auto.as_str()).clicked() {
+                    let _ = app.run("ui.language", json!({"value": crate::i18n::AUTO}));
+                }
+                for lang in crate::i18n::Lang::all().filter(|l| *l != crate::i18n::Lang::EN) {
+                    if ui.selectable_label(app.ui.language == lang.code(), lang.name()).clicked() {
+                        let _ = app.run("ui.language", json!({"value": lang.code()}));
+                    }
+                }
+            });
+            // A ComboBox has no accessible label of its own: name it with the chosen option so
+            // screen readers and UI tests can find the picker.
+            let opened = opened.response;
+            opened.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, &current_label));
+            ui.label(
+                egui::RichText::new(tl!("Menus, commands and the status bar change. Your presentation and file names don't."))
+                    .size(11.0)
+                    .color(Tokens::get(ui.ctx()).text_dim),
+            );
+            ui.label(egui::RichText::new(tl!("Editing")).font(theme::bold(13.0)));
+            ui.checkbox(&mut app.session.prefs.smart_guides, tl!("Show smart guides"));
+            ui.checkbox(&mut app.session.prefs.snap_to_grid, tl!("Snap objects to grid"));
+            ui.checkbox(&mut app.session.prefs.smart_quotes, tl!("Replace straight quotes with smart quotes"));
             ui.horizontal(|ui| {
-                ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-                if ui.button("AutoCorrect Options…").clicked() {
+                ui.checkbox(&mut app.session.prefs.autocorrect, tl!("AutoCorrect as you type"));
+                if ui.button(tl!("AutoCorrect Options…")).clicked() {
                     *d = Dialog::new("autocorrect");
                 }
             });
@@ -2198,7 +2232,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 return false;
             }
             ui.horizontal(|ui| {
-                ui.label("Your name (comments):");
+                ui.label(tl!("Your name (comments):"));
                 ui.text_edit_singleline(&mut app.session.prefs.author);
             });
             let (ok, cancel) = buttons(ui, "Done");
@@ -2212,7 +2246,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "themeFonts" => theme_fonts_dialog(app, ui, d),
         "dateTime" => date_time_dialog(app, ui, d),
         _ => {
-            ui.label(format!("“{}” is not available yet.", d.id));
+            ui.label(crate::i18n::fmt(tl!("“{dialog}” is not available yet."), &[("dialog", &d.id)]));
             let (ok, cancel) = buttons(ui, "OK");
             ok || cancel
         }
