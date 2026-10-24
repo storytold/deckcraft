@@ -130,7 +130,48 @@ fn services() -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        printers: cfg!(unix).then(|| Box::new(printing::printers) as Box<dyn Fn() -> Vec<String>>),
+        print_file: cfg!(unix).then(|| Box::new(printing::print_file) as deckcraft_ui_egui::PrintFn),
         ..Default::default()
+    }
+}
+
+/// Printing through CUPS (`lpstat`, `lp`), which Linux and macOS ship. Windows has no command for
+/// it, so there the PDF opens in the viewer as before.
+mod printing {
+    use std::process::Command;
+
+    /// Printer names from `lpstat -e`; none when CUPS is missing or lists none.
+    pub fn printers() -> Vec<String> {
+        match Command::new("lpstat").arg("-e").output() {
+            Ok(o) if o.status.success() => parse(&String::from_utf8_lossy(&o.stdout)),
+            _ => vec![],
+        }
+    }
+
+    pub fn parse(out: &str) -> Vec<String> {
+        out.lines().map(str::trim).filter(|l| !l.is_empty() && !l.contains(char::is_whitespace)).take(200).map(str::to_string).collect()
+    }
+
+    pub fn print_file(path: &str, printer: &str, copies: u32) -> Result<(), String> {
+        if printer.starts_with('-') || printer.contains(char::is_whitespace) {
+            return Err("not a printer name".into());
+        }
+        let o = Command::new("lp")
+            .args(["-d", printer, "-n", &copies.clamp(1, 999).to_string(), "-t", "DeckCraft", "--", path])
+            .output()
+            .map_err(|e| format!("lp: {e}"))?;
+        if o.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&o.stderr).trim().to_string()) }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        #[test]
+        fn lpstat_lines_are_printer_names() {
+            assert_eq!(super::parse("Office_Laser\nHP-4100\n\n"), ["Office_Laser", "HP-4100"]);
+            assert!(super::parse("lpstat: No destinations added.\n").is_empty());
+            assert!(super::print_file("/tmp/x.pdf", "-o evil", 1).is_err());
+        }
     }
 }
 
