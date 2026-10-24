@@ -22,7 +22,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | `.pptm` / `.potm` / `.ppsm` macro-enabled | Editor | no | no | Should open and keep `vbaProject.bin` without running it | none |
 | `.ppt` / `.pot` / `.pps` 97–2003 binary | Editor | no | no | Owner decision; import only would be enough | none |
 | `.odp` OpenDocument | Editor | no | no | | none |
-| `.thmx` Office theme | Viewer | no | no | Browse for themes is a P2 row | none |
+| `.thmx` Office theme | Viewer | theme only (Design › Browse for Themes…) | no | Browse for Themes takes a `.thmx`'s colours, fonts and effects; a `.pptx` or `.potx` brings its slide master and layouts as well, and slides move to the matching layouts (#807). A `.thmx`'s own master and layouts aren't read yet | `crates/pptx/src/lib.rs` (`import_theme_tests`), `crates/engine/src/cmd/design.rs` (`browse_theme_tests`) |
 | `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible | `crates/format` tests |
 | PDF | export | no | yes | Slides, notes pages, handouts (1–9); real-text layer with embedded subsets, links, bookmarks. Slide artwork is a raster image at print resolution, not vector | `crates/pdf` tests |
 | Outline `.rtf` / `.txt` | export (RTF), import (outline) | `.txt` outline; `.md` as Markdown (headings are slides, list items bullets) (`slide.fromOutline`) | `.txt` outline | No RTF | engine tests |
@@ -125,6 +125,7 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-15 | minor | A `.pptx` slide that can't be read is reported instead of dropped in silence: `file.open` and `file.openBytes` return `lostSlides`, the app shows a message and opens a repaired copy (Save asks for a new name), and `deckcraft-cli` warns on stderr (#203) |
 | 2026-10-16 | minor | PNG slide export with a transparent background (#784) |
 | 2026-10-16 | trivial | A `.ppsx` opened from the command line or the file association starts the slide show (#862) |
+| 2026-10-15 | minor | `.thmx` row: Browse for Themes reads a theme's colours, fonts and effects; a `.pptx`/`.potx` brings its slide master and layouts (#807) |
 | 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |
