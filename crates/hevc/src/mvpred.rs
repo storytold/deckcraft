@@ -36,9 +36,23 @@ fn same_motion(a: &MvField, b: &MvField) -> bool {
     true
 }
 
+/// Coding block and prediction block geometry (6.4.2): coding block (xc, yc, ncb), prediction block (xp, yp, w, h, part_idx).
+#[derive(Clone, Copy)]
+pub struct PbGeom {
+    pub xc: i32,
+    pub yc: i32,
+    pub ncb: i32,
+    pub xp: i32,
+    pub yp: i32,
+    pub w: i32,
+    pub h: i32,
+    pub part_idx: usize,
+}
+
 impl<'a> SliceDecoder<'a> {
     /// Prediction block availability (6.4.2).
-    fn pb_avail(&self, xc: i32, yc: i32, ncb: i32, xp: i32, yp: i32, w: i32, h: i32, part_idx: usize, xn: i32, yn: i32) -> bool {
+    fn pb_avail(&self, g: &PbGeom, xn: i32, yn: i32) -> bool {
+        let PbGeom { xc, yc, ncb, xp, yp, w, h, part_idx } = *g;
         let same_cb = xc <= xn && yc <= yn && xc + ncb > xn && yc + ncb > yn;
         let avail = if !same_cb {
             self.pic.zavail(xp, yp, xn, yn, self.slice_addr)
@@ -59,23 +73,13 @@ impl<'a> SliceDecoder<'a> {
     }
 
     /// Merge mode motion (8.5.3.2.2).
-    pub fn derive_merge(
-        &self,
-        xc: i32,
-        yc: i32,
-        ncb: i32,
-        xp0: i32,
-        yp0: i32,
-        w0: i32,
-        h0: i32,
-        part_idx0: usize,
-        part: PartMode,
-        merge_idx: usize,
-    ) -> MvField {
+    pub fn derive_merge(&self, g: PbGeom, part: PartMode, merge_idx: usize) -> MvField {
+        let PbGeom { xc, yc, ncb, xp: xp0, yp: yp0, w: w0, h: h0, part_idx: part_idx0 } = g;
         let pml = self.pps.log2_parallel_merge_level;
         let (xp, yp, w, h, part_idx) = if pml > 2 && ncb == 8 { (xc, yc, ncb, ncb, 0) } else { (xp0, yp0, w0, h0, part_idx0) };
+        let g = PbGeom { xc, yc, ncb, xp, yp, w, h, part_idx };
         let same_mer = |xn: i32, yn: i32| (xp >> pml) == (xn >> pml) && (yp >> pml) == (yn >> pml);
-        let avail = |xn: i32, yn: i32| self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, xn, yn) && !same_mer(xn, yn);
+        let avail = |xn: i32, yn: i32| self.pb_avail(&g, xn, yn) && !same_mer(xn, yn);
         let mut list: [MvField; 5] = [MvField::default(); 5];
         let mut n = 0;
         let max = self.sh.max_num_merge_cand as usize;
@@ -237,20 +241,8 @@ impl<'a> SliceDecoder<'a> {
     }
 
     /// AMVP predictor (8.5.3.2.6, 8.5.3.2.7).
-    pub fn derive_amvp(
-        &self,
-        xc: i32,
-        yc: i32,
-        ncb: i32,
-        xp: i32,
-        yp: i32,
-        w: i32,
-        h: i32,
-        part_idx: usize,
-        l: usize,
-        ref_idx: usize,
-        mvp_flag: usize,
-    ) -> [i16; 2] {
+    pub fn derive_amvp(&self, g: PbGeom, l: usize, ref_idx: usize, mvp_flag: usize) -> [i16; 2] {
+        let PbGeom { xp, yp, w, h, .. } = g;
         let target = &self.refs[l][ref_idx];
         let (tpoc, tlt) = (target.poc, target.long_term);
         let cur_poc = self.pic.poc;
@@ -277,10 +269,7 @@ impl<'a> SliceDecoder<'a> {
             pick.map(|(mv, r)| if r.poc != tpoc && !r.long_term && !tlt { scale_mv(mv, cur_poc - r.poc, cur_poc - tpoc) } else { mv })
         };
         let pa = [(xp - 1, yp + h), (xp - 1, yp + h - 1)];
-        let av_a = [
-            self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, pa[0].0, pa[0].1),
-            self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, pa[1].0, pa[1].1),
-        ];
+        let av_a = [self.pb_avail(&g, pa[0].0, pa[0].1), self.pb_avail(&g, pa[1].0, pa[1].1)];
         let is_scaled = av_a[0] || av_a[1];
         let mut a = None;
         for k in 0..2 {
@@ -296,7 +285,7 @@ impl<'a> SliceDecoder<'a> {
             }
         }
         let pb = [(xp + w, yp - 1), (xp + w - 1, yp - 1), (xp - 1, yp - 1)];
-        let av_b = [0, 1, 2].map(|k| self.pb_avail(xc, yc, ncb, xp, yp, w, h, part_idx, pb[k].0, pb[k].1));
+        let av_b = [0, 1, 2].map(|k| self.pb_avail(&g, pb[k].0, pb[k].1));
         let mut b = None;
         for k in 0..3 {
             if av_b[k] && b.is_none() {
