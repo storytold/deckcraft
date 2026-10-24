@@ -750,7 +750,10 @@ pub fn write_kept(pkg: &mut crate::opc::PackageOut, chart_name: &str, c: &Chart,
         }
     }
     pkg.rels(chart_name, &rels);
-    let parts_by_norm: std::collections::HashMap<_, _> = c.kept.parts.iter().map(|p| (norm(&p.name), p)).collect();
+    let mut parts_by_norm = std::collections::HashMap::new();
+    for p in &c.kept.parts {
+        parts_by_norm.entry(norm(&p.name)).or_insert(p);
+    }
     let mut seen_payloads = std::collections::HashSet::new();
     // The kept parts' own relationships, pointed at the new names.
     for p in c.kept.parts.iter().filter(|p| kept_payload(&p.name)) {

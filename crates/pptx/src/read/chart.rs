@@ -126,23 +126,21 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     let mut kinds: Vec<ChartType> = vec![];
     // The value axis the first plot group uses is the primary one; a group on another value axis
     // (a combo chart's line on the right) is on the secondary axis.
-    let val_ids: Vec<(&str, bool)> =
+    let val_map: std::collections::HashMap<&str, bool> =
         pa.children_named("valAx").filter_map(|a| Some((a.child_val("axId")?, matches!(a.child_val("axPos"), Some("l" | "r"))))).collect();
     // A group's value axis: its vertical one when it has two (scatter), else its one.
     let group_val_axis = |g: &El| {
         let ids: Vec<(&str, bool)> =
-            g.children_named("axId").filter_map(|a| a.attr("val")).filter_map(|id| val_ids.iter().find(|(v, _)| *v == id).copied()).collect();
+            g.children_named("axId").filter_map(|a| a.attr("val")).filter_map(|id| val_map.get(id).copied().map(|v| (id, v))).collect();
         ids.iter().find(|(_, vertical)| *vertical).or(ids.first()).map(|(id, _)| id.to_string())
     };
     // The primary value axis is the one on the left (bottom for bar charts); the secondary one
     // sits on the right or top, or crosses the category axis at its maximum.
     let secondary_placed = |a: &El| a.child_val("crosses") == Some("max") || matches!(a.child_val("axPos"), Some("r" | "t"));
+    let val_axes_by_id: std::collections::HashMap<&str, &El> = pa.children_named("valAx").filter_map(|a| Some((a.child_val("axId")?, a))).collect();
     let used: Vec<String> = pa.elements().filter(|g| g.local().ends_with("Chart")).filter_map(group_val_axis).collect();
-    let primary_val: Option<String> = used
-        .iter()
-        .find(|id| pa.children_named("valAx").find(|a| a.child_val("axId") == Some(id.as_str())).is_some_and(|a| !secondary_placed(a)))
-        .or(used.first())
-        .cloned();
+    let primary_val: Option<String> =
+        used.iter().find(|id| val_axes_by_id.get(id.as_str()).is_some_and(|a| !secondary_placed(a))).or(used.first()).cloned();
     for g in pa.elements() {
         let name = g.local();
         if !name.ends_with("Chart") {
@@ -410,15 +408,21 @@ fn text_color(e: Option<&El>) -> Option<deckcraft_model::ColorRef> {
 
 const MAX_KEPT_PARTS: usize = 256;
 const MAX_KEPT_DEPTH: usize = 8;
+pub const MAX_KEPT_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 /// Relationships and parts a chart points at, so a later save can write them back.
-pub(crate) fn capture_kept(pkg: &crate::opc::Package, chart_part: &str) -> deckcraft_model::chart::ChartKept {
+pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_model::chart::ChartKept {
     use deckcraft_model::chart::{ChartKept, ChartRel};
+
+    let key = crate::opc::norm(chart_part);
+    if let Some(cached) = imp.kept_charts.get(&key) {
+        return cached.clone();
+    }
 
     let mut kept = ChartKept::default();
     // The chart document itself is rewritten; don't store a second copy of it.
-    let mut seen = std::collections::HashMap::from([(crate::opc::norm(chart_part), true)]);
-    for r in pkg.rels(chart_part).items {
+    let mut seen = std::collections::HashMap::from([(key.clone(), true)]);
+    for r in imp.pkg.rels(chart_part).items {
         if !safe_rel(&r.id, &r.ty, &r.target_raw) {
             log::warn!("pptx: skipping chart relationship {}", r.id);
             continue;
@@ -427,10 +431,11 @@ pub(crate) fn capture_kept(pkg: &crate::opc::Package, chart_part: &str) -> deckc
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: String::new(), external: true });
             continue;
         }
-        if copy_part(pkg, &r.target, &mut kept.parts, &mut seen, 0) {
+        if copy_part(imp.pkg, &r.target, &mut kept.parts, &mut seen, &mut imp.kept_sidecar_bytes, 0) {
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: r.target, external: false });
         }
     }
+    imp.kept_charts.insert(key, kept.clone());
     kept
 }
 
@@ -444,6 +449,7 @@ fn copy_part(
     part: &str,
     out: &mut Vec<deckcraft_model::chart::ChartPart>,
     seen: &mut std::collections::HashMap<String, bool>,
+    retained_bytes: &mut usize,
     depth: usize,
 ) -> bool {
     use deckcraft_model::chart::ChartPart;
@@ -473,7 +479,14 @@ fn copy_part(
         return false;
     }
     let content_type = pkg.content_type(part).unwrap_or_default();
-    out.push(ChartPart { name, content_type, bytes: bytes.to_vec(), native_entry: None });
+    let stored_bytes = if *retained_bytes + bytes.len() <= MAX_KEPT_TOTAL_BYTES {
+        *retained_bytes += bytes.len();
+        bytes.to_vec()
+    } else {
+        log::warn!("pptx: chart sidecar retained byte budget exceeded for {part}");
+        Vec::new()
+    };
+    out.push(ChartPart { name, content_type, bytes: stored_bytes, native_entry: None });
     seen.insert(key, true);
     let rels_name = crate::opc::rels_path(part);
     if crate::opc::sidecar_part(&rels_name)
@@ -482,15 +495,21 @@ fn copy_part(
     {
         seen.insert(crate::opc::norm(&rels_name), true);
         let name = pkg.original_name(&rels_name).unwrap_or(&rels_name).trim_start_matches('/').to_string();
+        let stored_rels = if *retained_bytes + rels_bytes.len() <= MAX_KEPT_TOTAL_BYTES {
+            *retained_bytes += rels_bytes.len();
+            rels_bytes.to_vec()
+        } else {
+            Vec::new()
+        };
         out.push(ChartPart {
             name,
             content_type: "application/vnd.openxmlformats-package.relationships+xml".into(),
-            bytes: rels_bytes.to_vec(),
+            bytes: stored_rels,
             native_entry: None,
         });
         let targets: Vec<String> = pkg.rels(part).items.into_iter().filter(|r| !r.external).map(|r| r.target).collect();
         for target in targets {
-            copy_part(pkg, &target, out, seen, depth + 1);
+            copy_part(pkg, &target, out, seen, retained_bytes, depth + 1);
         }
     }
     true

@@ -39,6 +39,7 @@ pub const RT_CORE: &str = "http://schemas.openxmlformats.org/package/2006/relati
 /// The files of a package, keyed by normalised part name (no leading slash, lowercase).
 pub struct Package {
     parts: HashMap<String, (String, Vec<u8>)>,
+    ct_cache: std::sync::OnceLock<(HashMap<String, String>, HashMap<String, String>)>,
 }
 
 impl Package {
@@ -94,7 +95,7 @@ impl Package {
             total = total.saturating_add(data.len() as u64);
             parts.insert(name.to_ascii_lowercase(), (name, data));
         }
-        Ok(Package { parts })
+        Ok(Package { parts, ct_cache: std::sync::OnceLock::new() })
     }
     pub fn get(&self, name: &str) -> Option<&[u8]> {
         self.parts.get(&norm(name)).map(|(_, d)| d.as_slice())
@@ -131,18 +132,29 @@ impl Package {
     }
     /// Content types: (extension defaults, part overrides).
     pub fn content_type(&self, part: &str) -> Option<String> {
-        let doc = self.xml("[Content_Types].xml")?;
-        let p = format!("/{}", norm(part));
-        for o in doc.root.children_named("Override") {
-            if o.attr("PartName").is_some_and(|n| n.to_ascii_lowercase() == p) {
-                return o.attr("ContentType").map(String::from);
+        let (overrides, defaults) = self.ct_cache.get_or_init(|| {
+            let mut ov = HashMap::new();
+            let mut def = HashMap::new();
+            if let Some(doc) = self.xml("[Content_Types].xml") {
+                for o in doc.root.children_named("Override") {
+                    if let (Some(n), Some(ct)) = (o.attr("PartName"), o.attr("ContentType")) {
+                        ov.insert(n.to_ascii_lowercase(), ct.to_string());
+                    }
+                }
+                for d in doc.root.children_named("Default") {
+                    if let (Some(e), Some(ct)) = (d.attr("Extension"), d.attr("ContentType")) {
+                        def.insert(e.to_ascii_lowercase(), ct.to_string());
+                    }
+                }
             }
+            (ov, def)
+        });
+        let p = format!("/{}", norm(part));
+        if let Some(ct) = overrides.get(&p) {
+            return Some(ct.clone());
         }
         let ext = part.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        doc.root
-            .children_named("Default")
-            .find(|d| d.attr("Extension").is_some_and(|e| e.eq_ignore_ascii_case(&ext)))
-            .and_then(|d| d.attr("ContentType").map(String::from))
+        defaults.get(&ext).cloned()
     }
     pub fn original_name(&self, name: &str) -> Option<&str> {
         self.parts.get(&norm(name)).map(|(n, _)| n.as_str())

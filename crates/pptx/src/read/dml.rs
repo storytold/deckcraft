@@ -493,6 +493,11 @@ pub fn hyperlink(imp: &mut Imp, part: &Part, h: &El) -> Option<Hyperlink> {
     })
 }
 
+fn typeface(e: &El) -> Option<String> {
+    let t = e.attr("typeface").filter(|t| !t.is_empty())?;
+    Some(t.chars().take(256).collect())
+}
+
 pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
     let mut p = RunProps {
         lang: r.attr("lang").map(String::from),
@@ -530,10 +535,10 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
             }
             "highlight" => p.highlight = color(e),
             "uFill" => p.underline_color = e.child("solidFill").and_then(color),
-            "latin" => p.font = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
-            "ea" => p.font_ea = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
-            "cs" => p.font_cs = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
-            "sym" => p.font_sym = e.attr("typeface").filter(|t| !t.is_empty()).map(String::from),
+            "latin" => p.font = typeface(e),
+            "ea" => p.font_ea = typeface(e),
+            "cs" => p.font_cs = typeface(e),
+            "sym" => p.font_sym = typeface(e),
             "hlinkClick" => p.link = hyperlink(imp, part, e),
             "hlinkMouseOver" => p.hover = hyperlink(imp, part, e),
             _ => {}
@@ -564,6 +569,8 @@ pub fn text_body(imp: &mut Imp, part: &Part, tx: &El) -> TextBody {
     TextBody { body, list_style, paragraphs }
 }
 
+const MAX_PARAGRAPH_RUNS: usize = 10_000;
+
 pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
     let mut para = Paragraph::default();
     for e in p.elements() {
@@ -581,33 +588,45 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
                 let text: String = e.child("t").map(|t| t.text()).unwrap_or_default();
                 // A vertical tab or line feed inside text is a line break, as it lays out and as export writes it.
                 for (i, piece) in text.split(['\u{b}', '\n']).enumerate() {
+                    if para.runs.len() >= MAX_PARAGRAPH_RUNS {
+                        break;
+                    }
                     if i > 0 {
                         para.runs.push(Run { text: String::new(), props: props.clone(), kind: RunKind::Break });
                     }
                     if !piece.is_empty() {
+                        if para.runs.len() >= MAX_PARAGRAPH_RUNS {
+                            break;
+                        }
                         para.runs.push(Run { text: piece.to_string(), props: props.clone(), kind: RunKind::Text });
                     }
                 }
             }
             "br" => {
-                let props = e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default();
-                para.runs.push(Run { text: String::new(), props, kind: RunKind::Break });
+                if para.runs.len() < MAX_PARAGRAPH_RUNS {
+                    let props = e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default();
+                    para.runs.push(Run { text: String::new(), props, kind: RunKind::Break });
+                }
             }
             "fld" => {
-                let props = e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default();
-                let text = e.child("t").map(|t| t.text()).unwrap_or_default();
-                para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
+                if para.runs.len() < MAX_PARAGRAPH_RUNS {
+                    let props = e.child("rPr").map(|r| rpr(imp, part, r)).unwrap_or_default();
+                    let text = e.child("t").map(|t| t.text()).unwrap_or_default();
+                    para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
+                }
             }
             "m" => {
-                // Office Math (a14:m) — keep the OMML and its plain text.
-                let mut text = String::new();
-                let mut ts = vec![];
-                e.find_all("t", &mut ts);
-                for t in ts {
-                    text.push_str(&t.text());
+                if para.runs.len() < MAX_PARAGRAPH_RUNS {
+                    // Office Math (a14:m) — keep the OMML and its plain text.
+                    let mut text = String::new();
+                    let mut ts = vec![];
+                    e.find_all("t", &mut ts);
+                    for t in ts {
+                        text.push_str(&t.text());
+                    }
+                    let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
+                    para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
                 }
-                let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
-                para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
             }
             "endParaRPr" => para.end_props = rpr(imp, part, e),
             _ => {}

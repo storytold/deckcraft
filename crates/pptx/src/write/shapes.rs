@@ -853,8 +853,10 @@ fn opaque(
     if let Ok(doc) = crate::xml::parse(xml.as_bytes())
         && matches!(doc.root.local(), "graphicFrame" | "sp" | "grpSp" | "cxnSp")
     {
-        let part_map: std::collections::HashMap<&str, (&str, deckcraft_model::MediaId)> =
-            parts.iter().map(|(id, kind, m)| (id.as_str(), (kind.as_str(), *m))).collect();
+        let mut part_map: std::collections::HashMap<&str, (&str, deckcraft_model::MediaId)> = std::collections::HashMap::new();
+        for (id, kind, m) in parts {
+            part_map.entry(id.as_str()).or_insert((kind.as_str(), *m));
+        }
         if let Some(ids) = crate::read::rel_refs(&doc.root)
             .iter()
             .map(|r| {
