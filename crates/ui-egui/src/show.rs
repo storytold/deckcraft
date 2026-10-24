@@ -569,7 +569,7 @@ fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Option<usize>, t
 /// Read the current viewport's show keys before its widgets can consume them. Both the
 /// audience window and Presenter View use this path, including animation steps and end-of-show.
 /// `presenter` is true for Presenter View, where G opens that window's own grid (#1130).
-fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool) -> bool {
+fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, keymap: &crate::keymap::Keymap, presenter: bool) -> bool {
     let keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
@@ -578,8 +578,18 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, 
     });
     let mut keep = true;
     let mut actions = vec![];
-    for (k, m) in keys {
+    for (pressed, pressed_mods) in keys {
         use egui::Key::*;
+        // Custom slide-show keys (File › Settings › Keyboard Shortcuts) map onto the built-in ones.
+        // A built-in key whose action has other keys now does nothing, and a focused presenter
+        // button doesn't get it either. While a slide number is typed, Enter, Backspace and Escape
+        // stay Go to Slide's own, whatever the custom keys.
+        let goto_key = !show.goto.is_empty() && plain(pressed_mods) && matches!(pressed, Enter | Backspace | Escape);
+        let hit = if goto_key { Some((pressed, pressed_mods)) } else { keymap.show_key(pressed, pressed_mods) };
+        let Some((k, m)) = hit else {
+            ctx.input_mut(|i| i.consume_key(pressed_mods, pressed));
+            continue;
+        };
         let presenter_grid = presenter && show.presenter_grid;
         let grid_open = if presenter { show.presenter_grid } else { show.grid };
         if grid_open && !matches!(k, Escape | Minus) {
@@ -659,8 +669,8 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, 
             }
         }
         // The same key must not also activate a focused presenter button or be handled again
-        // by an embedded presenter viewport.
-        ctx.input_mut(|i| i.consume_key(m, k));
+        // by an embedded presenter viewport: the key pressed, which a custom key maps from.
+        ctx.input_mut(|i| i.consume_key(pressed_mods, pressed));
         ctx.request_repaint_of(egui::ViewportId::ROOT);
     }
     for action in actions {
@@ -691,7 +701,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
         show.after_enter(&doc, now);
     }
-    let mut keep = keyboard(&ctx, &mut show, &doc, now, false);
+    let mut keep = keyboard(&ctx, &mut show, &doc, now, &app.ui.keymap, false);
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
     if moved {
         show.last_move = now;
@@ -1230,7 +1240,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     // Presenter view in a second window.
     if keep && show.presenter && !show.reading {
-        presenter_window(&ctx, &mut show, &doc, now, &mut keep);
+        presenter_window(&ctx, &mut show, &doc, now, &mut keep, &app.ui.keymap);
     }
     if keep {
         app.show = Some(show);
@@ -1931,7 +1941,7 @@ fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usi
     Some(tex)
 }
 
-fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, keep: &mut bool) {
+fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, keep: &mut bool, keymap: &crate::keymap::Keymap) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
     let cur_tex = show.tex.as_ref().map(|(_, t)| t.clone());
@@ -1965,7 +1975,7 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
         egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
         |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now, true) {
+            if !keyboard(ui.ctx(), show, doc, now, keymap, true) {
                 *keep = false;
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
@@ -2179,7 +2189,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
             |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
                 let now = ui.input(|i| i.time);
-                presenter_window(ui.ctx(), show, doc, now, keep);
+                presenter_window(ui.ctx(), show, doc, now, keep, &crate::keymap::Keymap::default());
             },
             (doc, show, true),
         );
@@ -2408,7 +2418,7 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
             |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
                 let now = ui.input(|i| i.time);
-                presenter_window(ui.ctx(), show, doc, now, keep);
+                presenter_window(ui.ctx(), show, doc, now, keep, &crate::keymap::Keymap::default());
             },
             (doc, show, true),
         );
@@ -2451,6 +2461,55 @@ mod tests {
         harness.key_press(egui::Key::Escape);
         harness.run_steps(2);
         assert!(!harness.state().2, "Escape from Presenter View ends the show");
+    }
+
+    /// A custom show key is used up as the key that was pressed, not the built-in key it maps to,
+    /// so a focused presenter button doesn't also get it; neither does a built-in key whose
+    /// action now has other keys.
+    #[test]
+    fn custom_show_keys_dont_also_press_the_focused_button() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..3 {
+            session.execute("slide.new", &json!({})).unwrap();
+        }
+        let doc = session.active().unwrap().doc.clone();
+        let mut keymap = crate::keymap::Keymap::default();
+        // Space goes back now (Previous), and Enter no longer advances (Next has only N).
+        keymap.set(&json!({"action": "show:next", "keys": ["N"]})).unwrap();
+        keymap.set(&json!({"action": "show:previous", "keys": ["Space"]})).unwrap();
+        let show = Show::new(&doc, 0, false, true);
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+            move |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+                let now = ui.input(|i| i.time);
+                presenter_window(ui.ctx(), show, doc, now, keep, &keymap);
+            },
+            (doc, show, true),
+        );
+        harness.run_steps(2);
+        // On slide 2, with the keyboard on the Next button.
+        for _ in 0..2 {
+            harness.get_by_label("Next ▶").click();
+            harness.run_steps(2);
+        }
+        assert_eq!(harness.state().1.state.slide, 2);
+        harness.get_by_label("Next ▶").focus();
+        harness.run_steps(2);
+        assert!(harness.ctx.memory(|m| m.focused()).is_some(), "Next has the keyboard");
+        harness.key_press(egui::Key::Space);
+        harness.run_steps(2);
+        assert_eq!(harness.state().1.state.slide, 1, "Space goes back once, without also pressing Next");
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        assert_eq!(harness.state().1.state.slide, 1, "Enter does nothing, not even press Next");
+        // Go to Slide keeps Enter and Backspace (Previous lost Backspace): 3, 1, Backspace, Enter.
+        for k in [egui::Key::Num3, egui::Key::Num1, egui::Key::Backspace, egui::Key::Enter] {
+            harness.key_press(k);
+            harness.run_steps(2);
+        }
+        assert_eq!(harness.state().1.state.slide, 2, "typed 3 goes to the third slide");
+        assert!(harness.state().1.goto.is_empty());
     }
 
     #[test]

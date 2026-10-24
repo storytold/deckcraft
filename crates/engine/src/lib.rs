@@ -343,6 +343,15 @@ pub struct Prefs {
     pub undo_limit: usize,
     /// Minutes between AutoRecover saves of unsaved presentations.
     pub recovery_minutes: f64,
+    /// New presentations (File › Settings › New Presentations): the built-in theme `file.new`
+    /// uses when it isn't given one; empty is DeckCraft's default.
+    pub new_theme: String,
+    /// New presentations: `standard` (4:3); anything else is widescreen (16:9).
+    pub new_size: String,
+    /// New presentations: heading and body font; empty keeps the theme's.
+    pub new_font: String,
+    /// Set as Default Shape: the look new shapes get, kept between sessions.
+    pub default_shape: Option<cmd::format::Painted>,
 }
 
 impl Default for Prefs {
@@ -365,6 +374,10 @@ impl Default for Prefs {
             author: "Presenter".into(),
             undo_limit: 500,
             recovery_minutes: 1.0,
+            new_theme: String::new(),
+            new_size: String::new(),
+            new_font: String::new(),
+            default_shape: None,
         }
     }
 }
@@ -384,6 +397,14 @@ impl Prefs {
         self.recovery_minutes = within(self.recovery_minutes, 0.1, 24.0 * 60.0, d.recovery_minutes);
         if self.author.chars().count() > 256 {
             self.author = self.author.chars().take(256).collect();
+        }
+        // New presentations are standard (4:3) or widescreen (empty), whatever the file's spelling.
+        self.new_size = if self.new_size.eq_ignore_ascii_case("standard") { "standard".into() } else { String::new() };
+        // A picture fill in the default shape names a picture no other presentation has.
+        if let Some(d) = &mut self.default_shape
+            && matches!(d.fill, Some(deckcraft_model::Fill::Picture(_)))
+        {
+            d.fill = None;
         }
         self
     }
@@ -462,8 +483,6 @@ pub struct Session {
     pub painter: Option<(cmd::format::Painted, bool)>,
     /// Animation Painter: copied shape animations and whether it stays on (double-click).
     pub anim_painter: Option<(Vec<deckcraft_model::anim::Animation>, bool)>,
-    /// Set as Default Shape: the look new shapes get.
-    pub default_look: Option<cmd::format::Painted>,
     /// Nesting of commands run by commands: only the outermost one is an undo step and a journal
     /// entry.
     depth: u32,
@@ -502,7 +521,6 @@ impl Session {
             ui_requests: vec![],
             tool: tools::ToolState::default(),
             untitled: 0,
-            default_look: None,
             painter: None,
             anim_painter: None,
             depth: 0,

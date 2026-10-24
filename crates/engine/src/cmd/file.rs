@@ -17,7 +17,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "New Presentation",
             ["File"],
             Some("Cmd+N"),
-            "{theme?: name, template?: starter name, size?: [w,h] pt, blank?: bool}",
+            "{theme?: name, template?: starter name, size?: [w,h] pt, blank?: bool} (missing ones: Settings › New Presentations)",
             always,
             new
         ),
@@ -80,12 +80,12 @@ fn theme_named(name: &str) -> Option<deckcraft_model::Theme> {
     deckcraft_model::theme::builtin_themes().into_iter().find(|t| t.name.eq_ignore_ascii_case(name))
 }
 
-fn slide_size(p: &Value) -> deckcraft_geom::Size {
+fn slide_size(p: &Value, default: deckcraft_geom::Size) -> deckcraft_geom::Size {
     p.get("size")
         .and_then(Value::as_array)
         .and_then(|a| Some(deckcraft_geom::Size::new(a.first()?.as_f64()?, a.get(1)?.as_f64()?)))
         .filter(|s| s.width >= 1.0 && s.height >= 1.0 && s.width < 5000.0 && s.height < 5000.0)
-        .unwrap_or(defaults::WIDE)
+        .unwrap_or(default)
 }
 
 fn templates(_s: &mut Session, _p: &Value) -> Result<Value> {
@@ -108,13 +108,20 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
     if template.is_some() && bool_or(p, "blank", false) {
         return Err(bad("file.new", "a template is not a blank presentation"));
     }
-    let size = slide_size(p);
+    // What isn't given comes from Settings › New Presentations.
+    let prefs = &s.prefs;
+    let size = slide_size(p, if prefs.new_size.eq_ignore_ascii_case("standard") { defaults::STANDARD } else { defaults::WIDE });
     let (doc, template_name) = if let Some(name) = template {
         let doc = crate::templates::build(name, size)?;
         let chosen = crate::templates::find(name).map(|t| t.name);
         (doc, chosen)
     } else {
-        let theme = theme_name.and_then(theme_named).unwrap_or_default();
+        let mut theme = theme_name.or(Some(prefs.new_theme.as_str())).and_then(theme_named).unwrap_or_default();
+        let font = prefs.new_font.trim();
+        if !font.is_empty() && font.len() <= 128 {
+            theme.fonts.major.latin = font.to_string();
+            theme.fonts.minor.latin = font.to_string();
+        }
         (defaults::blank_presentation(size, theme, !bool_or(p, "blank", false)), None)
     };
     let slides = doc.slides.len();

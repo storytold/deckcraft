@@ -89,7 +89,7 @@ fn page_ids_round_trip_and_unknown_ids_are_refused() {
     assert_eq!(Page::parse(""), None);
     let (top, bottom) = entries(false);
     assert_eq!(top, vec![Nav::Page(Page::Home), Nav::Page(Page::New), Nav::Page(Page::Open)], "the start screen has no presentation pages");
-    assert_eq!(bottom, vec![Nav::Page(Page::Account), Nav::Options]);
+    assert_eq!(bottom, vec![Nav::Page(Page::Account), Nav::Page(Page::Settings), Nav::Options]);
     assert_eq!(entries(true).0.len(), 9);
     assert_eq!(split_path("/home/me/Talk.pptx"), ("Talk.pptx".into(), "/home/me".into()));
     assert_eq!(format_bytes(512), "512 bytes");
@@ -560,6 +560,458 @@ fn print_slides_follow_the_settings() {
     assert!((w - 841.89).abs() < 0.01 && (h - 595.28).abs() < 0.01);
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
+}
+
+// ---------- Interface themes (File › Settings › Themes) ----------
+
+/// The title bar's gear opens File › Settings on its Themes tab, where clicking a theme card switches the interface
+/// theme; Custom shows its colour pickers, and Esc goes back to the slide.
+#[test]
+fn the_gear_opens_settings_and_theme_cards_apply() {
+    let mut h = harness(new_app());
+    h.get_by_label("Open Settings").click();
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::Settings));
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.settings_tab), Some(SettingsTab::General));
+    h.get_by_label("Themes").click();
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.settings_tab), Some(SettingsTab::Themes));
+
+    h.get_by_label("Lagoon").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_theme, theme::UiTheme::Lagoon);
+    assert_eq!(Tokens::get(&h.ctx).accent, h.state().tokens().accent, "the theme is applied");
+
+    h.get_by_label("High Contrast").click();
+    h.run_steps(3);
+    assert!(Tokens::get(&h.ctx).high_contrast);
+    assert!(h.query_by_label("Window tint").is_none());
+
+    h.get_by_label("Custom").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Window tint").is_some(), "Custom shows its colours");
+
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert_eq!(page(&h), None);
+    assert_eq!(h.state().ui.ui_theme, theme::UiTheme::Custom, "leaving keeps the theme");
+}
+
+#[test]
+fn ui_theme_command_sets_and_validates() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    let r = app.run("view.uiTheme", json!({"theme": "highContrast"})).unwrap();
+    assert_eq!(r["theme"], "highContrast");
+    assert!(app.tokens().high_contrast);
+
+    // A custom colour alone switches to Custom.
+    let r = app.run("view.uiTheme", json!({"tint": "#00ff80", "strength": 7.5})).unwrap();
+    assert_eq!(app.ui.ui_theme, theme::UiTheme::Custom);
+    assert_eq!(app.ui.custom_theme.tint, [0x00, 0xFF, 0x80]);
+    assert_eq!(r["strength"].as_f64(), Some(1.0), "strength is clamped");
+
+    // Hostile input is refused and changes nothing.
+    let before = (app.ui.ui_theme, app.ui.custom_theme);
+    for bad in [
+        json!({"theme": "neon"}),
+        json!({"theme": 3}),
+        json!({"accent": "#12345"}),
+        json!({"accent": "#zzzzzz"}),
+        json!({"accent": "#+1+2+3"}),
+        json!({"tint": 42}),
+        json!({"accent": "#ééé"}),
+        json!({"strength": "lots"}),
+    ] {
+        assert!(app.run("view.uiTheme", bad.clone()).is_err(), "{bad} should be refused");
+        assert_eq!((app.ui.ui_theme, app.ui.custom_theme), before, "{bad} changed the theme");
+    }
+}
+
+#[test]
+fn the_theme_is_saved_with_the_ui_state() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    app.run("view.uiTheme", json!({"theme": "lagoon"})).unwrap();
+    app.run("view.dark", json!({"on": true})).unwrap();
+    let saved = serde_json::to_value(&app.ui).unwrap();
+    assert_eq!(saved["uiTheme"], "lagoon");
+    let back: crate::UiState = serde_json::from_value(saved).unwrap();
+    assert_eq!((back.ui_theme, back.brightness), (theme::UiTheme::Lagoon, theme::Brightness::Dark));
+    // Settings saved before themes existed still load, as Standard.
+    let old: crate::UiState = serde_json::from_value(json!({"brightness": "dark", "tab": "Home"})).unwrap();
+    assert_eq!((old.ui_theme, old.brightness), (theme::UiTheme::Standard, theme::Brightness::Dark));
+}
+
+// ---------- Keyboard shortcuts (File › Settings, #127) and Reset all settings ----------
+
+fn ctrl_alt() -> Modifiers {
+    Modifiers { ctrl: true, alt: true, command: true, ..Modifiers::NONE }
+}
+
+/// Ctrl+Alt+Shift (Ctrl+Alt+G and Ctrl+Alt+Shift+G are taken; Ctrl+Alt+Shift+J is free).
+fn ctrl_alt_shift() -> Modifiers {
+    Modifiers { shift: true, ..ctrl_alt() }
+}
+
+/// A custom key runs its action in the editor, and the action's built-in key stops working.
+#[test]
+fn a_custom_editor_key_replaces_the_built_in_one() {
+    let mut h = harness(new_app());
+    h.state_mut().run("keys.set", json!({"action": "view.gridlines", "keys": ["Cmd+Alt+Shift+J"]})).unwrap();
+    assert!(!h.state().ui.gridlines);
+    h.key_press_modifiers(ctrl_alt_shift(), Key::J);
+    h.run_steps(2);
+    assert!(h.state().ui.gridlines, "Ctrl+Alt+Shift+J toggles the gridlines");
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F9);
+    h.run_steps(2);
+    assert!(h.state().ui.gridlines, "Shift+F9 no longer does");
+    h.state_mut().run("keys.reset", json!({})).unwrap();
+    h.key_press_modifiers(Modifiers::SHIFT, Key::F9);
+    h.run_steps(2);
+    assert!(!h.state().ui.gridlines, "after a reset Shift+F9 works again");
+}
+
+/// Ctrl+C arrives as a Copy event too: once Copy has other keys, the event no longer copies.
+#[test]
+fn a_moved_copy_key_no_longer_copies() {
+    let mut h = harness(new_app());
+    let title = h.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+    h.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+    h.state_mut().session.type_text("Aurora").unwrap();
+    h.state_mut().session.key("Escape", deckcraft_engine::Mods::default()).unwrap();
+    h.state_mut().run("keys.set", json!({"action": "edit.copy", "keys": ["Cmd+Alt+C"]})).unwrap();
+    h.event(egui::Event::Copy);
+    h.run_steps(2);
+    assert_eq!(h.state().session.clipboard.plain, "", "the Copy event was dropped");
+    h.key_press_modifiers(ctrl_alt(), Key::C);
+    h.run_steps(2);
+    assert_eq!(h.state().session.clipboard.plain, "Aurora", "Ctrl+Alt+C copies");
+}
+
+/// Ctrl+C, Ctrl+X and Ctrl+V given to another action run it. egui-winit sends only the Copy,
+/// Cut or Paste event for them, no key press; the web build sends both, and the action runs once.
+#[test]
+fn a_clipboard_key_given_to_another_action_runs_it() {
+    let mut h = harness(new_app());
+    for (event, key) in [(egui::Event::Copy, "Cmd+C"), (egui::Event::Cut, "Cmd+X"), (egui::Event::Paste("x".into()), "Cmd+V")] {
+        h.state_mut().run("keys.set", json!({"action": "view.gridlines", "keys": [key], "replace": true})).unwrap();
+        let before = h.state().ui.gridlines;
+        h.event(event.clone());
+        h.run_steps(2);
+        assert_eq!(h.state().ui.gridlines, !before, "{key} as the event alone toggles the gridlines");
+        // The key press and the event in one frame, as the web build gets them: one toggle, not two.
+        let k = match key {
+            "Cmd+C" => Key::C,
+            "Cmd+X" => Key::X,
+            _ => Key::V,
+        };
+        let events = &mut h.input_mut().events;
+        events.push(egui::Event::Key { key: k, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::COMMAND });
+        events.push(event);
+        h.step();
+        h.run_steps(2);
+        assert_eq!(h.state().ui.gridlines, before, "{key} with its key press toggles once");
+    }
+    assert_eq!(h.state().session.clipboard.plain, "", "nothing was copied");
+}
+
+/// Slide-show keys can be remapped to plain keys.
+#[test]
+fn a_custom_show_key_advances_the_show() {
+    let mut app = new_app();
+    app.session.execute("slide.new", &json!({})).unwrap();
+    app.session.execute("slide.new", &json!({})).unwrap();
+    app.run("keys.set", json!({"action": "show:next", "keys": ["X"]})).unwrap();
+    let mut h = harness(app);
+    h.state_mut().start_show(0, true);
+    h.run_steps(3);
+    let slide = |h: &Harness<'_, SlideApp>| h.state().show.as_ref().map(|s| s.state.slide);
+    assert_eq!(slide(&h), Some(0));
+    h.key_press(Key::Space);
+    h.run_steps(3);
+    assert_eq!(slide(&h), Some(0), "Space no longer advances");
+    h.key_press(Key::X);
+    h.run_steps(3);
+    assert_eq!(slide(&h), Some(1), "X does");
+}
+
+/// The page records a key from a real key press, and asks before taking one another command has.
+#[test]
+fn the_shortcuts_page_records_keys_and_asks_before_moving_one() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "settings"})).unwrap();
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::Settings));
+    h.get_by_label("Keyboard Shortcuts").click();
+    h.run_steps(3);
+    assert_eq!(h.state().backstage.as_ref().map(|b| b.settings_tab), Some(SettingsTab::Shortcuts));
+    h.state_mut().backstage.as_mut().unwrap().query = "gridlines".into();
+    h.run_steps(2);
+    h.get_by_label("Add a key to Gridlines").click();
+    h.run_steps(2);
+    assert_eq!(h.state().backstage.as_ref().unwrap().recording.as_deref(), Some("view.gridlines"));
+    h.key_press_modifiers(ctrl_alt_shift(), Key::J);
+    h.run_steps(3);
+    let keys = |h: &Harness<'_, SlideApp>| h.state().ui.keymap.0.get("view.gridlines").cloned();
+    assert_eq!(keys(&h), Some(vec!["Shift+F9".to_string(), "Cmd+Alt+Shift+J".to_string()]));
+    assert_eq!(page(&h), Some(Page::Settings), "recording swallowed the key: nothing else ran");
+
+    // Ctrl+O belongs to Open: the page asks, and only moves it when told to.
+    h.get_by_label("Add a key to Gridlines").click();
+    h.run_steps(2);
+    h.key_press_modifiers(Modifiers::COMMAND, Key::O);
+    h.run_steps(3);
+    assert!(h.state().backstage.as_ref().unwrap().clash.is_some());
+    assert_eq!(keys(&h).map(|k| k.len()), Some(2), "nothing moved yet");
+    h.get_by_label("Move it here").click();
+    h.run_steps(3);
+    assert!(keys(&h).unwrap().contains(&"Cmd+O".to_string()));
+    assert_eq!(h.state().ui.keymap.0.get("app.openDialog"), Some(&vec![]), "Open gave up Ctrl+O");
+
+    // An editor shortcut without Ctrl or Alt is refused.
+    h.get_by_label("Add a key to Gridlines").click();
+    h.run_steps(2);
+    h.key_press(Key::K);
+    h.run_steps(3);
+    assert!(h.state().backstage.as_ref().unwrap().key_note.is_some());
+    assert_eq!(keys(&h).map(|k| k.len()), Some(3));
+
+    // Ctrl+C comes as a Copy event only (egui-winit): it is recorded too, after asking, since
+    // Copy has it.
+    h.get_by_label("Add a key to Gridlines").click();
+    h.run_steps(2);
+    h.event(egui::Event::Copy);
+    h.run_steps(3);
+    assert!(h.state().backstage.as_ref().unwrap().recording.is_none(), "recording ended");
+    assert!(h.state().backstage.as_ref().unwrap().clash.is_some());
+    h.get_by_label("Move it here").click();
+    h.run_steps(3);
+    assert!(keys(&h).unwrap().contains(&"Cmd+C".to_string()));
+}
+
+/// Settings › Reset asks first, then puts everything back but the recent files.
+#[test]
+fn reset_all_settings_asks_then_resets_but_keeps_recent_files() {
+    let mut app = new_app();
+    app.ui.recent = vec!["talk.pptx".into()];
+    app.run("view.uiTheme", json!({"theme": "highContrast"})).unwrap();
+    app.run("view.dark", json!({"on": true})).unwrap();
+    app.run("keys.set", json!({"action": "edit.copy", "keys": ["Cmd+Alt+C"]})).unwrap();
+    app.session.prefs.smart_quotes = false;
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "settings", "tab": "reset"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Reset all settings…").click();
+    h.run_steps(2);
+    assert_eq!(h.state().ui.ui_theme, theme::UiTheme::HighContrast, "nothing happens before confirming");
+    click_on_page(&h, "Yes, reset everything");
+    h.run_steps(3);
+    let app = h.state();
+    assert_eq!((app.ui.ui_theme, app.ui.brightness), (theme::UiTheme::Standard, theme::Brightness::Light));
+    assert!(app.ui.keymap.0.is_empty() && app.session.prefs.smart_quotes);
+    assert_eq!(app.ui.recent, vec!["talk.pptx".to_string()]);
+    assert!(!Tokens::get(&h.ctx).high_contrast, "the look is reset too");
+}
+
+// ---------- File › Settings: General, New Presentations, search, backup, cheat sheet ----------
+
+fn settings_tab(h: &Harness<'_, SlideApp>) -> Option<SettingsTab> {
+    h.state().backstage.as_ref().map(|b| b.settings_tab)
+}
+
+/// The search box finds a setting by its name or by other words, and jumps to its tab.
+#[test]
+fn settings_search_finds_settings_and_jumps_to_their_tab() {
+    let tabs = |q: &str| settings_search(q).into_iter().map(|h| h.0).collect::<Vec<_>>();
+    assert!(tabs("dark").contains(&SettingsTab::Themes));
+    assert_eq!(tabs("zoom"), vec![SettingsTab::General]);
+    assert_eq!(tabs("factory"), vec![SettingsTab::Backup]);
+    assert_eq!(tabs("PRINT cheat"), vec![SettingsTab::Shortcuts], "every word, any case");
+    assert!(settings_search("").is_empty() && settings_search("zzz").is_empty());
+
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "settings"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Search settings").click();
+    h.run_steps(2);
+    h.get_by_label("Search settings").type_text("4:3");
+    h.run_steps(3);
+    assert_eq!(settings_tab(&h), Some(SettingsTab::NewPresentations));
+    assert_eq!(h.query_all_by_label("Slide size").count(), 2, "listed under its tab, and shown on it");
+}
+
+/// General: interface size (presets, steps, limits), reduce motion and what opens at start.
+#[test]
+fn the_general_tab_sets_size_motion_and_startup() {
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "settings", "tab": "general"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("125%").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_scale, 1.25);
+    h.get_by_label("+").click();
+    h.run_steps(3);
+    assert!((h.state().ui.ui_scale - 1.3).abs() < 1e-4);
+    assert_eq!(h.state_mut().run("view.interfaceSize", json!({"scale": 50})).unwrap()["scale"], 2.0);
+    assert!(h.state_mut().run("view.interfaceSize", json!({"scale": "big"})).is_err());
+    h.state_mut().run("view.interfaceSize", json!({"scale": 1})).unwrap();
+    h.run_steps(3);
+
+    h.get_by_label("Reduce motion").click();
+    h.run_steps(3);
+    assert!(h.state().ui.reduce_motion);
+    assert_eq!(h.ctx.global_style().animation_time, 0.0, "the interface stops animating");
+
+    h.get_by_label("A new blank presentation").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.startup, crate::Startup::Blank);
+    assert!(h.state_mut().run("app.startup", json!({"open": "sometimes"})).is_err());
+}
+
+/// What opens at start, when nothing else did.
+#[test]
+fn startup_opens_what_the_setting_says() {
+    let fresh = |startup: crate::Startup, recent: Vec<String>| {
+        let mut app = SlideApp::new(Session::new(), Services::default());
+        app.ui.startup = startup;
+        app.ui.recent = recent;
+        app.startup();
+        app
+    };
+    assert!(fresh(crate::Startup::StartScreen, vec![]).session.active().is_none());
+    assert!(fresh(crate::Startup::Blank, vec![]).session.active().is_some());
+    // The last file is gone: no crash, the start screen and a note.
+    let app = fresh(crate::Startup::LastFile, vec!["/no/such/talk.pptx".into()]);
+    assert!(app.session.active().is_none());
+    assert!(app.status.as_ref().is_some_and(|s| s.0.contains("talk.pptx")));
+
+    let dir = temp_dir("startup");
+    let path = dir.join("talk.deckcraft").to_string_lossy().to_string();
+    let mut maker = new_app();
+    maker.session.execute("file.saveAs", &json!({"path": path})).unwrap();
+    let app = fresh(crate::Startup::LastFile, vec![path.clone()]);
+    assert_eq!(app.session.active().and_then(|d| d.path.clone()), Some(path));
+    // Something already open (a file given on the command line) wins.
+    let mut app = new_app();
+    app.ui.startup = crate::Startup::Blank;
+    app.startup();
+    assert_eq!(app.session.documents().len(), 1);
+}
+
+/// New Presentations: theme, slide size and font for every new presentation.
+#[test]
+fn the_new_presentations_tab_sets_what_new_presentations_start_with() {
+    let last = deckcraft_model::theme::builtin_themes().last().map(|t| t.name.clone()).unwrap();
+    let mut h = harness(new_app());
+    h.state_mut().run("app.backstage", json!({"page": "settings", "tab": "new"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Standard (4:3)").click();
+    h.run_steps(3);
+    let app = h.state_mut();
+    assert_eq!(app.session.prefs.new_size, "standard");
+    app.run("settings.newPresentation", json!({"theme": last.to_uppercase(), "font": "Georgia"})).unwrap();
+    assert_eq!(app.session.prefs.new_theme, last, "stored under its own name");
+    assert!(app.run("settings.newPresentation", json!({"theme": "Not A Theme"})).is_err());
+    assert!(app.run("settings.newPresentation", json!({"size": "huge"})).is_err());
+    // A refused call keeps nothing, not even its valid parts; values that aren't text are refused.
+    for bad in [json!({"font": "Arial", "size": "huge"}), json!({"theme": "", "font": 5}), json!({"size": true})] {
+        assert!(app.run("settings.newPresentation", bad.clone()).is_err(), "{bad} should be refused");
+        assert_eq!((app.session.prefs.new_theme.as_str(), app.session.prefs.new_font.as_str()), (last.as_str(), "Georgia"), "{bad} changed a pref");
+        assert_eq!(app.session.prefs.new_size, "standard", "{bad} changed the size");
+    }
+    app.run("file.new", json!({})).unwrap();
+    let doc = &app.session.active().unwrap().doc;
+    assert_eq!(doc.slide_size, deckcraft_model::defaults::STANDARD);
+    assert_eq!((doc.masters[0].theme.name.as_str(), doc.masters[0].theme.fonts.minor.latin.as_str()), (last.as_str(), "Georgia"));
+    let v = app.run("settings.newPresentation", json!({"theme": "", "size": "widescreen", "font": ""})).unwrap();
+    assert_eq!(v, json!({"theme": "", "size": "widescreen", "font": "", "defaultShape": false}));
+}
+
+/// Backup and Reset: a backup file brings every setting back, but not the recent files or the Text
+/// Pane's SmartArt drafts; a file that isn't a backup changes nothing.
+#[test]
+fn settings_back_up_to_a_file_and_restore_from_it() {
+    let dir = temp_dir("settings-backup");
+    let file = dir.join("DeckCraft settings.json");
+    let services = |dir: std::path::PathBuf| Services {
+        pick_save: Some(Box::new(move |name: &str| Some(dir.join(name).to_string_lossy().to_string()))),
+        pick_open: Some(Box::new({
+            let f = file.to_string_lossy().to_string();
+            move |_: &str| Some(f.clone())
+        })),
+        read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
+        write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::with_new(), services(dir.clone()));
+    app.ui.recent = vec!["mine.pptx".into()];
+    app.ui.smartart_drafts = (7, vec!["Quarterly secret".into()]);
+    app.run("view.uiTheme", json!({"theme": "lagoon"})).unwrap();
+    app.run("keys.set", json!({"action": "view.gridlines", "keys": ["Cmd+Alt+Shift+J"]})).unwrap();
+    app.run("view.reduceMotion", json!({"on": true})).unwrap();
+    app.session.prefs.smart_quotes = false;
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "settings", "tab": "backup"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Back up settings…").click();
+    h.run_steps(3);
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("lagoon") && !text.contains("mine.pptx"), "the recent files stay out of the backup");
+    assert!(!text.contains("Quarterly secret"), "document text stays out of the backup");
+
+    let mut other = SlideApp::new(Session::with_new(), services(dir.clone()));
+    other.ui.recent = vec!["theirs.pptx".into()];
+    let mut h = harness(other);
+    h.state_mut().run("app.backstage", json!({"page": "settings", "tab": "backup"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Restore from a backup…").click();
+    h.run_steps(3);
+    let app = h.state_mut();
+    assert_eq!(app.ui.ui_theme, theme::UiTheme::Lagoon);
+    assert!(app.ui.reduce_motion && !app.session.prefs.smart_quotes);
+    assert_eq!(app.ui.keymap.0.get("view.gridlines"), Some(&vec!["Cmd+Alt+Shift+J".to_string()]));
+    assert_eq!(app.ui.recent, vec!["theirs.pptx".to_string()]);
+
+    // Not a backup: refused, nothing changes.
+    for bad in [json!({"deckcraft": "presentation"}), json!({"deckcraft": "settings", "ui": 5}), json!([1, 2])] {
+        assert!(app.run("settings.import", json!({"settings": bad})).is_err());
+    }
+    std::fs::write(&file, b"\x00\x01 not json").unwrap();
+    assert!(app.run("settings.import", json!({"path": file.to_string_lossy()})).is_err());
+    assert_eq!(app.ui.ui_theme, theme::UiTheme::Lagoon);
+
+    // A damaged or hand-edited backup is brought into range, like `ui.json` at start-up.
+    let wild = json!({"deckcraft": "settings", "ui": {"zoom": 100.0, "uiScale": 1.0e9, "thumbsWidth": -5.0}, "prefs": {"duplicateOffset": 1.0e12}});
+    app.run("settings.import", json!({"settings": wild})).unwrap();
+    assert_eq!(app.ui.zoom, Some(*crate::ZOOM_RANGE.end()));
+    assert_eq!(app.ui.ui_scale, crate::MAX_UI_SCALE, "the Settings slider's limit");
+    assert_eq!(app.ui.thumbs_width, 60.0);
+    assert_eq!(app.session.prefs.duplicate_offset, 1000.0);
+}
+
+/// Keyboard Shortcuts › Save cheat sheet…: a printable page of every key, the custom ones too.
+#[test]
+fn the_cheat_sheet_lists_every_shortcut() {
+    let dir = temp_dir("cheat-sheet");
+    let target = dir.clone();
+    let services = Services {
+        pick_save: Some(Box::new(move |name: &str| Some(target.join(name).to_string_lossy().to_string()))),
+        write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
+        ..Default::default()
+    };
+    let mut app = SlideApp::new(Session::with_new(), services);
+    app.run("keys.set", json!({"action": "view.gridlines", "keys": ["Cmd+Alt+Shift+J"]})).unwrap();
+    let v = app.run("keys.cheatSheet", json!({})).unwrap();
+    let text = v["text"].as_str().unwrap();
+    assert!(text.contains("Gridlines") && text.contains("Ctrl+Alt+Shift+J"), "{text}");
+    assert!(text.contains("Slide Show"));
+    let mut h = harness(app);
+    h.state_mut().run("app.backstage", json!({"page": "settings", "tab": "shortcuts"})).unwrap();
+    h.run_steps(3);
+    h.get_by_label("Save cheat sheet…").click();
+    h.run_steps(3);
+    let html = std::fs::read_to_string(dir.join("DeckCraft keyboard shortcuts.html")).unwrap();
+    assert!(html.starts_with("<!doctype html>") && html.contains("<kbd>"));
+    assert!(h.state().status.as_ref().is_some_and(|s| s.0.contains("cheat sheet")), "{:?}", h.state().status);
 }
 
 /// Options in the File tab opens the Preferences dialog, and Cancel closes it (#782, #752).

@@ -310,6 +310,7 @@ icons! {
     BackCircle => "back-circle",
     SaveAs => "save-as",
     Account => "account",
+    Keyboard => "keyboard",
     Recent => "recent",
     NewFile => "new-file",
     OpenFolder => "open-folder",
@@ -2382,6 +2383,15 @@ fn draw(p: &Pen<'_>, icon: Icon) {
         I::Account => {
             p.circle((12.0, 8.0), 4.5, N, K);
             p.line(&arc_pts((12.0, 22.0), 8.5, 7.5, 180.0, 360.0), K);
+        }
+        I::Keyboard => {
+            p.rect(2.0, 6.0, 22.0, 18.5, 2.0, N, K);
+            for (y, xs) in [(9.5, [5.5, 9.0, 12.5, 16.0, 19.0]), (12.5, [7.0, 10.5, 14.0, 17.5, 17.5])] {
+                for x in xs {
+                    p.dot((x, y), 0.9, K);
+                }
+            }
+            p.seg((7.5, 15.5), (16.5, 15.5), K);
         }
         I::Recent => {
             p.circle((12.0, 12.0), 9.8, N, K);

@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-23 · **Change:** trivial (scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (File › Settings: General, New Presentations, search, backup, cheat sheet; custom keyboard shortcuts and Reset all settings; File › Settings with Themes, Keyboard Shortcuts and Reset tabs; previous: trivial, scroll bars on the zoomed slide pane, #1157; before that: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
@@ -30,6 +30,16 @@ ends and are omitted from thumbnails, slide shows and exports.
 | Status bar: slide counter, language, notes, comments, views, zoom slider | yes | yes | |
 | Command search (Tell Me) | yes | command palette | |
 | Light / dark appearance | follows the system | light or dark; doesn't follow the system (#41) | 1–2 h |
+| Settings page | File › Options, a dialog with sections and no search | File › Settings: General, Themes, New Presentations, Keyboard Shortcuts, Backup and Reset tabs, with a search box over them; the title bar's gear opens it (`app.backstage {page: settings, tab}`) | |
+| Interface size | follows the system's display scaling | Settings › General: 90–175% presets and 5% steps, 75–200% (`view.interfaceSize`) | |
+| Reduce motion | follows the system's animation setting | Settings › General › Reduce motion: no animated menus, panes or scrolling; slide animations still play (`view.reduceMotion`) | |
+| What opens at start | Options › General: show the Start screen or not | Settings › General: the start screen, the last presentation or a blank one (`app.startup`); files given to DeckCraft always open | |
+| Defaults for new presentations | a default theme or template (Design › Set as Default Theme) | Settings › New Presentations: theme, slide size and font for `file.new`; Set as Default Shape is kept between sessions (`settings.newPresentation`) | |
+| Back up and restore settings | none in the app (settings roam with an account) | Settings › Backup and Reset: every setting to a JSON file and back, recent files left out (`settings.export`, `settings.import`) | |
+| Keyboard shortcut cheat sheet | none (a help page online) | Settings › Keyboard Shortcuts: Save cheat sheet… (a page to print, with your own keys) and Copy as text (`keys.cheatSheet`) | |
+| Custom keyboard shortcuts | no (fixed shortcuts) | File › Settings › Keyboard Shortcuts: own keys for any command and the slide-show actions, recorded from a key press, several per action, a warning before taking another action's key, reset per action or all (`keys.list`, `keys.set`, `keys.reset`, #127). Editor keys need Ctrl, Alt or a function key | |
+| Reset all settings | none (delete the registry key or the preference files) | File › Settings › Backup and Reset, confirmed in place (`app.resetSettings`); recent files stay | |
+| Interface themes and high contrast | Office Theme (Colorful, Dark Gray, Black, White) on File › Account; follows the system's high-contrast mode | File › Settings › Themes (also the title bar’s gear): Standard, High Contrast (WCAG AAA text, outlined controls), Lagoon, Sunset and Custom (own tint and accent, text kept readable), each light or dark, with previews (`view.uiTheme`); doesn't follow the system's high-contrast setting | 1–2 h |
 | One window per presentation, New Window, Arrange All | yes | New Window opens one more window on the same presentation (its own slide, live with edits); tabs stay in the first window; no Arrange All | Arrange All |
 | Quick Access Toolbar customization | yes | yes: Customize menu (common commands, reset), right-click any ribbon button to add, right-click a toolbar button to remove; saved with the UI state | done |
 
@@ -58,7 +68,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Share | Cloud sharing | Not offered |
 | Export | Create PDF/XPS Document, Create a Video, Create an Animated GIF, Package Presentation for CD, Create Handouts, Change File Type | Create PDF Document, Create Handouts (a PDF), Change File Type (PNG with an optional transparent background, #784). No video, GIF or CD package |
 | Close | Closes; asks Save / Don't Save / Cancel about unsaved changes | Same (`file.close` after the prompt); Ctrl+W asks too |
-| Account | User information, sign-in, Office Background and Office Theme, product information, About | Appearance (light/dark, `view.dark`), product information, About DeckCraft. No accounts to sign in to |
+| Account | User information, sign-in, Office Background and Office Theme, product information, About | Appearance: light/dark (`view.dark`) and a link to File › Settings, whose Themes tab holds the interface themes (`view.uiTheme`); product information, About DeckCraft. No accounts to sign in to |
 | Options | Opens the PowerPoint Options dialog | Opens Preferences |
 
 ## Panes and dialogs
@@ -176,6 +186,9 @@ consistency is open (#73, #56).
 | 2026-10-15 | minor | Edit Points: the right-click menu has Straight/Curved Segment on a segment and Open/Close Path on a point |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |
 | 2026-10-14 | minor | Community PR wave folded: one row each for Format Shape, Dialogs (41, listed from `dialogs.rs`), Animation Pane (timeline is in), window, Quick Access Toolbar, Format Background, rulers, image paste, context menus, exact size and edit points; estimates re-totalled (~26–46 h) |
+| 2026-10-13 | minor | Settings page, interface size, reduce motion, startup, new-presentation defaults, settings backup and shortcut cheat sheet rows |
+| 2026-10-13 | minor | Custom keyboard shortcuts and Reset all settings rows |
+| 2026-10-13 | minor | Interface themes on File › Account, and the title bar's gear that opens it |
 | 2026-10-13 | trivial | Eyedropper in the colour menus (#367) |
 | 2026-10-12 | minor | Title bar: an Export button next to Save opens the Export dialog, a quick-access shortcut beside File › Export |
 | 2026-10-12 | minor | A right click selects the shape under the pointer before its context menu opens, as in PowerPoint; edited text keeps its selection and gets text items |
