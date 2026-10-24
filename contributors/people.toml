@@ -62,3 +62,6 @@ sync_github_name = false
 
 [people.GhostMitra]
 sync_github_name = true
+
+[people.Katacc]
+sync_github_name = true

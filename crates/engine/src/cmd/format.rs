@@ -6,6 +6,7 @@ use deckcraft_model::resolve;
 use deckcraft_model::text::{Align, Anchor, AutoFit, Bullet, Caps, ParaProps, RunProps, Spacing, Strike, TabStop, TextDir};
 use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot, Shape, ShapeKind};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use super::text::{format_body, format_para, format_run};
 use super::*;
@@ -59,6 +60,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{lang?, noProof?: bool} (proofing language of the selected text, and Do Not Check Spelling)",
             has_text_or_shapes,
             language
+        ),
+        cmd!(
+            "format.languageAll",
+            "Language for All Text",
+            ["Review", "Language"],
+            None,
+            "{lang?, noProof?: bool} (proofing language of every text in the presentation: slides, tables, notes, masters and layouts, and the default for new text; one undo step)",
+            has_doc,
+            language_all
         ),
         cmd!("format.highlight", "Text Highlight Color", ["Home", "Font"], None, "{color? (absent = none)}", has_text_or_shapes, highlight),
         cmd!(
@@ -398,16 +408,17 @@ fn text_transparency(s: &mut Session, p: &Value) -> Result<Value> {
         r.fill = Some(f);
     })
 }
-fn language(s: &mut Session, p: &Value) -> Result<Value> {
+/// The `lang` and `noProof` params of the language commands, checked: a run-props setter.
+fn language_edit(id: &str, p: &Value) -> Result<impl Fn(&mut RunProps) + Send + Sync + 'static> {
     let lang = str_param(p, "lang").map(str::to_string);
     let no_proof = bool_param(p, "noProof");
     if lang.is_none() && no_proof.is_none() {
-        return Err(bad("format.language", "give `lang` or `noProof`"));
+        return Err(bad(id, "give `lang` or `noProof`"));
     }
     if lang.as_deref().is_some_and(|l| l.is_empty() || l.len() > 35 || !l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')) {
-        return Err(bad("format.language", "`lang` is a language tag such as en-US"));
+        return Err(bad(id, "`lang` is a language tag such as en-US"));
     }
-    format_run(s, &move |r| {
+    Ok(move |r: &mut RunProps| {
         if let Some(l) = &lang {
             r.lang = Some(l.clone());
         }
@@ -415,6 +426,61 @@ fn language(s: &mut Session, p: &Value) -> Result<Value> {
             r.no_proof = n.then_some(true);
         }
     })
+}
+/// Review › Language on the selected text (or the selected shapes' text).
+fn language(s: &mut Session, p: &Value) -> Result<Value> {
+    let f = language_edit("format.language", p)?;
+    format_run(s, &f)
+}
+/// Every run in the deck, and the text styles new text inherits from, in one language.
+fn language_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let f = language_edit("format.languageAll", p)?;
+    /// Runs, end marks and the body's own list style levels (never creating one).
+    fn body(t: &mut deckcraft_model::text::TextBody, f: &dyn Fn(&mut RunProps)) {
+        ed::format_all(t, f);
+        t.list_style.levels.iter_mut().flatten().for_each(|lv| f(&mut lv.run));
+    }
+    /// Every text body in `list`: shapes, table cells and groups (nested at most 64 deep).
+    fn shapes(list: &mut [Shape], f: &dyn Fn(&mut RunProps), depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for sh in list {
+            if let Some(t) = &mut sh.text {
+                body(t, f);
+            }
+            match &mut sh.kind {
+                deckcraft_model::ShapeKind::Table(t) => t.rows.iter_mut().flat_map(|r| &mut r.cells).for_each(|c| body(&mut c.text, f)),
+                deckcraft_model::ShapeKind::Group { children, .. } => shapes(children, f, depth + 1),
+                _ => {}
+            }
+        }
+    }
+    /// A master or presentation text style's levels: what new text inherits.
+    fn styles(l: &mut deckcraft_model::text::ListStyle, f: &dyn Fn(&mut RunProps)) {
+        // Level 1 always, so a deck without a default text style gets one.
+        if l.level(0).is_none() {
+            l.set(0, Default::default());
+        }
+        l.levels.iter_mut().flatten().for_each(|lv| f(&mut lv.run));
+    }
+    s.edit(|doc, _| {
+        for sl in &mut doc.slides {
+            let sl = Arc::make_mut(sl);
+            shapes(&mut sl.shapes, &f, 0);
+            body(&mut sl.notes, &f);
+        }
+        let extra = [doc.notes_master.as_mut(), doc.handout_master.as_mut()];
+        for m in doc.masters.iter_mut().chain(extra.into_iter().flatten()) {
+            let m = Arc::make_mut(m);
+            shapes(&mut m.shapes, &f, 0);
+            m.layouts.iter_mut().for_each(|l| shapes(&mut l.shapes, &f, 0));
+            [&mut m.title_style, &mut m.body_style, &mut m.other_style].into_iter().for_each(|l| styles(l, &f));
+        }
+        styles(&mut doc.default_text_style, &f);
+        Ok(())
+    })?;
+    ok()
 }
 fn highlight(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color");

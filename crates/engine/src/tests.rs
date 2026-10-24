@@ -3756,6 +3756,64 @@ fn language_marks_text_and_no_proof_and_repeats_are_reported() {
     assert!(s.execute("format.language", &json!({"lang": "en US!"})).is_err());
 }
 
+/// Review › Language › Whole presentation: every run, placeholder list style and default text style
+/// takes the language, with nothing selected, in one undo step.
+#[test]
+fn language_all_marks_every_text_in_the_deck_with_nothing_selected() {
+    crate::spell::install("xx-AL", crate::spell::Dictionary::parse(b"", b"2\nhello\nworld\n"));
+    let mut s = session();
+    let a =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "hello wurld"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    s.execute("format.language", &json!({"lang": "de-DE"})).unwrap();
+    s.execute("slide.new", &json!({"title": "world hellow"})).unwrap();
+    s.execute("insert.table", &json!({"rows": 1, "cols": 1})).unwrap();
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+    // A layout placeholder with its own list style (a:lstStyle) in another language.
+    let placeholder = s
+        .edit(|doc, _| {
+            let m = std::sync::Arc::make_mut(doc.masters.first_mut().unwrap());
+            let sh = m.layouts[0].shapes.iter_mut().find(|sh| sh.text.is_some()).unwrap();
+            let lv = deckcraft_model::text::LevelStyle {
+                run: deckcraft_model::RunProps { lang: Some("de-DE".into()), ..Default::default() },
+                ..Default::default()
+            };
+            sh.text.as_mut().unwrap().list_style.set(0, lv);
+            Ok(sh.id)
+        })
+        .unwrap();
+    s.execute("format.languageAll", &json!({"lang": "xx-AL"})).unwrap();
+    let st = s.doc().unwrap();
+    let ph = deckcraft_model::find_shape(&st.doc.masters[0].layouts[0].shapes, placeholder).unwrap();
+    assert_eq!(ph.text.as_ref().unwrap().list_style.level(0).unwrap().run.lang.as_deref(), Some("xx-AL"));
+    // A body without a list style doesn't get one.
+    let boxed = st.doc.slides.iter().find_map(|sl| deckcraft_model::find_shape(&sl.shapes, deckcraft_model::ShapeId(a as u32))).unwrap();
+    assert!(boxed.text.as_ref().unwrap().list_style.is_empty());
+    let mut langs = vec![];
+    for sl in &st.doc.slides {
+        deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
+            langs.extend(sh.text.iter().flat_map(|t| &t.paragraphs).flat_map(|p| &p.runs).map(|r| r.props.lang.clone()));
+            if let deckcraft_model::ShapeKind::Table(t) = &sh.kind {
+                langs.extend(t.rows.iter().flat_map(|r| &r.cells).flat_map(|c| &c.text.paragraphs).map(|p| p.end_props.lang.clone()));
+            }
+        });
+    }
+    assert!(!langs.is_empty() && langs.iter().all(|l| l.as_deref() == Some("xx-AL")), "{langs:?}");
+    // The defaults new text inherits.
+    assert_eq!(st.doc.default_text_style.level(0).unwrap().run.lang.as_deref(), Some("xx-AL"));
+    assert!(st.doc.masters.iter().all(|m| m.body_style.level(0).is_some_and(|l| l.run.lang.as_deref() == Some("xx-AL"))));
+    let words: Vec<String> =
+        s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().iter().map(|w| w["word"].as_str().unwrap().to_string()).collect();
+    assert_eq!(words, vec!["wurld", "hellow"]);
+    // One undo step puts the per-box language back.
+    s.execute("edit.undo", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides.iter().find_map(|sl| deckcraft_model::find_shape(&sl.shapes, deckcraft_model::ShapeId(a as u32))).unwrap();
+    assert_eq!(sh.text.as_ref().unwrap().paragraphs[0].runs[0].props.lang.as_deref(), Some("de-DE"));
+    assert!(s.execute("format.languageAll", &json!({})).is_err());
+    assert!(s.execute("format.languageAll", &json!({"lang": "en US!"})).is_err());
+}
+
 #[test]
 fn the_caret_takes_the_colour_of_the_text() {
     let caret = |theme: &str| {

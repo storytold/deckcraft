@@ -2031,7 +2031,21 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let (cur, np) = selected_language(app);
             let lang = d.get("lang", &cur);
             let mut no_proof = d.get("noProof", if np { "1" } else { "" }) == "1";
-            ui.label("Mark selected text as:");
+            // The selected text, or every text in the presentation (all there is with nothing selected).
+            let has_sel = deckcraft_engine::cmd::has_text_or_shapes(&app.session).is_ok();
+            let mut all = !has_sel || d.get("scope", "") == "all";
+            ui.horizontal(|ui| {
+                ui.label("Apply to:");
+                if ui.add_enabled(has_sel, egui::RadioButton::new(!all, "Selected text")).clicked() {
+                    d.fields.insert("scope".into(), "sel".into());
+                    all = false;
+                }
+                if ui.radio(all, "Whole presentation").clicked() {
+                    d.fields.insert("scope".into(), "all".into());
+                    all = true;
+                }
+            });
+            ui.label(if all { "Mark all text in the presentation as:" } else { "Mark selected text as:" });
             egui::ScrollArea::vertical().max_height(220.0).show(ui, |ui| {
                 // The selection's own language first when the list doesn't have it.
                 let own = (!crate::squiggles::LANGS.iter().any(|(_, t)| t.eq_ignore_ascii_case(&cur))).then(|| (cur.clone(), cur.clone()));
@@ -2052,7 +2066,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let (ok, cancel) = buttons(ui, "OK");
             if ok {
                 let lang = d.get("lang", &cur);
-                run(app, "format.language", json!({"lang": lang, "noProof": no_proof}));
+                run(app, if all { "format.languageAll" } else { "format.language" }, json!({"lang": lang, "noProof": no_proof}));
             }
             ok || cancel
         }
