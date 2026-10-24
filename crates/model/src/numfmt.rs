@@ -275,6 +275,11 @@ fn fixed(toks: &[Tok], first: usize, last: usize, v: f64, sep: char, dec: char) 
     if !x.is_finite() {
         x = 0.0;
     }
+    // Excel rounds halves away from zero; `format!` rounds exact binary halves to even.
+    let scale = 10f64.powi(max_frac as i32);
+    if x.abs() * scale < 1e15 {
+        x = (x * scale).round() / scale;
+    }
     let s = format!("{x:.max_frac$}");
     let (ip, fp) = s.split_once('.').unwrap_or((s.as_str(), ""));
     let mut fp = fp.to_string();
@@ -303,6 +308,14 @@ mod tests {
     fn scientific_subnormal() {
         assert_eq!(format("0.00E+00", 5e-324, None), "4.94E-324");
         assert_eq!(format("0.00E+00", f64::MIN_POSITIVE, None), "2.23E-308");
+    }
+
+    #[test]
+    fn rounds_halves_away_from_zero() {
+        assert_eq!(format("0", 2.5, None), "3");
+        assert_eq!(format("0", 0.5, None), "1");
+        assert_eq!(format("0.00", 0.125, None), "0.13");
+        assert_eq!(format("0", -2.5, None), "-3");
     }
 
     #[test]
