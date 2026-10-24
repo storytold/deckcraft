@@ -411,6 +411,9 @@ pub enum UiRequest {
     },
     PickFile {
         purpose: String,
+        /// The command's other parameters, to run it with once the path is chosen.
+        #[serde(default)]
+        params: Value,
     },
     /// Media playback for the UI host (`media.play` / `pause` / `stop` / `seek`): `action` is
     /// `play`, `pause`, `toggle`, `stop` or `seek`; `ms` the media time to start from / seek to.

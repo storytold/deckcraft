@@ -42,6 +42,7 @@ fn title(id: &str) -> &'static str {
         "altText" => "Alt Text",
         "outline" => "Slides from Outline",
         "renameSection" => "Rename Section",
+        "splitPresentation" => "Split Presentation",
         "renameShape" => "Rename",
         "renameLayout" => "Rename Layout",
         "paragraph" => "Paragraph",
@@ -1534,6 +1535,34 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let (ok, cancel) = buttons(ui, "Insert");
             if ok {
                 run(app, "slide.fromOutline", json!({"text": v}));
+            }
+            ok || cancel
+        }
+        "splitPresentation" => {
+            ui.label("Write the presentation as several files. The open presentation stays as it is.");
+            let by = d.get("by", "every");
+            for (l, id) in [("A file every N slides", "every"), ("A file per section", "section")] {
+                if ui.radio(by == id, l).clicked() {
+                    d.fields.insert("by".into(), id.into());
+                }
+            }
+            if by == "every" {
+                field(ui, d, "Slides per file:", "every", "10");
+            }
+            let (ok, cancel) = buttons(ui, "Split…");
+            if ok {
+                let params = if by == "every" {
+                    match d.get("every", "10").trim().parse::<usize>() {
+                        Ok(n) if n > 0 => json!({"every": n}),
+                        _ => {
+                            app.set_status("Slides per file must be a number from 1".to_string());
+                            return false;
+                        }
+                    }
+                } else {
+                    json!({"bySection": true})
+                };
+                app.split_presentation(params);
             }
             ok || cancel
         }

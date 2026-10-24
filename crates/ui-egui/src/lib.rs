@@ -403,6 +403,8 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
+    ("app.saveSlidesAsDialog", "Save Selected Slides As…", None, "{}"),
+    ("app.splitDialog", "Split Presentation…", None, "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
     ("app.compareDialog", "Compare…", None, "{}"),
@@ -1027,6 +1029,8 @@ impl SlideApp {
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
+            "app.saveSlidesAsDialog" => self.save_slides_as_dialog(json!({})),
+            "app.splitDialog" => self.dialog = Some(dialogs::Dialog::new("splitPresentation")),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
             "app.browseThemeDialog" => {
@@ -1334,6 +1338,46 @@ impl SlideApp {
         }
     }
 
+    /// File › Save Selected Slides As…: write the selected slides to a new file. The open
+    /// presentation stays as it is.
+    /// `params` are further `file.saveSlidesAs` parameters (e.g. `slides`); without them the
+    /// selected slides are saved.
+    pub fn save_slides_as_dialog(&mut self, mut params: Value) {
+        let Some(name) = self.session.active().map(|d| d.title()) else { return };
+        let Some(pick) = self.services.pick_save.as_mut() else {
+            self.set_status("Saving part of a presentation needs the desktop app".to_string());
+            return;
+        };
+        if let Some(path) = pick(&format!("{name} (selected slides).pptx")) {
+            if !params.is_object() {
+                params = json!({});
+            }
+            params["path"] = json!(path);
+            match self.session.execute("file.saveSlidesAs", &params) {
+                Ok(r) => self.set_status(format!("Saved {} slide(s) to {path}", r.get("slides").and_then(Value::as_u64).unwrap_or(0))),
+                Err(e) => self.set_status(e.to_string()),
+            }
+        }
+    }
+
+    /// File › Split Presentation…: ask for the base file name, then write the parts next to it.
+    /// `params` are the `file.split` parameters without `path`.
+    pub fn split_presentation(&mut self, mut params: Value) {
+        let Some(name) = self.session.active().map(|d| d.title()) else { return };
+        let Some(pick) = self.services.pick_save.as_mut() else {
+            self.set_status("Splitting a presentation needs the desktop app".to_string());
+            return;
+        };
+        let Some(path) = pick(&format!("{name}.pptx")) else { return };
+        if let Some(o) = params.as_object_mut() {
+            o.insert("path".into(), json!(path));
+        }
+        match self.session.execute("file.split", &params) {
+            Ok(r) => self.set_status(format!("Split into {} files", r.get("files").and_then(Value::as_array).map_or(0, Vec::len))),
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
     /// Save every presentation with unsaved changes (asking for a location where needed).
     /// Returns false if one wasn't saved (cancelled or failed).
     pub fn save_all(&mut self) -> bool {
@@ -1371,11 +1415,14 @@ impl SlideApp {
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
                 UiRequest::StartShow { from } => self.start_show(from, false),
                 UiRequest::Message { text } => self.set_status(text),
-                UiRequest::PickFile { purpose } => {
-                    if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
-                    }
-                }
+                UiRequest::PickFile { purpose, params } => match purpose.as_str() {
+                    "saveAs" => self.save_as_dialog("deckcraft"),
+                    "saveSlidesAs" => self.save_slides_as_dialog(params),
+                    // A request that already says how to split only needs the file name.
+                    "splitPresentation" if params.get("every").is_some() || params.get("bySection").is_some() => self.split_presentation(params),
+                    "splitPresentation" => self.dialog = Some(dialogs::Dialog::new("splitPresentation")),
+                    _ => {}
+                },
                 UiRequest::Media { action, shape, ms } => {
                     let owner = if self.show.is_some() { media::Owner::Show } else { media::Owner::Editor };
                     // The command resolved `shape` on the editor's slide, also while a show runs.
