@@ -245,8 +245,9 @@ pub struct ColorScheme {
 }
 
 impl ColorScheme {
-    pub fn get(&self, slot: SchemeSlot) -> Rgba {
-        let i = match slot {
+    /// Index into `colors` for a slot, resolving the aliases to their theme colours.
+    fn index(slot: SchemeSlot) -> usize {
+        match slot {
             SchemeSlot::Dk1 | SchemeSlot::Tx1 => 0,
             SchemeSlot::Lt1 | SchemeSlot::Bg1 => 1,
             SchemeSlot::Dk2 | SchemeSlot::Tx2 => 2,
@@ -260,13 +261,13 @@ impl ColorScheme {
             SchemeSlot::Hlink => 10,
             SchemeSlot::FolHlink => 11,
             SchemeSlot::PhClr => 4,
-        };
-        self.colors.get(i).copied().unwrap_or(Rgba::BLACK)
+        }
+    }
+    pub fn get(&self, slot: SchemeSlot) -> Rgba {
+        self.colors.get(Self::index(slot)).copied().unwrap_or(Rgba::BLACK)
     }
     pub fn set(&mut self, slot: SchemeSlot, c: Rgba) {
-        if let Some(i) = SchemeSlot::THEME.iter().position(|s| *s == slot)
-            && let Some(v) = self.colors.get_mut(i)
-        {
+        if let Some(v) = self.colors.get_mut(Self::index(slot)) {
             *v = c;
         }
     }
@@ -525,6 +526,23 @@ mod tests {
         assert_eq!(Rgba::from_hex("#+1+2+3"), None);
         assert_eq!(Rgba::from_hex("+1+2+3+4"), None);
         assert_eq!(Rgba::from_hex("+12"), None);
+    }
+
+    #[test]
+    fn set_accepts_alias_slots() {
+        let c = Rgba::rgb(1, 2, 3);
+        for (alias, real) in [
+            (SchemeSlot::Bg1, SchemeSlot::Lt1),
+            (SchemeSlot::Tx1, SchemeSlot::Dk1),
+            (SchemeSlot::Bg2, SchemeSlot::Lt2),
+            (SchemeSlot::Tx2, SchemeSlot::Dk2),
+            (SchemeSlot::PhClr, SchemeSlot::Accent1),
+        ] {
+            let mut s = ColorScheme { name: String::new(), colors: [Rgba::BLACK; 12] };
+            s.set(alias, c);
+            assert_eq!(s.get(alias), c);
+            assert_eq!(s.get(real), c);
+        }
     }
 
     #[test]
