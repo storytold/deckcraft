@@ -450,6 +450,14 @@ fn output_format(path: &str) -> Result<&'static str, String> {
     })
 }
 
+/// Whether `addr` (`HOST:PORT`, as `--connect` gives it) is at least shaped like an address: a
+/// host of some kind and a numeric port. Malformed addresses fail at startup — a lazy remote
+/// would otherwise retry one on every call and never say why nothing connects.
+fn valid_connect_addr(addr: &str) -> bool {
+    let Some((host, port)) = addr.rsplit_once(':') else { return false };
+    !host.is_empty() && port.parse::<u16>().is_ok()
+}
+
 fn run(args: &[String]) -> Result<(), String> {
     let mut input = None;
     let mut sample = false;
@@ -631,7 +639,26 @@ so drop --connect (or use --connect without the roots)"
             .into());
     }
     let backend: Box<dyn Backend> = match connect {
-        Some(c) => Box::new(Remote::connect(&control_addr(&c)).map_err(|e| format!("can't reach the app at {c}: {e}"))?),
+        Some(c) => {
+            let addr = control_addr(&c);
+            // A malformed address must fail at startup, not on every tool call the lazy remote
+            // would retry it with.
+            if !valid_connect_addr(&addr) {
+                return Err(format!("mcp: --connect needs HOST:PORT with a numeric port, got `{addr}`"));
+            }
+            match Remote::connect(&addr) {
+                Ok(remote) => {
+                    eprintln!("deckcraft-cli mcp: connected to DeckCraft at {addr}");
+                    Box::new(remote)
+                }
+                // The app may start after the client does: serve anyway and connect on the first
+                // call, or the client marks the server failed for its whole session (#1248).
+                Err(e) => {
+                    eprintln!("deckcraft-cli mcp: DeckCraft is not reachable at {addr} yet ({e}); will retry on each call");
+                    Box::new(Remote::lazy(&addr))
+                }
+            }
+        }
         None => {
             let mut h = Headless::new();
             // `--sample` is the operator's own choice, made before the roots come into force.
@@ -739,6 +766,17 @@ mod tests {
         assert!(run(&args(&["--sample", "--export-params", "{}"])).is_ok());
         assert!(run(&args(&["--sample", "--export-params", r#"{"width": 64}"#])).is_err());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn malformed_connect_addresses_fail_at_startup() {
+        assert!(valid_connect_addr("127.0.0.1:7990"));
+        assert!(valid_connect_addr("localhost:7990"));
+        assert!(!valid_connect_addr("127.0.0.1:notaport"));
+        assert!(!valid_connect_addr("notaport"));
+        assert!(!valid_connect_addr(":7990"));
+        // A malformed one is refused before the server starts, with the reason.
+        assert!(mcp(&["--connect".into(), "127.0.0.1:notaport".into()]).is_err_and(|e| e.contains("numeric port")));
     }
 }
 
