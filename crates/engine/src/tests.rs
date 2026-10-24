@@ -1722,7 +1722,8 @@ mod copy_remap {
     use std::sync::Arc;
 
     use deckcraft_model::style::PictureFill;
-    use deckcraft_model::{Animation, Shape, ShapeId, ShapeKind, Xfrm};
+    use deckcraft_model::text::Bullet;
+    use deckcraft_model::{Animation, Fill, MediaId, Shape, ShapeId, ShapeKind, Table, TextBody, Transition, Xfrm};
     use serde_json::json;
 
     use crate::*;
@@ -1779,6 +1780,101 @@ mod copy_remap {
         assert_eq!(picture_bytes(&b, &shape(&b, 0, new)), b"deck a picture");
         // Deck b's own picture is untouched.
         assert_eq!(picture_bytes(&b, &shape(&b, 0, pb)), b"deck b picture");
+    }
+
+    /// A 4 by 4 PNG of one color.
+    fn solid_png(rgb: [u8; 3]) -> Vec<u8> {
+        deckcraft_render::Image { width: 4, height: 4, pixels: [rgb[0], rgb[1], rgb[2], 255].repeat(16) }.to_png()
+    }
+
+    #[test]
+    fn paste_as_picture_into_a_deck_with_a_colliding_media_id_draws_the_copied_picture() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (pa, ..) = populate(&mut a, &solid_png([255, 0, 0]));
+        populate(&mut b, &solid_png([0, 0, 255]));
+        select(&mut a, &[pa]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.pasteSpecial", &json!({"as": "picture"})).unwrap();
+        let id = ShapeId(r["id"].as_u64().or_else(|| r["ids"][0].as_u64()).unwrap() as u32);
+        let img = deckcraft_render::decode_image(&picture_bytes(&b, &shape(&b, 0, id))).unwrap();
+        // The middle of the drawing is the middle of the copied picture.
+        assert_eq!(img.get_pixel(img.width() / 2, img.height() / 2).0, [255, 0, 0, 255]);
+    }
+
+    /// Slide 0 of `s` gets a table whose first cell, background and second cell's picture bullet
+    /// each use a picture of their own, and a transition sound. `tag` starts the bytes of each.
+    /// Returns the table.
+    fn picture_table(s: &mut Session, tag: &str) -> ShapeId {
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let cell = doc.add_media("cell.png", "image/png", format!("{tag} cell").into_bytes()).expect("media");
+        let back = doc.add_media("back.png", "image/png", format!("{tag} background").into_bytes()).expect("media");
+        let bullet = doc.add_media("bullet.png", "image/png", format!("{tag} bullet").into_bytes()).expect("media");
+        let sound = doc.add_media("sound.wav", "audio/wav", format!("{tag} sound").into_bytes()).expect("media");
+        let mut t = Table::new(1, 2, 200.0, 40.0);
+        t.background = Some(Fill::Picture(PictureFill { media: back, ..Default::default() }));
+        t.rows[0].cells[0].fill = Some(Fill::Picture(PictureFill { media: cell, ..Default::default() }));
+        t.rows[0].cells[1].text = TextBody::from_text("item");
+        t.rows[0].cells[1].text.paragraphs[0].props.bullet = Some(Bullet::Picture { media: bullet });
+        let id = ShapeId(doc.alloc_id().expect("id"));
+        let slide = Arc::make_mut(&mut doc.slides[0]);
+        slide.shapes.push(Shape { id, kind: ShapeKind::Table(t), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), ..Default::default() });
+        slide.transition = Some(Transition { kind: "fade".into(), sound: Some(sound), ..Default::default() });
+        id
+    }
+
+    /// The bytes behind a table's first cell fill, background and second cell's bullet.
+    fn table_pictures(s: &Session, sh: &Shape) -> [Vec<u8>; 3] {
+        let ShapeKind::Table(t) = &sh.kind else { panic!("not a table") };
+        let doc = &s.doc().unwrap().doc;
+        let bytes = |id: MediaId| doc.media(id).unwrap().data.as_ref().clone();
+        let Some(Fill::Picture(cell)) = &t.rows[0].cells[0].fill else { panic!("no cell picture") };
+        let Some(Fill::Picture(back)) = &t.background else { panic!("no table picture") };
+        let Some(Bullet::Picture { media }) = &t.rows[0].cells[1].text.paragraphs[0].props.bullet else { panic!("no picture bullet") };
+        [bytes(cell.media), bytes(back.media), bytes(*media)]
+    }
+
+    fn deck_pictures(tag: &str) -> [Vec<u8>; 3] {
+        ["cell", "background", "bullet"].map(|w| format!("{tag} {w}").into_bytes())
+    }
+
+    #[test]
+    fn a_table_pasted_into_another_deck_keeps_its_cell_background_and_bullet_pictures() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let ta = picture_table(&mut a, "a");
+        let tb = picture_table(&mut b, "b");
+        select(&mut a, &[ta]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let new = ShapeId(r["ids"][0].as_u64().unwrap() as u32);
+        assert_eq!(table_pictures(&b, &shape(&b, 0, new)), deck_pictures("a"));
+        // Deck b's own table is untouched.
+        assert_eq!(table_pictures(&b, &shape(&b, 0, tb)), deck_pictures("b"));
+    }
+
+    #[test]
+    fn a_slide_pasted_into_another_deck_keeps_its_table_pictures_and_transition_sound() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        picture_table(&mut a, "a");
+        let tb = picture_table(&mut b, "b");
+        a.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.execute("edit.paste", &json!({"scope": "slides"})).unwrap();
+        let d = b.doc().unwrap();
+        let pasted = &d.doc.slides[1];
+        let table = pasted.shapes.iter().find(|x| matches!(x.kind, ShapeKind::Table(_))).cloned().unwrap();
+        assert_eq!(table_pictures(&b, &table), deck_pictures("a"));
+        let sound = pasted.transition.as_ref().and_then(|t| t.sound).unwrap();
+        assert_eq!(d.doc.media(sound).unwrap().data.as_ref(), b"a sound");
+        // Deck b's own slide is untouched.
+        assert_eq!(table_pictures(&b, &shape(&b, 0, tb)), deck_pictures("b"));
     }
 
     #[test]
