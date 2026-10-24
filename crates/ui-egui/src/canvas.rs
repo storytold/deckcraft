@@ -358,11 +358,16 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ruler(&painter, avail, slide_rect, scale, &t);
         ruler_markers(app, ui, &painter, avail, xf, &t);
     }
+    // A click the Eyedropper takes is not also a click on a video.
+    let sampling = app.eyedropper.is_some();
     pointer(app, ui, &resp, xf);
     if !app.anim_preview_active() {
         overlays(app, ui, &painter, xf, &t);
         ime_output(app, ui, xf);
         media_bar(app, ui, xf);
+        if !sampling {
+            media_click(app, ui, &resp, xf);
+        }
         gif_buttons(app, ui, xf, &gifs);
         if resp.secondary_clicked()
             && let Some(p) = resp.interact_pointer_pos()
@@ -543,6 +548,27 @@ fn media_bar(app: &mut SlideApp, ui: &mut Ui, xf: Xf) {
         }
         None => {}
     }
+}
+
+/// A click on a video plays or pauses it, as its bar's Play button does. The click selects it as
+/// usual; dragging it moves it without playing, and a modifier key leaves it to the selection.
+fn media_click(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
+    // The second and third clicks of a double or triple click leave the first one's choice.
+    if !resp.clicked() || resp.double_clicked() || resp.triple_clicked() || !ui.input(|i| i.modifiers.is_none()) {
+        return;
+    }
+    let Some(p) = resp.interact_pointer_pos() else { return };
+    let Some(d) = app.session.active() else { return };
+    if d.selection.target != Target::Slides || d.selection.text.is_some() || d.selection.shapes.len() != 1 {
+        return;
+    }
+    let only = d.selection.shapes[0];
+    let hit = crate::media::slide_media(&d.doc, d.selection.slide)
+        .into_iter()
+        .find(|(id, x, clip)| clip.video && *id == only && screen_rect(xf, x).contains(p));
+    let Some((id, _, clip)) = hit else { return };
+    let (uid, doc) = (d.uid, d.doc.clone());
+    app.media.toggle(uid, &doc, id, &clip, crate::media::Owner::Editor);
 }
 
 fn master_tex(
@@ -1863,3 +1889,7 @@ mod ruler_tests;
 #[cfg(test)]
 #[path = "guides_tests.rs"]
 mod guides_tests;
+
+#[cfg(test)]
+#[path = "media_bar_tests.rs"]
+mod media_bar_tests;
