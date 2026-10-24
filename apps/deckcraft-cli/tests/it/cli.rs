@@ -114,7 +114,7 @@ Run it with: deckcraft-cli run --cmd 'format.size={…}'
 
 #[test]
 fn describe_shows_alternative_sets_of_parameters() {
-    assert!(stdout(&cli(&["describe", "slide.go"])).contains("Parameters:\n  either:\n    index\n  or:\n    id\n"));
+    assert!(stdout(&cli(&["describe", "slide.go"])).contains("Parameters:\n  either:\n    index  (0-based)\n  or:\n    id\n"));
     let remove = stdout(&cli(&["describe", "animation.remove"]));
     assert!(remove.contains("  or:\n    ids, optional  (all of the shapes' animations)\n"), "{remove}");
     assert!(remove.ends_with("Run it with: deckcraft-cli run --cmd animation.remove\n") && !remove.contains("Note:"), "{remove}");

@@ -25,7 +25,9 @@ list_commands and run them with run_command (or several with batch). Typical flo
 inspect_slide to read back ids, boxes and text → render_slide to look at the result. Shape ids are looked up on the \
 current slide. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
 the selected text or shapes; shape.fill, shape.line and the other shape commands whose parameters list `ids` act on \
-those shapes, else on the selected ones. Save with save_presentation (.deckcraft or .pptx).";
+those shapes, else on the selected ones. Save with save_presentation (.deckcraft or .pptx). Slide, section, animation and \
+table indices are 0-based; the editor numbers slides from 1, so inspect_document returns each slide's index and its displayed \
+number.";
 
 /// Resource URIs.
 pub const DOC_URI: &str = "deckcraft://document";

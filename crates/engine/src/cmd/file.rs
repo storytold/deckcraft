@@ -37,7 +37,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "file.saveAs", "Save As…", ["File"], Some("Cmd+Shift+S"), "{path, format?}", has_doc, save_as),
         cmd!(noundo "file.saveTemplate", "Save as Template…", ["File"], None, "{path}", has_doc, save_as),
         cmd!(query "file.saveBytes", "Save to Data", [], None, "{format?: deckcraft|pptx} → {data: base64}", has_doc, save_bytes_cmd),
-        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|rtf|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [index]|range (\"1-3,5\"), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
+        cmd!(noundo "file.export", "Export…", ["File"], None, "{path, format?: png|jpeg|pptx|deckcraft|outline|rtf|pdf|gif (else by path), slide?: index, all?: bool, scale?: px per pt, layout?: slides|notes|handouts (pdf), perPage?: 1|2|3|4|6|9, paper?: letter|a4|legal|a3 (pdf), orientation?: portrait|landscape (pdf), dpi?, slides?: [0-based index]|range of 1-based numbers (\"1-3,5\", as the editor shows them and the Print page takes them), includeHidden?, textLayer?, frame?, transparentBackground?: bool (png: leave the slide background out), width?: px 16-3840|small|medium|large|extraLarge (gif), secondsPerSlide?: 0.1-600 (gif; 5), loop?: bool (gif; true: forever)} → {path, bytes} or {files} (png, jpeg); gif adds frames, width, height, secondsPerSlide", has_doc, export),
         cmd!(
             query "file.info",
             "Info",
@@ -364,7 +364,16 @@ pub fn pdf_options(p: &Value, count: usize) -> Result<deckcraft_pdf::PdfOptions>
     };
     o.dpi = f64_or(p, "dpi", o.dpi).clamp(36.0, 600.0);
     o.slides = match p.get("slides") {
-        Some(Value::Array(a)) => Some(a.iter().filter_map(|v| v.as_u64().map(|x| x as usize)).filter(|i| *i < count).collect()),
+        Some(Value::Array(a)) => Some(
+            a.iter()
+                .map(|v| {
+                    v.as_u64().and_then(|x| usize::try_from(x).ok()).ok_or_else(|| {
+                        bad("file.export", format!("each entry of `slides` must be a non-negative integer (a 0-based index), not {v}"))
+                    })
+                })
+                .map(|i| i.and_then(|i| if i < count { Ok(i) } else { Err(super::no_slide("file.export", i, count)) }))
+                .collect::<Result<Vec<_>>>()?,
+        ),
         Some(Value::String(text)) if !text.trim().is_empty() => Some(parse_slide_range(text, count)?),
         _ => None,
     };
@@ -536,9 +545,9 @@ fn picture_bytes(img: &deckcraft_render::Image, format: &str, scale: f64) -> Vec
 
 fn render(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = super::opt_usize_param(p, "slide", "file.render")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
-        return Err(bad("file.render", format!("no slide {i}")));
+        return Err(super::no_slide("file.render", i, st.doc.slides.len()));
     }
     let (png, w, h) = render_png_with(&st.doc, i, f64_or(p, "scale", 1.0), bool_or(p, "edit", false), bool_or(p, "transparentBackground", false));
     Ok(json!({"png": base64_encode(&png), "width": w, "height": h}))
@@ -547,9 +556,9 @@ fn render(s: &mut Session, p: &Value) -> Result<Value> {
 /// The colour the slide is drawn with at one point: what the Eyedropper takes.
 fn color_at(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = super::opt_usize_param(p, "slide", "slide.colorAt")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
-        return Err(bad("slide.colorAt", format!("no slide {i}")));
+        return Err(super::no_slide("slide.colorAt", i, st.doc.slides.len()));
     }
     let coord = |key: &str| {
         p.get(key)
@@ -578,14 +587,14 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
     match format.as_str() {
         "png" | "jpeg" | "jpg" => {
-            let slides: Vec<usize> = match usize_param(p, "slide") {
+            let slides: Vec<usize> = match super::opt_usize_param(p, "slide", "file.export")? {
                 Some(i) => vec![i],
                 None if bool_or(p, "all", false) => (0..st.doc.slides.len()).collect(),
                 None => vec![st.selection.slide],
             };
             // Every slide checked before any file is written, so a bad index leaves nothing behind.
             if let Some(i) = slides.iter().find(|i| **i >= st.doc.slides.len()) {
-                return Err(bad("file.export", format!("no slide {i}")));
+                return Err(super::no_slide("file.export", *i, st.doc.slides.len()));
             }
             let scale = image_scale(&st.doc, scale);
             let mut written = vec![];

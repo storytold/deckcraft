@@ -4,7 +4,7 @@
 use deckcraft_engine::Session;
 use egui::Pos2;
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use serde_json::json;
 
 use crate::{Services, SlideApp};
@@ -196,4 +196,30 @@ fn screenshot() {
     h.run_steps(2);
     let img = h.render().unwrap();
     img.save("/tmp/animpane.png").unwrap();
+}
+
+fn right_click(h: &mut Harness<'_, SlideApp>, pos: Pos2) {
+    h.event(egui::Event::PointerMoved(pos));
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed, modifiers: egui::Modifiers::default() });
+    }
+    h.run_steps(3);
+}
+
+/// `animation.move` refuses a `to` past the end, so the pane's Move Down must not ask for one:
+/// on the last animation it is disabled, and nothing lands in the status bar.
+#[test]
+fn move_down_on_the_last_animation_is_disabled() {
+    let mut h = harness();
+    let bar = h.get_by_label("Timing bar 2").rect();
+    right_click(&mut h, Pos2::new(bar.left() - 20.0, bar.center().y));
+    let order = |h: &Harness<'_, SlideApp>| -> Vec<String> {
+        h.state().session.active().unwrap().current_slide().unwrap().animations.iter().map(|a| a.effect.clone()).collect()
+    };
+    assert_eq!(order(&h), ["fade", "zoom"]);
+    assert!(h.get_by_label("Move Down").accesskit_node().is_disabled(), "the last animation cannot move down");
+    h.get_by_label("Move Down").click();
+    h.run_steps(3);
+    assert_eq!(order(&h), ["fade", "zoom"]);
+    assert_eq!(h.state().status, None, "no error for a disabled move");
 }

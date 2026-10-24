@@ -94,6 +94,19 @@ files it was given rather than guarding against other software on the computer.
 | `screenshot` | The whole window, UI included (connected mode) |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
 
+**Numbering.** Every index is 0-based: `index` and `slide` in the tools above, the `slides` list in
+`export`, and `from`, `to`, `at`, `indices`, `row` and `col` in the slide, section, animation and
+table commands. The one 1-based value is `file.export`'s string form of `slides` (`"1-3,5"`), which
+is the Print page's range as the editor shows the numbers; the MCP `export` tool takes only the
+0-based list. The editor counts slides from 1 ("Slide 3 of 8" is index 2), so `inspect_document` and
+`inspect_slide` return both: `index` to pass back, `number` as the editor shows it (index + 1; the
+number printed on the slide may start elsewhere). A slide, section or animation index past the end
+answers with the valid range (`no slide at index 8; indices run 0 through 7`) and changes nothing,
+and `slide.move`, `section.move` and `animation.move` refuse a `to` past the end instead of
+clamping it. `at` is an insertion position (`slide.new`, `section.add`, `slide.reuse`), so one past
+the end is clamped to the end. An index that is not a non-negative integer (`-1`, `1.5`) is
+refused, never read as omitted.
+
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, series, title, type)`). Keys inside `run_command`'s `params` are that command's parameters.
 
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,

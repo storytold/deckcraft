@@ -99,7 +99,7 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                     let _ = app.run("section.move", json!({"index": si, "to": si.saturating_sub(1)}));
                     ui.close();
                 }
-                if ui.button("Move Section Down").clicked() {
+                if ui.add_enabled(*si + 1 < doc.sections.len(), egui::Button::new("Move Section Down")).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si + 1}));
                     ui.close();
                 }

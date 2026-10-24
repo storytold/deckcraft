@@ -28,8 +28,24 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             add
         ),
-        cmd!("animation.remove", "Remove Animation", ["Animation Pane"], None, "{index} | {ids? (all of the shapes' animations)}", has_slide, remove),
-        cmd!("animation.move", "Reorder Animation", ["Animations", "Timing"], None, "{index, to}", has_slide, move_anim),
+        cmd!(
+            "animation.remove",
+            "Remove Animation",
+            ["Animation Pane"],
+            None,
+            "{index (0-based)} | {ids? (all of the shapes' animations)}",
+            has_slide,
+            remove
+        ),
+        cmd!(
+            "animation.move",
+            "Reorder Animation",
+            ["Animations", "Timing"],
+            None,
+            "{index, to} (0-based; to is the final index)",
+            has_slide,
+            move_anim
+        ),
         cmd!(
             "animation.timing",
             "Timing",
@@ -48,7 +64,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             options
         ),
-        cmd!("animation.clear", "Remove All Animations", [], None, "{index?: slide}", has_slide, clear),
+        cmd!("animation.clear", "Remove All Animations", [], None, "{index?: slide (0-based)}", has_slide, clear),
         cmd!(
             noundo "animation.painter",
             "Animation Painter",
@@ -230,7 +246,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
-    let index = usize_param(p, "index");
+    let index = super::opt_usize_param(p, "index", "animation.remove")?;
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.remove", "no slide"))?);
@@ -238,7 +254,7 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
             Some(i) if i < sl.animations.len() => {
                 sl.animations.remove(i);
             }
-            Some(_) => return Err(bad("animation.remove", "no such animation")),
+            Some(i) => return Err(bad("animation.remove", super::out_of_range("animation", i, sl.animations.len()))),
             None => sl.animations.retain(|a| !ids.contains(&a.shape)),
         }
         Ok(())
@@ -247,15 +263,16 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("animation.move", "missing `index`"))?;
-    let to = usize_param(p, "to").ok_or_else(|| bad("animation.move", "missing `to`"))?;
+    let i = super::opt_usize_param(p, "index", "animation.move")?.ok_or_else(|| bad("animation.move", "missing `index`"))?;
+    let to = super::opt_usize_param(p, "to", "animation.move")?.ok_or_else(|| bad("animation.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.move", "no slide"))?);
-        if i >= sl.animations.len() {
-            return Err(bad("animation.move", "no such animation"));
+        // `to` is the final index, so it has the same range as `index`: refused, never clamped.
+        let n = sl.animations.len();
+        if let Some(j) = [i, to].into_iter().find(|j| *j >= n) {
+            return Err(bad("animation.move", super::out_of_range("animation", j, n)));
         }
         let a = sl.animations.remove(i);
-        let to = to.min(sl.animations.len());
         sl.animations.insert(to, a);
         Ok(())
     })?;
@@ -263,7 +280,7 @@ fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result<Value> {
-    let index = usize_param(p, "index");
+    let index = super::opt_usize_param(p, "index", "animation")?;
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?);
@@ -337,7 +354,11 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn clear(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").unwrap_or(s.doc()?.selection.slide);
+    let i = super::opt_usize_param(p, "index", "animation.clear")?.unwrap_or(s.doc()?.selection.slide);
+    let n = s.doc()?.doc.slides.len();
+    if i >= n {
+        return Err(super::no_slide("animation.clear", i, n));
+    }
     s.edit(|doc, _| {
         if let Some(sl) = doc.slides.get_mut(i) {
             Arc::make_mut(sl).animations.clear();
@@ -353,8 +374,8 @@ fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
-    let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
+    let i = super::opt_usize_param(p, "slide", "animation.get")?.unwrap_or(st.selection.slide);
+    let sl = st.doc.slides.get(i).ok_or_else(|| super::no_slide("animation.get", i, st.doc.slides.len()))?;
     Ok(serde_json::to_value(&sl.animations).unwrap_or_default())
 }
 

@@ -1576,8 +1576,9 @@ fn slide_ranges_parse_like_powerpoints_print_box() {
     let both = cmd::file::pdf_bytes(&doc, &json!({"slides": "1-2"})).unwrap();
     assert!(one.len() < both.len());
     assert!(cmd::file::pdf_bytes(&doc, &json!({"slides": "5"})).is_err());
-    let opts = cmd::file::pdf_options(&json!({"slides": [0, 7, 1]}), 2).unwrap();
-    assert_eq!(opts.slides, Some(vec![0, 1]), "indices past the end are dropped");
+    let err = cmd::file::pdf_options(&json!({"slides": [0, 7, 1]}), 2).unwrap_err().to_string();
+    assert!(err.contains("no slide at index 7; indices run 0 through 1"), "an index past the end is refused, not dropped: {err}");
+    assert_eq!(cmd::file::pdf_options(&json!({"slides": [1, 0]}), 2).unwrap().slides, Some(vec![1, 0]));
 }
 
 #[test]
@@ -4723,4 +4724,116 @@ fn slide_hide_and_layout_reject_invalid_index() {
         assert!(e.contains("not a valid index"), "{e}");
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
+}
+
+/// `number` is the count the editor's thumbnail pane shows (index + 1), not the number printed
+/// on the slide, which `first_slide_number` offsets.
+#[test]
+fn inspect_number_is_the_editors_count_not_the_printed_slide_number() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.edit(|doc, _| {
+        doc.first_slide_number = 5;
+        Ok(())
+    })
+    .unwrap();
+    let one = s.execute("slide.inspect", &json!({"index": 1})).unwrap();
+    assert_eq!((one["index"].as_u64(), one["number"].as_u64()), (Some(1), Some(2)), "{one}");
+    let all = s.execute("document.inspect", &json!({})).unwrap();
+    let numbers: Vec<u64> = all["slides"].as_array().unwrap().iter().map(|x| x["number"].as_u64().unwrap()).collect();
+    assert_eq!(numbers, [1, 2], "{all}");
+}
+
+/// Every command that takes a slide index refuses one past the end with the valid range, rather
+/// than doing nothing and answering ok (the agent passing the editor's 1-based number for the
+/// last slide would otherwise believe it hid, duplicated or re-laid-out it).
+#[test]
+fn a_slide_index_past_the_end_is_refused_by_every_slide_command() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-past-end-{}", std::process::id()));
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    for (cmd, params) in [
+        ("slide.hide", json!({"index": 2, "hidden": true})),
+        ("slide.duplicate", json!({"index": 2})),
+        ("slide.layout", json!({"index": 2, "layout": "blank"})),
+        ("slide.delete", json!({"index": 2})),
+        ("slide.selectSlides", json!({"indices": [0, 2]})),
+        ("transition.set", json!({"index": 2, "kind": "fade"})),
+        ("transition.timing", json!({"index": 2, "duration": 500})),
+        ("animation.clear", json!({"index": 2})),
+        ("file.export", json!({"path": dir.join("deck.gif").to_string_lossy(), "format": "gif", "slides": [0, 2]})),
+        ("file.export", json!({"path": dir.join("deck.pdf").to_string_lossy(), "format": "pdf", "slides": [0, 2]})),
+    ] {
+        let err = s.execute(cmd, &params).expect_err(cmd).to_string();
+        assert!(err.contains("no slide at index 2; indices run 0 through 1"), "{cmd}: {err}");
+        assert!(err.contains(&format!("`{cmd}`")), "the error names the command: {err}");
+    }
+    assert_eq!(s.doc().unwrap().doc, before, "a refused command changes nothing");
+    assert!(!dir.exists(), "a refused export writes nothing");
+}
+
+/// An `index` (or `from`, `to`, `slide`, an entry of `slides` or `indices`) that is present but
+/// not a non-negative integer is refused, never read as omitted: `-1` must not act on the
+/// current slide or be dropped from a list.
+#[test]
+fn a_malformed_index_is_refused_not_read_as_omitted() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-bad-index-{}", std::process::id()));
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [id], "effect": "fade"})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    for bad in [json!(-1), json!(1.5), json!("1")] {
+        for (cmd, params) in [
+            ("slide.go", json!({"index": bad})),
+            ("slide.reset", json!({"index": bad})),
+            ("slide.notes", json!({"index": bad, "text": "x"})),
+            ("slide.rename", json!({"index": bad, "name": "x"})),
+            ("slide.duplicate", json!({"index": bad})),
+            ("slide.hide", json!({"index": bad, "hidden": true})),
+            ("slide.layout", json!({"index": bad, "layout": "blank"})),
+            ("slide.delete", json!({"index": bad})),
+            ("slide.move", json!({"from": bad, "to": 0})),
+            ("slide.move", json!({"from": 0, "to": bad})),
+            ("slide.selectSlides", json!({"indices": [0, bad]})),
+            ("slide.inspect", json!({"index": bad})),
+            ("transition.set", json!({"index": bad, "kind": "fade"})),
+            ("animation.remove", json!({"index": bad})),
+            ("animation.timing", json!({"index": bad, "duration": 500})),
+            ("animation.clear", json!({"index": bad})),
+            ("animation.move", json!({"index": 0, "to": bad})),
+            ("animation.get", json!({"slide": bad})),
+            ("file.render", json!({"slide": bad})),
+            ("file.export", json!({"path": dir.join("d.png").to_string_lossy(), "format": "png", "slide": bad})),
+            ("file.export", json!({"path": dir.join("d.pdf").to_string_lossy(), "format": "pdf", "slides": [0, bad]})),
+            ("file.export", json!({"path": dir.join("d.gif").to_string_lossy(), "format": "gif", "slides": [0, bad]})),
+            ("section.rename", json!({"index": bad, "name": "x"})),
+            ("section.move", json!({"index": 0, "to": bad})),
+        ] {
+            let err = s.execute(cmd, &params).expect_err(&format!("{cmd} {params}")).to_string();
+            assert!(err.contains("is not a valid index") || err.contains("must be a non-negative integer"), "{cmd} {params}: {err}");
+        }
+    }
+    assert_eq!(s.doc().unwrap().doc, before, "a refused command changes nothing");
+    assert!(!dir.exists(), "a refused export writes nothing");
+}
+
+/// Section indices too, and `section.move {to}` past the end is refused like `slide.move`'s.
+#[test]
+fn a_section_index_past_the_end_is_refused() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("section.add", &json!({"name": "A", "at": 0})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.sections.len(), 1);
+    for (cmd, params) in [
+        ("section.rename", json!({"index": 1, "name": "B"})),
+        ("section.remove", json!({"index": 1})),
+        ("section.move", json!({"index": 1, "to": 0})),
+        ("section.move", json!({"index": 0, "to": 1})),
+    ] {
+        let err = s.execute(cmd, &params).expect_err(cmd).to_string();
+        assert!(err.contains("no section at index 1; indices run 0 through 0"), "{cmd}: {err}");
+    }
+    assert_eq!(s.doc().unwrap().doc.sections[0].name, "A");
 }

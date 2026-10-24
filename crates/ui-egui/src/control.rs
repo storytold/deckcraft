@@ -303,9 +303,15 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.screenshot" => Outcome::Screenshot { path: s("path").map(String::from) },
         "ui.render" => {
             let Some(d) = app.session.active() else { return err("no presentation open") };
-            let i = p.get("slide").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(d.selection.slide);
+            let i = match p.get("slide") {
+                None | Some(Value::Null) => d.selection.slide,
+                Some(v) => match v.as_u64().and_then(|v| usize::try_from(v).ok()) {
+                    Some(i) => i,
+                    None => return err(format!("`slide` must be a non-negative integer (a 0-based index), not {v}")),
+                },
+            };
             if i >= d.doc.slides.len() {
-                return err(format!("no slide {i}"));
+                return err(deckcraft_engine::cmd::no_slide_message(i, d.doc.slides.len()));
             }
             let (png, w, h) = deckcraft_engine::cmd::file::render_png(
                 &d.doc,
