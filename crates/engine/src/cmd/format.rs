@@ -80,6 +80,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             spacing
         ),
+        cmd!(
+            "format.kumimoji",
+            "Combine Characters (Kumimoji)",
+            [],
+            None,
+            "{on?: bool} — numbers stand upright in East Asian vertical text (eaVert) instead of lying on their side",
+            has_text_or_shapes,
+            kumimoji
+        ),
         cmd!("format.clear", "Clear All Formatting", ["Home", "Font"], Some("Cmd+Space"), "{}", has_text_or_shapes, clear),
         cmd!(
             "format.fontDialog",
@@ -410,6 +419,12 @@ fn caps(s: &mut Session, p: &Value) -> Result<Value> {
 fn spacing(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "pt").unwrap_or(0.0).clamp(-100.0, 400.0);
     format_run(s, &move |r| r.spacing = Some(v))
+}
+/// 組み文字 (`a:rPr/@kumimoji`): numbers stand upright in East Asian vertical text. Off removes the
+/// attribute, which the spec reads as false.
+fn kumimoji(s: &mut Session, p: &Value) -> Result<Value> {
+    let v = on_param(p, Some(current_run(s).kumimoji.unwrap_or(false)));
+    format_run(s, &move |r| r.kumimoji = v.then_some(true))
 }
 
 /// Character formatting applied together, so the Font dialog is one undo step.

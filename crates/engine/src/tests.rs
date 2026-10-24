@@ -3173,6 +3173,43 @@ fn format_language_marks_the_selected_text() {
 }
 
 #[test]
+fn format_kumimoji_toggles_the_selected_text_and_survives_a_save() {
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "第1章"})).unwrap();
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.kumimoji", &json!({"on": true})).unwrap();
+    let props = |s: &Session| {
+        let body = s.doc().unwrap().current_slide().unwrap().shapes[0].text.clone().unwrap();
+        body.paragraphs[0].runs.iter().map(|r| r.props.kumimoji).collect::<Vec<_>>()
+    };
+    assert!(props(&s).iter().all(|k| *k == Some(true)), "{:?}", props(&s));
+    // Off removes the attribute (the spec reads an omitted attribute as false).
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.kumimoji", &json!({"on": false})).unwrap();
+    assert!(props(&s).iter().all(Option::is_none), "{:?}", props(&s));
+    // With no `on`, the command toggles the current run.
+    s.execute("text.selectAll", &json!({})).unwrap();
+    s.execute("format.kumimoji", &json!({})).unwrap();
+    assert!(props(&s).iter().all(|k| *k == Some(true)), "{:?}", props(&s));
+    // The attribute round-trips through a save, on the East Asian vertical body it belongs to.
+    {
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        if let Some(t) = slide.shapes[0].text.as_mut() {
+            t.body.vert = Some(deckcraft_model::text::TextDir::EaVertical);
+        }
+    }
+    let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["data"].as_str().unwrap().to_string();
+    let reopened = deckcraft_pptx::import(&crate::cmd::base64_decode(&saved).unwrap()).unwrap();
+    let body = reopened.slides[0].shapes[0].text.as_ref().unwrap();
+    assert_eq!(body.body.vert, Some(deckcraft_model::text::TextDir::EaVertical));
+    assert!(body.paragraphs[0].runs.iter().all(|r| r.props.kumimoji == Some(true)));
+}
+
+#[test]
 fn every_params_doc_names_its_keys() {
     for c in command_specs() {
         assert!(cmd::param_keys(c.params).is_ok(), "{}: {:?}", c.id, cmd::param_keys(c.params));
