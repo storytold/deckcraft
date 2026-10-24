@@ -700,6 +700,25 @@ pub fn autonum(scheme: &str, n: u32) -> String {
     }
 }
 
+/// The characters run `run` lays out: a field's current value (in the run's language `lang`), a
+/// line break as `\u{b}`, otherwise its text.
+fn shown_run(run: &deckcraft_model::text::Run, lang: Option<&str>, fields: &dyn Fields) -> String {
+    match &run.kind {
+        RunKind::Text | RunKind::Math { .. } => run.text.clone(),
+        RunKind::Break => "\u{b}".into(),
+        RunKind::Field { field } => fields.field_in(field, lang).unwrap_or_else(|| run.text.clone()),
+    }
+}
+
+/// Each paragraph's text as [`layout`] lays it out, fields evaluated: the text that
+/// [`GlyphRun::chars`] index into (#1153).
+pub fn shown_paragraphs(ctx: &Ctx, shape: &Shape, body: &TextBody, fields: &dyn Fields) -> Vec<String> {
+    body.paragraphs
+        .iter()
+        .map(|para| para.runs.iter().map(|run| shown_run(run, resolve::run(ctx, shape, para, &run.props).lang.as_deref(), fields)).collect())
+        .collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, opts: &Opts, number: Option<u32>, vertical: Upright) -> ParaShaped {
     let db = FontDb::global();
@@ -729,12 +748,7 @@ fn shape_para(ctx: &Ctx, shape: &Shape, body: &TextBody, pi: usize, scale: f64, 
     for run in &para.runs {
         let rp = resolve::run(ctx, shape, para, &run.props);
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
-        let t: String = match &run.kind {
-            RunKind::Text => run.text.clone(),
-            RunKind::Break => "\u{b}".into(),
-            RunKind::Field { field } => opts.fields.field_in(field, rp.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
-            RunKind::Math { .. } => run.text.clone(),
-        };
+        let t = shown_run(run, rp.lang.as_deref(), opts.fields);
         let si = styles.len();
         styles.push(st);
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));

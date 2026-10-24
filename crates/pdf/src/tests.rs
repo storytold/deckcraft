@@ -200,8 +200,6 @@ fn unembeddable_font_returns_error_instead_of_a_pdf_missing_text() {
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
     use deckcraft_model::{Shape, ShapeId, Xfrm};
-    use hayro_syntax::content::ops::TypedInstruction;
-    use hayro_syntax::object::{Dict, Object, Stream};
 
     let text = "Café Ελληνικά Привет";
     let face = FontDb::global().face("Ubuntu", "Regular");
@@ -223,8 +221,18 @@ fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
     assert!(runs.iter().all(|run| run.face.family == "Ubuntu" && !run.glyphs.is_empty() && run.glyphs.iter().all(|glyph| glyph.0 != 0)));
 
     let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
+    let extracted = page_text(bytes, 0);
+    assert_eq!(extracted, text);
+}
+
+/// The text a PDF reader extracts from page `index` (one embedded font): the text-showing
+/// operators decoded through the font's ToUnicode map, not document metadata.
+fn page_text(bytes: Vec<u8>, index: usize) -> String {
+    use hayro_syntax::content::ops::TypedInstruction;
+    use hayro_syntax::object::{Dict, Object, Stream};
+
     let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
-    let page = &pdf.pages()[0];
+    let page = &pdf.pages()[index];
     let resources = page.raw().get::<Dict<'_>>(b"Resources").unwrap();
     let fonts = resources.get::<Dict<'_>>(b"Font").unwrap();
     assert_eq!(fonts.len(), 1);
@@ -275,7 +283,55 @@ fn supported_unicode_is_shaped_and_recovered_from_the_page_text_layer() {
             _ => {}
         }
     }
-    assert_eq!(extracted, text);
+    extracted
+}
+
+/// A slide-number field reaches the text layer as the number drawn, not the saved placeholder
+/// (#1153).
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn slide_number_fields_are_searchable_as_their_number() {
+    use deckcraft_model::text::{Run, RunKind};
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+
+    let mut p = deck(3);
+    for (i, slide) in p.slides.iter_mut().enumerate() {
+        let mut body = TextBody::from_text("Page ");
+        let props = body.paragraphs[0].runs[0].props.clone();
+        body.paragraphs[0].runs.push(Run { kind: RunKind::Field { field: "slidenum".into() }, text: "\u{2039}#\u{203a}".into(), props });
+        for run in &mut body.paragraphs[0].runs {
+            run.props.font = Some("Ubuntu".into());
+            run.props.size = Some(20.0);
+        }
+        Arc::make_mut(slide).shapes =
+            vec![Shape { id: ShapeId(9100 + i as u32), xfrm: Some(Xfrm::new(20.0, 20.0, 600.0, 60.0)), text: Some(body), ..Default::default() }];
+    }
+    let bytes = export(&p, &opts(PageLayout::Slides)).unwrap();
+    for i in 0..3 {
+        assert_eq!(page_text(bytes.clone(), i), format!("Page {}", i + 1));
+    }
+}
+
+/// A line break (Shift+Enter) inside a paragraph doesn't shift the text after it in the text layer:
+/// the layout counts it as a character, and so does the layer's text now.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), test)]
+fn a_line_break_keeps_the_text_layer_in_step() {
+    use deckcraft_model::text::{Run, RunKind};
+    use deckcraft_model::{Shape, ShapeId, Xfrm};
+
+    let mut body = TextBody::from_text("one");
+    let props = body.paragraphs[0].runs[0].props.clone();
+    body.paragraphs[0].runs.push(Run { kind: RunKind::Break, text: String::new(), props: props.clone() });
+    body.paragraphs[0].runs.push(Run { kind: RunKind::Text, text: "two".into(), props });
+    for run in &mut body.paragraphs[0].runs {
+        run.props.font = Some("Ubuntu".into());
+        run.props.size = Some(20.0);
+    }
+    let mut p = deck(1);
+    Arc::make_mut(&mut p.slides[0]).shapes =
+        vec![Shape { id: ShapeId(9200), xfrm: Some(Xfrm::new(20.0, 20.0, 600.0, 120.0)), text: Some(body), ..Default::default() }];
+    assert_eq!(page_text(export(&p, &opts(PageLayout::Slides)).unwrap(), 0), "onetwo");
 }
 
 /// Notes pages and handouts print on the chosen paper, landscape included, with every slide box
