@@ -118,9 +118,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, axisMin?: n|null, axisMax?: n|null (the value axis' bounds; null: automatic), palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), gapWidth?: 0-500 (percent of a bar's width between the bars of neighbouring categories), id?}",
             has_selection,
             chart_options
+        ),
+        cmd!(
+            "chart.axisTitle",
+            "Axis Titles",
+            ["Chart Design", "Chart Layouts"],
+            None,
+            "{axis: category|value, text: string|null (null removes the title), id?} → {changed, ids, axisTitles: {category, value}} (Chart Elements > Axis Titles: PowerPoint adds the text \"Axis Title\"; a bar chart draws its category axis vertically)",
+            has_selection,
+            chart_axis_title
         ),
         cmd!(
             "insert.smartArt",
@@ -1713,6 +1722,39 @@ fn chart_type_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+fn chart_axis_title(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "chart.axisTitle";
+    let category = match str_param(p, "axis") {
+        Some("category") => true,
+        Some("value") => false,
+        _ => return Err(bad(CMD, "`axis` is `category` or `value`")),
+    };
+    let text = match p.get("text") {
+        Some(Value::Null) => None,
+        Some(Value::String(t)) => Some(t.clone()),
+        _ => return Err(bad(CMD, "`text` is the title, or null to remove it")),
+    };
+    let changed = with_chart(s, p, CMD, |c| {
+        if category {
+            c.axis_titles.0.clone_from(&text);
+        } else {
+            c.axis_titles.1.clone_from(&text);
+        }
+        c.raw = None;
+        Ok(())
+    })?;
+    let ids: Vec<u32> = match p.get("id").and_then(Value::as_u64) {
+        Some(id) => vec![u32::try_from(id).unwrap_or(0)],
+        None => s.doc()?.selection.shapes.iter().map(|i| i.0).collect(),
+    };
+    let titles = ids.first().and_then(|id| s.doc().ok()?.shape(ShapeId(*id)).cloned()).and_then(|sh| match sh.kind {
+        ShapeKind::Chart(c) => Some(c.axis_titles),
+        _ => None,
+    });
+    let (cat, val) = titles.unwrap_or_default();
+    Ok(json!({"changed": changed, "ids": ids, "axisTitles": {"category": cat, "value": val}}))
+}
+
 fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
     let cats: Option<Vec<String>> = p
         .get("categories")
@@ -1813,7 +1855,48 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // Value axis bounds: a finite number, or null for automatic.
+    let axis_bound = |key: &str| -> Result<Option<Option<f64>>> {
+        match p.get(key) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(v) => v
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .map(|v| Some(Some(v)))
+                .ok_or_else(|| bad("chart.options", format!("{key} must be a number or null"))),
+        }
+    };
+    let (axis_min, axis_max) = (axis_bound("axisMin")?, axis_bound("axisMax")?);
+    // Gap width in percent (0 to 500, as Format Data Series takes it) for bar and column charts.
+    let gap_width = match p.get("gapWidth") {
+        None => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|g| g.is_finite() && (0.0..=500.0).contains(g))
+                .ok_or_else(|| bad("chart.options", format!("`gapWidth` is a percentage from 0 to 500; not {v}")))?
+                / 100.0,
+        ),
+    };
     with_chart(s, p, "chart.options", |c| {
+        if let Some(v) = axis_min {
+            c.y_min = v;
+        }
+        if let Some(v) = axis_max {
+            c.y_max = v;
+        }
+        if let (Some(lo), Some(hi)) = (c.y_min, c.y_max)
+            && lo >= hi
+        {
+            return Err(bad("chart.options", "axisMin must be below axisMax"));
+        }
+        if let Some(g) = gap_width {
+            use deckcraft_model::chart::ChartType as T;
+            if !matches!(c.kind, T::Column | T::StackedColumn | T::PercentColumn | T::Bar | T::StackedBar | T::PercentBar) {
+                return Err(bad("chart.options", "`gapWidth` is for bar and column charts"));
+            }
+            c.gap_width = g;
+        }
         if let Some(t) = &text_color {
             c.text_color = t.clone();
         }

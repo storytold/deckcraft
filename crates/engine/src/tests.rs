@@ -4724,3 +4724,101 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+#[test]
+fn chart_options_axis_bounds_set_clear_and_refuse() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.chart",
+            &json!({"type": "bar", "rect": [40, 40, 400, 300], "categories": ["A", "B", "C"], "series": [{"name": "S", "values": [20, 45.5, 59.7]}]}),
+        )
+        .unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let bounds = |s: &Session| match &s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().kind {
+        deckcraft_model::ShapeKind::Chart(c) => (c.y_min, c.y_max),
+        k => panic!("not a chart: {k:?}"),
+    };
+    assert_eq!(bounds(&s), (None, None));
+    s.execute("chart.options", &json!({"id": id, "axisMax": 80})).unwrap();
+    assert_eq!(bounds(&s), (None, Some(80.0)));
+    s.execute("chart.options", &json!({"id": id, "axisMin": 10, "axisMax": 70.5})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), Some(70.5)));
+    // null clears a bound; other options are untouched.
+    s.execute("chart.options", &json!({"id": id, "axisMax": null})).unwrap();
+    assert_eq!(bounds(&s), (Some(10.0), None));
+    // Not a number, or a minimum at or above the maximum: refused, nothing changes.
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": "80"})).is_err());
+    assert!(s.execute("chart.options", &json!({"id": id, "axisMax": 5})).is_err(), "5 is below the minimum of 10");
+    assert_eq!(bounds(&s), (Some(10.0), None));
+}
+
+#[test]
+fn chart_axis_title_sets_clears_and_draws() {
+    let mut s = session();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    let draw = |s: &Session| {
+        let st = s.doc().unwrap();
+        deckcraft_render::render_slide(&st.doc, 0, &deckcraft_render::RenderOpts { scale: 0.5, ..Default::default() }).pixels
+    };
+    let before = draw(&s);
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": "Quarter"})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": "Quarter", "value": null}), "{r}");
+    s.execute("chart.axisTitle", &json!({"id": id, "axis": "value", "text": "Revenue"})).unwrap();
+    let with = draw(&s);
+    assert_ne!(before, with, "the titles are drawn");
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides[0].shapes.iter().find(|x| x.id.0 as u64 == id.as_u64().unwrap()).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("chart") };
+    assert_eq!(c.axis_titles, (Some("Quarter".into()), Some("Revenue".into())));
+    let r = s.execute("chart.axisTitle", &json!({"id": id, "axis": "category", "text": null})).unwrap();
+    assert_eq!(r["axisTitles"], json!({"category": null, "value": "Revenue"}), "{r}");
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "depth", "text": "x"})).is_err());
+    assert!(s.execute("chart.axisTitle", &json!({"id": id, "axis": "value"})).is_err(), "text is required (null removes)");
+}
+
+/// `chart.options {gapWidth}` (percent) sets a bar or column chart's gap width: it is drawn, written
+/// as `c:gapWidth` and read back; other charts and values outside 0 to 500 are refused.
+#[test]
+fn chart_options_gap_width_is_drawn_and_survives_pptx() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    let sid = deckcraft_model::ShapeId(id.as_u64().unwrap() as u32);
+    let gap = |s: &Session| {
+        let st = s.doc().unwrap();
+        let deckcraft_model::ShapeKind::Chart(c) = &st.shape(sid).unwrap().kind else { panic!("not a chart") };
+        c.gap_width
+    };
+    let draw = |s: &Session| {
+        let st = s.doc().unwrap();
+        deckcraft_render::render_slide(&st.doc, 1, &deckcraft_render::RenderOpts { scale: 1.0, ..Default::default() }).pixels
+    };
+    let before = draw(&s);
+    s.execute("chart.options", &json!({"id": id, "gapWidth": 40})).unwrap();
+    assert!((gap(&s) - 0.4).abs() < 1e-9, "{}", gap(&s));
+    assert_ne!(draw(&s), before, "narrower gaps draw wider bars");
+    // Written as c:gapWidth and read back.
+    let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+    let name = z.file_names().find(|n| n.starts_with("ppt/charts/chart") && n.ends_with(".xml")).unwrap().to_string();
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut z.by_name(&name).unwrap(), &mut xml).unwrap();
+    assert!(xml.contains("<c:gapWidth val=\"40\"/>"), "{xml}");
+    let back = deckcraft_pptx::import(&bytes).unwrap();
+    let c = back.slides[1].shapes.iter().find_map(|x| if let deckcraft_model::ShapeKind::Chart(c) = &x.kind { Some(c) } else { None }).unwrap();
+    assert!((c.gap_width - 0.4).abs() < 1e-9, "{}", c.gap_width);
+    // 0 and 500 are the ends; beyond them, a non-number and a pie chart are refused.
+    s.execute("chart.options", &json!({"id": id, "gapWidth": 0})).unwrap();
+    assert_eq!(gap(&s), 0.0);
+    s.execute("chart.options", &json!({"id": id, "gapWidth": 500})).unwrap();
+    assert_eq!(gap(&s), 5.0);
+    for bad in [json!(501), json!(-1), json!("wide"), json!(null)] {
+        let e = s.execute("chart.options", &json!({"id": id, "gapWidth": bad})).unwrap_err().to_string();
+        assert!(e.contains("gapWidth") && e.contains("0 to 500"), "{e}");
+    }
+    assert_eq!(gap(&s), 5.0, "a refused value changes nothing");
+    let pie = s.execute("insert.chart", &json!({"type": "pie"})).unwrap()["id"].clone();
+    let e = s.execute("chart.options", &json!({"id": pie, "gapWidth": 50})).unwrap_err().to_string();
+    assert!(e.contains("bar and column"), "{e}");
+}

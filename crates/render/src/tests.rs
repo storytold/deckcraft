@@ -2874,3 +2874,90 @@ fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
     assert!(count(&coloured, &red) > 30, "the labels take the chart's red: {} red pixels", count(&coloured, &red));
     assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
 }
+
+/// How far the longest bar of a rendered bar or column chart reaches along its value axis, as a
+/// fraction of the plot's extent from the zero line to the outermost gridline. Bars are the
+/// coloured pixels; gridlines are the light grey lines that cross most of the plot.
+fn plot_fill_ratio(img: &Image, horiz: bool) -> f64 {
+    let coloured = |p: [u8; 4]| p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])).max(p[0].abs_diff(p[2])) > 40;
+    let grey = |p: [u8; 4]| p[0] == p[1] && p[1] == p[2] && p[0] > 150 && p[0] < 240;
+    let (w, h) = (img.width, img.height);
+    // Bar extent and the cross-axis range the bars occupy.
+    let (mut bar_lo, mut bar_hi, mut cross_lo, mut cross_hi) = (u32::MAX, 0u32, u32::MAX, 0u32);
+    for y in 0..h {
+        for x in 0..w {
+            if coloured(img.pixel(x, y)) {
+                let (a, c) = if horiz { (x, y) } else { (y, x) };
+                bar_lo = bar_lo.min(a);
+                bar_hi = bar_hi.max(a);
+                cross_lo = cross_lo.min(c);
+                cross_hi = cross_hi.max(c);
+            }
+        }
+    }
+    // Gridlines: along-axis positions where most of the cross range is grey.
+    let n = (cross_hi.saturating_sub(cross_lo)).max(1);
+    let is_grid = |a: u32| {
+        let hits = (cross_lo..=cross_hi).filter(|&c| grey(if horiz { img.pixel(a, c) } else { img.pixel(c, a) })).count() as u32;
+        hits * 10 >= n * 6
+    };
+    let along = if horiz { w } else { h };
+    let grids: Vec<u32> = (0..along).filter(|&a| is_grid(a)).collect();
+    let (Some(&g0), Some(&g1)) = (grids.first(), grids.last()) else { return f64::NAN };
+    if horiz {
+        // Bars start at the zero line (left gridline) and grow right.
+        (bar_hi as f64 - g0 as f64) / (g1 as f64 - g0 as f64)
+    } else {
+        // Bars stand on the zero line (bottom gridline) and grow up.
+        (g1 as f64 - bar_lo as f64) / (g1 as f64 - g0 as f64)
+    }
+}
+
+#[test]
+fn value_axis_ends_near_the_data_maximum() {
+    // A maximum of 59.7 drew its axis to 100 on a bar chart of this size (the step jumped from 10
+    // to 50 to fit three labels), leaving the bars in the left 60 % of the plot. The axis should
+    // end at the next tick of 10 past the data: 60 or 70.
+    for (kind, horiz) in [(ChartType::Bar, true), (ChartType::Column, false)] {
+        let mut c = Chart::sample(kind);
+        c.title = None;
+        c.legend = None;
+        c.gridlines = true;
+        c.categories = vec!["A".into(), "B".into(), "C".into()];
+        c.series.truncate(1);
+        c.series[0].values = vec![Some(20.0), Some(45.5), Some(59.7)];
+        let sh =
+            Shape { id: ShapeId(630), xfrm: Some(Xfrm::new(40.0, 40.0, 400.0, 300.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 2.0, ..Default::default() });
+        let ratio = plot_fill_ratio(&img, horiz);
+        assert!(ratio >= 0.8, "{kind:?}: the longest bar reaches {ratio:.3} of the plot (axis far past the data)");
+        assert!(ratio <= 1.0, "{kind:?}: the longest bar reaches {ratio:.3} of the plot");
+    }
+}
+
+/// A chart too short for four value labels takes fewer, so they don't sit on top of each other: a
+/// 400x60 chart with a maximum of 3.5 labels 0, 2 and 4, not 0 to 4 by ones 10 pt apart.
+#[test]
+fn a_short_value_axis_takes_fewer_than_four_labels() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.title = None;
+    c.legend = None;
+    c.gridlines = true;
+    c.categories = vec!["A".into(), "B".into(), "C".into()];
+    c.series.truncate(1);
+    c.series[0].values = vec![Some(1.0), Some(2.0), Some(3.5)];
+    let sh = Shape { id: ShapeId(631), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 60.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    // Rows with label ink (grey, darker than the gridlines) in the gutter left of the first bar;
+    // each label is one run of inked rows.
+    let coloured = |p: [u8; 4]| p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])) > 40;
+    let ink = |p: [u8; 4]| p[0] < 190 && p[1] < 190 && p[2] < 190 && p[0].abs_diff(p[1]).max(p[1].abs_diff(p[2])) < 12;
+    let first_bar = (0..400u32).find(|&x| (0..60u32).any(|y| coloured(img.pixel(x, y)))).unwrap_or(400);
+    let inked: Vec<bool> = (0..60u32).map(|y| (0..first_bar).any(|x| ink(img.pixel(x, y)))).collect();
+    let starts: Vec<usize> = inked.iter().enumerate().filter(|(y, on)| **on && (*y == 0 || !inked[*y - 1])).map(|(y, _)| y).collect();
+    let closest = starts.windows(2).map(|w| w[1] - w[0]).min().unwrap_or(60);
+    // Labels at least 1.9 base (13 pt at the 7 pt text of a chart this small) apart: 4 at most,
+    // where four intervals put 5 of them 10 pt apart.
+    assert!((2..=4).contains(&starts.len()), "{} value labels on a 60 pt tall chart (bars from x={first_bar}): {inked:?}", starts.len());
+    assert!(closest >= 13, "value labels {closest} pt apart: {starts:?}");
+}
