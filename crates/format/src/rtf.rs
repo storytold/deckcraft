@@ -57,9 +57,17 @@ pub fn slides_to_rtf(p: &Presentation) -> String {
     for s in &p.slides {
         let title = s.shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())).and_then(|sh| sh.text.as_ref());
         out.push_str("\\pard\\outlinelevel0\\sb240\\b\\fs32 ");
-        match title.and_then(|t| t.paragraphs.iter().find(|p| !p.is_empty())) {
-            Some(tp) => runs(&mut out, tp),
-            None => escape(&mut out, &s.title()),
+        // The title stays one outline paragraph (a `\par` would start another slide on re-import),
+        // so its paragraphs are joined with line breaks.
+        let mut tps = title.into_iter().flat_map(|t| &t.paragraphs).filter(|p| !p.is_empty()).peekable();
+        if tps.peek().is_none() {
+            escape(&mut out, &s.title());
+        }
+        for (k, tp) in tps.enumerate() {
+            if k > 0 {
+                out.push_str("\\line ");
+            }
+            runs(&mut out, tp);
         }
         out.push_str("\\b0\\par\n");
         for sh in &s.shapes {
@@ -352,6 +360,19 @@ mod tests {
         let rtf = slides_to_rtf(&p);
         assert!(sniff_rtf(rtf.as_bytes()));
         assert!(rtf.contains("\\outlinelevel2") && rtf.contains("Plan \\{Q3\\}"), "{rtf}");
+        assert_eq!(rtf_to_outline(&rtf), crate::slides_to_outline(&p));
+    }
+
+    /// A title with two paragraphs: the plain outline keeps both, the RTF export kept only the first.
+    #[test]
+    fn every_title_paragraph_is_exported() {
+        let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        crate::outline_to_slides(&mut p, "First line\n\tBody\n");
+        let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
+        let title = slide.shapes.iter_mut().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())).and_then(|sh| sh.text.as_mut()).unwrap();
+        title.paragraphs.push(Paragraph::new("Second line"));
+        let rtf = slides_to_rtf(&p);
+        assert!(rtf.contains("First line\\line Second line\\b0\\par"), "{rtf}");
         assert_eq!(rtf_to_outline(&rtf), crate::slides_to_outline(&p));
     }
 
