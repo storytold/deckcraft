@@ -139,13 +139,14 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** handouts and speaker notes are printed in many workplaces.
 - **Estimate:** 5–8 h (print through the PDF path and each OS's print dialog). **Beta blocker.**
 
-### No video export; the animated GIF has no transitions or builds
-- **Evidence:** checklist row "Export video (MP4) / animated GIF" is partial: `file.export` writes
-  an animated GIF with one frame per slide (#171), but there is no MP4/MOV export, and the GIF
-  doesn't animate transitions or build animations.
-- **Impact:** sharing a talk as a video is a common request.
-- **Estimate:** 10–16 h (render the timeline frame by frame, which the GIF can then reuse for
-  transitions and builds; an H.264 encoder is the hard part, FilmCraft has one to copy).
+### No video file export; the animated GIF has no transitions or builds
+- **Evidence:** checklist row "Export video (MP4) / animated GIF" is partial: `file.export
+  {format: "frames"}` writes the show frame by frame (builds, holds and transitions) as a PNG
+  sequence an external encoder joins, and the animated GIF has one frame per slide (#171), but
+  there is no MP4/MOV writer, and the GIF doesn't animate transitions or build animations.
+- **Impact:** sharing a talk as a video is a common request; a frame folder needs a second tool.
+- **Estimate:** 6–10 h (an H.264 encoder is the hard part, FilmCraft has one to copy; the GIF can
+  reuse the frame plan for transitions and builds).
 
 ### Embedded MicroType Express font subsets aren't drawn
 - **Evidence:** `p:embeddedFontLst` is read and written. A raw TrueType/OpenType face, or one inside an Embedded OpenType wrapper, is loaded and used to draw. A MicroType Express subset (`application/x-fontdata` with neither form) is kept and written back, and the text still uses a stand-in.

@@ -71,6 +71,62 @@ pub fn write_file(path: &str, _bytes: &[u8]) -> Result<(), String> {
     Err(format!("{path}: saving to a path is not available in the browser"))
 }
 
+/// Create the folder `path` (and its parents) inside the automation write root; one that exists is
+/// left as it is. A file of that name is an error.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn create_folder(path: &str) -> Result<(), String> {
+    crate::file_access::check_write(path)?;
+    let dir = std::path::Path::new(path);
+    if dir.exists() && !dir.is_dir() {
+        return Err(format!("{path} is not a folder"));
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("{path}: cannot create the folder: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn create_folder(path: &str) -> Result<(), String> {
+    Err(format!("{path}: saving to a path is not available in the browser"))
+}
+
+/// Remove the plain files in folder `path` whose names `matches` says are ours, inside the
+/// automation write root (each one is checked). A folder that isn't there has nothing to remove.
+/// Answers how many were removed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_files(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    let Ok(entries) = std::fs::read_dir(path) else { return Ok(0) };
+    let mut removed = 0;
+    for e in entries.flatten() {
+        let name = e.file_name();
+        if matches(&name.to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_file()) {
+            let file = e.path();
+            let file = file.to_string_lossy();
+            crate::file_access::check_write(&file)?;
+            std::fs::remove_file(&*file).map_err(|err| format!("{file}: {err}"))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn remove_files(_path: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    Ok(0)
+}
+
+/// Write `bytes` straight to `path` inside the automation write root: no temporary sibling and no
+/// sync, for the many generated files of a frame sequence, which are rebuilt rather than precious.
+/// The folder must exist ([`create_folder`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_file_direct(path: &str, bytes: &[u8]) -> Result<(), String> {
+    crate::file_access::check_write(path)?;
+    std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn write_file_direct(path: &str, _bytes: &[u8]) -> Result<(), String> {
+    Err(format!("{path}: saving to a path is not available in the browser"))
+}
+
 /// The size in bytes of the file at `path`; `None` when it can't be read (or is outside the
 /// automation read root, so File › Info doesn't reveal files the agent may not read).
 #[cfg(not(target_arch = "wasm32"))]

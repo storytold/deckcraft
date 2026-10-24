@@ -644,7 +644,9 @@ pub fn slides_to_outline(p: &Presentation) -> String {
         out.push_str(&s.title().replace('\n', " "));
         out.push('\n');
         for sh in &s.shapes {
-            if sh.ph_type().is_some_and(|k| k.is_title()) {
+            // The title is the slide's line; footer, date and slide-number placeholders are not
+            // body text (PowerPoint's outline view shows title and body placeholders only).
+            if sh.ph_type().is_some_and(|k| k.is_title() || k.is_footer_kind()) {
                 continue;
             }
             if let Some(t) = &sh.text {
