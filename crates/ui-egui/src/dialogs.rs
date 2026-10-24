@@ -2168,22 +2168,19 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             if ui.checkbox(&mut dark, "Dark appearance").changed() {
                 let _ = app.run("view.dark", json!({"on": dark}));
             }
-            // While the pointer holds the slider its value only waits in the dialog: applying it
-            // would rescale the slider under the pointer and run it to an end (#767). It applies
-            // on release, and at once from the keyboard.
-            let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
-            let mut scale = pending.unwrap_or(app.ui.ui_scale);
-            let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text("Interface size"));
-            if r.is_pointer_button_down_on() {
-                if r.changed() || pending.is_some() {
-                    d.fields.insert("uiScale".into(), scale.to_string());
+            // Applying the size while the pointer holds the slider would rescale the slider under
+            // the pointer and run it to an end (#767): the shared slider holds the value during the
+            // drag, and it applies on release, and at once from the keyboard or the value field.
+            let mut scale = f64::from(app.ui.ui_scale);
+            ui.horizontal(|ui| {
+                ui.label("Interface size");
+                let style = crate::widgets::slider_style(&theme::Tokens::get(ui.ctx()));
+                let r =
+                    craft_ui::slider::Slider::new(&mut scale, 0.75..=1.75, "Interface size", &style).step(0.05).mark(1.0).editable(2, "×").show(ui);
+                if r.drag_stopped() || (r.changed() && !r.dragged()) {
+                    app.ui.ui_scale = scale as f32;
                 }
-            } else {
-                if r.changed() || pending.is_some() {
-                    app.ui.ui_scale = scale;
-                }
-                d.fields.remove("uiScale");
-            }
+            });
             ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
             ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
             ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");

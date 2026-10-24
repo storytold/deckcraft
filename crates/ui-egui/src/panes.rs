@@ -317,7 +317,7 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.label(egui::RichText::new("Soft Edges").font(theme::bold(13.0)));
             let mut s = sh.effects.as_ref().and_then(|e| e.soft_edge).unwrap_or(0.0);
-            if ui.add(egui::Slider::new(&mut s, 0.0..=50.0).text("size (pt)")).drag_stopped() {
+            if crate::widgets::value_slider(ui, &mut s, 0.0..=50.0, "Soft edge size", 1, " pt", 0.0) {
                 run(app, "shape.effects", json!({"softEdges": s}));
             }
             let raw3d = sh.effects.as_ref().and_then(|e| e.raw3d.clone());
@@ -419,22 +419,26 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
         }
         "picture" => {
             let adj = if let ShapeKind::Picture { fill } = &sh.kind { fill.adjust.clone() } else { Default::default() };
-            let mut b = adj.brightness as f32;
-            if ui.add(egui::Slider::new(&mut b, -1.0..=1.0).text("Brightness")).drag_stopped() {
+            let mut b = adj.brightness;
+            ui.label("Brightness");
+            if crate::widgets::value_slider(ui, &mut b, -1.0..=1.0, "Brightness", 2, "", 0.0) {
                 run(app, "picture.adjust", json!({"brightness": b}));
             }
-            let mut c = adj.contrast as f32;
-            if ui.add(egui::Slider::new(&mut c, -1.0..=1.0).text("Contrast")).drag_stopped() {
+            let mut c = adj.contrast;
+            ui.label("Contrast");
+            if crate::widgets::value_slider(ui, &mut c, -1.0..=1.0, "Contrast", 2, "", 0.0) {
                 run(app, "picture.adjust", json!({"contrast": c}));
             }
-            let mut s = adj.saturation.unwrap_or(1.0) as f32;
-            if ui.add(egui::Slider::new(&mut s, 0.0..=4.0).text("Saturation")).drag_stopped() {
+            let mut s = adj.saturation.unwrap_or(1.0);
+            ui.label("Saturation");
+            if crate::widgets::value_slider(ui, &mut s, 0.0..=4.0, "Saturation", 2, "×", 1.0) {
                 run(app, "picture.adjust", json!({"saturation": s}));
             }
             let alpha = if let ShapeKind::Picture { fill } = &sh.kind { fill.alpha.unwrap_or(1.0) } else { 1.0 };
-            let mut tr = (1.0 - alpha) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=1.0).text("Transparency")).drag_stopped() {
-                run(app, "picture.adjust", json!({"transparency": tr}));
+            let mut tr = (1.0 - alpha) * 100.0;
+            ui.label("Transparency");
+            if crate::widgets::value_slider(ui, &mut tr, 0.0..=100.0, "Transparency", 0, "%", 0.0) {
+                run(app, "picture.adjust", json!({"transparency": tr / 100.0}));
             }
             if ui.button("Reset Picture").clicked() {
                 run(app, "picture.reset", json!({}));
@@ -481,19 +485,14 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
             });
             ui.horizontal(|ui| {
                 ui.label("Transparency");
-                // Seed from this shape. A shared temp defaulted to 0, so a shape that was
-                // already 40% transparent showed as opaque, and leaving the slider wrote 0.
+                // Seed from this shape, so a shape that is already 40% transparent shows 40%; the
+                // shared slider holds the value while dragging or typing.
                 let seed = solid_fill_transparency_percent(sh.fill.as_ref());
-                let id = ui.id().with(("ftr", sh.id.0));
-                let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(seed));
-                let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%"));
-                if r.drag_stopped() || r.lost_focus() {
-                    if let Some(t) = fill_transparency_to_apply(v, seed) {
-                        let _ = app.run("shape.fill", json!({"transparency": t}));
-                    }
-                    ui.data_mut(|d| d.remove::<f32>(id));
-                } else if r.dragged() || r.changed() {
-                    ui.data_mut(|d| d.insert_temp(id, v));
+                let mut v = f64::from(seed);
+                let apply =
+                    ui.push_id(("ftr", sh.id.0), |ui| crate::widgets::value_slider(ui, &mut v, 0.0..=100.0, "Fill transparency", 0, "%", 0.0)).inner;
+                if apply && let Some(t) = fill_transparency_to_apply(v as f32, seed) {
+                    let _ = app.run("shape.fill", json!({"transparency": t}));
                 }
             });
             if let Some(Fill::Picture(pf)) = &sh.fill {
@@ -621,21 +620,15 @@ fn fx_slider(
     prop: &str,
     scale: f64,
 ) {
-    ui.horizontal(|ui| {
-        ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
-        // Hold the value while dragging; otherwise follow the shape.
-        let sid = ui.id().with(id);
-        let mut v: f64 = ui.data_mut(|d| d.get_temp(sid)).unwrap_or(value);
-        let r = ui.add(egui::Slider::new(&mut v, range).suffix(suffix).max_decimals(0));
-        if r.dragged() || r.has_focus() {
-            ui.data_mut(|d| d.insert_temp(sid, v));
-        } else {
-            ui.data_mut(|d| d.remove::<f64>(sid));
-        }
-        if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
-            ui.data_mut(|d| d.remove::<f64>(sid));
-            run(app, "shape.effects", json!({key: {prop: v * scale}}));
-        }
+    ui.push_id(id, |ui| {
+        ui.horizontal(|ui| {
+            ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
+            // The shared slider holds the value while dragging and reports when to apply it.
+            let mut v = value;
+            if crate::widgets::value_slider(ui, &mut v, range, label, 0, suffix, 0.0) {
+                run(app, "shape.effects", json!({key: {prop: v * scale}}));
+            }
+        });
     });
 }
 
@@ -1447,17 +1440,11 @@ pub(crate) fn text_transparency_of(sh: &deckcraft_model::Shape) -> f64 {
 
 /// Text Fill › Transparency, as in PowerPoint's Format Shape › Text Options (#32).
 pub(crate) fn text_transparency_slider(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
-    ui.horizontal(|ui| {
+    ui.push_id(("text-transparency", sh.id), |ui| {
         ui.label("Transparency");
-        let id = ui.id().with(("text-transparency", sh.id));
-        let stored = (text_transparency_of(sh) * 100.0) as f32;
-        let mut v: f32 = ui.data_mut(|d| d.get_temp(id).unwrap_or(stored));
-        let r = ui.add(egui::Slider::new(&mut v, 0.0..=100.0).suffix("%"));
-        if r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged()) {
-            let _ = app.run("format.textTransparency", json!({"value": v as f64 / 100.0}));
-            ui.data_mut(|d| d.remove::<f32>(id));
-        } else if r.dragged() {
-            ui.data_mut(|d| d.insert_temp(id, v));
+        let mut v = text_transparency_of(sh) * 100.0;
+        if crate::widgets::value_slider(ui, &mut v, 0.0..=100.0, "Text transparency", 0, "%", 0.0) {
+            let _ = app.run("format.textTransparency", json!({"value": v / 100.0}));
         }
     });
 }
