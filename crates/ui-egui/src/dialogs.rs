@@ -2211,6 +2211,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.checkbox(&mut pr.ac_caps_lock, "Correct accidental use of cAPS LOCK key");
             ui.checkbox(&mut pr.ac_fractions, "Replace fractions (1/2) with fraction characters (½)");
             ui.checkbox(&mut pr.ac_ordinals, "Ordinals (1st) with superscript");
+            ui.checkbox(&mut pr.ac_lists, "Automatic bulleted and numbered lists");
             ui.checkbox(&mut pr.autocorrect, "Replace text as you type");
             ui.add_space(4.0);
             let mut from = d.get("from", "");

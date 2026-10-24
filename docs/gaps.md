@@ -262,9 +262,10 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   installed (always on Windows and the web) only a short list of common misspellings is found.
   `review.thesaurus` looks up the selected word (checklist row partial). AutoCorrect has
   PowerPoint's options (two initial capitals, sentence and day capitals, caps lock, fractions, an
-  editable replace list), and AutoFormat superscripts ordinals (1st) as you type; no automatic
-  bulleted lists, no undo of a single correction.
-- **Estimate:** 1–2 h (bundle openly licensed dictionaries); 2–4 h (AutoFormat as you type).
+  editable replace list), and AutoFormat superscripts ordinals (1st) and starts bulleted and
+  numbered lists (`* `, `1. `, Backspace puts the typed text back) as you type; no undo of a
+  single correction.
+- **Estimate:** 1–2 h (bundle openly licensed dictionaries).
 
 ### Equations
 - **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
@@ -359,6 +360,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
