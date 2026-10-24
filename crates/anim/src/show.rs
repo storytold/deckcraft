@@ -29,18 +29,8 @@ pub enum ShowAction {
     Exit,
 }
 
-/// Can a link from a (possibly untrusted) deck be opened outside the show? Only web pages and
-/// mail: `file:`, `javascript:`, relative paths and other schemes (OS protocol handlers) are not
-/// opened on a click.
-pub fn safe_url(url: &str) -> bool {
-    let u = url.trim();
-    let Some((scheme, rest)) = u.split_once(':') else { return false };
-    match scheme.to_ascii_lowercase().as_str() {
-        "http" | "https" => rest.starts_with("//") && rest.len() > 2,
-        "mailto" => !rest.is_empty(),
-        _ => false,
-    }
-}
+// Which links the show opens on a click; PDF export writes the same ones.
+pub use deckcraft_model::text::safe_url;
 
 /// What a clicked link does in the show (`ShowState::follow`).
 #[derive(Clone, Debug, PartialEq, Eq)]
