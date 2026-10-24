@@ -16,5 +16,18 @@
 <body>
   <canvas id="deckcraft_canvas"></canvas>
   <div id="deckcraft_loading">Loading DeckCraft&hellip;</div>
+  <script>
+    // DeckCraft is built with WebAssembly SIMD (Chrome and Edge 91+, Firefox 89+, Safari 16.4+).
+    // Say so instead of failing silently in a browser without it. The bytes are a module with
+    // one function returning `i8x16.splat(0)`.
+    (function () {
+      var simd = new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0, 1, 5, 1, 96, 0, 1, 123, 3, 2, 1, 0, 10, 8, 1, 6, 0, 65, 0, 253, 15, 11]);
+      var ok = typeof WebAssembly === "object" && WebAssembly.validate(simd);
+      if (!ok) {
+        document.getElementById("deckcraft_loading").textContent =
+          "DeckCraft needs a browser with WebAssembly SIMD: Chrome or Edge 91, Firefox 89, Safari 16.4 or later.";
+      }
+    })();
+  </script>
 </body>
 </html>

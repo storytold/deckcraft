@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** minor (show playback composites animations on the GPU from layers rendered once; animated groups move their contents; previous: minor, Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -76,6 +76,8 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 | Preview from the selected effect | yes | yes: with an effect selected the pane's button reads Play From and starts at that effect, earlier effects already played (`animpane_tests`) |
 | Motion path editing (edit points, reverse, lock) | yes | partly (no edit points) |
 | Multiple animations on one object | yes | yes |
+| Playback at display rate: shapes drawn once, then moved, scaled, turned, faded and clipped by the GPU | yes | yes: a slide with animations is split into layers rendered once (`show_layers`); frames only composite textures (0.03 ms of CPU and no texture upload per frame, was 8–60 ms and an 8 MB upload at 1080p; [benchmarks](benchmarks/slideshow.md)). Colour changes and shapes animated inside a group are drawn again for that shape alone |
+| Animated groups (fly, spin, grow, motion paths on a group) | yes | yes: the group's contents move with it (they stayed in place before) |
 | Round trip of the timing tree | yes | flattened to the pane list on read, rebuilt on write (`every_animation_effect_survives`) |
 
 ## Estimates
@@ -94,6 +96,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Show playback composites animations from layers rendered once (GPU moves, fades and clips them); animated groups move their contents. Feature scores unchanged; playback is now measured (`show_frame_bench`, [benchmarks/slideshow.md](benchmarks/slideshow.md)) |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |
 | 2026-10-15 | trivial | PPTX interactive sequences preserve later On Click effects and one click per paragraph; no change to playback or feature scores |
 | 2026-10-16 | trivial | PPTX paragraph builds edited in PowerPoint keep their clicks; sub-points save With Previous of their parent (#844) |

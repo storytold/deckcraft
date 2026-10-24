@@ -27,6 +27,7 @@ pub mod ribbon;
 pub mod selpane;
 pub mod settings;
 pub mod show;
+mod show_layers;
 pub mod sorter;
 pub mod squiggles;
 pub mod status;

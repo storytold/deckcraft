@@ -37,6 +37,7 @@ use std::sync::Arc;
 
 use deckcraft_color::Rgba;
 use deckcraft_fonts::FontDb;
+use deckcraft_geom::Xfrm;
 use deckcraft_geom::preset::{self, FillMode, Geometry, SubPath};
 use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::style::{Effects, Fill, Line};
@@ -320,6 +321,8 @@ pub struct Renderer {
     group_fill: Option<(Fill, Affine, Rect)>,
     /// Their aligned outlines, kept from frame to frame.
     morphs: morph_path::Cache,
+    /// Draw only this paragraph of each shape's text ([`ShapePart::Paragraph`]).
+    text_only: Option<usize>,
 }
 
 impl Default for Renderer {
@@ -332,6 +335,7 @@ impl Default for Renderer {
             view: Affine::IDENTITY,
             group_fill: None,
             morphs: morph_path::Cache::default(),
+            text_only: None,
         }
     }
 }
@@ -449,6 +453,49 @@ pub fn render_slide_part(pres: &Presentation, index: usize, part: SlidePart, opt
             RENDERER.with(|r| *r.borrow_mut() = Renderer::default());
             let (w, h) = output_size(pres, opts);
             Image { width: w as u32, height: h as u32, pixels: vec![0; w as usize * h as usize * 4] }
+        }
+    }
+}
+
+/// What [`render_slide_shapes`] draws of each shape.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShapePart {
+    /// The whole shape.
+    #[default]
+    Whole,
+    /// Only paragraph `n` of its text: not its fill, outline, effects or other paragraphs.
+    Paragraph(usize),
+}
+
+/// Render the top-level shapes of slide `index` listed in `ids` (in slide order, as `part`) over
+/// transparency, or over the slide's backdrop with `backdrop`, and say how far their drawing
+/// reaches, in output pixels (`None`: nothing drawn). A slide show draws its animated shapes this
+/// way, each on a picture of its own that the GPU moves; a 1×1 `opts.size` only measures. A panic
+/// inside the renderer becomes a transparent image (logged), never a crash.
+pub fn render_slide_shapes(
+    pres: &Presentation,
+    index: usize,
+    ids: &[ShapeId],
+    part: ShapePart,
+    backdrop: bool,
+    opts: &RenderOpts,
+) -> (Image, Option<Rect>) {
+    let Some(slide) = pres.slides.get(index) else { return (Image::default(), None) };
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        RENDERER.with(|r| {
+            let mut r = r.borrow_mut();
+            r.drawn = None;
+            let img = r.shapes(pres, slide, index, ids, part, backdrop, opts);
+            (img, r.drawn.take())
+        })
+    })) {
+        Ok(out) => out,
+        Err(_) => {
+            log::error!("rendering shapes of slide {index} panicked; showing nothing");
+            note_panic();
+            RENDERER.with(|r| *r.borrow_mut() = Renderer::default());
+            let (w, h) = output_size(pres, opts);
+            (Image { width: w as u32, height: h as u32, pixels: vec![0; w as usize * h as usize * 4] }, None)
         }
     }
 }
@@ -620,6 +667,45 @@ pub fn crop_dest(bounds: Rect, crop: [f64; 4]) -> Rect {
     Rect::new(bounds.x0 - l * fw, bounds.y0 - t * fh, bounds.x0 - l * fw + fw, bounds.y0 - t * fh + fh)
 }
 
+/// The transform from a shape's own space (box `x`) to its parent's, as animation state `st`
+/// moves it: translated by `st.offset` in the parent, scaled and turned around its centre.
+fn moved(x: &Xfrm, st: &ShapeState) -> Affine {
+    if st.offset == Vec2::ZERO && st.scale == (1.0, 1.0) && st.rotate == 0.0 {
+        return x.affine();
+    }
+    let c = Point::new(x.w / 2.0, x.h / 2.0);
+    let around = Affine::translate(c.to_vec2())
+        * Affine::rotate(st.rotate.to_radians())
+        * Affine::scale_non_uniform(st.scale.0, st.scale.1)
+        * Affine::translate(-c.to_vec2());
+    Affine::translate(st.offset) * x.affine() * around
+}
+
+/// How animation moves a top-level shape: its box size and the transforms (slide points) from
+/// its own space to the slide, as drawn still and as a [`ShapeState`] moves it ([`shape_motion`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Motion {
+    pub w: f64,
+    pub h: f64,
+    pub still: Affine,
+    pub moved: Affine,
+}
+
+/// How state `st` moves top-level shape `id` of slide `index` (a 3-D camera's turn included, as
+/// drawn). `None` for a shape that isn't there or has no finite box. A slide show uses it to move
+/// a picture of the still shape instead of drawing the shape again.
+pub fn shape_motion(pres: &Presentation, index: usize, id: ShapeId, st: &ShapeState) -> Option<Motion> {
+    let slide = pres.slides.get(index)?;
+    let s = slide.shapes.iter().find(|s| s.id == id)?;
+    let rctx = Ctx::for_slide(pres, slide)?;
+    let x = resolve::xfrm(&rctx, s);
+    if !x.is_finite() {
+        return None;
+    }
+    let turn = camera_turn(&rctx, s, x.w, x.h).unwrap_or(Affine::IDENTITY);
+    Some(Motion { w: x.w, h: x.h, still: x.affine() * turn, moved: moved(&x, st) * turn })
+}
+
 struct Frame<'a> {
     pres: &'a Presentation,
     opts: &'a RenderOpts<'a>,
@@ -703,6 +789,41 @@ impl Renderer {
                     }
                 }
             }
+        }
+        self.finish(ctx, w, h)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn shapes(
+        &mut self,
+        pres: &Presentation,
+        slide: &Slide,
+        index: usize,
+        ids: &[ShapeId],
+        part: ShapePart,
+        backdrop: bool,
+        opts: &RenderOpts,
+    ) -> Image {
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
+        let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
+        if let Some(rctx) = Ctx::for_slide(pres, slide) {
+            if backdrop {
+                self.backdrop(&mut ctx, &f, &rctx, slide, view);
+                // The backdrop's own drawing is not what the chosen shapes reach.
+                self.drawn = None;
+            } else {
+                // Shapes filled with the background (`useBgFill`) still show it.
+                let (fill, ph) = resolve::background(&rctx, Some(slide));
+                self.bg = Some((fill, ph, view));
+            }
+            self.text_only = match part {
+                ShapePart::Whole => None,
+                ShapePart::Paragraph(n) => Some(n),
+            };
+            for s in slide.shapes.iter().filter(|s| ids.contains(&s.id)) {
+                self.shape(&mut ctx, &f, &rctx, s, view, 0);
+            }
+            self.text_only = None;
         }
         self.finish(ctx, w, h)
     }
@@ -904,17 +1025,13 @@ impl Renderer {
         if !x.is_finite() {
             return;
         }
-        let mut m = parent * x.affine();
-        if st.offset != Vec2::ZERO || st.scale != (1.0, 1.0) || st.rotate != 0.0 {
-            let c = Point::new(x.w / 2.0, x.h / 2.0);
-            let around = Affine::translate(c.to_vec2())
-                * Affine::rotate(st.rotate.to_radians())
-                * Affine::scale_non_uniform(st.scale.0, st.scale.1)
-                * Affine::translate(-c.to_vec2());
-            m = parent * Affine::translate(st.offset) * x.affine() * around;
-        }
+        let mut m = parent * moved(&x, &st);
         if let Some(a) = camera_turn(rctx, s, x.w, x.h) {
             m *= a;
+        }
+        // Only a paragraph's text: nothing else draws text of its own.
+        if self.text_only.is_some() && matches!(s.kind, ShapeKind::Group { .. } | ShapeKind::Table(_) | ShapeKind::Chart(_) | ShapeKind::Ink { .. }) {
+            return;
         }
         let layered = st.opacity < 0.999 || st.clip.is_some();
         if layered {
@@ -925,7 +1042,13 @@ impl Renderer {
         match &s.kind {
             ShapeKind::Group { children, child } => {
                 let ch = Rect::new(child.x, child.y, child.x + child.w, child.y + child.h);
-                let gm = parent * deckcraft_geom::group_child_affine(&x, ch);
+                // The children move with the group's animation (fly in, spin, grow, motion paths).
+                let motion = if st.offset != Vec2::ZERO || st.scale != (1.0, 1.0) || st.rotate != 0.0 {
+                    moved(&x, &st) * x.affine().inverse()
+                } else {
+                    Affine::IDENTITY
+                };
+                let gm = parent * motion * deckcraft_geom::group_child_affine(&x, ch);
                 // A group's own fill (a group filled with its parent's passes that on).
                 let own = match &s.fill {
                     Some(Fill::Group) | None => self.group_fill.clone(),
@@ -1024,6 +1147,78 @@ impl Renderer {
         }
     }
 
+    /// A shape's text (or, in the editor, its placeholder prompt), set in its box under `m`.
+    #[allow(clippy::too_many_arguments)]
+    fn shape_text(
+        &mut self,
+        ctx: &mut RenderContext,
+        f: &Frame,
+        rctx: &Ctx,
+        s: &Shape,
+        m: Affine,
+        depth: usize,
+        w: f64,
+        h: f64,
+        geo: &Geometry,
+        paras: &[(usize, ParaState)],
+    ) {
+        // Text (or the placeholder prompt in the editor).
+        let skip_text = f.opts.skip_text == Some(s.id);
+        if let Some(body) = &s.text
+            && !skip_text
+        {
+            // Text in a group is set at the shape's size on the slide, in points: a group's
+            // child-coordinate scale sizes and places the box, never the type (#233's twin).
+            let (tw, th, m) = self.text_space(m, depth, w, h);
+            let text_geo;
+            let geo = if (tw, th) == (w, h) {
+                geo
+            } else {
+                text_geo = shape_geometry(s, tw, th);
+                &text_geo
+            };
+            let tr = geo.text_rect;
+            let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
+            if !body.is_empty() || editing {
+                // Imported placeholders can have no paragraph until the first keystroke.
+                let mut empty;
+                let body = if editing && body.paragraphs.is_empty() {
+                    empty = body.clone();
+                    empty.paragraphs.push(Default::default());
+                    &empty
+                } else {
+                    body
+                };
+                let mut l = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields: &f.fields, prompt_color: None, no_shrink: false });
+                if editing {
+                    preview_empty_bullets(&mut l);
+                }
+                let tm = text_transform(m, tr, l.rotation);
+                // Only the paragraphs drawn, where their animation moves them.
+                let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
+                let shift = |o: Vec2| if o == Vec2::ZERO || m.determinant().abs() < 1e-12 { tm } else { m * Affine::translate(o) * m.inverse() * tm };
+                for li in &l.lines {
+                    let ps = para(li.para);
+                    let Some(b) = line_bounds(li).filter(|_| ps.visible && ps.opacity > 0.001) else { continue };
+                    // Glyphs reach a little past their carets and line box (italics, swashes).
+                    let pad = b.height() * 0.3;
+                    self.track(shift(ps.offset), b.inflate(pad, pad));
+                }
+                match text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0) {
+                    Some(w) => warp::draw(ctx, &l, tr, m, paras, &w),
+                    None => draw_layout_with(ctx, &l, tr, m, paras),
+                }
+            } else if f.opts.edit && s.ph.is_some() {
+                let kind = s.ph_type().unwrap_or(PhType::Body);
+                let prompt_body = prompt_body(rctx, s, kind);
+                if !prompt_body.is_empty() {
+                    let grey = Rgba::rgb(0x59, 0x59, 0x59);
+                    draw_text(ctx, rctx, s, &prompt_body, tr, m, &f.fields, Some(grey));
+                }
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn geometry_shape(
         &mut self,
@@ -1042,6 +1237,13 @@ impl Renderer {
             None => (self.scaled_geometry(s, m, depth, w, h), Vec::new()),
         };
         let fade = |i: usize| fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 });
+        if let Some(n) = self.text_only {
+            // One paragraph alone: every other one hidden, the box and its effects left out.
+            let count = s.text.as_ref().map_or(0, |t| t.paragraphs.len());
+            let only: Vec<(usize, ParaState)> = (0..count).map(|i| (i, ParaState { visible: i == n, ..Default::default() })).collect();
+            self.shape_text(ctx, f, rctx, s, m, depth, w, h, &geo, &only);
+            return;
+        }
         let (fill, fill_ph) = resolve::fill(rctx, s);
         let (line, line_ph) = resolve::line(rctx, s);
         let (effects, fx_ph) = resolve::effects(rctx, s);
@@ -1344,56 +1546,7 @@ impl Renderer {
             ctx.pop_layer();
             ctx.pop_layer();
         }
-        // Text (or the placeholder prompt in the editor).
-        let skip_text = f.opts.skip_text == Some(s.id);
-        if let Some(body) = &s.text
-            && !skip_text
-        {
-            // Text in a group is set at the shape's size on the slide, in points: a group's
-            // child-coordinate scale sizes and places the box, never the type (#233's twin).
-            let (tw, th, m) = self.text_space(m, depth, w, h);
-            let text_geo;
-            let geo = if (tw, th) == (w, h) {
-                &geo
-            } else {
-                text_geo = shape_geometry(s, tw, th);
-                &text_geo
-            };
-            let tr = geo.text_rect;
-            let editing = f.opts.edit && f.opts.editing_text == Some(s.id);
-            if !body.is_empty() || editing {
-                // Imported placeholders can have no paragraph until the first keystroke.
-                let mut empty;
-                let body = if editing && body.paragraphs.is_empty() {
-                    empty = body.clone();
-                    empty.paragraphs.push(Default::default());
-                    &empty
-                } else {
-                    body
-                };
-                let mut l = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields: &f.fields, prompt_color: None, no_shrink: false });
-                if editing {
-                    preview_empty_bullets(&mut l);
-                }
-                let tm = text_transform(m, tr, l.rotation);
-                for b in l.lines.iter().filter_map(line_bounds) {
-                    // Glyphs reach a little past their carets and line box (italics, swashes).
-                    let pad = b.height() * 0.3;
-                    self.track(tm, b.inflate(pad, pad));
-                }
-                match text_warp(rctx, s, tr).filter(|_| l.rotation == 0.0) {
-                    Some(w) => warp::draw(ctx, &l, tr, m, &st.paras, &w),
-                    None => draw_layout_with(ctx, &l, tr, m, &st.paras),
-                }
-            } else if f.opts.edit && s.ph.is_some() {
-                let kind = s.ph_type().unwrap_or(PhType::Body);
-                let prompt_body = prompt_body(rctx, s, kind);
-                if !prompt_body.is_empty() {
-                    let grey = Rgba::rgb(0x59, 0x59, 0x59);
-                    draw_text(ctx, rctx, s, &prompt_body, tr, m, &f.fields, Some(grey));
-                }
-            }
-        }
+        self.shape_text(ctx, f, rctx, s, m, depth, w, h, &geo, &st.paras);
         if empty_ph && f.opts.edit {
             // Dashed placeholder outline.
             ctx.set_transform(m);
@@ -2419,6 +2572,8 @@ pub fn render_shape(pres: &Presentation, slide: &Slide, id: ShapeId, scale: f64)
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod tests_layers;
 #[cfg(test)]
 mod tests_wild;
 

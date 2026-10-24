@@ -269,7 +269,7 @@ ALSA headers).
 
 | Build | File | Notes |
 |---|---|---|
-| Static site | `deckcraft-web-<ver>.zip` | Runs in a modern browser; host it on any static server |
+| Static site | `deckcraft-web-<ver>.zip` | Runs in a modern browser with WebAssembly SIMD (Chrome and Edge 91+, Firefox 89+, Safari 16.4+); host it on any static server |
 
 ## The Crafting Apps
 

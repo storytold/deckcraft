@@ -85,4 +85,5 @@ DeckCraft renders with wgpu. It uses **WebGPU** when the browser has it and fall
 
 For example: `<iframe src="https://example.com/deckcraft/?webgl" ...>`.
 
-A browser with neither WebGPU nor WebGL2 gets a message in place of the app.
+A browser with neither WebGPU nor WebGL2 gets a message in place of the app, and so does one
+without WebAssembly SIMD (the build uses it; Chrome and Edge 91+, Firefox 89+, Safari 16.4+).

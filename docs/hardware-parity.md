@@ -1,6 +1,6 @@
 # Hardware parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** minor (show frames measured; animations and GIFs composited on the GPU; wasm SIMD; previous: minor, community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
 
 What hardware PowerPoint uses and what DeckCraft uses, per platform. Dimension score: **~40%
 ready** (estimated), **25–45 h** to parity. Performance (unmeasured, ~55%) is tracked here too
@@ -53,9 +53,16 @@ because it mostly follows from hardware use.
 
 ## Performance
 
-Nothing is measured against PowerPoint yet: no benchmark of open time, render time per slide,
-show frame rate or memory exists in `xtask`. Known: slides rasterize on the CPU, Morph aligns
-outlines every frame (#67, fix open), and the decoders run in software.
+Nothing is measured against PowerPoint yet. `cargo xtask bench` times open, render, save and
+export; `show_frame_bench` (in `crates/ui-egui`) times slide-show frames, natively and, built for
+wasm, in V8 ([benchmarks/slideshow.md](benchmarks/slideshow.md)). Slides rasterize on the CPU, but
+the show plays animations and animated GIFs the way PowerPoint does: each slide's layers are
+rasterized once and the GPU moves, scales, turns, fades and clips them, so an animation frame
+costs about 0.03 ms of CPU and uploads nothing (it was a whole-slide render and an 8 MB upload at
+1080p: 3.5 fps for a photo slide in the browser). The browser build uses WebAssembly SIMD, which
+makes the CPU renderer 1.2–3× faster there (2.4× on a photo slide). Morph transitions and slides with a playing video
+still render every frame; Morph aligns outlines every frame (#67, fix open); the decoders run in
+software.
 
 ## Estimates
 
@@ -73,6 +80,7 @@ outlines every frame (#67, fix open), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Performance: slide-show frames measured (`show_frame_bench`); animations and GIFs composited from layers rendered once; the web build uses WebAssembly SIMD. Scores and hours unchanged pending a PowerPoint comparison |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |

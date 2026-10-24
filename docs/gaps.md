@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** minor (show animations and GIFs composited on the GPU; show frame cost measured; Morph and video frames remain; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -32,7 +32,7 @@ revision history.
 | 12 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
 | 13 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 14 | PDF export rasterizes slide artwork | File format | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
-| 15 | Slides rasterize on the CPU; no performance baseline | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
+| 15 | Slides rasterize on the CPU (animations and GIFs are composited on the GPU); no PowerPoint comparison | Performance / hardware | | 15–30 | [hardware-parity.md](hardware-parity.md) |
 
 ## Stability
 
@@ -336,8 +336,16 @@ Detail in [localization-parity.md](localization-parity.md).
 
 - **Baseline measured, not compared.** `cargo xtask bench` (and `deckcraft-cli bench FILE`) times
   open, per-slide render, save, PPTX round trip and PDF export, and peak memory, against a saved
-  baseline; show frame rate isn't measured and there are no PowerPoint numbers to set beside it.
-  2–4 h.
+  baseline; the show's frame cost is measured by `show_frame_bench` ([benchmarks/slideshow.md](benchmarks/slideshow.md)).
+  There are no PowerPoint numbers to set beside them. 2–4 h.
+- **Morph transitions and slides with a playing video render every frame on the CPU.** Animated
+  slides and GIFs are composited from layers rendered once; Morph (`render_blend`) and the video
+  overlay still draw the whole slide each frame and upload it (8 MB a frame at 1080p). Moving
+  matched shapes as sprites when only their position and size change: 4–8 h.
+- **A slide with animations costs one extra render when it is entered.** Its layers are built while
+  it rests, one per frame (all at once if an animation starts first): 20–120 ms of CPU at 1080p
+  spread over a few frames, about twice that in the browser. 1–3 h to build them on a worker
+  thread on desktop.
 - **Morph aligns outlines every frame** (#67, PR open). 1 h.
 
 ## Ecosystem
@@ -359,6 +367,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Performance: the show composites animated slides and GIFs from layers rendered once and its frame cost is measured (`show_frame_bench`); new entries for Morph and video frames still rendered on the CPU and for the one-off layer build. Hours unchanged |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |

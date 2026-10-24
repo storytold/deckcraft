@@ -35,6 +35,14 @@ pub struct Show {
     prefetch: Option<Prefetch>,
     /// The current slide's backdrop, under its animation frames.
     backdrop: Option<Backdrop>,
+    /// The current slide's layers when it has animations or animated GIFs: frames are composited
+    /// from pictures rendered once (`show_layers`), with the presentation they were made from.
+    layers: Option<(std::sync::Arc<Presentation>, crate::show_layers::Layers)>,
+    /// The last composited frame, for the presenter's view of the current slide.
+    quads: Vec<crate::show_layers::Quad>,
+    /// What the last composited frame showed, so a transition away from the slide can start
+    /// from it when the whole-slide picture is older.
+    shown: Option<Shown>,
     blank: Option<Color32>,
     /// See All Slides covers the show until a slide is chosen.
     pub grid: bool,
@@ -255,8 +263,54 @@ fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u
     spawned.ok().map(|_| Prefetch { key, rx })
 }
 
+/// A composited frame's moment: enough to render the whole slide as it showed.
+#[derive(Clone)]
+struct Shown {
+    key: Key,
+    t: f64,
+    plays: Vec<TriggerPlay>,
+    stamps: Vec<StepStamp>,
+    times: Vec<(ShapeId, f64)>,
+}
+
+/// Render the whole slide as the show shows it now into `show.tex`, unless it already is that
+/// (GIF frames aside). A slide composited from layers keeps it for the transition to the next one.
+#[allow(clippy::too_many_arguments)]
+fn bring_whole_up_to_date(
+    ctx: &egui::Context,
+    show: &mut Show,
+    doc: &std::sync::Arc<Presentation>,
+    size: (u32, u32),
+    hidden: &[ShapeId],
+    times: &[(ShapeId, f64)],
+    gif: u64,
+    now: f64,
+) {
+    let (idx, step) = (show.state.slide, show.state.step);
+    let t = if show.state.playing { now - show.step_start } else { 0.0 };
+    let (plays, stamps) = (show.state.trigger_plays(), show.state.trigger_stamps());
+    let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
+    let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(doc) as usize, hidden: hidden.to_vec(), plays: done, gif };
+    if show.tex.as_ref().is_some_and(|(k, _)| Key { gif: 0, ..k.clone() } == Key { gif: 0, ..key.clone() }) {
+        return;
+    }
+    let tl = show.timeline(doc).clone();
+    let ci = render_frame(doc, idx, tl, step, t, size, hidden.to_vec(), times, render_threads(), &plays, &stamps, None);
+    let tex = match show.tex.take() {
+        Some((_, mut h)) => {
+            crate::textures::replace(ctx, &mut h, ci);
+            h
+        }
+        None => crate::textures::upload(ctx, "show", ci),
+    };
+    show.tex = Some((key, tex));
+}
+
 struct Transition {
     old: Option<TextureHandle>,
+    /// The old slide was composited and `old` is an older picture of it: render it as it last
+    /// showed before the first frame of the transition.
+    refresh: Option<Shown>,
     /// The slide left behind (Morph matches its shapes) and the Morph frame texture.
     from: Option<usize>,
     morph: Option<TextureHandle>,
@@ -289,6 +343,9 @@ impl Show {
             next_tex: None,
             prefetch: None,
             backdrop: None,
+            layers: None,
+            quads: vec![],
+            shown: None,
             blank: None,
             grid: false,
             presenter_grid: false,
@@ -418,12 +475,14 @@ impl Show {
                 // Take the old slide's texture rather than cloning its handle: the new slide is
                 // otherwise rendered into the same texture, and the transition blends the new
                 // slide with itself (#33).
+                let tex_key = self.tex.as_ref().map(|(k, _)| Key { gif: 0, ..k.clone() });
+                let refresh = self.shown.take().filter(|_| !self.quads.is_empty()).filter(|sh| tex_key != Some(Key { gif: 0, ..sh.key.clone() }));
                 let (from, old) = self.tex.take().map(|(k, t)| (k.slide, t)).unzip();
                 if from != Some(i) {
                     self.last_viewed = from;
                 }
                 self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
-                    Some(Transition { old, from, morph: None, parts: None, start: now, kind, option, dur })
+                    Some(Transition { old, refresh, from, morph: None, parts: None, start: now, kind, option, dur })
                 } else {
                     None
                 };
@@ -792,6 +851,13 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             actions.push(show.state.prev(&doc));
         }
     }
+    let ppp = ctx.pixels_per_point();
+    // A huge screen or DPI mustn't ask for a picture the GPU can't hold: render at most its limit
+    // (drawn stretched to the screen).
+    let size = crate::textures::fit_size(
+        ((srect.width() * ppp).round().clamp(1.0, u32::MAX as f32) as u32, (srect.height() * ppp).round().clamp(1.0, u32::MAX as f32) as u32),
+        crate::textures::max_side(&ctx),
+    );
     // Apply input first: a step started by this click must restart the clock before it is read.
     for a in actions.drain(..) {
         if !show.apply(a, &doc, now) {
@@ -835,13 +901,6 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     // Draw.
     let painter = ui.painter_at(full);
     painter.rect_filled(full, CornerRadius::ZERO, Color32::BLACK);
-    let ppp = ctx.pixels_per_point();
-    // A huge screen or DPI mustn't ask for a picture the GPU can't hold: render at most its limit
-    // (drawn stretched to the screen).
-    let size = crate::textures::fit_size(
-        ((srect.width() * ppp).round().clamp(1.0, u32::MAX as f32) as u32, (srect.height() * ppp).round().clamp(1.0, u32::MAX as f32) as u32),
-        crate::textures::max_side(&ctx),
-    );
     if show.ended {
         painter.text(
             pos2(full.center().x, full.min.y + 40.0),
@@ -873,7 +932,55 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
         let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: hidden.clone(), plays: done, gif };
         let back_key = BackKey { slide: idx, size, doc: key.doc };
-        let tex = if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == key) {
+        // A slide with animations or animated GIFs is composited from layers rendered once
+        // (PowerPoint-style), except while a transition plays or a video is on it.
+        let gif_ids: Vec<ShapeId> = gifs.iter().map(|g| g.id).collect();
+        let animated = show.timeline(&doc).animated_shapes();
+        let layered = show.trans.is_none() && !media.iter().any(|(_, _, c)| c.video) && (!animated.is_empty() || !gif_ids.is_empty());
+        let layers_key = crate::show_layers::LayersKey { slide: idx, size, doc: key.doc, hidden: hidden.clone() };
+        if !layered {
+            if show.trans.is_none() {
+                show.layers = None;
+            }
+        } else if show.layers.as_ref().is_none_or(|(_, l)| l.key != layers_key) {
+            let tl = show.timeline(&doc).clone();
+            show.layers =
+                crate::show_layers::Layers::plan(&doc, layers_key, &animated, &gif_ids, &|id| tl.paragraph_targets(id)).map(|l| (doc.clone(), l));
+        }
+        let view = crate::show_layers::View {
+            size,
+            rect: srect,
+            uv: show.zoom_uv(),
+            max_side: crate::textures::max_side(&ctx),
+            scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+        };
+        let frame_tl = show.timeline(&doc).clone();
+        let frame_state = |id: ShapeId| {
+            let mut st = state_for(&frame_tl, id, step, t, &plays, &stamps);
+            if hidden.contains(&id) {
+                st.visible = false;
+            }
+            st
+        };
+        let gif_frames: Vec<(ShapeId, usize)> = gifs.iter().map(|g| (g.id, g.frame)).collect();
+        let lframe = crate::show_layers::Frame { state: &frame_state, gif_times: &times, gif_frames: &gif_frames, threads: render_threads() };
+        let use_layers = layered && show.layers.as_ref().is_some_and(|(_, l)| l.ready());
+        if !use_layers {
+            show.quads.clear();
+        }
+        // With layers, the whole-slide picture is only what a transition to the next slide
+        // starts from: brought up to date once the slide has rested a moment (and, at the
+        // latest, as the slide changes).
+        let rested = !animating && now - show.step_end.max(show.slide_start) > 0.4;
+        let same_but_gif = show.tex.as_ref().is_some_and(|(k, _)| Key { gif: 0, ..k.clone() } == Key { gif: 0, ..key.clone() });
+        let mut rendered = false;
+        let tex = if use_layers {
+            if rested && !same_but_gif {
+                bring_whole_up_to_date(&ctx, &mut show, &doc, size, &hidden, &times, gif, now);
+                rendered = true;
+            }
+            show.tex.as_ref().map(|(_, t)| t.clone())
+        } else if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == key) {
             show.tex.as_ref().map(|(_, t)| t.clone())
         } else {
             // The frame rendered ahead of time, when it is this one (waiting for it beats starting over).
@@ -898,12 +1005,27 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 None => crate::textures::upload(&ctx, "show", ci),
             };
             show.tex = Some((key.clone(), tex.clone()));
+            rendered = true;
             Some(tex)
         };
+        if layered
+            && !rendered
+            && let Some((_, l)) = show.layers.as_mut()
+            && !l.ready()
+        {
+            // Build them while the slide rests, one a frame (never in a frame that already drew
+            // the whole slide); all at once when something moves.
+            let all = animating || !gif_ids.is_empty();
+            if !l.build(&ctx, &doc, &view, &lframe, all) {
+                ctx.request_repaint();
+            }
+        } else if layered && rendered && show.layers.as_ref().is_some_and(|(_, l)| !l.ready()) {
+            ctx.request_repaint();
+        }
         // While this slide rests, render the next one's first frame (not one with GIFs, whose
         // frame depends on when it is entered).
         // A slide with animations gets its backdrop ready while it rests, so they start smoothly.
-        if !animating && !show.timeline(&doc).is_empty() {
+        if !animating && !layered && !show.timeline(&doc).is_empty() {
             show.prefetch_backdrop(&doc, back_key);
         }
         if !animating && show.trans.is_none() && !show.preview_only {
@@ -913,6 +1035,30 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 && show.prefetch.as_ref().is_none_or(|p| p.key.slide != n || p.key.size != size || p.key.doc != std::sync::Arc::as_ptr(&doc) as usize)
             {
                 show.prefetch = start_prefetch(&doc, n, size);
+            }
+        }
+        // A transition away from a composited slide starts from the slide as it last showed.
+        if let Some(tr) = show.trans.as_mut()
+            && let Some(sh) = tr.refresh.take()
+        {
+            let tl = ShowState::timeline(&doc, sh.key.slide);
+            let ci = render_frame(
+                &doc,
+                sh.key.slide,
+                tl,
+                sh.key.step,
+                sh.t,
+                size,
+                sh.key.hidden.clone(),
+                &sh.times,
+                render_threads(),
+                &sh.plays,
+                &sh.stamps,
+                None,
+            );
+            match tr.old.as_mut() {
+                Some(h) => crate::textures::replace(&ctx, h, ci),
+                None => tr.old = Some(crate::textures::upload(&ctx, "show-old", ci)),
             }
         }
         let mut drew = false;
@@ -1001,7 +1147,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
         if !drew {
             show.trans = None;
-            if let Some(tex) = &tex {
+            if use_layers && let Some((ldoc, l)) = show.layers.as_mut() {
+                show.quads = l.frame(&ctx, ldoc, &view, &lframe);
+                crate::show_layers::draw(&painter, &view, &show.quads);
+                show.shown = Some(Shown { key: key.clone(), t, plays: plays.clone(), stamps: stamps.clone(), times: times.clone() });
+            } else if let Some(tex) = &tex {
                 painter.image(tex.id(), srect, show.zoom_uv(), Color32::WHITE);
             }
             // Playing video: the current frame in its box, or full screen.
@@ -2037,7 +2187,13 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                 let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
                 let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
                 let cr = Rect::from_min_size(left.min, cr.size());
-                if let Some(t) = &cur_tex {
+                if !show.quads.is_empty() {
+                    // The slide composited as on the audience screen.
+                    let size = (cr.width().max(1.0) as u32, cr.height().max(1.0) as u32);
+                    let full = show.layers.as_ref().map_or(size, |(_, l)| l.key.size);
+                    let view = crate::show_layers::View { size: full, rect: cr, uv: unit_uv(), max_side: 1, scale: 1.0 };
+                    crate::show_layers::draw(ui.painter(), &view, &show.quads);
+                } else if let Some(t) = &cur_tex {
                     ui.painter().image(t.id(), cr, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                 }
                 if let Some(z) = show.zoom {
@@ -2918,3 +3074,11 @@ mod tests {
         assert_eq!(st.slide, 0, "five Backs leave slide 2 (step {}, playing {})", st.step, st.playing);
     }
 }
+
+#[cfg(test)]
+#[path = "show_layers_tests.rs"]
+mod layers_tests;
+
+#[cfg(test)]
+#[path = "show_bench_tests.rs"]
+mod bench_tests;

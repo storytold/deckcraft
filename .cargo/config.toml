@@ -5,3 +5,8 @@ CRAFT_FONTS_DIR = { value = "../craft-fonts", relative = true }
 
 [alias]
 xtask = "run --package xtask --"
+
+# The web build uses WebAssembly SIMD (in every current browser: Chrome/Edge 91, Firefox 89,
+# Safari 16.4). The CPU renderer (vello_cpu) only vectorises with it: about 2.4x faster slides.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]
