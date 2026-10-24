@@ -286,4 +286,16 @@ mod tests {
         assert_eq!(r["playable"], false);
         assert!(r["warning"].as_str().is_some_and(|w| w.contains("can't be played")), "{r}");
     }
+
+    #[test]
+    fn a_vp8_webm_is_playable_and_warns_that_only_the_audio_plays() {
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &json!({"layout": "blank"}));
+        let clip = include_bytes!("../../../media/tests/fixtures/clip-vp8.webm");
+        let r = s.execute("insert.video", &json!({"name": "clip.webm", "data": base64_encode(clip)})).expect("insert");
+        assert_eq!(r["playable"], true, "the Vorbis track plays: {r}");
+        let w = r["warning"].as_str().expect("the VP8 track can't be shown");
+        assert!(w.contains("VP8") && w.contains("only the audio plays"), "{w}");
+        assert!(matches!(s.ui_requests.last(), Some(UiRequest::Message { .. })), "the warning reaches the status bar");
+    }
 }

@@ -1278,14 +1278,25 @@ fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
         }
         Err(_) => (0, 0, 0, false),
     };
-    let warning = (!playable).then(|| match &info {
-        Ok(i) => {
-            let codecs: Vec<&str> = i.audio.iter().map(|a| a.codec.as_str()).chain(i.video.iter().map(|v| v.codec.as_str())).collect();
-            format!("{name} was inserted, but it can't be played ({} isn't supported yet)", codecs.join(" / "))
-        }
-        Err(e) => format!("{name} was inserted, but it can't be played ({e})"),
-    });
     let decodable_video = info.as_ref().is_ok_and(|i| i.video.as_ref().is_some_and(|v| v.decodable));
+    let warning = if !playable {
+        Some(match &info {
+            Ok(i) => {
+                let codecs: Vec<&str> = i.audio.iter().map(|a| a.codec.as_str()).chain(i.video.iter().map(|v| v.codec.as_str())).collect();
+                format!("{name} was inserted, but it can't be played ({} isn't supported yet)", codecs.join(" / "))
+            }
+            Err(e) => format!("{name} was inserted, but it can't be played ({e})"),
+        })
+    } else if video && !decodable_video {
+        // A video codec without a decoder (VP8, say): the clip's audio still plays, but no frame
+        // can ever show — say so instead of leaving an unexplained black box (#1237).
+        info.as_ref()
+            .ok()
+            .and_then(|i| i.video.as_ref())
+            .map(|v| format!("{name} was inserted, but its video can't be played ({} isn't supported yet); only the audio plays", v.codec))
+    } else {
+        None
+    };
     let poster_png = if video && decodable_video { super::media::poster_png(&bytes, 0) } else { None };
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or_else(|| {

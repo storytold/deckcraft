@@ -727,6 +727,37 @@ mod tests {
         b
     }
 
+    /// A video whose codec has no decoder (a VP8 WebM, #1237) still plays through the real
+    /// insert + play path: its audio track sounds, and the insert said the video won't show.
+    #[test]
+    fn a_webm_with_an_undecodable_video_codec_still_plays_its_audio() {
+        use deckcraft_engine::Session;
+        let bytes = include_bytes!("../../media/tests/fixtures/clip-vp8.webm");
+        let mut s = Session::with_new();
+        let _ = s.execute("slide.new", &serde_json::json!({"layout": "blank"}));
+        let r = s
+            .execute("insert.video", &serde_json::json!({"name": "clip.webm", "data": deckcraft_engine::cmd::base64_encode(bytes)}))
+            .expect("insert");
+        assert_eq!(r["playable"], true, "the Vorbis track plays: {r}");
+        let w = r["warning"].as_str().expect("the insert says the video won't show");
+        assert!(w.contains("VP8") && w.contains("only the audio plays"), "{w}");
+        let (uid, doc) = s.active().map(|d| (d.uid, d.doc.clone())).expect("document");
+        let id = ShapeId(r["id"].as_u64().expect("id") as u32);
+        let clip = find_clip(&doc, id, Some(0)).expect("clip");
+        let mut host = MediaHost::new(None);
+        host.play(uid, &doc, id, &clip, None, Owner::Show);
+        assert!(host.player.wait_loaded(key(id), std::time::Duration::from_secs(5)), "decode");
+        assert!(host.status(id).is_some_and(|s| s.error.is_none()), "Vorbis decodes");
+        let mut buf = vec![0.0f32; 22_050];
+        host.player.render(&mut buf, 1, 44_100);
+        // The fixture's sine is −21 dB, so a peak near 0.09 means it is sounding.
+        let peak = buf.iter().fold(0.0f32, |m, s| m.max(s.abs()));
+        assert!(peak > 0.04, "the audio track sounds: peak {peak}");
+        assert!(host.videos.get(&id).is_some_and(|v| v.feed.is_none()), "VP8 opens no video feed");
+        host.tick(&egui::Context::default(), &mut s);
+        assert!(host.texture(id).is_none(), "no VP8 frame exists to show");
+    }
+
     #[test]
     fn grouped_gifs_play_in_slide_space() {
         let mut doc = Presentation::default();
