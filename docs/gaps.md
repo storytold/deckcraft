@@ -294,8 +294,8 @@ Detail in [ui-parity.md](ui-parity.md).
 - **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar, #41 system light/dark).
   2–4 h.
 - **Icon consistency across Craft apps** (#73, #56). 2–4 h; coordinate in craftrules.
-- **Dialogs**: 41 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
-  and Tabs, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
+- **Dialogs**: 42 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
+  and Tabs, Columns, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
   Position, Date and Time, Photo Album (Edit Photo Album reopens it), Create New Theme Colors and
   Create New Theme Fonts (each edits the open master's scheme, not a saved library; theme fonts
   are latin only), Grid Options, AutoCorrect and Paste Special. Format Background picture options
@@ -360,6 +360,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
+| 2026-10-24 | trivial | Columns dialog (number and spacing of text columns); dialog count 41 → 42 |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |

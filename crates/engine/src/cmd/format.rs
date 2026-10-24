@@ -198,7 +198,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             direction
         ),
-        cmd!("format.columns", "Columns", ["Home", "Paragraph"], None, "{count, spacing?: pt}", has_text_or_shapes, columns),
+        cmd!(
+            "format.columns",
+            "Columns",
+            ["Home", "Paragraph"],
+            None,
+            "{count?: 1-16, spacing?: pt between columns}; a key left out keeps the shape's value, and with neither the Columns dialog opens",
+            has_text_or_shapes,
+            columns
+        ),
         cmd!("format.autofit", "Autofit", ["Format Shape", "Text Box"], None, "{mode: none|shrink|resize}", has_text_or_shapes, autofit),
         cmd!("format.wrap", "Wrap Text in Shape", ["Format Shape", "Text Box"], None, "{on: bool}", has_text_or_shapes, wrap),
         cmd!(
@@ -1111,12 +1119,45 @@ fn direction(s: &mut Session, p: &Value) -> Result<Value> {
     };
     format_body(s, &move |b| b.vert = Some(d))
 }
+/// The edited or first selected shape's columns as drawn: the count and the spacing in points.
+fn current_columns(s: &Session) -> (u32, f64) {
+    let Ok(st) = s.doc() else { return (1, 0.0) };
+    let id = match &st.selection.text {
+        Some(t) if !t.notes => Some(t.shape),
+        _ => st.selection.shapes.first().copied(),
+    };
+    let Some(sh) = id.and_then(|id| st.shape(id)) else { return (1, 0.0) };
+    let body = match super::text::ctx_for(&st.doc, &st.selection) {
+        Some(c) => resolve::body(&c, sh),
+        None => sh.text.as_ref().map(|b| b.body.clone()).unwrap_or_default(),
+    };
+    (body.columns.unwrap_or(1).clamp(1, 16), body.col_spacing.unwrap_or(0.0).max(0.0))
+}
 fn columns(s: &mut Session, p: &Value) -> Result<Value> {
-    let n = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 16) as u32;
-    let sp = f64_or(p, "spacing", 0.0).max(0.0);
+    const CMD: &str = "format.columns";
+    let count = match p.get("count") {
+        None => None,
+        Some(v) => {
+            let n = v
+                .as_f64()
+                .filter(|n| n.fract() == 0.0 && (1.0..=16.0).contains(n))
+                .ok_or_else(|| bad(CMD, "`count` must be a whole number from 1 to 16"))?;
+            Some(n as u32)
+        }
+    };
+    let spacing = finite_key(p, CMD, "spacing")?.map(clamp_pt);
+    if count.is_none() && spacing.is_none() {
+        let (count, spacing) = current_columns(s);
+        s.ui_requests.push(crate::UiRequest::Dialog { id: "columns".into(), params: json!({"count": count, "spacing": spacing}) });
+        return ok();
+    }
     format_body(s, &move |b| {
-        b.columns = Some(n);
-        b.col_spacing = Some(sp);
+        if let Some(n) = count {
+            b.columns = Some(n);
+        }
+        if let Some(sp) = spacing {
+            b.col_spacing = Some(sp);
+        }
     })
 }
 fn autofit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1613,6 +1654,51 @@ mod tests {
         assert_eq!(s.doc().unwrap().history.undo.len(), n);
         assert_eq!(para(&s).align, Some(Align::Center));
         assert!(para(&s).indent.is_none());
+    }
+
+    fn body(s: &Session) -> deckcraft_model::text::BodyProps {
+        s.doc().unwrap().selected_shapes().first().and_then(|sh| sh.text.as_ref()).map(|t| t.body.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn columns_set_the_number_and_spacing_and_a_left_out_key_keeps_its_value() {
+        let mut s = shape();
+        let n = s.doc().unwrap().history.undo.len();
+        s.execute("format.columns", &json!({"count": 4, "spacing": 36.0})).unwrap();
+        assert_eq!((body(&s).columns, body(&s).col_spacing), (Some(4), Some(36.0)));
+        assert_eq!(s.doc().unwrap().history.undo.len(), n + 1, "one undo step");
+        s.execute("format.columns", &json!({"count": 2})).unwrap();
+        assert_eq!((body(&s).columns, body(&s).col_spacing), (Some(2), Some(36.0)), "the spacing stays");
+        s.execute("format.columns", &json!({"spacing": 9.0})).unwrap();
+        assert_eq!((body(&s).columns, body(&s).col_spacing), (Some(2), Some(9.0)), "the number stays");
+    }
+
+    #[test]
+    fn columns_with_no_fields_open_the_dialog_with_the_shapes_values() {
+        let mut s = shape();
+        s.execute("format.columns", &json!({"count": 3, "spacing": 27.0})).unwrap();
+        let rev = s.doc().unwrap().revision;
+        let n = s.doc().unwrap().history.undo.len();
+        s.ui_requests.clear();
+        s.execute("format.columns", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().revision, rev);
+        assert_eq!(s.doc().unwrap().history.undo.len(), n);
+        let Some(UiRequest::Dialog { id, params }) = s.ui_requests.last() else { panic!("dialog request") };
+        assert_eq!(id, "columns");
+        assert_eq!(params["count"], 3);
+        assert_eq!(params["spacing"], 27.0);
+    }
+
+    #[test]
+    fn columns_reject_a_bad_number_or_spacing_without_editing() {
+        let mut s = shape();
+        let n = s.doc().unwrap().history.undo.len();
+        for p in [json!({"count": 0}), json!({"count": 17}), json!({"count": 2.5}), json!({"count": "two"}), json!({"spacing": "wide"})] {
+            let err = s.execute("format.columns", &p).unwrap_err().to_string();
+            assert!(err.contains("format.columns"), "{p}: {err}");
+        }
+        assert_eq!(s.doc().unwrap().history.undo.len(), n);
+        assert_eq!(body(&s).columns, None);
     }
 
     #[test]

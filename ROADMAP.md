@@ -138,6 +138,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-23 | Format Background ▸ Apply to All also sets the background of the slide masters the slides use (and clears their layouts' overrides), so new slides keep it (#891) |
 | 2026-10-22 | Table text takes the master's other-text style (`otherStyle`), shapes and text boxes the presentation's default text style, as PowerPoint for Mac draws them (synthetic probe: 14 pt cells under a 14 pt `otherStyle` and a 26 pt `defaultTextStyle`); a private deck's table had been drawn 20 pt instead of 18 |
 | 2026-10-18 | Find (Ctrl+F): "Find what:" has the keyboard as soon as the dialog opens, and keeps it after Enter finds a match, so the search can be typed and changed without clicking the field (#951) |
+| 2026-10-24 | Columns dialog: Home › Columns › More Columns… and Format Shape › Text Box › Columns… set the number of text columns (1 to 16) and the spacing between them in inches, in one undo step; `format.columns` with no fields opens it, and a key left out keeps the text box's own value |
 | 2026-10-18 | Duplicate (Ctrl+D) repeats a move: duplicate a shape, move the copy, and the next Duplicate places its copy the same distance further on, as in PowerPoint (#966) |
 | 2026-10-22 | Slide Show: while animations play, each frame draws only the slide's shapes over the slide's backdrop (background, master and layout graphics), rendered once and ahead of time. A full-slide picture with a glow in the layout re-rendered at every frame held animations to 2–3 frames a second (~390 ms a frame at 1080p); now ~28 ms |
 | 2026-10-22 | Animation Pane ▸ Play From: with an effect selected, the pane's play button starts the canvas preview at that effect, with the effects before it already played. With nothing selected it is still Play All |
@@ -280,6 +281,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 |---|---|---|
 | 2026-10-22 | trivial | Progress log: Animation Pane ▸ Play From. Scores unchanged |
 | 2026-10-23 | trivial | Progress log: scroll bars on the zoomed slide pane (#1157). Scores and milestone names unchanged |
+| 2026-10-24 | trivial | Progress log: the Columns dialog. Scores and milestone names unchanged |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-21 | trivial | Progress log: Reuse Slides picker (#1103). Scores and milestone names unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |

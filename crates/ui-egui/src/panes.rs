@@ -415,6 +415,9 @@ fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                         run(app, "format.columns", json!({"count": n, "spacing": 18}));
                     }
                 }
+                if ui.small_button("Columns…").clicked() {
+                    run(app, "format.columns", json!({}));
+                }
             });
         }
         "picture" => {

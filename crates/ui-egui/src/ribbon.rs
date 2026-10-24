@@ -767,6 +767,9 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                             run(app, "format.columns", json!({"count": n, "spacing": 18}));
                         }
                     }
+                    if ui.button("More Columns…").clicked() {
+                        run(app, "format.columns", json!({}));
+                    }
                 });
             });
             ui.add_space(3.0);
