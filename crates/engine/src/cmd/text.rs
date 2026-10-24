@@ -80,7 +80,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_slide,
             set
         ),
-        cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs}", has_slide, get),
+        cmd!(query "text.get", "Get Text", [], None, "{id?} → {text, paragraphs, slide: the index of the slide the shape is on} (any slide; moves nothing)", has_slide, get),
     ]
 }
 
@@ -1227,7 +1227,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
     let inherited = inherited_aligns(s, id);
-    edit_shapes(s, &json!({"id": id}), "text.set", |sh| {
+    let r = edit_shapes(s, &json!({"id": id}), "text.set", |sh| {
         let target = match (&mut sh.kind, cell) {
             (ShapeKind::Table(t), Some((r, c))) => t.cell_mut(r, c).map(|x| &mut x.text),
             (ShapeKind::Table(_), None) => None,
@@ -1254,7 +1254,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     fit_text_box(s, id)?;
-    ok()
+    Ok(r)
 }
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1266,14 +1266,29 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
             None => st.selection.shapes.first().copied().ok_or_else(|| bad("text.get", "missing `id`"))?,
         },
     };
-    let sh = st.shape(id).ok_or_else(|| bad("text.get", "no such shape"))?;
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "text.get"))?;
     let t = sh.text.clone().unwrap_or_default();
-    Ok(json!({"text": t.text(), "paragraphs": t.paragraphs.iter().map(|p| json!({"level": p.level, "text": p.text()})).collect::<Vec<_>>()}))
+    let mut v = json!({"text": t.text(), "paragraphs": t.paragraphs.iter().map(|p| json!({"level": p.level, "text": p.text()})).collect::<Vec<_>>()});
+    if let Some(i) = super::inspect::slide_of(&ctx) {
+        v["slide"] = json!(i);
+    }
+    Ok(v)
+}
+
+/// Whether cell `(r, c)` of table `id` is one the shape-level formatters act on: when the
+/// selection is a cell range of this table (`table.selectCells`, a drag over cells) only the
+/// cells in that range are, otherwise every cell is.
+fn in_cell_range(cells: Option<(ShapeId, (usize, usize), (usize, usize))>, id: ShapeId, r: usize, c: usize) -> bool {
+    match cells {
+        Some((tid, a, b)) if tid == id => (a.0.min(b.0)..=a.0.max(b.0)).contains(&r) && (a.1.min(b.1)..=a.1.max(b.1)).contains(&c),
+        _ => true,
+    }
 }
 
 /// Apply run formatting to the text selection (or, when not editing, to all text of the
 /// selected shapes). A caret without a range formats the word it's in (PowerPoint behaviour),
-/// or sets the formatting for what is typed next at a word boundary.
+/// or sets the formatting for what is typed next at a word boundary. Formatting shapes answers
+/// as [`edit_shapes`] does (how many changed), so a caller can check a multi-selection took.
 pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sync)) -> Result<Value> {
     let st = s.doc()?;
     if let Some(t) = st.selection.text.clone() {
@@ -1297,12 +1312,13 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
     if ids.is_empty() {
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
-    edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+    let cells = st.selection.cells;
+    let changed = edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         match &mut sh.kind {
             ShapeKind::Table(t) => {
-                for row in &mut t.rows {
-                    for c in &mut row.cells {
-                        ed::format_all(&mut c.text, f);
+                for (r, row) in t.rows.iter_mut().enumerate() {
+                    for (_, cell) in row.cells.iter_mut().enumerate().filter(|(c, _)| in_cell_range(cells, sh.id, r, *c)) {
+                        ed::format_all(&mut cell.text, f);
                     }
                 }
             }
@@ -1316,7 +1332,7 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
     for id in ids {
         fit_text_box(s, id)?;
     }
-    ok()
+    Ok(changed)
 }
 
 /// What `format_run` formats while editing: the selection, or for a bare caret the word it's in
@@ -1388,12 +1404,13 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     if ids.is_empty() {
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
-    edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+    let cells = st.selection.cells;
+    let changed = edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         match &mut sh.kind {
             ShapeKind::Table(t) => {
-                for row in &mut t.rows {
-                    for c in &mut row.cells {
-                        c.text.paragraphs.iter_mut().for_each(f);
+                for (r, row) in t.rows.iter_mut().enumerate() {
+                    for (_, cell) in row.cells.iter_mut().enumerate().filter(|(c, _)| in_cell_range(cells, sh.id, r, *c)) {
+                        cell.text.paragraphs.iter_mut().for_each(f);
                     }
                 }
             }
@@ -1410,7 +1427,7 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     for id in ids {
         fit_text_box(s, id)?;
     }
-    ok()
+    Ok(changed)
 }
 
 /// Apply body (text box) changes to the edited or selected shapes.
@@ -1423,14 +1440,14 @@ pub(crate) fn format_body(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     if ids.is_empty() {
         return Err(bad("format", "select a shape"));
     }
-    edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+    let changed = edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
         f(&mut sh.text.get_or_insert_with(TextBody::default).body);
         Ok(())
     })?;
     for id in ids {
         fit_text_box(s, id)?;
     }
-    ok()
+    Ok(changed)
 }
 
 fn fonts_used(s: &mut Session, _: &Value) -> Result<Value> {

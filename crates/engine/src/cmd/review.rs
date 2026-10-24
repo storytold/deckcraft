@@ -10,11 +10,35 @@ use crate::{Result, Session, Target, UiRequest};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("comment.add", "New Comment", ["Review", "Comments"], Some("Cmd+Alt+M"), "{text, x?, y?, id?: shape}", has_slide, add),
-        cmd!("comment.reply", "Reply", ["Comments"], None, "{index, text}", has_slide, reply),
+        cmd!(
+            "comment.add",
+            "New Comment",
+            ["Review", "Comments"],
+            Some("Cmd+Alt+M"),
+            "{text, x?, y?, id?: shape} → {index, slide} (on the current slide)",
+            has_slide,
+            add
+        ),
+        cmd!("comment.reply", "Reply", ["Comments"], None, "{index, text} → {index, slide, resolved, replies: n}", has_slide, reply),
         cmd!("comment.delete", "Delete Comment", ["Review", "Comments"], None, "{index? | all?: bool}", has_slide, delete),
-        cmd!("comment.resolve", "Resolve Thread", ["Comments"], None, "{index, resolved?: bool}", has_slide, resolve),
-        cmd!(query "comment.list", "Comments", [], None, "{slide?} → comments", has_slide, list),
+        cmd!(
+            "comment.resolve",
+            "Resolve Thread",
+            ["Comments"],
+            None,
+            "{index, resolved?: bool} → {index, slide, resolved, replies: n}",
+            has_slide,
+            resolve
+        ),
+        cmd!(
+            query "comment.list",
+            "Comments",
+            [],
+            None,
+            "{slide? (else the current slide only), all?: bool (every slide's comments, each with its slide and index)} → comments",
+            has_slide,
+            list
+        ),
         cmd!(
             noundo "comment.next",
             "Next Comment",
@@ -34,7 +58,7 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| neighbour(s, p, false)
         ),
         cmd!(query "review.accessibility", "Check Accessibility", ["Review", "Accessibility"], None, "{} → [{slide, shape, issue}]", has_doc, accessibility),
-        cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}] (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; Hunspell dictionaries installed on the system, else a built-in list of common misspellings)", has_doc, spelling),
+        cmd!(query "review.spelling", "Spelling", ["Review", "Proofing"], Some("F7"), "{lang?, ignore?:[word]} → {dictionary: bool, lang, issues: [{slide, shape?, row?, col?, notes?, para, start, end, word, lang, suggestions}]} (shapes, table cells and notes; repeated words as {repeated, deleteFrom}; runs marked noProof skipped; each run in its own language, lang? for runs without one; dictionary: whether a Hunspell dictionary for lang is installed (review.dictionary says where) — without one only the built-in list of common misspellings runs, so empty issues then means little)", has_doc, spelling),
         cmd!(
             "review.spellingChange",
             "Change Spelling",
@@ -127,7 +151,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.add", "no slide"))?);
         let initials: String = author.split_whitespace().filter_map(|w| w.chars().next()).collect();
         sl.comments.push(Comment { author: author.clone(), initials, text, date: now(), x, y, resolved: false, replies: vec![], shape });
-        Ok(json!({"index": sl.comments.len() - 1}))
+        Ok(json!({"index": sl.comments.len() - 1, "slide": sel.slide}))
     })
 }
 
@@ -139,9 +163,13 @@ fn reply(s: &mut Session, p: &Value) -> Result<Value> {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.reply", "no slide"))?);
         let c = sl.comments.get_mut(i).ok_or_else(|| bad("comment.reply", "no such comment"))?;
         c.replies.push(Comment { author, text, date: now(), ..Default::default() });
-        Ok(())
-    })?;
-    ok()
+        Ok(thread_state(i, sel.slide, c))
+    })
+}
+
+/// A thread's state after reply or resolve: `{index, slide, resolved, replies}`.
+fn thread_state(index: usize, slide: usize, c: &Comment) -> Value {
+    json!({"index": index, "slide": slide, "resolved": c.resolved, "replies": c.replies.len()})
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
@@ -179,14 +207,29 @@ fn resolve(s: &mut Session, p: &Value) -> Result<Value> {
     let v = bool_or(p, "resolved", true);
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("comment.resolve", "no slide"))?);
-        sl.comments.get_mut(i).ok_or_else(|| bad("comment.resolve", "no such comment"))?.resolved = v;
-        Ok(())
-    })?;
-    ok()
+        let c = sl.comments.get_mut(i).ok_or_else(|| bad("comment.resolve", "no such comment"))?;
+        c.resolved = v;
+        Ok(thread_state(i, sel.slide, c))
+    })
 }
 
 fn list(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
+    if bool_or(p, "all", false) {
+        // Every slide's comments, each saying which slide and index it is.
+        let mut out = vec![];
+        for (slide, sl) in st.doc.slides.iter().enumerate() {
+            for (index, c) in sl.comments.iter().enumerate() {
+                let mut v = serde_json::to_value(c).unwrap_or_default();
+                if let Some(o) = v.as_object_mut() {
+                    o.insert("slide".into(), json!(slide));
+                    o.insert("index".into(), json!(index));
+                }
+                out.push(v);
+            }
+        }
+        return Ok(Value::Array(out));
+    }
     let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
     Ok(serde_json::to_value(st.doc.slides.get(i).map(|x| x.comments.clone()).unwrap_or_default()).unwrap_or_default())
 }
@@ -387,7 +430,10 @@ fn spelling(s: &mut Session, p: &Value) -> Result<Value> {
             check(para, json!({"slide": i, "notes": true, "para": pi}), &mut out);
         }
     }
-    Ok(Value::Array(out))
+    // Without a dictionary only the common-misspellings list ran: an empty list then is not a
+    // clean deck, so the answer says which it was.
+    let dictionary = dicts.get(&default).cloned().unwrap_or_else(|| crate::spell::dictionary(&default)).is_some();
+    Ok(json!({"dictionary": dictionary, "lang": default, "issues": out}))
 }
 
 fn add_to_dictionary(_s: &mut Session, p: &Value) -> Result<Value> {

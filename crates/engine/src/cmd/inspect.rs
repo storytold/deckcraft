@@ -10,8 +10,8 @@ use crate::{Result, Session};
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(query "document.inspect", "Inspect Presentation", [], None, "{} → slides with titles, layouts, shape counts; selection; size; theme", has_doc, document),
-        cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?} → the slide's shapes with ids, kinds, boxes, text, fills, animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
-        cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → full shape JSON plus its effective box", has_doc, shape),
+        cmd!(query "slide.inspect", "Inspect Slide", [], None, "{index?, animations?: true (the full list; default a summary {count, clickSteps}, animation.get has the list)} → the slide's shapes with ids, kinds, boxes, text, fills, and when present textColor (a scheme colour as its slot name, else hex), line {color, width}, a connector's from/to {id, site}, links [{text, url|slide}]; animations, transition, notes (text, and notesBody with its formatting)", has_doc, slide),
+        cmd!(query "shape.inspect", "Inspect Shape", [], None, "{id} → {shape: full shape JSON, box: its effective box, slide: the index of the slide it is on} (any slide; moves nothing)", has_doc, shape),
         cmd!(query "commands.list", "List Commands", [], None, "{filter?: substring} → [{id, label, params, enabled}]", always, commands),
     ]
 }
@@ -47,7 +47,24 @@ fn document(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
-    let x = ctx.map(|c| resolve::xfrm(c, sh)).or(sh.xfrm).unwrap_or_default();
+    let mut x = ctx.map(|c| resolve::xfrm(c, sh)).or(sh.xfrm).unwrap_or_default();
+    // A table's rows grow with their text: the box is what draws, not what was asked for.
+    if let (Some(c), deckcraft_model::ShapeKind::Table(t)) = (ctx, &sh.kind) {
+        x.h = x.h.max(deckcraft_render::table_row_heights(c, t, &deckcraft_text::NoFields).iter().sum());
+    }
+    // Text that needs more height than its box has: what an agent otherwise learns only from a
+    // render. Only for a box that neither grows (autofit shape) nor shrinks its text.
+    let overflow = ctx.and_then(|c| {
+        let body = sh.text.as_ref().filter(|b| !b.is_empty())?;
+        if matches!(sh.kind, deckcraft_model::ShapeKind::Table(_))
+            || !matches!(resolve::body(c, sh).autofit, None | Some(deckcraft_model::text::AutoFit::None))
+        {
+            return None;
+        }
+        let rect = deckcraft_render::shape_geometry(sh, x.w, x.h).text_rect;
+        let need = deckcraft_text::fit_height(c, sh, body, rect, &deckcraft_text::NoFields);
+        (need > rect.height() + 0.5).then_some(need)
+    });
     let fill = ctx.map(|c| {
         let (f, ph) = resolve::fill(c, sh);
         match f {
@@ -64,6 +81,10 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
         "rotation": x.rot,
     });
     if let Some(o) = v.as_object_mut() {
+        if let Some(need) = overflow {
+            o.insert("textOverflows".into(), json!(true));
+            o.insert("textHeight".into(), json!(round(need)));
+        }
         if let Some(p) = &sh.ph {
             o.insert("placeholder".into(), json!(p.kind.xml()));
         }
@@ -79,6 +100,35 @@ pub fn shape_summary(ctx: Option<&Ctx>, sh: &Shape, depth: usize) -> Value {
         }
         if let Some(f) = fill {
             o.insert("fill".into(), f);
+        }
+        // What used to cost a render: the text colour, the line, a connector's ends and link
+        // targets, each only when present, so a plain shape grows by its text colour alone.
+        if let Some(c) = ctx {
+            if let Some(tc) = text_color(c, sh) {
+                o.insert("textColor".into(), tc);
+            }
+            if let (deckcraft_model::Fill::Solid { color }, ph) = {
+                let (l, ph) = resolve::line(c, sh);
+                (l.fill.clone().unwrap_or(deckcraft_model::Fill::None), (l, ph))
+            } {
+                let mut line = json!({"color": color_json(c, &color, ph.1)});
+                if let Some(w) = ph.0.width {
+                    line["width"] = json!(w);
+                }
+                o.insert("line".into(), line);
+            }
+            let links = links(c, sh);
+            if !links.is_empty() {
+                o.insert("links".into(), Value::Array(links));
+            }
+        }
+        if let ShapeKind::Connector { start, end } = &sh.kind {
+            if let Some((id, site)) = start {
+                o.insert("from".into(), json!({"id": id, "site": site}));
+            }
+            if let Some((id, site)) = end {
+                o.insert("to".into(), json!({"id": id, "site": site}));
+            }
         }
         if sh.hidden {
             o.insert("hidden".into(), json!(true));
@@ -109,6 +159,47 @@ fn round(v: f64) -> f64 {
     (v * 100.0).round() / 100.0
 }
 
+/// A colour as an agent reads it: the theme slot's name for an unmodified scheme colour (so a
+/// theme change is seen as such), else the resolved `#RRGGBB`.
+fn color_json(c: &Ctx, color: &deckcraft_model::ColorRef, ph: Option<deckcraft_color::Rgba>) -> Value {
+    match &color.base {
+        deckcraft_model::ColorBase::Scheme { slot } if color.mods.is_empty() => json!(slot.xml_name()),
+        _ => json!(format!("#{}", c.color(color, ph).hex())),
+    }
+}
+
+/// The resolved colour of the shape's first text run, when it has text.
+fn text_color(c: &Ctx, sh: &Shape) -> Option<Value> {
+    let body = sh.text.as_ref().filter(|t| !t.is_empty())?;
+    let para = body.paragraphs.iter().find(|p| !p.runs.is_empty())?;
+    let run = para.runs.first()?;
+    let r = resolve::run(c, sh, para, &run.props);
+    Some(match &r.fill {
+        Some(deckcraft_model::Fill::Solid { color }) => color_json(c, color, None),
+        _ => json!(format!("#{}", resolve::text_color(c, &r).hex())),
+    })
+}
+
+/// The shape's hyperlinks: each linked run's text with its target, a `url` or the 0-based
+/// `slide` index.
+fn links(c: &Ctx, sh: &Shape) -> Vec<Value> {
+    use deckcraft_model::text::Action;
+    let mut out = vec![];
+    let target = |a: &Action| match a {
+        Action::Url { url } => Some(("url", json!(url))),
+        Action::Slide { slide } => c.pres.slide_index(*slide).map(|i| ("slide", json!(i))),
+        _ => None,
+    };
+    for run in sh.text.iter().flat_map(|t| t.paragraphs.iter()).flat_map(|p| p.runs.iter()) {
+        if let Some(link) = &run.props.link
+            && let Some((k, v)) = target(&link.action)
+        {
+            out.push(json!({"text": run.text, k: v}));
+        }
+    }
+    out
+}
+
 fn slide(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let i = usize_param(p, "index").unwrap_or(st.selection.slide);
@@ -119,7 +210,14 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
         (deckcraft_model::Fill::Solid { color }, ph) => json!(format!("#{}", c.color(&color, ph).hex())),
         (f, _) => serde_json::to_value(&f).ok().and_then(|v| v.get("kind").cloned()).unwrap_or_default(),
     });
-    Ok(json!({
+    // The full list costs 10-15 KB on an animated slide, and agents inspect a slide many times
+    // per run; the summary is what they need between edits, animation.get has the list.
+    let animations = if bool_param(p, "animations").unwrap_or(false) {
+        serde_json::to_value(&sl.animations).unwrap_or_default()
+    } else {
+        json!({"count": sl.animations.len(), "clickSteps": super::animation::click_steps(&sl.animations)})
+    };
+    let mut v = json!({
         "index": i,
         "id": sl.id,
         "layout": st.doc.layout(sl.layout).map(|(_, l)| l.name.clone()),
@@ -127,21 +225,53 @@ fn slide(s: &mut Session, p: &Value) -> Result<Value> {
         "background": bg,
         "shapes": shapes,
         "transition": serde_json::to_value(&sl.transition).unwrap_or_default(),
-        "animations": serde_json::to_value(&sl.animations).unwrap_or_default(),
+        "animations": animations,
         "notes": sl.notes_text(),
         "notesBody": sl.notes,
         "comments": sl.comments.len(),
         "hidden": sl.hidden,
-    }))
+    });
+    // Empty notes are "", not a formatted body full of nulls.
+    if sl.notes_text().is_empty()
+        && let Some(o) = v.as_object_mut()
+    {
+        o.remove("notesBody");
+    }
+    prune_nulls(&mut v);
+    Ok(v)
+}
+
+/// Drops every null-valued key, recursively: an absent field reads the same and costs nothing,
+/// where a formatted body or an animation serialises dozens of `null`s.
+fn prune_nulls(v: &mut Value) {
+    match v {
+        Value::Object(o) => {
+            o.retain(|_, x| !x.is_null());
+            o.values_mut().for_each(prune_nulls);
+        }
+        Value::Array(a) => a.iter_mut().for_each(prune_nulls),
+        _ => {}
+    }
 }
 
 fn shape(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let id =
         id_param(p, "id", "shape.inspect")?.or_else(|| st.selection.shapes.first().copied()).ok_or_else(|| bad("shape.inspect", "missing `id`"))?;
-    let sh = st.shape(id).ok_or_else(|| bad("shape.inspect", format!("no shape {id}")))?;
-    let x = xfrm_of(&st.doc, &st.selection, sh);
-    Ok(json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x}))
+    // Ids are unique in the presentation: a read-only lookup finds the shape on any slide
+    // without making that slide current, and says which slide it is on.
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.inspect"))?;
+    let x = xfrm_of(&st.doc, &ctx, sh);
+    let mut v = json!({"shape": serde_json::to_value(sh).unwrap_or_default(), "box": x});
+    if let Some(i) = slide_of(&ctx) {
+        v["slide"] = json!(i);
+    }
+    Ok(v)
+}
+
+/// The slide index of a lookup's context when the shape is on a slide (not a master or layout).
+pub(crate) fn slide_of(ctx: &crate::Selection) -> Option<usize> {
+    matches!(ctx.target, crate::Target::Slides).then_some(ctx.slide)
 }
 
 fn commands(s: &mut Session, p: &Value) -> Result<Value> {

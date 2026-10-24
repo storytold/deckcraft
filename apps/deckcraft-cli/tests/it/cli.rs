@@ -71,9 +71,10 @@ fn run_help_says_what_the_ids_do_not() {
         "COMMAND is a command id, then `=`, then the command's parameters as one JSON object.",
         "points on a 960×540 slide",
         "Slide indices start at 0.",
-        "Shape ids are looked up on the current slide only.",
+        "Shape ids are unique in the presentation;",
         "A command that adds a shape (shape.insert, insert.textBox, insert.table…) selects it.",
         "format.* acts on the selected text or shapes",
+        "skips the --save and --export still pending; it does not undo files an earlier command wrote",
     ] {
         assert!(out.contains(fact), "{fact}: {out}");
     }
@@ -86,9 +87,18 @@ fn describe_spells_out_a_command() {
         "shape.insert: Shapes, in Insert ▸ Illustrations.
 
 Parameters:
-  preset          rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets)
-  rect            [x,y,w,h] pt
-  text, optional  string
+  preset           rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets)
+  rect             [x,y,w,h] pt
+  text, optional   string
+  fill, optional   color|none
+  line, optional   color|none
+  size, optional   pt (text)
+  color, optional  text colour
+  bold, optional   bool
+  name, optional
+  adj, optional    [adjustment values 0-1]
+  flip, optional   h|v|hv
+Answers with {id}.
 
 Run it with: deckcraft-cli run --cmd 'shape.insert={…}'
 "
@@ -136,4 +146,44 @@ fn commands_lists_one_line_per_command() {
     assert_eq!(stdout(&cli(&["commands", "format.size"])), "format.size — Font Size: {size: pt}\n");
     assert_eq!(stdout(&cli(&["commands", "slide.next"])), "slide.next — Next Slide\n");
     assert_eq!(stdout(&cli(&["commands", "shape.presets"])), "shape.presets — Shape Gallery → [{name, label, category}]\n");
+}
+
+/// #298: a `--cmd` that doesn't parse says how it was read, what's wrong and the form that works,
+/// and nothing runs (not even the --cmd before it).
+#[test]
+fn a_cmd_that_does_not_parse_says_how_it_was_read_and_runs_nothing() {
+    let dir = std::env::temp_dir().join(format!("deckcraft-cli-cmd-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let deck = dir.join("x.deckcraft");
+    let err = stderr(&cli(&[
+        "run",
+        "--sample",
+        "--cmd",
+        r#"slide.new={"title":"ok"}"#,
+        "--cmd",
+        r#"new=file.new={"blank":true}"#,
+        "--save",
+        deck.to_str().unwrap(),
+    ]));
+    assert!(err.contains(r#"--cmd 2 of 2 was read as command `new` with parameters `file.new={"blank":true}`"#), "{err}");
+    assert!(
+        err.contains("--cmd takes COMMAND=PARAMS") && err.contains(r#"--cmd 'slide.new={"title":"Q3"}'"#) && err.contains("Nothing ran."),
+        "{err}"
+    );
+    assert!(!deck.exists(), "nothing ran, so nothing was saved");
+    let err = stderr(&cli(&["run", "--sample", "--cmd", "slide.new=[1]"]));
+    assert!(err.contains("--cmd 1 of 1 was read as command `slide.new` with parameters `[1]`") && err.contains("not a JSON object"), "{err}");
+    // Every --cmd is read before the presentation is opened, so a malformed one is reported even
+    // when --in cannot be opened, and file.open/file.new run only once every --cmd parses.
+    let missing = dir.join("missing.deckcraft");
+    let err = stderr(&cli(&["run", "--in", missing.to_str().unwrap(), "--cmd", "slide.new=[1]"]));
+    assert!(err.contains("--cmd 1 of 1 was read as command `slide.new` with parameters `[1]`") && err.contains("Nothing ran."), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #298: a --cmd that fails is numbered, so the agent knows which of several it was.
+#[test]
+fn a_failing_cmd_is_numbered() {
+    let err = stderr(&cli(&["run", "--sample", "--cmd", "slide.new", "--cmd", r#"slide.go={"index":99}"#]));
+    assert!(err.starts_with("deckcraft-cli: --cmd 2 of 2, `slide.go`: invalid parameters for `slide.go`: no slide"), "{err}");
 }

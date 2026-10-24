@@ -21,7 +21,13 @@ impl ToolResult {
         Self::text(serde_json::to_string_pretty(v).unwrap_or_default())
     }
     pub fn error(t: impl Into<String>) -> Self {
-        Self { content: vec![json!({"type": "text", "text": t.into()})], is_error: true }
+        let mut t = t.into();
+        // The engine names its own commands; here the tools that open a presentation are the
+        // ones a client calls.
+        if t.contains("no presentation open") {
+            t.push_str("; here: new_presentation or open_presentation");
+        }
+        Self { content: vec![json!({"type": "text", "text": t})], is_error: true }
     }
     pub fn image(png_base64: String, info: &Value) -> Self {
         Self {
@@ -67,14 +73,17 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "list_commands",
             "List commands",
-            "Every command (id, label, ribbon/menu place, shortcut, parameter summary, whether it is enabled now). Filter by a substring of id or label.",
-            obj(json!({"filter": string("Substring of the id or label, e.g. `format.` or `slide`")}), &[]),
+            "Every command (id, label, ribbon/menu place, shortcut, parameter summary, whether it is enabled now, what it acts on). Filter by a substring of id or label; brief answers only id and params. Families: slide., section., shape., text., format., insert., table., animation., transition., design., arrange., edit., file.",
+            obj(
+                json!({"filter": string("Substring of the id or label, e.g. `format.` or `slide`"), "brief": boolean("Only id and params (default false)")}),
+                &[],
+            ),
             true,
         ),
         tool(
             "run_command",
             "Run a command",
-            "Run any command by id with JSON parameters. This is how everything is done: slide.new, shape.insert, text.set, format.bold, shape.fill, design.theme, transition.set, animation.add, table.merge, edit.undo…",
+            "Run any command by id with JSON parameters. This is how everything is done: slide.new, shape.insert, text.set, format.bold, shape.fill, design.theme, transition.set, animation.add, table.merge, edit.undo… A tool name (add_shape, go_to_slide…) works here too, with the tool's arguments as params.",
             obj(
                 json!({"command": string("Command id from list_commands"), "params": {"type": "object", "description": "Parameters (see the command's params summary)"}}),
                 &["command"],
@@ -84,9 +93,9 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "batch",
             "Run several commands",
-            "Run commands in order; stops at the first error unless keepGoing. Returns each result.",
+            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params; a tool that answers an image (render_slide) is refused here: call it on its own. An item with `as: \"box\"` can be referred to by a later item's params as \"$box\" (its id), so insert, connect and animate fit in one batch.",
             obj(
-                json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
+                json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}, "as": string("Name for this item's answer, for \"$name\" in later params")}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
                 &["commands"],
             ),
             false,
@@ -115,13 +124,14 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "export",
             "Export",
-            "Export slides: png/jpeg (one slide, or all with all:true), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
+            "Export slides: png/jpeg (one slide by `index` (or `slide`), or all with all:true: one file per slide, numbered from 1, the displayed slide number: d.png → d1.png, d2.png…; the answer's `indices` are the 0-based slide of each file), pptx, deckcraft, outline text, pdf (slides, notes pages or handouts), or an animated gif of the deck (one frame per slide).",
             obj(
                 json!({
                     "path": string("Output path"),
                     "format": {"type": "string", "enum": ["png", "jpeg", "pptx", "deckcraft", "outline", "rtf", "pdf", "gif"], "description": "Output format (default: from the path's extension)"},
-                    "slide": int("Slide index for images"),
-                    "all": boolean("All slides (images)"),
+                    "slide": int("Slide index for images (`index` is the same)"),
+                    "index": int("Slide index for images (the same as `slide`)"),
+                    "all": boolean("All slides (images): one file per slide, numbered from 1 (the displayed slide number), while `slide` is a 0-based index"),
                     "scale": num("Pixels per point for images (default 2)"),
                     "layout": {"type": "string", "enum": ["slides", "notes", "handouts"], "description": "PDF page layout (default slides)"},
                     "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
@@ -156,16 +166,19 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "inspect_slide",
             "Inspect slide",
-            "One slide's shapes with ids, kinds, boxes [x,y,w,h], placeholder types, text, fills, tables, charts; plus background, transition, animations, notes.",
-            obj(json!({"index": int("Slide index (default: current)")}), &[]),
+            "One slide (`index`, or `slide`): its shapes with ids, kinds, boxes [x,y,w,h], placeholder types, text, fills, tables, charts, and when present textColor (a scheme colour as its slot name, else hex), line {color, width}, a connector's from/to {id, site} and links [{text, url|slide}]; plus background, transition, notes, and animations as a summary {count, clickSteps} (animations: true for the full list, as run_command animation.get gives it with each one's click step).",
+            obj(
+                json!({"index": int("Slide index (or `slide`; default: current)"), "slide": int("The same as `index`"), "animations": boolean("Embed the full animation list instead of the {count, clickSteps} summary (default false)")}),
+                &[],
+            ),
             true,
         ),
         tool(
             "render_slide",
             "Render slide",
-            "Render a slide to a PNG image and return it, to check your work visually.",
+            "Render a slide (`index`, or `slide`) to a PNG image and return it, to check your work visually.",
             obj(
-                json!({"slide": int("Slide index (default: current)"), "scale": num("Pixels per point (default 1 = 960×540 for 16:9)"), "edit": boolean("Show placeholder prompts like the editor")}),
+                json!({"index": int("Slide index (or `slide`; default: current)"), "slide": int("The same as `index`"), "scale": num("Pixels per point (default 1 = 960×540 for 16:9)"), "edit": boolean("Show placeholder prompts like the editor")}),
                 &[],
             ),
             true,
@@ -207,14 +220,17 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "set_text",
             "Set text",
-            "Replace a shape's text (keeps its first run's formatting). Leading tabs set bullet levels.",
-            obj(json!({"id": int("Shape id (from inspect_slide)"), "text": string("New text")}), &["id", "text"]),
+            "Replace a shape's text (keeps its first run's formatting), or one table cell's with `cell`. Leading tabs set bullet levels.",
+            obj(
+                json!({"id": int("Shape id (from inspect_slide)"), "text": string("New text"), "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "Table cell [row, col], 0-based, when id is a table"}}),
+                &["id", "text"],
+            ),
             false,
         ),
         tool(
             "insert_picture",
             "Insert picture",
-            "Insert a picture from a file path or base64 data, optionally at a box.",
+            "Insert a picture from a file path or base64 data, optionally at a box (x, y, w and h together; none for the default placement).",
             obj(
                 json!({"path": string("Image file path"), "data": string("Base64 image data (instead of path)"), "name": string("File name for data"), "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height")}),
                 &[],
@@ -224,7 +240,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "insert_table",
             "Insert table",
-            "Insert a table with rows×cols and optional cell text (data: rows of strings).",
+            "Insert a table with rows×cols and optional cell text (data: rows of strings), optionally at a box (x, y, w and h together; none for the default placement).",
             obj(
                 json!({"rows": int("Rows"), "cols": int("Columns"), "data": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}, "x": num("Left"), "y": num("Top"), "w": num("Width"), "h": num("Height")}),
                 &["rows", "cols"],
@@ -251,7 +267,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "pointer",
             "Pointer gesture",
-            "Drive the active tool with pointer events in slide points: down/drag/up/move/doubleclick/contextclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret; contextclick selects like a right click).",
+            "Drive the active tool with pointer events in slide points (origin top-left, y down; 960×540 for 16:9): down/drag/up/move/doubleclick/contextclick, exactly like the mouse (draws, moves, resizes, rotates, places the caret; contextclick selects like a right click). Answers `selected: [{id, rect}]`, the selection's boxes after the gesture, so no inspect is needed after a drag.",
             obj(
                 json!({"events": {"type": "array", "items": obj(json!({"kind": string("down|drag|up|move|doubleclick|tripleclick|contextclick"), "x": num("x (pt)"), "y": num("y (pt)"), "mods": mods_schema()}), &["kind", "x", "y"])}, "mods": mods_schema()}),
                 &["events"],
@@ -268,7 +284,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "key",
             "Press key",
-            "Press a key as on the keyboard: text editing keys (arrows, Backspace, Enter, Tab), nudges, and shortcuts (cmd+B…).",
+            "Press a key as on the keyboard: text editing keys (arrows, Backspace, Enter, Tab), nudges (with shapes selected, an arrow key moves them 6 pt, alt+arrow 1 pt; the answer carries `selected: [{id, rect}]`, the moved boxes), and shortcuts (cmd+B…).",
             obj(json!({"key": string("Key name or character"), "mods": mods_schema()}), &["key"]),
             false,
         ),
@@ -279,7 +295,16 @@ pub fn tool_definitions() -> Vec<Value> {
             obj(json!({"text": string("Text")}), &["text"]),
             false,
         ),
-        tool("screenshot", "Screenshot", &format!("Screenshot of the whole DeckCraft window (UI included).{APP_ONLY}"), obj(json!({}), &[]), true),
+        tool(
+            "screenshot",
+            "Screenshot",
+            &format!(
+                "Screenshot of the whole DeckCraft window (UI included), as image content; with `path` the PNG is written there and the answer is text {{path, width, height}}, for a client that cannot read images.{APP_ONLY}"
+            ),
+            obj(json!({"path": string("Write the PNG to this file and answer {path, width, height} as text")}), &[]),
+            // With `path` it writes a file, so it is not read-only (like export).
+            false,
+        ),
         tool(
             "call_app",
             "Call app method",
@@ -294,8 +319,125 @@ fn exec(b: &mut dyn Backend, cmd: &str, params: Value) -> Result<Value, String> 
     b.call("engine.execute", json!({"command": cmd, "params": params}))
 }
 
+/// A tool name where `run_command` and `batch` take a command id runs that tool, so add_shape,
+/// add_text_box or go_to_slide can sit in a batch beside commands (#298).
+fn is_tool(id: &str) -> bool {
+    tool_definitions().iter().any(|t| t["name"] == id)
+}
+
+/// Replaces every `"$name"` string in a batch item's params with the answer of the earlier item
+/// named `as: "name"` (its `id`, else the whole answer). A `$` followed by an identifier that
+/// names no earlier item is an error, so a typo is not sent on as text.
+/// A batch item name `$name` can refer to: letters, digits and `_`, not starting with a digit.
+fn is_ref_name(key: &str) -> bool {
+    !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !key.starts_with(|c: char| c.is_ascii_digit())
+}
+
+fn substitute(v: &mut Value, named: &std::collections::HashMap<String, Value>) -> Result<(), String> {
+    match v {
+        Value::String(s) => {
+            if let Some(key) = s.strip_prefix('$')
+                && is_ref_name(key)
+            {
+                match named.get(key) {
+                    Some(r) => *v = r.clone(),
+                    None => return Err(format!("`${key}` names no earlier item of this batch (give an item `\"as\": \"{key}\"` before it)")),
+                }
+            }
+        }
+        Value::Array(a) => {
+            for x in a {
+                substitute(x, named)?;
+            }
+        }
+        Value::Object(o) => {
+            for x in o.values_mut() {
+                substitute(x, named)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// A command id or a tool name, run either way, as a command's answer. A batch answers text, so a
+/// tool that answers an image (render_slide, screenshot without `path`) is refused rather than
+/// reported ok with the image dropped.
+fn run_either(b: &mut dyn Backend, id: &str, params: Value) -> Result<Value, String> {
+    if !is_tool(id) {
+        return exec(b, id, params);
+    }
+    let r = call_tool(b, id, &params);
+    if r.content.iter().any(|c| c.get("type").and_then(Value::as_str) == Some("image")) {
+        return Err(format!("`{id}` answers an image, which a batch cannot carry (it answers one text array): call {id} on its own"));
+    }
+    let text = r.content.iter().filter_map(|c| c.get("text").and_then(Value::as_str)).collect::<Vec<_>>().join("\n");
+    if r.is_error { Err(text) } else { Ok(serde_json::from_str(&text).unwrap_or(Value::String(text))) }
+}
+
 fn f(a: &Value, k: &str) -> Option<f64> {
     a.get(k).and_then(Value::as_f64)
+}
+
+/// The tool's `x`, `y`, `w`, `h` as the command's `rect`; the four keys themselves are taken out,
+/// because the command refuses keys it doesn't take. Some of the four but not all (or one that is
+/// not a finite number) is refused, not dropped for the default placement; none keeps it.
+fn with_rect(a: &Value) -> Result<Value, String> {
+    const KEYS: [&str; 4] = ["x", "y", "w", "h"];
+    let given: Vec<&str> = KEYS.into_iter().filter(|k| a.get(k).is_some_and(|v| !v.is_null())).collect();
+    let nums: Vec<f64> = KEYS.into_iter().filter_map(|k| f(a, k)).filter(|v| v.is_finite()).collect();
+    let mut p = a.clone();
+    let Some(o) = p.as_object_mut() else { return Ok(p) };
+    for k in KEYS {
+        o.remove(k);
+    }
+    if given.is_empty() {
+        return Ok(p);
+    }
+    match nums.as_slice() {
+        [x, y, w, h] => {
+            o.insert("rect".into(), json!([x, y, w, h]));
+            Ok(p)
+        }
+        _ => Err(format!(
+            "x, y, w and h go together: give all four or none (got {}, as finite numbers in points); with none the shape takes the default placement",
+            given.join(", ")
+        )),
+    }
+}
+
+/// `index` and `slide` name the same slide on every slide-taking tool: whichever the agent wrote
+/// is renamed to the key the engine takes (`to`). Both given with different values is a
+/// contradiction and is refused rather than one being picked.
+fn slide_alias(tool: &str, a: &Value, to: &str) -> Result<Value, String> {
+    let from = if to == "index" { "slide" } else { "index" };
+    let mut p = a.clone();
+    if let Some(o) = p.as_object_mut()
+        && let Some(v) = o.remove(from)
+    {
+        match o.get(to) {
+            Some(other) if *other != v => return Err(format!("{tool}: `index` ({other}) and `slide` ({v}) name different slides; give one")),
+            _ => {
+                o.insert(to.to_string(), v);
+            }
+        }
+    }
+    Ok(p)
+}
+
+/// A `key` or `pointer` answer with `selected: [{id, rect}]`, the selection's boxes after the
+/// action: the engine answers it itself for a nudge or a gesture; an app whose answer lacks it
+/// (an older build) gets one follow-up `edit.selection`, so the agent still spends one call.
+fn with_selected(b: &mut dyn Backend, mut v: Value, want: bool) -> Value {
+    if want
+        && let Some(o) = v.as_object_mut()
+        && !o.contains_key("selected")
+        && let Ok(sel) = exec(b, "edit.selection", json!({}))
+        && let Some(s) = sel.get("selected")
+    {
+        o.insert("selected".into(), s.clone());
+    }
+    v
 }
 
 fn wrap(r: Result<Value, String>) -> ToolResult {
@@ -339,6 +481,8 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
     match name {
         "list_commands" => wrap(b.call("engine.commands", json!({})).map(|v| {
             let f = a.get("filter").and_then(Value::as_str).unwrap_or("").to_lowercase();
+            let brief = a.get("brief").and_then(Value::as_bool).unwrap_or(false);
+            let trim = |c: Value| if brief { json!({"id": c.get("id"), "params": c.get("params")}) } else { c };
             Value::Array(
                 v.as_array()
                     .cloned()
@@ -349,20 +493,41 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
                             || c.get("id").and_then(Value::as_str).is_some_and(|i| i.to_lowercase().contains(&f))
                             || c.get("label").and_then(Value::as_str).is_some_and(|i| i.to_lowercase().contains(&f))
                     })
+                    .map(trim)
                     .collect(),
             )
         })),
         "run_command" => {
             let Some(c) = a.get("command").and_then(Value::as_str) else { return ToolResult::error("missing `command`") };
-            wrap(exec(b, c, a.get("params").cloned().unwrap_or(json!({}))))
+            let params = a.get("params").cloned().unwrap_or(json!({}));
+            if is_tool(c) {
+                return call_tool(b, c, &params);
+            }
+            wrap(exec(b, c, params))
         }
         "batch" => {
             let keep = a.get("keepGoing").and_then(Value::as_bool).unwrap_or(false);
             let mut out = vec![];
+            let mut named: std::collections::HashMap<String, Value> = std::collections::HashMap::new();
             for c in a.get("commands").and_then(Value::as_array).cloned().unwrap_or_default() {
                 let id = c.get("command").and_then(Value::as_str).unwrap_or("");
-                match exec(b, id, c.get("params").cloned().unwrap_or(json!({}))) {
-                    Ok(v) => out.push(json!({"command": id, "ok": true, "result": v})),
+                let mut params = c.get("params").cloned().unwrap_or(json!({}));
+                // A name that `$name` could never match (a hyphen, a space, a leading digit) is
+                // refused where it is declared, not left to fail as text two items later.
+                let name_ok = match c.get("as").and_then(Value::as_str) {
+                    Some(n) if !is_ref_name(n) => Err(format!(
+                        "`as: \"{n}\"` is not a usable name: use letters, digits and `_`, not starting with a digit, so that `${n}` can refer to it"
+                    )),
+                    _ => Ok(()),
+                };
+                let run = name_ok.and_then(|()| substitute(&mut params, &named)).and_then(|()| run_either(b, id, params));
+                match run {
+                    Ok(v) => {
+                        if let Some(name) = c.get("as").and_then(Value::as_str) {
+                            named.insert(name.to_string(), v.get("id").cloned().unwrap_or_else(|| v.clone()));
+                        }
+                        out.push(json!({"command": id, "ok": true, "result": v}));
+                    }
                     Err(e) => {
                         out.push(json!({"command": id, "ok": false, "error": e}));
                         if !keep {
@@ -376,10 +541,10 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "new_presentation" => wrap(exec(b, "file.new", a)),
         "open_presentation" => wrap(exec(b, "file.open", a)),
         "save_presentation" => wrap(exec(b, "file.save", a)),
-        "export" => wrap(exec(b, "file.export", a)),
+        "export" => wrap(slide_alias(name, &a, "slide").and_then(|p| exec(b, "file.export", p))),
         "inspect_document" => wrap(b.call("document.inspect", json!({}))),
-        "inspect_slide" => wrap(exec(b, "slide.inspect", a)),
-        "render_slide" => match b.call("ui.render", a.clone()) {
+        "inspect_slide" => wrap(slide_alias(name, &a, "index").and_then(|p| exec(b, "slide.inspect", p))),
+        "render_slide" => match slide_alias(name, &a, "slide").and_then(|p| b.call("ui.render", p)) {
             Ok(v) => match v.get("png").and_then(Value::as_str) {
                 Some(png) => {
                     ToolResult::image(png.to_string(), &json!({"width": v.get("width"), "height": v.get("height"), "slide": v.get("slide")}))
@@ -430,35 +595,35 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
             ToolResult::json(&v)
         }
         "set_text" => wrap(exec(b, "text.set", a)),
-        "insert_picture" => {
-            let mut p = a.clone();
-            if let (Some(x), Some(y), Some(w), Some(h)) = (f(&a, "x"), f(&a, "y"), f(&a, "w"), f(&a, "h")) {
-                p["rect"] = json!([x, y, w, h]);
-            }
-            wrap(exec(b, "insert.picture", p))
-        }
-        "insert_table" => {
-            let mut p = a.clone();
-            if let (Some(x), Some(y), Some(w), Some(h)) = (f(&a, "x"), f(&a, "y"), f(&a, "w"), f(&a, "h")) {
-                p["rect"] = json!([x, y, w, h]);
-            }
-            wrap(exec(b, "insert.table", p))
-        }
+        "insert_picture" => wrap(with_rect(&a).and_then(|p| exec(b, "insert.picture", p))),
+        "insert_table" => wrap(with_rect(&a).and_then(|p| exec(b, "insert.table", p))),
         "insert_chart" => wrap(exec(b, "insert.chart", a)),
         "select" => wrap(exec(b, "edit.select", a)),
-        "pointer" => wrap(b.call("ui.pointer", a)),
+        "pointer" => wrap(b.call("ui.pointer", a).map(|v| with_selected(b, v, true))),
         "select_tool" => wrap(b.call("ui.tool.select", a)),
         "key" => {
             let mut p = a.get("mods").cloned().filter(Value::is_object).unwrap_or(json!({}));
             p["key"] = a.get("key").cloned().unwrap_or_default();
-            wrap(b.call("ui.key", p))
+            let nudge = matches!(
+                a.get("key").and_then(Value::as_str).map(str::to_ascii_lowercase).as_deref(),
+                Some("arrowleft" | "arrowright" | "arrowup" | "arrowdown" | "left" | "right" | "up" | "down")
+            );
+            wrap(b.call("ui.key", p).map(|v| with_selected(b, v, nudge)))
         }
         "type_text" => wrap(b.call("ui.text", a)),
         "screenshot" => {
             if !b.has_ui() {
-                return ToolResult::error(format!("screenshot: {NEEDS_APP}. Use render_slide to see a slide headlessly."));
+                return ToolResult::error(format!(
+                    "screenshot: {NEEDS_APP}. Headless, render_slide shows a slide, and export {{path, format: \"png\", slide}} writes one to a file."
+                ));
             }
-            match b.call("ui.screenshot", json!({"base64": true})) {
+            // With a path the app writes the file and answers {path, width, height}: text an agent
+            // behind a text-only bridge can read (it used to have to guess call_app ui.screenshot).
+            let params = match a.get("path").and_then(Value::as_str) {
+                Some(path) => json!({"path": path}),
+                None => json!({"base64": true}),
+            };
+            match b.call("ui.screenshot", params) {
                 Ok(v) => match v.get("png").and_then(Value::as_str) {
                     Some(png) => ToolResult::image(png.to_string(), &json!({"width": v.get("width"), "height": v.get("height")})),
                     None => ToolResult::json(&v),
@@ -469,6 +634,9 @@ pub fn call_tool(b: &mut dyn Backend, name: &str, a: &Value) -> ToolResult {
         "call_app" => {
             let Some(m) = a.get("method").and_then(Value::as_str) else { return ToolResult::error("missing `method`") };
             wrap(b.call(m, a.get("params").cloned().unwrap_or(json!({}))))
+        }
+        other if deckcraft_engine::find_command(other).is_some() => {
+            ToolResult::error(format!("`{other}` is a command, not a tool: run_command {{\"command\": \"{other}\", \"params\": {{…}}}}"))
         }
         other => ToolResult::error(format!("unknown tool `{other}`")),
     }

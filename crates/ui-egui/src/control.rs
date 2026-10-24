@@ -161,7 +161,12 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                     Err(e) => return err(e),
                 }
             }
-            ok(json!({"result": last, "selection": app.session.active().map(|d| serde_json::to_value(&d.selection).unwrap_or_default())}))
+            let st = app.session.active();
+            ok(json!({
+                "result": last,
+                "selection": st.map(|d| serde_json::to_value(&d.selection).unwrap_or_default()),
+                "selected": st.map(deckcraft_engine::DocState::selected_boxes).unwrap_or_default(),
+            }))
         }
         "ui.key" => {
             let Some(k) = s("key") else { return err("missing `key`") };

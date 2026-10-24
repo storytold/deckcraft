@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shapes",
             ["Insert", "Illustrations"],
             None,
-            "{preset: rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets), rect: [x,y,w,h] pt, text?: string}",
+            "{preset: rect|roundRect|ellipse|triangle|rightArrow|star5|… (see shape.presets), rect: [x,y,w,h] pt, text?: string, fill?: color|none, line?: color|none, size?: pt (text), color?: text colour, bold?: bool, name?, adj?: [adjustment values 0-1], flip?: h|v|hv} → {id}",
             has_slide,
             insert_shape
         ),
@@ -39,7 +39,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Picture from File…",
             ["Insert", "Images", "Pictures"],
             None,
-            "{path? | data: base64, name?, rect?: [x,y,w,h]}",
+            "{path? | data: base64, name?, rect?: [x,y,w,h]} → {id, rect} (a selected empty content placeholder takes the picture and keeps its box)",
             has_slide,
             picture
         ),
@@ -61,13 +61,13 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             photo_album_edit
         ),
-        cmd!("insert.table", "Table…", ["Insert", "Tables"], None, "{rows, cols, rect?}", has_slide, table),
+        cmd!("insert.table", "Table…", ["Insert", "Tables"], None, "{rows, cols, rect?, data?: [[cell text]]} → {id, rect}", has_slide, table),
         cmd!(
             "insert.chart",
             "Chart…",
             ["Insert", "Illustrations"],
             None,
-            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, rect?, categories?: [..], series?: [{name, values}]}",
+            "{type?: column|bar|line|pie|doughnut|area|scatter|stackedColumn|…, title?, rect?, categories?: [..], series?: [{name, values}]} → {id, rect}",
             has_slide,
             chart
         ),
@@ -109,7 +109,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Edit Data",
             ["Chart Design", "Data"],
             None,
-            "{categories?: [..], levels?: [[..]] (outer category levels, innermost first), series?: [{name, values}], id?}",
+            "{categories?: [..] (replaces all the categories), levels?: [[..]] (outer category levels, innermost first), series?: [{name, values}] (replaces all the series: pass every one to keep), id?}",
             has_selection,
             chart_data
         ),
@@ -118,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?: colorful1|colorful2|colorful3|colorful4|monochrome1…monochrome13 (a name; colorful* cycle the six accents, monochrome* shade accent1; a list of colours is refused), binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
         ),
@@ -127,7 +127,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "SmartArt",
             ["Insert", "Illustrations"],
             None,
-            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}]} → {id}",
+            "{kind: list|process|cycle|hierarchy|pyramid|matrix, items?: [text] (leading tabs = sub-points), nodes?: [{text, level}], rect?: [x, y, w, h] (default: the middle 80% of the slide)} → {id, rect}",
             has_slide,
             smart_art
         ),
@@ -223,6 +223,29 @@ fn insert_shape(s: &mut Session, p: &Value) -> Result<Value> {
         super::format::apply_painted(&mut shape, look);
     }
     let id = add_shape(s, "shape.insert", shape, true)?;
+    // Its look in the same call, so a diagram box is one command rather than six (#298). The
+    // inserted shape is selected, which is what format.* act on.
+    let colour_or_none = |c: &str| if c == "none" { json!({"id": id, "none": true}) } else { json!({"id": id, "color": c}) };
+    if let Some(c) = str_param(p, "fill") {
+        s.execute("shape.fill", &colour_or_none(c))?;
+    }
+    if let Some(c) = str_param(p, "line") {
+        s.execute("shape.line", &colour_or_none(c))?;
+    }
+    if !line_like {
+        if let Some(size) = f64_param(p, "size") {
+            s.execute("format.size", &json!({"size": size}))?;
+        }
+        if let Some(c) = str_param(p, "color") {
+            s.execute("format.color", &json!({"color": c}))?;
+        }
+        if bool_or(p, "bold", false) {
+            s.execute("format.bold", &json!({"on": true}))?;
+        }
+    }
+    if let Some(name) = str_param(p, "name") {
+        s.execute("shape.rename", &json!({"id": id, "name": name}))?;
+    }
     Ok(json!({"id": id}))
 }
 
@@ -451,10 +474,10 @@ fn picture(s: &mut Session, p: &Value) -> Result<Value> {
             sel.shapes = vec![ph_id];
             Ok(())
         })?;
-        return Ok(json!({"id": ph_id}));
+        return Ok(json!({"id": ph_id, "rect": rect_json(&rect)}));
     }
     let id = add_shape(s, "insert.picture", shape, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 const ALBUM_MAX_ITEMS: usize = 48;
@@ -1194,7 +1217,7 @@ fn table(s: &mut Session, p: &Value) -> Result<Value> {
         }
     }
     let id = add_shape(s, "insert.table", Shape { xfrm: Some(rect), kind: ShapeKind::Table(t), ..Default::default() }, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 pub fn chart_type(name: &str) -> ChartType {
@@ -1251,7 +1274,7 @@ fn chart(s: &mut Session, p: &Value) -> Result<Value> {
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or(Xfrm::new(size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7));
     let id = add_shape(s, "insert.chart", Shape { xfrm: Some(rect), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
@@ -1813,6 +1836,14 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // A palette is a name (colorful1…4, monochrome1…13); a list of colours was accepted and ignored.
+    let palette = match p.get("palette") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_str().filter(|n| is_palette_name(n)) {
+            Some(n) => Some(n.to_string()),
+            None => return Err(bad("chart.options", format!("`palette` is a name, one of {CHART_PALETTES}; not {v}"))),
+        },
+    };
     with_chart(s, p, "chart.options", |c| {
         if let Some(t) = &text_color {
             c.text_color = t.clone();
@@ -1838,12 +1869,20 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = bool_param(p, "gridlines") {
             c.gridlines = v;
         }
-        if let Some(v) = str_param(p, "palette") {
-            c.palette = v.to_string();
+        if let Some(v) = &palette {
+            c.palette.clone_from(v);
         }
         c.raw = None;
         Ok(())
     })
+}
+
+const CHART_PALETTES: &str = "colorful1, colorful2, colorful3, colorful4, monochrome1 … monochrome13";
+
+/// `colorful1`…`colorful4` or `monochrome1`…`monochrome13` (PowerPoint's chart colour sets).
+fn is_palette_name(n: &str) -> bool {
+    let num = |rest: &str, max: u32| rest.parse::<u32>().is_ok_and(|k| (1..=max).contains(&k));
+    n.strip_prefix("colorful").is_some_and(|r| num(r, 4)) || n.strip_prefix("monochrome").is_some_and(|r| num(r, 13))
 }
 
 /// A SmartArt graphic: a group regenerated from its outline (see [`super::smartart`]). Items with
@@ -1854,7 +1893,7 @@ fn smart_art(s: &mut Session, p: &Value) -> Result<Value> {
         Some(v) => serde_json::from_value(v.clone()).map_err(|e| bad("insert.smartArt", e.to_string()))?,
         None => super::smartart::nodes_from_lines(p.get("items").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str)),
     };
-    super::smartart::insert(s, &kind, nodes)
+    super::smartart::insert(s, &kind, nodes, rect_param(p, "rect"))
 }
 
 #[cfg(test)]

@@ -12,8 +12,8 @@ use crate::{HistoryEntry, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
-        cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
+        cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{} → {label, slide: index}", can_undo, undo),
+        cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{} → {label, slide: index}", can_redo, redo),
         cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
         cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides} → {text, html?}", has_doc, copy),
         cmd!(
@@ -40,6 +40,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "edit.selectAll", "Select All", ["Edit"], Some("Cmd+A"), "{scope?: slides}", has_slide, select_all),
         cmd!(noundo "edit.deselect", "Deselect", [], Some("Escape"), "{}", has_doc, deselect),
         cmd!(noundo "edit.select", "Select Objects", [], None, "{ids: [id], add?: bool, toggle?: bool}", has_slide, select),
+        cmd!(query "edit.selection", "Selection", [], None, "{} → {slide, ids, selected: [{id, rect: [x, y, w, h]}]} the selected shapes with their boxes", has_doc, selection),
     ]
 }
 
@@ -54,7 +55,8 @@ fn restore(s: &mut Session, redo: bool) -> Result<Value> {
     // A later shape can get an undone copy's id: Duplicate starts over with the usual offset.
     st.last_duplicate = None;
     st.revision += 1;
-    Ok(json!({"label": e.label}))
+    // The slide the restored state is on: where the change was made.
+    Ok(json!({"label": e.label, "slide": st.selection.slide}))
 }
 
 fn undo(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -581,10 +583,12 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {
-    if s.doc()?.selection.text.is_some() && ids_param(p, "ids").is_none() {
+    // `ids: null` is the same as no `ids`.
+    let no_ids = p.get("ids").is_none_or(Value::is_null);
+    if s.doc()?.selection.text.is_some() && no_ids {
         return super::text::delete_dir(s, "forward");
     }
-    if slides_scope(s, p) && ids_param(p, "ids").is_none() {
+    if slides_scope(s, p) && no_ids {
         return s.execute("slide.delete", &json!({}));
     }
     let ids = targets(s, p)?;
@@ -693,15 +697,55 @@ fn deselect(s: &mut Session, _p: &Value) -> Result<Value> {
     ok()
 }
 
+fn selection(s: &mut Session, _p: &Value) -> Result<Value> {
+    let st = s.doc()?;
+    Ok(json!({"slide": st.selection.slide, "ids": st.selection.shapes, "selected": st.selected_boxes()}))
+}
+
 fn select(s: &mut Session, p: &Value) -> Result<Value> {
-    let ids = match ids_param(p, "ids") {
+    let ids = match ids_param(p, "ids")? {
         Some(v) => v,
         None => id_param(p, "id", "edit.select")?.map(|i| vec![i]).unwrap_or_default(),
     };
     let add = bool_or(p, "add", false);
     let toggle = bool_or(p, "toggle", false);
-    let valid: Vec<ShapeId> = ids.into_iter().filter(|i| s.active().is_some_and(|d| d.shape(*i).is_some())).collect();
-    s.select(|_, sel| {
+    // Ids are unique in the presentation: ids on another slide select there (that slide becomes
+    // current, as for the shape commands); an id that is nowhere, or ids spread over two slides,
+    // are refused rather than quietly selecting nothing (#298).
+    let (valid, moved_to) = {
+        let st = s.doc()?;
+        let mut here = vec![];
+        let mut elsewhere: Vec<(ShapeId, usize)> = vec![];
+        for id in ids {
+            if st.shape(id).is_some() {
+                here.push(id);
+            } else if let Some(i) = st.doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, id).is_some()) {
+                elsewhere.push((id, i));
+            } else {
+                return Err(super::no_such_shape(&st.doc, &st.selection, id, "edit.select"));
+            }
+        }
+        match elsewhere.first().copied() {
+            None => (here, None),
+            Some((first, i)) => {
+                let stray = if here.is_empty() { elsewhere.iter().find(|(_, j)| *j != i).copied() } else { Some((first, i)) };
+                if let Some((id, j)) = stray {
+                    return Err(bad(
+                        "edit.select",
+                        format!("shape {id} is on slide index {j}; edit.select takes ids on one slide (slide.go {{\"index\": {j}}} first)"),
+                    ));
+                }
+                (elsewhere.iter().map(|(id, _)| *id).collect(), Some(i))
+            }
+        }
+    };
+    s.select(|doc, sel| {
+        if let Some(i) = moved_to {
+            sel.slide = i;
+            sel.target = crate::Target::Slides;
+            sel.slides = doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default();
+            sel.shapes.clear();
+        }
         sel.text = None;
         sel.cells = None;
         if toggle {
@@ -722,5 +766,8 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
             sel.shapes = valid.clone();
         }
     })?;
-    Ok(json!({"selected": s.doc()?.selection.shapes}))
+    Ok(match moved_to {
+        Some(i) => json!({"selected": s.doc()?.selection.shapes, "currentSlide": i}),
+        None => json!({"selected": s.doc()?.selection.shapes}),
+    })
 }

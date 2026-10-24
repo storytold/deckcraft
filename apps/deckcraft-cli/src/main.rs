@@ -484,22 +484,43 @@ fn run(args: &[String]) -> Result<(), String> {
     for p in save.iter().chain(&export) {
         output_format(p)?;
     }
-    let mut s = Session::new();
-    open(&mut s, input.as_deref(), sample)?;
-    for c in cmds {
+    // Every --cmd is read before the presentation is opened and before any runs (file.open and
+    // file.new included), so a malformed one leaves nothing half done and is reported ahead of an
+    // --in that cannot be opened; a refusal mirrors how the text was read and shows the form that
+    // works (#298).
+    let total = cmds.len();
+    let mut parsed = Vec::with_capacity(total);
+    for (k, c) in cmds.iter().enumerate() {
+        let n = k + 1;
         let (id, p) = match c.split_once('=') {
-            Some((id, j)) => (id.to_string(), serde_json::from_str::<Value>(j).map_err(|e| format!("{id}: bad JSON: {e}"))?),
+            Some((id, j)) => {
+                let read = |problem: String| {
+                    format!(
+                        "--cmd {n} of {total} was read as command `{id}` with parameters `{j}`: {problem}. --cmd takes COMMAND=PARAMS: a command id, then `=`, then a JSON object, e.g. --cmd 'slide.new={{\"title\":\"Q3\"}}'. Nothing ran."
+                    )
+                };
+                let v = serde_json::from_str::<Value>(j).map_err(|e| read(format!("the parameters are not JSON ({e})")))?;
+                if !v.is_object() {
+                    return Err(read("the parameters are not a JSON object".into()));
+                }
+                (id.to_string(), v)
+            }
             None => (c.clone(), json!({})),
         };
-        let r = s.execute(&id, &p).map_err(|e| e.to_string())?;
+        parsed.push((n, id, p));
+    }
+    let mut s = Session::new();
+    open(&mut s, input.as_deref(), sample)?;
+    for (n, id, p) in &parsed {
+        let r = s.execute(id, p).map_err(|e| format!("--cmd {n} of {total}, `{id}`: {e}"))?;
         if print {
             outln!("{id} → {r}");
         }
     }
-    if let Some(p) = save {
+    if let Some(p) = &save {
         s.execute("file.saveAs", &json!({"path": p})).map_err(|e| e.to_string())?;
     }
-    if let Some(p) = export {
+    if let Some(p) = &export {
         export_params["path"] = json!(p);
         s.execute("file.export", &export_params).map_err(|e| e.to_string())?;
     } else if export_params != json!({}) {

@@ -14,7 +14,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Add Guide",
             ["View", "Show", "Guides"],
             None,
-            "{vertical: bool, pos?: pt (default: the slide's centre)} → {index}. `defaults: true` adds the two centre guides when there are none",
+            "{vertical: bool, pos?: pt (default: the slide's centre), defaults?: true (adds the two centre guides when there are none)} → {index}",
             has_doc,
             guide_add
         ),
@@ -145,7 +145,7 @@ fn reorder(s: &mut Session, p: &Value) -> Result<Value> {
     let to = usize_param(p, "index").ok_or_else(|| bad("arrange.reorder", "missing `index`"))?;
     let st = s.doc()?;
     let siblings: &[Shape] = match deckcraft_model::parent_of(st.shapes(), id) {
-        None => return Err(bad("arrange.reorder", "no such shape")),
+        None => return Err(super::no_such_shape(&st.doc, &st.selection, id, "arrange.reorder")),
         Some(None) => st.shapes(),
         Some(Some(g)) => st.shape(g).map(Shape::children).unwrap_or(&[]),
     };

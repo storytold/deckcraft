@@ -34,7 +34,7 @@ pub mod zoom;
 use deckcraft_geom::Xfrm;
 use deckcraft_model::ShapeId;
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{EngineError, Result, Session};
 
@@ -67,6 +67,9 @@ pub struct CommandInfo {
     pub enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub disabled_reason: Option<String>,
+    /// What the command acts on when its selection check fails but `ids`/`id` is given.
+    #[serde(rename = "actsOn", skip_serializing_if = "Option::is_none")]
+    pub acts_on: Option<String>,
 }
 
 impl CommandSpec {
@@ -102,8 +105,16 @@ impl CommandSpec {
             params: self.params,
             enabled: e.is_ok(),
             disabled_reason: e.err(),
+            acts_on: acts_on_cached(self.id),
         }
     }
+}
+
+/// [`CommandSpec::acts_on`] for every command, computed once: it needs a fresh session per
+/// command, which is too slow to redo on every list_commands.
+fn acts_on_cached(id: &str) -> Option<String> {
+    static ACTS: std::sync::OnceLock<std::collections::HashMap<&'static str, String>> = std::sync::OnceLock::new();
+    ACTS.get_or_init(|| command_specs().iter().filter_map(|c| c.acts_on().map(|a| (c.id, a))).collect()).get(id).cloned()
 }
 
 pub fn always(_: &Session) -> std::result::Result<(), String> {
@@ -196,6 +207,126 @@ pub fn command_specs() -> &'static [CommandSpec] {
 
 pub fn find_command(id: &str) -> Option<&'static CommandSpec> {
     command_specs().iter().find(|c| c.id == id)
+}
+
+/// Commands named like `id`, for the unknown-command answer (#298): `new` names file.new and
+/// slide.new, `slide.nw` names slide.new. Empty when nothing is close.
+pub fn like_it(id: &str) -> String {
+    let id = id.to_ascii_lowercase();
+    let last = id.rsplit('.').next().unwrap_or(&id);
+    let mut found: Vec<(usize, &str)> = command_specs()
+        .iter()
+        .filter_map(|c| {
+            let cid = c.id.to_ascii_lowercase();
+            let clast = cid.rsplit('.').next().unwrap_or(&cid);
+            let rank = if clast == last || cid == id {
+                0
+            } else if cid.contains(&id) || (last.len() >= 3 && clast.contains(last)) {
+                1
+            } else {
+                let d = edit_distance(&cid, &id).min(edit_distance(clast, last) + 1);
+                if d > 2 {
+                    return None;
+                }
+                1 + d
+            };
+            Some((rank, c.id))
+        })
+        .collect();
+    found.sort_unstable();
+    found.truncate(6);
+    if found.is_empty() {
+        String::new()
+    } else {
+        format!("; commands named like it: {}", found.iter().map(|(_, id)| *id).collect::<Vec<_>>().join(", "))
+    }
+}
+
+/// Levenshtein distance of two short ids.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().take(64).collect();
+    let b: Vec<char> = b.chars().take(64).collect();
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.iter().enumerate() {
+        let mut cur = vec![i + 1];
+        for (j, cb) in b.iter().enumerate() {
+            let above = prev.get(j + 1).copied().unwrap_or(0);
+            let diag = prev.get(j).copied().unwrap_or(0);
+            let left = cur.last().copied().unwrap_or(0);
+            cur.push((above + 1).min(left + 1).min(diag + usize::from(ca != cb)));
+        }
+        prev = cur;
+    }
+    prev.last().copied().unwrap_or(0)
+}
+
+/// The "not available" reason with how to make the command available, naming only the
+/// parameters it takes (#298).
+pub(crate) fn how_to_enable(spec: &CommandSpec, reason: &str) -> String {
+    let keys = param_keys(spec.params).unwrap_or_default();
+    let pass = if keys.contains(&"ids") {
+        ", or pass `ids` to act on those shapes"
+    } else if keys.contains(&"id") {
+        ", or pass `id` to act on that shape"
+    } else {
+        ""
+    };
+    match reason {
+        NOTHING_SELECTED => format!("{reason}: edit.select {{\"ids\": [id, …]}} selects shapes{pass}"),
+        SELECT_TWO => format!("{reason}: edit.select {{\"ids\": [id, id, …]}} selects them{pass}"),
+        SELECT_TEXT_OR_SHAPE => {
+            format!("{reason}: edit.select {{\"ids\": [id, …]}} selects shapes, text.edit {{\"id\": id}} starts editing a shape's text{pass}")
+        }
+        NO_TEXT_POINT => format!("{reason}: text.edit {{\"id\": id}} starts editing a shape's text"),
+        "no presentation open" => format!("{reason}: file.new {{}} or file.open {{\"path\": …}} opens one"),
+        "no slides" => format!("{reason}: slide.new adds one"),
+        _ => reason.to_string(),
+    }
+}
+
+/// The refusal for a shape id that isn't on the current slide: where it is when it is on another
+/// slide, with the call that gets there, because ids are looked up on the current slide only (#298).
+pub(crate) fn no_such_shape(doc: &deckcraft_model::Presentation, sel: &crate::Selection, id: ShapeId, cmd: &str) -> EngineError {
+    let cur = sel.slide;
+    let elsewhere = doc.slides.iter().enumerate().find(|(i, sl)| *i != cur && deckcraft_model::find_shape(&sl.shapes, id).is_some()).map(|(i, _)| i);
+    bad(
+        cmd,
+        match elsewhere {
+            Some(i) => format!(
+                "shape {id} is on slide index {i}, but shape ids are looked up on the current slide (index {cur}); slide.go {{\"index\": {i}}} switches to it"
+            ),
+            None => format!("no shape {id} on the current slide (index {cur}); slide.inspect lists its shapes and their ids"),
+        },
+    )
+}
+
+/// The refusal for keys a command doesn't take, with the parameters it does (#298).
+pub(crate) fn not_taken(spec: &CommandSpec, unknown: &[&str]) -> String {
+    let quoted: Vec<String> = unknown.iter().map(|k| format!("`{k}`")).collect();
+    let list = match quoted.split_last() {
+        Some((last, [])) => last.clone(),
+        Some((last, rest)) => format!("{} and {last}", rest.join(", ")),
+        None => String::new(),
+    };
+    let takes = spec.params.split('→').next().unwrap_or_default().trim();
+    let takes = if takes.is_empty() || takes == "{}" { "no parameters" } else { takes };
+    format!("`{}` was given {list}, which it doesn't take. `{}` takes {takes}", spec.id, spec.id)
+}
+
+/// The keys a command accepts: the ones its params doc lists, plus `id` wherever `ids?` is
+/// optional, because [`targets`] reads either.
+pub(crate) fn accepted_keys(spec: &CommandSpec) -> std::result::Result<Vec<&'static str>, String> {
+    let params = parse_params(spec.params)?;
+    let mut keys: Vec<&'static str> = vec![];
+    for p in &params {
+        if !keys.contains(&p.name) {
+            keys.push(p.name);
+        }
+    }
+    if params.iter().any(|p| p.name == "ids" && p.optional) && !keys.contains(&"id") {
+        keys.push("id");
+    }
+    Ok(keys)
 }
 
 pub(crate) fn param_keys(doc: &str) -> std::result::Result<Vec<&str>, String> {
@@ -300,6 +431,15 @@ pub(crate) const NO_ID_SPACE: &str = "the presentation has used every object id 
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
 }
+/// A slide index past the end, naming the range that is valid (`n` is the slide count).
+pub(crate) fn no_slide(cmd: &str, i: usize, n: usize) -> EngineError {
+    let has = match n {
+        0 => "no slides".to_string(),
+        1 => "1 slide (index 0)".to_string(),
+        n => format!("{n} slides (indices 0 through {})", n - 1),
+    };
+    bad(cmd, format!("no slide at index {i}: the presentation has {has}"))
+}
 pub(crate) fn f64_param(p: &Value, key: &str) -> Option<f64> {
     p.get(key).and_then(Value::as_f64).filter(|v| v.is_finite())
 }
@@ -338,8 +478,25 @@ pub(crate) fn id_param(p: &Value, key: &str, cmd: &str) -> Result<Option<ShapeId
             .ok_or_else(|| bad(cmd, format!("`{key}` is not a valid shape id: {v}"))),
     }
 }
-pub(crate) fn ids_param(p: &Value, key: &str) -> Option<Vec<ShapeId>> {
-    p.get(key).and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).filter_map(|v| u32::try_from(v).ok()).map(ShapeId).collect())
+/// A box as commands answer it: `[x, y, w, h]` in slide points.
+pub(crate) fn rect_json(x: &Xfrm) -> Value {
+    json!([x.x, x.y, x.w, x.h])
+}
+/// A list of shape ids: `Ok(None)` when absent, `Err` naming the entry when one is not an integer
+/// id (a `$name` left unsubstituted, a float, a negative number), so `edit.select {ids:
+/// ["$sl.placeholders.title"]}` is refused instead of selecting nothing and answering ok.
+pub(crate) fn ids_param(p: &Value, key: &str) -> Result<Option<Vec<ShapeId>>> {
+    let Some(a) = p.get(key).filter(|v| !v.is_null()) else { return Ok(None) };
+    let a = a.as_array().ok_or_else(|| EngineError::Other(format!("`{key}` must be a list of shape ids, not {a}")))?;
+    a.iter()
+        .map(|v| {
+            v.as_u64()
+                .and_then(|v| u32::try_from(v).ok())
+                .map(ShapeId)
+                .ok_or_else(|| EngineError::Other(format!("`{key}` entry {v} is not a shape id (an integer, as slide.inspect lists them)")))
+        })
+        .collect::<Result<Vec<_>>>()
+        .map(Some)
 }
 /// `[x, y, w, h]` in points.
 pub(crate) fn rect_param(p: &Value, key: &str) -> Option<Xfrm> {
@@ -355,9 +512,12 @@ pub(crate) fn with_param(p: &Value, key: &str, v: Value) -> Value {
 
 /// Targets: `ids` / `id` params, else the selection.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<ShapeId>> {
-    if let Some(ids) = ids_param(p, "ids")
-        && !ids.is_empty()
-    {
+    if let Some(ids) = ids_param(p, "ids")? {
+        // An explicit empty list is a caller's mistake, not "the selection": acting on the
+        // selection instead was a trap an agent fell into (#298).
+        if ids.is_empty() {
+            return Err(EngineError::Other("`ids` is empty: pass the shape ids, or leave `ids` out to act on the selected shapes".into()));
+        }
         return Ok(ids);
     }
     if let Some(id) = id_param(p, "id", "shape")? {
@@ -453,35 +613,67 @@ pub(crate) fn edit_shapes(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut
         return Err(bad(cmd, "no shapes selected"));
     }
     s.edit(|doc, sel| {
-        let boxes: Vec<(ShapeId, Xfrm)> = {
-            let st_shapes: Vec<deckcraft_model::Shape> =
-                ids.iter().filter_map(|id| current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)).cloned()).collect();
-            st_shapes.iter().map(|sh| (sh.id, xfrm_of(doc, sel, sh))).collect()
-        };
-        let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad(cmd, "no slide"))?;
+        // Each id is looked for where the selection is (the current slide, or the layout or
+        // master being edited) first, then on every slide: ids are unique in the presentation,
+        // so an id from slide.inspect works from anywhere (#298). The edit makes the shape's
+        // slide current, so the window shows the change and later commands act there, and the
+        // answer says so.
         let mut n = 0;
+        let mut elsewhere: Vec<usize> = vec![];
+        let mut missing: Option<ShapeId> = None;
         for id in &ids {
+            let here = current_shapes(doc, sel).and_then(|v| deckcraft_model::find_shape(v, *id)).is_some();
+            let on_slide = if here { None } else { doc.slides.iter().position(|sl| deckcraft_model::find_shape(&sl.shapes, *id).is_some()) };
+            if !here && on_slide.is_none() {
+                missing.get_or_insert(*id);
+                continue;
+            }
+            let ctx = match on_slide {
+                Some(i) => crate::Selection { slide: i, target: crate::Target::Slides, ..sel.clone() },
+                None => sel.clone(),
+            };
+            let xfrm = current_shapes(doc, &ctx).and_then(|v| deckcraft_model::find_shape(v, *id)).map(|sh| xfrm_of(doc, &ctx, sh));
+            let shapes = crate::shapes_mut(doc, &ctx).ok_or_else(|| bad(cmd, "no slide"))?;
             if let Some(sh) = deckcraft_model::find_shape_mut(shapes, *id) {
                 if sh.xfrm.is_none() {
-                    sh.xfrm = boxes.iter().find(|(i, _)| i == id).map(|(_, x)| *x);
+                    sh.xfrm = xfrm;
                 }
                 f(sh)?;
                 n += 1;
+                if let Some(i) = on_slide
+                    && !elsewhere.contains(&i)
+                {
+                    elsewhere.push(i);
+                }
             }
         }
         if n == 0 {
-            return Err(bad(cmd, "no such shape"));
+            return Err(no_such_shape(doc, sel, missing.or(ids.first().copied()).unwrap_or_default(), cmd));
         }
-        Ok(Value::from(n))
+        if let Some(&i) = elsewhere.last() {
+            sel.slide = i;
+            sel.target = crate::Target::Slides;
+            sel.slides = doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default();
+            sel.shapes = ids
+                .iter()
+                .filter(|id| doc.slides.get(i).is_some_and(|sl| deckcraft_model::find_shape(&sl.shapes, **id).is_some()))
+                .copied()
+                .collect();
+            sel.text = None;
+            sel.cells = None;
+        }
+        Ok(if elsewhere.is_empty() { Value::from(n) } else { json!({"changed": n, "onSlides": elsewhere, "currentSlide": sel.slide}) })
     })
 }
 
 /// [`edit_shapes`] for edits a locked object refuses (move, size, rotate, flip, reshape, crop):
-/// locked targets are left out, and when every target is locked nothing changes.
+/// locked targets are left out, and when every target is locked nothing changes. The lock is
+/// looked up wherever the shape is, like the edit itself, so a locked shape on another slide
+/// stays put.
 pub(crate) fn edit_geometry(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
     let ids = targets(s, p)?;
     let st = s.doc()?;
-    let free: Vec<u32> = ids.iter().filter(|id| !st.shape(**id).is_some_and(|x| x.locked)).map(|id| id.0).collect();
+    let free: Vec<u32> = ids.iter().filter(|id| !st.shape_anywhere(**id).is_some_and(|(x, _)| x.locked)).map(|id| id.0).collect();
     if !ids.is_empty() && free.is_empty() {
         return Err(bad(cmd, "the object is locked"));
     }

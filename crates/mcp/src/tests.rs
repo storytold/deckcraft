@@ -34,6 +34,25 @@ fn handshake_and_tool_list() {
     assert!(s.handle_line("{}").is_some());
 }
 
+/// readOnlyHint is true only for tools that never write: screenshot writes a PNG when given
+/// `path`, like export, while render_slide and the inspectors only answer.
+#[test]
+fn read_only_hints_match_what_the_tools_write() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let tools = call(&mut s, 2, "tools/list", json!({}));
+    let hint = |name: &str| {
+        tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap_or_else(|| panic!("{name}"))["annotations"]
+            ["readOnlyHint"]
+            .clone()
+    };
+    for n in ["screenshot", "export", "save_presentation", "batch"] {
+        assert_eq!(hint(n), false, "{n} writes");
+    }
+    for n in ["render_slide", "inspect_slide", "inspect_document", "list_commands"] {
+        assert_eq!(hint(n), true, "{n} only answers");
+    }
+}
+
 #[test]
 fn agent_builds_a_deck() {
     let mut s = Server::new(Box::new(Headless::new()));
@@ -195,11 +214,12 @@ fn export_tool_lists_pdf_and_its_options() {
     tool(&mut s, "new_presentation", json!({}));
     for layout in ["slides", "notes", "handouts"] {
         let path = dir.join(format!("{layout}.pdf"));
-        tool(
-            &mut s,
-            "export",
-            json!({"path": path.to_string_lossy(), "format": "pdf", "layout": layout, "perPage": 3, "paper": "a4", "orientation": "landscape"}),
-        );
+        let mut args = json!({"path": path.to_string_lossy(), "format": "pdf", "layout": layout, "paper": "a4", "orientation": "landscape"});
+        // `perPage` is a handouts setting; the other layouts refuse it.
+        if layout == "handouts" {
+            args["perPage"] = json!(3);
+        }
+        tool(&mut s, "export", args);
         assert!(std::fs::read(&path).unwrap().starts_with(b"%PDF"), "{layout}");
     }
     let _ = std::fs::remove_dir_all(&dir);
@@ -241,4 +261,381 @@ fn export_tool_lists_gif_and_its_options() {
     let r = call(&mut s, 9, "tools/call", json!({"name": "export", "arguments": {"path": dir.join("bad.gif").to_string_lossy(), "width": 0}}));
     assert_eq!(r["result"]["isError"], true, "{r}");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #298: a tool name where a command id goes (`run_command`, an item of `batch`) runs that tool,
+/// so add_shape with its fill and line can sit in a batch; and "no presentation open" names the
+/// tools that open one.
+#[test]
+fn a_tool_name_as_a_command_id_runs_the_tool() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let r = call(&mut s, 1, "tools/call", json!({"name": "inspect_document", "arguments": {}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(r["result"]["isError"] == true && text.contains("new_presentation") && text.contains("open_presentation"), "{text}");
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let r = tool(&mut s, "run_command", json!({"command": "go_to_slide", "params": {"index": 0}}));
+    assert_eq!(r["index"], 0, "{r}");
+    let out = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "go_to_slide", "params": {"index": 1}},
+            {"command": "add_shape", "params": {"preset": "roundRect", "x": 10, "y": 10, "w": 100, "h": 50, "fill": "#336699", "text": "A"}},
+            {"command": "shape.rename", "params": {"name": "Box A"}},
+        ]}),
+    );
+    let items = out.as_array().unwrap();
+    assert!(items.iter().all(|i| i["ok"] == true), "{out}");
+    let id = items[1]["result"]["id"].as_u64().expect("the inserted shape's id");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    assert_eq!(sl["index"], 1);
+    let shape = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).expect("shape on slide 1");
+    assert_eq!(shape["name"], "Box A", "{shape}");
+    assert_eq!(shape["text"], "A", "{shape}");
+}
+
+/// The tools that take `x`, `y`, `w`, `h` hand the engine a `rect`, not the four keys, which the
+/// engine refuses (it found this: `insert_table` advertised them and then failed).
+#[test]
+fn tools_with_x_y_w_h_place_the_shape() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let t = tool(&mut s, "insert_table", json!({"rows": 2, "cols": 2, "x": 100, "y": 200, "w": 300, "h": 80, "data": [["a", "b"], ["c", "d"]]}));
+    let id = t["id"].as_u64().expect("table id");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let table = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).expect("the table");
+    assert_eq!(table["box"], json!([100.0, 200.0, 300.0, 80.0]), "{table}");
+    let bad = call(
+        &mut s,
+        5,
+        "tools/call",
+        json!({"name": "insert_picture", "arguments": {"data": "AAAA", "name": "x.png", "x": 1, "y": 2, "w": 3, "h": 4}}),
+    );
+    let text = bad["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(!text.contains("doesn't take"), "x/y/w/h must not reach the engine: {text}");
+}
+
+/// A batch answers one JSON array of text, so an item that answers an image (render_slide) would
+/// report ok with the image gone: it is refused and told to run on its own; the other items run.
+#[test]
+fn a_batch_refuses_an_item_that_answers_an_image() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let r =
+        call(&mut s, 5, "tools/call", json!({"name": "batch", "arguments": {"commands": [{"command": "render_slide"}, {"command": "add_slide"}]}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    let out: Value = serde_json::from_str(text).expect("a JSON array");
+    assert_eq!(out[0]["ok"], false, "{out}");
+    assert!(out[0]["error"].as_str().unwrap().contains("call render_slide on its own"), "{out}");
+    assert!(out[1].is_null(), "stopped at the refusal: {out}");
+    let out = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [{"command": "render_slide", "params": {"slide": 0}}, {"command": "add_slide"}], "keepGoing": true}),
+    );
+    assert_eq!(out[0]["ok"], false, "{out}");
+    assert_eq!(out[1]["ok"], true, "{out}");
+}
+
+/// `x`, `y`, `w`, `h` place the shape only together: some of them is refused by name rather than
+/// dropped for the default placement, and none of them keeps the default placement.
+#[test]
+fn a_partial_x_y_w_h_is_refused_not_dropped() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let before = tool(&mut s, "inspect_slide", json!({}))["shapes"].as_array().map_or(0, Vec::len);
+    for args in [json!({"rows": 2, "cols": 2, "x": 100, "y": 200}), json!({"rows": 2, "cols": 2, "x": 100, "y": 200, "w": "300", "h": 80})] {
+        let r = call(&mut s, 5, "tools/call", json!({"name": "insert_table", "arguments": args}));
+        assert_eq!(r["result"]["isError"], true, "{r}");
+        let text = r["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("x, y, w and h go together") && text.contains("all four or none"), "{text}");
+    }
+    let r = call(&mut s, 6, "tools/call", json!({"name": "insert_picture", "arguments": {"data": "AAAA", "name": "x.png", "x": 1, "y": 2}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(text.contains("x, y, w and h go together"), "{text}");
+    let after = tool(&mut s, "inspect_slide", json!({}))["shapes"].as_array().map_or(0, Vec::len);
+    assert_eq!(after, before, "a refused placement inserts nothing");
+    // None of the four: the default placement.
+    let t = tool(&mut s, "insert_table", json!({"rows": 2, "cols": 2}));
+    assert!(t["id"].as_u64().is_some() && t["rect"].is_array(), "{t}");
+}
+
+/// Phase-2 findings: `set_text` reaches a table cell with `cell`, and `list_commands` says what a
+/// command acts on, so "disabled: nothing selected" no longer hides that `ids`/`id` work.
+#[test]
+fn set_text_takes_a_cell_and_list_commands_says_what_acts_on_what() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let t = tool(&mut s, "insert_table", json!({"rows": 2, "cols": 2, "x": 50, "y": 50, "w": 400, "h": 100}));
+    let id = t["id"].as_u64().expect("table id");
+    tool(&mut s, "set_text", json!({"id": id, "cell": [1, 0], "text": "pptx"}));
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let table = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap();
+    assert_eq!(table["table"]["cells"][1][0], "pptx", "{table}");
+    let cmds = tool(&mut s, "list_commands", json!({"filter": "shape.fill"}));
+    let fill = cmds.as_array().unwrap().iter().find(|c| c["id"] == "shape.fill").unwrap();
+    assert!(fill["actsOn"].as_str().unwrap_or("").contains("`ids`"), "{fill}");
+    let cmds = tool(&mut s, "list_commands", json!({"filter": "table.style"}));
+    let style = cmds.as_array().unwrap().iter().find(|c| c["id"] == "table.style").unwrap();
+    assert!(style["actsOn"].as_str().unwrap_or("").contains("`id`"), "{style}");
+}
+
+/// Final-run findings: a command id given as a tool name is told to use run_command; the
+/// instructions carry the diagram recipe so the common path needs no list_commands; and
+/// list_commands {brief} answers ids and params only.
+#[test]
+fn discovery_costs_fewer_calls() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let init = call(&mut s, 1, "initialize", json!({"protocolVersion": "2025-06-18"}));
+    let instr = init["result"]["instructions"].as_str().unwrap();
+    for needle in [
+        "shape.insert",
+        "shape.connect",
+        "animation.add",
+        "slide.notes",
+        "transition.set",
+        "section.add",
+        "insert.table",
+        "design.palette",
+        "placeholders",
+        "cannot read images",
+    ] {
+        assert!(instr.contains(needle), "instructions should mention {needle}");
+    }
+    let r = call(&mut s, 2, "tools/call", json!({"name": "design.palette", "arguments": {}}));
+    let text = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(r["result"]["isError"] == true && text.contains("is a command") && text.contains("run_command"), "{text}");
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let brief = tool(&mut s, "list_commands", json!({"filter": "shape.connect", "brief": true}));
+    let item = brief.as_array().unwrap().iter().find(|c| c["id"] == "shape.connect").unwrap();
+    let mut keys: Vec<&str> = item.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(keys, ["id", "params"], "{item}");
+}
+
+/// W6: inspect_slide answers animations as {count, clickSteps}; `animations: true` embeds the list.
+#[test]
+fn inspect_slide_summarises_animations_unless_asked() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    let id = tool(&mut s, "add_shape", json!({"preset": "rect", "x": 10, "y": 10, "w": 100, "h": 50}))["id"].as_u64().unwrap();
+    tool(&mut s, "run_command", json!({"command": "animation.add", "params": {"ids": [id], "effect": "fade", "start": "onClick"}}));
+    tool(
+        &mut s,
+        "run_command",
+        json!({"command": "animation.add", "params": {"ids": [id], "effect": "zoom", "class": "exit", "start": "afterPrevious"}}),
+    );
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    assert_eq!(sl["animations"], json!({"count": 2, "clickSteps": 1}), "{sl}");
+    let full = tool(&mut s, "inspect_slide", json!({"animations": true}));
+    assert_eq!(full["animations"].as_array().map(Vec::len), Some(2), "{full}");
+}
+
+/// E5: a batch item can be named with `as`, and a later item's params can refer to its answer
+/// with "$name" (its id) wherever an id goes, so a diagram is one batch: insert, connect, animate.
+#[test]
+fn batch_items_can_reference_earlier_results() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({"theme": "Harbor"}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let out = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "shape.insert", "params": {"preset": "roundRect", "rect": [50, 50, 150, 60], "text": "A", "fill": "accent1"}, "as": "a"},
+            {"command": "shape.insert", "params": {"preset": "roundRect", "rect": [400, 50, 150, 60], "text": "B", "fill": "accent2"}, "as": "b"},
+            {"command": "shape.connect", "params": {"from": "$a", "to": "$b"}, "as": "ab"},
+            {"command": "animation.add", "params": {"ids": ["$a", "$b", "$ab"], "effect": "fade", "start": "onClick"}},
+            {"command": "set_text", "params": {"id": "$b", "text": "B!"}},
+        ]}),
+    );
+    let items = out.as_array().unwrap();
+    assert!(items.iter().all(|i| i["ok"] == true), "{out}");
+    let a = items[0]["result"]["id"].as_u64().unwrap();
+    let b = items[1]["result"]["id"].as_u64().unwrap();
+    assert!(items[2]["result"]["id"].as_u64().is_some(), "{out}");
+    assert_eq!(items[3]["result"]["indices"], json!([0, 1, 2]), "{out}");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let shapes = sl["shapes"].as_array().unwrap();
+    assert!(shapes.iter().any(|x| x["id"] == b && x["text"] == "B!"), "{sl}");
+    assert!(shapes.iter().any(|x| x["id"] == a), "{sl}");
+    let bad = call(
+        &mut s,
+        7,
+        "tools/call",
+        json!({"name": "batch", "arguments": {"commands": [{"command": "set_text", "params": {"id": "$nope", "text": "x"}}]}}),
+    );
+    let text = bad["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(bad["result"]["isError"] == true && text.contains("$nope"), "{text}");
+}
+
+/// A stand-in for the desktop app: records the control-channel calls and answers `ui.screenshot`
+/// as the app does (a base64 PNG, or `{path, width, height}` once a path is given).
+struct FakeApp {
+    calls: std::rc::Rc<std::cell::RefCell<Vec<(String, Value)>>>,
+}
+
+impl crate::backend::Backend for FakeApp {
+    fn call(&mut self, method: &str, params: Value) -> Result<Value, String> {
+        self.calls.borrow_mut().push((method.to_string(), params.clone()));
+        match method {
+            "ui.screenshot" => Ok(match params.get("path").and_then(Value::as_str) {
+                Some(p) => json!({"path": p, "width": 1280, "height": 800}),
+                None => json!({"png": "iVBORw0KGgo=", "width": 1280, "height": 800}),
+            }),
+            "ui.key" => Ok(json!({"handled": true})),
+            "engine.execute" if params["command"] == "edit.selection" => {
+                Ok(json!({"slide": 0, "ids": [7], "selected": [{"id": 7, "rect": [1.0, 2.0, 3.0, 4.0]}]}))
+            }
+            other => Err(format!("unknown method `{other}`")),
+        }
+    }
+    fn has_ui(&self) -> bool {
+        true
+    }
+    fn describe(&self) -> String {
+        "stand-in app".into()
+    }
+}
+
+/// W4: `screenshot` answered image content only, which an agent behind a text bridge cannot see.
+/// With `path` the PNG is written there and the answer is text `{path, width, height}`; headless
+/// still refuses clearly and writes nothing. (The connected backend is a loopback socket; the
+/// stand-in checks the argument plumbing and the answer shape.)
+#[test]
+fn screenshot_with_a_path_answers_text_and_headless_refuses() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let path = std::env::temp_dir().join(format!("deckcraft-mcp-shot-{}.png", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let r = call(&mut s, 1, "tools/call", json!({"name": "screenshot", "arguments": {"path": path.to_string_lossy()}}));
+    let msg = r["result"]["content"][0]["text"].as_str().unwrap();
+    assert!(r["result"]["isError"] == true && msg.contains("desktop app") && msg.contains("export"), "{msg}");
+    assert!(!path.exists(), "headless must write nothing");
+    let calls = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let mut s = Server::new(Box::new(FakeApp { calls: calls.clone() }));
+    let r = call(&mut s, 2, "tools/call", json!({"name": "screenshot", "arguments": {"path": "shots/window.png"}}));
+    assert_eq!(r["result"]["isError"], false, "{r}");
+    let content = r["result"]["content"].as_array().unwrap();
+    assert!(content.iter().all(|c| c["type"] == "text"), "text, not an image: {r}");
+    let v: Value = serde_json::from_str(content[0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(v, json!({"path": "shots/window.png", "width": 1280, "height": 800}));
+    assert_eq!(calls.borrow().last().unwrap(), &("ui.screenshot".to_string(), json!({"path": "shots/window.png"})));
+    // Without a path: image content, as before.
+    let r = call(&mut s, 3, "tools/call", json!({"name": "screenshot", "arguments": {}}));
+    assert_eq!(r["result"]["content"][0]["type"], "image", "{r}");
+    assert_eq!(calls.borrow().last().unwrap().1, json!({"base64": true}));
+    let tools = call(&mut s, 4, "tools/list", json!({}));
+    let shot = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "screenshot").unwrap();
+    assert!(shot["inputSchema"]["properties"].get("path").is_some() && shot["description"].as_str().unwrap().contains("path"), "{shot}");
+}
+
+/// A batch item named with a hyphen (`as: "ui-egui"`) can never be referred to as `$ui-egui`
+/// (the reference stops at the hyphen), so the name is refused where it is declared, with the
+/// rule, instead of a later item failing on a `$ui-egui` sent on as text.
+#[test]
+fn batch_refuses_a_name_a_reference_cannot_spell() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let r = call(
+        &mut s,
+        9,
+        "tools/call",
+        json!({"name": "batch", "arguments": {"commands": [
+            {"command": "shape.insert", "params": {"preset": "rect", "rect": [10, 10, 100, 50]}, "as": "ui-egui"},
+            {"command": "shape.insert", "params": {"preset": "rect", "rect": [200, 10, 100, 50]}},
+        ]}}),
+    );
+    let text = r["result"]["content"][0]["text"].as_str().unwrap_or("");
+    assert!(r["result"]["isError"] == true && text.contains("ui-egui") && text.contains("letters, digits and `_`"), "{text}");
+    assert!(!text.contains("\"ok\":true"), "stops at the refused item: {text}");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    assert_eq!(sl["shapes"].as_array().map(|a| a.len()), Some(0), "nothing ran: {sl}");
+}
+
+/// Y4: the `export` tool says that `all: true` numbers the files from 1 (the displayed slide
+/// number) while `slide` is a 0-based index, and the answer carries `indices` beside `files`.
+#[test]
+fn export_all_says_files_are_numbered_from_one() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    let tools = call(&mut s, 1, "tools/list", json!({}));
+    let export = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == "export").unwrap().clone();
+    assert!(export["description"].as_str().unwrap().contains("numbered from 1"), "{export}");
+    assert!(export["inputSchema"]["properties"]["all"]["description"].as_str().unwrap().contains("numbered from 1"), "{export}");
+    let dir = std::env::temp_dir().join(format!("deckcraft-mcp-export-all-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    tool(&mut s, "new_presentation", json!({}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    let v = tool(&mut s, "export", json!({"path": dir.join("d.png").to_string_lossy(), "all": true, "scale": 0.25}));
+    assert_eq!(v["indices"], json!([0, 1]), "{v}");
+    assert_eq!(v["files"], json!([dir.join("d1.png").to_string_lossy(), dir.join("d2.png").to_string_lossy()]), "{v}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AA2: `inspect_slide` took `index` and `export`/`render_slide` took `slide` for the same thing,
+/// and agents hit refusals switching between them. Both spellings work on all three.
+#[test]
+fn index_and_slide_name_the_same_slide_on_every_tool() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({}));
+    tool(&mut s, "add_slide", json!({"layout": "blank"}));
+    assert_eq!(tool(&mut s, "inspect_slide", json!({"index": 0}))["index"], 0);
+    assert_eq!(tool(&mut s, "inspect_slide", json!({"slide": 0}))["index"], 0);
+    assert_eq!(tool(&mut s, "inspect_slide", json!({}))["index"], 1, "the default is still the current slide");
+    for args in [json!({"index": 0, "scale": 0.25}), json!({"slide": 0, "scale": 0.25})] {
+        let r = call(&mut s, 3, "tools/call", json!({"name": "render_slide", "arguments": args}));
+        assert_eq!(r["result"]["isError"], false, "{r}");
+        let info: Value = serde_json::from_str(r["result"]["content"][1]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(info["slide"], 0, "{info}");
+    }
+    let dir = std::env::temp_dir().join(format!("deckcraft-mcp-index-alias-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    for (k, name) in [("slide", "a.png"), ("index", "b.png")] {
+        tool(&mut s, "export", json!({"path": dir.join(name).to_string_lossy(), k: 0, "scale": 0.25}));
+        assert!(dir.join(name).exists(), "{name} written via `{k}`");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    // Both given and different is a contradiction, not a silent pick.
+    let r = call(&mut s, 4, "tools/call", json!({"name": "inspect_slide", "arguments": {"index": 0, "slide": 1}}));
+    assert_eq!(r["result"]["isError"], true, "{r}");
+    let tools = call(&mut s, 5, "tools/list", json!({}));
+    for name in ["inspect_slide", "export", "render_slide"] {
+        let t = tools["result"]["tools"].as_array().unwrap().iter().find(|t| t["name"] == name).unwrap();
+        let props = t["inputSchema"]["properties"].as_object().unwrap();
+        assert!(props.contains_key("index") && props.contains_key("slide"), "{name}: {t}");
+    }
+}
+
+/// AA5: `key` nudges and `pointer` drags answer `selected: [{id, rect}]`, the moved shapes' boxes,
+/// so the agent does not inspect after each one. Headless the engine answers it itself; an app
+/// whose answer lacks it gets one follow-up `edit.selection` (still one agent call).
+#[test]
+fn key_and_pointer_answer_the_selected_boxes() {
+    let mut s = Server::new(Box::new(Headless::new()));
+    tool(&mut s, "new_presentation", json!({}));
+    let id = tool(&mut s, "add_shape", json!({"preset": "rect", "x": 100, "y": 100, "w": 200, "h": 100}))["id"].as_u64().unwrap();
+    let r = tool(&mut s, "key", json!({"key": "ArrowRight"}));
+    assert_eq!(r["selected"], json!([{"id": id, "rect": [106.0, 100.0, 200.0, 100.0]}]), "{r}");
+    let r = tool(
+        &mut s,
+        "pointer",
+        json!({"events": [{"kind": "down", "x": 200, "y": 150}, {"kind": "drag", "x": 250, "y": 170}, {"kind": "up", "x": 250, "y": 170}]}),
+    );
+    assert_eq!(r["selected"], json!([{"id": id, "rect": [156.0, 120.0, 200.0, 100.0]}]), "{r}");
+    // A key that moves nothing answers no boxes.
+    let r = tool(&mut s, "key", json!({"key": "Escape"}));
+    assert!(r.get("selected").is_none(), "{r}");
+
+    let calls = std::rc::Rc::new(std::cell::RefCell::new(vec![]));
+    let mut s = Server::new(Box::new(FakeApp { calls: calls.clone() }));
+    let r = tool(&mut s, "key", json!({"key": "ArrowLeft"}));
+    assert_eq!(r, json!({"handled": true, "selected": [{"id": 7, "rect": [1.0, 2.0, 3.0, 4.0]}]}), "{r}");
+    let methods: Vec<String> = calls.borrow().iter().map(|(m, _)| m.clone()).collect();
+    assert_eq!(methods, ["ui.key", "engine.execute"], "one follow-up");
+    assert_eq!(calls.borrow()[1].1["command"], "edit.selection");
 }

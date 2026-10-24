@@ -18,7 +18,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Connect Shapes",
             [],
             None,
-            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the closest pair), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
+            "{from: shape id, to: shape id (both on the current slide), fromSite?, toSite?: site index (default: the closest pair; shape.sites lists them, a box has 0 top, 1 left, 2 bottom, 3 right), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3 (with id: changes the connector's kind as it is re-glued)} → {id, fromSite, toSite}",
             has_slide,
             connect
         ),
@@ -87,7 +87,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Fill",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color? | none?: true | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill; a group also formats its members",
+            "{color? | none?: true | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?, pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} (adjusts a picture fill)}; a group also formats its members",
             has_selection,
             fill
         ),
@@ -96,7 +96,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Outline",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
+            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow (at the start of the line), tail? (at the end), headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
             has_selection,
             line
         ),
@@ -355,7 +355,7 @@ fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
         let (x, y, w, h, rot) = {
             let st = s.doc()?;
             let id = targets(s, p)?.first().copied().ok_or_else(|| bad(SIZE_POS, "nothing selected"))?;
-            let sh = st.shape(id).ok_or_else(|| bad(SIZE_POS, "no such shape"))?;
+            let sh = st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, SIZE_POS))?;
             let x = xfrm_of(&st.doc, &st.selection, sh);
             (x.x, x.y, x.w, x.h, x.rot)
         };
@@ -368,13 +368,15 @@ fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
     let changed = {
         let ids = targets(s, p)?;
         let st = s.doc()?;
-        let free: Vec<_> = ids.iter().copied().filter(|id| !st.shape(*id).is_some_and(|sh| sh.locked)).collect::<Vec<_>>();
+        // The shape may be on another slide (edit_geometry reaches it there): the lock and the
+        // box are read where it is.
+        let free: Vec<_> = ids.iter().copied().filter(|id| !st.shape_anywhere(*id).is_some_and(|(sh, _)| sh.locked)).collect::<Vec<_>>();
         if !ids.is_empty() && free.is_empty() {
             return Err(bad(SIZE_POS, "the object is locked"));
         }
         free.iter().any(|id| {
-            st.shape(*id).is_some_and(|sh| {
-                let mut x = xfrm_of(&st.doc, &st.selection, sh);
+            st.shape_anywhere(*id).is_some_and(|(sh, ctx)| {
+                let mut x = xfrm_of(&st.doc, &ctx, sh);
                 let before = x;
                 apply_size(&mut x, spec);
                 x != before
@@ -1187,8 +1189,8 @@ fn media_options(s: &mut Session, p: &Value) -> Result<Value> {
 fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;
     let st = s.doc()?;
-    let sh = st.shape(id).ok_or_else(|| bad("shape.sites", "no such shape"))?;
-    Ok(json!(crate::connect::sites(&st.doc, &st.selection, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.sites"))?;
+    Ok(json!(crate::connect::sites(&st.doc, &ctx, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
 }
 
 fn connect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1196,8 +1198,9 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    let site_list = |id| st.shape(id).map(|sh| crate::connect::sites(&st.doc, &st.selection, sh)).unwrap_or_default();
-    let (a, b) = (site_list(from), site_list(to));
+    let shape = |id| st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.connect"));
+    let (sa, sb) = (shape(from)?, shape(to)?);
+    let (a, b) = (crate::connect::sites(&st.doc, &st.selection, sa), crate::connect::sites(&st.doc, &st.selection, sb));
     if a.is_empty() || b.is_empty() {
         return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
     }
@@ -1218,8 +1221,23 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let (p0, p1) = (a[ia], b[ib]);
+    // With `id`, `preset` changes the connector's kind (straight → bent, say) as it is re-glued;
+    // without it the preset was silently kept.
+    let mut regeom = None;
     let id = match id_param(p, "id", "shape.connect")? {
-        Some(id) => id,
+        Some(id) => {
+            if let Some(name) = str_param(p, "preset") {
+                let info = deckcraft_geom::preset::info(name).ok_or_else(|| bad("shape.connect", format!("unknown preset `{name}`")))?;
+                if !deckcraft_geom::preset::is_line_like(info.name) {
+                    return Err(bad(
+                        "shape.connect",
+                        format!("`{name}` is not a connector preset (straightConnector1, bentConnector3, curvedConnector3)"),
+                    ));
+                }
+                regeom = Some(Geom::preset(info.name));
+            }
+            id
+        }
         None => {
             let preset = str_param(p, "preset").unwrap_or("straightConnector1");
             let r = s.execute("shape.insert", &json!({"preset": preset, "rect": [p0.x, p0.y, 1.0, 1.0]}))?;
@@ -1231,6 +1249,9 @@ fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         let sh = deckcraft_model::find_shape_mut(list, id).ok_or_else(|| bad("shape.connect", "no such line"))?;
         if !sh.is_line() {
             return Err(bad("shape.connect", "`id` is not a line or connector"));
+        }
+        if let Some(geom) = regeom {
+            sh.geom = geom;
         }
         sh.xfrm = Some(crate::tools::line_xfrm(p0, p1, 0.0));
         sh.kind = deckcraft_model::ShapeKind::Connector { start: Some((from, ia as u32)), end: Some((to, ib as u32)) };

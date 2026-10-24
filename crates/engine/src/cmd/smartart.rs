@@ -1699,7 +1699,46 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     let st = s.doc()?;
     let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(cmd, "no slide"))?;
     let ids = targets(s, p)?;
-    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, "select a SmartArt graphic"))
+    ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, not_smartart(shapes, &ids)))
+}
+
+/// Why `ids` name no SmartArt graphic: what the id is instead, and which SmartArt the slide has
+/// when there is exactly one ("id 367 is a placeholder, not a SmartArt graphic (the SmartArt on
+/// this slide is 382)").
+fn not_smartart(shapes: &[Shape], ids: &[ShapeId]) -> String {
+    let mut msg = match ids.first() {
+        None => "select a SmartArt graphic".to_string(),
+        Some(id) => match deckcraft_model::find_shape(shapes, *id) {
+            None => format!("id {} is not on this slide; select a SmartArt graphic", id.0),
+            Some(sh) => format!("id {} is {}, not a SmartArt graphic", id.0, describe(sh)),
+        },
+    };
+    let mut graphics = shapes.iter().filter(|sh| sh.diagram.is_some()).map(|sh| sh.id.0);
+    if let (Some(only), None) = (graphics.next(), graphics.next()) {
+        msg.push_str(&format!(" (the SmartArt on this slide is {only})"));
+    }
+    msg
+}
+
+/// What a shape is, for a refusal: "a placeholder", "a picture", "a table"…
+fn describe(sh: &Shape) -> &'static str {
+    if sh.ph.is_some() {
+        return "a placeholder";
+    }
+    match &sh.kind {
+        ShapeKind::Picture { .. } => "a picture",
+        ShapeKind::Group { .. } => "a group",
+        ShapeKind::Connector { .. } => "a connector",
+        ShapeKind::Table(_) => "a table",
+        ShapeKind::Chart(_) => "a chart",
+        ShapeKind::Media(m) if m.video => "a video",
+        ShapeKind::Media(_) => "an audio clip",
+        ShapeKind::Ink { .. } => "ink",
+        ShapeKind::Model3d { .. } => "a 3D model",
+        ShapeKind::Opaque { .. } => "an opaque object",
+        ShapeKind::Shape if sh.text_box => "a text box",
+        ShapeKind::Shape => "a shape",
+    }
 }
 
 /// Children with fresh ids for diagram `d` inside a group whose child space is `area`.
@@ -1737,7 +1776,7 @@ fn index(p: &Value, cmd: &str) -> Result<usize> {
 }
 
 /// Insert a new SmartArt graphic (`insert.smartArt`).
-pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Result<Value> {
+pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>, rect: Option<Xfrm>) -> Result<Value> {
     let kind = if is_kind(kind) { kind } else { "process" };
     if nodes.is_empty() {
         nodes = (0..3).map(|_| DiagramNode { text: "Text".into(), level: 0, picture: None, assistant: false, title: String::new() }).collect();
@@ -1745,7 +1784,10 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
     normalize(&mut nodes);
     let d = Diagram { kind: kind.into(), nodes, ..Default::default() };
     let size = s.doc()?.doc.slide_size;
-    let area = Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6);
+    // A degenerate `rect` (zero width or height) falls back to the default area.
+    let area = rect
+        .filter(|r| r.w > 0.0 && r.h > 0.0)
+        .unwrap_or_else(|| Xfrm::new(size.width * 0.1, size.height * 0.28, size.width * 0.8, size.height * 0.6));
     let id = s.edit(|doc, sel| {
         let children = regenerate("insert.smartArt", doc, &d, area)?;
         let id = ShapeId(doc.alloc_id().ok_or_else(|| bad("insert.smartArt", NO_ID_SPACE))?);
@@ -1762,7 +1804,7 @@ pub fn insert(s: &mut Session, kind: &str, mut nodes: Vec<DiagramNode>) -> Resul
         sel.text = None;
         Ok(id)
     })?;
-    Ok(json!({"id": id.0}))
+    Ok(json!({"id": id.0, "rect": rect_json(&area)}))
 }
 
 fn nodes(s: &mut Session, p: &Value) -> Result<Value> {
