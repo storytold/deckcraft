@@ -545,14 +545,34 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
 /// `a:lstStyle`, `p:titleStyle`, `a:defaultTextStyle`… → list style.
 pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
     let mut out = ListStyle::default();
+    let mut def = None;
     for e in ls.elements() {
         let n = e.local();
+        if n == "defPPr" {
+            // Defaults for every level (`a:defPPr`, as `p:defaultTextStyle` carries them).
+            let (_, para, run) = ppr(imp, part, e);
+            def = Some(LevelStyle { para, run: run.unwrap_or_default() });
+            continue;
+        }
         let Some(l) = n.strip_prefix("lvl").and_then(|r| r.strip_suffix("pPr")).and_then(|d| d.parse::<u8>().ok()) else { continue };
         if !(1..=9).contains(&l) {
             continue;
         }
         let (_, para, run) = ppr(imp, part, e);
         out.set(l - 1, LevelStyle { para, run: run.unwrap_or_default() });
+    }
+    // A level's own `a:lvlNpPr` wins over the defaults; the defaults reach levels without one.
+    // Dropping them loses the colours of text that takes its formatting from `p:defaultTextStyle`
+    // (the text draws in the plain default colour instead; #810).
+    if let Some(d) = &def {
+        for l in 0..9u8 {
+            if let Some(lvl) = out.levels.get_mut(l as usize).and_then(|x| x.as_mut()) {
+                lvl.para.inherit(&d.para);
+                lvl.run.inherit(&d.run);
+            } else {
+                out.set(l, LevelStyle { para: d.para.clone(), run: d.run.clone() });
+            }
+        }
     }
     out
 }
