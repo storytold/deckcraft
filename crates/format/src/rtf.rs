@@ -239,6 +239,7 @@ pub fn rtf_to_outline(rtf: &str) -> String {
                     match n {
                         b'\\' | b'{' | b'}' => line.push(n as char),
                         b'~' => line.push('\u{a0}'),
+                        b'_' => line.push('\u{2011}'),
                         b'\n' | b'\r' => flush(&mut line, level, indent, &mut out),
                         _ => {}
                     }
@@ -335,6 +336,12 @@ mod tests {
         assert_eq!(rtf_to_outline(r"{\rtf1 a\'00bé\par}"), "abé\n");
         assert_eq!(rtf_to_outline("{\\rtf1 a\0b\\par}\0\0"), "ab\n");
         assert_eq!(rtf_to_outline(r"{\rtf1 x\u-70000?y\par}"), "x\u{ee90}y\n");
+    }
+
+    /// `\\_` is RTF's non-breaking hyphen: a visible character, not markup.
+    #[test]
+    fn non_breaking_hyphen_is_kept() {
+        assert_eq!(rtf_to_outline(r"{\rtf1\pard Year\_end review\par}"), "Year\u{2011}end review\n");
     }
 
     /// A hostile `\li` near `i64::MAX` overflowed the rounding addend in debug builds.
