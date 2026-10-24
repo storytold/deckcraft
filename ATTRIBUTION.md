@@ -75,3 +75,23 @@ is copied into this repository. The licence text is in `licenses/pdf-writer/LICE
 | `krilla 0.8.2 / icc/sGrey-v4.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sGrey-v4.icc | CC0-1.0 | `00c0f94e09127520a17dc0e1d9264b5702081d96dbdb1549ee88e3631ce42a9d` | PDF export colour profiles |
 | `krilla 0.8.2 / icc/sRGB-v2-magic.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sRGB-v2-magic.icc | CC0-1.0 | `af4efe28f6d311799865f325ba39184a2e978b113ca74124d60af7de22b105f4` | PDF export colour profiles |
 | `krilla 0.8.2 / icc/sRGB-v4.icc` | Clinton Ingram (Compact ICC Profiles) | https://github.com/LaurenzV/krilla/blob/3ffdf0588cf98050aad6edba51ca70162e1fb5b5/crates/krilla/icc/sRGB-v4.icc | CC0-1.0 | `c56e1685d888f5edb92fe07f2750f387f8fe8e91b32ff8fb0b56bfbbb9458353` | PDF export colour profiles |
+
+## Android launcher icons (deckcraft)
+
+`apps/deckcraft-android` ships the Android Studio new-project template's default launcher art, unmodified.
+The adaptive icon in `res/mipmap-anydpi-v26/` composes the foreground drawable with the template's
+background colour; the density folders hold the same stand-in at each scale.
+
+| Asset | Author | Source | Licence |
+|---|---|---|---|
+| `apps/deckcraft-android/android/app/src/main/res/drawable/ic_launcher_foreground.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-hdpi/ic_launcher.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-hdpi/ic_launcher_round.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-mdpi/ic_launcher.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-mdpi/ic_launcher_round.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-xhdpi/ic_launcher.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-xhdpi/ic_launcher_round.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-xxhdpi/ic_launcher.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-xxhdpi/ic_launcher_round.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
+| `apps/deckcraft-android/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher_round.png` | The Android Open Source Project | Android Studio new-project template (default launcher art), unmodified | Apache-2.0 |
