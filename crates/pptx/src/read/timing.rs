@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
-use deckcraft_model::Shape;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
+use deckcraft_model::{Shape, ShapeId, ShapeKind};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -183,4 +183,63 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, _shapes:
         out.push((a, file_id, grp));
     }
     out.into_iter().map(|(a, _, _)| a).collect()
+}
+
+/// Media playback options from the timing tree's `p:video`/`p:audio` nodes (#74): volume,
+/// play-across-slides, hide-while-not-playing, loop, rewind and the automatic start. The nodes
+/// sit beside the main sequence and carry them for clips whose `p14:media` element only holds
+/// trim, fades and bookmarks.
+pub fn media_options(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
+    let mut nodes: Vec<&El> = vec![];
+    timing.find_all("video", &mut nodes);
+    timing.find_all("audio", &mut nodes);
+    for n in nodes {
+        let Some(mn) = n.child("cMediaNode") else { continue };
+        let Some(id) = mn.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|s| ctx.lookup(s)) else { continue };
+        let Some(clip) = clip_mut(shapes, id) else { continue };
+        if let Some(v) = mn.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
+            clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
+        }
+        if let Some(n) = mn.attr("numSld").and_then(|n| n.parse::<u32>().ok()) {
+            clip.play_across_slides = n > 1;
+        }
+        // `showWhenStopped` says the clip stays on screen when it is not playing; both XML
+        // spellings of false mean the same.
+        if let Some(b) = mn.attr("showWhenStopped").and_then(xml_bool) {
+            clip.hide_while_not_playing = !b;
+        }
+        if let Some(tn) = mn.child("cTn") {
+            clip.loop_play = tn.attr("repeatCount") == Some("indefinite");
+            clip.rewind = tn.attr("fill") == Some("remove");
+            // The clip starts by itself when its start condition asks for it without a click:
+            // a missing condition list delays indefinitely, like a missing delay attribute, and
+            // a click condition waits for the click.
+            clip.autoplay = matches!(tn.path(&["stCondLst", "cond"]), Some(c) if c.attr("evt") != Some("onClick") && c.attr("delay").is_some_and(|d| d != "indefinite"));
+        }
+    }
+}
+
+/// An XML boolean written as an attribute: "1"/"true"/"on" and "0"/"false"/"off".
+fn xml_bool(v: &str) -> Option<bool> {
+    match v.trim() {
+        "1" | "true" | "on" => Some(true),
+        "0" | "false" | "off" => Some(false),
+        _ => None,
+    }
+}
+
+/// The media clip of shape `id`, in groups too.
+fn clip_mut(shapes: &mut [Shape], id: ShapeId) -> Option<&mut deckcraft_model::MediaClip> {
+    for s in shapes {
+        if s.id == id {
+            return match &mut s.kind {
+                ShapeKind::Media(m) => Some(m),
+                _ => None,
+            };
+        }
+        if let Some(m) = s.children_mut().and_then(|c| clip_mut(c, id)) {
+            return Some(m);
+        }
+    }
+    None
 }

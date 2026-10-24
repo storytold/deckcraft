@@ -795,9 +795,9 @@ fn slide_xml(x: &mut Exp, o: &mut Out, s: &Slide, comment_rel: Option<&str>) -> 
     if let Some(t) = &s.transition {
         timing::transition(&mut w, x, o, t);
     }
-    if !s.animations.is_empty() {
-        timing::timing(&mut w, x, &s.animations, &s.shapes, &ids);
-    }
+    // Also for a slide with media but no animations: the playback options live in the timing
+    // tree (#74). `timing` writes nothing when there is neither.
+    timing::timing(&mut w, x, &s.animations, &s.shapes, &ids);
     slide_ext_list(&mut w, s.raw_ext.as_deref(), comment_rel);
     w.close("p:sld");
     w.finish()

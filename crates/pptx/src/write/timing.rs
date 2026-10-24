@@ -569,6 +569,38 @@ fn para_count(s: &Shape) -> u32 {
     s.text.as_ref().map(|t| t.paragraphs.iter().filter(|p| !p.is_empty()).count()).unwrap_or(0).min(10_000) as u32
 }
 
+/// One media shape's playback options, as PowerPoint writes them: `vol` in thousandths of a
+/// percent, the slide span, whether the clip is shown when stopped, and the common time node's
+/// loop (`repeatCount`), rewind (`fill="remove"`) and start (a zero delay starts by itself).
+fn media_node(w: &mut W, ids: &mut Ids, m: &deckcraft_model::MediaClip, spid: u32) {
+    let tag = if m.video { "p:video" } else { "p:audio" };
+    // A volume that is not a number would write a number that is not one: the clip keeps the
+    // full volume instead.
+    let vol = if m.volume.is_finite() { m.volume.clamp(0.0, 1.0) } else { 1.0 };
+    w.open0(tag);
+    w.open(
+        "p:cMediaNode",
+        A::new()
+            .a("vol", (vol * 100_000.0).round() as i64)
+            .a("numSld", if m.play_across_slides { 999 } else { 1 })
+            .a("showWhenStopped", if m.hide_while_not_playing { "0" } else { "1" }),
+    );
+    let mut ctn = A::new().a("id", ids.next()).a("fill", if m.rewind { "remove" } else { "hold" }).a("display", "0").a("masterRel", "sameClick");
+    if m.loop_play {
+        ctn = ctn.a("repeatCount", "indefinite");
+    }
+    w.open("p:cTn", ctn);
+    w.open0("p:stCondLst");
+    w.empty("p:cond", A::new().a("delay", if m.autoplay { "0" } else { "indefinite" }));
+    w.close("p:stCondLst");
+    w.close("p:cTn");
+    w.open0("p:tgtEl");
+    w.empty("p:spTgt", A::new().a("spid", spid));
+    w.close("p:tgtEl");
+    w.close("p:cMediaNode");
+    w.close(tag);
+}
+
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
@@ -621,7 +653,18 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    // Media playback options (`media.options`) live here in the timing tree, not in `p14:media`
+    // (#74): a `p:video`/`p:audio` node per media shape that has any to record.
+    let mut media: Vec<(&Shape, u32)> = vec![];
+    deckcraft_model::walk(shapes, &mut |s, _| {
+        if let ShapeKind::Media(m) = &s.kind
+            && (m.autoplay || m.loop_play || m.rewind || m.play_across_slides || m.hide_while_not_playing || (m.volume - 1.0).abs() > f64::EPSILON)
+            && let Some(spid) = idmap.get(s.id)
+        {
+            media.push((s, spid));
+        }
+    });
+    if main.is_empty() && triggered.is_empty() && media.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -691,6 +734,11 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         trig_cond(w);
         w.close("p:nextCondLst");
         w.close("p:seq");
+    }
+    for (s, spid) in &media {
+        if let ShapeKind::Media(m) = &s.kind {
+            media_node(w, &mut ids, m, *spid);
+        }
     }
     w.close("p:childTnLst");
     w.close("p:cTn");
