@@ -104,7 +104,7 @@ impl<const L: usize> Lane for [i32; L] {
     }
     #[inline(always)]
     fn neg(self) -> Self {
-        self.map(|v| v.wrapping_neg())
+        self.map(i32::wrapping_neg)
     }
     #[inline(always)]
     fn mul_round12(self, m: i32) -> Self {
