@@ -3008,6 +3008,9 @@ fn seed_paragraph_fields(d: &mut Dialog) {
     seed_once(d, "spaceAfterSeed", pt_text(d.params.get("spaceAfter"), 0.0));
     seed_once(d, "lineKind", json_text(d.params.get("lineKind"), "multiple"));
     seed_once(d, "lineValue", pt_text(d.params.get("lineValue"), 1.0));
+    seed_once(d, "eastAsianLineBreak", json_text(d.params.get("eastAsianLineBreak"), "0"));
+    seed_once(d, "hangingPunctuation", json_text(d.params.get("hangingPunctuation"), "0"));
+    seed_once(d, "latinLineBreak", json_text(d.params.get("latinLineBreak"), "0"));
 }
 
 fn paragraph_return_params(d: &mut Dialog) -> Value {
@@ -3031,6 +3034,9 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
         "spaceAfterKind": if after_same { d.params.get("spaceAfterKind").and_then(Value::as_str).unwrap_or("pts") } else { "pts" },
         "lineKind": d.get("lineKind", "multiple"),
         "lineValue": line_value,
+        "eastAsianLineBreak": d.get("eastAsianLineBreak", "0") == "1",
+        "hangingPunctuation": d.get("hangingPunctuation", "0") == "1",
+        "latinLineBreak": d.get("latinLineBreak", "0") == "1",
         "tabs": d.params.get("tabs").cloned().unwrap_or_else(|| json!([])),
         "defaultTab": d.params.get("defaultTab").cloned().unwrap_or_else(|| json!(72.0)),
     })
@@ -3124,6 +3130,10 @@ fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             d.fields.insert("lineValue".into(), "1".into());
         }
     }
+    ui.label(egui::RichText::new("Asian Typography").strong());
+    let _ = check(ui, d, "East Asian Line Breaking", "eastAsianLineBreak", false);
+    let _ = check(ui, d, "Hang Punctuation", "hangingPunctuation", false);
+    let _ = check(ui, d, "Allow Latin Text to Wrap Mid-word", "latinLineBreak", false);
     let mut open_tabs = false;
     ui.horizontal(|ui| {
         if ui.button("Tabs…").clicked() {
@@ -3177,6 +3187,9 @@ fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             "spaceAfter": space_after,
             "spaceBeforeKind": if d.get("spaceBefore", "") == d.get("spaceBeforeSeed", "") { d.params.get("spaceBeforeKind").and_then(Value::as_str).unwrap_or("pts") } else { "pts" },
             "spaceAfterKind": if d.get("spaceAfter", "") == d.get("spaceAfterSeed", "") { d.params.get("spaceAfterKind").and_then(Value::as_str).unwrap_or("pts") } else { "pts" },
+            "eastAsianLineBreak": d.get("eastAsianLineBreak", "0") == "1",
+            "hangingPunctuation": d.get("hangingPunctuation", "0") == "1",
+            "latinLineBreak": d.get("latinLineBreak", "0") == "1",
         });
         if d.get("lineKind", "multiple") == "exactly" {
             params["lineSpacingPt"] = json!(line_value);
