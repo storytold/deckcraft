@@ -307,7 +307,7 @@ pub fn master_text_pieces(pres: &Presentation, m: &deckcraft_model::Master, pape
                 .body
                 .paragraphs
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(|p| p.text())
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)
@@ -512,7 +512,7 @@ impl Exporter<'_> {
                 .body
                 .paragraphs
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(|p| p.text())
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)
@@ -695,3 +695,6 @@ fn to_path(bp: &kurbo::BezPath) -> Option<krilla::geom::Path> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod tests_line_breaks;
