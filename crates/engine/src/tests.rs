@@ -3098,6 +3098,70 @@ fn dragging_the_frame_of_edited_text_moves_the_box() {
     assert_eq!(text_box_xfrm(&s, id), x);
 }
 
+/// Press and release at `at` without moving.
+fn click_at(s: &mut Session, at: (f64, f64)) {
+    let ev = |kind| PointerEvent { kind, x: at.0, y: at.1, mods: Mods::default(), tol: 3.0, pressure: None };
+    s.pointer(ev(PointerKind::Down)).unwrap();
+    s.pointer(ev(PointerKind::Up)).unwrap();
+}
+
+#[test]
+fn clicking_the_frame_of_a_text_box_selects_it_whole() {
+    let (mut s, id, x) = editing_text_box(0.0);
+    let sid = deckcraft_model::ShapeId(id as u32);
+    let undo_before = s.doc().unwrap().history.undo.len();
+    // Leave editing and select nothing: a click on empty slide.
+    click_at(&mut s, (20.0, 20.0));
+    assert!(s.doc().unwrap().selection.shapes.is_empty());
+
+    // Edges and corner bands, inside and just outside the box, select it but don't start typing.
+    for (lx, ly) in [(x.w / 4.0, 1.0), (x.w / 4.0, -2.0), (x.w * 0.75, x.h - 1.0), (1.0, x.h / 2.0), (x.w + 2.0, x.h / 2.0)] {
+        click_at(&mut s, (20.0, 20.0));
+        click_at(&mut s, on_box(&x, lx, ly));
+        let st = s.doc().unwrap();
+        assert_eq!(st.selection.shapes, vec![sid], "({lx}, {ly})");
+        assert!(st.selection.text.is_none(), "({lx}, {ly}) entered text");
+    }
+
+    // Dragging the frame moves the box; the inside of an unselected box still takes the caret.
+    click_at(&mut s, (20.0, 20.0));
+    let from = on_box(&x, x.w / 4.0, 1.0);
+    drag_gesture(&mut s, from, (from.0 + 30.0, from.1 + 20.0));
+    let moved = text_box_xfrm(&s, id);
+    assert!((moved.x - (x.x + 30.0)).abs() < 1e-9 && (moved.y - (x.y + 20.0)).abs() < 1e-9, "{moved:?}");
+    click_at(&mut s, (20.0, 20.0));
+    click_at(&mut s, on_box(&moved, moved.w / 4.0, moved.h / 2.0));
+    assert!(s.doc().unwrap().selection.text.is_some());
+
+    // The frame also deletes: select by frame, press Delete.
+    click_at(&mut s, (20.0, 20.0));
+    click_at(&mut s, on_box(&moved, moved.w / 4.0, 1.0));
+    s.execute("edit.delete", &json!({})).unwrap();
+    assert!(s.doc().unwrap().shape(sid).is_none());
+    assert!(s.doc().unwrap().history.undo.len() > undo_before);
+}
+
+#[test]
+fn clicking_the_frame_of_a_selected_plain_shape_still_takes_the_caret() {
+    let mut s = session();
+    s.prefs.snap_to_grid = false;
+    s.prefs.smart_guides = false;
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [200.0, 150.0, 240.0, 60.0], "text": "Hello"})).unwrap()["id"].as_u64().unwrap();
+    let sid = deckcraft_model::ShapeId(id as u32);
+    let x = text_box_xfrm(&s, id);
+    // The first click selects an ordinary shape, the second puts the caret, as before; the frame
+    // rule is for text boxes and placeholders only.
+    click_at(&mut s, (20.0, 20.0));
+    click_at(&mut s, on_box(&x, x.w / 4.0, x.h / 2.0));
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![sid]);
+    assert!(st.selection.text.is_none());
+    click_at(&mut s, on_box(&x, x.w / 4.0, 1.0));
+    assert!(s.doc().unwrap().selection.text.is_some(), "frame click on a selected plain shape lost the caret");
+}
+
 #[test]
 fn dragging_inside_edited_text_selects_text() {
     let (mut s, id, x) = editing_text_box(0.0);
