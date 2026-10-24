@@ -263,6 +263,8 @@ pub struct UiState {
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
     pub presenter_view: bool,
+    /// The slide strip along the bottom of presenter view.
+    pub presenter_strip: bool,
     pub ui_scale: f32,
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
     pub format_tab: String,
@@ -281,6 +283,7 @@ pub struct UiState {
 }
 
 impl Default for UiState {
+    /// The layout a first launch gets, and what any field missing from `ui.json` falls back to.
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
@@ -302,6 +305,7 @@ impl Default for UiState {
             sorter_zoom: 1.0,
             recent: vec![],
             presenter_view: true,
+            presenter_strip: true,
             ui_scale: 1.0,
             format_tab: "fill".into(),
             smartart_row: 0,
@@ -386,6 +390,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
     ("show.presenter", "Presenter View", None, "{on?: bool}"),
+    ("show.presenterStrip", "Presenter View Slide Strip", None, "{on?: bool}"),
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool, from?: effect index}"),
     ("app.home", "Home", None, "{on?}"),
@@ -849,6 +854,8 @@ impl SlideApp {
         params.get("on").and_then(Value::as_bool).unwrap_or(!cur)
     }
 
+    /// Run UI command `id` with params `p`: views, panes, the show and presenter view, dialogs and
+    /// the other commands that act on the app rather than the presentation.
     fn run_ui(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         match id {
             "view.normal" => self.ui.view = ViewMode::Normal,
@@ -972,6 +979,13 @@ impl SlideApp {
                 }
             }
             "show.presenter" => self.ui.presenter_view = self.flag(p, self.ui.presenter_view),
+            "show.presenterStrip" => {
+                let on = self.flag(p, self.ui.presenter_strip);
+                self.ui.presenter_strip = on;
+                if let Some(show) = self.show.as_mut() {
+                    show.strip = on;
+                }
+            }
             "show.end" => {
                 self.show = None;
                 self.media.stop_owned(media::Owner::Show);
@@ -1103,11 +1117,15 @@ impl SlideApp {
         Ok(Some(from))
     }
 
+    /// Start the slide show at slide `from` (in Reading View when `reading`), with presenter view
+    /// and its slide strip as the saved settings say.
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
         if let Some(d) = self.session.active() {
-            self.show = Some(show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading));
+            let mut show = show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading);
+            show.strip = self.ui.presenter_strip;
+            self.show = Some(show);
         }
     }
 
