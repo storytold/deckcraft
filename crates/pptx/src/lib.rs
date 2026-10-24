@@ -11,6 +11,7 @@ mod cfb;
 mod custgeom;
 mod dgm;
 mod maps;
+mod odp;
 mod opc;
 mod png;
 pub(crate) mod read;
@@ -56,6 +57,16 @@ pub fn sniff(bytes: &[u8]) -> bool {
 /// Is this a password-protected presentation (an encrypted package inside a compound file)?
 pub fn is_encrypted(bytes: &[u8]) -> bool {
     cfb::is_encrypted(bytes)
+}
+
+/// Does this look like an OpenDocument presentation (`.odp`)?
+pub fn sniff_odp(bytes: &[u8]) -> bool {
+    odp::sniff(bytes)
+}
+
+/// Read an OpenDocument presentation (`.odp`): slides, text, shapes, pictures and notes.
+pub fn import_odp(bytes: &[u8]) -> Result<Presentation, PptxError> {
+    odp::import(bytes)
 }
 
 /// Read a `.pptx` / `.potx` / `.ppsx` package.
