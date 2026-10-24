@@ -14,8 +14,8 @@ pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!(noundo "edit.undo", "Undo", ["Edit"], Some("Cmd+Z"), "{}", can_undo, undo),
         cmd!(noundo "edit.redo", "Redo", ["Edit"], Some("Cmd+Y"), "{}", can_redo, redo),
-        cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides} → {text, html?}", has_doc, cut),
-        cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides} → {text, html?}", has_doc, copy),
+        cmd!("edit.cut", "Cut", ["Home", "Clipboard"], Some("Cmd+X"), "{scope?: slides, picture?: bool} → {text, html?, png?}", has_doc, cut),
+        cmd!(noundo "edit.copy", "Copy", ["Home", "Clipboard"], Some("Cmd+C"), "{scope?: slides, picture?: bool} → {text, html?, png?}", has_doc, copy),
         cmd!(
             "edit.paste",
             "Paste",
@@ -154,7 +154,23 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
     let caret = copying_caret(s);
     let t = copy_inner(s, p)?;
     let html = if caret { String::new() } else { copied_html(s) };
-    Ok(json!({"text": t, "html": html}))
+    let mut v = json!({"text": t, "html": html});
+    if !caret {
+        add_slide_picture(s, p, &mut v);
+    }
+    Ok(v)
+}
+
+/// With `picture`, a copy of slides also carries a PNG of the first copied slide in deck order
+/// (base64 `png`), for other apps to paste as a picture (#1309). Called before Cut deletes it.
+fn add_slide_picture(s: &Session, p: &Value, v: &mut Value) {
+    if !bool_or(p, "picture", false) || s.clipboard.slides.is_empty() {
+        return;
+    }
+    let Some(st) = s.active() else { return };
+    let Some(i) = s.clipboard.slides.iter().filter_map(|sl| st.doc.slide_index(sl.id)).min() else { return };
+    let (png, _, _) = super::file::render_png(&st.doc, i, 1.0, false);
+    v["png"] = Value::String(base64_encode(&png));
 }
 
 /// HTML for what was just copied, when it is text (a selection, or the text on the copied shapes).
@@ -182,8 +198,10 @@ fn cut(s: &mut Session, p: &Value) -> Result<Value> {
         return Ok(json!({"text": t, "html": ""}));
     }
     let html = copied_html(s);
+    let mut v = json!({"text": t, "html": html});
+    add_slide_picture(s, p, &mut v);
     delete(s, p)?;
-    Ok(json!({"text": t, "html": html}))
+    Ok(v)
 }
 
 /// Give pasted shapes fresh ids (groups included) and return the old-to-new map. Connector ends

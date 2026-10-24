@@ -104,7 +104,9 @@ Acts on the selected text or shapes.
 Run it with: deckcraft-cli run --cmd 'format.size={…}'
 "
     );
-    assert!(stdout(&cli(&["describe", "edit.copy"])).contains("Answers with {text, html?}.\n\nRun it with: deckcraft-cli run --cmd edit.copy\n"));
+    assert!(
+        stdout(&cli(&["describe", "edit.copy"])).contains("Answers with {text, html?, png?}.\n\nRun it with: deckcraft-cli run --cmd edit.copy\n")
+    );
     assert!(stdout(&cli(&["describe", "text.set"])).contains("Note: replaces the whole text, keeping the first run's formatting\n"));
     assert_eq!(
         stdout(&cli(&["describe", "shape.setDefault"])),

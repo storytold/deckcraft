@@ -218,6 +218,9 @@ pub struct Services {
     pub clipboard_html: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Put HTML and its plain-text alternative on the system clipboard. `true` when it landed.
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
+    /// Put a PNG picture and its plain-text alternative on the system clipboard together, in one
+    /// write. `true` when both landed.
+    pub clipboard_set_image: Option<Box<dyn FnMut(&[u8], &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
 }
@@ -487,8 +490,9 @@ pub struct SlideApp {
     /// creating or closing a presentation leaves it.
     pub backstage: Option<backstage::Backstage>,
     pending_urls: Vec<String>,
-    /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
-    pending_copy: Option<String>,
+    /// Text for the system clipboard from a Copy or Cut command, with the copied slide's picture
+    /// when there is one (#1309), handed over on the next frame.
+    pending_copy: Option<(String, Option<Vec<u8>>)>,
     shot_token: u64,
     queued_shots: Vec<(u64, f64, u32)>,
     pending_shots: Vec<(u64, Option<String>, Sender<ControlResponse>, f64)>,
@@ -666,18 +670,32 @@ impl SlideApp {
 
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
-    pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
-        let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
+    pub fn run(&mut self, id: &str, mut params: Value) -> Result<Value, String> {
+        // The slide picture for the system clipboard is asked here, so a caller that did not ask
+        // for it (the control channel, MCP) does not get the PNG back.
+        let asked = params.get("picture").and_then(Value::as_bool).unwrap_or(false);
+        let copy = matches!(id, "edit.copy" | "edit.cut");
+        if copy
+            && self.services.clipboard_set_image.is_some()
+            && let Some(p) = params.as_object_mut()
+        {
+            p.insert("picture".into(), Value::Bool(true));
+        }
+        let mut r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
             self.session.execute(id, &params).map_err(|e| e.to_string())
         };
-        match &r {
+        match &mut r {
             // Copy and Cut from the ribbon, menus, the slide's context menu or the control channel
             // put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431).
-            Ok(v) if matches!(id, "edit.copy" | "edit.cut") => {
+            Ok(v) if copy => {
+                let png = v.get("png").and_then(Value::as_str).and_then(deckcraft_engine::cmd::base64_decode);
+                if !asked && let Some(o) = v.as_object_mut() {
+                    o.remove("png");
+                }
                 if let Some(t) = v.get("text").and_then(Value::as_str) {
-                    self.pending_copy = Some(t.to_string());
+                    self.pending_copy = Some((t.to_string(), png));
                 }
             }
             Ok(_) => {}
@@ -1791,12 +1809,14 @@ impl SlideApp {
                 egui::Event::Copy => self.publish_clipboard(ctx, false),
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
-                    // Our own marker for objects without text: paste what the session copied.
-                    let text = if text == OBJECTS_MARKER { String::new() } else { text };
+                    // Our own marker for objects without text: paste what the session copied, even
+                    // when a picture of the copied slide sits beside it (#1309).
+                    let ours = text == OBJECTS_MARKER;
+                    let text = if ours { String::new() } else { text };
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
                     // Text keeps its HTML (bold, italic, underline) when the host can read it.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
-                    let img = if text.is_empty() { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+                    let img = if text.is_empty() && !ours { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
                     let r = match img {
                         Some(png) => self
                             .session
@@ -1842,16 +1862,24 @@ impl SlideApp {
 
     /// Offer the copy or cut on the system clipboard.
     ///
-    /// Slides go out as plain text. Text goes out as HTML plus the same plain words, so a paste
-    /// back into DeckCraft still uses the internal clipboard. A textless shape leaves the
+    /// Slides go out as plain text, and as a picture of the first one beside that text when the
+    /// host can write both at once (#1309). Text goes out as HTML plus the same plain words, so a
+    /// paste back into DeckCraft still uses the internal clipboard. A textless shape leaves the
     /// invisible [`OBJECTS_MARKER`] rather than a picture: with only an image on the clipboard
     /// egui-winit drops Ctrl+V, and the shortcut could no longer paste the shape here (#182).
     fn publish_clipboard(&mut self, ctx: &egui::Context, cut: bool) {
         let cmd = if cut { "edit.cut" } else { "edit.copy" };
-        let Ok(v) = self.session.execute(cmd, &json!({})) else { return };
+        let picture = self.services.clipboard_set_image.is_some();
+        let Ok(v) = self.session.execute(cmd, &json!({"picture": picture})) else { return };
         let text = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
         let html = v.get("html").and_then(Value::as_str).unwrap_or("").to_string();
         if self.session.clipboard.slides.is_empty() && !html.is_empty() && self.services.clipboard_set_html.as_mut().is_some_and(|f| f(&html, &text))
+        {
+            return;
+        }
+        let png = v.get("png").and_then(Value::as_str).and_then(deckcraft_engine::cmd::base64_decode);
+        if let Some(png) = png
+            && self.services.clipboard_set_image.as_mut().is_some_and(|f| f(&png, &system_clipboard_text(&text)))
         {
             return;
         }
@@ -1926,8 +1954,11 @@ impl SlideApp {
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
-        if let Some(t) = self.pending_copy.take() {
-            ctx.copy_text(t);
+        if let Some((t, png)) = self.pending_copy.take() {
+            let landed = png.is_some_and(|png| self.services.clipboard_set_image.as_mut().is_some_and(|f| f(&png, &system_clipboard_text(&t))));
+            if !landed {
+                ctx.copy_text(t);
+            }
         }
         self.drain_requests();
         doc_window::show(self, &ctx);
@@ -3296,6 +3327,81 @@ mod tests {
         h.run_steps(1);
         let cmds = &h.output().platform_output.commands;
         assert!(cmds.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(t) if t == OBJECTS_MARKER)), "{cmds:?}");
+    }
+
+    /// #1309: a slide copied from the thumbnails goes out as a PNG together with its text, in
+    /// one write. With both on the clipboard, Ctrl+V here still pastes the slide, not the picture.
+    #[test]
+    fn a_copied_slide_offers_a_picture_and_still_pastes_as_a_slide() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let clip: Rc<RefCell<Option<(Vec<u8>, String)>>> = Rc::new(RefCell::new(None));
+        let (write, read) = (clip.clone(), clip.clone());
+        let services = Services {
+            clipboard_set_image: Some(Box::new(move |png: &[u8], text: &str| {
+                *write.borrow_mut() = Some((png.to_vec(), text.to_string()));
+                true
+            })),
+            clipboard_image: Some(Box::new(move || read.borrow().as_ref().map(|(png, _)| png.clone()))),
+            ..Default::default()
+        };
+        let mut h = step_app(services);
+        h.state_mut().session.execute("slide.selectSlides", &json!({"indices": [0]})).unwrap();
+        h.event(egui::Event::Copy);
+        h.run_steps(1);
+        let (png, text) = clip.borrow().clone().expect("picture offered");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "a PNG");
+        let side = |at: usize| png.get(at..at + 4).map_or(0, |b| u32::from_be_bytes([b[0], b[1], b[2], b[3]]));
+        assert!(side(16) > 100 && side(20) > 50, "the whole slide: {}x{}", side(16), side(20));
+        assert_eq!(text, OBJECTS_MARKER, "an untitled slide keeps the marker beside the picture");
+        assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(_))));
+
+        h.event(egui::Event::Paste(text));
+        h.run_steps(1);
+        let doc = &h.state().session.active().unwrap().doc;
+        assert_eq!(doc.slides.len(), 2, "the slide is pasted");
+        let picture = |sl: &deckcraft_model::Slide| sl.shapes.iter().any(|sh| matches!(sh.kind, deckcraft_model::ShapeKind::Picture { .. }));
+        assert!(!doc.slides.iter().any(|sl| picture(sl)), "no picture is inserted");
+    }
+
+    /// A host that cannot write a picture leaves the slide copy as it was: plain text only.
+    #[test]
+    fn a_slide_copy_falls_back_to_text_when_the_picture_is_refused() {
+        let services = Services { clipboard_set_image: Some(Box::new(|_: &[u8], _: &str| false)), ..Default::default() };
+        let mut h = step_app(services);
+        h.state_mut().session.execute("slide.selectSlides", &json!({"indices": [0]})).unwrap();
+        h.event(egui::Event::Copy);
+        h.run_steps(1);
+        let cmds = &h.output().platform_output.commands;
+        assert!(cmds.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(t) if t == OBJECTS_MARKER)), "{cmds:?}");
+    }
+
+    /// #1309: Copy from the thumbnail's context menu, the ribbon or the Edit menu runs the command
+    /// (#431) and offers the picture too, not only the text.
+    #[test]
+    fn copy_from_a_menu_offers_the_slide_picture() {
+        use std::cell::RefCell;
+        use std::rc::Rc;
+        let seen: Rc<RefCell<Option<(Vec<u8>, String)>>> = Rc::new(RefCell::new(None));
+        let record = seen.clone();
+        let services = Services {
+            clipboard_set_image: Some(Box::new(move |png: &[u8], text: &str| {
+                *record.borrow_mut() = Some((png.to_vec(), text.to_string()));
+                true
+            })),
+            ..Default::default()
+        };
+        let mut h = step_app(services);
+        let v = h.state_mut().run("edit.copy", json!({"scope": "slides"})).unwrap();
+        h.run_steps(1);
+        let (png, text) = seen.borrow().clone().expect("picture offered");
+        assert!(png.starts_with(b"\x89PNG\r\n\x1a\n"), "a PNG");
+        assert_eq!(text, OBJECTS_MARKER);
+        assert!(!h.output().platform_output.commands.iter().any(|c| matches!(c, egui::output::OutputCommand::CopyText(_))));
+        assert!(v.get("png").is_none(), "the caller did not ask for the picture");
+
+        let asked = h.state_mut().run("edit.copy", json!({"scope": "slides", "picture": true})).unwrap();
+        assert!(asked.get("png").is_some(), "asked, it comes back");
     }
 
     fn redder(px: [u8; 4]) -> i32 {

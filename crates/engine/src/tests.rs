@@ -210,6 +210,34 @@ fn clipboard_copy_paste_shapes_and_slides() {
     assert!(s.doc().unwrap().doc.validate().is_empty());
 }
 
+/// #1309: Copy and Cut of slides, asked for a picture, also return a PNG of the first copied
+/// slide in deck order (not the first clicked, not the current one), rendered before Cut removes
+/// it. A plain copy and a copy of shapes carry none.
+#[test]
+fn a_slide_copy_can_carry_a_picture_of_its_first_slide() {
+    let mut s = session();
+    for (i, color) in ["#C80000", "#0000C8", "#00C800"].into_iter().enumerate() {
+        if i > 0 {
+            s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        }
+        s.execute("design.background", &json!({"color": color, "index": i})).unwrap();
+    }
+    let corner = |v: &serde_json::Value| {
+        let png = cmd::base64_decode(v["png"].as_str().expect("png")).unwrap();
+        image::load_from_memory(&png).unwrap().to_rgba8().get_pixel(5, 5).0
+    };
+    s.execute("slide.selectSlides", &json!({"indices": [2, 0, 1]})).unwrap();
+    assert!(s.execute("edit.copy", &json!({})).unwrap().get("png").is_none(), "only when asked");
+    let v = s.execute("edit.copy", &json!({"picture": true})).unwrap();
+    assert_eq!(corner(&v), [200, 0, 0, 255], "the first slide of the deck");
+    s.execute("slide.selectSlides", &json!({"indices": [2]})).unwrap();
+    let v = s.execute("edit.cut", &json!({"picture": true})).unwrap();
+    assert_eq!(corner(&v), [0, 200, 0, 255], "the cut slide, drawn before it goes");
+    assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+    assert!(s.execute("edit.copy", &json!({"picture": true})).unwrap().get("png").is_none(), "shapes have no slide picture");
+}
+
 #[test]
 fn bold_copy_is_html_and_pages_html_pastes_bold() {
     let mut s = session();
