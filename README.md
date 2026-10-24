@@ -172,6 +172,58 @@ See [ROADMAP.md](ROADMAP.md) for the stage, numbers by dimension and what's next
 [docs/gaps.md](docs/gaps.md) for every known shortfall and
 [docs/parity-checklist.md](docs/parity-checklist.md) for the feature-by-feature checklist.
 
+## Build dan instalasi
+
+Panduan ini membuat paket rilis lokal. Paket macOS yang ditandatangani ad-hoc hanya cocok untuk pengujian pada Mac pembuat; gunakan sertifikat Apple Developer sendiri sebelum membagikannya.
+
+### macOS
+
+Gunakan macOS 11 atau lebih baru, Xcode Command Line Tools, dan Rust stable. Untuk membuat DMG universal yang dapat berjalan pada Apple silicon dan Intel, pasang kedua target Rust lalu jalankan skrip paket:
+
+```sh
+xcode-select --install
+rustup toolchain install stable
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+git clone https://github.com/storytold/deckcraft
+cd deckcraft
+./packaging/macos/package.sh --arch universal
+```
+
+Hasilnya berada di `dist/release/`: `deckcraft-<versi>-macos-universal.dmg` dan ZIP `deckcraft-cli`. Gunakan `--arch aarch64` untuk Apple silicon atau `--arch x86_64` untuk Intel. Untuk memasang aplikasi, buka DMG, seret `DeckCraft.app` ke folder `Applications`, kemudian keluarkan disk image.
+
+DeckCraft akan memakai checkout `../craft-fonts` secara otomatis apabila tersedia; tanpa checkout tersebut aplikasi tetap dapat dibangun dengan font sistem. Untuk rilis yang dapat dipasang di Mac lain tanpa peringatan Gatekeeper, atur `MACOS_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_PASSWORD`, dan `APPLE_TEAM_ID` sebelum menjalankan skrip agar aplikasi ditandatangani dan dinotarization oleh Apple.
+
+### Windows: MSI installer
+
+Bangun paket Windows pada komputer Windows dengan Visual Studio Build Tools (workload **Desktop development with C++**), Windows SDK, Rust stable MSVC, PowerShell 7, dan .NET SDK. Pasang WiX 5 lalu buat MSI:
+
+```powershell
+rustup toolchain install stable-x86_64-pc-windows-msvc
+rustup target add x86_64-pc-windows-msvc
+dotnet tool install --global wix --version 5.0.2
+git clone https://github.com/storytold/deckcraft
+Set-Location deckcraft
+pwsh ./packaging/windows/package.ps1 -Arch x64
+```
+
+Hasilnya berada di `dist/release/`: `deckcraft-<versi>-windows-x64.msi` dan ZIP portabel. Pasang MSI dengan klik dua kali, atau dari PowerShell Administrator:
+
+```powershell
+msiexec /i ".\dist\release\deckcraft-<versi>-windows-x64.msi"
+```
+
+Gunakan `-Arch arm64` atau `-Arch x86` setelah target Rust dan build tools arsitektur tersebut dipasang. Skrip membuat paket tanpa sertifikat bila konfigurasi signing belum tersedia; lihat `packaging/windows/sign.ps1` untuk menambahkan signing.
+
+## AI Studio lokal — RoboDhan
+
+Klik toggle **AI Studio** untuk menampilkan atau menyembunyikan panel. Prompt dan proses yang sedang berjalan tetap tersimpan selama aplikasi terbuka, walaupun panel disembunyikan.
+
+Masukkan topik, jumlah slide (maksimum 12), audiens dan gaya bahasa. Tinjau isi slide, lalu klik **Buat presentasi dari pratinjau** untuk membuka presentasi baru. Simpan melalui Save As ke PPTX. Presentasi lama tetap terbuka.
+
+Jalankan RoboDhan versi integrasi Craft, aktifkan API lokal pada port **1234**, lalu muat model chat lokal di Preferences. Editor berkomunikasi langsung ke `http://127.0.0.1:1234/v1/craft/tasks` dengan tugas `deck.generate`; tidak ada bridge Python terpisah. PhotoCraft/VectorCraft tetap memakai endpoint chat/gambar yang sudah ada. Fitur AI Studio tersedia pada aplikasi desktop; browser tidak mengakses API loopback ini.
+
+Pemrosesan dimulai hanya saat tombol proses ditekan. Teks sumber dan instruksi dikirim ke model lokal RoboDhan. Sumber maksimal 240 KB; teks panjang untuk ringkasan/terjemahan dibagi menjadi bagian agar tidak terpotong diam-diam. Hasil model tetap perlu ditinjau. Jika server tidak aktif, panel menampilkan kesalahan tanpa mengubah dokumen.
+
 ## Downloads
 
 **Download DeckCraft** from GitHub: the [latest release](https://github.com/storytold/deckcraft/releases/latest) has every build listed below, and [all releases](https://github.com/storytold/deckcraft/releases) has earlier versions and their notes. `<ver>` in the file names is the version number, and `SHA256SUMS.txt` lists a checksum for every file.
