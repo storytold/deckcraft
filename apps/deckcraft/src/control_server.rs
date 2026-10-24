@@ -66,6 +66,13 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
 /// core busy until it recovers.
 const ACCEPT_RETRY: Duration = Duration::from_millis(100);
 
+/// The longest a connection refused as busy is drained before it is closed.
+const REFUSED_GRACE: Duration = Duration::from_millis(250);
+
+/// Refused connections drained at once, each on a thread of its own. Past this many, a refused
+/// connection gets the busy reply and is closed without a drain.
+const MAX_REFUSING: usize = 16;
+
 /// The connections `incoming` accepts, calling `wait` after each failed accept.
 fn accepted<T>(incoming: impl Iterator<Item = std::io::Result<T>>, mut wait: impl FnMut()) -> impl Iterator<Item = T> {
     incoming.filter_map(move |stream| stream.map_err(|_| wait()).ok())
@@ -75,12 +82,14 @@ fn accepted<T>(incoming: impl Iterator<Item = std::io::Result<T>>, mut wait: imp
 fn serve_listener(listener: TcpListener, limits: Limits, ctx: egui::Context) -> Receiver<ControlRequest> {
     let (tx, rx) = sync_channel::<ControlRequest>(limits.queue.max(1));
     let active = Arc::new(AtomicUsize::new(0));
+    let refusing = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
         for mut stream in accepted(listener.incoming(), || std::thread::sleep(ACCEPT_RETRY)) {
             let _ = stream.set_write_timeout(Some(limits.write_timeout));
             if active.fetch_add(1, Ordering::SeqCst) >= limits.max_clients {
                 active.fetch_sub(1, Ordering::SeqCst);
                 let _ = writeln!(stream, "{}", json!({"ok": false, "error": "busy: too many control connections"}));
+                refuse(stream, &refusing, limits.write_timeout.min(REFUSED_GRACE));
                 continue;
             }
             let slot = Slot(Arc::clone(&active));
@@ -96,6 +105,27 @@ fn serve_listener(listener: TcpListener, limits: Limits, ctx: egui::Context) -> 
         }
     });
     rx
+}
+
+/// Close a connection that was told it is refused. A peer that wrote a line before it read the
+/// reply would see only a reset, so the connection is drained for up to `grace` first, on a
+/// thread of its own: the accepting thread goes straight back to accepting. Past
+/// [`MAX_REFUSING`] drains at once, the connection is closed without one.
+fn refuse(stream: TcpStream, refusing: &Arc<AtomicUsize>, grace: Duration) {
+    if refusing.fetch_add(1, Ordering::SeqCst) >= MAX_REFUSING {
+        refusing.fetch_sub(1, Ordering::SeqCst);
+        return;
+    }
+    let slot = Slot(Arc::clone(refusing));
+    let spawned = std::thread::Builder::new().name("control-refused".into()).spawn(move || {
+        let _slot = slot;
+        if let Ok(read) = stream.try_clone() {
+            close_politely(&stream, &mut BufReader::new(read), grace);
+        }
+    });
+    if spawned.is_err() {
+        log::warn!("control server could not start a thread to close a refused connection");
+    }
 }
 
 /// Holds one connection slot; gives it back when the client thread ends, however it ends.
@@ -192,14 +222,16 @@ fn close_politely(out: &TcpStream, reader: &mut BufReader<TcpStream>, grace: Dur
     // Enough for a pipelined line or two; a peer that keeps talking is dropped at the deadline.
     // The timeout is what is left of the grace before each read, not the whole of it: a peer that
     // sends a byte just before each one expires would otherwise hold this thread, and its slot,
-    // for close to twice as long as the deadline says.
+    // for close to twice as long as the deadline says. The timeout is set on the handle that
+    // reads: on Windows, a read timeout set on one handle of a `try_clone` pair can fail to apply
+    // to reads through the other.
     const MAX_DRAIN: usize = 64 << 10;
     let until = Instant::now() + grace;
     let mut sink = [0u8; 4 << 10];
     let mut drained = 0;
     while drained < MAX_DRAIN {
         let left = until.saturating_duration_since(Instant::now());
-        if left.is_zero() || out.set_read_timeout(Some(left)).is_err() {
+        if left.is_zero() || reader.get_ref().set_read_timeout(Some(left)).is_err() {
             break;
         }
         match reader.read(&mut sink) {
@@ -388,8 +420,11 @@ mod tests {
     /// depended on the timing of the two.
     #[test]
     fn a_pipelined_peer_still_reads_why_its_line_was_rejected() {
-        let (addr, rx) = server(small());
-        for _ in 0..12 {
+        // A slot comes back only when the thread serving a peer ends, which can be after the next
+        // peer connects, so every peer has a slot of its own.
+        const PEERS: usize = 12;
+        let (addr, rx) = server(Limits { max_clients: PEERS, ..small() });
+        for _ in 0..PEERS {
             let (mut r, mut w) = client(addr);
             w.write_all(b"hello\n").unwrap();
             // A second line, written after the first as a script writes it: it races the close.
@@ -401,6 +436,69 @@ mod tests {
         }
         // The line after the rejected one is never dispatched, pipelined or not.
         assert!(rx.try_recv().is_err(), "a line after the rejection was dispatched");
+    }
+
+    /// A peer refused because every connection is taken still reads why when it had already
+    /// written a line: closing with that line unread resets the connection and discards the
+    /// reply. Repeated because it depends on the timing of the two.
+    #[test]
+    fn a_pipelined_peer_refused_as_busy_still_reads_why() {
+        let (addr, rx) = server(Limits { max_clients: 1, idle_timeout: Duration::from_secs(30), ..small() });
+        ui(rx);
+        // Take the only slot, and make sure it is being served.
+        let (mut hr, mut hw) = client(addr);
+        writeln!(hw, r#"{{"id":1,"method":"m"}}"#).unwrap();
+        assert!(reply(&mut hr).is_some());
+        for _ in 0..50 {
+            let (mut r, mut w) = client(addr);
+            let _ = w.write_all(b"{\"id\":2,\"method\":\"m\"}\n");
+            let replies = replies_until_closed(&mut r);
+            assert_eq!(replies.len(), 1, "{replies:?}");
+            assert!(replies[0]["error"].as_str().unwrap_or_default().starts_with("busy"), "{replies:?}");
+        }
+    }
+
+    /// Peers refused as busy that stay connected without sending anything do not hold up the
+    /// connections after them: each one's drain runs to its deadline on a thread of its own, and
+    /// past `MAX_REFUSING` drains at once a refused connection is closed without one.
+    #[test]
+    fn silent_refused_peers_do_not_delay_the_next_refusal() {
+        let (addr, rx) = server(Limits { max_clients: 1, idle_timeout: Duration::from_secs(30), ..small() });
+        ui(rx);
+        let (mut hr, mut hw) = client(addr);
+        writeln!(hw, r#"{{"id":1,"method":"m"}}"#).unwrap();
+        assert!(reply(&mut hr).is_some());
+        // Twenty drains of 250 ms each, one after another, would take five seconds.
+        let silent: Vec<_> = (0..MAX_REFUSING + 4).map(|_| client(addr)).collect();
+        let start = Instant::now();
+        let (mut r, _w) = client(addr);
+        let refused = reply(&mut r).unwrap();
+        assert!(refused["error"].as_str().unwrap_or_default().starts_with("busy"), "{refused}");
+        assert!(start.elapsed() < Duration::from_secs(1), "refused after {:?}", start.elapsed());
+        drop(silent);
+    }
+
+    /// A peer that keeps its connection open after its line was rejected gives its slot back at
+    /// the drain deadline (the write timeout), not at the idle timeout.
+    #[test]
+    fn a_rejected_peer_that_stays_connected_frees_its_slot_at_the_deadline() {
+        let (addr, rx) = server(Limits { max_clients: 1, idle_timeout: Duration::from_secs(30), ..small() });
+        ui(rx);
+        let (mut r, mut w) = client(addr);
+        w.write_all(b"hello\n").unwrap();
+        assert_eq!(reply(&mut r).unwrap()["ok"], false);
+        // `w` stays open, sending nothing.
+        let deadline = Instant::now() + Duration::from_secs(4);
+        loop {
+            let (mut dr, mut dw) = client(addr);
+            writeln!(dw, r#"{{"id":2,"method":"m"}}"#).unwrap();
+            if reply(&mut dr).is_some_and(|v| v["ok"] == true) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "slot never freed");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        drop(w);
     }
 
     #[test]
@@ -427,7 +525,9 @@ mod tests {
 
     #[test]
     fn connection_limit_refuses_then_frees_slot() {
-        let (addr, rx) = server(small());
+        // `a` sends nothing. Under a 300 ms idle timeout, a slow run could close it before the
+        // third peer connected, and that peer then took its slot instead of reading `busy`.
+        let (addr, rx) = server(Limits { idle_timeout: Duration::from_secs(30), ..small() });
         ui(rx);
         let a = client(addr);
         let (mut br, mut bw) = client(addr);
@@ -454,17 +554,18 @@ mod tests {
     #[test]
     fn blocked_ui_times_out_and_full_queue_is_busy() {
         let (addr, rx) = server(small());
-        // No UI: the first request fills the one-slot queue and times out; the second finds it full.
+        // No UI: the request that reaches the one-slot queue first fills it and times out; the
+        // other finds it full. Each connection has its own thread, so either request can be first.
         let (mut ar, mut aw) = client(addr);
         let (mut br, mut bw) = client(addr);
         writeln!(aw, r#"{{"id":1,"method":"m"}}"#).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
         writeln!(bw, r#"{{"id":2,"method":"m"}}"#).unwrap();
-        let b = reply(&mut br).unwrap();
-        assert!(b["error"].as_str().unwrap().starts_with("busy"));
-        assert_eq!(b["id"], 2);
         let a = reply(&mut ar).unwrap();
-        assert_eq!(a["error"], "timeout");
+        let b = reply(&mut br).unwrap();
+        assert_eq!((&a["id"], &b["id"]), (&json!(1), &json!(2)));
+        let mut errors = [a["error"].as_str().unwrap_or_default(), b["error"].as_str().unwrap_or_default()];
+        errors.sort_unstable();
+        assert_eq!(errors, ["busy: too many queued requests", "timeout"], "{a} {b}");
         drop(rx);
     }
 
