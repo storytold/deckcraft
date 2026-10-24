@@ -355,6 +355,11 @@ pub(crate) fn with_param(p: &Value, key: &str, v: Value) -> Value {
 
 /// Targets: `ids` / `id` params, else the selection.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<ShapeId>> {
+    if let Some(a) = p.get("ids").and_then(Value::as_array)
+        && let Some(v) = a.iter().find(|v| v.as_u64().and_then(|v| u32::try_from(v).ok()).is_none())
+    {
+        return Err(bad("shape", format!("`ids` has an invalid shape id: {v}")));
+    }
     if let Some(ids) = ids_param(p, "ids")
         && !ids.is_empty()
     {

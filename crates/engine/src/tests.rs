@@ -4403,3 +4403,14 @@ fn duplicating_a_moved_copy_repeats_the_move() {
     assert_eq!(boxed(&mut s, f), (340.0 + off, 100.0 + off));
     assert_eq!(s.doc().unwrap().doc.validate(), Vec::<String>::new());
 }
+
+#[test]
+fn invalid_ids_array_never_falls_back_to_the_selection() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    for ids in [json!([-1]), json!([1.5]), json!([4294967296u64]), json!([-1, a])] {
+        let r = s.execute("edit.delete", &json!({ "ids": ids }));
+        assert!(matches!(r, Err(crate::EngineError::BadParams { .. })), "invalid ids {ids} gave {r:?}");
+        assert!(s.doc().unwrap().shape(deckcraft_model::ShapeId(a as u32)).is_some(), "shape deleted for {ids}");
+    }
+}
