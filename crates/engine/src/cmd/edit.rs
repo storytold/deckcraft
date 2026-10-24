@@ -51,6 +51,8 @@ fn restore(s: &mut Session, redo: bool) -> Result<Value> {
     st.doc = e.doc;
     st.selection = e.selection;
     st.interaction = None;
+    // A later shape can get an undone copy's id: Duplicate starts over with the usual offset.
+    st.last_duplicate = None;
     st.revision += 1;
     Ok(json!({"label": e.label}))
 }
@@ -534,15 +536,31 @@ fn paste_text(s: &mut Session, p: &Value) -> Result<Value> {
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     let off = s.prefs.duplicate_offset;
-    s.edit(|doc, sel| {
+    let last = s.doc()?.last_duplicate.clone();
+    let (new_ids, made) = s.edit(|doc, sel| {
         let list = super::current_shapes(doc, sel).cloned().unwrap_or_default();
         let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
+        let sources: Vec<ShapeId> = copies.iter().map(|c| c.id).collect();
         let boxes: Vec<_> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
+        // Duplicating the copies of the last Duplicate again repeats how far they were moved
+        // since (#966); anything else gets the usual offset.
+        let (dx, dy) = last
+            .filter(|(slide, target, pairs)| {
+                *slide == sel.slide && *target == sel.target && pairs.len() == sources.len() && pairs.iter().all(|(_, c)| sources.contains(c))
+            })
+            .and_then(|(_, _, pairs)| {
+                let (src, copy) = pairs.first()?;
+                let a = xfrm_of(doc, sel, list.iter().find(|x| x.id == *src)?);
+                let b = xfrm_of(doc, sel, list.iter().find(|x| x.id == *copy)?);
+                let d = (b.x - a.x, b.y - a.y);
+                (d.0.is_finite() && d.1.is_finite()).then_some(d)
+            })
+            .unwrap_or((off, off));
         reid("edit.duplicate", doc, &mut copies)?;
         for (c, b) in copies.iter_mut().zip(boxes) {
             let mut x = b;
-            x.x += off;
-            x.y += off;
+            x.x += dx;
+            x.y += dy;
             c.xfrm = Some(x);
             if sel.target == crate::Target::Slides {
                 c.ph = None;
@@ -555,8 +573,11 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("edit.duplicate", "no slide"))?;
         shapes.extend(copies);
         sel.shapes = new_ids.clone();
-        Ok(json!({"ids": new_ids}))
-    })
+        let made = (sel.slide, sel.target, sources.into_iter().zip(new_ids.iter().copied()).collect());
+        Ok((new_ids, made))
+    })?;
+    s.doc_mut()?.last_duplicate = Some(made);
+    Ok(json!({"ids": new_ids}))
 }
 
 fn delete(s: &mut Session, p: &Value) -> Result<Value> {

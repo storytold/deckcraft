@@ -66,7 +66,7 @@ pub enum PageLayout {
 #[serde(default, rename_all = "camelCase")]
 pub struct PdfOptions {
     pub layout: PageLayout,
-    /// Raster resolution of slide artwork (dots per inch).
+    /// Raster resolution of slide artwork (dots per inch), lowered for a slide whose raster would pass 64M pixels.
     pub dpi: f64,
     /// Slide indices to export (0-based); `None` = all.
     pub slides: Option<Vec<usize>>,
@@ -423,6 +423,16 @@ fn backdrop(mut img: deckcraft_render::Image) -> Image {
     Image::from_rgba8(img.pixels, img.width, img.height)
 }
 
+/// Most pixels one slide raster may have; it is RGBA, and the backdrop and the content are two rasters.
+const MAX_RASTER_PIXELS: f64 = 64_000_000.0;
+
+/// Render scale for a slide of `slide` units drawn `box_width` points wide at `dpi`, with the total pixel count capped.
+fn raster_scale(box_width: f64, slide: (f64, f64), dpi: f64) -> f64 {
+    let scale = (box_width / 72.0 * dpi.clamp(36.0, 600.0)) / slide.0;
+    let pixels = slide.0 * scale * slide.1 * scale;
+    if pixels > MAX_RASTER_PIXELS { scale * (MAX_RASTER_PIXELS / pixels).sqrt() } else { scale }
+}
+
 impl Exporter<'_> {
     fn font(&mut self, face: &deckcraft_fonts::FontFace) -> Result<Font> {
         if let Some(font) = self.fonts.get(&face.id()) {
@@ -439,7 +449,7 @@ impl Exporter<'_> {
         let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
-        let scale = (b.width() / 72.0 * self.opts.dpi.clamp(36.0, 600.0)) / sw;
+        let scale = raster_scale(b.width(), (sw, sh), self.opts.dpi);
         let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
         // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
         // on every slide that shares its layout, so the writer stores it once, and the slide's own

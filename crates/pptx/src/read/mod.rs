@@ -781,24 +781,14 @@ pub fn color_map(cm: &El) -> Vec<(String, String)> {
     cm.attrs.iter().filter(|(k, _)| !k.starts_with("xmlns")).map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
-/// The anchor the theme's shape defaults (`a:objectDefaults/a:spDef/a:bodyPr`) give new shapes
-/// text, if any.
-fn theme_shape_anchor(t: &deckcraft_model::Theme) -> Option<deckcraft_model::text::Anchor> {
-    let raw = t.raw_extra.as_deref()?;
-    let sp = &raw[raw.find("spDef")?..];
-    let sp = &sp[..sp.find("/a:spDef").or_else(|| sp.find("txDef")).unwrap_or(sp.len())];
-    let b = &sp[sp.find("bodyPr")?..];
-    let b = &b[..b.find('>').unwrap_or(b.len())];
-    let v = &b[b.find("anchor=\"")? + 8..];
-    deckcraft_model::text::Anchor::from_xml(&v[..v.find('"')?])
-}
-
-/// A shape's text without an anchor of its own sits at the top, as the standard has it (or where
-/// the theme's shape defaults put it). The model's own default for shapes is the middle, so a
-/// top or bottom anchor is made explicit here and a middle one left unset (placeholders and text
-/// boxes keep inheriting).
+/// A shape's text without an anchor of its own sits at the top, as the standard has it and as
+/// PowerPoint draws it. The theme's shape defaults (`a:objectDefaults/a:spDef/a:bodyPr`, centred in
+/// Office's themes) are for shapes inserted later, not for the file's own shapes: PowerPoint for
+/// Mac draws `<a:bodyPr/>` at the top under an `spDef` with `anchor="ctr"`. The model's own default
+/// for shapes is the middle, so a top or bottom anchor is made explicit here and a middle one left
+/// unset (placeholders and text boxes keep inheriting).
 fn default_text_anchor(p: &mut Presentation) {
-    fn fix(shapes: &mut [deckcraft_model::Shape], a: deckcraft_model::text::Anchor) {
+    fn fix(shapes: &mut [deckcraft_model::Shape]) {
         walk_shapes_mut(shapes, &mut |s| {
             if s.ph.is_none()
                 && !s.text_box
@@ -806,25 +796,20 @@ fn default_text_anchor(p: &mut Presentation) {
                 && let Some(t) = &mut s.text
             {
                 // Middle is the model's own default for shapes, so it is kept as unset.
-                let got = t.body.anchor.unwrap_or(a);
+                let got = t.body.anchor.unwrap_or(deckcraft_model::text::Anchor::Top);
                 t.body.anchor = (got != deckcraft_model::text::Anchor::Middle).then_some(got);
             }
         });
     }
-    let top = deckcraft_model::text::Anchor::Top;
-    let anchors: Vec<_> = p.masters.iter().map(|m| (m.id, theme_shape_anchor(&m.theme).unwrap_or(top))).collect();
     for m in &mut p.masters {
-        let a = anchors.iter().find(|(id, _)| *id == m.id).map(|x| x.1).unwrap_or(top);
         let m = Arc::make_mut(m);
-        fix(&mut m.shapes, a);
+        fix(&mut m.shapes);
         for l in &mut m.layouts {
-            fix(&mut l.shapes, a);
+            fix(&mut l.shapes);
         }
     }
-    let per_slide: Vec<_> =
-        p.slides.iter().map(|s| p.master_for(s).and_then(|(m, _)| anchors.iter().find(|(id, _)| *id == m.id)).map(|x| x.1).unwrap_or(top)).collect();
-    for (s, a) in p.slides.iter_mut().zip(per_slide) {
-        fix(&mut Arc::make_mut(s).shapes, a);
+    for s in &mut p.slides {
+        fix(&mut Arc::make_mut(s).shapes);
     }
 }
 

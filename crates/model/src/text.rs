@@ -603,6 +603,7 @@ pub struct TextBody {
 
 impl TextBody {
     pub fn from_text(text: &str) -> Self {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
         TextBody { paragraphs: text.split('\n').map(Paragraph::new).collect(), ..Default::default() }
     }
     /// Plain text with `\n` between paragraphs.

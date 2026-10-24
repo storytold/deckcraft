@@ -256,6 +256,7 @@ pub fn rich_deck() -> Presentation {
         media: video,
         video: true,
         poster: Some(img),
+        crop: [0.1, 0.0, 0.2, 0.25],
         volume: 1.0,
         trim_start_ms: 500,
         fade_in_ms: 250,
@@ -505,6 +506,10 @@ fn pictures_media_and_ink_round_trip() {
     assert_eq!((m.trim_start_ms, m.fade_in_ms), (500, 250));
     assert!(q.media(m.media).is_some_and(|x| x.data.starts_with(b"\x00\x00\x00\x18ftyp")));
     assert!(m.poster.is_some());
+    // The crop of the video survives the round trip (#972).
+    for (got, want) in m.crop.iter().zip([0.1, 0.0, 0.2, 0.25]) {
+        assert!((got - want).abs() < 1e-4, "video crop {:?}", m.crop);
+    }
     // Ink comes back as freeform lines in a group. A flat 0.5 stroke keeps the pen width.
     let ink = by_name(&q.slides[2], "Ink");
     let ShapeKind::Group { children, .. } = &ink.kind else { panic!("ink is not a group: {:?}", ink.kind) };

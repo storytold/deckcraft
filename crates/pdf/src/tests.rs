@@ -530,3 +530,14 @@ fn glyph_ranges_follow_shaping_clusters() {
     // A run starting mid-paragraph, multi-byte characters in visual (right-to-left) order.
     assert_eq!(glyph_text_ranges("αβγ", (3, 6), &[(5, 'γ'), (4, 'β'), (3, 'α')], 3), vec![4..6, 2..4, 0..2]);
 }
+
+#[test]
+fn raster_scale_caps_total_pixels_not_each_side() {
+    // A huge square slide at 600 dpi would be 16,000 x 16,000 px (~1 GB RGBA) without the cap.
+    let s = raster_scale(20_000.0, (20_000.0, 20_000.0), 600.0);
+    let px = 20_000.0 * s * 20_000.0 * s;
+    assert!(px <= MAX_RASTER_PIXELS * 1.0001, "{px}");
+    // A normal slide keeps the requested dpi.
+    let s = raster_scale(720.0, (960.0, 540.0), 200.0);
+    assert!((s - 720.0 / 72.0 * 200.0 / 960.0).abs() < 1e-12);
+}

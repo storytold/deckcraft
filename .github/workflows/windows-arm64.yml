@@ -10,8 +10,9 @@ on:
     paths:
       - .github/workflows/windows-arm64.yml
       - packaging/windows/**
+  # Nightly, so dependency and runner-image drift shows up within a day.
   schedule:
-    - cron: "41 3 * * 1"
+    - cron: "3 5 * * *"
   workflow_dispatch:
 
 concurrency:

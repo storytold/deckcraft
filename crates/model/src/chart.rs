@@ -1132,7 +1132,14 @@ impl Chart {
             let sd = (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
             3.49 * sd / n.cbrt()
         };
-        let count = if span <= 0.0 || !width.is_finite() || width <= 0.0 { 1 } else { ((span / width).ceil() as usize).clamp(1, MAX_BINS) };
+        let fixed = self.bin_count.filter(|k| *k > 0).filter(|_| self.bin_size.filter(|w| w.is_finite() && *w > 0.0).is_none());
+        let count = if span <= 0.0 || !width.is_finite() || width <= 0.0 {
+            1
+        } else if let Some(k) = fixed {
+            (k as usize).clamp(1, MAX_BINS)
+        } else {
+            ((span / width).ceil() as usize).clamp(1, MAX_BINS)
+        };
         let width = if count == 1 && (span <= 0.0 || !width.is_finite() || width <= 0.0) { span.max(1.0) } else { width.max(span / MAX_BINS as f64) };
         let mut bins: Vec<Bin> = (0..count).map(|i| Bin { lo: lo + width * i as f64, hi: lo + width * (i + 1) as f64, count: 0 }).collect();
         for x in v {
@@ -1387,6 +1394,13 @@ mod chartex_tests {
         assert!(c.histogram_bins().len() <= MAX_BINS);
         assert_eq!(obs(&[3.0]).histogram_bins(), vec![Bin { lo: 3.0, hi: 4.0, count: 1 }]);
         assert!(obs(&[]).histogram_bins().is_empty());
+    }
+
+    #[test]
+    fn histogram_fixed_bin_count_is_exact_despite_float_rounding() {
+        let mut c = obs(&[0.0, 1.0, 2.1]);
+        c.bin_count = Some(7);
+        assert_eq!(c.histogram_bins().len(), 7);
     }
 
     #[test]

@@ -498,8 +498,9 @@ fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
             }
         }
         match &mut sh.kind {
-            deckcraft_model::ShapeKind::Picture { fill } => {
-                for c in &mut fill.crop {
+            deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { crop, .. } }
+            | deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { crop, .. }) => {
+                for c in crop {
                     *c = if c.is_finite() { c.clamp(-10.0, 1.0) } else { 0.0 };
                 }
             }
@@ -825,6 +826,18 @@ mod tests {
         let n = b.len();
         b.truncate(n / 2);
         assert!(load(&b).is_err());
+    }
+
+    /// A video's crop is brought into the same range as a picture's (#972).
+    #[test]
+    fn a_video_crop_is_repaired_like_a_picture_crop() {
+        use deckcraft_model::{MediaClip, Shape};
+        let mut p = Presentation::default();
+        let clip = MediaClip { video: true, crop: [f64::NAN, 0.25, -1e9, 0.0], ..Default::default() };
+        Arc::make_mut(&mut p.slides[0]).shapes.push(Shape { kind: ShapeKind::Media(clip), ..Default::default() });
+        let back = load(&save(&p).unwrap()).unwrap_or_else(|e| panic!("{e}"));
+        let ShapeKind::Media(m) = &back.slides[0].shapes.last().unwrap().kind else { panic!("media") };
+        assert_eq!(m.crop, [0.0, 0.25, -10.0, 0.0]);
     }
 
     /// Non-finite numbers are written as `null` by serde_json; the file still opens, with each

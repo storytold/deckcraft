@@ -145,8 +145,13 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
             continue;
         }
         let end = bytes[i..].iter().position(|c| *c == b'<').map(|n| i + n).unwrap_or(bytes.len());
-        let text = decode_text(&html[i..end]);
+        let mut text = decode_text(&html[i..end]);
         i = end;
+        // A space at the start of a paragraph, or after a space, does not render in HTML.
+        let after_space = paragraphs.last().and_then(|p| p.runs.last()).is_none_or(|r| r.text.ends_with(' '));
+        if after_space {
+            text = text.trim_start_matches(' ').to_string();
+        }
         if text.is_empty() {
             continue;
         }
@@ -155,6 +160,7 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
     while paragraphs.last().is_some_and(Paragraph::is_empty) && paragraphs.len() > 1 {
         paragraphs.pop();
     }
+    trim_end_space(&mut paragraphs);
     if paragraphs.iter().all(Paragraph::is_empty) {
         return None;
     }
@@ -240,7 +246,16 @@ fn new_para(paragraphs: &mut Vec<Paragraph>) {
         return;
     }
     if paragraphs.last().is_some_and(|p| !p.is_empty()) {
+        trim_end_space(paragraphs);
         paragraphs.push(Paragraph::default());
+    }
+}
+
+/// Whitespace at the end of a paragraph does not render in HTML.
+fn trim_end_space(paragraphs: &mut [Paragraph]) {
+    if let Some(run) = paragraphs.last_mut().and_then(|p| p.runs.last_mut()) {
+        let len = run.text.trim_end_matches(' ').len();
+        run.text.truncate(len);
     }
 }
 
@@ -263,14 +278,32 @@ fn push_run(paragraphs: &mut [Paragraph], runs: &mut usize, text: String, bold: 
     *runs += 1;
 }
 
+/// Text with each run of HTML whitespace (spaces, tabs, line breaks) collapsed to one space.
+fn collapse_space(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut space = false;
+    for c in s.chars() {
+        if matches!(c, ' ' | '\t' | '\n' | '\r') {
+            if !space {
+                out.push(' ');
+            }
+            space = true;
+        } else {
+            out.push(c);
+            space = false;
+        }
+    }
+    out
+}
+
 fn decode_text(raw: &str) -> String {
     let mut out = String::new();
     let mut rest = raw;
     while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at].replace(['\n', '\r'], ""));
+        out.push_str(&collapse_space(&rest[..at]));
         rest = &rest[at..];
         let Some(end) = rest.find(';') else {
-            out.push_str(&rest.replace(['\n', '\r'], ""));
+            out.push_str(&collapse_space(rest));
             break;
         };
         let entity = &rest[1..end];
@@ -280,7 +313,7 @@ fn decode_text(raw: &str) -> String {
             "gt" => Some('>'),
             "quot" => Some('"'),
             "apos" => Some('\''),
-            "nbsp" => Some(' '),
+            "nbsp" => Some('\u{a0}'),
             _ => entity.strip_prefix('#').and_then(numeric_char),
         };
         if let Some(c) = decoded {
@@ -293,7 +326,7 @@ fn decode_text(raw: &str) -> String {
         }
     }
     if !rest.is_empty() && !rest.starts_with('&') {
-        out.push_str(&rest.replace(['\n', '\r'], ""));
+        out.push_str(&collapse_space(rest));
     }
     out
 }
@@ -369,6 +402,18 @@ mod tests {
         assert_eq!(body.paragraphs[1].runs[0].props.italic, Some(true));
         assert!(same_words(&body.text(), "A & B\nC"));
         assert!(!same_words(&body.text(), "other"));
+    }
+
+    #[test]
+    fn a_newline_in_html_text_is_a_space() {
+        assert_eq!(decode_text("Hello\nworld"), "Hello world");
+        let body = html_to_body("<p>Hello\r\n  world</p>").unwrap();
+        assert_eq!(body.text(), "Hello world");
+        let body = html_to_body("<p>\n<b>Hello</b>\n<i>world</i>\n</p>\n<p>next</p>").unwrap();
+        assert_eq!(body.text(), "Hello world\nnext");
+        assert!(same_words(&body.text(), "Hello world\nnext"));
+        assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true));
+        assert_eq!(body.paragraphs[0].runs.last().unwrap().props.italic, Some(true));
     }
 
     #[test]

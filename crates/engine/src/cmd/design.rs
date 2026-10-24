@@ -1,6 +1,7 @@
 //! Design tab and masters: themes, colours, fonts, backgrounds, slide size, header & footer,
 //! Slide Master view.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use deckcraft_geom::Size;
@@ -592,6 +593,11 @@ fn background_of(doc: &Presentation, sel: &crate::Selection, index: Option<usize
     }
 }
 
+fn used_master_indices(doc: &Presentation) -> BTreeSet<usize> {
+    let fallback = (!doc.masters.is_empty()).then_some(0);
+    doc.slides.iter().filter_map(|sl| doc.masters.iter().position(|m| m.layout(sl.layout).is_some()).or(fallback)).collect()
+}
+
 fn backgrounds_already(doc: &Presentation, sel: &crate::Selection, index: Option<usize>, all: bool, bg: &Option<Background>) -> bool {
     match sel.target {
         Target::Master { master } => doc.masters.get(master).is_some_and(|m| m.background == *bg),
@@ -599,7 +605,16 @@ fn backgrounds_already(doc: &Presentation, sel: &crate::Selection, index: Option
         t @ (Target::Handout | Target::NotesMaster) => crate::page_master(doc, t).is_some_and(|m| m.background == *bg),
         Target::Slides => {
             let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![index.unwrap_or(sel.slide)] };
-            !list.is_empty() && list.iter().all(|i| doc.slides.get(*i).is_some_and(|sl| sl.background == *bg))
+            let slides_match = !list.is_empty() && list.iter().all(|i| doc.slides.get(*i).is_some_and(|sl| sl.background == *bg));
+            if all && bg.is_some() {
+                let masters = used_master_indices(doc);
+                let masters_match = !masters.is_empty() && masters.iter().all(|&idx| doc.masters.get(idx).is_some_and(|m| m.background == *bg));
+                let layouts_match = !masters.is_empty()
+                    && masters.iter().all(|&idx| doc.masters.get(idx).is_some_and(|m| m.layouts.iter().all(|l| l.background.is_none())));
+                slides_match && masters_match && layouts_match
+            } else {
+                slides_match
+            }
         }
     }
 }
@@ -622,6 +637,17 @@ fn write_background(doc: &mut Presentation, sel: &crate::Selection, index: Optio
             }
         }
         Target::Slides => {
+            if all && bg.is_some() {
+                for idx in used_master_indices(doc) {
+                    if let Some(m) = doc.masters.get_mut(idx) {
+                        let m = Arc::make_mut(m);
+                        m.background = bg.clone();
+                        for l in &mut m.layouts {
+                            l.background = None;
+                        }
+                    }
+                }
+            }
             let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![index.unwrap_or(sel.slide)] };
             for i in list {
                 if let Some(sl) = doc.slides.get_mut(i) {
@@ -639,7 +665,14 @@ fn copy_slide_background(s: &mut Session) -> Result<Value> {
             return Err(bad("design.background", "copy applies to slides"));
         }
         let bg = st.doc.slides.get(st.selection.slide).and_then(|sl| sl.background.clone());
-        if st.doc.slides.iter().all(|sl| sl.background == bg) {
+        let slides_match = st.doc.slides.iter().all(|sl| sl.background == bg);
+        let masters_match = if bg.is_some() {
+            let masters = used_master_indices(&st.doc);
+            !masters.is_empty() && masters.iter().all(|&idx| st.doc.masters.get(idx).is_some_and(|m| m.background == bg))
+        } else {
+            true
+        };
+        if slides_match && masters_match {
             return ok();
         }
         bg
@@ -943,18 +976,21 @@ pub fn date_field_text(kind: &str) -> String {
     DateTime::now_local().and_then(|now| field_text(kind, None, now)).unwrap_or_default()
 }
 
-/// Days since 1970-01-01 → (year, month, day) (Howard Hinnant's algorithm).
+/// Days since 1970-01-01 → (year, month, day), exact for every `i64`.
 pub fn civil(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
+    use chrono::Datelike;
+    // `NaiveDate` covers only about ±262143 years, and the Gregorian calendar repeats every 400
+    // years (146_097 days). chrono converts the day within its cycle and whole cycles go back
+    // into the year (an i128 for i64::MAX/MIN). 1970-01-01 is `num_days_from_ce` 719_163, and
+    // 0..146_097 days from it always fits.
+    let (cycles, rest) = (z.div_euclid(146_097), z.rem_euclid(146_097));
+    match i32::try_from(rest + 719_163).ok().and_then(chrono::NaiveDate::from_num_days_from_ce_opt) {
+        Some(d) => {
+            let y = i128::from(d.year()) + i128::from(cycles) * 400;
+            (i64::try_from(y).unwrap_or(if y < 0 { i64::MIN } else { i64::MAX }), d.month(), d.day())
+        }
+        None => (1970, 1, 1),
+    }
 }
 
 fn master_view(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1456,6 +1492,8 @@ fn slide_number_paragraph() -> deckcraft_model::Paragraph {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use deckcraft_color::SchemeSlot;
     use deckcraft_model::style::PictureMode;
     use deckcraft_model::theme::{FontScheme, ScriptFont, builtin_color_schemes, builtin_font_schemes};
@@ -1495,6 +1533,11 @@ mod tests {
     fn civil_dates() {
         assert_eq!(super::civil(0), (1970, 1, 1));
         assert_eq!(super::civil(20_734), (2026, 10, 8));
+        // Past `NaiveDate`'s range the 400-year cycles carry the year, exactly, up to the extremes.
+        assert_eq!(super::civil(95_026_602), (262_144, 1, 1));
+        assert_eq!(super::civil(-96_465_964), (-262_145, 3, 1));
+        assert_eq!(super::civil(i64::MAX), (25_252_734_927_768_524, 7, 27));
+        assert_eq!(super::civil(i64::MIN), (-25_252_734_927_764_585, 6, 7));
     }
 
     #[test]
@@ -1726,6 +1769,187 @@ mod tests {
         assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Format Background");
         s.execute("design.background", &json!({"copy": true})).unwrap();
         assert_eq!(undo_len(&s), n + 1, "copying an already shared background is not an undo step");
+    }
+
+    #[test]
+    fn background_all_applies_to_master_and_new_slides_inherit() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+        let s0 = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        assert_eq!(s0["background"], "#121826");
+
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"color": "#0D0D0D", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1);
+
+        // Idempotency: re-applying the same background to all is a no-op (no extra undo step)
+        s.execute("design.background", &json!({"color": "#0D0D0D", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "re-applying already applied background is not an undo step");
+
+        // Slide 0 has new background, master has new background, layouts cleared
+        let doc = &s.doc().unwrap().doc;
+        assert!(matches!(doc.slides[0].background, Some(Background::Fill { .. })));
+        assert_eq!(doc.masters[0].background, doc.slides[0].background);
+        for l in &doc.masters[0].layouts {
+            assert!(l.background.is_none());
+        }
+
+        // Newly added slides inherit the master background (fixes #891)
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "new"})).unwrap();
+        let s0_after = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        let s1_after = s.execute("slide.inspect", &json!({"index": 1})).unwrap();
+        assert_eq!(s0_after["background"], "#0D0D0D");
+        assert_eq!(s1_after["background"], "#0D0D0D");
+
+        // Undo restores previous slide and master backgrounds
+        s.execute("edit.undo", &json!({})).unwrap(); // undos slide.new
+        assert_eq!(s.doc().unwrap().doc.slides.len(), 1);
+        s.execute("edit.undo", &json!({})).unwrap(); // undos design.background
+        let s0_reverted = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        assert_eq!(s0_reverted["background"], "#121826");
+    }
+
+    #[test]
+    fn background_copy_from_slide_following_master_preserves_master_and_layout_backgrounds() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+        s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+
+        let custom_layout_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x22, 0x22, 0x22))) };
+        s.edit(|doc, _| {
+            let m = Arc::make_mut(&mut doc.masters[0]);
+            m.layouts[0].background = Some(custom_layout_bg.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        // Slide 0 follows master (background: None)
+        assert!(s.doc().unwrap().doc.slides[0].background.is_none());
+        // Give Slide 1 an explicit override
+        s.execute("design.background", &json!({"color": "#FF0000", "index": 1})).unwrap();
+        assert!(s.doc().unwrap().doc.slides[1].background.is_some());
+
+        let orig_master_bg = s.doc().unwrap().doc.masters[0].background.clone();
+        assert!(orig_master_bg.is_some());
+
+        // Select slide 0 (which follows master) and apply copy to all
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"copy": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1);
+
+        // Slide 1 has been reset to None (follows master), slide 0 remains None
+        let doc = &s.doc().unwrap().doc;
+        assert!(doc.slides[0].background.is_none());
+        assert!(doc.slides[1].background.is_none());
+
+        // Master and layout backgrounds survived!
+        assert_eq!(doc.masters[0].background, orig_master_bg);
+        assert_eq!(doc.masters[0].layouts[0].background, Some(custom_layout_bg));
+
+        // Idempotency: re-applying copy is a no-op
+        s.execute("design.background", &json!({"copy": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "re-copying when already matching is a no-op");
+    }
+
+    #[test]
+    fn background_reset_all_preserves_master_and_layout_backgrounds() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+        s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+
+        let custom_layout_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x33, 0x33, 0x33))) };
+        s.edit(|doc, _| {
+            let m = Arc::make_mut(&mut doc.masters[0]);
+            m.layouts[0].background = Some(custom_layout_bg.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        let orig_master_bg = s.doc().unwrap().doc.masters[0].background.clone();
+        assert!(orig_master_bg.is_some());
+
+        // Set explicit backgrounds on both slides individually (master remains untouched)
+        s.execute("design.background", &json!({"color": "#0D0D0D", "index": 0})).unwrap();
+        s.execute("design.background", &json!({"color": "#0D0D0D", "index": 1})).unwrap();
+        assert!(s.doc().unwrap().doc.slides[0].background.is_some());
+        assert!(s.doc().unwrap().doc.slides[1].background.is_some());
+
+        // Now perform reset with all
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"reset": true, "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1);
+
+        // Slides reset to None to follow master
+        let doc = &s.doc().unwrap().doc;
+        assert!(doc.slides[0].background.is_none());
+        assert!(doc.slides[1].background.is_none());
+
+        // Master and layout backgrounds survived!
+        assert_eq!(doc.masters[0].background, orig_master_bg);
+        assert_eq!(doc.masters[0].layouts[0].background, Some(custom_layout_bg));
+
+        // Idempotency: re-running reset all is a no-op
+        s.execute("design.background", &json!({"reset": true, "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "re-resetting when already reset is a no-op");
+    }
+
+    #[test]
+    fn background_all_only_touches_used_masters() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+
+        // Add a second master to presentation
+        let second_master_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x55, 0x55, 0x55))) };
+        s.edit(|doc, _| {
+            let mut m2 = (*doc.masters[0]).clone();
+            m2.id = deckcraft_model::MasterId(999);
+            m2.background = Some(second_master_bg.clone());
+            doc.masters.push(Arc::new(m2));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(s.doc().unwrap().doc.masters.len(), 2);
+        // Slides only use master 0 (default layout)
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+
+        let doc = &s.doc().unwrap().doc;
+        // Master 0 updated
+        assert_eq!(doc.masters[0].background, doc.slides[0].background);
+        // Master 1 preserved!
+        assert_eq!(doc.masters[1].background, Some(second_master_bg));
+    }
+
+    #[test]
+    fn background_all_clears_layout_overrides_even_if_slides_and_master_match() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+
+        // Set all slides and master to #AA0000
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.masters[0].background, s.doc().unwrap().doc.slides[0].background);
+
+        // Add a layout override on layout 0
+        let custom_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x12, 0x34, 0x56))) };
+        s.edit(|doc, _| {
+            let m = Arc::make_mut(&mut doc.masters[0]);
+            m.layouts[0].background = Some(custom_bg);
+            Ok(())
+        })
+        .unwrap();
+
+        // Re-run Apply to All with #AA0000. Must not be skipped as no-op; must clear layout override.
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "should execute and clear layout override, not treat as no-op");
+
+        let doc = &s.doc().unwrap().doc;
+        assert!(doc.masters[0].layouts[0].background.is_none());
+
+        // Now that layout override is cleared, repeating is an actual no-op
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "now it is truly a no-op");
     }
 }
 

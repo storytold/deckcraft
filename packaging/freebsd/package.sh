@@ -14,16 +14,18 @@ set -euo pipefail
 LINUX="$ROOT/packaging/linux"
 APP_ID=ai.storyteller.deckcraft
 
-if [ "${1:-}" != "--skip-build" ]; then
+if [[ "${1:-}" != "--skip-build" ]]; then
   (cd "$ROOT" && cargo build --release --locked -p deckcraft -p deckcraft-cli)
 fi
 
 release_arch() {
-  case "$1" in
+  local arch="$1"
+  case "$arch" in
     amd64 | x86_64) echo x86_64 ;;
     arm64 | aarch64) echo aarch64 ;;
-    *) echo "$1" ;;
+    *) echo "$arch" ;;
   esac
+  return
 }
 # The release workflow cross-compiles aarch64 in an x86_64 VM with CARGO_BUILD_TARGET set to
 # aarch64-unknown-freebsd (craft-common-actions#39): name the archive after the target.
@@ -35,7 +37,7 @@ esac
 # Only binaries for this machine run here (the --version check at the end); a FreeBSD target built
 # on another OS never does.
 HOST_ARCH="$(release_arch "$(uname -m)" 2>/dev/null)" || HOST_ARCH="$(uname -m)"
-if [ -n "${CARGO_BUILD_TARGET:-}" ] && [ "$(uname -s)" != FreeBSD ]; then
+if [[ -n "${CARGO_BUILD_TARGET:-}" ]] && [[ "$(uname -s)" != FreeBSD ]]; then
   HOST_ARCH="$(uname -s) $HOST_ARCH"
 fi
 # Cargo puts a cross build under target/<triple>/release.
@@ -56,12 +58,12 @@ cp -R "$ROOT/assets/app-icon/hicolor" "$STAGE/share/icons/"
 copy_docs "$STAGE/share/doc/deckcraft"
 
 tar -C "$WORK" -czf "$DIST/$NAME.tar.gz" "$NAME"
-if [ "$ARCH" = "$HOST_ARCH" ]; then
+if [[ "$ARCH" = "$HOST_ARCH" ]]; then
   "$STAGE/bin/deckcraft-cli" --version
 else
   # They cannot run here, so check what they are instead: executables, not libraries or objects.
   # An older file(1) calls a PIE a shared object; its interpreter still marks it as a program.
-  want="$ARCH"; [ "$ARCH" != x86_64 ] || want=x86-64
+  want="$ARCH"; [[ "$ARCH" != x86_64 ]] || want=x86-64
   for b in "$STAGE"/bin/*; do
     case "$(file -b "$b")" in
       ELF*" executable, "*"$want"*FreeBSD* | ELF*"$want"*FreeBSD*interpreter*) ;;

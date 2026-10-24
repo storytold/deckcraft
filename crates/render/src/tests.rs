@@ -432,6 +432,22 @@ fn glow_of_an_unfilled_shape_follows_its_line() {
 }
 
 #[test]
+fn glow_of_a_shape_with_no_fill_and_no_line_is_not_drawn() {
+    // A text box (no fill, no line) with a glow in its shape properties: PowerPoint shows no halo
+    // round the box (its text carries its own glow), so the box's edge and surroundings stay white.
+    let mut sh = Shape { id: ShapeId(611), xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 300.0)), fill: Some(Fill::None), ..Default::default() };
+    sh.effects = Some(deckcraft_model::Effects {
+        glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 255, 0)), radius: 15.0 }),
+        ..Default::default()
+    });
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    for (x, y) in [(300, 250), (300, 100), (300, 95), (96, 250)] {
+        let px = img.pixel(x, y);
+        assert!(px[2] > 245, "({x}, {y}): {px:?}");
+    }
+}
+
+#[test]
 fn placeholder_prompts_only_in_edit_view() {
     let p = Presentation::default();
     let edit = render_slide(&p, 0, &RenderOpts { scale: 0.5, edit: true, ..Default::default() });
@@ -1972,6 +1988,37 @@ fn text_in_a_scaled_group_keeps_its_point_size() {
 }
 
 #[test]
+fn rounded_corners_in_a_stretched_group_stay_round() {
+    // #1083: a group that stretches its child space 4x across makes a rounded rectangle wider on
+    // the slide, but its corners stay circular, like a plain rounded rectangle of that size.
+    let round = |id: u32, w: f64, h: f64| Shape {
+        id: ShapeId(id),
+        xfrm: Some(Xfrm::new(0.0, 0.0, w, h)),
+        geom: Geom::Preset { name: "roundRect".into(), adj: vec![16667.0] },
+        fill: Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::BLACK))),
+        line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
+        ..Default::default()
+    };
+    let render = |sh: Shape| {
+        let mut p = Presentation::default();
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];
+        render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let mut plain = round(700, 400.0, 100.0);
+    plain.xfrm = Some(Xfrm::new(100.0, 100.0, 400.0, 100.0));
+    let plain = render(plain);
+    let grouped = render(Shape {
+        id: ShapeId(701),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 100.0)),
+        kind: ShapeKind::Group { children: vec![round(702, 100.0, 100.0)], child: Xfrm::new(0.0, 0.0, 100.0, 100.0) },
+        ..Default::default()
+    });
+    for (x, y) in [(120, 102), (102, 120), (480, 102), (498, 180), (120, 198)] {
+        assert_eq!(plain.pixel(x, y), grouped.pixel(x, y), "pixel ({x},{y}) of a roundRect in a stretched group");
+    }
+}
+
+#[test]
 fn a_fill_overlay_blends_over_the_fill() {
     // `a:fillOverlay blend="mult"`: a 50% grey multiplied over a light fill darkens it; "screen"
     // lightens a dark one; the overlay stays inside the shape.
@@ -2263,6 +2310,81 @@ fn extrusions_show_their_sides_under_a_turned_camera() {
     assert!(ink(&img, 0, 260) > ink(&thin, 0, 260) + 1000, "the cube's sides add ink");
     assert_eq!(ink(&img, 740, 960), ink(&thin, 740, 960), "a front camera shows no sides");
     assert_eq!(ink(&flat, 0, 960), 0);
+}
+
+#[test]
+fn group_child_scale_does_not_scale_3d_depth_contours_or_bevels() {
+    // A legacy group child space (here 100 points per unit) scales the shapes' boxes, but
+    // extrusion depths, contour widths and bevels are points: a 1 pt contour on a small extruded
+    // cube in such a group was drawn hundreds of points wide, a band across the whole slide.
+    let mut deck = extruded_deck();
+    let bevelled = Shape {
+        id: ShapeId(704),
+        xfrm: Some(Xfrm::new(40.0, 340.0, 170.0, 130.0)),
+        geom: Geom::preset("rect"),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        effects: Some(deckcraft_model::Effects {
+            raw3d: Some(r#"<a:scene3d><a:camera prst="orthographicFront"/><a:lightRig rig="threePt" dir="t"/></a:scene3d><a:sp3d><a:bevelT w="254000" h="254000"/></a:sp3d>"#.into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut deck.slides[0]).shapes.push(bevelled);
+    let shapes = deck.slides[0].shapes.clone();
+    let grouped = |k: f64| {
+        let children = shapes
+            .iter()
+            .map(|s| {
+                let x = s.xfrm.unwrap_or_default();
+                Shape { xfrm: Some(Xfrm::new(x.x / k, x.y / k, x.w / k, x.h / k)), ..s.clone() }
+            })
+            .collect();
+        let group = Shape {
+            id: ShapeId(10),
+            xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)),
+            kind: ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, 960.0 / k, 540.0 / k) },
+            ..Default::default()
+        };
+        render_slide(&deck_with(vec![group]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let reference = grouped(1.0);
+    let ink = |img: &Image| img.pixels.as_chunks::<4>().0.iter().filter(|p| **p != [255, 255, 255, 255]).count();
+    let drawn = ink(&reference);
+    assert!(drawn > 20_000, "the reference draws the shapes: {drawn}");
+    let scaled = grouped(100.0);
+    let (n, d) = (ink(&scaled), differing(&reference, &scaled));
+    assert!(n.abs_diff(drawn) * 20 < drawn, "{n} inked pixels against {drawn}");
+    assert!(d * 20 < drawn, "{d} differing values against {drawn} inked pixels");
+}
+
+#[test]
+fn a_turned_camera_in_a_one_to_one_group_draws_its_3d_sizes_as_outside_one() {
+    // The camera's turn is part of the shape's transform; its foreshortening is not a group scale,
+    // so a 1:1 group must not change extrusion depths, contours or bevels under a turned camera.
+    let mut deck = extruded_deck();
+    let bevelled = Shape {
+        id: ShapeId(705),
+        xfrm: Some(Xfrm::new(40.0, 340.0, 170.0, 130.0)),
+        geom: Geom::preset("rect"),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        effects: Some(deckcraft_model::Effects {
+            raw3d: Some(r#"<a:scene3d><a:camera prst="isometricOffAxis1Right"/><a:lightRig rig="threePt" dir="t"/></a:scene3d><a:sp3d extrusionH="254000" contourW="38100"><a:bevelT w="254000" h="254000"/></a:sp3d>"#.into()),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut deck.slides[0]).shapes.push(bevelled);
+    let opts = RenderOpts { scale: 1.0, ..Default::default() };
+    let alone = render_slide(&deck, 0, &opts);
+    let group = Shape {
+        id: ShapeId(10),
+        xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)),
+        kind: ShapeKind::Group { children: deck.slides[0].shapes.clone(), child: Xfrm::new(0.0, 0.0, 960.0, 540.0) },
+        ..Default::default()
+    };
+    let grouped = render_slide(&deck_with(vec![group]), 0, &opts);
+    let d = differing(&alone, &grouped);
+    assert!(d < 200, "{d} values differ between the shapes alone and in a 1:1 group");
 }
 
 #[test]

@@ -34,6 +34,9 @@ pub struct Mods {
     pub cmd: bool,
 }
 
+/// A text selection's shape, table cell, notes flag, anchor and caret.
+type TextTarget = (ShapeId, Option<(usize, usize)>, bool, (usize, usize), (usize, usize));
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PointerEvent {
@@ -191,6 +194,8 @@ enum Drag {
     },
     TextSelect {
         shape: ShapeId,
+        /// The text selection before the press, to tell whether the drag changed it.
+        before: Option<TextTarget>,
     },
     /// Dragging a table border: the right edge of column `index`, or the bottom edge of row
     /// `index`. `start` is the table-local press point, `size` the column's width or the row's
@@ -474,16 +479,43 @@ impl Session {
             PointerKind::Down => self.down(p, ev.mods, tol),
             PointerKind::Drag => self.drag(p, ev.mods, tol),
             PointerKind::Up => self.up(p, ev.mods),
-            PointerKind::DoubleClick => self.double_click(p, tol),
+            PointerKind::DoubleClick => {
+                let before = self.text_selection();
+                let r = self.double_click(p, tol)?;
+                self.paint_if_selection_changed(before, r)
+            }
             PointerKind::ContextClick => self.context_click(p, tol),
             PointerKind::TripleClick => {
                 if self.active().is_some_and(|d| d.selection.text.is_some()) {
-                    self.execute("text.selectParagraph", &json!({}))
+                    let before = self.text_selection();
+                    let r = self.execute("text.selectParagraph", &json!({}))?;
+                    self.paint_if_selection_changed(before, r)
                 } else {
                     Ok(Value::Null)
                 }
             }
         }
+    }
+
+    /// Format Painter applies once a text range is selected (drag, word or paragraph click).
+    fn paint_text_selection(&mut self) -> Result<Option<Value>> {
+        if self.painter.is_some() && self.doc()?.selection.text.as_ref().is_some_and(|t| t.is_range()) {
+            return self.execute("format.painterApply", &json!({})).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Where the text selection is: its shape, cell or notes, anchor and caret.
+    fn text_selection(&self) -> Option<TextTarget> {
+        self.active().and_then(|d| d.selection.text.as_ref()).map(|t| (t.shape, t.cell, t.notes, t.anchor, t.caret))
+    }
+
+    /// A double or triple click paints only the range it selected, not an older one it left alone.
+    fn paint_if_selection_changed(&mut self, before: Option<TextTarget>, r: Value) -> Result<Value> {
+        if self.text_selection() == before {
+            return Ok(r);
+        }
+        self.paint_text_selection().map(|a| a.unwrap_or(r))
     }
 
     pub(crate) fn begin(&mut self, label: &str) {
@@ -552,8 +584,9 @@ impl Session {
             ToolKind::Select => {}
         }
         // Clicking inside the text being edited moves the caret / starts a text selection.
+        let before = self.text_selection();
         if let Some((shape, pos)) = self.place_caret(p, tol, mods.shift)? {
-            self.tool.drag = Some(Drag::TextSelect { shape });
+            self.tool.drag = Some(Drag::TextSelect { shape, before });
             return Ok(json!({"caret": [pos.0, pos.1]}));
         }
         let hit = self.hit_test(p, tol);
@@ -909,7 +942,7 @@ impl Session {
                 };
                 self.tool.preview = Some(x);
             }
-            Drag::TextSelect { shape } => {
+            Drag::TextSelect { shape, .. } => {
                 // The selection stays in the shape or table cell where it started.
                 let st = self.doc()?;
                 if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
@@ -1103,6 +1136,10 @@ impl Session {
                 self.commit();
                 let _ = cmd::text::fit_text_box(self, id);
                 self.refit_after_resize(id)?;
+            }
+            Some(Drag::TextSelect { before, .. }) => {
+                out = self.paint_if_selection_changed(before, out)?;
+                self.commit();
             }
             Some(_) => self.commit(),
             None => {}
@@ -1449,6 +1486,13 @@ impl Session {
     /// Smart guides: snap `r` edges/centres to the slide and other shapes. Returns the offset to
     /// apply and the guides to draw.
     fn snap_rect(&self, r: Rect, exclude: &[ShapeId], tol: f64, enabled: bool) -> (Vec2, Vec<Guide>) {
+        self.snap_edges(r, exclude, tol, enabled, [true; 3], [true; 3])
+    }
+
+    /// `snap_rect` looking only at some of `r`'s edges: `xs_on` is left, centre, right and `ys_on`
+    /// top, centre, bottom. Resizing passes just the edges being dragged, so a fixed edge that
+    /// already sits on a line (distance 0) doesn't win and leave the dragged edge unsnapped.
+    fn snap_edges(&self, r: Rect, exclude: &[ShapeId], tol: f64, enabled: bool, xs_on: [bool; 3], ys_on: [bool; 3]) -> (Vec2, Vec<Guide>) {
         let Some(st) = self.active() else { return (Vec2::ZERO, vec![]) };
         if !enabled || !self.prefs.smart_guides {
             return (Vec2::ZERO, vec![]);
@@ -1486,7 +1530,7 @@ impl Session {
             }
         }
         let mut best_x: Option<(f64, f64, Rect)> = None;
-        for edge in [r.x0, r.center().x, r.x1] {
+        for edge in [r.x0, r.center().x, r.x1].into_iter().zip(xs_on).filter_map(|(e, on)| on.then_some(e)) {
             for (x, b) in &xs {
                 let d = x - edge;
                 if d.abs() <= tol && best_x.is_none_or(|(bd, _, _)| d.abs() < bd.abs()) {
@@ -1495,7 +1539,7 @@ impl Session {
             }
         }
         let mut best_y: Option<(f64, f64, Rect)> = None;
-        for edge in [r.y0, r.center().y, r.y1] {
+        for edge in [r.y0, r.center().y, r.y1].into_iter().zip(ys_on).filter_map(|(e, on)| on.then_some(e)) {
             for (y, b) in &ys {
                 let d = y - edge;
                 if d.abs() <= tol && best_y.is_none_or(|(bd, _, _)| d.abs() < bd.abs()) {
@@ -1509,32 +1553,49 @@ impl Session {
             off.x = d;
             let rr = r + Vec2::new(d, 0.0);
             guides.push(Guide { vertical: true, pos: x, from: b.y0.min(rr.y0), to: b.y1.max(rr.y1) });
-        } else if self.prefs.snap_to_grid {
-            off.x = deckcraft_geom::snap(r.x0, self.prefs.grid_spacing) - r.x0;
+        } else if self.prefs.snap_to_grid && xs_on.contains(&true) {
+            let at = if xs_on[0] {
+                r.x0
+            } else if xs_on[2] {
+                r.x1
+            } else {
+                r.center().x
+            };
+            off.x = deckcraft_geom::snap(at, self.prefs.grid_spacing) - at;
         }
         if let Some((d, y, b)) = best_y {
             off.y = d;
             let rr = r + Vec2::new(0.0, d);
             guides.push(Guide { vertical: false, pos: y, from: b.x0.min(rr.x0), to: b.x1.max(rr.x1) });
-        } else if self.prefs.snap_to_grid {
-            off.y = deckcraft_geom::snap(r.y0, self.prefs.grid_spacing) - r.y0;
+        } else if self.prefs.snap_to_grid && ys_on.contains(&true) {
+            let at = if ys_on[0] {
+                r.y0
+            } else if ys_on[2] {
+                r.y1
+            } else {
+                r.center().y
+            };
+            off.y = deckcraft_geom::snap(at, self.prefs.grid_spacing) - at;
         }
         (off, guides)
     }
 
+    /// Snap the edges that resize handle `handle` drags in the resized box `x` to the smart guides.
     fn snap_resize(&mut self, x: Xfrm, _orig: &Xfrm, handle: u8, id: ShapeId, tol: f64) -> Xfrm {
         if x.rot != 0.0 {
             self.tool.guides.clear();
             return x;
         }
         let r = x.rect();
-        let (off, guides) = self.snap_rect(r, &[id], tol * 1.5, true);
+        // Only the dragged edges move, so only they look for a line to snap to. The handles sit in
+        // the box's unflipped frame: in a flipped box, also one that a drag past the opposite edge
+        // just flipped, the dragged handle is on the other side.
+        let (left, right) = (matches!(handle, 0 | 6 | 7), matches!(handle, 2..=4));
+        let (top, bottom) = (matches!(handle, 0..=2), matches!(handle, 4..=6));
+        let (moves_left, moves_right) = if x.flip_h { (right, left) } else { (left, right) };
+        let (moves_top, moves_bottom) = if x.flip_v { (bottom, top) } else { (top, bottom) };
+        let (off, guides) = self.snap_edges(r, &[id], tol * 1.5, true, [moves_left, false, moves_right], [moves_top, false, moves_bottom]);
         let mut nx = x;
-        // Only the dragged edges move.
-        let moves_left = matches!(handle, 0 | 6 | 7);
-        let moves_right = matches!(handle, 2..=4);
-        let moves_top = matches!(handle, 0..=2);
-        let moves_bottom = matches!(handle, 4..=6);
         if moves_left {
             nx.x += off.x;
             nx.w -= off.x;

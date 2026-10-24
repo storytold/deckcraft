@@ -876,7 +876,7 @@ fn author_slot(c: &Comment, authors: &mut Vec<(String, String, u32)>) -> usize {
 /// the flattened legacy part cannot express (issue #70).
 fn modern_comments_xml(list: &[Comment], part: &str, authors: &mut Vec<(String, String, u32)>) -> Vec<u8> {
     let mut w = W::new();
-    w.open("p188:cmLst", A::new().a("xmlns:p188", NS_P188));
+    w.open("p188:cmLst", A::new().a("xmlns:p188", NS_P188).a("xmlns:a", NS_A).a("xmlns:r", NS_R));
     for (ti, c) in list.iter().take(10_000).enumerate() {
         modern_comment(&mut w, c, part, ti, authors, 0);
     }

@@ -20,12 +20,13 @@ $FF $TONE44 -c:a wmav2 -b:a 64k $META tone.wma
 # Video: 64x48 (AV1: 64x64), 10 fps, 6 frames of our own moving colour gradient (raw RGB from
 # python3 below), so every pixel is contributor-original.
 frames() {
+  width="$1" height="$2" out="$3"
   python3 -c "
 import sys
-w, h = $1, $2
+w, h = $width, $height
 for f in range(6):
     sys.stdout.buffer.write(bytes(v for y in range(h) for x in range(w) for v in ((x * 4 + f * 20) % 256, (y * 5) % 256, (f * 40) % 256)))
-" > "$3"
+" > "$out"
 }
 frames 64 48 /tmp/deckcraft-fixture-64x48.rgb
 frames 64 64 /tmp/deckcraft-fixture-64x64.rgb

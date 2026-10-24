@@ -35,7 +35,7 @@ impl Rgba {
     /// `RRGGBB` or `#RRGGBB` (also `RRGGBBAA`).
     pub fn from_hex(s: &str) -> Option<Self> {
         let s = s.trim().trim_start_matches('#');
-        if !s.is_ascii() {
+        if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let byte = |i: usize| s.get(i..i + 2).and_then(|h| u8::from_str_radix(h, 16).ok());
@@ -518,6 +518,14 @@ pub fn preset(name: &str) -> Option<Rgba> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_hex_rejects_signs() {
+        assert_eq!(Rgba::from_hex("+12345"), None);
+        assert_eq!(Rgba::from_hex("#+1+2+3"), None);
+        assert_eq!(Rgba::from_hex("+1+2+3+4"), None);
+        assert_eq!(Rgba::from_hex("+12"), None);
+    }
 
     #[test]
     fn hex_roundtrip() {

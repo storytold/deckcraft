@@ -231,6 +231,8 @@ pub struct MediaClip {
     pub video: bool,
     /// Poster frame image.
     pub poster: Option<MediaId>,
+    /// Crop of the picture (left, top, right, bottom as fractions), PowerPoint's `srcRect` on the video.
+    pub crop: [f64; 4],
     pub trim_start_ms: u32,
     pub trim_end_ms: u32,
     pub fade_in_ms: u32,
@@ -439,6 +441,11 @@ impl Default for Shape {
 }
 
 impl Shape {
+    /// A stand-in shape for laying out one table cell's `body`: a table, so the cell's text takes
+    /// the master's other-text style as PowerPoint's does.
+    pub fn table_cell(body: text::TextBody) -> Shape {
+        Shape { text: Some(body), kind: ShapeKind::Table(Table::default()), ..Default::default() }
+    }
     pub fn is_placeholder(&self) -> bool {
         self.ph.is_some()
     }

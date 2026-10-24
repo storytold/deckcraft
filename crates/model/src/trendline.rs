@@ -500,11 +500,12 @@ fn x_pow(p: f64) -> String {
 }
 
 fn poly_equation(coeff: &[f64]) -> Option<String> {
-    let scale = coeff.iter().map(|c| c.abs()).fold(0.0, f64::max).max(1.0);
+    // Drop terms that are negligible relative to the largest coefficient, so tiny-valued data keeps its terms.
+    let scale = coeff.iter().map(|c| c.abs()).fold(0.0, f64::max);
     let mut body = String::new();
     let mut first = true;
     for (k, c) in coeff.iter().enumerate().rev() {
-        if c.abs() < scale * 1e-8 {
+        if c.abs() <= scale * 1e-8 {
             continue;
         }
         let pow = match k {
@@ -514,7 +515,7 @@ fn poly_equation(coeff: &[f64]) -> Option<String> {
         };
         let mag = if pow.is_empty() {
             num(c.abs())
-        } else if (c.abs() - 1.0).abs() < scale * 1e-8 {
+        } else if (c.abs() - 1.0).abs() < scale.max(1.0) * 1e-8 {
             pow
         } else {
             format!("{}{}", num(c.abs()), pow)
@@ -619,5 +620,22 @@ mod tests {
         t.disp_r_sqr = true;
         let fit = t.fit(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0]).expect("fit");
         assert_eq!(t.caption(&fit), "y = x\nR² = 1");
+    }
+
+    #[test]
+    fn equation_keeps_tiny_coefficients() {
+        let xs = [1.0, 2.0, 3.0, 4.0];
+        let lin = line(TrendlineType::Linear).fit(&xs, &[2e-9, 4e-9, 6e-9, 8e-9]).expect("linear");
+        assert_eq!(lin.equation().as_deref(), Some("y = 2.00e-9x"));
+        let mut poly = line(TrendlineType::Poly);
+        poly.order = Some(2);
+        let ys: Vec<f64> = xs.iter().map(|x| 3e-9 * x * x + 1e-9).collect();
+        let quad = poly.fit(&xs, &ys).expect("poly");
+        assert_eq!(quad.equation().as_deref(), Some("y = 3.00e-9x² + 1.00e-9"));
+        let ys: Vec<f64> = xs.iter().map(|x: &f64| 5e-9 * x.ln()).collect();
+        let log = line(TrendlineType::Log).fit(&xs, &ys).expect("log");
+        assert_eq!(log.equation().as_deref(), Some("y = 5.00e-9ln(x)"));
+        let zero = line(TrendlineType::Linear).fit(&xs, &[0.0; 4]).expect("zero");
+        assert_eq!(zero.equation().as_deref(), Some("y = 0"));
     }
 }

@@ -934,7 +934,7 @@ pub fn cell_range_underlines(
         return vec![];
     };
     let body = deckcraft_render::table_cell_body(&ctx, tb, row, col, cell);
-    let tmp = deckcraft_model::Shape { text: Some(body.clone()), ..Default::default() };
+    let tmp = deckcraft_model::Shape::table_cell(body.clone());
     let l = deckcraft_text::layout(
         &ctx,
         &tmp,
@@ -1003,7 +1003,7 @@ fn cell_on_slide(st: &DocState, id: ShapeId, row: usize, col: usize) -> Option<C
     if body.paragraphs.is_empty() {
         body.paragraphs.push(deckcraft_model::text::Paragraph::default());
     }
-    let tmp = deckcraft_model::Shape { text: Some(body.clone()), ..Default::default() };
+    let tmp = deckcraft_model::Shape::table_cell(body.clone());
     let layout = deckcraft_text::layout(
         &ctx,
         &tmp,

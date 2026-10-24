@@ -1,6 +1,10 @@
 //! File menu: new, open, save, export, close, properties.
 
-use deckcraft_model::{Presentation, defaults};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use deckcraft_media::MediaInfo;
+use deckcraft_model::{MediaId, MediaItem, Presentation, Shape, ShapeKind, defaults};
 use serde_json::{Value, json};
 
 use super::*;
@@ -156,6 +160,7 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     if deckcraft_pptx::sniff(bytes) {
         let (mut p, lost_slides) = deckcraft_pptx::import_checked(bytes).map_err(|e| EngineError::Other(e.to_string()))?;
         deckcraft_format::repair(&mut p);
+        probe_clips(&mut p);
         return Ok((p, lost_slides));
     }
     if deckcraft_pptx::is_encrypted(bytes) {
@@ -176,6 +181,42 @@ fn open_other(name: &str, bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
         return Ok((p, vec![]));
     }
     Err(EngineError::Other(format!("{name}: not a presentation DeckCraft can read")))
+}
+
+/// Fill in each audio and video clip's length and picture size from its bytes: a `.pptx` doesn't
+/// store them. Headers only, so opening never decodes a whole audio file.
+fn probe_clips(p: &mut Presentation) {
+    fn rec(shapes: &mut [Shape], media: &[MediaItem], probed: &mut HashMap<MediaId, Option<MediaInfo>>, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for s in shapes {
+            if let ShapeKind::Media(m) = &mut s.kind
+                && (m.duration_ms == 0 || m.width == 0 && m.height == 0)
+                && let Some(info) = probed
+                    .entry(m.media)
+                    .or_insert_with(|| media.iter().find(|i| i.id == m.media).and_then(|i| deckcraft_media::probe_headers(&i.data).ok()))
+            {
+                if m.duration_ms == 0 {
+                    m.duration_ms = info.duration_ms.min(u32::MAX as u64) as u32;
+                }
+                if m.width == 0
+                    && m.height == 0
+                    && let Some(v) = &info.video
+                {
+                    (m.width, m.height) = (v.width, v.height);
+                }
+            }
+            if let Some(children) = s.children_mut() {
+                rec(children, media, probed, depth + 1);
+            }
+        }
+    }
+    let mut probed = HashMap::new();
+    // Just read, so no slide is shared yet and `make_mut` doesn't copy.
+    for slide in &mut p.slides {
+        rec(&mut Arc::make_mut(slide).shapes, &p.media, &mut probed, 0);
+    }
 }
 
 pub fn add_opened(s: &mut Session, name: &str, path: Option<String>, p: Presentation) -> usize {

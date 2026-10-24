@@ -828,7 +828,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
     }
     w.close("p:nvPr");
     w.close("p:nvPicPr");
-    let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), ..Default::default() };
+    let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), crop: m.crop, ..Default::default() };
     dml::blip_fill(w, x, o, "p:blipFill", &poster);
     let mut s3 = s.clone();
     s3.fill = None;

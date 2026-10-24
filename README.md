@@ -224,6 +224,41 @@ DirectX 12 shaders are compiled with FXC, which is part of Windows, so no `dxcom
 
 RISC-V 64 (riscv64): `deckcraft-<ver>-linux-riscv64.tar.gz`, a tarball only (cross-compiled; needs glibc 2.39+, e.g. Ubuntu 24.04+).
 
+**Runtime libraries.** The window-system, GPU and file-dialog libraries DeckCraft needs are opened
+when the app starts (`dlopen` through `x11-dl`, `xkbcommon-dl`, `ash`, `glutin` and `rfd`) instead
+of being linked in, so `ldd` shows none of them: an install that satisfies the linked dependencies
+can still fail at start-up with a loader error and no hint of what to install. Only
+`libasound.so.2` (slide-show sound) is a hard link-time dependency, and only of the `deckcraft`
+GUI — `deckcraft-cli` uses neither sound nor a display. The `.deb` and `.rpm` declare the set in
+`packaging/linux/nfpm.yaml`; a tarball install or a musl system has to provide it itself:
+
+```sh
+apk add libx11 libxcursor libxrandr libxi libxkbcommon xkeyboard-config \
+        wayland-libs-client alsa-lib \
+        vulkan-loader mesa-vulkan-swrast \
+        mesa-gl mesa-egl mesa-dri-gallium \
+        xdg-desktop-portal
+```
+
+Alpine Linux `v3.22` names above; Void's musl variant uses the same `/lib/ld-musl-x86_64.so.1`
+loader and the same libraries as `libX11 libXcursor libXrandr libXi libxkbcommon xkeyboard-config
+wayland alsa-lib vulkan-loader mesa xdg-desktop-portal`. There is no musl build among the release
+artifacts yet — this is what a build from source on musl needs at run time, and what a future musl
+artifact will need (#954).
+
+- `mesa-vulkan-swrast` is the software Vulkan driver: it runs anywhere, VMs and containers
+  included. On a real GPU install your vendor's driver instead (`mesa-vulkan-intel`,
+  `mesa-vulkan-ati`, `mesa-vulkan-nouveau`, …).
+- Without Vulkan the app falls back to CPU rendering through Mesa's GL drivers. It works, but
+  slowly — a driver limit, not a DeckCraft bug.
+- `xdg-desktop-portal` (with `xdg-desktop-portal-gtk` or `-kde`; `-wlr` has no file chooser, so
+  on wlroots compositors install `zenity`) is what the Open and Save dialogs talk to; `xkeyboard-config` holds the XKB keyboard data `libxkbcommon` reads.
+- fontconfig and freetype are not needed: DeckCraft reads `/usr/share/fonts` itself and embeds its
+  presentation fonts.
+
+Building from source on musl also needs `build-base pkgconf alsa-lib-dev` (`alsa-lib-dev` is the
+ALSA headers).
+
 ### FreeBSD
 
 | Build | File |
