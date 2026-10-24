@@ -484,7 +484,9 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let size = st.get("size").and_then(Value::as_f64);
                 let fams = font_families(app);
                 let theme_fonts: Vec<String> = fams.iter().take(2).cloned().collect();
-                dropdown(ui, "font", &font, 150.0, en, |ui| {
+                let truncated_font = widgets::truncate_with_ellipsis(ui, &font, 130.0);
+                let can_load = app.services.load_system_fonts.is_some() && !deckcraft_fonts::FontDb::global().web_catalog_loaded();
+                dropdown(ui, "font", &truncated_font, 150.0, en, |ui| {
                     for (k, f) in fams.iter().enumerate() {
                         let label = if k == 0 && theme_fonts.len() == 2 {
                             format!("{f} (Headings)")
@@ -494,6 +496,9 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                             f.clone()
                         };
                         if ui.button(egui::RichText::new(label)).clicked() {
+                            if let Some(fetch) = &app.services.fetch_font {
+                                fetch(f);
+                            }
                             run(app, "format.font", json!({"family": f}));
                             ui.close();
                         }
@@ -501,6 +506,14 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                             ui.separator();
                         }
                     }
+                    if can_load {
+                        ui.separator();
+                        if ui.button(egui::RichText::new("Load System Fonts…")).clicked() {
+                            if let Some(load) = &app.services.load_system_fonts {
+                                load();
+                            }
+                            ui.close();
+                        }
                     ui.separator();
                     // Fonts installed while DeckCraft runs (e.g. into ~/.local/share/fonts).
                     if ui.button("Rescan Installed Fonts").clicked() {
