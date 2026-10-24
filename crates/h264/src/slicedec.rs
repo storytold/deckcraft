@@ -5,11 +5,11 @@ use crate::deblock;
 use crate::error::{Result, ensure, invalid};
 use crate::inter::{self, Weight};
 use crate::intra::{self, Avail};
-use crate::mbtypes::*;
+use crate::mbtypes::{CBP_ME, MbTypeInfo, Part, SubMbInfo, SubPart, b_mb_type, b_sub_mb_type, intra_mb_type, p_mb_type, p_sub_mb_type};
 use crate::params::{Pps, Sps};
-use crate::picture::*;
+use crate::picture::{Frame, FrameRef, MbKind, MbState, Planes, RefPic};
 use crate::slice::{SliceHeader, SliceType};
-use crate::tables::*;
+use crate::tables::{BLK4_XY, QPC_TABLE, RASTER_TO_BLK4, ZIGZAG4, ZIGZAG8};
 use crate::transform::{self, LevelScale};
 use deckcraft_bitstream::BitReader;
 

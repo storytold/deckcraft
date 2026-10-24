@@ -2,7 +2,7 @@
 //! (RFC 6716 §4.3.4 – §4.3.6).
 
 use super::rate::{Mode, QTHETA_OFFSET, QTHETA_OFFSET_TWOPHASE, get_pulses};
-use super::tables::*;
+use super::tables::{EBANDS, E_MEANS, NB_EBANDS, ORDERY, SHORT_MDCT};
 use crate::range::{BITRES, RangeDecoder, ilog};
 
 pub const SPREAD_NONE: usize = 0;

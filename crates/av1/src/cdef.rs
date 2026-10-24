@@ -1,7 +1,7 @@
 //! CDEF (7.15).
 
 use crate::frame::{FrameBuf, Plane};
-use crate::spec_tables::*;
+use crate::spec_tables::{CDEF_DIRECTIONS, CDEF_PRI_TAPS, CDEF_SEC_TAPS, CDEF_UV_DIR, DIV_TABLE};
 use crate::state::FrameState;
 
 /// Run CDEF on `fs.cur`; returns the CdefFrame, or None when no block is filtered (CdefFrame

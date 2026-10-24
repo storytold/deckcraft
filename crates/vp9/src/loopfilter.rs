@@ -2,7 +2,7 @@
 
 use crate::frame::{MiGrid, MiInfo};
 use crate::header::{LoopFilterParams, Segmentation};
-use crate::tables::*;
+use crate::tables::{BLOCK_16X16, BLOCK_8X8, INTRA_FRAME, MAX_LOOP_FILTER, MAX_TXSIZE, NEARESTMV, NEARMV, NEWMV, NUM_8X8_HIGH, NUM_8X8_WIDE, SEG_LVL_ALT_L, SS_SIZE_LOOKUP, TX_16X16, TX_4X4, TX_8X8};
 
 /// Frame-level loop filter setup (8.8.1) plus the per-level limits of 8.8.4.
 pub struct LfFrame {

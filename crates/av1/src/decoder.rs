@@ -17,7 +17,7 @@ use crate::cdf::Cdfs;
 use crate::frame::FrameBuf;
 use crate::header::{FilmGrainParams, FrameHeader, HeaderState, LoopFilterDeltas, RefInfo, SegmentationFeatures, SequenceHeader, default_gm_params};
 use crate::par::Pool;
-use crate::spec_tables::*;
+use crate::spec_tables::{ALTREF2_FRAME, ALTREF_FRAME, BWDREF_FRAME, DEFAULT_INTRA_FRAME_Y_MODE_CDF, DIV_MULT, GOLDEN_FRAME, INTRA_FRAME, INTRA_ONLY_FRAME, KEY_FRAME, LAST2_FRAME, LAST_FRAME, MAX_FRAME_DISTANCE, MAX_OFFSET_HEIGHT, MAX_OFFSET_WIDTH, MFMV_STACK_SIZE, NUM_REF_FRAMES, PRIMARY_REF_NONE, REFMVS_LIMIT, REFS_PER_FRAME};
 use crate::state::{FrameShared, FrameState, TileState};
 use crate::stats::{DecodeStats, Stage, Timer};
 use crate::tile::TileDecoder;

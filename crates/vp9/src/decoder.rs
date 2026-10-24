@@ -8,7 +8,7 @@ use crate::frame::{BAND_PAD, Band, Frame, FrameInfo, MiGrid, MiInfo, Pools};
 use crate::header::{FrameHeader, HeaderState, KEY_FRAME, RefInfo, parse_compressed, parse_uncompressed, split_superframe};
 use crate::loopfilter::{LfFrame, PlaneView, filter_superblock};
 use crate::probs::{Counts, adapt_coef_probs, adapt_noncoef_probs};
-use crate::tables::*;
+use crate::tables::{AC_QLOOKUP, DC_QLOOKUP, SEG_LVL_ALT_Q, SWITCHABLE, TX_MODE_SELECT};
 use crate::tile::{FrameShared, RefUse, Strip, TileDecoder};
 use crate::{ColorInfo, Picture, Plane};
 use std::collections::VecDeque;

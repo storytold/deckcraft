@@ -12,7 +12,7 @@ use bands::{anti_collapse, denormalise_bands, quant_all_bands, renormalise_vecto
 use energy::{unquant_coarse_energy, unquant_energy_finalise, unquant_fine_energy};
 use mdct::ImdctScratch;
 use rate::{Mode, compute_allocation};
-use tables::*;
+use tables::{COMB_GAINS, EBANDS, MAX_LM, NB_EBANDS, OVERLAP, PREEMPH, SHORT_MDCT, SPREAD_ICDF, TAPSET_ICDF, TF_SELECT_TABLE, TRIM_ICDF};
 
 use crate::range::{BITRES, RangeDecoder};
 
