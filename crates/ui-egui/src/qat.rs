@@ -92,6 +92,9 @@ pub fn command(app: &mut SlideApp, p: &Value) -> Result<Value, String> {
 fn run(app: &mut SlideApp, q: &QatItem) {
     match q.id.as_str() {
         "file.save" => app.save(),
+        // Close from the QAT goes through the same guarded flow as Ctrl+W
+        // (Save / Don't Save / Cancel on unsaved changes).
+        "file.close" => app.close_presentation(),
         "show.fromStart" => app.start_show(app.show_start_index(), false),
         "review.spelling" => app.dialog = Some(crate::dialogs::Dialog::new("spelling")),
         id => {

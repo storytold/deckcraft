@@ -28,6 +28,10 @@ pub fn start() {
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
+        // `?host=parent`: a same-origin page framing DeckCraft opens presentations in it and
+        // stores what it saves (see `host`).
+        let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
+        let app_bridge = bridge.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -37,8 +41,13 @@ pub fn start() {
                         log::info!("deckcraft-web {}: wgpu backend {:?}", env!("CARGO_PKG_VERSION"), rs.adapter.get_info().backend);
                     }
                     let inbox: Inbox = Inbox::default();
-                    let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
-                    let q = query();
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone());
+                    if let Some(bridge) = &app_bridge {
+                        bridge.connect(&mut services);
+                    }
+                    let mut app = SlideApp::new(Session::new(), services);
+                    // In host mode the parent sends the deck to edit; start blank, no sample meanwhile.
+                    let q = if app_bridge.is_some() { "blank".to_string() } else { query() };
                     if !q.contains("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                             log::error!("sample deck: {e}");
@@ -46,13 +55,20 @@ pub fn start() {
                     } else if let Err(e) = app.run("file.new", serde_json::json!({})) {
                         log::error!("new presentation: {e}");
                     }
+                    if let Some(bridge) = &app_bridge {
+                        bridge.listen(cc.egui_ctx.clone());
+                        bridge.post_ready();
+                    }
                     if q.contains("show") {
                         app.start_show(0, false);
                     }
-                    Ok(Box::new(WebShell { app, inbox }))
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
                 }),
             )
             .await;
+        if let (Err(e), Some(bridge)) = (&result, &bridge) {
+            bridge.post_failed(&format!("{e:?}"));
+        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -66,11 +82,16 @@ fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
 
+fn query_param(key: &str) -> Option<String> {
+    web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
+}
+
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)
 /// and feed them through the inbox.
 struct WebShell {
     app: SlideApp,
     inbox: Inbox,
+    bridge: Option<crate::host::Bridge>,
 }
 
 impl eframe::App for WebShell {
@@ -97,6 +118,38 @@ impl eframe::App for WebShell {
                 }
             });
         }
+        // Files the host page handed over (`deckcraft:open`): open a presentation, insert
+        // pictures/media on the current slide.
+        if let Some(bridge) = &self.bridge {
+            for (name, bytes) in bridge.take_incoming() {
+                self.app.open_or_insert_bytes(&name, &bytes);
+                // Remember the presentation the host opened (docClosed tracking) and keep
+                // saving in the format the deck came in as.
+                let is_deck_file =
+                    name.rsplit('.').next().is_some_and(|ext| ["pptx", "potx", "ppsx", "deckcraft"].iter().any(|e| ext.eq_ignore_ascii_case(e)));
+                if is_deck_file && let Some(d) = self.app.session.active() {
+                    bridge.set_host_uid(d.uid);
+                }
+                let ext = name.rsplit('.').next().map(str::to_ascii_lowercase);
+                if matches!(ext.as_deref(), Some("pptx" | "potx" | "ppsx")) {
+                    // save_as_dialog writes PowerPoint formats as .pptx and .deckcraft files
+                    // as .deckcraft: potx/ppsx decks save back through the pptx branch.
+                    self.app.web_save_format = Some(match ext.as_deref() {
+                        Some("potx" | "ppsx") => "pptx".to_string(),
+                        _ => ext.unwrap_or_else(|| "pptx".into()),
+                    });
+                }
+                ctx.request_repaint();
+            }
+            // Commands the host sent (`deckcraft:cmd`): run them like ribbon buttons.
+            for (id, params, request_id) in bridge.take_commands() {
+                let result = self
+                    .app
+                    .run(&id, params)
+                    .map(|v| if id == "file.close" { serde_json::json!({ "docs": self.app.session.documents().len() }) } else { v });
+                bridge.post_response(&id, request_id.as_deref(), result);
+            }
+        }
         self.app.logic(ctx);
     }
 
@@ -106,6 +159,9 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        if let Some(bridge) = &self.bridge {
+            bridge.sync(&mut self.app);
+        }
     }
 }
 

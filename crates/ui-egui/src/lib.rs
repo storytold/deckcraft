@@ -441,6 +441,9 @@ pub struct SlideApp {
     pub last_outline: serde_json::Value,
     /// Table Design's border pen (`color`, `width`, `dash` for `table.borders`).
     pub table_pen: serde_json::Value,
+    /// The format `Save` suggests on the web when the deck has no path yet (`deckcraft`, or
+    /// `pptx` when a host opened a PowerPoint file — saving keeps the format it opened as).
+    pub web_save_format: Option<String>,
     pub session: Session,
     pub services: Services,
     pub ui: UiState,
@@ -542,6 +545,7 @@ impl SlideApp {
             last_fill: serde_json::json!("accent1"),
             last_outline: serde_json::json!("tx1"),
             table_pen: serde_json::json!({"width": 1.0}),
+            web_save_format: None,
             session,
             services,
             ui: UiState::default(),
@@ -1355,7 +1359,8 @@ impl SlideApp {
                 Err(e) => self.set_status(e.to_string()),
             }
         } else {
-            self.save_as_dialog("deckcraft");
+            let fmt = self.web_save_format.clone().unwrap_or_else(|| "deckcraft".into());
+            self.save_as_dialog(&fmt);
         }
     }
 
@@ -1373,7 +1378,9 @@ impl SlideApp {
                 UiRequest::Message { text } => self.set_status(text),
                 UiRequest::PickFile { purpose } => {
                     if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
+                        // A host may have opened a PowerPoint file: keep saving in that format.
+                        let fmt = self.web_save_format.clone().unwrap_or_else(|| "deckcraft".into());
+                        self.save_as_dialog(&fmt);
                     }
                 }
                 UiRequest::Media { action, shape, ms } => {
