@@ -192,6 +192,7 @@ fn preview_rejects_a_from_that_is_not_an_effect_index() {
 #[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let mut h = harness();
     h.run_steps(2);
     let img = h.render().unwrap();

@@ -53,6 +53,7 @@ fn pane_opens_lists_changes_and_accept_all_applies_them() {
 #[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let (mut h, _) = harness();
     // Review tab.
     h.state_mut().ui.tab = "Review".into();

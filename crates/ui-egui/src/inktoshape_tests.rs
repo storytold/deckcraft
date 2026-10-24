@@ -11,6 +11,7 @@ use crate::{Services, SlideApp};
 
 #[test]
 fn pen_a_rectangle_then_ink_to_shape() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let mut app = SlideApp::new(s, Services::default());

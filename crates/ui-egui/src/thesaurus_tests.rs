@@ -9,6 +9,7 @@ use crate::{Services, SlideApp};
 
 #[test]
 fn thesaurus_pane_swaps_the_word_at_the_caret() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let id = s.execute("insert.textBox", &json!({"rect": [100, 100, 500, 50]})).unwrap()["id"].as_u64().unwrap();

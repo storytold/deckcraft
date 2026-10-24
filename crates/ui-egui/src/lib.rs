@@ -2086,6 +2086,8 @@ mod eyedropper_tests;
 #[cfg(test)]
 mod find_dialog_tests;
 #[cfg(test)]
+mod gpu_lock;
+#[cfg(test)]
 mod huge_deck_tests;
 #[cfg(test)]
 mod ime_tests;
@@ -2765,6 +2767,7 @@ mod tests {
     /// they can be selected and moved.
     #[test]
     fn off_slide_objects_show_on_the_pasteboard_and_can_be_selected_and_moved() {
+        let _gpu = crate::gpu_lock::gpu_lock();
         let mut harness = canvas_harness();
         let off =
             harness.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [1000.0, 100.0, 120.0, 80.0]})).unwrap()["id"]

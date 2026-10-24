@@ -63,6 +63,7 @@ fn ribbon_button_opens_the_dialog_and_replaces() {
 #[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let mut h = harness();
     h.render().unwrap().save("/tmp/replacefonts0.png").unwrap();
     h.state_mut().dialog = Some(crate::dialogs::Dialog::new("replaceFonts"));

@@ -78,6 +78,7 @@ fn home_convert_to_smartart_gallery_converts_the_text() {
 
 #[test]
 fn layout_gallery_shows_cached_pictures_and_previews_on_hover() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     s.execute("insert.smartArt", &json!({"kind": "process", "items": ["Plan", "Build", "Ship"]})).unwrap();
