@@ -2189,6 +2189,154 @@ fn edit_points_types_and_handles() {
     assert!((ho3.unwrap() - ho).hypot() < 1e-3);
 }
 
+/// Alt, Shift or Ctrl held while dragging a handle makes the point a corner, smooth or straight
+/// point, and the point keeps that type for the next drag.
+#[test]
+fn edit_points_handle_drag_modifiers_set_the_point_type() {
+    use crate::tools::{Mods, PointerEvent, PointerKind};
+    use deckcraft_geom::Vec2;
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    let handles = |s: &Session| {
+        let st = s.doc().unwrap();
+        let (hi, ho, v) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(id).unwrap(), 0, 0).unwrap();
+        (hi.unwrap(), ho.unwrap(), v)
+    };
+    let ev = |kind, p: deckcraft_geom::Point, mods: Mods| PointerEvent { kind, x: p.x, y: p.y, mods, ..Default::default() };
+    let drag = |s: &mut Session, from: deckcraft_geom::Point, to: deckcraft_geom::Point, mods: Mods| {
+        s.pointer(ev(PointerKind::Down, from, Mods::default())).unwrap();
+        s.pointer(ev(PointerKind::Drag, to, mods)).unwrap();
+        s.pointer(ev(PointerKind::Up, to, mods)).unwrap();
+    };
+    // Click the point to show its handles.
+    let (hi, ho, v) = handles(&s);
+    drag(&mut s, v, v, Mods::default());
+    assert_eq!(s.tool.edit_vertex, Some((0, 0)));
+    // Alt: only the dragged handle moves.
+    let to = ho + Vec2::new(10.0, -25.0);
+    drag(&mut s, ho, to, Mods { alt: true, ..Default::default() });
+    let (hi1, ho1, _) = handles(&s);
+    assert!((ho1 - to).hypot() < 1e-3, "{ho1:?}");
+    assert!((hi1 - hi).hypot() < 1e-3, "the other handle stays: {hi1:?} {hi:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "corner");
+    // A plain drag afterwards keeps it a corner point.
+    let to2 = ho1 + Vec2::new(5.0, 5.0);
+    drag(&mut s, ho1, to2, Mods::default());
+    assert!((handles(&s).0 - hi).hypot() < 1e-3);
+    // Shift: the other handle mirrors the dragged one at the same length.
+    let to3 = v + Vec2::new(0.0, 40.0);
+    drag(&mut s, to2, to3, Mods { shift: true, ..Default::default() });
+    let (hi3, ho3, _) = handles(&s);
+    assert!((ho3 - to3).hypot() < 1e-3, "{ho3:?}");
+    assert!((hi3 - (v - Vec2::new(0.0, 40.0))).hypot() < 1e-3, "{hi3:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    // Ctrl: the other handle turns in line and keeps its length.
+    let to4 = v + Vec2::new(30.0, 0.0);
+    drag(&mut s, ho3, to4, Mods { cmd: true, ..Default::default() });
+    let (hi4, ho4, _) = handles(&s);
+    assert!((ho4 - to4).hypot() < 1e-3, "{ho4:?}");
+    assert!((hi4 - (v - Vec2::new(40.0, 0.0))).hypot() < 1e-3, "{hi4:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "straight");
+}
+
+/// A handle drag without a modifier follows the point type remembered with the document that
+/// Undo or Redo restores, and only on the shape the type was chosen on.
+#[test]
+fn edit_points_remembered_point_type_follows_undo_redo_and_its_shape() {
+    use crate::tools::{Mods, PointerEvent, PointerKind};
+    use deckcraft_geom::Vec2;
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    let handles = |s: &Session| {
+        let st = s.doc().unwrap();
+        let (hi, ho, v) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(id).unwrap(), 0, 0).unwrap();
+        (hi.unwrap(), ho.unwrap(), v)
+    };
+    let ev = |kind, p: deckcraft_geom::Point, mods: Mods| PointerEvent { kind, x: p.x, y: p.y, mods, ..Default::default() };
+    let drag = |s: &mut Session, from: deckcraft_geom::Point, to: deckcraft_geom::Point, mods: Mods| {
+        s.pointer(ev(PointerKind::Down, from, Mods::default())).unwrap();
+        s.pointer(ev(PointerKind::Drag, to, mods)).unwrap();
+        s.pointer(ev(PointerKind::Up, to, mods)).unwrap();
+    };
+    let (_, ho, v) = handles(&s);
+    drag(&mut s, v, v, Mods::default());
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    drag(&mut s, ho, ho + Vec2::new(10.0, -25.0), Mods { alt: true, ..Default::default() });
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "corner");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    // A plain drag moves the other handle with the dragged one, as for a smooth point.
+    let (_, ho1, _) = handles(&s);
+    let to = v + Vec2::new(0.0, 40.0);
+    drag(&mut s, ho1, to, Mods::default());
+    let (hi2, ho2, _) = handles(&s);
+    assert!((ho2 - to).hypot() < 1e-3, "{ho2:?}");
+    assert!((hi2 - (v - Vec2::new(0.0, 40.0))).hypot() < 1e-3, "the other handle mirrors the dragged one: {hi2:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    // Undo of a Corner Point choice that left the outline as it was: the point is smooth again.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "corner"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    let to = v + Vec2::new(0.0, 50.0);
+    drag(&mut s, v + Vec2::new(0.0, 40.0), to, Mods::default());
+    let (hi3, ho3, _) = handles(&s);
+    assert!((ho3 - to).hypot() < 1e-3, "{ho3:?}");
+    assert!((hi3 - (v - Vec2::new(0.0, 50.0))).hypot() < 1e-3, "the other handle mirrors the dragged one: {hi3:?}");
+    // Undo of a step that leaves the outline alone keeps a Straight choice, which equal handles
+    // cannot show: a plain drag keeps the other handle's length.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "straight"})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#ff0000"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    let to2 = v + Vec2::new(0.0, 70.0);
+    drag(&mut s, to, to2, Mods::default());
+    let (hi4, ho4, _) = handles(&s);
+    assert!((ho4 - to2).hypot() < 1e-3, "{ho4:?}");
+    assert!((hi4 - (v - Vec2::new(0.0, 50.0))).hypot() < 1e-3, "the other handle keeps its length: {hi4:?}");
+    // Redo brings a Corner Point choice back with the step: a plain drag moves one handle.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "corner"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.redo", &json!({})).unwrap();
+    drag(&mut s, to2, to2 + Vec2::new(10.0, 0.0), Mods::default());
+    let (hi5, ho5, _) = handles(&s);
+    assert!((ho5 - (to2 + Vec2::new(10.0, 0.0))).hypot() < 1e-3, "{ho5:?}");
+    assert!((hi5 - hi4).hypot() < 1e-3, "the other handle stays: {hi5:?}");
+    // A Point Type choice that fails leaves the remembered type as it was.
+    assert!(s.execute("shape.pointType", &json!({"index": 99, "type": "smooth"})).is_err());
+    assert_eq!(s.tool.vertex_kind, Some((id, 0, 0, "corner".to_string())));
+    // The remembered type belongs to its shape: the same point of another ellipse stays smooth.
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 300, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let other = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    assert_ne!(other, id);
+    let handles_of = |s: &Session| {
+        let st = s.doc().unwrap();
+        let (hi, ho, v) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(other).unwrap(), 0, 0).unwrap();
+        (hi.unwrap(), ho.unwrap(), v)
+    };
+    let (_, ho6, v6) = handles_of(&s);
+    drag(&mut s, v6, v6, Mods::default());
+    let to6 = v6 + Vec2::new(0.0, 40.0);
+    drag(&mut s, ho6, to6, Mods::default());
+    let (hi6, _, _) = handles_of(&s);
+    assert!((hi6 - (v6 - Vec2::new(0.0, 40.0))).hypot() < 1e-3, "the other handle mirrors the dragged one: {hi6:?}");
+    // Another document can have a shape with the same id: a change of active document forgets the
+    // remembered type, and choosing the active document again keeps it.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "corner"})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    assert_eq!(s.tool.vertex_kind, None);
+    s.tool.vertex_kind = Some((other, 0, 0, "corner".to_string()));
+    let new_doc = s.active_index().unwrap();
+    s.set_active(new_doc);
+    assert!(s.tool.vertex_kind.is_some());
+    s.set_active(0);
+    assert_eq!(s.tool.vertex_kind, None);
+}
+
 #[test]
 fn edit_points_straight_and_curved_segments() {
     let mut s = Session::with_new();
@@ -2247,8 +2395,7 @@ fn edit_points_open_and_close_path() {
     };
     assert!(s.execute("shape.closePath", &json!({"index": 0})).is_err(), "the outline is closed already");
     // A point type remembered for handle drags belongs to the old numbering: opening forgets it.
-    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
-    s.execute("edit.undo", &json!({})).unwrap();
+    s.tool.vertex_kind = s.tool.edit_points.map(|id| (id, 0, 2, "straight".to_string()));
     assert!(s.tool.vertex_kind.is_some());
     // Open Path at the bottom-right corner: the outline now starts and ends there, as two points.
     s.execute("shape.openPath", &json!({"index": 2})).unwrap();

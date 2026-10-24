@@ -44,16 +44,19 @@ pub fn specs() -> Vec<CommandSpec> {
 }
 
 fn restore(s: &mut Session, redo: bool) -> Result<Value> {
+    let vertex_kind = s.tool.vertex_kind.clone();
     let st = s.doc_mut()?;
     let (from, to) = if redo { (&mut st.history.redo, &mut st.history.undo) } else { (&mut st.history.undo, &mut st.history.redo) };
     let Some(e) = from.pop() else { return ok() };
-    to.push(HistoryEntry { label: e.label.clone(), doc: st.doc.clone(), selection: st.selection.clone() });
+    to.push(HistoryEntry { label: e.label.clone(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind });
     st.doc = e.doc;
     st.selection = e.selection;
     st.interaction = None;
     // A later shape can get an undone copy's id: Duplicate starts over with the usual offset.
     st.last_duplicate = None;
     st.revision += 1;
+    // The point type Edit Points remembered with the restored document: handle drags follow it.
+    s.tool.vertex_kind = e.vertex_kind;
     Ok(json!({"label": e.label}))
 }
 

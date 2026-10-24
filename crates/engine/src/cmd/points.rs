@@ -837,7 +837,7 @@ fn point_type(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("shape.pointType", "`type` is smooth, straight or corner")),
     };
     // A straight point's handles can be as long as each other; remember the choice for drags.
-    s.tool.vertex_kind = Some((path, index, kind.clone()));
+    s.tool.vertex_kind = Some((id, path, index, kind.clone()));
     edit_path(s, id, path, "shape.pointType", move |segs, vs, _| {
         let si = *vs.get(index).ok_or_else(|| bad("shape.pointType", "no such point"))?;
         set_type(segs, si, &kind);
@@ -931,7 +931,7 @@ fn close_path(s: &mut Session, p: &Value) -> Result<Value> {
 /// Opening or closing renumbers the points of `path`: a point type remembered for one of them
 /// would follow the wrong point.
 fn forget_kinds(s: &mut Session, path: usize) {
-    if s.tool.vertex_kind.as_ref().is_some_and(|k| k.0 == path) {
+    if s.tool.vertex_kind.as_ref().is_some_and(|k| k.1 == path) {
         s.tool.vertex_kind = None;
     }
 }

@@ -269,8 +269,8 @@ pub struct ToolState {
     /// The segment (path, index of the vertex ending it) last right-clicked in Edit Points, for
     /// the segment menu.
     pub edit_segment: Option<(usize, usize)>,
-    /// The point type last chosen for a vertex (path, index, type): handle drags follow it.
-    pub vertex_kind: Option<(usize, usize, String)>,
+    /// The point type last chosen for a vertex (shape, path, index, type): handle drags follow it.
+    pub vertex_kind: Option<(ShapeId, usize, usize, String)>,
     /// Drawing guides are shown (View › Guides): they can be dragged and shapes snap to them.
     pub guides_visible: bool,
     /// The guide being dragged and where it is now (slide points); `None` once dropped.
@@ -522,10 +522,11 @@ impl Session {
     }
 
     pub(crate) fn begin(&mut self, label: &str) {
+        let vertex_kind = self.tool.vertex_kind.clone();
         if let Some(st) = self.active_mut()
             && st.interaction.is_none()
         {
-            st.interaction = Some(crate::Interaction { label: label.into(), doc: st.doc.clone(), selection: st.selection.clone() });
+            st.interaction = Some(crate::Interaction { label: label.into(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind });
         }
     }
 
@@ -534,7 +535,7 @@ impl Session {
             && let Some(i) = st.interaction.take()
             && !Arc::ptr_eq(&i.doc, &st.doc)
         {
-            crate::push_undo(st, HistoryEntry { label: i.label, doc: i.doc, selection: i.selection });
+            crate::push_undo(st, HistoryEntry { label: i.label, doc: i.doc, selection: i.selection, vertex_kind: i.vertex_kind });
         }
     }
 
@@ -893,7 +894,18 @@ impl Session {
             Drag::Handle { id, path, index, out } => {
                 self.tool.drag = Some(Drag::Handle { id, path, index, out });
                 let side = if out { "out" } else { "in" };
-                if let Err(e) = self.execute_inner_move_handle(id, path, index, side, p) {
+                // Shift, Ctrl or Alt held while dragging a handle makes the point smooth, straight or
+                // corner, as in PowerPoint; Cmd and Option count as Ctrl and Alt.
+                let held = if mods.shift {
+                    Some("smooth")
+                } else if mods.cmd {
+                    Some("straight")
+                } else if mods.alt {
+                    Some("corner")
+                } else {
+                    None
+                };
+                if let Err(e) = self.execute_inner_move_handle(id, path, index, side, p, held) {
                     log::debug!("edit handle: {e}");
                 }
                 return Ok(Value::Null);
@@ -1012,9 +1024,19 @@ impl Session {
         Ok(())
     }
 
-    fn execute_inner_move_handle(&mut self, id: ShapeId, path: usize, index: usize, side: &str, p: Point) -> Result<Value> {
-        let kind = self.tool.vertex_kind.clone().filter(|(pp, i, _)| (*pp, *i) == (path, index)).map(|k| k.2);
-        cmd::points::move_handle_raw(self, &json!({"id": id.0, "path": path, "index": index, "side": side, "x": p.x, "y": p.y, "type": kind}))
+    /// Moves a control handle during a drag. `held` is the point type set by the modifier held
+    /// during the drag; the point keeps that type for later drags, as after `shape.pointType`.
+    fn execute_inner_move_handle(&mut self, id: ShapeId, path: usize, index: usize, side: &str, p: Point, held: Option<&str>) -> Result<Value> {
+        let kind = match held {
+            Some(k) => Some(k.to_string()),
+            None => self.tool.vertex_kind.clone().filter(|(s, pp, i, _)| (*s, *pp, *i) == (id, path, index)).map(|k| k.3),
+        };
+        let r =
+            cmd::points::move_handle_raw(self, &json!({"id": id.0, "path": path, "index": index, "side": side, "x": p.x, "y": p.y, "type": kind}))?;
+        if let Some(k) = held {
+            self.tool.vertex_kind = Some((id, path, index, k.to_string()));
+        }
+        Ok(r)
     }
 
     fn up(&mut self, p: Point, mods: Mods) -> Result<Value> {
@@ -1690,8 +1712,9 @@ impl Session {
             }
             Ok(())
         })?;
+        let vertex_kind = self.tool.vertex_kind.clone();
         if let Some(st) = self.active_mut() {
-            crate::push_undo(st, HistoryEntry { label: "Erase".into(), doc: before, selection: sel_before });
+            crate::push_undo(st, HistoryEntry { label: "Erase".into(), doc: before, selection: sel_before, vertex_kind });
         }
         Ok(Value::Null)
     }

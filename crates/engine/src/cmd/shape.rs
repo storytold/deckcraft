@@ -1646,7 +1646,7 @@ mod tests {
         let mut s = Session::with_new();
         s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [10.0, 10.0, 30.0, 30.0]})).unwrap();
         let st = s.active_mut().unwrap();
-        st.interaction = Some(crate::Interaction { label: "Move".into(), doc: st.doc.clone(), selection: st.selection.clone() });
+        st.interaction = Some(crate::Interaction { label: "Move".into(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind: None });
         s.execute("shape.rotate", &json!({"gesture": "end", "ids": []})).unwrap();
         assert_eq!(s.active().unwrap().interaction.as_ref().unwrap().label, "Move");
     }
