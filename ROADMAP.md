@@ -178,6 +178,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-16 | AutoFormat as you type: ordinals (1st, 22nd, 103rd) get superscript suffixes after a space or punctuation; Tools ▸ AutoCorrect and `text.autocorrect {ordinals}` turn it off |
 | 2026-10-16 | A PowerPoint Show (`.ppsx`) opened from the command line or the file association starts its slide show, as in PowerPoint; File › Open still opens it for editing (#862) |
 | 2026-10-15 | Canvas: the Format and Animation Painter override the cursor to show the tool is armed (#830) |
+| 2026-10-24 | Edit Points: Esc pressed before the mouse button is released cancels a point or handle drag, as in PowerPoint, and leaves the shape as it was with no undo step. Edit Points stays on after the cancel |
 | 2026-10-15 | Edit Points: right-click a segment for Straight/Curved Segment, a point for Open/Close Path (`shape.segmentType`, `shape.openPath`, `shape.closePath`); Delete Segment and Add Point in the menu still to come |
 | 2026-10-15 | Design › Browse for Themes… with a `.pptx` or `.potx` brings its slide master and layouts, not just the theme: the master the current slide uses is replaced (a preserved one stays beside it), the template stretches to the deck's slide size, and each slide moves to the layout with the same name or kind and keeps its content. One undo step (#807) |
 | 2026-10-15 | Clicking the frame of a text box or placeholder selects the box whole, so it can be moved, duplicated or deleted; only a click inside puts the caret in the text (#787) |

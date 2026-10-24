@@ -2111,6 +2111,51 @@ fn edit_points_with_the_pointer_and_curves() {
     assert!(s.tool.edit_points.is_none());
 }
 
+/// Esc before the button is released cancels a point or handle drag in Edit Points: the shape
+/// is as it was at the press, no undo step is added, and Edit Points stays on.
+#[test]
+fn edit_points_escape_cancels_a_point_or_handle_drag() {
+    use crate::tools::{Mods, PointerEvent, PointerKind};
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    let path = |s: &Session| s.doc().unwrap().shape(id).map(|sh| format!("{:?}", sh.geom)).unwrap_or_default();
+    let undo_len = |s: &Session| s.doc().unwrap().history.undo.len();
+    let ev = |kind, x: f64, y: f64| PointerEvent { kind, x, y, mods: Mods::default(), ..Default::default() };
+    let (before, steps) = (path(&s), undo_len(&s));
+    // A vertex: drag it, press Esc, keep dragging, release.
+    let v: Vec<[f64; 2]> = serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][0].clone()).unwrap();
+    let [x0, y0] = v[0];
+    s.pointer(ev(PointerKind::Down, x0, y0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, x0 - 30.0, y0)).unwrap();
+    assert_ne!(path(&s), before, "the drag moves the point");
+    assert_eq!(s.key("Escape", Mods::default()).unwrap()["handled"], true);
+    assert_eq!(path(&s), before, "Esc puts the point back");
+    assert!(!s.tool.dragging());
+    s.pointer(ev(PointerKind::Drag, x0 - 50.0, y0)).unwrap();
+    s.pointer(ev(PointerKind::Up, x0 - 50.0, y0)).unwrap();
+    assert_eq!(path(&s), before, "the rest of the drag does nothing");
+    assert_eq!(undo_len(&s), steps, "no undo step");
+    assert_eq!(s.tool.editing_points(s.doc().unwrap()), Some(id), "Edit Points stays on");
+    // A handle of the same point, which the press on the point shows.
+    let st = s.doc().unwrap();
+    let (_, ho, _) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(id).unwrap(), 0, 0).unwrap();
+    let ho = ho.unwrap();
+    s.pointer(ev(PointerKind::Down, ho.x, ho.y)).unwrap();
+    s.pointer(ev(PointerKind::Drag, ho.x + 20.0, ho.y + 20.0)).unwrap();
+    assert_ne!(path(&s), before, "the drag moves the handle");
+    s.key("Escape", Mods::default()).unwrap();
+    s.pointer(ev(PointerKind::Up, ho.x + 20.0, ho.y + 20.0)).unwrap();
+    assert_eq!(path(&s), before, "Esc puts the handle back");
+    assert_eq!(undo_len(&s), steps, "no undo step");
+    assert_eq!(s.tool.editing_points(s.doc().unwrap()), Some(id), "Edit Points stays on");
+    // Without a drag, Esc still leaves Edit Points.
+    s.key("Escape", Mods::default()).unwrap();
+    assert!(s.tool.edit_points.is_none());
+}
+
 #[test]
 fn edit_points_path_parse_and_write() {
     use crate::cmd::points::{Seg, parse, vertices, write};

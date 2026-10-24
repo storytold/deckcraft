@@ -54,6 +54,9 @@ impl Session {
         let has_shapes = self.active().is_some_and(|d| !d.selection.shapes.is_empty());
         let k = key_token(key);
         let k = k.as_str();
+        if matches!(k, "escape" | "esc") && self.cancel_point_drag() {
+            return Ok(json!({"handled": true}));
+        }
         if self.tool.drawing_freeform() && matches!(k, "enter" | "return" | "escape") {
             return self.finish_freeform(false);
         }

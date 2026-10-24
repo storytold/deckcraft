@@ -538,6 +538,25 @@ impl Session {
         }
     }
 
+    /// Cancels a point or handle drag in Edit Points when Esc is pressed: ends the drag, puts back the
+    /// document and selection saved at the press, and adds no undo step. Returns whether a drag was cancelled.
+    pub(crate) fn cancel_point_drag(&mut self) -> bool {
+        if !matches!(self.tool.drag, Some(Drag::Vertex { .. } | Drag::Handle { .. })) {
+            return false;
+        }
+        self.tool.drag = None;
+        if let Some(st) = self.active_mut()
+            && st.interaction.as_ref().is_some_and(|i| i.label == "Edit Points")
+            && let Some(i) = st.interaction.take()
+            && !Arc::ptr_eq(&i.doc, &st.doc)
+        {
+            st.doc = i.doc;
+            st.selection = i.selection;
+            st.revision += 1;
+        }
+        true
+    }
+
     /// End the interaction only when it is the one `label` started. A twist must not commit a drag.
     pub(crate) fn commit_named(&mut self, label: &str) {
         let ours = self.active().and_then(|st| st.interaction.as_ref()).is_some_and(|i| i.label == label);
