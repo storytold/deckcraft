@@ -637,6 +637,7 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
 
     // Comment authors.
     let mut authors: Vec<(String, String, u32)> = vec![];
+    let mut author_map: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut n_comments = 0u32;
 
     // Slides.
@@ -662,13 +663,13 @@ pub fn export(p: &Presentation, main_ct: &str) -> Result<Vec<u8>, PptxError> {
             n_comments += 1;
             let cname = format!("ppt/comments/comment{n_comments}.xml");
             so.rels.add("comments", &opc::relative(&sname, &cname), false);
-            x.pkg.xml_part(&cname, CT_COMMENTS, comments_xml(&s.comments, &mut authors));
+            x.pkg.xml_part(&cname, CT_COMMENTS, comments_xml(&s.comments, &mut authors, &mut author_map));
             // The modern threaded part next to the flattened legacy one (issue #70):
             // PowerPoint 2021+ and DeckCraft read replies and resolved state from it,
             // older readers keep the legacy part.
             let mname = format!("ppt/comments/modernComment{n_comments}.xml");
             let rid = so.rels.add(RT_COMMENTS_MODERN, &opc::relative(&sname, &mname), false);
-            x.pkg.xml_part(&mname, CT_COMMENTS_MODERN, modern_comments_xml(&s.comments, &cname, &mut authors));
+            x.pkg.xml_part(&mname, CT_COMMENTS_MODERN, modern_comments_xml(&s.comments, &cname, &mut authors, &mut author_map));
             comment_rel = Some(rid);
         }
         let xml = slide_xml(&mut x, &mut so, s, comment_rel.as_deref());
@@ -828,7 +829,7 @@ fn notes_xml(x: &mut Exp, o: &mut Out, notes: &TextBody) -> Vec<u8> {
     w.finish()
 }
 
-fn comments_xml(list: &[Comment], authors: &mut Vec<(String, String, u32)>) -> Vec<u8> {
+fn comments_xml(list: &[Comment], authors: &mut Vec<(String, String, u32)>, author_map: &mut std::collections::HashMap<String, usize>) -> Vec<u8> {
     let mut w = W::new();
     root_open(&mut w, "p:cmLst", A::new());
     let mut flat: Vec<&Comment> = vec![];
@@ -839,7 +840,7 @@ fn comments_xml(list: &[Comment], authors: &mut Vec<(String, String, u32)>) -> V
         }
     }
     for c in flat {
-        let ai = author_slot(c, authors);
+        let ai = author_slot(c, authors, author_map);
         let idx = match authors.get_mut(ai) {
             Some(a) => {
                 a.2 += 1;
@@ -860,32 +861,45 @@ fn comments_xml(list: &[Comment], authors: &mut Vec<(String, String, u32)>) -> V
 
 /// The author's slot in the shared bucket list, adding them on first use. Legacy parts index the
 /// list by number, the modern authors part gives every slot a GUID.
-fn author_slot(c: &Comment, authors: &mut Vec<(String, String, u32)>) -> usize {
-    let author = if c.author.is_empty() { "Author".to_string() } else { c.author.clone() };
-    match authors.iter().position(|(n, _, _)| *n == author) {
-        Some(i) => i,
-        None => {
-            let ini = if c.initials.is_empty() { author.chars().filter(|ch| ch.is_alphabetic()).take(2).collect() } else { c.initials.clone() };
-            authors.push((author.clone(), ini, 0));
-            authors.len() - 1
-        }
+fn author_slot(c: &Comment, authors: &mut Vec<(String, String, u32)>, map: &mut std::collections::HashMap<String, usize>) -> usize {
+    let author = if c.author.is_empty() { "Author" } else { &c.author };
+    if let Some(&i) = map.get(author) {
+        return i;
     }
+    let ini = if c.initials.is_empty() { author.chars().filter(|ch| ch.is_alphabetic()).take(2).collect() } else { c.initials.clone() };
+    let idx = authors.len();
+    authors.push((author.to_string(), ini, 0));
+    map.insert(author.to_string(), idx);
+    idx
 }
 
 /// The modern (p188) threaded-comment part: replies nest and the resolved state is kept, which
 /// the flattened legacy part cannot express (issue #70).
-fn modern_comments_xml(list: &[Comment], part: &str, authors: &mut Vec<(String, String, u32)>) -> Vec<u8> {
+fn modern_comments_xml(
+    list: &[Comment],
+    part: &str,
+    authors: &mut Vec<(String, String, u32)>,
+    author_map: &mut std::collections::HashMap<String, usize>,
+) -> Vec<u8> {
     let mut w = W::new();
-    w.open("p188:cmLst", A::new().a("xmlns:p188", NS_P188));
+    w.open("p188:cmLst", A::new().a("xmlns:p188", NS_P188).a("xmlns:a", NS_A).a("xmlns:r", NS_R));
     for (ti, c) in list.iter().take(10_000).enumerate() {
-        modern_comment(&mut w, c, part, ti, authors, 0);
+        modern_comment(&mut w, c, part, ti, authors, author_map, 0);
     }
     w.close("p188:cmLst");
     w.finish()
 }
 
-fn modern_comment(w: &mut W, c: &Comment, part: &str, ti: usize, authors: &mut Vec<(String, String, u32)>, depth: usize) {
-    let ai = author_slot(c, authors);
+fn modern_comment(
+    w: &mut W,
+    c: &Comment,
+    part: &str,
+    ti: usize,
+    authors: &mut Vec<(String, String, u32)>,
+    author_map: &mut std::collections::HashMap<String, usize>,
+    depth: usize,
+) {
+    let ai = author_slot(c, authors, author_map);
     let author = authors.get(ai).map(|(n, _, _)| n.clone()).unwrap_or_default();
     let dt = if valid_date(&c.date) { c.date.clone() } else { "2024-01-01T00:00:00.000".into() };
     let mut a = A::new().a("id", crate::tables::guid(&format!("deckcraft-comment:{part}:{ti}"))).a("authorId", author_guid(&author)).a("created", dt);
@@ -899,7 +913,7 @@ fn modern_comment(w: &mut W, c: &Comment, part: &str, ti: usize, authors: &mut V
     if depth < 4 && !c.replies.is_empty() {
         w.open0("p188:replyLst");
         for (ri, r) in c.replies.iter().take(1000).enumerate() {
-            let ri_ai = author_slot(r, authors);
+            let ri_ai = author_slot(r, authors, author_map);
             let r_author = authors.get(ri_ai).map(|(n, _, _)| n.clone()).unwrap_or_default();
             let rdt = if valid_date(&r.date) { r.date.clone() } else { "2024-01-01T00:00:00.000".into() };
             let mut ra = A::new()

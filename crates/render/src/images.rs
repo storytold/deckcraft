@@ -76,7 +76,7 @@ impl Anim {
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
-    let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut g = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     f(g.get_or_insert_with(Cache::default))
 }
 

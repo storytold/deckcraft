@@ -2,16 +2,17 @@
 # (GitHub has no FreeBSD runners). GPU tests skip themselves when the VM has no adapter.
 name: FreeBSD
 
+# The VM build is slow, so it runs nightly on main and on pushes to `release`, not on every pull
+# request: a drifted dependency still shows up within a day, and always before a release ships.
+# PRs that change the FreeBSD workflow itself still run it.
 on:
   push:
-    branches: [main]
+    branches: [release]
   pull_request:
     paths:
-      - Cargo.toml
-      - Cargo.lock
-      - "**/Cargo.toml"
-      - "crates/fonts/**"
       - .github/workflows/freebsd.yml
+  schedule:
+    - cron: "27 2 * * *"
   workflow_dispatch:
 
 concurrency:

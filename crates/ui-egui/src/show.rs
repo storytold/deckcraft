@@ -27,13 +27,19 @@ pub struct Show {
     step_end: f64,
     trans: Option<Transition>,
     tex: Option<(Key, TextureHandle)>,
+    /// The shapes stacked above the playing videos, drawn over the video frames (#1005).
+    overlay: Option<(Key, Vec<ShapeId>, TextureHandle)>,
     next_tex: Option<(usize, TextureHandle)>,
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
+    /// The current slide's backdrop, under its animation frames.
+    backdrop: Option<Backdrop>,
     blank: Option<Color32>,
     /// See All Slides covers the show until a slide is chosen.
     pub grid: bool,
+    /// The Presenter View's own See All Slides: the grid replaces the slide and notes in that window only; the audience keeps the slide.
+    pub presenter_grid: bool,
     /// The next click on the slide zooms in there.
     pub zoom_arm: bool,
     zoom: Option<Zoom>,
@@ -93,8 +99,55 @@ fn render_threads() -> u16 {
     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) }
 }
 
+/// What a slide's backdrop was rendered for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BackKey {
+    slide: usize,
+    size: (u32, u32),
+    doc: usize,
+}
+
+/// A slide's backdrop (background, master and layout graphics), kept while the slide is shown so
+/// animation frames render only the slide's own shapes over it. The backdrop can cost far more
+/// than the shapes: a full-slide picture with a glow in the layout made animations crawl at 2–3
+/// frames a second. `rx` brings it from another thread when it is rendered ahead of time.
+struct Backdrop {
+    /// The presentation it was rendered from, held so its address (in `key`) can't be reused by
+    /// a later edit while the backdrop is kept.
+    doc: std::sync::Arc<Presentation>,
+    key: BackKey,
+    img: Option<std::sync::Arc<deckcraft_render::Image>>,
+    rx: Option<std::sync::mpsc::Receiver<deckcraft_render::Image>>,
+}
+
+fn render_backdrop(doc: &Presentation, key: BackKey, threads: u16) -> deckcraft_render::Image {
+    let opts = RenderOpts { scale: key.size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(key.size), threads, ..Default::default() };
+    deckcraft_render::render_slide_part(doc, key.slide, deckcraft_render::SlidePart::Backdrop, &opts)
+}
+
+/// `top` laid over `back` (both premultiplied RGBA of the same size; `top` alone otherwise).
+fn over(back: &deckcraft_render::Image, top: &deckcraft_render::Image) -> egui::ColorImage {
+    if back.width != top.width || back.height != top.height || back.pixels.len() != top.pixels.len() {
+        return crate::textures::to_color_image(top, false);
+    }
+    let px = back
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(top.pixels.as_chunks::<4>().0)
+        .map(|(b, t)| {
+            let k = 255 - t[3] as u32;
+            let mix = |i: usize| (t[i] as u32 + (b[i] as u32 * k + 127) / 255).min(255) as u8;
+            Color32::from_rgba_premultiplied(mix(0), mix(1), mix(2), mix(3))
+        })
+        .collect();
+    egui::ColorImage::new([top.width as usize, top.height as usize], px)
+}
+
 #[allow(clippy::too_many_arguments)]
-/// Slide `idx` at `step`, `t` seconds into it, `size` pixels, with `hidden` media hidden.
+/// Slide `idx` at `step`, `t` seconds into it, `size` pixels, with `hidden` media hidden. With a
+/// `backdrop` (of this slide, at this size), only the slide's shapes are rendered, over it.
 fn render_frame(
     doc: &Presentation,
     idx: usize,
@@ -107,6 +160,7 @@ fn render_frame(
     threads: u16,
     plays: &[TriggerPlay],
     stamps: &[StepStamp],
+    backdrop: Option<&deckcraft_render::Image>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
         let mut st = state_for(&tl, id, step, t, plays, stamps);
@@ -115,19 +169,67 @@ fn render_frame(
         }
         st
     };
-    let img = deckcraft_render::render_slide(
-        doc,
-        idx,
-        &RenderOpts {
-            scale: size.0 as f64 / doc.slide_size.width.max(1.0),
-            size: Some(size),
-            state: Some(&f),
-            gif_times: times,
-            threads,
-            ..Default::default()
-        },
-    );
+    let opts = RenderOpts {
+        scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+        size: Some(size),
+        state: Some(&f),
+        gif_times: times,
+        threads,
+        ..Default::default()
+    };
+    match backdrop {
+        Some(back) => over(back, &deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts)),
+        None => crate::textures::to_color_image(&deckcraft_render::render_slide(doc, idx, &opts), false),
+    }
+}
+
+/// Render only the slide's own shapes except `skip`, over transparency: what is stacked above a
+/// playing video, to be drawn over the video frame.
+#[allow(clippy::too_many_arguments)]
+fn render_overlay(
+    doc: &Presentation,
+    idx: usize,
+    tl: Timeline,
+    step: usize,
+    t: f64,
+    size: (u32, u32),
+    hidden: Vec<ShapeId>,
+    skip: &[ShapeId],
+    times: &[(ShapeId, f64)],
+    threads: u16,
+    plays: &[TriggerPlay],
+    stamps: &[StepStamp],
+) -> egui::ColorImage {
+    let f = move |id: ShapeId| {
+        let mut st = state_for(&tl, id, step, t, plays, stamps);
+        if hidden.contains(&id) {
+            st.visible = false;
+        }
+        st
+    };
+    let opts = RenderOpts {
+        scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+        size: Some(size),
+        state: Some(&f),
+        skip,
+        gif_times: times,
+        threads,
+        ..Default::default()
+    };
+    let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
     crate::textures::to_color_image(&img, false)
+}
+
+/// The shapes of slide `idx` to leave out when drawing what is stacked above the lowest of the
+/// playing `videos` (that video, everything below it and the other videos). Empty when nothing
+/// is above a video: the video frame is then painted last.
+fn below_playing_video(doc: &Presentation, idx: usize, videos: &[ShapeId]) -> Vec<ShapeId> {
+    let Some(slide) = doc.slides.get(idx) else { return vec![] };
+    let Some(first) = slide.shapes.iter().position(|s| videos.contains(&s.id)) else { return vec![] };
+    if slide.shapes.iter().skip(first + 1).all(|s| videos.contains(&s.id)) {
+        return vec![];
+    }
+    slide.shapes.iter().enumerate().filter(|(i, s)| *i <= first || videos.contains(&s.id)).map(|(_, s)| s.id).collect()
 }
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.
@@ -148,7 +250,7 @@ fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u
     let threads = render_threads().saturating_sub(1).max(1);
     let spawned = std::thread::Builder::new().name("show-prefetch".into()).spawn(move || {
         let tl = ShowState::timeline(&doc, next);
-        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[]));
+        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], None));
     });
     spawned.ok().map(|_| Prefetch { key, rx })
 }
@@ -183,10 +285,13 @@ impl Show {
             step_end: 0.0,
             trans: None,
             tex: None,
+            overlay: None,
             next_tex: None,
             prefetch: None,
+            backdrop: None,
             blank: None,
             grid: false,
+            presenter_grid: false,
             zoom_arm: false,
             zoom: None,
             thumbs: vec![],
@@ -230,6 +335,37 @@ impl Show {
     fn arrow(&mut self) {
         self.pen = false;
         self.laser = false;
+    }
+
+    /// The backdrop for `key`: kept from earlier, waited for if it is being rendered ahead of
+    /// time, or rendered now.
+    fn backdrop(&mut self, doc: &std::sync::Arc<Presentation>, key: BackKey) -> std::sync::Arc<deckcraft_render::Image> {
+        if let Some(b) = self.backdrop.as_mut().filter(|b| b.key == key && std::sync::Arc::ptr_eq(&b.doc, doc)) {
+            if b.img.is_none() {
+                b.img = b.rx.take().and_then(|rx| rx.recv().ok()).map(std::sync::Arc::new);
+            }
+            if let Some(img) = &b.img {
+                return img.clone();
+            }
+        }
+        let img = std::sync::Arc::new(render_backdrop(doc, key, render_threads()));
+        self.backdrop = Some(Backdrop { doc: doc.clone(), key, img: Some(img.clone()), rx: None });
+        img
+    }
+
+    /// Start rendering the backdrop for `key` on another thread, unless it is already there or
+    /// on its way. Nothing on the web (no threads): the first animation frame renders it.
+    fn prefetch_backdrop(&mut self, doc: &std::sync::Arc<Presentation>, key: BackKey) {
+        if cfg!(target_arch = "wasm32") || self.backdrop.as_ref().is_some_and(|b| b.key == key && std::sync::Arc::ptr_eq(&b.doc, doc)) {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_doc = doc.clone();
+        let threads = render_threads().saturating_sub(1).max(1);
+        let spawned = std::thread::Builder::new().name("show-backdrop".into()).spawn(move || {
+            let _ = tx.send(render_backdrop(&worker_doc, key, threads));
+        });
+        self.backdrop = spawned.ok().map(|_| Backdrop { doc: doc.clone(), key, img: None, rx: Some(rx) });
     }
 
     fn timeline(&mut self, doc: &Presentation) -> &Timeline {
@@ -367,6 +503,11 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
     }
 }
 
+/// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.
+fn show_fills_screen(reading: bool, show_type: &str) -> bool {
+    !reading && show_type != "browsed"
+}
+
 fn fit(avail: Rect, doc: &Presentation) -> Rect {
     // Loaded sizes are repaired, but a zero side here would make every rectangle NaN.
     let side = |v: f64| if v.is_finite() { (v as f32).max(1.0) } else { 1.0 };
@@ -422,7 +563,8 @@ fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Option<usize>, t
 
 /// Read the current viewport's show keys before its widgets can consume them. Both the
 /// audience window and Presenter View use this path, including animation steps and end-of-show.
-fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) -> bool {
+/// `presenter` is true for Presenter View, where G opens that window's own grid (#1130).
+fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool) -> bool {
     let keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
@@ -433,10 +575,16 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
     let mut actions = vec![];
     for (k, m) in keys {
         use egui::Key::*;
-        if show.grid && !matches!(k, Escape | Minus) {
+        let presenter_grid = presenter && show.presenter_grid;
+        let grid_open = if presenter { show.presenter_grid } else { show.grid };
+        if grid_open && !matches!(k, Escape | Minus) {
             // See All Slides takes no other keys until a slide is chosen.
             if k == G && plain(m) {
-                show.grid = false;
+                if presenter_grid {
+                    show.presenter_grid = false;
+                } else {
+                    show.grid = false;
+                }
             } else {
                 continue;
             }
@@ -444,7 +592,7 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
             match k {
                 Escape | Minus => {
                     let cancelled = k == Escape && show.clear_goto();
-                    if !cancelled && !show.back_out() {
+                    if !cancelled && !show.back_out(presenter) {
                         keep = false;
                     }
                 }
@@ -491,7 +639,7 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
                 B | Period => toggle_blank(show, Color32::BLACK),
                 W | Comma => toggle_blank(show, Color32::WHITE),
                 E => show.strokes.clear(),
-                G if plain(m) => show.grid = true,
+                G if plain(m) => show.open_grid(presenter),
                 Z if plain(m) => show.zoom_key(),
                 T if plain(m) => show.timer.toggle(now),
                 R if plain(m) => show.timer.reset(now),
@@ -533,12 +681,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
-        if !show.reading {
+        if show_fills_screen(show.reading, &doc.show.show_type) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
         }
         show.after_enter(&doc, now);
     }
-    let mut keep = keyboard(&ctx, &mut show, &doc, now);
+    let mut keep = keyboard(&ctx, &mut show, &doc, now, false);
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
     if moved {
         show.last_move = now;
@@ -656,7 +804,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         let cur_step = show.state.step;
         let n_steps = show.timeline(&doc).steps();
         let step_due = show.autoplay && cur_step < n_steps && idle > 0.3;
-        let holding = show.grid || show.zoom.is_some() || show.zoom_arm;
+        let holding = show.grid || show.presenter_grid || show.zoom.is_some() || show.zoom_arm;
         if !holding && (step_due || (!show.rehearse && show.state.auto_advance_due(&doc, idle) && !show.ended)) {
             actions.push(show.state.next(&doc));
         } else if show.preview_only && cur_step >= n_steps && idle > 0.8 {
@@ -714,6 +862,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         let gif = crate::media::gif_key(&gifs);
         let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
         let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: hidden.clone(), plays: done, gif };
+        let back_key = BackKey { slide: idx, size, doc: key.doc };
         let tex = if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == key) {
             show.tex.as_ref().map(|(_, t)| t.clone())
         } else {
@@ -726,7 +875,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 Some(ci) => ci,
                 None => {
                     let tl = show.timeline(&doc).clone();
-                    render_frame(&doc, idx, tl, step, t, size, hidden.clone(), &times, render_threads(), &plays, &stamps)
+                    // Animating: the backdrop doesn't change, only the shapes over it are drawn.
+                    let back = animating.then(|| show.backdrop(&doc, back_key));
+                    render_frame(&doc, idx, tl, step, t, size, hidden.clone(), &times, render_threads(), &plays, &stamps, back.as_deref())
                 }
             };
             let tex = match show.tex.take() {
@@ -736,11 +887,15 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 }
                 None => crate::textures::upload(&ctx, "show", ci),
             };
-            show.tex = Some((key, tex.clone()));
+            show.tex = Some((key.clone(), tex.clone()));
             Some(tex)
         };
         // While this slide rests, render the next one's first frame (not one with GIFs, whose
         // frame depends on when it is entered).
+        // A slide with animations gets its backdrop ready while it rests, so they start smoothly.
+        if !animating && !show.timeline(&doc).is_empty() {
+            show.prefetch_backdrop(&doc, back_key);
+        }
         if !animating && show.trans.is_none() && !show.preview_only {
             let next = show.state.peek_next(&doc);
             let wanted = next.filter(|n| app.media.gifs(doc_uid, &doc, *n, now, &app.session.gif_paused).is_empty());
@@ -842,16 +997,44 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             // Playing video: the current frame in its box, or full screen.
             let (sw, sh) = (doc.slide_size.width as f32, doc.slide_size.height as f32);
             let uv = show.zoom_uv();
+            let mut framed: Vec<ShapeId> = vec![];
+            let mut full_screen = false;
             for (id, x, clip) in &media {
                 if !clip.video || hidden.contains(id) {
                     continue;
                 }
                 let r = if clip.full_screen && app.media.is_playing(*id) {
+                    full_screen = true;
                     full
                 } else {
                     slide_box(srect, uv, sw, sh, x.x as f32, x.y as f32, x.w as f32, x.h as f32)
                 };
-                crate::media::paint_frame(&painter, &app.media, *id, r);
+                if crate::media::paint_frame(&painter, &app.media, *id, r, clip.crop) {
+                    framed.push(*id);
+                }
+            }
+            // Shapes stacked above a playing video show over it, as in PowerPoint (#1005); a video
+            // playing full screen covers the whole slide.
+            let skip = if full_screen { vec![] } else { below_playing_video(&doc, idx, &framed) };
+            if skip.is_empty() {
+                show.overlay = None;
+            } else {
+                let fresh = !animating && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == key && *s == skip);
+                if !fresh {
+                    let tl = show.timeline(&doc).clone();
+                    let ci = render_overlay(&doc, idx, tl, step, t, size, hidden.clone(), &skip, &times, render_threads(), &plays, &stamps);
+                    let handle = match show.overlay.take() {
+                        Some((_, _, mut h)) => {
+                            crate::textures::replace(&ctx, &mut h, ci);
+                            h
+                        }
+                        None => crate::textures::upload(&ctx, "show-overlay", ci),
+                    };
+                    show.overlay = Some((key.clone(), skip, handle));
+                }
+                if let Some((_, _, h)) = &show.overlay {
+                    painter.image(h.id(), srect, uv, Color32::WHITE);
+                }
             }
             // Play/pause on the animated GIF under the pointer, and the audio/video bar.
             // Slide Show ▸ Show Media Controls hides both (the click still plays a clip).
@@ -1077,11 +1260,11 @@ fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentat
     // [Stop Previous Sound] ends a transition sound still playing.
     let stop_previous = trans.is_some_and(|t| t.stop_sound);
     let keep: Vec<ShapeId> = match cur {
-        Some(_) => app
+        Some(i) => app
             .media
             .ids()
             .into_iter()
-            .filter(|id| crate::media::find_clip(doc, *id).is_some_and(|c| c.play_across_slides))
+            .filter(|id| app.media.clip(*id).is_some_and(|c| crate::media::carries_over(c, doc, *id, i)))
             // A transition sound plays to its end, as in PowerPoint, unless the new slide has its own.
             .chain((sound.is_none() && !stop_previous).then_some(TRANSITION_SOUND).filter(|id| app.media.is_playing(*id)))
             .collect(),
@@ -1110,7 +1293,7 @@ fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentat
 /// the clip is already playing, Pause toggles, Stop stops.
 fn run_media_cues(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation) {
     for (id, effect) in std::mem::take(&mut show.media_cues) {
-        let Some(clip) = crate::media::find_clip(doc, id) else { continue };
+        let Some(clip) = crate::media::find_clip(doc, id, Some(show.state.slide)) else { continue };
         match effect.as_str() {
             "pause" => app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show),
             "stop" => app.media.stop(id),
@@ -1322,6 +1505,15 @@ impl Show {
         }
     }
 
+    /// G opens See All Slides in the window it was pressed in: Presenter View's grid stays off the audience screen (#1130).
+    fn open_grid(&mut self, presenter: bool) {
+        if presenter {
+            self.presenter_grid = true;
+        } else {
+            self.grid = true;
+        }
+    }
+
     /// Z, or the Zoom button: arm a click-to-zoom, or leave a zoom that is already on.
     fn zoom_key(&mut self) {
         if self.zoom.is_some() || self.zoom_arm {
@@ -1332,9 +1524,12 @@ impl Show {
         }
     }
 
-    /// Esc closes See All Slides, then a zoom, and only then leaves the show.
-    fn back_out(&mut self) -> bool {
-        if self.grid {
+    /// Esc closes the See All Slides of the window it was pressed in, then a zoom, and only then leaves the show.
+    fn back_out(&mut self, presenter: bool) -> bool {
+        if presenter && self.presenter_grid {
+            self.presenter_grid = false;
+            true
+        } else if !presenter && self.grid {
             self.grid = false;
             true
         } else {
@@ -1745,7 +1940,8 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
         show.next_tex = Some((n, crate::textures::upload(ctx, "presenter-next", crate::textures::to_color_image(&img, false))));
     }
     let next_tex = show.next_tex.as_ref().filter(|(k, _)| Some(*k) == next).map(|(_, t)| t.clone());
-    let notes = doc.slides.get(cur).map(|s| s.notes_text()).unwrap_or_default();
+    let no_notes = deckcraft_model::text::TextBody::default();
+    let notes = doc.slides.get(cur).map_or(&no_notes, |s| &s.notes);
     let clock = wall_clock();
     // The presenter clock only moves when this window is drawn again.
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
@@ -1758,7 +1954,7 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
         egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
         |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now) {
+            if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
@@ -1800,8 +1996,8 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                     if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
                         toggle_blank(show, Color32::WHITE);
                     }
-                    if button(ui, if show.grid { "All slides on" } else { "All slides" }).clicked() {
-                        show.grid = !show.grid;
+                    if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
+                        show.presenter_grid = !show.presenter_grid;
                     }
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
@@ -1809,6 +2005,23 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                 });
                 ui.add_space(8.0);
                 let avail = ui.available_rect_before_wrap();
+                if show.presenter_grid {
+                    // The grid fills this window; the audience keeps seeing the current slide.
+                    paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
+                    let hit = ui.interact(avail, ui.id().with("presenter_grid"), Sense::click());
+                    if hit.clicked()
+                        && let Some(p) = hit.interact_pointer_pos()
+                        && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
+                        && let Some(&i) = grid_indices(doc.slides.len()).get(n)
+                    {
+                        show.presenter_grid = false;
+                        show.blank = None;
+                        show.zoom = None;
+                        show.zoom_arm = false;
+                        actions.push(show.state.goto(doc, i));
+                    }
+                    return;
+                }
                 let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
                 let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
                 let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
@@ -1860,13 +2073,13 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                 let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
                 egui::ScrollArea::vertical().show(&mut child, |ui| {
-                    ui.label(
-                        egui::RichText::new(if notes.is_empty() { "No notes." } else { &notes }).size(show.notes_px).color(Color32::from_gray(230)),
-                    );
+                    presenter_notes(ui, notes, show.notes_px);
                 });
             });
             if ui.input(|i| i.viewport().close_requested()) {
                 show.presenter = false;
+                // A grid left open in the closed window would hold auto-advance for the rest of the show.
+                show.presenter_grid = false;
             }
         },
     );
@@ -1877,11 +2090,45 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
     }
 }
 
+/// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.
+fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
+    let color = Color32::from_gray(230);
+    if notes.text().is_empty() {
+        ui.label(egui::RichText::new("No notes.").size(px).color(color))
+    } else {
+        crate::notes::view(ui, notes, &crate::notes::Look { size: px, color: Some(color) })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// #1005: shapes stacked above a playing video must be drawn over its frame; the video, what
+    /// is below it and other videos stay out of that overlay.
+    #[test]
+    fn shapes_above_a_playing_video_are_the_overlay() {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..3 {
+            session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 100.0, 100.0]})).unwrap();
+        }
+        let mut doc = (*session.active().unwrap().doc).clone();
+        // Keep only the three inserted rects (a new slide may start with placeholders).
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        let keep = slide.shapes.len() - 3;
+        slide.shapes.drain(..keep);
+        let ids: Vec<ShapeId> = slide.shapes.iter().map(|s| s.id).collect();
+        slide.shapes[1].kind = deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, ..Default::default() });
+        // Video in the middle: the shape above it is drawn over it.
+        assert_eq!(below_playing_video(&doc, 0, &[ids[1]]), vec![ids[0], ids[1]]);
+        // Video on top: nothing above it, the frame is painted last as before.
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.swap(1, 2);
+        assert!(below_playing_video(&doc, 0, &[ids[1]]).is_empty());
+        // No video playing.
+        assert!(below_playing_video(&doc, 0, &[]).is_empty());
+    }
 
     /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
     /// never gave way to the idle hide, so a still pointer stayed on the playing video.
@@ -1907,6 +2154,40 @@ mod tests {
         assert_eq!(harness.output().platform_output.cursor_icon, egui::CursorIcon::PointingHand);
         harness.run_steps(12);
         assert_eq!(harness.output().platform_output.cursor_icon, egui::CursorIcon::None, "still for 3 s: hidden");
+    }
+
+    /// #1130: the Presenter View's All slides button opens the grid in that window, not on the audience screen.
+    #[test]
+    fn presenter_all_slides_does_not_cover_the_audience_screen() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let doc = session.active().unwrap().doc.clone();
+        let show = Show::new(&doc, 0, false, true);
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+            |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+                let now = ui.input(|i| i.time);
+                presenter_window(ui.ctx(), show, doc, now, keep);
+            },
+            (doc, show, true),
+        );
+        harness.run_steps(2);
+        harness.get_by_label("All slides").click();
+        harness.run_steps(2);
+        assert!(harness.state().1.presenter_grid, "the grid opens in the Presenter View");
+        assert!(!harness.state().1.grid, "the audience screen keeps showing the slide");
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(!harness.state().1.presenter_grid, "Esc closes the Presenter View grid");
+        assert!(harness.state().2, "and does not end the show");
+        harness.key_press(egui::Key::G);
+        harness.run_steps(2);
+        assert!(harness.state().1.presenter_grid, "G in Presenter View opens its own grid");
+        assert!(!harness.state().1.grid, "G in Presenter View leaves the audience screen alone");
+        harness.key_press(egui::Key::G);
+        harness.run_steps(2);
+        assert!(!harness.state().1.presenter_grid, "G again closes it");
     }
 
     /// Send real egui key events to the presenter UI, without the audience window's handler.
@@ -2009,9 +2290,57 @@ mod tests {
         let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
         assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
         let got = p.rx.recv().expect("the frame arrives");
-        let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[]);
+        let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None);
         assert_eq!(got.size, want.size);
         assert_eq!(got.pixels, want.pixels);
+    }
+
+    /// A glowing full-slide picture in a layout made every animation frame re-render (and re-blur)
+    /// the backdrop: 2–3 frames a second. Frames now draw the slide's shapes over the kept
+    /// backdrop, and must look the same as a whole-slide render.
+    #[test]
+    fn an_animation_frame_over_the_kept_backdrop_matches_a_full_render() {
+        let mut s = deckcraft_engine::Session::with_new();
+        let r = s.execute("shape.insert", &json!({"preset": "star5", "rect": [100.0, 100.0, 300.0, 200.0]})).unwrap();
+        s.execute("animation.set", &json!({"effect": "fade", "ids": [r["id"]]})).unwrap();
+        let mut doc = (*s.active().unwrap().doc).clone();
+        // A glowing master graphic under the animated star.
+        let mut deco = doc.slides[0].shapes.last().unwrap().clone();
+        deco.id = ShapeId(9000);
+        deco.xfrm = deco.xfrm.map(|x| deckcraft_geom::Xfrm { x: x.x - 60.0, y: x.y + 40.0, ..x });
+        deco.effects = Some(deckcraft_model::Effects {
+            glow: Some(deckcraft_model::style::Glow {
+                color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 120, 255)),
+                radius: 12.0,
+            }),
+            ..Default::default()
+        });
+        std::sync::Arc::make_mut(&mut doc.masters[0]).shapes.push(deco);
+        let doc = std::sync::Arc::new(doc);
+        let size = (480, 270);
+        let key = BackKey { slide: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize };
+        let mut show = Show::new(&doc, 0, false, false);
+        show.prefetch_backdrop(&doc, key);
+        let back = show.backdrop(&doc, key);
+        let tl = ShowState::timeline(&doc, 0);
+        assert!(!tl.is_empty());
+        // Half-way through the fade, the star half see-through over the glow.
+        let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], Some(&back));
+        let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], None);
+        assert_eq!(fast.size, full.size);
+        let worst = fast
+            .pixels
+            .iter()
+            .zip(&full.pixels)
+            .map(|(a, b)| a.to_array().iter().zip(b.to_array()).map(|(x, y)| x.abs_diff(y)).max().unwrap_or(0))
+            .max();
+        assert!(worst.is_some_and(|d| d <= 2), "frames differ by up to {worst:?}");
+        // The backdrop is kept, not rendered again.
+        assert!(std::sync::Arc::ptr_eq(&back, &show.backdrop(&doc, key)));
+        // Another document under the same key (an edit whose copy reused the old address) gets
+        // its own backdrop.
+        let edited = std::sync::Arc::new((*doc).clone());
+        assert!(!std::sync::Arc::ptr_eq(&back, &show.backdrop(&edited, key)));
     }
 
     #[test]
@@ -2159,6 +2488,24 @@ mod tests {
     }
 
     #[test]
+    fn escape_only_closes_the_grid_of_its_own_window() {
+        let mut s = deckcraft_engine::Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        let doc = s.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, true);
+        show.presenter_grid = true;
+        assert!(!show.back_out(false), "audience Esc leaves the show, the Presenter View grid stays");
+        assert!(show.presenter_grid);
+        assert!(show.back_out(true));
+        assert!(!show.presenter_grid);
+        show.grid = true;
+        assert!(!show.back_out(true), "Presenter View Esc does not close the audience grid");
+        assert!(show.grid);
+        assert!(show.back_out(false));
+        assert!(!show.grid);
+    }
+
+    #[test]
     fn escape_leaves_the_grid_then_the_zoom_and_blank_toggles() {
         let mut s = deckcraft_engine::Session::with_new();
         s.execute("slide.new", &json!({})).unwrap();
@@ -2166,12 +2513,12 @@ mod tests {
         let mut show = Show::new(&doc, 0, false, true);
         show.grid = true;
         show.zoom = Some(Zoom::at(0.2, 0.3));
-        assert!(show.back_out());
+        assert!(show.back_out(false));
         assert!(!show.grid);
         assert!(show.zoom.is_some(), "closing the grid leaves the zoom");
-        assert!(show.back_out());
+        assert!(show.back_out(false));
         assert!(show.zoom.is_none());
-        assert!(!show.back_out());
+        assert!(!show.back_out(false));
         show.zoom_key();
         assert!(show.zoom_arm);
         show.zoom_key();
@@ -2185,6 +2532,55 @@ mod tests {
         show.zoom = Some(Zoom::at(0.4, 0.6));
         assert!(show.apply(ShowAction::Slide(1), &doc, 1.0));
         assert!(show.zoom.is_none(), "a new slide is shown whole");
+    }
+
+    /// #1128: the presenter drew the notes as plain text, so bullets, numbers and bold were lost
+    /// although the notes pane shows them; the notes stay selectable.
+    #[test]
+    fn presenter_notes_keep_bullets_numbers_and_bold() {
+        use deckcraft_model::text::{Bullet, ParaProps, Paragraph, Run, RunProps, TextBody};
+        let point = |text: &str, bullet: Bullet| Paragraph {
+            level: 1,
+            props: ParaProps { bullet: Some(bullet), ..Default::default() },
+            runs: vec![Run::new(text)],
+            ..Default::default()
+        };
+        let num = || Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 1 };
+        let notes = TextBody {
+            paragraphs: vec![
+                Paragraph { runs: vec![Run::with("Opening", RunProps { bold: Some(true), ..Default::default() })], ..Default::default() },
+                point("Welcome", Bullet::Char { char: "•".into() }),
+                point("Agenda", num()),
+                point("Demo", num()),
+            ],
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut sense = None;
+        let mut out = ctx.run_ui(Default::default(), |ui| sense = Some(presenter_notes(ui, &notes, 24.0).sense));
+        out.textures_delta.clear();
+        assert!(sense.unwrap().senses_drag(), "the notes can be selected, as the plain label could");
+        let mut texts = vec![];
+        let mut stack: Vec<egui::Shape> = out.shapes.into_iter().map(|c| c.shape).collect();
+        while let Some(shape) = stack.pop() {
+            match shape {
+                egui::Shape::Vec(v) => stack.extend(v),
+                egui::Shape::Text(t) => texts.push(t.galley),
+                _ => {}
+            }
+        }
+        let painted: Vec<&str> = texts.iter().map(|g| g.job.text.as_str()).collect();
+        for marker in ["•", "1.", "2."] {
+            assert!(painted.contains(&marker), "{marker} is drawn: {painted:?}");
+        }
+        let notes_galley = texts.iter().find(|g| g.job.text.contains("Agenda")).expect("the notes are drawn");
+        let font_of = |s: &str| {
+            let b = notes_galley.job.text.find(s).unwrap();
+            notes_galley.job.sections.iter().find(|x| (x.byte_range.start.0..x.byte_range.end.0).contains(&b)).unwrap().format.font_id.clone()
+        };
+        assert_eq!(font_of("Opening"), theme::bold(24.0), "bold runs stay bold at the pane's size");
+        assert_eq!(font_of("Agenda"), theme::font(24.0));
     }
 
     #[test]
@@ -2256,6 +2652,14 @@ mod tests {
         assert_eq!(show.goto.len(), GOTO_DIGITS);
         show.push_slide_number('a', 1.0);
         assert!(show.goto.chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[test]
+    fn browsed_by_an_individual_stays_in_a_window() {
+        assert!(!show_fills_screen(false, "browsed"));
+        assert!(!show_fills_screen(true, "speaker"));
+        assert!(show_fills_screen(false, "speaker"));
+        assert!(show_fills_screen(false, "kiosk"));
     }
 
     #[test]

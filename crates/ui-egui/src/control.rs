@@ -335,11 +335,12 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             let reading = p.get("reading").and_then(Value::as_bool).unwrap_or(false);
             if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                 app.start_custom_show(name, reading);
-            } else if p.get("from").is_some() {
-                let from = p.get("from").and_then(Value::as_u64).unwrap_or(0) as usize;
-                app.start_show(from, reading);
             } else {
-                app.start_show(app.show_start_index(), reading);
+                let from = match app.show_from(p) {
+                    Ok(from) => from.unwrap_or_else(|| app.show_start_index()),
+                    Err(e) => return err(e),
+                };
+                app.start_show(from, reading);
             }
             ok(Value::Null)
         }

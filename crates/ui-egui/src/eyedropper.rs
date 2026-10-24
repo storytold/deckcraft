@@ -5,6 +5,9 @@
 //! therefore hands its colour back through the same menu: the menu closes while the pointer picks,
 //! then opens again for one frame and `color_grid` returns the colour as if its swatch had been
 //! clicked, so every caller applies it its own way.
+//!
+//! Picture Format ▸ Color ▸ Set Transparent Color uses the same pointer, as PowerPoint does: the
+//! click names the colour of the selected picture under it, which turns transparent.
 
 use egui::{Color32, Context, CursorIcon, Id, Pos2, Rect, Stroke, StrokeKind, Ui, pos2, vec2};
 
@@ -13,15 +16,25 @@ use crate::canvas::Xf;
 use crate::theme::{self, Tokens};
 
 const REQUEST: &str = "deckcraft.eyedropper.request";
+const TRANSPARENT: &str = "deckcraft.eyedropper.transparent";
 const MENU: &str = "deckcraft.eyedropper.menu";
 const RESULT: &str = "deckcraft.eyedropper.result";
 
 /// Pixels per slide unit of the picture the Eyedropper looks at.
 const SCALE: f64 = 2.0;
 
-/// An Eyedropper waiting for a click: the slide as it is drawn and the menu button it came from.
+/// What a click with the pointer does.
+#[derive(Clone, Copy)]
+enum Pick {
+    /// Hands the colour to the colour menu on this button.
+    Menu(Id),
+    /// Makes the colour of the selected picture under the pointer transparent.
+    TransparentColor,
+}
+
+/// An Eyedropper waiting for a click: the slide as it is drawn and what the click is for.
 pub struct State {
-    menu: Id,
+    pick: Pick,
     slide: usize,
     image: deckcraft_render::Image,
 }
@@ -50,6 +63,11 @@ pub fn request(ctx: &Context) {
     ctx.data_mut(|d| d.insert_temp(key(REQUEST), true));
 }
 
+/// Picture Format ▸ Color ▸ "Set Transparent Color" was chosen.
+pub fn request_transparent_color(ctx: &Context) {
+    ctx.data_mut(|d| d.insert_temp(key(TRANSPARENT), true));
+}
+
 /// Has the Eyedropper taken a colour for the menu on `button`?
 pub fn result_waits_for(ctx: &Context, button: Id) -> bool {
     ctx.data(|d| d.get_temp::<Option<(Id, String)>>(key(RESULT))).flatten().is_some_and(|(b, _)| b == button)
@@ -67,8 +85,13 @@ pub fn take_result(ctx: &Context) -> Option<String> {
 /// Once a frame: start the Eyedropper when a menu asked for it, stop it when something else is
 /// clicked.
 pub fn tick(app: &mut SlideApp, ctx: &Context) {
-    if ctx.data_mut(|d| d.remove_temp::<bool>(key(REQUEST))).unwrap_or(false) {
-        begin(app, ctx);
+    if ctx.data_mut(|d| d.remove_temp::<bool>(key(REQUEST))).unwrap_or(false)
+        && let Some(menu) = open_menu(ctx)
+    {
+        begin(app, Pick::Menu(menu));
+    }
+    if ctx.data_mut(|d| d.remove_temp::<bool>(key(TRANSPARENT))).unwrap_or(false) {
+        begin(app, Pick::TransparentColor);
     }
     if app.eyedropper.is_some() {
         let outside =
@@ -79,8 +102,7 @@ pub fn tick(app: &mut SlideApp, ctx: &Context) {
     }
 }
 
-fn begin(app: &mut SlideApp, ctx: &Context) {
-    let Some(menu) = open_menu(ctx) else { return };
+fn begin(app: &mut SlideApp, pick: Pick) {
     let Some(d) = app.session.active() else { return };
     if d.selection.target != deckcraft_engine::Target::Slides {
         app.set_status("The Eyedropper takes colours from a slide");
@@ -88,8 +110,11 @@ fn begin(app: &mut SlideApp, ctx: &Context) {
     }
     let slide = d.selection.slide;
     let image = deckcraft_render::render_slide(&d.doc, slide, &deckcraft_render::RenderOpts { scale: SCALE, ..Default::default() });
-    app.eyedropper = Some(State { menu, slide, image });
-    app.set_status("Eyedropper: click the slide (Esc cancels)");
+    app.eyedropper = Some(State { pick, slide, image });
+    app.set_status(match pick {
+        Pick::Menu(_) => "Eyedropper: click the slide (Esc cancels)",
+        Pick::TransparentColor => "Set Transparent Color: click the colour in the picture (Esc cancels)",
+    });
 }
 
 fn hex(c: [u8; 4]) -> String {
@@ -121,15 +146,24 @@ pub fn canvas(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) -> boo
         loupe(ui, pos, c);
     }
     if resp.clicked() {
-        let (menu, slide) = (state.menu, state.slide);
+        let (pick, slide) = (state.pick, state.slide);
         app.eyedropper = None;
-        match app.session.execute("slide.colorAt", &serde_json::json!({"slide": slide, "x": p.x, "y": p.y, "scale": SCALE})) {
-            Ok(v) => {
-                if let Some(color) = v["color"].as_str() {
-                    store_result(ui.ctx(), menu, color);
+        match pick {
+            Pick::Menu(menu) => {
+                match app.session.execute("slide.colorAt", &serde_json::json!({"slide": slide, "x": p.x, "y": p.y, "scale": SCALE})) {
+                    Ok(v) => {
+                        if let Some(color) = v["color"].as_str() {
+                            store_result(ui.ctx(), menu, color);
+                        }
+                    }
+                    Err(e) => app.set_status(e.to_string()),
                 }
             }
-            Err(e) => app.set_status(e.to_string()),
+            Pick::TransparentColor => {
+                if let Err(e) = app.session.execute("picture.transparentColor", &serde_json::json!({"at": [p.x, p.y]})) {
+                    app.set_status(e.to_string());
+                }
+            }
         }
         ui.ctx().request_repaint();
     }

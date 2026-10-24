@@ -1013,13 +1013,31 @@ fn animation(app: &mut SlideApp, ui: &mut Ui) {
     let Some(slide) = st.current_slide() else { return };
     let anims = slide.animations.clone();
     let size = (st.doc.slide_size.width, st.doc.slide_size.height);
-    let effects = deckcraft_anim::Timeline::new(slide, size.0, size.1).effects();
+    let tl = deckcraft_anim::Timeline::new(slide, size.0, size.1);
+    let effects = tl.effects();
     let names: Vec<(u32, String)> = st.shapes().iter().map(|s| (s.id.0, s.name.clone())).collect();
     let selected: Vec<u32> = st.selection.shapes.iter().map(|i| i.0).collect();
+    // Play From starts at the effect last clicked here, or else the first effect of the selected
+    // shape; with nothing selected it is Play All. Reordering or removing forgets the click: the
+    // index would point at another effect.
+    let pick_id = egui::Id::new(("anim_pane_pick", st.uid, st.selection.slide));
+    let pick = ui.data(|m| m.get_temp::<usize>(pick_id));
+    // A triggered effect is not on the click sequence, so it can't be played from.
+    let eligible = |i: usize| anims.get(i).is_some_and(|a| selected.contains(&a.shape.0)) && tl.start_of(i).is_some();
+    let from = pick.filter(|&i| eligible(i)).or_else(|| (0..anims.len()).find(|&i| eligible(i)));
     ui.horizontal(|ui| {
         let playing = app.anim_preview_active();
-        if ui.button(if playing { "■ Stop" } else { "▶ Play All" }).clicked() {
-            run(app, "animation.preview", json!({"on": !playing}));
+        let label = match (playing, from) {
+            (true, _) => "■ Stop",
+            (false, Some(_)) => "▶ Play From",
+            (false, None) => "▶ Play All",
+        };
+        if ui.button(label).clicked() {
+            let p = match (playing, from) {
+                (false, Some(i)) => json!({"on": true, "from": i}),
+                _ => json!({"on": !playing}),
+            };
+            run(app, "animation.preview", p);
         }
     });
     ui.separator();
@@ -1041,6 +1059,9 @@ fn animation(app: &mut SlideApp, ui: &mut Ui) {
         let sel = selected.contains(&a.shape.0);
         if sel || resp.hovered() {
             ui.painter().rect_filled(r, CornerRadius::same(4), if sel { t.selected } else { t.hover });
+        }
+        if from == Some(i) {
+            ui.painter().rect_stroke(r, CornerRadius::same(4), Stroke::new(1.5, t.accent), egui::StrokeKind::Inside);
         }
         let p = ui.painter();
         p.text(
@@ -1123,6 +1144,7 @@ fn animation(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         if resp.clicked() {
+            ui.data_mut(|m| m.insert_temp(pick_id, i));
             run(app, "edit.select", json!({"ids": [a.shape.0]}));
         }
         resp.context_menu(|ui| {
@@ -1134,14 +1156,17 @@ fn animation(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             if ui.button("Move Up").clicked() {
+                ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i.saturating_sub(1)}));
                 ui.close();
             }
             if ui.button("Move Down").clicked() {
+                ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i + 1}));
                 ui.close();
             }
             if ui.button("Remove").clicked() {
+                ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.remove", json!({"index": i}));
                 ui.close();
             }

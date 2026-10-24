@@ -600,6 +600,16 @@ pub fn parse_path(d: &str) -> BezPath {
     bp
 }
 
+/// The transform a 3-D camera applies to shape `s` of size `w` x `h` (approximated by the affine
+/// map that fits it best), as drawn; `None` for no camera, and for groups, tables and charts.
+pub fn camera_turn(rctx: &Ctx, s: &Shape, w: f64, h: f64) -> Option<Affine> {
+    if matches!(s.kind, ShapeKind::Group { .. } | ShapeKind::Table(_) | ShapeKind::Chart(_)) {
+        return None;
+    }
+    let (e, _) = resolve::effects(rctx, s);
+    e.as_ref().and_then(|e| e.raw3d.as_deref()).and_then(camera::from_raw).and_then(|c| camera::affine(&c, w, h))
+}
+
 /// The rectangle a picture's image occupies given its crop (fractions; negative = padding).
 pub fn crop_dest(bounds: Rect, crop: [f64; 4]) -> Rect {
     let [l, t, r, b] = crop.map(|v| if v.is_finite() { v.clamp(-10.0, 0.99) } else { 0.0 });
@@ -833,6 +843,15 @@ impl Renderer {
         if depth > 0 && view.determinant().abs() > 1e-12 && view.is_finite() { (view, view.inverse() * m) } else { (m, Affine::IDENTITY) }
     }
 
+    /// Shape-space units per point: a group's child coordinates can scale a shape's box (a legacy
+    /// 1360-unit child space makes one unit hundreds of EMUs), but 3-D sizes kept in points
+    /// (contour width, extrusion depth, bevel) stay points, as PowerPoint draws them. 1 outside a
+    /// group.
+    fn per_point(&self, m: Affine, depth: usize) -> f64 {
+        let k = scale_of(self.line_space(m, depth).1);
+        if k.is_finite() && k > 1e-12 { 1.0 / k } else { 1.0 }
+    }
+
     /// The size and transform a shape's text is set in: inside a group whose child coordinates
     /// scale the shape, the shape's size in slide points and `m` with that scale taken out, so
     /// insets and font sizes stay in points; otherwise `w`, `h` and `m` themselves.
@@ -849,6 +868,27 @@ impl Renderer {
             return (w, h, m);
         }
         (tw, th, m * Affine::scale_non_uniform(1.0 / sx, 1.0 / sy))
+    }
+
+    /// A shape's geometry in its own `w` × `h` space, built at its size on the slide: inside a
+    /// group whose child coordinates scale the shape unevenly, the preset's rounded corners and
+    /// other size-derived features stay as they would be on a plain shape of that size (#1083).
+    fn scaled_geometry(&self, s: &Shape, m: Affine, depth: usize, w: f64, h: f64) -> Geometry {
+        let (tw, th, _) = self.text_space(m, depth, w, h);
+        if (tw, th) == (w, h) {
+            return shape_geometry(s, w, h);
+        }
+        let mut geo = shape_geometry(s, tw, th);
+        let k = |a: f64, b: f64| if b.abs() > 1e-12 { a / b } else { 1.0 };
+        let back = Affine::scale_non_uniform(k(w, tw), k(h, th));
+        for p in &mut geo.paths {
+            p.path.apply_affine(back);
+        }
+        geo.text_rect = back.transform_rect_bbox(geo.text_rect);
+        for p in &mut geo.sites {
+            *p = back * *p;
+        }
+        geo
     }
 
     fn shape_at(&mut self, ctx: &mut RenderContext, f: &Frame, rctx: &Ctx, s: &Shape, parent: Affine, depth: usize) {
@@ -873,15 +913,7 @@ impl Renderer {
                 * Affine::translate(-c.to_vec2());
             m = parent * Affine::translate(st.offset) * x.affine() * around;
         }
-        // A 3-D camera turns the shape (approximated by the affine transform that fits it best).
-        if !matches!(s.kind, ShapeKind::Group { .. } | ShapeKind::Table(_) | ShapeKind::Chart(_))
-            && let Some(a) = resolve::effects(rctx, s)
-                .0
-                .as_ref()
-                .and_then(|e| e.raw3d.as_deref())
-                .and_then(camera::from_raw)
-                .and_then(|c| camera::affine(&c, x.w, x.h))
-        {
+        if let Some(a) = camera_turn(rctx, s, x.w, x.h) {
             m *= a;
         }
         let layered = st.opacity < 0.999 || st.clip.is_some();
@@ -1007,7 +1039,7 @@ impl Renderer {
     ) {
         let (geo, fades) = match self.paths.iter().find(|p| p.id == s.id) {
             Some(pm) => self.morphs.geometry(pm, s, w, h),
-            None => (shape_geometry(s, w, h), Vec::new()),
+            None => (self.scaled_geometry(s, m, depth, w, h), Vec::new()),
         };
         let fade = |i: usize| fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 });
         let (fill, fill_ph) = resolve::fill(rctx, s);
@@ -1047,6 +1079,17 @@ impl Renderer {
             ctx.push_layer(None, None, None, None, None);
             let _ = r;
         }
+        // Shape-space units per point for the 3-D sizes, measured without the camera's turn (which
+        // `shape_at` puts in `m`): its foreshortening is not a child-coordinate scale.
+        let pt = {
+            let turn = effects
+                .as_ref()
+                .and_then(|e| e.raw3d.as_deref())
+                .and_then(camera::from_raw)
+                .and_then(|c| camera::affine(&c, w, h))
+                .filter(|t| t.determinant().abs() > 1e-9);
+            self.per_point(turn.map_or(m, |t| m * t.inverse()), depth)
+        };
         // A 3-D extrusion under a turned camera: the sides, swept behind the face.
         if let Some(raw) = effects.as_ref().and_then(|e| e.raw3d.as_deref())
             && let Some(ex) = extrude::from_raw(raw)
@@ -1060,7 +1103,8 @@ impl Renderer {
             };
             let pre = m * turn.inverse();
             let lit = light::Lighting::from_raw(raw);
-            extrude::draw(ctx, &outline, w, h, &cam, ex.depth, pre, turn, extrude::side_color(rctx, &ex, face), &lit);
+            let d = ex.depth * pt;
+            extrude::draw(ctx, &outline, w, h, &cam, d, pre, turn, extrude::side_color(rctx, &ex, face), &lit);
         }
         // A 3-D contour: a band around the outline, behind the face (and in front of any sides).
         if let Some(raw) = effects.as_ref().and_then(|e| e.raw3d.as_deref())
@@ -1071,7 +1115,7 @@ impl Renderer {
                 _ => None,
             };
             let col = c.color.as_ref().map(|k| rctx.color(k, face)).or(face).unwrap_or(Rgba::rgb(0xff, 0xff, 0xff));
-            extrude::draw_contour(ctx, &outline, m, c.width, col, &light::Lighting::from_raw(raw));
+            extrude::draw_contour(ctx, &outline, m, c.width * pt, col, &light::Lighting::from_raw(raw));
         }
         // Fill.
         match &s.kind {
@@ -1094,8 +1138,10 @@ impl Renderer {
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 if let Some(p) = mc.poster {
-                    let pf = deckcraft_model::style::PictureFill { media: p, ..Default::default() };
+                    let pf = deckcraft_model::style::PictureFill { media: p, crop: mc.crop, ..Default::default() };
+                    ctx.push_clip_layer(&outline);
                     paint::picture(ctx, f.pres, &pf, bounds, m, None);
+                    ctx.pop_layer();
                 } else if mc.video {
                     ctx.set_paint(peniko::Color::from_rgba8(20, 20, 24, 255));
                     ctx.fill_rect(&bounds);
@@ -1166,6 +1212,7 @@ impl Renderer {
         };
         // A 3-D bevel: the face and a band inside the outline lit as surfaces.
         if let Some(bv) = effects.as_ref().and_then(|e| e.raw3d.as_deref()).and_then(bevel::from_raw) {
+            let bv = bevel::Bevel { w: bv.w * pt, h: bv.h * pt, ..bv };
             let solid = match &fill {
                 Some(Fill::Solid { color: c }) => Some(rctx.color(c, fill_ph)),
                 _ => None,
@@ -1437,7 +1484,10 @@ impl Renderer {
             }
             ctx.pop_layer();
         }
-        if let Some(g) = &e.glow {
+        // A shape with no fill and no line (a text box) draws nothing to glow around: its text's
+        // own glow is all PowerPoint shows, not a halo round the box.
+        let glows = fill_alpha.is_some() || content.is_some() || outline.is_some();
+        if let Some(g) = e.glow.as_ref().filter(|_| glows) {
             let c = rctx.color(&g.color, ph);
             ctx.set_transform(Affine::IDENTITY);
             // Measured on PowerPoint's export: a glow of radius r is half strength about half of r

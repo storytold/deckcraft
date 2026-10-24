@@ -122,6 +122,21 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     }
 }
 
+/// Room the About credits need for their table; the About tab keeps its compact size.
+const CREDITS_SIZE: egui::Vec2 = vec2(640.0, 380.0);
+
+/// The Contributors / Models body in a block of its own fixed size, below the tab row. Sizing the
+/// dialog's `ui` instead (`set_min_size` / `set_max_height`) squeezed the tab row and the first
+/// credits row together, so the text was garbled and the tabs stopped answering (#843).
+fn credits_block(ui: &mut Ui, models: bool) -> Rect {
+    ui.allocate_ui(CREDITS_SIZE, |ui| {
+        ui.set_min_size(CREDITS_SIZE);
+        if models { crate::credits::models_ui(ui) } else { crate::credits::contributors_ui(ui) }
+    })
+    .response
+    .rect
+}
+
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
@@ -257,7 +272,7 @@ fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
         app.set_status("That picture is larger than 32 MB");
         return None;
     }
-    let name = std::path::Path::new(&path).file_name().and_then(|n| n.to_str()).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
+    let name = std::path::Path::new(&path).file_name().and_then(std::ffi::OsStr::to_str).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
     Some(json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&loaded)}))
 }
 
@@ -2012,7 +2027,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             });
             ui.horizontal(|ui| {
                 if ui.button("+ Row").clicked() {
-                    let n = grid.first().map(|r| r.len()).unwrap_or(2);
+                    let n = grid.first().map(Vec::len).unwrap_or(2);
                     grid.push(vec![String::new(); n]);
                 }
                 if ui.button("+ Series").clicked() {
@@ -2091,10 +2106,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.separator();
             match tab.as_str() {
                 "contributors" | "models" => {
-                    // The credits need room for the table; the About tab keeps its compact size.
-                    ui.set_min_size(vec2(640.0, 380.0));
-                    ui.set_max_height(380.0);
-                    if tab == "models" { crate::credits::models_ui(ui) } else { crate::credits::contributors_ui(ui) }
+                    credits_block(ui, tab == "models");
                 }
                 _ => about(app, ui),
             }
@@ -2931,7 +2943,7 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
     let line_value = finite_pt(&d.get("lineValue", "1")).unwrap_or(1.0);
     let before_same = d.get("spaceBefore", "") == d.get("spaceBeforeSeed", "");
     let after_same = d.get("spaceAfter", "") == d.get("spaceAfterSeed", "");
-    let v = json!({
+    json!({
         "align": d.get("align", "left"),
         "indentLeft": before,
         "indentRight": after,
@@ -2945,8 +2957,7 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
         "lineValue": line_value,
         "tabs": d.params.get("tabs").cloned().unwrap_or_else(|| json!([])),
         "defaultTab": d.params.get("defaultTab").cloned().unwrap_or_else(|| json!(72.0)),
-    });
-    v
+    })
 }
 
 fn line_preset_label(kind: &str, value: &str) -> &'static str {
@@ -3196,7 +3207,18 @@ fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 /// Home › Find / Replace: step through matches (slide text, table cells, notes) or replace them.
 fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let replace_mode = d.get("replace", "0") == "1";
-    field(ui, d, "Find what:", "text", "");
+    // "Find what:" has the keyboard when the dialog opens, so Ctrl+F and typing finds (#951).
+    let mut what = d.get("text", "");
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Find what:"));
+        let r = ui.add(egui::TextEdit::singleline(&mut what).desired_width(180.0));
+        // Enter finds the next match and leaves the keyboard here, so the search can be changed.
+        if !d.fields.contains_key("focused") || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+            r.request_focus();
+            d.fields.insert("focused".into(), "1".into());
+        }
+    });
+    d.fields.insert("text".into(), what);
     if replace_mode {
         field(ui, d, "Replace with:", "with", "");
     }
@@ -3684,3 +3706,59 @@ mod spelling_tests;
 #[cfg(test)]
 #[path = "paragraph_dialog_tests.rs"]
 mod paragraph_dialog_tests;
+
+#[cfg(test)]
+mod about_credits_tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::{CREDITS_SIZE, Dialog, credits_block};
+    use crate::{Services, SlideApp};
+
+    fn tab_of(h: &Harness<'_, SlideApp>) -> String {
+        let d = h.state().dialog.as_ref().expect("the About dialog is open");
+        d.fields.get("tab").cloned().unwrap_or_else(|| "about".into())
+    }
+
+    /// The reported symptom (#843): in the real dialog the tabs stopped answering once Contributors
+    /// or Models was open. Click through Contributors, Models and back to About.
+    #[test]
+    fn about_dialog_tabs_keep_responding() {
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), Services::default());
+        app.dialog = Some(Dialog::new("about"));
+        let mut h = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        assert_eq!(tab_of(&h), "about");
+        for label in ["Contributors", "Models", "About", "Models", "Contributors"] {
+            h.get_by_label(label).click();
+            h.run_steps(3);
+            assert_eq!(tab_of(&h), label.to_lowercase(), "clicking {label} switches the tab");
+        }
+    }
+
+    #[test]
+    fn credits_get_their_own_block_below_the_tab_row() {
+        for models in [false, true] {
+            let ctx = egui::Context::default();
+            let mut tabs = egui::Rect::NOTHING;
+            let mut block = egui::Rect::NOTHING;
+            let mut whole = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                tabs = ui.label("About").rect;
+                block = credits_block(ui, models);
+                whole = ui.min_rect();
+            });
+            out.textures_delta.clear();
+            assert_eq!(block.size(), CREDITS_SIZE, "models={models}");
+            assert!(block.min.y >= tabs.max.y, "the credits start below the tab row (models={models})");
+            assert!(whole.max.y >= block.max.y, "the dialog grows to hold the block (models={models})");
+            assert!(whole.height() > CREDITS_SIZE.y, "the tab row is not squeezed into the credits height (models={models})");
+        }
+    }
+}

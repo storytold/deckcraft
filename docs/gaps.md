@@ -1,6 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -26,7 +27,7 @@ revision history.
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
 | 8 | Image paste fails on Windows and Linux (#53) | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
 | 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
-| 10 | Animation Pane: preview plays the whole slide, not from the selected effect (timeline done); 64 of ~190 effects | Feature | B (pane) | 8–14 | [animation-parity.md](animation-parity.md) |
+| 10 | Animation Pane: 64 of ~190 effects, effect options (timeline and Play From done) | Feature | B (pane) | 7–13 | [animation-parity.md](animation-parity.md) |
 | 11 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
 | 12 | Format Shape pane thinner than PowerPoint's | UI/UX | B | 6–10 | [ui-parity.md](ui-parity.md) |
 | 13 | No native macOS menu bar | UI/UX | B | 3–5 | [ui-parity.md](ui-parity.md) |
@@ -181,7 +182,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
   `Series.secondary_axis`) and is not written back when the chart is rebuilt.
   An unchanged chart's embedded workbook now survives save (#335); editing the chart still
   drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
-  also survive `.deckcraft` save/reopen (`crates/engine/tests/chart_native.rs`), with binary
+  also survive `.deckcraft` save/reopen (`crates/engine/tests/it/chart_native.rs`), with binary
   payloads in bounded ZIP entries sharing the media load budget (`crates/format` tests).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
@@ -202,9 +203,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
 
 ### Animation Pane, effect count and preview
 Animations ▸ Preview and the pane's Play All play the current slide's animations on the editor
-canvas (Escape or a click stops them), and the pane has an advanced timeline with draggable bars
-(`crates/ui-egui/src/animtimeline.rs`). Still open: previewing from the selected effect, and most
-of the effect gallery. Detail in [animation-parity.md](animation-parity.md). 8–14 h; the pane is a
+canvas (Escape or a click stops them); with an effect selected the pane's button reads Play From
+and starts at that effect. The pane has an advanced timeline with draggable bars
+(`crates/ui-egui/src/animtimeline.rs`). Still open: most of the effect gallery. Detail in
+[animation-parity.md](animation-parity.md). 7–13 h; the pane is a
 **beta blocker**.
 
 ### Interactive decks: media-action links, audio-triggered effects and click boxes
@@ -215,7 +217,7 @@ of the effect gallery. Detail in [animation-parity.md](animation-parity.md). 8�
   shapes in two decks) does nothing; triggers that start on `onStopAudio` or `begin` conditions are
   not read as triggers; click boxes are the shape's bounding box (a hexagon's corners count) and do
   not follow a shape that a motion path has moved. Trigger sequences now keep their separate
-  click steps on PPTX save, including paragraph builds (`crates/pptx/tests/trigger_steps.rs`).
+  click steps on PPTX save, including paragraph builds (`crates/pptx/tests/it/trigger_steps.rs`).
 - **Impact:** games built around sound effects on buttons, audio-triggered effects or moving
   clickable shapes do not play as authored.
 - **Estimate:** 4–8 h.
@@ -356,6 +358,8 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
+| 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |

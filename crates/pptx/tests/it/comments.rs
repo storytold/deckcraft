@@ -206,3 +206,46 @@ fn modern_only_package_imports() {
     assert!(b[0].resolved);
     assert_eq!((b[0].x, b[0].y), (90.0, 45.0), "modern positions are EMU");
 }
+
+/// Every prefix an exported part uses is bound: PowerPoint refuses a package whose part is not
+/// namespace-well-formed (issue #974, the modern comments part used `a:` without declaring it).
+#[test]
+fn every_written_xml_part_binds_its_prefixes() {
+    use quick_xml::events::Event;
+    use quick_xml::name::ResolveResult;
+
+    let bytes = deckcraft_pptx::export(&deck()).expect("export");
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).expect("zip");
+    let mut modern = 0;
+    for i in 0..z.len() {
+        let mut f = z.by_index(i).expect("entry");
+        let name = f.name().to_string();
+        if !(name.ends_with(".xml") || name.ends_with(".rels")) {
+            continue;
+        }
+        let mut data = vec![];
+        f.read_to_end(&mut data).expect("read");
+        modern += usize::from(name.contains("modernComment"));
+        let mut r = quick_xml::NsReader::from_reader(data.as_slice());
+        loop {
+            match r.read_resolved_event() {
+                Ok((ns, Event::Start(e) | Event::Empty(e))) => {
+                    assert!(!matches!(ns, ResolveResult::Unknown(_)), "{name}: unbound prefix on <{}>", String::from_utf8_lossy(e.name().as_ref()));
+                    for attr in e.attributes() {
+                        let attr = attr.unwrap_or_else(|err| panic!("{name}: bad attribute: {err}"));
+                        let (ns, _) = r.resolver().resolve_attribute(attr.key);
+                        assert!(
+                            !matches!(ns, ResolveResult::Unknown(_)),
+                            "{name}: unbound prefix on attribute {}",
+                            String::from_utf8_lossy(attr.key.as_ref())
+                        );
+                    }
+                }
+                Ok((_, Event::Eof)) => break,
+                Ok(_) => {}
+                Err(e) => panic!("{name}: not well-formed: {e}"),
+            }
+        }
+    }
+    assert!(modern > 0, "the deck should write a modern comments part");
+}

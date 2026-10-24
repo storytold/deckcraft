@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** major (community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (Animations shortfall: preview from the selected effect is in; previous: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -194,7 +194,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Pictures | 7 | 60% | ~45% | 12–20 | SVG, EMF+ records, clipboard paste on Windows/Linux (#53), remove background, artistic-effect and correction depth | [file-format-parity.md](file-format-parity.md) |
 | Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
-| Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, Animation Pane timeline, preview from the selected effect, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
+| Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects, rewind lost on save (#77) | [animation-parity.md](animation-parity.md) |
 | Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
@@ -289,6 +289,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-16 | trivial | Arrange shortfall: Align to Slide and Align Selected Objects are in the Align menu. Percentages unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one headline breadth row (84% over 191 features after `cargo xtask parity`; duplicate checklist rows removed), one row per feature area with the latest breadth and shortfalls, one Themes / Slide show / Views / Review / Automation bullet each (320 engine commands). SmartArt ready ~35% (Text Pane, 6e40335) moves the area mean to 62.8%; dimension and headline percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed to adjust handles: the Transform gallery applies a preset |

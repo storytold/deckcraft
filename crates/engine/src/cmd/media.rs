@@ -229,6 +229,21 @@ mod tests {
     }
 
     #[test]
+    fn a_video_reopened_from_pptx_keeps_its_length_and_size() {
+        let mut s = Session::with_new();
+        let clip = include_bytes!("../../../media/tests/fixtures/clip-h264.mp4");
+        s.execute("insert.video", &json!({"name": "clip.mp4", "data": base64_encode(clip)})).expect("insert");
+        let before = s.execute("media.info", &json!({})).expect("info");
+        assert!(before["durationMs"].as_u64().is_some_and(|ms| ms > 0));
+        let saved = s.execute("file.saveBytes", &json!({"format": "pptx"})).expect("save");
+        s.execute("file.openBytes", &json!({"name": "deck.pptx", "data": saved["data"]})).expect("open");
+        let after = s.execute("media.info", &json!({})).expect("info");
+        for key in ["durationMs", "width", "height"] {
+            assert_eq!(after[key], before[key], "{key}");
+        }
+    }
+
+    #[test]
     fn media_commands_need_media() {
         let mut s = Session::with_new();
         let _ = s.execute("slide.new", &json!({"layout": "blank"}));

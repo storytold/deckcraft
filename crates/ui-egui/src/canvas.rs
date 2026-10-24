@@ -95,11 +95,62 @@ pub(crate) fn page_flick(wheel: egui::Vec2) -> Option<bool> {
     (along.abs() > MIN_FLICK).then_some(along < 0.0)
 }
 
+/// Discrete wheel input must not share the trackpad's gesture cooldown. Keep all the steps,
+/// including several notches delivered in one frame, and clamp at each end of the deck.
+///
+/// High-resolution and free-spin wheels send fractions of a line (0.125 per event on Windows), so
+/// the delta is accumulated in `carry` and each whole line is one slide; a change of direction
+/// drops what was left over. Returns the target, `None` when no wheel event was read.
+fn wheel_slide_target(events: &[egui::Event], current: usize, slides: usize, carry: &mut f32) -> Option<usize> {
+    let last = slides.checked_sub(1)?;
+    let mut target = current.min(last);
+    let mut handled = false;
+    for event in events {
+        if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
+            && matches!(unit, egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page)
+            && !modifiers.ctrl
+            && !modifiers.command
+            && !modifiers.shift
+            && delta.y.is_finite()
+            && delta.y.abs() > 0.0
+            && delta.y.abs() >= delta.x.abs()
+        {
+            if *carry * delta.y < 0.0 {
+                *carry = 0.0;
+            }
+            *carry += delta.y;
+            // The small slack keeps sums such as 10 × 0.1 from falling just short of a line.
+            let whole = (carry.abs() + 1e-4).floor();
+            *carry -= whole.copysign(*carry);
+            let steps = whole.min(slides as f32) as usize;
+            target = if delta.y < 0.0 { target.saturating_add(steps).min(last) } else { target.saturating_sub(steps) };
+            handled = true;
+        }
+    }
+    handled.then_some(target)
+}
+
+fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
+    events.iter().fold(egui::Vec2::ZERO, |sum, event| match event {
+        egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, modifiers, .. } if !modifiers.ctrl && !modifiers.command => sum + *delta,
+        _ => sum,
+    })
+}
+
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     app.canvas_rect = Some(avail);
     let Some(st) = app.session.active() else { return };
+    // The leftover fraction of a wheel line belongs to one presentation. Drop it whenever another
+    // one is drawn here, hovered or not, so switching away and back starts from zero.
+    let carry_id = ui.id().with("wheel_carry");
+    let doc_uid = st.uid;
+    ui.data_mut(|d| {
+        if d.get_temp::<(u64, f32)>(carry_id).is_none_or(|(uid, _)| uid != doc_uid) {
+            d.insert_temp(carry_id, (doc_uid, 0.0_f32));
+        }
+    });
     if st.doc.slides.is_empty() && st.selection.target == Target::Slides {
         let resp = ui.allocate_rect(avail, Sense::click());
         ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
@@ -131,23 +182,72 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         offset = content_rect.min + at * scale - anchor;
     }
     let overflow = vec2((content_rect.width() + 56.0 - avail.width()).max(0.0), (content_rect.height() + 56.0 - avail.height()).max(0.0));
-    if resp.hovered() && !zooming {
+    // Scroll bars on the axes that overflow (#1157). They sit over the canvas edge and take their
+    // presses before the slide does; the rulers keep their strips.
+    let inset = if app.ui.ruler { 16.0 } else { 0.0 };
+    let mut on_bar = false;
+    let mut bar_active = [false; 2];
+    for axis in 0..2 {
+        let Some((track, thumb, travel)) = scroll_bar(avail, inset, overflow, offset, axis) else { continue };
+        let bar_id = scroll_id.with(("bar", axis));
+        let bar = ui.interact(track, bar_id, Sense::click_and_drag());
+        on_bar |= bar.hovered();
+        bar_active[axis] = bar.hovered() || bar.dragged();
+        // Where the button went down and the offset then: egui calls a press a click until it
+        // moves 6 pt, so the release point can't tell the thumb from the track, and drag_delta
+        // misses those first points.
+        let grab_id = bar_id.with("grab");
+        if bar.is_pointer_button_down_on()
+            && let Some(origin) = ui.input(|i| i.pointer.primary_pressed().then(|| i.pointer.press_origin()).flatten())
+        {
+            ui.data_mut(|d| d.insert_temp(grab_id, (origin, offset[axis])));
+        }
+        let grab: Option<(Pos2, f32)> = ui.data_mut(|d| d.get_temp(grab_id));
+        if let Some((origin, start)) = grab {
+            if bar.dragged_by(egui::PointerButton::Primary)
+                && travel > 0.0
+                && let Some(p) = bar.interact_pointer_pos()
+            {
+                if last.is_some_and(|(_, s)| (scale - s).abs() > 1e-6) {
+                    // A zoom during the drag moved the slide about its anchor: carry on from there.
+                    ui.data_mut(|d| d.insert_temp(grab_id, (p, offset[axis])));
+                } else {
+                    offset[axis] = start + (p[axis] - origin[axis]) * overflow[axis] / travel;
+                }
+            } else if bar.clicked() && !thumb.contains(origin) {
+                // A click on the track beside the thumb moves one window's length toward it.
+                let page = avail.size()[axis] * 0.9;
+                offset[axis] += if origin[axis] < thumb.min[axis] { -page } else { page };
+            }
+            if bar.drag_stopped() || bar.clicked() {
+                ui.data_mut(|d| d.remove_temp::<(Pos2, f32)>(grab_id));
+            }
+        }
+    }
+    if (resp.hovered() || on_bar) && !zooming {
         if overflow != egui::Vec2::ZERO {
             offset -= wheel;
-        } else if !app.anim_preview_active()
-            && app.session.tool.marquee.is_none()
-            && !app.session.tool.dragging()
-            && let Some(next) = page_flick(wheel)
-        {
-            // A fitted slide: the mouse wheel and a trackpad swipe turn the page. Pinch zoom is
-            // the branch above and is left alone.
-            let gate = ui.id().with("wheel_gate");
-            // No previous flick yet: the first one must turn the page, not wait out the gap.
-            let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(f64::NEG_INFINITY));
-            let now = ui.input(|i| i.time);
-            if now - last > 0.35 {
-                ui.data_mut(|d| d.insert_temp(gate, now));
-                let _ = app.run(if next { "slide.next" } else { "slide.previous" }, json!({}));
+        } else if !app.anim_preview_active() && app.session.tool.marquee.is_none() && !app.session.tool.dragging() {
+            let (_, mut carry): (u64, f32) = ui.data_mut(|d| d.get_temp(carry_id).unwrap_or_default());
+            let wheel_step = app.session.active().and_then(|d| {
+                let current = d.selection.slide;
+                ui.input(|i| wheel_slide_target(&i.events, current, d.doc.slides.len(), &mut carry)).map(|target| (current, target))
+            });
+            ui.data_mut(|d| d.insert_temp(carry_id, (doc_uid, carry)));
+            if let Some((current, index)) = wheel_step {
+                if index != current {
+                    let _ = app.run("slide.go", json!({"index": index}));
+                }
+            } else if let Some(next) = page_flick(ui.input(|i| trackpad_scroll(&i.events))) {
+                // Point-based trackpad gestures keep their cooldown. Raw input avoids reading
+                // the smoothed tail of a discrete mouse notch as another page turn.
+                let gate = ui.id().with("wheel_gate");
+                let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(f64::NEG_INFINITY));
+                let now = ui.input(|i| i.time);
+                if now - last > 0.35 {
+                    ui.data_mut(|d| d.insert_temp(gate, now));
+                    let _ = app.run(if next { "slide.next" } else { "slide.previous" }, json!({}));
+                }
             }
         }
     }
@@ -272,6 +372,42 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         context_menu(app, &resp);
     }
+    for (axis, active) in bar_active.into_iter().enumerate() {
+        if let Some((track, thumb, _)) = scroll_bar(avail, inset, overflow, offset, axis) {
+            painter.rect_filled(track, CornerRadius::ZERO, t.chrome);
+            let fill = if active { t.text_dim } else { t.text_faint };
+            painter.rect_filled(thumb.shrink(2.0), CornerRadius::same(3), fill);
+        }
+    }
+}
+
+/// Thickness of the canvas scroll bars, in points.
+const SCROLL_BAR: f32 = 10.0;
+
+/// The canvas scroll bar along `axis` (0 across, 1 down): its track, its thumb for `offset`, and
+/// how far the thumb can travel. `None` when the slide fits that way. `inset` keeps the rulers'
+/// strips clear.
+fn scroll_bar(avail: Rect, inset: f32, overflow: egui::Vec2, offset: egui::Vec2, axis: usize) -> Option<(Rect, Rect, f32)> {
+    let over = overflow[axis];
+    if !over.is_finite() || over <= 0.0 {
+        return None;
+    }
+    // Both bars showing leave the corner between them empty.
+    let corner = if overflow[1 - axis] > 0.0 { SCROLL_BAR } else { 0.0 };
+    let track = if axis == 0 {
+        Rect::from_min_max(pos2(avail.min.x + inset, avail.max.y - SCROLL_BAR), pos2(avail.max.x - corner, avail.max.y))
+    } else {
+        Rect::from_min_max(pos2(avail.max.x - SCROLL_BAR, avail.min.y + inset), pos2(avail.max.x, avail.max.y - corner))
+    };
+    let len = track.size()[axis].max(0.0);
+    let view = avail.size()[axis];
+    let thumb_len = (len * view / (view + over)).max(SCROLL_BAR * 2.0).min(len);
+    let travel = (len - thumb_len).max(0.0);
+    let at = travel * (offset[axis] / over).clamp(0.0, 1.0);
+    let mut thumb = track;
+    thumb.min[axis] = track.min[axis] + at;
+    thumb.max[axis] = thumb.min[axis] + thumb_len;
+    Some((track, thumb, travel))
 }
 
 /// The canvas `avail` in texture pixels (`pixel`: one pixel's size in points) from the slide's
@@ -371,7 +507,7 @@ fn media_frames(app: &SlideApp, painter: &egui::Painter, xf: Xf) {
     }
     for (id, x, clip) in crate::media::slide_media(&d.doc, d.selection.slide) {
         if clip.video {
-            crate::media::paint_frame(painter, &app.media, id, screen_rect(xf, &x));
+            crate::media::paint_frame(painter, &app.media, id, screen_rect(xf, &x), clip.crop);
         }
     }
 }
@@ -1440,6 +1576,130 @@ mod tests {
         h.state_mut().run("view.zoomOut", serde_json::json!({})).unwrap();
         h.run_steps(2);
         assert_near(mid, slide_point(&h, c), "zoom out");
+    }
+
+    /// Drags with the primary button from `a` to `b`; `during` runs after every move.
+    fn drag_with(h: &mut Harness<'_, SlideApp>, a: Pos2, b: Pos2, mut during: impl FnMut(&SlideApp)) {
+        h.hover_at(a);
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        for i in 1..=8 {
+            h.event(Event::PointerMoved(a + (b - a) * (i as f32 / 8.0)));
+            h.run_steps(1);
+            during(h.state());
+        }
+        h.event(Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+
+    /// #1157: a slide zoomed past the window has a scroll bar on each axis that overflows, and
+    /// dragging its thumb pans the slide, not a marquee on the canvas.
+    #[test]
+    fn scroll_bars_pan_a_zoomed_slide() {
+        let mut h = harness();
+        let fit = h.state().canvas_scale;
+        h.state_mut().ui.zoom = Some(fit * 3.0);
+        h.run_steps(3);
+        let canvas = h.state().canvas_rect.unwrap();
+        let before = h.state().slide_rect.unwrap();
+        let no_marquee =
+            |app: &SlideApp| assert!(app.session.tool.marquee.is_none() && !app.session.tool.dragging(), "the bar drag reached the slide");
+
+        // Zoomed about the middle, so each thumb sits in the middle of its track.
+        let bottom = pos2(canvas.center().x, canvas.max.y - 4.0);
+        drag_with(&mut h, bottom, bottom + vec2(150.0, 0.0), no_marquee);
+        let after = h.state().slide_rect.unwrap();
+        assert!(before.min.x - after.min.x > 150.0, "the horizontal thumb pans right: {before:?} -> {after:?}");
+        assert!((before.min.y - after.min.y).abs() < 1.0, "only across: {before:?} -> {after:?}");
+
+        let right = pos2(canvas.max.x - 4.0, canvas.center().y);
+        drag_with(&mut h, right, right + vec2(0.0, 100.0), no_marquee);
+        let down = h.state().slide_rect.unwrap();
+        assert!(after.min.y - down.min.y > 100.0, "the vertical thumb pans down: {after:?} -> {down:?}");
+        assert!((after.min.x - down.min.x).abs() < 1.0, "only down: {after:?} -> {down:?}");
+
+        // A click on the track beside the thumb pages back toward it.
+        let left = pos2(canvas.min.x + 20.0, canvas.max.y - 4.0);
+        h.hover_at(left);
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: left, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.event(Event::PointerButton { pos: left, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+        let paged = h.state().slide_rect.unwrap();
+        assert!(paged.min.x - down.min.x > 100.0, "a track click pages left: {down:?} -> {paged:?}");
+        assert!(h.state().session.tool.marquee.is_none());
+
+        // The ends of the tracks reach the slide's far edges.
+        drag_with(&mut h, right, right + vec2(0.0, 2000.0), |_| {});
+        let end = h.state().slide_rect.unwrap();
+        assert!((end.max.y - (canvas.max.y - 28.0)).abs() < 2.0, "the bottom of the slide comes into view: {end:?} in {canvas:?}");
+    }
+
+    /// A press on the thumb that ends just past its end is a nudge, not a page: the track click
+    /// is decided where the button went down, not where it came up.
+    #[test]
+    fn a_short_press_on_the_thumb_does_not_page() {
+        let mut h = harness();
+        let fit = h.state().canvas_scale;
+        h.state_mut().ui.zoom = Some(fit * 3.0);
+        h.run_steps(3);
+        let (canvas, before) = (h.state().canvas_rect.unwrap(), h.state().slide_rect.unwrap());
+        let overflow = vec2((before.width() + 56.0 - canvas.width()).max(0.0), (before.height() + 56.0 - canvas.height()).max(0.0));
+        let offset = canvas.min + vec2(28.0, 28.0) - before.min;
+        let (_, thumb, _) = scroll_bar(canvas, 0.0, overflow, offset, 0).unwrap();
+        let (a, b) = (pos2(thumb.max.x - 3.0, canvas.max.y - 4.0), pos2(thumb.max.x + 3.0, canvas.max.y - 4.0));
+        h.hover_at(a);
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        h.event(Event::PointerMoved(b));
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+        let after = h.state().slide_rect.unwrap();
+        let moved = before.min.x - after.min.x;
+        assert!((0.0..40.0).contains(&moved), "a 6 pt nudge of the thumb, not a page: {before:?} -> {after:?}");
+    }
+
+    /// Only the primary button drags a thumb: a right or middle drag after a left one leaves the
+    /// slide where it is.
+    #[test]
+    fn only_the_primary_button_drags_a_thumb() {
+        let mut h = harness();
+        let fit = h.state().canvas_scale;
+        h.state_mut().ui.zoom = Some(fit * 3.0);
+        h.run_steps(3);
+        let canvas = h.state().canvas_rect.unwrap();
+        let bottom = pos2(canvas.center().x, canvas.max.y - 4.0);
+        drag_with(&mut h, bottom, bottom + vec2(40.0, 0.0), |_| {});
+        let before = h.state().slide_rect.unwrap();
+        for button in [egui::PointerButton::Secondary, egui::PointerButton::Middle] {
+            let a = pos2(canvas.center().x + 40.0, canvas.max.y - 4.0);
+            h.hover_at(a);
+            h.run_steps(1);
+            h.event(Event::PointerButton { pos: a, button, pressed: true, modifiers: Modifiers::NONE });
+            h.run_steps(1);
+            for i in 1..=4 {
+                h.event(Event::PointerMoved(a + vec2(30.0 * i as f32, 0.0)));
+                h.run_steps(1);
+            }
+            h.event(Event::PointerButton { pos: a + vec2(120.0, 0.0), button, pressed: false, modifiers: Modifiers::NONE });
+            h.run_steps(2);
+            let after = h.state().slide_rect.unwrap();
+            assert!((before.min - after.min).length() < 1.0, "{button:?} drag moved the slide: {before:?} -> {after:?}");
+        }
+    }
+
+    /// A slide that fits has no scroll bars: a drag along the canvas edge is a marquee.
+    #[test]
+    fn a_fitted_slide_has_no_scroll_bars() {
+        let mut h = harness();
+        let canvas = h.state().canvas_rect.unwrap();
+        let a = pos2(canvas.center().x, canvas.max.y - 4.0);
+        let mut marquee = false;
+        drag_with(&mut h, a, a + vec2(150.0, 0.0), |app| marquee |= app.session.tool.marquee.is_some());
+        assert!(marquee, "the drag selects on the canvas");
     }
 
     fn app_with_table() -> (egui_kittest::Harness<'static, SlideApp>, deckcraft_model::ShapeId) {

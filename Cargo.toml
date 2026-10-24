@@ -4,7 +4,7 @@ members = ["crates/*", "apps/*", "xtask"]
 default-members = ["crates/*", "apps/deckcraft", "apps/deckcraft-cli"]
 
 [workspace.package]
-version = "0.8.0"
+version = "0.10.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.95"
@@ -49,7 +49,9 @@ rayon = "1"
 unicode-bidi = "0.3"
 unicode-segmentation = "1"
 unicode-linebreak = "0.1"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Base features are wasm-safe (`std` only). The non-wasm `clock` feature is requested
+# per-crate for targets that read the local clock (see crates/text).
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 # text / rendering / formats
 skrifa = "0.47"
@@ -57,7 +59,8 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
-craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8", version = "=0.1.0", default-features = false, features = ["write"] }
+craft-media = { git = "https://github.com/storytold/craft-libs", rev = "f0ad6c1e1d297908915f4be315b0fcfc9be7b5d4", version = "=0.1.0", default-features = false }
+craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "9f75d3dc19b4b514c4f3d4847ed1ec1b0e86b4ef", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
@@ -82,11 +85,16 @@ self_named_constructors = "allow"
 large_enum_variant = "allow"
 result_large_err = "allow"
 
+# Line tables keep file and line in panics and backtraces; full debug info
+# for every test binary and dependency would multiply the target dir size.
+# The test profile inherits both settings.
 [profile.dev.package."*"]
 opt-level = 2
+debug = false
 
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 [profile.release]
 opt-level = 3
@@ -95,4 +103,4 @@ codegen-units = 16
 debug = 0
 
 [patch.crates-io]
-krilla = { git = "https://github.com/storytold/craft-libs", rev = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8", version = "=0.8.2" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "9f75d3dc19b4b514c4f3d4847ed1ec1b0e86b4ef", version = "=0.8.2" }

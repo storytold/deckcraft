@@ -222,6 +222,9 @@ pub struct DocState {
     pub composition: Option<Composition>,
     /// Review › Compare in progress: the revised copy.
     pub compare: Option<compare::Compare>,
+    /// The last Duplicate: where it happened and each original with its copy, so duplicating the
+    /// copies again repeats how far they were moved, as in PowerPoint (#966).
+    pub last_duplicate: Option<(usize, Target, Vec<(ShapeId, ShapeId)>)>,
 }
 
 static NEXT_UID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -249,6 +252,7 @@ impl DocState {
             missing_fonts: Vec::new(),
             composition: None,
             compare: None,
+            last_duplicate: None,
         }
     }
     pub fn is_dirty(&self) -> bool {

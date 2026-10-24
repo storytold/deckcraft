@@ -437,7 +437,7 @@ fn next_rid(rels: &str) -> String {
     let mut max = 0u32;
     let mut rest = rels;
     while let Some(i) = rest.find("rId") {
-        let digits: String = rest[i + 3..].chars().take_while(|c| c.is_ascii_digit()).collect();
+        let digits: String = rest[i + 3..].chars().take_while(char::is_ascii_digit).collect();
         if let Ok(n) = digits.parse::<u32>() {
             max = max.max(n);
         }

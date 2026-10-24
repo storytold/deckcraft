@@ -696,6 +696,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         let stacked = kind.stacked();
         let area_kind = matches!(kind, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
+        let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
@@ -719,7 +720,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 }
                 _ => plot.x0 + band * (slot(i) + 0.5),
             };
-            if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| e.range(&s.values, i, v)) {
+            if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| series_stats.as_ref().and_then(|st| e.range_in(st, i, v))) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
             pts.push(Point::new(x, to_axis(sec, v)));

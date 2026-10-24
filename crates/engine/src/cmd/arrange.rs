@@ -208,7 +208,7 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A child's xfrm in slide space, given its group.
-pub(crate) fn child_to_parent(group: &Xfrm, ch: &Xfrm, c: &Xfrm) -> Xfrm {
+pub fn child_to_parent(group: &Xfrm, ch: &Xfrm, c: &Xfrm) -> Xfrm {
     let sx = if ch.w.abs() > 1e-9 { group.w / ch.w } else { 1.0 };
     let sy = if ch.h.abs() > 1e-9 { group.h / ch.h } else { 1.0 };
     let a = deckcraft_geom::group_child_affine(group, Rect::new(ch.x, ch.y, ch.x + ch.w, ch.y + ch.h));

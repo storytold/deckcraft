@@ -266,7 +266,7 @@ pub fn row_heights(rctx: &Ctx, t: &Table, fields: &dyn Fields) -> Vec<f64> {
             let c1 = ci.saturating_add(cell.grid_span.max(1) as usize).min(t.cols.len());
             let (Some(x0), Some(x1)) = (xs.get(ci), xs.get(c1)) else { continue };
             let body = cell_body(rctx, t, ri, ci, cell);
-            let tmp = Shape { text: Some(body.clone()), ..Default::default() };
+            let tmp = Shape::table_cell(body.clone());
             let need = deckcraft_text::fit_height(rctx, &tmp, &body, Rect::new(*x0, 0.0, *x1, h.max(1.0)), fields);
             if need.is_finite() {
                 h = h.max(need.min(20_000.0));
@@ -423,7 +423,7 @@ pub fn draw(
             continue;
         }
         let body = cell_body(rctx, t, *r, *c, cell);
-        let tmp = Shape { text: Some(body.clone()), ..Default::default() };
+        let tmp = Shape::table_cell(body.clone());
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));
         let mut l = deckcraft_text::layout(rctx, &tmp, &body, &deckcraft_text::Opts { rect: *rect, fields, prompt_color: None, no_shrink: false });

@@ -359,6 +359,19 @@ impl Timeline {
         (self.main.len(), 0.0)
     }
 
+    /// Where effect `anim` (index into `slide.animations`) starts on the play-everything clock:
+    /// Animation Pane ▸ Play From. `None` for a triggered effect or one that isn't on the slide.
+    pub fn start_of(&self, anim: usize) -> Option<f64> {
+        let e = self
+            .effects
+            .iter()
+            .map(|e| &e.timing)
+            .filter(|e| e.anim == anim && e.sequence == Sequence::Main)
+            .min_by(|a, b| a.step.cmp(&b.step).then(a.start.total_cmp(&b.start)))?;
+        let before: f64 = self.main.iter().take(e.step).map(|s| s.duration).sum();
+        Some(before + e.start)
+    }
+
     /// Shapes that start an interactive sequence when clicked.
     pub fn trigger_shapes(&self) -> Vec<ShapeId> {
         self.triggers.iter().map(|(s, _)| *s).collect()

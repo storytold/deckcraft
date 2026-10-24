@@ -1,6 +1,9 @@
 //! Inverse transforms (spec 7.13), implemented step by step as specified.
 
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ADST_ADST, ADST_DCT, ADST_FLIPADST, COS128_LOOKUP, DCT_ADST, DCT_DCT, DCT_FLIPADST, FLIPADST_ADST, FLIPADST_DCT, FLIPADST_FLIPADST, H_ADST,
+    H_DCT, H_FLIPADST, TRANSFORM_ROW_SHIFT, TX_HEIGHT_LOG2, TX_WIDTH_LOG2, V_ADST, V_DCT, V_FLIPADST,
+};
 
 #[inline(always)]
 fn round2_64(x: i64, n: u32) -> i32 {

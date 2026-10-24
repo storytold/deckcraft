@@ -525,4 +525,46 @@ mod tests {
         s.execute("animation.painterApply", &json!({"ids": [id3]})).unwrap();
         assert!(s.anim_painter.is_some());
     }
+
+    fn setup_triggers() -> (Session, [u64; 4]) {
+        let mut s = Session::with_new();
+        let mut ids = [0u64; 4];
+        for (slot, x) in ids.iter_mut().zip([10.0, 150.0, 300.0, 450.0]) {
+            let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 10.0, 100.0, 100.0]})).unwrap();
+            *slot = r.get("id").unwrap().as_u64().unwrap();
+        }
+        (s, ids)
+    }
+
+    fn triggers(s: &Session) -> Vec<Option<deckcraft_model::ShapeId>> {
+        s.doc().unwrap().current_slide().unwrap().animations.iter().map(|x| x.trigger).collect()
+    }
+
+    #[test]
+    fn deleting_a_trigger_shape_clears_the_trigger() {
+        let (mut s, [a, b, c, d]) = setup_triggers();
+        let id = |v: u64| Some(deckcraft_model::ShapeId(v as u32));
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [a]})).unwrap();
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [d]})).unwrap();
+        s.execute("animation.timing", &json!({"index": 0, "trigger": b})).unwrap();
+        s.execute("animation.timing", &json!({"index": 1, "trigger": c})).unwrap();
+        assert_eq!(triggers(&s), vec![id(b), id(c)]);
+
+        s.execute("edit.delete", &json!({"ids": [b]})).unwrap();
+        assert_eq!(triggers(&s), vec![None, id(c)], "only the deleted trigger is cleared");
+        assert_eq!(s.doc().unwrap().current_slide().unwrap().animations.len(), 2, "the animated shapes keep their effects");
+    }
+
+    #[test]
+    fn deleting_a_group_clears_triggers_of_its_children() {
+        let (mut s, [a, b, c, _]) = setup_triggers();
+        let g = s.execute("arrange.group", &json!({"ids": [b, c]})).unwrap().get("id").unwrap().as_u64().unwrap();
+        s.execute("animation.add", &json!({"effect": "fade", "ids": [a]})).unwrap();
+        s.execute("animation.timing", &json!({"index": 0, "trigger": b})).unwrap();
+        assert_eq!(triggers(&s), vec![Some(deckcraft_model::ShapeId(b as u32))]);
+
+        s.execute("edit.delete", &json!({"ids": [g]})).unwrap();
+        assert_eq!(triggers(&s), vec![None], "the trigger was inside the deleted group");
+        assert_eq!(s.doc().unwrap().current_slide().unwrap().animations.len(), 1);
+    }
 }

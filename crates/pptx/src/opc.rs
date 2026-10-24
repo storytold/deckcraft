@@ -281,8 +281,8 @@ fn percent_decode(s: &str) -> String {
 
 /// Resolve a relative target against a base directory into a part name.
 pub fn resolve(base: &str, target: &str) -> String {
-    let target = percent_decode(target);
-    let target = target.split('#').next().unwrap_or("");
+    let target = percent_decode(target.split('#').next().unwrap_or(""));
+    let target = target.as_str();
     let mut segs: Vec<&str> = if target.starts_with('/') { vec![] } else { base.split('/').filter(|s| !s.is_empty()).collect() };
     for s in target.split('/') {
         match s {
@@ -387,7 +387,12 @@ impl PackageOut {
         if rels.items.is_empty() {
             return;
         }
-        self.files.push((rels_path(part), rels.to_xml(), true));
+        let path = rels_path(part);
+        if let Some(existing) = self.files.iter_mut().find(|(name, ..)| *name == path) {
+            existing.1 = rels.to_xml();
+        } else {
+            self.files.push((path, rels.to_xml(), true));
+        }
     }
     /// Add a part with no content type of its own (a relationships part).
     pub fn raw(&mut self, name: &str, data: Vec<u8>) {
@@ -440,6 +445,12 @@ impl PackageOut {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_keeps_encoded_hash_and_strips_fragment() {
+        assert_eq!(resolve("ppt/slides", "../media/a%23b.png"), "ppt/media/a#b.png");
+        assert_eq!(resolve("ppt/slides", "../media/a.png#frag"), "ppt/media/a.png");
+    }
 
     fn zip_of(entries: &[(&str, usize)]) -> Vec<u8> {
         let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
