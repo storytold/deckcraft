@@ -1346,47 +1346,155 @@ fn bullets(ui: &mut Ui, items: &[&str]) {
 /// there is nothing to sign in to.
 fn account(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(340.0);
-            heading(ui, "Appearance");
-            let dark = app.ui.brightness == theme::Brightness::Dark;
-            egui::ComboBox::from_id_salt("backstage_appearance").width(260.0).selected_text(if dark { "Dark" } else { "Light" }).show_ui(ui, |ui| {
-                for (on, label) in [(false, "Light"), (true, "Dark")] {
-                    if ui.selectable_label(dark == on, label).clicked() {
-                        let _ = app.run("view.dark", json!({"on": on}));
-                    }
-                }
+    let left = |app: &mut SlideApp, ui: &mut Ui| {
+        heading(ui, "Appearance");
+        appearance(app, ui, &t);
+        ui.add_space(16.0);
+        heading(ui, "User Information");
+        dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
+    };
+    // Side by side when Product Information has room next to the theme cards, else one column.
+    // The page's max width is CONTENT_W even in a narrower window: measure what is visible.
+    let room = ui.available_width().min(ui.clip_rect().right() - ui.max_rect().left());
+    if room >= THEMES_W + 40.0 + PRODUCT_MIN_W {
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(THEMES_W);
+                left(app, ui);
             });
-            ui.add_space(16.0);
-            heading(ui, "User Information");
-            dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
+            ui.add_space(40.0);
+            ui.vertical(|ui| product_information(app, ui, &t));
         });
-        ui.add_space(40.0);
+    } else {
         ui.vertical(|ui| {
-            heading(ui, "Product Information");
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                crate::dialogs::paint_logo(ui.painter(), r);
-                ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
-            });
-            dim(ui, &crate::dialogs::version_line());
-            dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
-            ui.add_space(14.0);
-            if task(
-                ui,
-                Icon::Help,
-                "About DeckCraft",
-                "About DeckCraft",
-                "The version, the people and models who built it, and where to find us.",
-                true,
-            ) {
-                let _ = app.run("app.about", json!({}));
-            }
-            ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+            left(app, ui);
+            ui.add_space(24.0);
+            product_information(app, ui, &t);
         });
+    }
+}
+
+/// Account's Product Information column: logo, version, About and links.
+fn product_information(app: &mut SlideApp, ui: &mut Ui, t: &Tokens) {
+    heading(ui, "Product Information");
+    ui.horizontal(|ui| {
+        let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
+        crate::dialogs::paint_logo(ui.painter(), r);
+        ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
     });
+    dim(ui, &crate::dialogs::version_line());
+    dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
+    ui.add_space(14.0);
+    if task(ui, Icon::Help, "About DeckCraft", "About DeckCraft", "The version, the people and models who built it, and where to find us.", true) {
+        let _ = app.run("app.about", json!({}));
+    }
+    ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
+    ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+}
+
+/// Width of Account's left column: three theme cards side by side.
+const THEMES_W: f32 = 3.0 * THEME_CARD.x + 2.0 * 12.0;
+const THEME_CARD: egui::Vec2 = vec2(170.0, 102.0);
+/// The narrowest Product Information column shown beside the theme cards.
+const PRODUCT_MIN_W: f32 = 280.0;
+
+/// Light or dark, and the interface theme (PowerPoint's Office Theme): a preview of every theme in
+/// the current mode, and the Custom theme's colours.
+fn appearance(app: &mut SlideApp, ui: &mut Ui, t: &Tokens) {
+    dim(ui, "Colours DeckCraft's own windows, ribbon and panes. Your slides keep their own colours.");
+    ui.add_space(8.0);
+    ui.horizontal(|ui| {
+        for (b, label) in [(theme::Brightness::Light, "Light"), (theme::Brightness::Dark, "Dark")] {
+            if ui.add(egui::Button::selectable(app.ui.brightness == b, label).min_size(vec2(84.0, 26.0))).clicked() {
+                let _ = app.run("view.dark", json!({"on": b == theme::Brightness::Dark}));
+            }
+        }
+    });
+    ui.add_space(10.0);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+        for th in theme::UiTheme::ALL {
+            let (r, resp) = ui.allocate_exact_size(THEME_CARD + vec2(0.0, 24.0), Sense::click());
+            let card = Rect::from_min_size(r.min, THEME_CARD);
+            paint_theme_preview(ui.painter(), card, &Tokens::build(th, app.ui.brightness, &app.ui.custom_theme));
+            let selected = app.ui.ui_theme == th;
+            if selected || resp.hovered() || resp.has_focus() {
+                ui.painter().rect_stroke(card, CornerRadius::same(6), Stroke::new(if selected { 2.5 } else { 1.5 }, t.accent), StrokeKind::Outside);
+            }
+            let font = if selected { theme::bold(13.0) } else { theme::font(13.0) };
+            ui.painter().text(pos2(r.min.x + 2.0, r.max.y - 10.0), Align2::LEFT_CENTER, th.label(), font, t.text);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, th.label()));
+            if resp.on_hover_text(th.description()).clicked() {
+                let _ = app.run("view.uiTheme", json!({"theme": th.id()}));
+            }
+        }
+    });
+    dim(ui, app.ui.ui_theme.description());
+    if app.ui.ui_theme == theme::UiTheme::Custom {
+        ui.add_space(12.0);
+        let mut c = app.ui.custom_theme;
+        let mut changed = false;
+        egui::Grid::new("custom_theme").num_columns(2).spacing(vec2(16.0, 8.0)).show(ui, |ui| {
+            // Each control is labelled by the text beside it, for screen readers.
+            let label = ui.label("Window tint");
+            changed |= ui.color_edit_button_srgb(&mut c.tint).labelled_by(label.id).changed();
+            ui.end_row();
+            let label = ui.label("Accent");
+            changed |= ui.color_edit_button_srgb(&mut c.accent).labelled_by(label.id).changed();
+            ui.end_row();
+            let label = ui.label("Tint strength");
+            changed |= ui.add(egui::Slider::new(&mut c.strength, 0.0..=1.0).show_value(false)).labelled_by(label.id).changed();
+            ui.end_row();
+        });
+        if changed {
+            let _ = app.run("view.uiTheme", json!({"tint": theme::hex(c.tint), "accent": theme::hex(c.accent), "strength": c.strength}));
+        }
+        let ratio = [t.chrome, t.card, t.canvas].iter().map(|b| theme::contrast(t.text, *b)).fold(f32::INFINITY, f32::min);
+        let verdict = if ratio >= 7.0 { "very easy to read (WCAG AAA)" } else { "easy to read (WCAG AA)" };
+        dim(ui, &format!("Text contrast {ratio:.1}:1, {verdict}. Text colours adjust automatically to stay readable."));
+    }
+}
+
+/// A miniature DeckCraft window in the theme `tk`: title bar, ribbon, thumbnails and a slide.
+pub fn paint_theme_preview(p: &egui::Painter, r: Rect, tk: &Tokens) {
+    p.rect(r, CornerRadius::same(6), tk.canvas, Stroke::new(1.0, tk.card_border), StrokeKind::Inside);
+    let inner = r.shrink(1.0);
+    // Title bar with the Present button.
+    let title = Rect::from_min_size(inner.min, vec2(inner.width(), 16.0));
+    p.rect_filled(title, CornerRadius { nw: 5, ne: 5, sw: 0, se: 0 }, tk.chrome);
+    p.rect_filled(Rect::from_min_size(pos2(title.max.x - 30.0, title.min.y + 4.0), vec2(24.0, 8.0)), CornerRadius::same(4), tk.accent);
+    p.text(pos2(title.min.x + 6.0, title.center().y), Align2::LEFT_CENTER, "Aa", theme::bold(10.0), tk.text);
+    // Ribbon card with a selected tab underline and a few buttons.
+    let ribbon = Rect::from_min_size(pos2(inner.min.x + 4.0, title.max.y + 2.0), vec2(inner.width() - 8.0, 20.0));
+    p.rect(ribbon, CornerRadius::same(3), tk.card, Stroke::new(if tk.high_contrast { 1.0 } else { 0.0 }, tk.card_border), StrokeKind::Inside);
+    for i in 0..5 {
+        let b = Rect::from_min_size(pos2(ribbon.min.x + 6.0 + i as f32 * 14.0, ribbon.min.y + 6.0), vec2(9.0, 9.0));
+        p.rect_filled(b, CornerRadius::same(2), if i == 1 { tk.selected } else { tk.text_dim.gamma_multiply(0.85) });
+    }
+    p.line_segment([pos2(ribbon.min.x + 6.0, title.max.y), pos2(ribbon.min.x + 22.0, title.max.y)], Stroke::new(2.0, tk.accent));
+    // Thumbnails pane.
+    let side = Rect::from_min_max(pos2(inner.min.x, ribbon.max.y + 3.0), pos2(inner.min.x + 34.0, inner.max.y));
+    p.rect_filled(side, CornerRadius { nw: 0, ne: 0, sw: 5, se: 0 }, tk.chrome);
+    for i in 0..3 {
+        let th = Rect::from_min_size(pos2(side.min.x + 6.0, side.min.y + 4.0 + i as f32 * 17.0), vec2(22.0, 13.0));
+        let (w, c) = if i == 0 { (1.5, tk.accent) } else { (0.5, tk.border) };
+        p.rect(th, CornerRadius::same(1), Color32::WHITE, Stroke::new(w, c), StrokeKind::Outside);
+    }
+    // The slide on the canvas.
+    let area = Rect::from_min_max(pos2(side.max.x + 8.0, side.min.y + 6.0), pos2(inner.max.x - 8.0, inner.max.y - 8.0));
+    let h = (area.width() * 9.0 / 16.0).min(area.height());
+    let slide = Rect::from_center_size(area.center(), vec2(h * 16.0 / 9.0, h));
+    p.rect_filled(slide, CornerRadius::same(1), Color32::WHITE);
+    p.rect_filled(
+        Rect::from_min_size(slide.min + vec2(8.0, h * 0.3), vec2(slide.width() * 0.55, 4.0)),
+        CornerRadius::same(1),
+        Color32::from_gray(0x40),
+    );
+    p.rect_filled(
+        Rect::from_min_size(slide.min + vec2(8.0, h * 0.3 + 8.0), vec2(slide.width() * 0.4, 3.0)),
+        CornerRadius::same(1),
+        Color32::from_gray(0x9A),
+    );
 }
 
 #[cfg(test)]

@@ -174,6 +174,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-16 | Fitted canvas: discrete mouse-wheel steps navigate immediately, including rapid and batched input, while trackpad gestures retain their cooldown and zoomed slides still pan. |
 | 2026-10-16 | PPTX import: a paragraph build edited in PowerPoint (paragraphs with their own start, other shapes' effects in between, builds by 2nd-level paragraphs) takes PowerPoint's clicks in the show; it used to be rebuilt as one build, 34 clicks instead of 10 on the reporter's slide. Paragraph builds with sub-points save as PowerPoint writes them (#844) |
 | 2026-10-15 | CLI: .txt and .md export includes table cell text, which it used to skip silently (#814) |
+| 2026-10-13 | Interface themes on File › Account (Office Theme's place): High Contrast, Lagoon, Sunset and Custom in light and dark, with previews and contrast checks; a gear in the title bar opens it |
 | 2026-10-15 | A `.pptx` slide that can't be read is reported, not dropped in silence: `lostSlides` from `file.open`, a message and a repaired copy in the app, a warning from `deckcraft-cli` (#203) |
 | 2026-10-16 | AutoFormat as you type: ordinals (1st, 22nd, 103rd) get superscript suffixes after a space or punctuation; Tools ▸ AutoCorrect and `text.autocorrect {ordinals}` turn it off |
 | 2026-10-16 | A PowerPoint Show (`.ppsx`) opened from the command line or the file association starts its slide show, as in PowerPoint; File › Open still opens it for editing (#862) |

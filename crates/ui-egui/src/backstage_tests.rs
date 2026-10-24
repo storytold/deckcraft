@@ -562,6 +562,116 @@ fn print_slides_follow_the_settings() {
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
 }
 
+// ---------- Interface themes (File › Account) ----------
+
+/// The title bar's gear opens File › Account, where clicking a theme card switches the interface
+/// theme; Custom shows its colour pickers, and Esc goes back to the slide.
+#[test]
+fn the_gear_opens_account_and_theme_cards_apply() {
+    let mut h = harness(new_app());
+    h.get_by_label("Appearance and themes").click();
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::Account));
+
+    h.get_by_label("Lagoon").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.ui_theme, theme::UiTheme::Lagoon);
+    assert_eq!(Tokens::get(&h.ctx).accent, h.state().tokens().accent, "the theme is applied");
+
+    h.get_by_label("High Contrast").click();
+    h.run_steps(3);
+    assert!(Tokens::get(&h.ctx).high_contrast);
+    assert!(h.query_by_label("Window tint").is_none());
+
+    h.get_by_label("Custom").click();
+    h.run_steps(3);
+    assert!(h.query_by_label("Window tint").is_some(), "Custom shows its colours");
+
+    h.key_press(Key::Escape);
+    h.run_steps(3);
+    assert_eq!(page(&h), None);
+    assert_eq!(h.state().ui.ui_theme, theme::UiTheme::Custom, "leaving keeps the theme");
+}
+
+/// Account at the narrowest main window puts Product Information under the theme cards instead
+/// of squeezing it beside them; a wide window keeps the two columns. The Custom colour controls
+/// carry their labels.
+#[test]
+fn account_stacks_in_a_narrow_window_and_custom_controls_are_labelled() {
+    let columns = |width: f32| {
+        let mut h = Harness::builder().with_size(egui::vec2(width, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            new_app(),
+        );
+        h.run_steps(3);
+        h.state_mut().run("app.backstage", json!({"page": "account"})).unwrap();
+        h.run_steps(3);
+        let cards = h.get_by_label("Lagoon").rect();
+        let about = h.query_all_by_label("About DeckCraft").next().map(|n| n.rect()).unwrap();
+        (cards, about)
+    };
+    let (cards, about) = columns(900.0);
+    assert!(about.min.y > cards.max.y, "stacked: About sits below the theme cards ({cards:?} {about:?})");
+    let (cards, about) = columns(1400.0);
+    assert!(about.min.x > cards.max.x, "wide: About sits beside the theme cards");
+
+    let mut h = harness(new_app());
+    h.state_mut().run("view.uiTheme", json!({"theme": "custom"})).unwrap();
+    h.state_mut().run("app.backstage", json!({"page": "account"})).unwrap();
+    h.run_steps(3);
+    for name in ["Window tint", "Accent", "Tint strength"] {
+        let by = egui_kittest::kittest::by().predicate(move |n| n.labelled_by().any(|l| l.value().as_deref() == Some(name)));
+        assert_eq!(h.query_all(by).count(), 1, "{name}: one control labelled by the text");
+    }
+}
+
+#[test]
+fn ui_theme_command_sets_and_validates() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    let r = app.run("view.uiTheme", json!({"theme": "highContrast"})).unwrap();
+    assert_eq!(r["theme"], "highContrast");
+    assert!(app.tokens().high_contrast);
+
+    // A custom colour alone switches to Custom.
+    let r = app.run("view.uiTheme", json!({"tint": "#00ff80", "strength": 7.5})).unwrap();
+    assert_eq!(app.ui.ui_theme, theme::UiTheme::Custom);
+    assert_eq!(app.ui.custom_theme.tint, [0x00, 0xFF, 0x80]);
+    assert_eq!(r["strength"].as_f64(), Some(1.0), "strength is clamped");
+
+    // Hostile input is refused and changes nothing.
+    let before = (app.ui.ui_theme, app.ui.custom_theme);
+    for bad in [
+        json!({"theme": "neon"}),
+        json!({"theme": 3}),
+        json!({"accent": "#12345"}),
+        json!({"accent": "#zzzzzz"}),
+        json!({"accent": "#+1+2+3"}),
+        json!({"tint": 42}),
+        json!({"accent": "#ééé"}),
+        json!({"strength": "lots"}),
+    ] {
+        assert!(app.run("view.uiTheme", bad.clone()).is_err(), "{bad} should be refused");
+        assert_eq!((app.ui.ui_theme, app.ui.custom_theme), before, "{bad} changed the theme");
+    }
+}
+
+#[test]
+fn the_theme_is_saved_with_the_ui_state() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    app.run("view.uiTheme", json!({"theme": "lagoon"})).unwrap();
+    app.run("view.dark", json!({"on": true})).unwrap();
+    let saved = serde_json::to_value(&app.ui).unwrap();
+    assert_eq!(saved["uiTheme"], "lagoon");
+    let back: crate::UiState = serde_json::from_value(saved).unwrap();
+    assert_eq!((back.ui_theme, back.brightness), (theme::UiTheme::Lagoon, theme::Brightness::Dark));
+    // Settings saved before themes existed still load, as Standard.
+    let old: crate::UiState = serde_json::from_value(json!({"brightness": "dark", "tab": "Home"})).unwrap();
+    assert_eq!((old.ui_theme, old.brightness), (theme::UiTheme::Standard, theme::Brightness::Dark));
+}
+
 /// Options in the File tab opens the Preferences dialog, and Cancel closes it (#782, #752).
 #[test]
 fn options_in_backstage_opens_preferences_and_cancel_closes_it() {

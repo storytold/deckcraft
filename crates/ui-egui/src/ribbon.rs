@@ -85,6 +85,12 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 6.0;
+        let on_account = app.backstage.as_ref().is_some_and(|b| b.page == crate::backstage::Page::Account);
+        let gear = icon_toggle(&mut right, Icon::Settings, "Appearance and themes (File › Account)", true, on_account);
+        gear.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Appearance and themes"));
+        if gear.clicked() {
+            let _ = app.run("app.backstage", json!({"page": "account"}));
+        }
         if icon_toggle(&mut right, Icon::Search, "Search commands (⇧⌘P)", true, false).clicked() {
             app.palette = Some((String::new(), 0));
         }
