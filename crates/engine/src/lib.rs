@@ -593,7 +593,8 @@ impl Session {
             self.end_composition();
         }
         if let Err(e) = (spec.enabled)(self) {
-            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
+            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO || e == cmd::SELECT_TEXT_OR_SHAPE)
+                && (params.get("ids").is_some() || params.get("id").is_some());
             if !named {
                 return Err(EngineError::Disabled(id.into(), e));
             }

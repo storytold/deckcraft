@@ -4724,3 +4724,322 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+fn smartart_runs(s: &Session, gid: u64) -> Vec<(Option<f64>, Option<deckcraft_model::Fill>)> {
+    match s.doc().unwrap().shape(deckcraft_model::ShapeId(gid as u32)).map(|x| &x.kind) {
+        Some(deckcraft_model::ShapeKind::Group { children, .. }) => children
+            .iter()
+            .filter_map(|c| c.text.as_ref())
+            .flat_map(|t| t.paragraphs.iter().flat_map(|p| p.runs.iter().map(|r| (r.props.size, r.props.fill.clone()))))
+            .collect(),
+        _ => panic!("not a group"),
+    }
+}
+
+/// HH7: SmartArt text is sized alike for every node, and the user can set that size.
+#[test]
+fn smartart_font_size_is_one_value_for_every_node() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "insert.smartArt",
+            &json!({"kind": "blockList", "items": ["Internationalisationinternationalisationinternationalisation", "\tScope", "Build", "\tTest"]}),
+        )
+        .unwrap();
+    let gid = r["id"].as_u64().unwrap();
+    // Automatic: the long word shrinks the whole graphic, titles and bullets by the same factor.
+    let auto = smartart_runs(&s, gid);
+    let (title, bullet) = (auto[0].0.unwrap(), auto[1].0.unwrap());
+    assert!(title < 20.0, "the long word shrinks the text: {title}");
+    assert_eq!(auto[2].0.unwrap(), title, "the other node's title is sized alike");
+    assert_eq!(auto[3].0.unwrap(), bullet, "and its bullet");
+    // Set: one size for every node.
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": 18})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.0 == Some(18.0)));
+    // format.size with the graphic selected does the same, and it survives an edit.
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.size", &json!({"size": 26})).unwrap();
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "More"})).unwrap();
+    let runs = smartart_runs(&s, gid);
+    assert!(runs.len() >= 5 && runs.iter().all(|r| r.0 == Some(26.0)), "{runs:?}");
+    // Back to automatic.
+    s.execute("smartArt.fontSize", &json!({"id": gid, "size": null})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().any(|r| r.0 != Some(26.0)));
+    assert!(s.execute("smartArt.fontSize", &json!({"id": gid})).is_err());
+    assert!(s.execute("smartArt.fontSize", &json!({"id": gid, "size": -3})).is_err());
+}
+
+/// AA4: Font Color on a SmartArt graphic colours every node's text (it answered ok and changed
+/// nothing).
+#[test]
+fn format_color_on_a_smartart_graphic_colours_every_node() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "\tScope", "Build"]})).unwrap();
+    let gid = r["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [gid]})).unwrap();
+    s.execute("format.color", &json!({"color": "#00AA00"})).unwrap();
+    let want = Some(deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_model::Rgba::rgb(0, 0xAA, 0))));
+    let runs = smartart_runs(&s, gid);
+    assert!(runs.len() >= 3 && runs.iter().all(|r| r.1 == want), "{runs:?}");
+    s.execute("smartArt.addNode", &json!({"id": gid, "text": "Ship"})).unwrap();
+    assert!(smartart_runs(&s, gid).iter().all(|r| r.1 == want), "the colour survives a regenerate");
+}
+
+/// AA4: a picture has no fill of its own; the refusal names Recolor.
+#[test]
+fn shape_fill_on_a_picture_is_refused_naming_recolor() {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf,
+        0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+        0x82,
+    ];
+    let mut s = session();
+    let id = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png"})).unwrap()["id"].clone();
+    let e = s.execute("shape.fill", &json!({"id": id, "color": "#FF0000"})).unwrap_err().to_string();
+    assert!(e.contains("picture.recolor"), "{e}");
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 50, 50]})).unwrap();
+    s.execute("shape.fill", &json!({"id": r["id"], "color": "#FF0000"})).unwrap();
+    // A mixed selection fills the shape and leaves the picture alone.
+    s.execute("shape.fill", &json!({"ids": [id.clone(), r["id"].clone()], "color": "#00FF00"})).unwrap();
+    let pic = s.doc().unwrap().shape(ShapeId(id.as_u64().unwrap() as u32)).unwrap().clone();
+    assert!(pic.fill.is_none(), "the picture keeps no fill of its own: {:?}", pic.fill);
+    // Grouped with the shape, the picture is left alone when the group is filled.
+    s.execute("edit.select", &json!({"ids": [id.clone(), r["id"].clone()]})).unwrap();
+    s.execute("arrange.group", &json!({})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#0000FF"})).unwrap();
+    let st = s.doc().unwrap();
+    let pic = st.shape(ShapeId(id.as_u64().unwrap() as u32)).unwrap();
+    assert!(pic.fill.is_none(), "a picture in a filled group keeps no fill: {:?}", pic.fill);
+    let rect = st.shape(ShapeId(r["id"].as_u64().unwrap() as u32)).unwrap();
+    assert!(format!("{:?}", rect.fill).contains("b: 255"), "the shape in the group took the blue fill: {:?}", rect.fill);
+}
+
+/// A SmartArt graphic selected together with a text box: `format.size` sizes the graphic's nodes
+/// and the text box, and the selection stays as it was (regenerating the graphic used to collapse
+/// it to the graphic alone, so the other shapes were skipped).
+/// `ids: []` names nothing: a formatter given it acts on the selection, the selected text range
+/// included, instead of dropping the range and formatting the whole shape.
+#[test]
+fn an_empty_ids_list_formats_the_selected_text_range_like_no_ids() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60], "text": "Hello world"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 5]})).unwrap();
+    s.execute("format.bold", &json!({"on": true, "ids": []})).unwrap();
+    let st = s.doc().unwrap();
+    assert!(st.selection.text.as_ref().is_some_and(|t| t.is_range()), "the text range stays selected");
+    let runs = &st.shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs;
+    assert!(runs.len() >= 2, "the range was split off: {runs:?}");
+    assert_eq!(runs[0].props.bold, Some(true), "{runs:?}");
+    assert_ne!(runs.last().unwrap().props.bold, Some(true), "the rest of the text is not bold: {runs:?}");
+}
+
+#[test]
+fn format_size_on_a_mixed_selection_reaches_the_other_shapes_and_keeps_the_selection() {
+    let mut s = session();
+    let g = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "Build"]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 400, 200, 60], "text": "Note"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [g, b]})).unwrap();
+    s.execute("format.size", &json!({"size": 40})).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![ShapeId(g as u32), ShapeId(b as u32)], "the selection is as it was");
+    let run = &st.shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props;
+    assert_eq!(run.size, Some(40.0), "the text box was sized too: {run:?}");
+    let graphic = st.shape(ShapeId(g as u32)).unwrap();
+    assert_eq!(graphic.diagram.as_ref().unwrap().font_size, Some(40.0));
+    assert!(graphic.text.is_none(), "the run formatting skipped the graphic itself, which has no text of its own");
+}
+
+/// MM1: the text formatters that took only the selection take `ids` too, like `shape.fill`: the
+/// named shapes are formatted with nothing selected, and the selection is left as it was.
+#[test]
+fn format_color_and_friends_take_ids() {
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, p: serde_json::Value| s.execute("shape.insert", &p).unwrap()["id"].as_u64().unwrap();
+    let a = ins(&mut s, json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"}));
+    let b = ins(&mut s, json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"}));
+    let c = ins(&mut s, json!({"preset": "rect", "rect": [20, 180, 200, 60], "text": "C"}));
+    s.doc_mut().unwrap().selection.shapes.clear();
+    s.doc_mut().unwrap().selection.text = None;
+    s.execute("format.color", &json!({"ids": [a, b], "color": "#FF0000"})).unwrap();
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    let fill_of =
+        |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.fill.clone();
+    assert_eq!(fill_of(&s, a), red);
+    assert_eq!(fill_of(&s, b), red);
+    assert_ne!(fill_of(&s, c), red, "an unnamed shape is untouched");
+    assert!(s.doc().unwrap().selection.shapes.is_empty(), "the selection is left alone");
+    s.execute("format.font", &json!({"ids": [c], "family": "Lato"})).unwrap();
+    assert_eq!(s.doc().unwrap().shape(ShapeId(c as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.font.as_deref(), Some("Lato"));
+    s.execute("format.highlight", &json!({"ids": [a], "color": "#FFFF00"})).unwrap();
+    s.execute("format.textTransparency", &json!({"ids": [b], "value": 0.5})).unwrap();
+}
+
+/// MM1: a refused named `format.color` leaves the selection as it was.
+#[test]
+fn a_refused_named_format_color_restores_the_selection() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 20, 200, 60], "text": "A"})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 100, 200, 60], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(b as u32)];
+    let before = s.doc().unwrap().selection.shapes.clone();
+    assert!(!before.is_empty());
+    assert!(s.execute("format.color", &json!({"ids": [a], "color": "nope"})).is_err());
+    assert_eq!(s.doc().unwrap().selection.shapes, before, "the refusal left the selection replaced");
+}
+
+/// OO2: SmartArt colours are theme references (accent slots), so a theme change recolours the
+/// graphic, as in PowerPoint where Change Colors sets are theme-bound.
+#[test]
+fn a_theme_change_recolours_a_smartart_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let r = s.execute("insert.smartArt", &json!({"kind": "blockList", "items": ["Plan", "Scope", "Build"]})).unwrap();
+    let id = r["id"].clone();
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let b = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap()["box"].clone();
+    let (x0, y0, w, h) = (b[0].as_f64().unwrap(), b[1].as_f64().unwrap(), b[2].as_f64().unwrap(), b[3].as_f64().unwrap());
+    let sample = |s: &mut Session| -> std::collections::BTreeSet<String> {
+        let mut out = std::collections::BTreeSet::new();
+        for i in 0..12 {
+            for j in 0..8 {
+                let v = s
+                    .execute(
+                        "slide.colorAt",
+                        &json!({"x": x0 + w * (f64::from(i) + 0.5) / 12.0, "y": y0 + h * (f64::from(j) + 0.5) / 8.0, "scale": 1}),
+                    )
+                    .unwrap();
+                out.insert(v["color"].as_str().unwrap().to_string());
+            }
+        }
+        out
+    };
+    let bg = |s: &mut Session| s.execute("slide.colorAt", &json!({"x": 1, "y": 1, "scale": 1})).unwrap()["color"].as_str().unwrap().to_string();
+    let (bg_before, mut before) = (bg(&mut s), sample(&mut s));
+    s.execute("design.theme", &json!({"name": "Ember"})).unwrap();
+    let (bg_after, mut after) = (bg(&mut s), sample(&mut s));
+    before.remove(&bg_before);
+    after.remove(&bg_after);
+    assert!(!before.is_empty(), "the graphic is drawn: {before:?}");
+    assert_ne!(before, after, "the graphic keeps its old colours after a theme change");
+}
+
+#[test]
+fn smartart_colors_layout_and_style_answer_the_regenerated_ids() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "process"})).unwrap();
+    let gid = r["id"].clone();
+    for (cmd, params) in [
+        ("smartArt.colors", json!({"id": gid, "colors": "colorful"})),
+        ("smartArt.layout", json!({"id": gid, "kind": "cycle"})),
+        ("smartArt.style", json!({"id": gid, "style": "intense"})),
+    ] {
+        let a = s.execute(cmd, &params).unwrap();
+        assert_eq!(a["id"], gid, "{cmd}: {a}");
+        let st = s.doc().unwrap();
+        let g = st
+            .doc
+            .slides
+            .iter()
+            .find_map(|sl| deckcraft_model::find_shape(&sl.shapes, deckcraft_model::ShapeId(gid.as_u64().unwrap() as u32)))
+            .unwrap();
+        let deckcraft_model::ShapeKind::Group { children, .. } = &g.kind else { panic!("group") };
+        let kids: Vec<u32> = children.iter().map(|c| c.id.0).collect();
+        assert_eq!(a["ids"], json!(kids), "{cmd}: {a}");
+    }
+}
+
+#[test]
+fn flip_is_refused_on_a_smartart_graphic_and_leaves_it_a_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.textBox", &json!({"text": "Goals\nRevenue"})).unwrap();
+    let gid = s.execute("smartArt.fromText", &json!({"kind": "blockList"})).unwrap()["id"].as_u64().unwrap();
+    for cmd in ["arrange.flipHorizontal", "arrange.flipVertical", "shape.flip"] {
+        let e = s.execute(cmd, &json!({"ids": [gid]})).unwrap_err().to_string();
+        assert!(e.contains("SmartArt") && e.contains("smartArt.layout"), "{cmd}: {e}");
+    }
+    // Still a SmartArt graphic: smartArt commands keep working.
+    s.execute("smartArt.layout", &json!({"id": gid, "kind": "cycle"})).unwrap();
+    // Ordinary shapes still flip.
+    let b = s.execute("insert.textBox", &json!({"text": "x"})).unwrap();
+    let id = b["id"].as_u64().unwrap();
+    assert_eq!(s.execute("arrange.flipHorizontal", &json!({"ids": [id]})).unwrap(), json!(1));
+}
+
+/// ZZ5: the paragraph and text formatters that acted only on the selection take `ids` too: the
+/// named shapes change with nothing selected, an unnamed shape and the selection stay as they were,
+/// and a refused call restores the selection.
+#[test]
+fn paragraph_and_text_formatters_take_ids() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, y: u32| {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [20, y, 200, 60], "text": "Alpha beta"})).unwrap()["id"].as_u64().unwrap()
+    };
+    let (a, b, c) = (ins(&mut s, 20), ins(&mut s, 100), ins(&mut s, 180));
+    s.doc_mut().unwrap().selection.shapes = vec![ShapeId(c as u32)];
+    s.doc_mut().unwrap().selection.text = None;
+    let shape = |s: &Session, id: u64| serde_json::to_value(s.doc().unwrap().shape(ShapeId(id as u32)).unwrap()).unwrap();
+    let (a0, c0) = (shape(&s, a), shape(&s, c));
+    s.execute("format.columns", &json!({"ids": [a, b], "count": 2})).unwrap();
+    s.execute("format.lineSpacing", &json!({"ids": [a], "lines": 1.5})).unwrap();
+    s.execute("format.align", &json!({"ids": [a], "align": "right"})).unwrap();
+    s.execute("format.bold", &json!({"ids": [a], "on": true})).unwrap();
+    s.execute("format.indent", &json!({"ids": [b]})).unwrap();
+    s.execute("format.bullets", &json!({"ids": [b], "on": true})).unwrap();
+    let sh = s.doc().unwrap().shape(ShapeId(a as u32)).unwrap().clone();
+    let body = sh.text.as_ref().unwrap();
+    assert_eq!(body.paragraphs[0].props.align, Some(deckcraft_model::text::Align::Right));
+    assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true));
+    assert_ne!(shape(&s, a), a0);
+    assert_eq!(s.doc().unwrap().shape(ShapeId(b as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].level, 1);
+    assert_eq!(shape(&s, c), c0, "an unnamed shape is untouched");
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(c as u32)], "the selection is left alone");
+    assert!(s.execute("format.size", &json!({"ids": [a]})).is_err());
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![ShapeId(c as u32)], "a refusal restores the selection");
+    for id in [
+        "bold",
+        "italic",
+        "underline",
+        "strikethrough",
+        "superscript",
+        "subscript",
+        "size",
+        "grow",
+        "shrink",
+        "case",
+        "caps",
+        "spacing",
+        "clear",
+        "textShadow",
+        "textOutline",
+        "textWarp",
+        "align",
+        "rtl",
+        "alignLeft",
+        "alignCenter",
+        "alignRight",
+        "justify",
+        "bullets",
+        "numbering",
+        "indent",
+        "outdent",
+        "lineSpacing",
+        "paragraph",
+        "anchor",
+        "direction",
+        "columns",
+        "autofit",
+        "wrap",
+        "margins",
+        "language",
+    ] {
+        let doc = command_specs().iter().find(|x| x.id == format!("format.{id}")).unwrap().params;
+        assert!(doc.contains("ids?: [shape ids] (default: the selection)"), "format.{id}: {doc}");
+    }
+}
