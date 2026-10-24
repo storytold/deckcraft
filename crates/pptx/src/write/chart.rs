@@ -58,13 +58,23 @@ fn sp_pr(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>) {
     w.close("c:spPr");
 }
 
-fn rich(w: &mut W, text: &str) {
+/// `a:defRPr sz` for a text size in points (hundredths, in the range the schema allows).
+fn sz(pt: f64) -> i64 {
+    if pt.is_finite() { (pt * 100.0).round().clamp(100.0, 400_000.0) as i64 } else { 1000 }
+}
+
+fn rich(w: &mut W, text: &str, size: Option<f64>) {
     w.open0("c:tx");
     w.open0("c:rich");
     w.empty0("a:bodyPr");
     w.empty0("a:lstStyle");
     for line in text.split('\n') {
         w.open0("a:p");
+        if let Some(pt) = size {
+            w.open0("a:pPr");
+            w.empty("a:defRPr", A::new().a("sz", sz(pt)));
+            w.close("a:pPr");
+        }
         w.open0("a:r");
         w.elt("a:t", line);
         w.close("a:r");
@@ -74,9 +84,9 @@ fn rich(w: &mut W, text: &str) {
     w.close("c:tx");
 }
 
-fn title(w: &mut W, text: &str) {
+fn title(w: &mut W, text: &str, size: Option<f64>) {
     w.open0("c:title");
-    rich(w, text);
+    rich(w, text, size);
     w.val("c:overlay", 0);
     w.close("c:title");
 }
@@ -355,7 +365,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", "b");
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t);
+            title(w, t, c.text_size);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "out");
@@ -374,7 +384,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", cat_pos);
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t);
+            title(w, t, c.text_size);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "none");
@@ -411,7 +421,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.empty0("c:minorGridlines");
     }
     if let Some(t) = &c.axis_titles.1 {
-        title(w, t);
+        title(w, t, c.text_size);
     }
     match c.y_format.as_deref().filter(|f| !f.is_empty()) {
         Some(f) => w.empty("c:numFmt", A::new().a("formatCode", f).a("sourceLinked", 0)),
@@ -544,7 +554,15 @@ fn kept_chartex(c: &Chart) -> Option<Vec<u8>> {
 }
 
 /// The chart part XML, and whether it is the original part (so its relationships still apply).
+#[cfg(test)]
 pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
+    chart_xml_in(c, None)
+}
+
+/// [`chart_xml`] for a chart drawn in a `frame` (width, height in points). A chart written from
+/// the model then carries the text sizes DeckCraft draws it at (`Chart::text_sizes`): without
+/// them PowerPoint falls back to 10 pt text and an 18 pt title, whatever the chart's size.
+pub fn chart_xml_in(c: &Chart, frame: Option<(f64, f64)>) -> (Vec<u8>, bool) {
     // Reuse the kept part when the chart is unchanged since it was read.
     if let Some(raw) = &c.raw
         && !raw.contains(NS_CX)
@@ -568,6 +586,16 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
             }
         }
     }
+    // Written from the model: with the frame's size, the sizes the chart is drawn at.
+    let sized;
+    let c = match frame {
+        Some((fw, fh)) => {
+            let (text, title) = c.text_sizes(fw, fh);
+            sized = Chart { text_size: Some(text), title_size: Some(title), ..c.clone() };
+            &sized
+        }
+        None => c,
+    };
     let mut w = W::new();
     w.open("c:chartSpace", A::new().a("xmlns:c", NS_C).a("xmlns:a", NS_A).a("xmlns:r", NS_R));
     w.val("c:date1904", 0);
@@ -576,7 +604,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.open0("c:chart");
     match &c.title {
         Some(t) => {
-            title(&mut w, t);
+            title(&mut w, t, c.title_size);
             w.val("c:autoTitleDeleted", 0);
         }
         None => w.val("c:autoTitleDeleted", 1),
@@ -661,6 +689,19 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.close("c:chart");
     if let Some(f) = &c.chart_fill {
         sp_pr(&mut w, Some(f), None);
+    }
+    // The whole chart's text size: the axes and the legend take it.
+    if let Some(pt) = c.text_size {
+        w.open0("c:txPr");
+        w.empty0("a:bodyPr");
+        w.empty0("a:lstStyle");
+        w.open0("a:p");
+        w.open0("a:pPr");
+        w.empty("a:defRPr", A::new().a("sz", sz(pt)));
+        w.close("a:pPr");
+        w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
+        w.close("a:p");
+        w.close("c:txPr");
     }
     w.close("c:chartSpace");
     (w.finish(), false)
@@ -991,5 +1032,36 @@ mod tests {
         assert!(crate::read::chart::read_chart_xml(&xml).unwrap().cat_reversed);
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
+    }
+
+    #[test]
+    fn a_written_chart_carries_the_text_sizes_it_is_drawn_at() {
+        // Without sizes PowerPoint draws 10 pt text and an 18 pt title at any chart size; with
+        // them it draws what DeckCraft draws (whole points: a 560 x 360 chart at 16 and 22 pt).
+        let mut c = Chart::sample(ChartType::Column);
+        c.title = Some("Sales".into());
+        c.axis_titles = (Some("Month".into()), None);
+        c.raw = None;
+        let read = |c: &Chart, frame| crate::read::chart::read_chart_xml(&super::chart_xml_in(c, frame).0).unwrap();
+        let big = read(&c, Some((560.0, 360.0)));
+        assert_eq!((big.text_size, big.title_size), (Some(16.0), Some(22.0)));
+        assert_eq!(c.text_sizes(560.0, 360.0), (16.0, 22.0), "the sizes the renderer draws at");
+        let xml = String::from_utf8(super::chart_xml_in(&c, Some((560.0, 360.0))).0).unwrap();
+        assert!(xml.contains(r#"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1600"/>"#), "{xml}");
+        assert_eq!(xml.matches(r#"<a:defRPr sz="2200"/>"#).count(), 1, "the chart title");
+        assert!(xml.contains(r#"<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1600"/></a:pPr><a:r><a:t>Month"#));
+        let small = read(&c, Some((300.0, 200.0)));
+        assert_eq!((small.text_size, small.title_size), (Some(9.0), Some(13.0)));
+        // The file's own sizes are written back as they are, with or without a frame.
+        c.text_size = Some(11.97);
+        c.title_size = Some(18.62);
+        let own = read(&c, Some((560.0, 360.0)));
+        assert_eq!((own.text_size, own.title_size), (Some(11.97), Some(18.62)));
+        assert_eq!(read(&c, None).text_size, Some(11.97));
+        // No frame and no sizes: none written (the chart keeps choosing its own).
+        c.text_size = None;
+        c.title_size = None;
+        let bare = read(&c, None);
+        assert_eq!((bare.text_size, bare.title_size), (None, None));
     }
 }

@@ -405,7 +405,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 // The kept workbook belongs to the `chartEx` part; the fallback has none.
                 plain.kept = Default::default();
             }
-            let rid = x.chart_rel(o, &plain);
+            let rid = x.chart_rel(o, &plain, s.xfrm.map(|f| (f.w, f.h)));
             frame_open(w, x, o, id, s);
             w.open("a:graphicData", A::new().a("uri", "http://schemas.openxmlformats.org/drawingml/2006/chart"));
             w.empty("c:chart", A::new().a("xmlns:c", crate::opc::NS_C).a("r:id", rid));

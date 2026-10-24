@@ -209,10 +209,11 @@ impl Exp<'_> {
         Some(o.rels.add_new(RT_CHARTEX, &opc::relative(&o.name, &name), false))
     }
 
-    pub fn chart_rel(&mut self, o: &mut Out, c: &deckcraft_model::Chart) -> String {
+    /// The chart part for `c`, drawn in a `frame` (width, height in points) when known.
+    pub fn chart_rel(&mut self, o: &mut Out, c: &deckcraft_model::Chart, frame: Option<(f64, f64)>) -> String {
         self.n_chart += 1;
         let name = format!("ppt/charts/chart{}.xml", self.n_chart);
-        let (xml, preserved) = chart::chart_xml(c);
+        let (xml, preserved) = chart::chart_xml_in(c, frame);
         self.pkg.xml_part(&name, CT_CHART, xml);
         if preserved {
             chart::write_kept(&mut self.pkg, &name, c, &mut self.n_kept);

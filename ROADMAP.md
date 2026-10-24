@@ -134,6 +134,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-24 | A chart written to .pptx carries the text sizes DeckCraft draws it at (chart-wide `c:txPr`, the title's and axis titles' rich text), so PowerPoint shows a DeckCraft-made chart as DeckCraft does instead of at its 10 pt / 18 pt defaults; automatic chart text sizes are whole points, as PowerPoint for Mac draws chart text (synthetic probe) |
 | 2026-10-23 | Format Background ▸ Apply to All also sets the background of the slide masters the slides use (and clears their layouts' overrides), so new slides keep it (#891) |
 | 2026-10-22 | Table text takes the master's other-text style (`otherStyle`), shapes and text boxes the presentation's default text style, as PowerPoint for Mac draws them (synthetic probe: 14 pt cells under a 14 pt `otherStyle` and a 26 pt `defaultTextStyle`); a private deck's table had been drawn 20 pt instead of 18 |
 | 2026-10-18 | Find (Ctrl+F): "Find what:" has the keyboard as soon as the dialog opens, and keeps it after Enter finds a match, so the search can be typed and changed without clicking the field (#951) |
@@ -272,6 +273,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-15 | trivial | Progress log: PPTX trigger click-step round trip. Feature scores and milestone names unchanged |
 | 2026-10-16 | trivial | Progress log: PNG export with a transparent background (#784) |
 | 2026-10-16 | trivial | Progress log: a `.ppsx` from the system starts the slide show (#862) |
+| 2026-10-24 | trivial | Progress log: written charts carry their text sizes |
 | 2026-10-22 | trivial | Progress log: table text takes the master's other-text style |
 | 2026-10-16 | trivial | Progress log: responsive mouse-wheel navigation on the fitted canvas |
 | 2026-10-21 | trivial | Progress log: theme `spDef` anchor no longer applied to a file's own shapes |
