@@ -171,6 +171,22 @@ pub(crate) fn union_bounds(xs: &[Xfrm]) -> Option<Rect> {
     Some(it.fold(first, |a, b| a.union(b)))
 }
 
+/// How deep groups may nest: as deep as the PPTX reader reads and the renderer draws. A saved
+/// .deckcraft file stops opening at about 39 (the JSON reader's recursion limit), and walks over
+/// the shape tree stop at 64.
+pub const MAX_GROUP_DEPTH: usize = 32;
+
+/// How many groups deep `shapes` nest (0 without groups).
+fn group_depth(shapes: &[Shape]) -> usize {
+    let mut d = 0;
+    deckcraft_model::walk(shapes, &mut |sh, depth| {
+        if sh.is_group() {
+            d = d.max(depth + 1);
+        }
+    });
+    d
+}
+
 fn group(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = targets(s, p)?;
     s.edit(|doc, sel| {
@@ -178,6 +194,9 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
         let mut members: Vec<Shape> = current.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
         if members.len() < 2 {
             return Err(bad("arrange.group", "select two or more objects on the slide"));
+        }
+        if group_depth(&members) + 1 > MAX_GROUP_DEPTH {
+            return Err(bad("arrange.group", format!("groups can be nested at most {MAX_GROUP_DEPTH} deep")));
         }
         for m in &mut members {
             if m.xfrm.is_none() {
@@ -208,7 +227,7 @@ fn group(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// A child's xfrm in slide space, given its group.
-pub(crate) fn child_to_parent(group: &Xfrm, ch: &Xfrm, c: &Xfrm) -> Xfrm {
+pub fn child_to_parent(group: &Xfrm, ch: &Xfrm, c: &Xfrm) -> Xfrm {
     let sx = if ch.w.abs() > 1e-9 { group.w / ch.w } else { 1.0 };
     let sy = if ch.h.abs() > 1e-9 { group.h / ch.h } else { 1.0 };
     let a = deckcraft_geom::group_child_affine(group, Rect::new(ch.x, ch.y, ch.x + ch.w, ch.y + ch.h));
@@ -322,9 +341,9 @@ fn distribute(s: &mut Session, p: &Value) -> Result<Value> {
     let (start, end) = if to_slide {
         if horiz { (0.0, size.width) } else { (0.0, size.height) }
     } else {
-        let f = boxes.first().map(|b| b.1).unwrap_or_default();
-        let l = boxes.last().map(|b| b.1).unwrap_or_default();
-        if horiz { (f.x0, l.x1) } else { (f.y0, l.y1) }
+        let lo = |f: fn(&Rect) -> f64| boxes.iter().map(|b| f(&b.1)).fold(f64::INFINITY, f64::min);
+        let hi = |f: fn(&Rect) -> f64| boxes.iter().map(|b| f(&b.1)).fold(f64::NEG_INFINITY, f64::max);
+        if horiz { (lo(|r| r.x0), hi(|r| r.x1)) } else { (lo(|r| r.y0), hi(|r| r.y1)) }
     };
     let n = boxes.len();
     let gap = if n > 1 { ((end - start) - total) / (n - 1) as f64 } else { 0.0 };

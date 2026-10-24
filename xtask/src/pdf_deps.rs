@@ -6,7 +6,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-const SHARED_REV: &str = "c3487320b2d1de657b860b3c8abb44e1f2b32bd8";
+const SHARED_REV: &str = "9f75d3dc19b4b514c4f3d4847ed1ec1b0e86b4ef";
 const REGISTRY: &str = "registry+https://github.com/rust-lang/crates.io-index";
 
 pub fn run(root: &Path) -> Result<(), String> {
@@ -72,8 +72,8 @@ fn validate(metadata: &Value) -> Result<(), String> {
     };
     let source = format!("git+https://github.com/storytold/craft-libs?rev={SHARED_REV}#{SHARED_REV}");
     for (name, version, expected_source, expected_features) in [
-        ("craft-pdf", "0.1.0", source.as_str(), vec!["write"]),
-        ("krilla", "0.8.2", source.as_str(), vec!["default", "raster-images", "rayon", "simple-text"]),
+        ("craft-pdf", "0.1.0", source.as_str(), vec!["write", "write-simple-text"]),
+        ("krilla", "0.8.2", source.as_str(), vec!["raster-images", "rayon", "simple-text"]),
         ("hayro-syntax", "0.7.2", REGISTRY, vec!["std"]),
     ] {
         let package = one_package(name)?;
@@ -119,7 +119,7 @@ fn validate(metadata: &Value) -> Result<(), String> {
 }
 
 fn validate_target_features(tree: &str, parallel: bool) -> Result<(), String> {
-    let mut expected = BTreeSet::from(["default", "raster-images", "simple-text"]);
+    let mut expected = BTreeSet::from(["raster-images", "simple-text"]);
     if parallel {
         expected.insert("rayon");
     }
@@ -153,8 +153,8 @@ mod tests {
             ],
             "resolve":{"nodes":[
                 {"id":"app", "deps":[{"pkg":"writer", "dep_kinds":[{"kind":null}]}, {"pkg":"parser", "dep_kinds":[{"kind":"dev"}]}]},
-                {"id":"writer", "features":["write"], "deps":[{"pkg":"backend", "dep_kinds":[{"kind":null}]}]},
-                {"id":"backend", "features":["default","raster-images","rayon","simple-text"], "deps":[]},
+                {"id":"writer", "features":["write","write-simple-text"], "deps":[{"pkg":"backend", "dep_kinds":[{"kind":null}]}]},
+                {"id":"backend", "features":["raster-images","rayon","simple-text"], "deps":[]},
                 {"id":"parser", "features":["std"], "deps":[]}
             ]}
         })
@@ -162,8 +162,8 @@ mod tests {
 
     #[test]
     fn parallel_compression_is_required_only_on_native_targets() {
-        let serial = "krilla v0.8.2 (pinned)|default,raster-images,simple-text\n";
-        let parallel = "krilla v0.8.2 (pinned)|default,raster-images,rayon,simple-text\n";
+        let serial = "krilla v0.8.2 (pinned)|raster-images,simple-text\n";
+        let parallel = "krilla v0.8.2 (pinned)|raster-images,rayon,simple-text\n";
         assert!(validate_target_features(serial, false).is_ok());
         assert!(validate_target_features(parallel, true).is_ok());
         assert!(validate_target_features(serial, true).is_err());
@@ -189,8 +189,9 @@ mod tests {
     fn rejects_import_features_and_missing_text_shaping() {
         for (node, features) in [
             (1, json!([])),
-            (1, json!(["write", "write-pdf"])),
-            (2, json!(["default", "raster-images", "rayon", "simple-text", "pdf"])),
+            (1, json!(["write"])),
+            (1, json!(["write", "write-simple-text", "write-pdf"])),
+            (2, json!(["raster-images", "rayon", "simple-text", "pdf"])),
             (2, json!(["raster-images"])),
             (3, json!(["std", "images"])),
         ] {

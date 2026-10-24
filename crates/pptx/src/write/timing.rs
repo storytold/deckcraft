@@ -1,7 +1,7 @@
 //! Transitions and the animation timing tree.
 
-use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
-use deckcraft_model::{Shape, ShapeKind, find_shape};
+use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, find_shape};
 
 use super::shapes::IdMap;
 use super::{Exp, Out};
@@ -565,53 +565,68 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
     }
 }
 
-fn para_count(s: &Shape) -> u32 {
-    s.text.as_ref().map(|t| t.paragraphs.iter().filter(|p| !p.is_empty()).count()).unwrap_or(0).min(10_000) as u32
-}
-
 /// Write `p:timing` for a slide's animations.
 pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
     let mut main: Vec<Eff> = vec![];
     let mut triggered: Vec<(u32, Vec<Eff>)> = vec![];
     let mut bld: Vec<(u32, u32, bool)> = vec![];
+    // The last paragraph effect written: (shape, class, trigger, grpId).
+    let mut prev_para: Option<(ShapeId, AnimClass, Option<ShapeId>, u32)> = None;
     for a in anims.iter().take(10_000) {
         let Some(spid) = idmap.get(a.shape) else {
             log::warn!("pptx: animation on missing shape {} skipped", a.shape);
             continue;
         };
         let Some(shape) = find_shape(shapes, a.shape) else { continue };
-        let grp = {
-            let c = grp_count.entry(spid).or_insert(0);
-            let g = *c;
-            *c += 1;
-            g
-        };
+        let text_sp = matches!(shape.kind, ShapeKind::Shape) && shape.text.is_some();
         let is_text_sp = matches!(shape.kind, ShapeKind::Shape) && shape.text.as_ref().is_some_and(|t| !t.is_empty());
-        let by_para = a.text_build == TextBuild::ByParagraph && is_text_sp && para_count(shape) > 0;
+        let text = shape.text.as_ref().filter(|_| a.text_build == TextBuild::ByParagraph && is_text_sp);
+        let roles = text.map(paragraph_build_roles).unwrap_or_default();
+        let by_para = roles.contains(&BuildRole::Top);
+        // PowerPoint keeps a shape's consecutive paragraph effects in one build (`grpId`) marked
+        // `build="p"`; the reader turns them back into a by-paragraph build only if that plays them
+        // the same way.
+        let para_effect = !by_para && text_sp && a.paragraph.is_some();
+        let joins = para_effect && prev_para.is_some_and(|(s, c, t, _)| s == a.shape && c == a.class && t == a.trigger);
+        let grp = match prev_para {
+            Some((.., g)) if joins => g,
+            _ => {
+                let c = grp_count.entry(spid).or_insert(0);
+                let g = *c;
+                *c += 1;
+                g
+            }
+        };
+        prev_para = para_effect.then_some((a.shape, a.class, a.trigger, grp));
         let mut effs = vec![];
         if by_para {
-            // Paragraph indices in the file count empty paragraphs too.
-            let idxs: Vec<u32> = shape
-                .text
-                .as_ref()
-                .map(|t| t.paragraphs.iter().enumerate().filter(|(_, p)| !p.is_empty()).map(|(i, _)| i as u32).collect())
-                .unwrap_or_default();
-            for (k, pi) in idxs.into_iter().enumerate() {
-                let start = if k == 0 {
-                    a.start
-                } else if a.start == AnimStart::OnClick {
-                    AnimStart::OnClick
-                } else {
-                    AnimStart::AfterPrevious
+            // One effect per paragraph the build animates on its own, deeper ones with their
+            // parent; indices in the file count empty paragraphs too.
+            let mut tops = 0;
+            for (i, role) in roles.iter().enumerate() {
+                let start = match role {
+                    BuildRole::Top => {
+                        tops += 1;
+                        if tops == 1 {
+                            a.start
+                        } else if a.start == AnimStart::OnClick {
+                            AnimStart::OnClick
+                        } else {
+                            AnimStart::AfterPrevious
+                        }
+                    }
+                    BuildRole::Member(_) if text.and_then(|t| t.paragraphs.get(i)).is_some_and(build_filled) => AnimStart::WithPrevious,
+                    _ => continue,
                 };
+                let Ok(pi) = u32::try_from(i) else { break };
                 effs.push(Eff { a, spid, start, paragraph: Some(pi), grp });
             }
         } else {
             effs.push(Eff { a, spid, start: a.start, paragraph: a.paragraph, grp });
         }
-        if matches!(shape.kind, ShapeKind::Shape) && shape.text.is_some() {
-            bld.push((spid, grp, by_para));
+        if text_sp && !joins {
+            bld.push((spid, grp, by_para || para_effect));
         }
         match a.trigger.and_then(|t| idmap.get(t)) {
             Some(t) => match triggered.iter_mut().find(|(s, _)| *s == t) {
@@ -698,8 +713,8 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
     w.close("p:tnLst");
     if !bld.is_empty() {
         w.open0("p:bldLst");
-        for (spid, grp, by_para) in bld {
-            w.empty("p:bldP", A::new().a("spid", spid).a("grpId", grp).o("build", by_para.then_some("p")).t("animBg", !by_para));
+        for (spid, grp, build_p) in bld {
+            w.empty("p:bldP", A::new().a("spid", spid).a("grpId", grp).o("build", build_p.then_some("p")).t("animBg", !build_p));
         }
         w.close("p:bldLst");
     }

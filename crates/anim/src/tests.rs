@@ -345,6 +345,36 @@ fn empty_slide() {
 }
 
 #[test]
+fn start_of_seeks_the_play_all_clock_to_an_effect() {
+    let mut late = anim(4, AnimClass::Entrance, "fade", AnimStart::WithPrevious);
+    late.delay_ms = 250;
+    let mut triggered = anim(4, AnimClass::Emphasis, "pulse", AnimStart::OnClick);
+    triggered.trigger = Some(ShapeId(1));
+    let tl = Timeline::new(
+        &slide_with(vec![
+            anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick),
+            anim(2, AnimClass::Exit, "fadeOut", AnimStart::OnClick),
+            anim(3, AnimClass::Entrance, "fade", AnimStart::OnClick),
+            late,
+            triggered,
+        ]),
+        W,
+        H,
+    );
+    assert_eq!(tl.start_of(0), Some(0.0));
+    assert_eq!(tl.start_of(2), Some(2.0));
+    assert_eq!(tl.start_of(3), Some(2.25));
+    assert_eq!(tl.start_of(4), None, "a triggered effect is not on the play-all clock");
+    assert_eq!(tl.start_of(9), None);
+    // Playing from the third effect: what came before has played, the rest has not.
+    let at = tl.start_of(2).unwrap();
+    assert!(tl.state_at(ShapeId(1), None, at).visible, "entered before");
+    assert!(!tl.state_at(ShapeId(2), None, at).visible, "exited before");
+    assert!(!tl.state_at(ShapeId(3), None, at).visible, "not entered yet");
+    assert!(!tl.state_at(ShapeId(4), None, at).visible, "not entered yet");
+}
+
+#[test]
 fn locate_play_all_clock() {
     let tl = Timeline::new(
         &slide_with(vec![anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick), anim(2, AnimClass::Entrance, "fade", AnimStart::OnClick)]),

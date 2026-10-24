@@ -39,6 +39,7 @@ pub const RT_CORE: &str = "http://schemas.openxmlformats.org/package/2006/relati
 /// The files of a package, keyed by normalised part name (no leading slash, lowercase).
 pub struct Package {
     parts: HashMap<String, (String, Vec<u8>)>,
+    ct_cache: std::sync::OnceLock<(HashMap<String, String>, HashMap<String, String>)>,
 }
 
 impl Package {
@@ -94,7 +95,7 @@ impl Package {
             total = total.saturating_add(data.len() as u64);
             parts.insert(name.to_ascii_lowercase(), (name, data));
         }
-        Ok(Package { parts })
+        Ok(Package { parts, ct_cache: std::sync::OnceLock::new() })
     }
     pub fn get(&self, name: &str) -> Option<&[u8]> {
         self.parts.get(&norm(name)).map(|(_, d)| d.as_slice())
@@ -131,18 +132,29 @@ impl Package {
     }
     /// Content types: (extension defaults, part overrides).
     pub fn content_type(&self, part: &str) -> Option<String> {
-        let doc = self.xml("[Content_Types].xml")?;
-        let p = format!("/{}", norm(part));
-        for o in doc.root.children_named("Override") {
-            if o.attr("PartName").is_some_and(|n| n.to_ascii_lowercase() == p) {
-                return o.attr("ContentType").map(String::from);
+        let (overrides, defaults) = self.ct_cache.get_or_init(|| {
+            let mut ov = HashMap::new();
+            let mut def = HashMap::new();
+            if let Some(doc) = self.xml("[Content_Types].xml") {
+                for o in doc.root.children_named("Override") {
+                    if let (Some(n), Some(ct)) = (o.attr("PartName"), o.attr("ContentType")) {
+                        ov.insert(n.to_ascii_lowercase(), ct.to_string());
+                    }
+                }
+                for d in doc.root.children_named("Default") {
+                    if let (Some(e), Some(ct)) = (d.attr("Extension"), d.attr("ContentType")) {
+                        def.insert(e.to_ascii_lowercase(), ct.to_string());
+                    }
+                }
             }
+            (ov, def)
+        });
+        let p = format!("/{}", norm(part));
+        if let Some(ct) = overrides.get(&p) {
+            return Some(ct.clone());
         }
         let ext = part.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        doc.root
-            .children_named("Default")
-            .find(|d| d.attr("Extension").is_some_and(|e| e.eq_ignore_ascii_case(&ext)))
-            .and_then(|d| d.attr("ContentType").map(String::from))
+        defaults.get(&ext).cloned()
     }
     pub fn original_name(&self, name: &str) -> Option<&str> {
         self.parts.get(&norm(name)).map(|(n, _)| n.as_str())
@@ -281,8 +293,8 @@ fn percent_decode(s: &str) -> String {
 
 /// Resolve a relative target against a base directory into a part name.
 pub fn resolve(base: &str, target: &str) -> String {
-    let target = percent_decode(target);
-    let target = target.split('#').next().unwrap_or("");
+    let target = percent_decode(target.split('#').next().unwrap_or(""));
+    let target = target.as_str();
     let mut segs: Vec<&str> = if target.starts_with('/') { vec![] } else { base.split('/').filter(|s| !s.is_empty()).collect() };
     for s in target.split('/') {
         match s {
@@ -387,7 +399,12 @@ impl PackageOut {
         if rels.items.is_empty() {
             return;
         }
-        self.files.push((rels_path(part), rels.to_xml(), true));
+        let path = rels_path(part);
+        if let Some(existing) = self.files.iter_mut().find(|(name, ..)| *name == path) {
+            existing.1 = rels.to_xml();
+        } else {
+            self.files.push((path, rels.to_xml(), true));
+        }
     }
     /// Add a part with no content type of its own (a relationships part).
     pub fn raw(&mut self, name: &str, data: Vec<u8>) {
@@ -440,6 +457,12 @@ impl PackageOut {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_keeps_encoded_hash_and_strips_fragment() {
+        assert_eq!(resolve("ppt/slides", "../media/a%23b.png"), "ppt/media/a#b.png");
+        assert_eq!(resolve("ppt/slides", "../media/a.png#frag"), "ppt/media/a.png");
+    }
 
     fn zip_of(entries: &[(&str, usize)]) -> Vec<u8> {
         let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));

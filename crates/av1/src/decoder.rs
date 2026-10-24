@@ -17,7 +17,11 @@ use crate::cdf::Cdfs;
 use crate::frame::FrameBuf;
 use crate::header::{FilmGrainParams, FrameHeader, HeaderState, LoopFilterDeltas, RefInfo, SegmentationFeatures, SequenceHeader, default_gm_params};
 use crate::par::Pool;
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ALTREF_FRAME, ALTREF2_FRAME, BWDREF_FRAME, DEFAULT_INTRA_FRAME_Y_MODE_CDF, DIV_MULT, GOLDEN_FRAME, INTRA_FRAME, INTRA_ONLY_FRAME, KEY_FRAME,
+    LAST_FRAME, LAST2_FRAME, MAX_FRAME_DISTANCE, MAX_OFFSET_HEIGHT, MAX_OFFSET_WIDTH, MFMV_STACK_SIZE, NUM_REF_FRAMES, PRIMARY_REF_NONE,
+    REFMVS_LIMIT, REFS_PER_FRAME,
+};
 use crate::state::{FrameShared, FrameState, TileState};
 use crate::stats::{DecodeStats, Stage, Timer};
 use crate::tile::TileDecoder;
@@ -61,7 +65,7 @@ impl<T: Clone> Slot<T> {
     }
 
     fn set(&self, v: Result<T>) {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *g = Some(v);
         self.cv.notify_all();
     }
@@ -71,12 +75,12 @@ impl<T: Clone> Slot<T> {
     }
 
     fn wait(&self) -> Result<T> {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Some(v) = g.as_ref() {
                 return v.clone();
             }
-            g = self.cv.wait(g).unwrap_or_else(|e| e.into_inner());
+            g = self.cv.wait(g).unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 }

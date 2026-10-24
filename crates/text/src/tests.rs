@@ -394,6 +394,7 @@ fn autonum_formats() {
     assert_eq!(autonum("alphaLcParenR", 2), "b)");
     assert_eq!(autonum("arabicParenBoth", 1), "(1)");
     assert_eq!(autonum("alphaUcPeriod", 27), "AA.");
+    assert_eq!(autonum("alphaUcPeriod", u32::MAX).len(), 51); // 50 letters + '.'
 }
 
 #[test]
@@ -938,6 +939,27 @@ fn an_installed_symbol_font_draws_its_own_bullet() {
 }
 
 #[test]
+fn symbol_font_char_keeps_covered_non_symbol_bullets() {
+    // `Bullet::Char.char` is unrestricted text; the PPTX reader stores `buChar` directly. A bullet
+    // such as U+2022 • must draw its own covered glyph, never a low-byte remap (0x22 → FOR ALL)
+    // to an unrelated Symbol code. Skipped when the face doesn't cover U+2022.
+    let db = FontDb::global();
+    if !db.has_family("Symbol") {
+        eprintln!("skipped: no Symbol font installed");
+        return;
+    }
+    let face = db.face("Symbol", "Regular");
+    if !face.covers('•') {
+        eprintln!("skipped: installed Symbol face lacks U+2022");
+        return;
+    }
+    assert_eq!(symbol_font_char(&face, "•", Some("Symbol")), Some('•'), "U+2022 draws itself, not a low-byte remap");
+    // A real symbol code still takes the mapping.
+    let f0de = String::from_utf8(vec![0xEF, 0x83, 0x9E]).unwrap(); // U+F0DE
+    assert_eq!(symbol_font_char(&face, &f0de, Some("Symbol")), symbol_font_draw(&face, 0xDE));
+}
+
+#[test]
 fn symbol_char_maps_symbol_font_codes() {
     // Inter is not a symbol font, so the codes map to look-alikes.
     let face = FontDb::global().face("Inter", "Regular");
@@ -949,16 +971,271 @@ fn symbol_char_maps_symbol_font_codes() {
 }
 
 #[test]
+fn symbol_font_remaps_private_use_to_real_unicode() {
+    // Apple's "Symbol" on macOS has no private-use cmap: it draws the classic Symbol glyphs at
+    // their real Unicode points. A document's U+F0xx symbol characters must be remapped to those.
+    // Skipped without an installed Symbol face that actually draws the remapped character.
+    let db = FontDb::global();
+    if !db.has_family("Symbol") {
+        eprintln!("skipped: no Symbol font installed");
+        return;
+    }
+    let face = db.face("Symbol", "Regular");
+    // U+F0DE is the Symbol font's double arrow (⇒, U+21D2). The face must draw it at the real
+    // Unicode point — the PUA code itself only when the face has a private-use cmap (Windows).
+    let drawn = symbol_font_draw(&face, 0xDE);
+    if face.covers('\u{F0DE}') {
+        assert_eq!(drawn, Some('\u{F0DE}'));
+    } else {
+        assert_eq!(drawn, Some('\u{21D2}'), "Apple Symbol maps U+F0DE to the real double arrow");
+    }
+}
+
+#[test]
+fn symbol_font_draw_falls_back_to_ascii() {
+    // 0x3C–0x3F are plain ASCII < = > ? in Adobe's symbol encoding (≤ ≥ ∞ sit at 0xA3/0xB3/0xA5 and
+    // ∴ at 0x5C), so a document's "a<b" set in Symbol must draw "a<b", not "a≤b". ASCII codes with no
+    // table entry draw themselves too: U+F031 is "1", U+F028 "(". Skipped without an installed
+    // Symbol face.
+    let db = FontDb::global();
+    if !db.has_family("Symbol") {
+        eprintln!("skipped: no Symbol font installed");
+        return;
+    }
+    let face = db.face("Symbol", "Regular");
+    for &code in &[0x3C, 0x3D, 0x3E, 0x3F, 0x31, 0x28, 0x30, 0x2B] {
+        let pua = char::from_u32(0xF000 | code).unwrap();
+        let ascii = char::from_u32(code).unwrap();
+        let drawn = symbol_font_draw(&face, code);
+        if face.covers(pua) {
+            // Windows Symbol covers its private-use block; that glyph wins.
+            assert_eq!(drawn, Some(pua), "the face's private-use glyph wins for 0x{code:02X}");
+        } else if face.covers(ascii) {
+            // Apple's Symbol (no PUA cmap) draws the ASCII character itself, never a remap of
+            // 0x3C–0x3F to ≤ ≥ ∞ ∴.
+            assert_eq!(drawn, Some(ascii), "Symbol code 0x{code:02X} must draw its ASCII character");
+        } else {
+            assert_eq!(drawn, None, "0x{code:02X} has no glyph in this Symbol face");
+        }
+    }
+}
+
+#[test]
+fn symbol_font_draw_tries_apple_alternatives() {
+    // Apple's Symbol maps a few codes differently from Adobe: 0xA4 (fraction slash) to U+2044
+    // instead of Adobe's U+2215, and 0xE1/0xF1 (angle brackets) to U+3008/U+3009 instead of
+    // U+2329/U+232A. When the installed face doesn't cover the Adobe character, the alternative is
+    // tried before giving up. Skipped without an installed Symbol face.
+    let db = FontDb::global();
+    if !db.has_family("Symbol") {
+        eprintln!("skipped: no Symbol font installed");
+        return;
+    }
+    let face = db.face("Symbol", "Regular");
+    for &(code, adobe, alt) in &[(0xA4, '\u{2215}', '\u{2044}'), (0xE1, '\u{2329}', '\u{3008}'), (0xF1, '\u{232A}', '\u{3009}')] {
+        let pua = char::from_u32(0xF000 | code).unwrap();
+        let drawn = symbol_font_draw(&face, code);
+        if face.covers(pua) {
+            assert_eq!(drawn, Some(pua), "the face's private-use glyph wins for 0x{code:02X}");
+        } else if face.covers(adobe) {
+            assert_eq!(drawn, Some(adobe), "Adobe U+{:04X} wins for 0x{code:02X} when covered", adobe as u32);
+        } else {
+            assert_eq!(drawn, Some(alt), "Apple alternative U+{:04X} is tried for 0x{code:02X}", alt as u32);
+        }
+    }
+}
+
+#[test]
+fn symbol_unicode_maps_the_euro() {
+    // Adobe symbol.txt: 20AC A0 # EURO SIGN. The euro is the one currency symbol in the encoding.
+    assert_eq!(symbol_unicode(0xA0), Some(0x20AC));
+    // Apple alternatives are tried in order for 0xA4/0xE1/0xF1.
+    assert_eq!(symbol_unicode_alts(0xA4), &[0x2044u32]);
+    assert_eq!(symbol_unicode_alts(0xE1), &[0x3008u32]);
+    assert_eq!(symbol_unicode_alts(0xF1), &[0x3009u32]);
+    assert_eq!(symbol_unicode_alts(0x44), &[] as &[u32]);
+    assert_eq!(symbol_unicode_alts(0x57), &[] as &[u32]);
+    assert_eq!(symbol_unicode_alts(0x6D), &[] as &[u32]);
+}
+
+/// Every entry of the Adobe Symbol encoding table, in full. Pure and platform-independent: the
+/// table maps a Symbol code to its real Unicode character regardless of any installed font, so this
+/// runs on every machine. Guarded against typos in `symbol_unicode` (e.g. 0x40 must be U+2245, the
+/// congruent sign, not U+22C5 dot operator).
+#[test]
+fn symbol_unicode_table_covers_the_adobe_encoding() {
+    // (code, real Unicode) from unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt.
+    // Only the non-ASCII, non-CUS entries; ASCII codes pass through as themselves and CUS fragment
+    // glyphs have no standard Unicode point, so `symbol_unicode` returns None for them.
+    let table: &[(u32, u32)] = &[
+        // 0x20–0x7E: the few mathematical ones among the ASCII-range characters.
+        (0x22, 0x2200),
+        (0x24, 0x2203),
+        (0x27, 0x220B),
+        (0x2A, 0x2217),
+        (0x2D, 0x2212),
+        (0x40, 0x2245),
+        (0x5C, 0x2234),
+        (0x5E, 0x22A5),
+        (0x7E, 0x223C),
+        // 0x41–0x5A: Greek uppercase.
+        (0x41, 0x0391),
+        (0x42, 0x0392),
+        (0x43, 0x03A7),
+        (0x44, 0x0394),
+        (0x45, 0x0395),
+        (0x46, 0x03A6),
+        (0x47, 0x0393),
+        (0x48, 0x0397),
+        (0x49, 0x0399),
+        (0x4A, 0x03D1),
+        (0x4B, 0x039A),
+        (0x4C, 0x039B),
+        (0x4D, 0x039C),
+        (0x4E, 0x039D),
+        (0x4F, 0x039F),
+        (0x50, 0x03A0),
+        (0x51, 0x0398),
+        (0x52, 0x03A1),
+        (0x53, 0x03A3),
+        (0x54, 0x03A4),
+        (0x55, 0x03A5),
+        (0x56, 0x03C2),
+        (0x57, 0x03A9),
+        (0x58, 0x039E),
+        (0x59, 0x03A8),
+        (0x5A, 0x0396),
+        // 0x61–0x7A: Greek lowercase.
+        (0x61, 0x03B1),
+        (0x62, 0x03B2),
+        (0x63, 0x03C7),
+        (0x64, 0x03B4),
+        (0x65, 0x03B5),
+        (0x66, 0x03C6),
+        (0x67, 0x03B3),
+        (0x68, 0x03B7),
+        (0x69, 0x03B9),
+        (0x6A, 0x03D5),
+        (0x6B, 0x03BA),
+        (0x6C, 0x03BB),
+        (0x6D, 0x03BC),
+        (0x6E, 0x03BD),
+        (0x6F, 0x03BF),
+        (0x70, 0x03C0),
+        (0x71, 0x03B8),
+        (0x72, 0x03C1),
+        (0x73, 0x03C3),
+        (0x74, 0x03C4),
+        (0x75, 0x03C5),
+        (0x76, 0x03D6),
+        (0x77, 0x03C9),
+        (0x78, 0x03BE),
+        (0x79, 0x03C8),
+        (0x7A, 0x03B6),
+        // 0xA0–0xAF: euro, Greek upsilon with hook, primes, math, suits and arrows.
+        (0xA0, 0x20AC),
+        (0xA1, 0x03D2),
+        (0xA2, 0x2032),
+        (0xA3, 0x2264),
+        (0xA4, 0x2215),
+        (0xA5, 0x221E),
+        (0xA6, 0x0192),
+        (0xA7, 0x2663),
+        (0xA8, 0x2666),
+        (0xA9, 0x2665),
+        (0xAA, 0x2660),
+        (0xAB, 0x2194),
+        (0xAC, 0x2190),
+        (0xAD, 0x2191),
+        (0xAE, 0x2192),
+        (0xAF, 0x2193),
+        // 0xB0–0xBC: degree, plus-minus, double prime, math and ellipsis.
+        (0xB0, 0x00B0),
+        (0xB1, 0x00B1),
+        (0xB2, 0x2033),
+        (0xB3, 0x2265),
+        (0xB4, 0x00D7),
+        (0xB5, 0x221D),
+        (0xB6, 0x2202),
+        (0xB7, 0x2022),
+        (0xB8, 0x00F7),
+        (0xB9, 0x2260),
+        (0xBA, 0x2261),
+        (0xBB, 0x2248),
+        (0xBC, 0x2026),
+        (0xBF, 0x21B5),
+        // 0xC0–0xCF: letterlike symbols, set relations.
+        (0xC0, 0x2135),
+        (0xC1, 0x2111),
+        (0xC2, 0x211C),
+        (0xC3, 0x2118),
+        (0xC4, 0x2297),
+        (0xC5, 0x2295),
+        (0xC6, 0x2205),
+        (0xC7, 0x2229),
+        (0xC8, 0x222A),
+        (0xC9, 0x2283),
+        (0xCA, 0x2287),
+        (0xCB, 0x2284),
+        (0xCC, 0x2282),
+        (0xCD, 0x2286),
+        (0xCE, 0x2208),
+        (0xCF, 0x2209),
+        // 0xD0–0xDF: angle, nabla, product, radical, not, ands, ors, double arrows.
+        (0xD0, 0x2220),
+        (0xD1, 0x2207),
+        (0xD5, 0x220F),
+        (0xD6, 0x221A),
+        (0xD7, 0x22C5),
+        (0xD8, 0x00AC),
+        (0xD9, 0x2227),
+        (0xDA, 0x2228),
+        (0xDB, 0x21D4),
+        (0xDC, 0x21D0),
+        (0xDD, 0x21D1),
+        (0xDE, 0x21D2),
+        (0xDF, 0x21D3),
+        // 0xE0–0xF5: lozenge, angle brackets, summation, integral.
+        (0xE0, 0x25CA),
+        (0xE1, 0x2329),
+        (0xE5, 0x2211),
+        (0xF1, 0x232A),
+        (0xF2, 0x222B),
+        (0xF3, 0x2320),
+        (0xF5, 0x2321),
+    ];
+    for &(code, uni) in table {
+        assert_eq!(symbol_unicode(code), Some(uni), "Symbol code 0x{code:02X} must map to U+{uni:04X}");
+    }
+    // ASCII codes pass through as themselves (symbol_unicode has no entry), and the CUS fragment
+    // codes return None: 0x60 radical extender, 0xBD/0xBE arrow extenders, 0xD2–0xD4 serif marks,
+    // 0xE2–0xE4 sans-serif marks and the paren/bracket extender run 0xE6–0xFF.
+    for code in [
+        0x20, 0x21, 0x23, 0x25, 0x26, 0x28, 0x29, 0x2B, 0x2C, 0x2E, 0x2F, 0x30, 0x31, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F, 0x5B, 0x5D, 0x5F,
+        0x7B, 0x7C, 0x7D,
+    ] {
+        assert_eq!(symbol_unicode(code), None, "ASCII code 0x{code:02X} has no Symbol remap");
+    }
+    for code in [
+        0x60, 0xBD, 0xBE, 0xD2, 0xD3, 0xD4, 0xE2, 0xE3, 0xE4, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED, 0xEE, 0xEF, 0xF0, 0xF4, 0xF6, 0xF7,
+        0xF8, 0xF9, 0xFA, 0xFB, 0xFC, 0xFD, 0xFE, 0xFF,
+    ] {
+        assert_eq!(symbol_unicode(code), None, "CUS code 0x{code:02X} has no standard Unicode remap");
+    }
+}
+
+#[test]
 fn symbol_font_characters_draw_in_the_sym_font() {
     // PowerPoint stores a Symbol-font character as U+F0xx with `<a:sym typeface="Symbol"/>`:
     // U+F0DE is the Symbol font's double arrow (⇒). It must come from that font, not from
     // whichever installed font happens to map U+F0DE (Wingdings draws an arrow at another angle).
     let symbol = "Symbol";
     let db = FontDb::global();
-    // Some installed Symbol faces use Unicode mappings only, without the legacy U+F0xx cmap.
-    // This integration test needs a face that can draw the symbol code used by the document.
-    if !db.has_family(symbol) || !db.face(symbol, "Regular").covers('\u{F0DE}') {
-        eprintln!("skipped: no installed Symbol face covers U+F0DE");
+    // The installed Symbol face draws the code either at the private-use U+F0DE or, when it has no
+    // private-use mapping (Apple's Symbol on macOS maps glyphs to real Unicode), at the real
+    // character the Symbol font stores the code at. Skip only if neither is covered.
+    if !db.has_family(symbol) || !covers_symbol(&db.face(symbol, "Regular"), '\u{F0DE}') {
+        eprintln!("skipped: no installed Symbol face draws U+F0DE");
         return;
     }
     let (p, mut sh) = setup("x\u{F0DE}y", 600.0, 300.0);
@@ -1466,4 +1743,100 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     let l = lay(&p, &sh, 600.0, 300.0);
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
+}
+
+/// A run of `text` at `size` points.
+fn sized_run(text: &str, size: f64) -> Run {
+    let mut r = Run::new(text);
+    r.props.size = Some(size);
+    r
+}
+
+/// A line break whose own run properties are `size` points.
+fn sized_break(size: f64) -> Run {
+    let mut r = Run { text: String::new(), props: Default::default(), kind: deckcraft_model::text::RunKind::Break };
+    r.props.size = Some(size);
+    r
+}
+
+/// The height one line of `size`-point text takes in this shape: the yardstick the empty-line
+/// tests measure against, so they do not depend on the test font's ascent and descent.
+fn one_line_height(p: &Presentation, sh: &mut Shape, size: f64) -> f64 {
+    sh.text.as_mut().unwrap().paragraphs = vec![Paragraph { runs: vec![sized_run("X", size)], ..Default::default() }];
+    let l = lay(p, sh, 400.0, 400.0);
+    l.lines[0].bottom - l.lines[0].top
+}
+
+#[test]
+fn an_empty_line_is_sized_by_the_break_that_ends_it() {
+    // PowerPoint sizes an empty line by the mark that closes it, not by the paragraph's first
+    // run (#780). Case A of the report: 40pt text, a 40pt break, a 10pt break, 40pt text, so
+    // the empty second line is a 10pt line and not a 40pt one.
+    let (p, mut sh) = setup("x", 400.0, 400.0);
+    let (h10, h40, h60, h20) = (
+        one_line_height(&p, &mut sh, 10.0),
+        one_line_height(&p, &mut sh, 40.0),
+        one_line_height(&p, &mut sh, 60.0),
+        one_line_height(&p, &mut sh, 20.0),
+    );
+    let put = |sh: &mut Shape, runs: Vec<Run>| {
+        sh.text.as_mut().unwrap().paragraphs = vec![Paragraph { runs, ..Default::default() }];
+    };
+
+    put(&mut sh, vec![sized_run("A1", 40.0), sized_break(40.0), sized_break(10.0), sized_run("A2", 40.0)]);
+    let a = lay(&p, &sh, 400.0, 400.0);
+    assert_eq!(a.lines.len(), 3, "{:?}", a.lines.iter().map(|l| l.top).collect::<Vec<_>>());
+    let empty_a = a.lines[2].top - a.lines[1].top;
+    assert!((empty_a - h10).abs() < 0.5, "a 10pt break should give a 10pt line ({h10}), got {empty_a}");
+    assert!((empty_a - h40).abs() > 1.0, "and not the 40pt first run's line ({h40})");
+
+    // Case C: a 60pt break closing the empty line of a 20pt paragraph pushes the third line
+    // down, the opposite direction from the first run's size -- so this cannot pass by the old
+    // behaviour under a different font.
+    put(&mut sh, vec![sized_run("C1", 20.0), sized_break(20.0), sized_break(60.0), sized_run("C2", 20.0)]);
+    let c = lay(&p, &sh, 400.0, 400.0);
+    let empty_c = c.lines[2].top - c.lines[1].top;
+    assert!((empty_c - h60).abs() < 0.5, "a 60pt break should give a 60pt line ({h60}), got {empty_c}");
+    assert!((empty_c - h20).abs() > 1.0, "and not the 20pt first run's line ({h20})");
+}
+
+#[test]
+fn an_empty_last_line_is_sized_by_the_paragraph_mark() {
+    // Case B: 40pt text and a trailing 40pt break, with the paragraph mark at 10pt. No break
+    // closes the empty last line, so it takes the mark's size.
+    let (p, mut sh) = setup("x", 400.0, 400.0);
+    let (h10, h40) = (one_line_height(&p, &mut sh, 10.0), one_line_height(&p, &mut sh, 40.0));
+    {
+        let t = sh.text.as_mut().unwrap();
+        let mut para = Paragraph { runs: vec![sized_run("B1", 40.0), sized_break(40.0)], ..Default::default() };
+        para.end_props.size = Some(10.0);
+        t.paragraphs = vec![para];
+    }
+    let l = lay(&p, &sh, 400.0, 400.0);
+    assert_eq!(l.lines.len(), 2, "the trailing break leaves an empty last line");
+    let h = l.lines[1].bottom - l.lines[1].top;
+    assert!((h - h10).abs() < 0.5, "a 10pt paragraph mark should give {h10}, got {h}");
+    assert!((h - h40).abs() > 1.0, "and not the 40pt first run's line ({h40})");
+}
+
+#[test]
+fn an_empty_paragraph_keeps_its_paragraph_mark_height() {
+    // Case D, the control: an empty *paragraph* already took `end_props` before this change,
+    // through `lead`, and must be unaffected by it.
+    let (p, mut sh) = setup("x", 400.0, 400.0);
+    let h10 = one_line_height(&p, &mut sh, 10.0);
+    {
+        let t = sh.text.as_mut().unwrap();
+        let mut empty = Paragraph::default();
+        empty.end_props.size = Some(10.0);
+        t.paragraphs = vec![
+            Paragraph { runs: vec![sized_run("D1", 40.0)], ..Default::default() },
+            empty,
+            Paragraph { runs: vec![sized_run("D2", 40.0)], ..Default::default() },
+        ];
+    }
+    let l = lay(&p, &sh, 400.0, 400.0);
+    assert_eq!(l.lines.len(), 3);
+    let h = l.lines[1].bottom - l.lines[1].top;
+    assert!((h - h10).abs() < 0.5, "a 10pt empty paragraph should give {h10}, got {h}");
 }

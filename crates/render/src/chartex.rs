@@ -24,7 +24,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
         return;
     }
     let value_label = |v: f64| c.data_label(s, v);
-    let labels = c.data_labels || c.kind == ChartType::Funnel;
+    let labels = c.series_data_labels(s) || c.kind == ChartType::Funnel;
     match c.kind {
         ChartType::Funnel => funnel(ctx, rctx, c, m, area, base, text_col, &vals, &value_label),
         ChartType::Treemap if !c.category_levels.is_empty() => tree_treemap(ctx, rctx, c, m, area, base, labels.then_some(&value_label)),
@@ -107,7 +107,7 @@ fn region_tiles(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
             ctx.fill_rect(&t);
             let dark = v.is_some_and(|v| (v - min) / span > 0.55);
             let mut text = name.clone();
-            if c.data_labels
+            if c.series_data_labels(s)
                 && let Some(v) = v
             {
                 text = format!(

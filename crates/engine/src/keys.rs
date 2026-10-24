@@ -60,6 +60,7 @@ impl Session {
         if self.tool.edit_points.is_some() && matches!(k, "enter" | "return" | "escape") {
             self.tool.edit_points = None;
             self.tool.edit_vertex = None;
+            self.tool.edit_segment = None;
             return Ok(json!({"handled": true, "command": "shape.editPoints"}));
         }
         if editing && let Some((id, params)) = self.text_key(k, mods) {

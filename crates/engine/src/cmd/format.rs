@@ -4,7 +4,7 @@
 use deckcraft_model::edit as ed;
 use deckcraft_model::resolve;
 use deckcraft_model::text::{Align, Anchor, AutoFit, Bullet, Caps, ParaProps, RunProps, Spacing, Strike, TabStop, TextDir};
-use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot, Shape};
+use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot, Shape, ShapeKind};
 use serde_json::{Value, json};
 
 use super::text::{format_body, format_para, format_run};
@@ -340,6 +340,27 @@ fn shrink(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 fn color(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
+    // A selected chart has no runs: Font Color colours its text (title, axes, legend, labels),
+    // which used to answer and change nothing.
+    let st = s.doc()?;
+    if st.selection.text.is_none() {
+        let charts: Vec<ShapeId> =
+            st.selection.shapes.iter().copied().filter(|id| matches!(st.shape(*id).map(|sh| &sh.kind), Some(ShapeKind::Chart(_)))).collect();
+        let only_charts = charts.len() == st.selection.shapes.len();
+        if !charts.is_empty() {
+            let tc = c.clone();
+            edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
+                if let ShapeKind::Chart(ch) = &mut sh.kind {
+                    ch.text_color = Some(tc.clone());
+                    ch.raw = None;
+                }
+                Ok(())
+            })?;
+            if only_charts {
+                return ok();
+            }
+        }
+    }
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
 }
 /// `a:alpha` for `transparency` (0–1) on `c`, replacing any alpha it had; fully opaque drops it.
@@ -692,7 +713,8 @@ fn case(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let m = if mode == "cycle" { ed::next_case(&ed::text_range(&body, a, b)).to_string() } else { mode.clone() };
         super::text::edit_text(s, move |body, t| {
-            for pi in a.0..=b.0 {
+            let last = body.paragraphs.len().saturating_sub(1);
+            for pi in a.0..=b.0.min(last) {
                 let Some(para) = body.paragraphs.get_mut(pi) else { continue };
                 let n = para.char_len();
                 let from = if pi == a.0 { a.1 } else { 0 };
@@ -1170,6 +1192,31 @@ pub(crate) fn apply_painted(sh: &mut Shape, p: &Painted) {
     }
 }
 
+/// The paragraphs the text selection covers whole: it starts at or before their start and
+/// reaches their end. A paragraph the selection only touches the start of (it ends at offset
+/// 0, as after a triple-click) is not covered.
+fn covered_paragraphs(s: &Session) -> Vec<usize> {
+    let Ok(st) = s.doc() else { return vec![] };
+    let Some(t) = &st.selection.text else { return vec![] };
+    let Some(body) = super::text::body_of(st, t) else { return vec![] };
+    let (a, b) = t.ordered();
+    // A hostile selection can point past the body: walk only the paragraphs it has.
+    (a.0..=b.0.min(body.paragraphs.len().saturating_sub(1)))
+        .filter(|&pi| {
+            let Some(para) = body.paragraphs.get(pi) else { return false };
+            let starts = pi > a.0 || a.1 == 0;
+            let ends = if pi < b.0 {
+                true
+            } else if b.0 > a.0 && b.1 == 0 {
+                false
+            } else {
+                b.1 >= para.char_len()
+            };
+            starts && ends
+        })
+        .collect()
+}
+
 fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
     let Some((painted, sticky)) = s.painter.clone() else { return Err(bad("format.painterApply", "pick formatting with the Format Painter first")) };
     if !sticky {
@@ -1179,8 +1226,17 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(r) = painted.run.clone() {
             format_run(s, &move |rp| *rp = r.clone())?;
         }
-        if let Some(pp) = painted.para.clone() {
-            format_para(s, &move |para| para.props = pp.clone())?;
+        // Paragraph formatting (bullets, alignment, spacing) goes only onto paragraphs the
+        // selection covers whole; painting part of a bulleted line changes just its text.
+        let covered = covered_paragraphs(s);
+        if let (Some(pp), false) = (painted.para.clone(), covered.is_empty()) {
+            super::text::edit_text(s, |body, _| {
+                for &pi in &covered {
+                    if let Some(para) = body.paragraphs.get_mut(pi) {
+                        para.props = pp.clone();
+                    }
+                }
+            })?;
         }
         return ok();
     }

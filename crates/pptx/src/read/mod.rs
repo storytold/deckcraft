@@ -36,6 +36,10 @@ pub struct Imp<'a> {
     pub table_style_ids: Vec<String>,
     /// Per legacy VML drawing part: shape id → preview picture part (see `shapes::vml_preview`).
     pub vml_previews: HashMap<String, HashMap<String, String>>,
+    /// Aggregate byte count of retained chart sidecars across the presentation.
+    pub kept_sidecar_bytes: usize,
+    /// Cached kept sidecars by normalized chart part name.
+    pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
 }
 
 impl Imp<'_> {
@@ -97,29 +101,32 @@ impl Part {
 
 /// Prefixes declared below the root but not on it, skipping any bound to different namespaces.
 fn inner_decls(root: &El, ns: &[(String, String)]) -> Vec<(String, String)> {
-    fn rec(e: &El, out: &mut Vec<(String, String)>, clash: &mut HashSet<String>, depth: usize) {
+    fn rec(e: &El, out: &mut Vec<(String, String)>, out_map: &mut HashMap<String, String>, clash: &mut HashSet<String>, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
             return;
         }
         for (k, v) in e.attrs.iter().filter(|(k, _)| k.starts_with("xmlns:")) {
-            match out.iter().find(|(o, _)| o == k).map(|(_, u)| u != v) {
-                Some(true) => {
+            if let Some(existing) = out_map.get(k) {
+                if existing != v {
                     clash.insert(k.clone());
                 }
-                Some(false) => {}
-                None => out.push((k.clone(), v.clone())),
+            } else if out.len() < 1000 {
+                out_map.insert(k.clone(), v.clone());
+                out.push((k.clone(), v.clone()));
             }
         }
         for c in e.elements() {
-            rec(c, out, clash, depth + 1);
+            rec(c, out, out_map, clash, depth + 1);
         }
     }
     let mut out = vec![];
+    let mut out_map = HashMap::new();
     let mut clash = HashSet::new();
+    let root_ns: HashSet<&str> = ns.iter().map(|(r, _)| r.as_str()).collect();
     for c in root.elements() {
-        rec(c, &mut out, &mut clash, 1);
+        rec(c, &mut out, &mut out_map, &mut clash, 1);
     }
-    out.retain(|(k, _)| !clash.contains(k) && !ns.iter().any(|(r, _)| r == k));
+    out.retain(|(k, _)| !clash.contains(k) && !root_ns.contains(k.as_str()));
     out
 }
 
@@ -380,6 +387,8 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         custom_show_names: HashMap::new(),
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
+        kept_sidecar_bytes: 0,
+        kept_charts: HashMap::new(),
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -409,9 +418,9 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         .child("sldMasterIdLst")
         .map(|l| l.children_named("sldMasterId").filter_map(|m| pres_part.rels.target(m.attr("r:id").unwrap_or(""))).map(String::from).collect())
         .unwrap_or_default();
-    let master_paths: Vec<String> =
+    let mut master_paths: Vec<String> =
         if master_paths.is_empty() { pres_part.rels.all_of("slideMaster").map(|r| r.target.clone()).collect() } else { master_paths };
-    let slide_entries: Vec<(u32, String)> = pres_el
+    let mut slide_entries: Vec<(u32, String)> = pres_el
         .child("sldIdLst")
         .map(|l| {
             l.children_named("sldId")
@@ -423,10 +432,21 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
 
     let mut docs: HashMap<String, Doc> = HashMap::new();
     let mut max_id = 0u32;
+    let mut seen_masters = HashSet::new();
+    master_paths.retain(|m| seen_masters.insert(opc::norm(m)));
+
     let mut all_parts: Vec<String> = master_paths.clone();
+    let mut seen_layouts = HashSet::new();
     for m in &master_paths {
-        all_parts.extend(pkg.rels(m).all_of("slideLayout").map(|r| r.target.clone()));
+        for r in pkg.rels(m).all_of("slideLayout") {
+            let key = opc::norm(&r.target);
+            if seen_layouts.insert(key) {
+                all_parts.push(r.target.clone());
+            }
+        }
     }
+    let mut seen_slides = HashSet::new();
+    slide_entries.retain(|(_, p)| seen_slides.insert(opc::norm(p)));
     all_parts.extend(slide_entries.iter().map(|(_, p)| p.clone()));
     for p in &all_parts {
         let key = opc::norm(p);
@@ -448,6 +468,8 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         custom_show_names: HashMap::new(),
         table_style_ids: Vec::new(),
         vml_previews: HashMap::new(),
+        kept_sidecar_bytes: 0,
+        kept_charts: HashMap::new(),
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let mut slide_ids: Vec<(u32, String, SlideId)> = vec![];
@@ -516,17 +538,23 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
 
     // Slides.
     let mut file_slide_ids: HashMap<u32, SlideId> = HashMap::new();
+    let mut notes_by_target: HashMap<String, TextBody> = HashMap::new();
     for (file_id, path, id) in &slide_ids {
         let Some(doc) = docs.get(&opc::norm(path)) else { continue };
         let part = Part::new(&pkg, path, doc);
         let layout = part.rels.first_of("slideLayout").and_then(|r| layout_by_part.get(&opc::norm(&r.target)).copied()).unwrap_or(fallback_layout);
         let mut slide = read_slide(&mut imp, &part, doc, *id, layout);
         // Notes.
-        if let Some(n) = part.rels.first_of("notesSlide")
-            && let Some(nd) = load(&pkg, &n.target)
-        {
-            let np = Part::new(&pkg, &n.target, &nd);
-            slide.notes = read_notes(&mut imp, &np, &nd.root);
+        if let Some(n) = part.rels.first_of("notesSlide") {
+            let n_key = opc::norm(&n.target);
+            if let Some(cached_notes) = notes_by_target.get(&n_key) {
+                slide.notes = cached_notes.clone();
+            } else if let Some(nd) = load(&pkg, &n.target) {
+                let np = Part::new(&pkg, &n.target, &nd);
+                let notes = read_notes(&mut imp, &np, &nd.root);
+                notes_by_target.insert(n_key, notes.clone());
+                slide.notes = notes;
+            }
         }
         // Comments. A modern part and the legacy part can describe the same threads (PowerPoint
         // writes both): the modern one wins, its flattened legacy copy is skipped.
@@ -781,24 +809,14 @@ pub fn color_map(cm: &El) -> Vec<(String, String)> {
     cm.attrs.iter().filter(|(k, _)| !k.starts_with("xmlns")).map(|(k, v)| (k.clone(), v.clone())).collect()
 }
 
-/// The anchor the theme's shape defaults (`a:objectDefaults/a:spDef/a:bodyPr`) give new shapes
-/// text, if any.
-fn theme_shape_anchor(t: &deckcraft_model::Theme) -> Option<deckcraft_model::text::Anchor> {
-    let raw = t.raw_extra.as_deref()?;
-    let sp = &raw[raw.find("spDef")?..];
-    let sp = &sp[..sp.find("/a:spDef").or_else(|| sp.find("txDef")).unwrap_or(sp.len())];
-    let b = &sp[sp.find("bodyPr")?..];
-    let b = &b[..b.find('>').unwrap_or(b.len())];
-    let v = &b[b.find("anchor=\"")? + 8..];
-    deckcraft_model::text::Anchor::from_xml(&v[..v.find('"')?])
-}
-
-/// A shape's text without an anchor of its own sits at the top, as the standard has it (or where
-/// the theme's shape defaults put it). The model's own default for shapes is the middle, so a
-/// top or bottom anchor is made explicit here and a middle one left unset (placeholders and text
-/// boxes keep inheriting).
+/// A shape's text without an anchor of its own sits at the top, as the standard has it and as
+/// PowerPoint draws it. The theme's shape defaults (`a:objectDefaults/a:spDef/a:bodyPr`, centred in
+/// Office's themes) are for shapes inserted later, not for the file's own shapes: PowerPoint for
+/// Mac draws `<a:bodyPr/>` at the top under an `spDef` with `anchor="ctr"`. The model's own default
+/// for shapes is the middle, so a top or bottom anchor is made explicit here and a middle one left
+/// unset (placeholders and text boxes keep inheriting).
 fn default_text_anchor(p: &mut Presentation) {
-    fn fix(shapes: &mut [deckcraft_model::Shape], a: deckcraft_model::text::Anchor) {
+    fn fix(shapes: &mut [deckcraft_model::Shape]) {
         walk_shapes_mut(shapes, &mut |s| {
             if s.ph.is_none()
                 && !s.text_box
@@ -806,25 +824,20 @@ fn default_text_anchor(p: &mut Presentation) {
                 && let Some(t) = &mut s.text
             {
                 // Middle is the model's own default for shapes, so it is kept as unset.
-                let got = t.body.anchor.unwrap_or(a);
+                let got = t.body.anchor.unwrap_or(deckcraft_model::text::Anchor::Top);
                 t.body.anchor = (got != deckcraft_model::text::Anchor::Middle).then_some(got);
             }
         });
     }
-    let top = deckcraft_model::text::Anchor::Top;
-    let anchors: Vec<_> = p.masters.iter().map(|m| (m.id, theme_shape_anchor(&m.theme).unwrap_or(top))).collect();
     for m in &mut p.masters {
-        let a = anchors.iter().find(|(id, _)| *id == m.id).map(|x| x.1).unwrap_or(top);
         let m = Arc::make_mut(m);
-        fix(&mut m.shapes, a);
+        fix(&mut m.shapes);
         for l in &mut m.layouts {
-            fix(&mut l.shapes, a);
+            fix(&mut l.shapes);
         }
     }
-    let per_slide: Vec<_> =
-        p.slides.iter().map(|s| p.master_for(s).and_then(|(m, _)| anchors.iter().find(|(id, _)| *id == m.id)).map(|x| x.1).unwrap_or(top)).collect();
-    for (s, a) in p.slides.iter_mut().zip(per_slide) {
-        fix(&mut Arc::make_mut(s).shapes, a);
+    for s in &mut p.slides {
+        fix(&mut Arc::make_mut(s).shapes);
     }
 }
 

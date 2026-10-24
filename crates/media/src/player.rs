@@ -254,7 +254,7 @@ impl Player {
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut Mixer) -> R) -> R {
-        let mut g = self.mixer.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.mixer.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         f(&mut g)
     }
 

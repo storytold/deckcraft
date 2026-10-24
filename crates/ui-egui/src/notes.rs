@@ -204,22 +204,36 @@ pub fn editor(
         edit::replace_text(&mut draft.body, &draft.text);
         draft.edited = true;
     }
-    // Bullets and numbers sit at the start of each paragraph's first line.
     if draft.body.text() == draft.text {
-        let painter = ui.painter().with_clip_rect(out.text_clip_rect);
-        let k = size / 12.0;
-        let mut at = 0usize;
-        for (p, bullet) in draft.body.paragraphs.iter().zip(bullets(&draft.body)) {
-            if let Some(b) = bullet {
-                let row = out.galley.pos_from_cursor(CCursor::new(at));
-                let pos = out.galley_pos + vec2(px(indents(p).0, k), row.center().y);
-                let font = theme::font(row.height().clamp(size * 0.75, size * 2.0) * 0.8);
-                painter.text(pos, Align2::LEFT_CENTER, b, font, color);
-            }
-            at += p.char_len() + 1;
-        }
+        paint_bullets(&ui.painter().with_clip_rect(out.text_clip_rect), &draft.body, &out.galley, out.galley_pos, size, color);
     }
     out
+}
+
+/// Bullets and numbers at the start of each paragraph's first line of `galley` (laid out from
+/// `body`), drawn at `origin`.
+fn paint_bullets(painter: &egui::Painter, body: &TextBody, galley: &Galley, origin: egui::Pos2, size: f32, color: Color32) {
+    let k = size / 12.0;
+    let mut at = 0usize;
+    for (p, bullet) in body.paragraphs.iter().zip(bullets(body)) {
+        if let Some(b) = bullet {
+            let row = galley.pos_from_cursor(CCursor::new(at));
+            let pos = origin + vec2(px(indents(p).0, k), row.center().y);
+            let font = theme::font(row.height().clamp(size * 0.75, size * 2.0) * 0.8);
+            painter.text(pos, Align2::LEFT_CENTER, b, font, color);
+        }
+        at += p.char_len() + 1;
+    }
+}
+
+/// The notes drawn read-only with their formatting, wrapped to the available width, and
+/// selectable like a label (the presenter's notes pane).
+pub fn view(ui: &mut Ui, body: &TextBody, look: &Look) -> egui::Response {
+    let color = look.color.unwrap_or_else(|| ui.visuals().text_color());
+    let g = galley(ui, body, look.size, color, ui.available_width());
+    let response = ui.add(egui::Label::new(egui::WidgetText::Galley(g.clone())));
+    paint_bullets(ui.painter(), body, &g, response.rect.min, look.size, color);
+    response
 }
 
 #[cfg(test)]

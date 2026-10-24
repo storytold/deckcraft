@@ -925,13 +925,17 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
             let sc = scheme(app);
             let (m, a) = small_button_ex(ui, Icon::ShapeFill, "Shape Fill", sel, false, true);
             if m.clicked() {
-                run(app, "shape.fill", json!({"color": "accent1"}));
+                let c = app.last_fill.clone();
+                run(app, "shape.fill", json!({"color": c}));
             }
             if let Some(a) = a {
                 widgets::color_popup(&a).show(|ui| {
                     if let Some(c) = widgets::color_grid(ui, &sc, Some("No Fill")) {
                         match c {
-                            Some(c) => run(app, "shape.fill", json!({"color": cref_param(&c)})),
+                            Some(c) => {
+                                app.last_fill = cref_param(&c);
+                                run(app, "shape.fill", json!({"color": cref_param(&c)}));
+                            }
                             None => run(app, "shape.fill", json!({"none": true})),
                         }
                     }
@@ -939,7 +943,8 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
             }
             let (m, a) = small_button_ex(ui, Icon::ShapeOutline, "Shape Outline", sel, false, true);
             if m.clicked() {
-                run(app, "shape.line", json!({"color": "tx1", "width": 1}));
+                let c = app.last_outline.clone();
+                run(app, "shape.line", json!({"color": c}));
             }
             if let Some(a) = a {
                 widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc));
@@ -955,7 +960,10 @@ fn drawing_group(app: &mut SlideApp, ui: &mut Ui) {
 pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::ColorScheme) {
     if let Some(c) = widgets::color_grid(ui, sc, Some("No Outline")) {
         match c {
-            Some(c) => run(app, "shape.line", json!({"color": cref_param(&c)})),
+            Some(c) => {
+                app.last_outline = cref_param(&c);
+                run(app, "shape.line", json!({"color": cref_param(&c)}));
+            }
             None => run(app, "shape.line", json!({"none": true})),
         }
     }
@@ -1249,7 +1257,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
         });
         let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
-        egui::Popup::menu(&r).width(340.0).show(|ui| icon_library(app, ui));
+        egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
         big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
         let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
         egui::Popup::menu(&r).show(|ui| {
@@ -1341,6 +1349,38 @@ pub fn table_grid_picker(ui: &mut Ui) -> Option<(usize, usize)> {
     if resp.clicked() && hover.0 > 0 { Some(hover) } else { None }
 }
 
+fn render_icon_categories(app: &mut SlideApp, ui: &mut Ui, icons: &[deckcraft_engine::icons::Icon], color: Color32, hover: Color32) {
+    let mut cats: Vec<&str> = Vec::new();
+    for icon in icons {
+        if !cats.contains(&icon.category) {
+            cats.push(icon.category);
+        }
+    }
+    for cat in cats {
+        ui.label(egui::RichText::new(cat).small().strong());
+        ui.horizontal_wrapped(|ui| {
+            for icon in icons.iter().filter(|i| i.category == cat) {
+                icon_cell(app, ui, icon, color, hover);
+            }
+        });
+    }
+}
+
+fn render_filtered_icons(app: &mut SlideApp, ui: &mut Ui, icons: &[deckcraft_engine::icons::Icon], q: &str, color: Color32, hover: Color32) {
+    let mut n = 0;
+    ui.horizontal_wrapped(|ui| {
+        for icon in icons {
+            if icon.name.contains(q) || icon.label.to_lowercase().contains(q) {
+                icon_cell(app, ui, icon, color, hover);
+                n += 1;
+            }
+        }
+    });
+    if n == 0 {
+        ui.label("No icons match.");
+    }
+}
+
 /// Lucide stroke icons (Insert › Icons). Search filters the gallery; a click inserts the outline.
 fn icon_library(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -1353,33 +1393,9 @@ fn icon_library(app: &mut SlideApp, ui: &mut Ui) {
     let icons = deckcraft_engine::icons::icons();
     egui::ScrollArea::vertical().id_salt("icon-scroll").max_height(420.0).show(ui, |ui| {
         if q.is_empty() {
-            let mut cats: Vec<&str> = Vec::new();
-            for icon in icons {
-                if !cats.contains(&icon.category) {
-                    cats.push(icon.category);
-                }
-            }
-            for cat in cats {
-                ui.label(egui::RichText::new(cat).small().strong());
-                ui.horizontal_wrapped(|ui| {
-                    for icon in icons.iter().filter(|i| i.category == cat) {
-                        icon_cell(app, ui, icon, color, hover);
-                    }
-                });
-            }
+            render_icon_categories(app, ui, icons, color, hover);
         } else {
-            let mut n = 0;
-            ui.horizontal_wrapped(|ui| {
-                for icon in icons {
-                    if icon.name.contains(&q) || icon.label.to_lowercase().contains(&q) {
-                        icon_cell(app, ui, icon, color, hover);
-                        n += 1;
-                    }
-                }
-            });
-            if n == 0 {
-                ui.label("No icons match.");
-            }
+            render_filtered_icons(app, ui, icons, &q, color, hover);
         }
     });
 }
@@ -2436,13 +2452,17 @@ fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
         rows(ui, |ui| {
             let (m, a) = small_button_ex(ui, Icon::ShapeFill, "Shape Fill", sel, false, true);
             if m.clicked() {
-                run(app, "shape.fill", json!({"color": "accent1"}));
+                let c = app.last_fill.clone();
+                run(app, "shape.fill", json!({"color": c}));
             }
             if let Some(a) = a {
                 widgets::color_popup(&a).show(|ui| {
                     if let Some(c) = widgets::color_grid(ui, &sc, Some("No Fill")) {
                         match c {
-                            Some(c) => run(app, "shape.fill", json!({"color": cref_param(&c)})),
+                            Some(c) => {
+                                app.last_fill = cref_param(&c);
+                                run(app, "shape.fill", json!({"color": cref_param(&c)}));
+                            }
                             None => run(app, "shape.fill", json!({"none": true})),
                         }
                     }
@@ -2452,7 +2472,11 @@ fn shape_format(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 });
             }
-            let (_, a) = small_button_ex(ui, Icon::ShapeOutline, "Shape Outline", sel, false, true);
+            let (m, a) = small_button_ex(ui, Icon::ShapeOutline, "Shape Outline", sel, false, true);
+            if m.clicked() {
+                let c = app.last_outline.clone();
+                run(app, "shape.line", json!({"color": c}));
+            }
             if let Some(a) = a {
                 widgets::color_popup(&a).show(|ui| outline_menu(app, ui, &sc));
             }
@@ -2636,18 +2660,12 @@ fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "picture.recolor", json!({"preset": id}));
             }
             ui.separator();
-            ui.menu_button("Set Transparent Color", |ui| {
-                ui.label("Pixels of this colour become transparent:");
-                if let Some(c) = widgets::color_grid(ui, &sc, Some("None")) {
-                    match c {
-                        Some(c) => {
-                            let rgb = c.resolve(&sc, None);
-                            run(app, "picture.transparentColor", json!({"color": format!("#{}", rgb.hex())}));
-                        }
-                        None => run(app, "picture.transparentColor", json!({"none": true})),
-                    }
-                }
-            });
+            // As in PowerPoint, the pointer picks the colour in the picture itself: a colour
+            // chosen from a grid almost never matches a photo's pixels.
+            if ui.button("Set Transparent Color").on_hover_text("Click a colour in the picture to make it transparent").clicked() {
+                crate::eyedropper::request_transparent_color(ui.ctx());
+                ui.close();
+            }
         });
         let r = big_button(ui, Icon::ArtisticEffects, "Artistic\nEffects", enabled(app, "picture.artisticEffect"));
         egui::Popup::menu(&r).show(|ui| {
@@ -3473,6 +3491,10 @@ mod effects_tests;
 #[cfg(test)]
 #[path = "master_layout_tests.rs"]
 mod master_layout_tests;
+
+#[cfg(test)]
+#[path = "icons_popup_tests.rs"]
+mod icons_popup_tests;
 
 #[cfg(test)]
 #[path = "align_tests.rs"]

@@ -154,7 +154,7 @@ fn open_command(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     if is_presentation_name(&lower) {
         Some("file.openBytes")
-    } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".rtf") {
         Some("slide.fromOutline")
     } else {
         None
@@ -175,7 +175,7 @@ fn infer_command(name: &str, bytes: &[u8]) -> Option<&'static str> {
         Some("insert.audio")
     } else if ct.starts_with("video/") {
         Some("insert.video")
-    } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".rtf") {
         Some("slide.fromOutline")
     } else {
         None
@@ -244,6 +244,10 @@ pub struct UiState {
     pub notes: bool,
     pub notes_height: f32,
     pub thumbs_width: f32,
+    /// Vertical scroll offset of the thumbnail pane, recorded each frame for the control
+    /// channel and tests; not persisted.
+    #[serde(skip)]
+    pub thumbs_scroll: f32,
     /// Open task pane: `format`, `animation`, `selection`, `comments`, `designer`, `background`,
     /// `smartart` (Text Pane).
     pub pane: Option<String>,
@@ -286,6 +290,7 @@ impl Default for UiState {
             notes: true,
             notes_height: 52.0,
             thumbs_width: 236.0,
+            thumbs_scroll: 0.0,
             pane: None,
             pane_width: 300.0,
             ruler: false,
@@ -382,7 +387,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
     ("show.presenter", "Presenter View", None, "{on?: bool}"),
     ("show.end", "End Show", None, "{}"),
-    ("animation.preview", "Preview Animations", None, "{on?: bool}"),
+    ("animation.preview", "Preview Animations", None, "{on?: bool, from?: effect index}"),
     ("app.home", "Home", None, "{on?}"),
     ("app.backstage", "File", Some("Alt+F"), "{page?: home|new|open|info|saveAs|print|export|account, on?: bool}"),
     ("app.closePresentation", "Close", Some("Cmd+W"), "{}"),
@@ -428,11 +433,17 @@ struct AnimPreview {
     slide_ptr: usize,
     /// egui time when the first frame latched the clock (`None` until then).
     started: Option<f64>,
+    /// Where on the play-everything clock playback began (Play From the selected effect).
+    from: f64,
     elapsed: f64,
     timeline: deckcraft_anim::Timeline,
 }
 
 pub struct SlideApp {
+    /// Shape Fill's last colour (a command colour parameter): the button applies it again. Accent 1 until one is picked.
+    pub last_fill: serde_json::Value,
+    /// Shape Outline's last colour, likewise. Text 1 until one is picked.
+    pub last_outline: serde_json::Value,
     /// Table Design's border pen (`color`, `width`, `dash` for `table.borders`).
     pub table_pen: serde_json::Value,
     pub session: Session,
@@ -533,6 +544,8 @@ impl SlideApp {
     pub fn new(session: Session, mut services: Services) -> Self {
         let audio_out = services.audio_out.take();
         SlideApp {
+            last_fill: serde_json::json!("accent1"),
+            last_outline: serde_json::json!("tx1"),
             table_pen: serde_json::json!({"width": 1.0}),
             session,
             services,
@@ -744,6 +757,7 @@ impl SlideApp {
             "jpeg" | "jpg" => ("jpg", "jpeg", false),
             "pptx" => ("pptx", "pptx", false),
             "outline" | "txt" => ("txt", "outline", false),
+            "rtf" => ("rtf", "rtf", false),
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
@@ -952,11 +966,9 @@ impl SlideApp {
             "show.start" => {
                 if let Some(name) = p.get("custom").and_then(Value::as_str).filter(|s| !s.is_empty()) {
                     self.start_custom_show(name, false);
-                } else if p.get("from").is_some() {
-                    let from = p.get("from").and_then(Value::as_u64).map(|v| v as usize).unwrap_or(0);
-                    self.start_show(from, false);
                 } else {
-                    self.start_show(self.show_start_index(), false);
+                    let from = self.show_from(p)?.unwrap_or_else(|| self.show_start_index());
+                    self.start_show(from, false);
                 }
             }
             "show.presenter" => self.ui.presenter_view = self.flag(p, self.ui.presenter_view),
@@ -969,7 +981,11 @@ impl SlideApp {
                     self.anim_preview = None;
                     return Ok(json!({"playing": false}));
                 }
-                return self.start_anim_preview();
+                let from = match p.get("from") {
+                    None | Some(Value::Null) => None,
+                    Some(v) => Some(v.as_u64().map(|v| usize::try_from(v).unwrap_or(usize::MAX)).ok_or("`from` must be an effect index")?),
+                };
+                return self.start_anim_preview(from);
             }
             "app.home" => {
                 let on = self.flag(p, self.backstage_open());
@@ -1072,6 +1088,21 @@ impl SlideApp {
         self.session.active().and_then(|d| deckcraft_anim::show_order(&d.doc).first().copied()).unwrap_or(0)
     }
 
+    /// The slide `show.start {from}` names: `Ok(None)` when absent, `Err` when it is not a slide of
+    /// the open deck (negative, non-integer, past the end), so a bad index never plays slide 0 or
+    /// opens on the end screen. Hidden slides are allowed, as in "from current slide".
+    pub(crate) fn show_from(&self, p: &Value) -> Result<Option<usize>, String> {
+        let from = match p.get("from") {
+            None | Some(Value::Null) => return Ok(None),
+            Some(v) => v.as_u64().and_then(|v| usize::try_from(v).ok()).ok_or_else(|| format!("`from` is not a valid index: {v}"))?,
+        };
+        let count = self.session.active().map_or(0, |d| d.doc.slides.len());
+        if from >= count {
+            return Err(format!("no slide {from}"));
+        }
+        Ok(Some(from))
+    }
+
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
@@ -1129,7 +1160,7 @@ impl SlideApp {
         let Some(p) = self.anim_preview.as_mut() else { return false };
         let now = if now.is_finite() { now } else { p.started.unwrap_or(0.0) };
         let start = *p.started.get_or_insert(now);
-        let elapsed = (now - start).max(0.0);
+        let elapsed = p.from + (now - start).max(0.0);
         if !elapsed.is_finite() || elapsed > p.timeline.total_duration() + preview::HOLD_SECS {
             self.anim_preview = None;
             return false;
@@ -1138,7 +1169,9 @@ impl SlideApp {
         true
     }
 
-    fn start_anim_preview(&mut self) -> Result<Value, String> {
+    /// Play the current slide's animations on the canvas, from effect `from` (index into the slide's
+    /// animations) or from the start.
+    fn start_anim_preview(&mut self, from: Option<usize>) -> Result<Value, String> {
         let (uid, slide, ptr, timeline) = {
             let Some(d) = self.session.active() else {
                 return Err("no presentation is open".into());
@@ -1159,14 +1192,18 @@ impl SlideApp {
             self.set_status("This slide has no animations");
             return Ok(json!({"playing": false}));
         }
+        let from_secs = match from {
+            Some(i) => timeline.start_of(i).ok_or_else(|| format!("no effect {i} in this slide's click sequence"))?,
+            None => 0.0,
+        };
         if matches!(self.ui.view, ViewMode::Sorter | ViewMode::NotesPage) {
             self.ui.view = ViewMode::Normal;
         }
         self.close_backstage();
         let duration = timeline.total_duration();
-        self.anim_preview = Some(AnimPreview { uid, slide, slide_ptr: ptr, started: None, elapsed: 0.0, timeline });
+        self.anim_preview = Some(AnimPreview { uid, slide, slide_ptr: ptr, started: None, from: from_secs, elapsed: from_secs, timeline });
         self.set_status("Previewing animations");
-        Ok(json!({"playing": true, "slide": slide, "duration": duration}))
+        Ok(json!({"playing": true, "slide": slide, "duration": duration, "from": from_secs}))
     }
 
     fn pick_and_open(&mut self) {
@@ -1233,7 +1270,20 @@ impl SlideApp {
             return;
         };
         let Some(path) = pick("open") else { return };
-        match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep})) {
+        // Offer the file's slides to choose from; all of them are ticked to begin with.
+        match self.session.execute("slide.reuseList", &json!({"path": path})) {
+            Ok(list) => {
+                let mut d = dialogs::Dialog::new("reuseSlides");
+                d.params = json!({"path": path, "keep": keep, "slides": list["slides"]});
+                self.dialog = Some(d);
+            }
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    /// Insert the slides `picked` (indices) of the presentation at `path` after the current slide.
+    pub fn reuse_slides(&mut self, path: &str, keep: bool, picked: &[usize]) {
+        match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep, "slides": picked})) {
             Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
             Err(e) => self.set_status(e.to_string()),
         }
@@ -1347,8 +1397,9 @@ impl SlideApp {
                 }
                 UiRequest::Media { action, shape, ms } => {
                     let owner = if self.show.is_some() { media::Owner::Show } else { media::Owner::Editor };
-                    if let Some((uid, doc)) = self.session.active().map(|d| (d.uid, d.doc.clone())) {
-                        self.media.request(uid, &doc, &action, shape, ms, owner);
+                    // The command resolved `shape` on the editor's slide, also while a show runs.
+                    if let Some((uid, doc, slide)) = self.session.active().map(|d| (d.uid, d.doc.clone(), d.selection.slide)) {
+                        self.media.request(uid, &doc, slide, &action, shape, ms, owner);
                     }
                 }
             }
@@ -1442,7 +1493,7 @@ impl SlideApp {
             }
         };
         let params = if cmd == "slide.fromOutline" {
-            json!({"text": String::from_utf8_lossy(bytes), "markdown": name.to_ascii_lowercase().ends_with(".md")})
+            json!({"text": deckcraft_engine::cmd::file::outline_text(bytes), "markdown": name.to_ascii_lowercase().ends_with(".md")})
         } else {
             json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes)})
         };
@@ -1682,7 +1733,20 @@ impl SlideApp {
                 _ => {}
             }
         }
-        if ctx.memory(|m| m.focused().is_some()) || self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some() {
+        let modal = self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some();
+        // While slide text is being edited, the text owns the keyboard (#93). Tab and the arrow
+        // keys move egui's keyboard focus onto ordinary widgets (the window's drag handle, ribbon
+        // buttons), and that stray focus would swallow every later key and end text entry. Let it
+        // go; a real text field or an open menu keeps its keys.
+        if !modal
+            && self.session.active().is_some_and(|d| d.selection.text.is_some())
+            && !ctx.text_edit_focused()
+            && !ctx.any_popup_open()
+            && let Some(id) = ctx.memory(|m| m.focused())
+        {
+            ctx.memory_mut(|m| m.surrender_focus(id));
+        }
+        if ctx.memory(|m| m.focused().is_some()) || modal {
             return;
         }
         if self.backstage.is_some() {
@@ -2052,9 +2116,15 @@ mod compare_tests;
 #[cfg(test)]
 mod eyedropper_tests;
 #[cfg(test)]
+mod field_frame_tests;
+#[cfg(test)]
+mod find_dialog_tests;
+#[cfg(test)]
 mod huge_deck_tests;
 #[cfg(test)]
 mod ime_tests;
+#[cfg(test)]
+mod last_color_tests;
 #[cfg(test)]
 mod replacefonts_tests;
 #[cfg(test)]
@@ -2519,6 +2589,39 @@ mod tests {
         assert_eq!(level(&harness), 1);
     }
 
+    /// #93: Tab in an edited list indented the item but handed the keyboard to egui's focus
+    /// cycle: the stray focus (e.g. on the window's drag handle) swallowed every later key, so the
+    /// list could neither be typed into nor continued with Enter.
+    #[test]
+    fn tab_in_an_edited_list_keeps_the_keyboard() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+        harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+        harness.event(egui::Event::Text("one".into()));
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Tab); // Increase List Level
+        harness.run_steps(2);
+        harness.event(egui::Event::Text("sub".into()));
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter); // continues the list
+        harness.run_steps(2);
+        harness.event(egui::Event::Text("two".into()));
+        harness.run_steps(2);
+        assert_eq!(title_text(harness.state()), "one\nsub\ntwo", "typing after Tab must reach the text");
+        let body = harness.state().session.active().unwrap().doc.slides[0].shapes[0].text.clone().unwrap();
+        let levels: Vec<u8> = body.paragraphs.iter().map(|p| p.level).collect();
+        assert_eq!(levels, vec![0, 1, 1], "Tab indents one level; Enter keeps the level");
+    }
+
     #[test]
     fn home_needs_an_open_presentation() {
         let mut app = SlideApp::new(Session::new(), Services::default());
@@ -2697,6 +2800,41 @@ mod tests {
         assert_ne!(s.ui.brightness, dark_before, "Done keeps the appearance");
         assert_ne!(s.session.prefs.smart_guides, before.smart_guides, "Done keeps smart guides");
         assert_ne!(s.session.prefs.snap_to_grid, before.snap_to_grid, "Done keeps snap to grid");
+    }
+
+    /// About dialog: Close and Cancel each close the dialog.
+    #[test]
+    fn about_dialog_close_and_cancel_close_it() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        harness.state_mut().run("app.about", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_some());
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+            .next()
+            .unwrap_or_else(|| panic!("no Cancel button in About dialog"))
+            .click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "Cancel closes About dialog");
+
+        harness.state_mut().run("app.about", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_some());
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Close")
+            .next()
+            .unwrap_or_else(|| panic!("no Close button in About dialog"))
+            .click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "Close closes About dialog");
     }
 
     fn canvas_harness() -> egui_kittest::Harness<'static, SlideApp> {
@@ -3315,6 +3453,139 @@ mod tests {
         assert_eq!(crate::canvas::page_flick(egui::vec2(4.0, 10.0)), None);
     }
 
+    fn mouse_wheel(harness: &mut egui_kittest::Harness<'static, SlideApp>, notches: &[f32]) {
+        let centre = harness.state().canvas_rect.unwrap().center();
+        let input = harness.input_mut();
+        input.events.push(egui::Event::PointerMoved(centre));
+        for &y in notches {
+            input.events.push(egui::Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: egui::vec2(0.0, y),
+                phase: egui::TouchPhase::Move,
+                modifiers: egui::Modifiers::NONE,
+            });
+        }
+        harness.run_steps(1);
+    }
+
+    #[test]
+    fn mouse_wheel_keeps_fast_notches_in_both_directions_without_a_smoothed_tail() {
+        let mut h = flick_harness();
+        for _ in 0..8 {
+            h.state_mut().run("slide.new", json!({})).unwrap();
+        }
+        h.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+        h.run_steps(1);
+
+        mouse_wheel(&mut h, &[-1.0]);
+        assert_eq!(slide_at(h.state()), 1, "one notch responds immediately");
+        mouse_wheel(&mut h, &[-1.0]);
+        assert_eq!(slide_at(h.state()), 2, "the next frame does not lose a notch to the cooldown");
+        mouse_wheel(&mut h, &[-1.0, -1.0]);
+        assert_eq!(slide_at(h.state()), 4, "notches batched into a frame are retained");
+        mouse_wheel(&mut h, &[-3.0]);
+        assert_eq!(slide_at(h.state()), 7, "an accelerated wheel event keeps its steps");
+        h.run_steps(30);
+        assert_eq!(slide_at(h.state()), 7, "smoothing must not turn more pages");
+        mouse_wheel(&mut h, &[2.0]);
+        assert_eq!(slide_at(h.state()), 5, "reversing direction responds immediately");
+        mouse_wheel(&mut h, &[100.0]);
+        assert_eq!(slide_at(h.state()), 0, "stop at the first slide");
+        mouse_wheel(&mut h, &[-100.0]);
+        assert_eq!(slide_at(h.state()), 8, "stop at the last slide");
+    }
+
+    /// A high-resolution wheel on Windows sends one notch as eight 0.125-line events.
+    #[test]
+    fn mouse_wheel_fractional_lines_accumulate_into_one_slide_per_line() {
+        let mut h = flick_harness();
+        for _ in 0..4 {
+            h.state_mut().run("slide.new", json!({})).unwrap();
+        }
+        h.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+        h.run_steps(1);
+
+        for _ in 0..7 {
+            mouse_wheel(&mut h, &[-0.125]);
+            assert_eq!(slide_at(h.state()), 0, "a fraction of a line does not turn the page");
+        }
+        mouse_wheel(&mut h, &[-0.125]);
+        assert_eq!(slide_at(h.state()), 1, "eight eighths make exactly one slide");
+        h.run_steps(30);
+        assert_eq!(slide_at(h.state()), 1, "nothing is left over to turn another page");
+
+        mouse_wheel(&mut h, &[-0.5]);
+        mouse_wheel(&mut h, &[0.5, 0.25]);
+        assert_eq!(slide_at(h.state()), 1, "a change of direction drops the leftover fraction");
+        mouse_wheel(&mut h, &[0.25]);
+        assert_eq!(slide_at(h.state()), 0, "a whole line back is one slide back");
+    }
+
+    /// A fraction of a line left over in one presentation does not carry into another.
+    #[test]
+    fn mouse_wheel_fraction_does_not_carry_into_another_presentation() {
+        let mut h = flick_harness();
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+        h.run_steps(1);
+        mouse_wheel(&mut h, &[-0.75]);
+        assert_eq!(slide_at(h.state()), 0);
+
+        let a = h.state().session.active_index().unwrap();
+        h.state_mut().run("file.new", json!({})).unwrap();
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+        h.state_mut().ui.zoom = Some(0.4);
+        h.run_steps(2);
+        mouse_wheel(&mut h, &[-0.25]);
+        assert_eq!(slide_at(h.state()), 0, "a quarter line in the new presentation does not turn the page");
+        mouse_wheel(&mut h, &[-0.75]);
+        assert_eq!(slide_at(h.state()), 1, "a whole line in the new presentation does");
+
+        // Back in the first one, leave 0.75 of a line, then switch away and back with the pointer
+        // off the canvas (on the tabs): the canvas never sees a hover in the other presentation.
+        let b = h.state().session.active_index().unwrap();
+        h.state_mut().session.set_active(a);
+        h.state_mut().ui.zoom = Some(0.4);
+        h.run_steps(2);
+        mouse_wheel(&mut h, &[-0.75]);
+        assert_eq!(slide_at(h.state()), 0);
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(-10.0, -10.0)));
+        h.run_steps(1);
+        h.state_mut().session.set_active(b);
+        h.run_steps(2);
+        h.state_mut().session.set_active(a);
+        h.run_steps(2);
+        mouse_wheel(&mut h, &[-0.25]);
+        assert_eq!(slide_at(h.state()), 0, "switching away without a hover still drops the fraction");
+    }
+
+    #[test]
+    fn mouse_wheel_over_a_zoomed_canvas_pans_and_outside_the_canvas_does_not_navigate() {
+        let mut h = flick_harness();
+        h.state_mut().run("slide.new", json!({})).unwrap();
+        h.state_mut().run("slide.go", json!({"index": 0})).unwrap();
+        h.state_mut().ui.zoom = Some(3.0);
+        h.run_steps(2);
+        let before = h.state().slide_rect.unwrap();
+        mouse_wheel(&mut h, &[-3.0]);
+        h.run_steps(30);
+        assert_eq!(slide_at(h.state()), 0);
+        assert!(h.state().slide_rect.unwrap().min.y < before.min.y, "the enlarged canvas scrolls");
+
+        h.state_mut().ui.zoom = Some(0.4);
+        h.run_steps(2);
+        h.input_mut().events.push(egui::Event::PointerMoved(egui::pos2(-10.0, -10.0)));
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, -3.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run_steps(30);
+        assert_eq!(slide_at(h.state()), 0, "wheel input outside the canvas is ignored");
+    }
+
     /// A sideways swipe on a fitted slide turns the page, like PowerPoint on a Mac trackpad.
     /// The frames of one gesture do not skip ahead.
     #[test]
@@ -3351,6 +3622,34 @@ mod tests {
         harness.run_steps(2);
         flick(&mut harness, egui::vec2(-24.0, 0.0));
         assert_eq!(slide_at(harness.state()), 0, "zoomed in, a sideways swipe pans instead of turning the page");
+    }
+
+    /// `show.start {from}` that names no slide of the deck is refused, over `run` and over the
+    /// control channel, instead of starting at slide 0 or on the end screen. A hidden slide is a
+    /// slide: From Current Slide plays it.
+    #[test]
+    fn show_start_refuses_a_from_that_is_not_a_slide() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("slide.hide", &json!({"index": 1, "hidden": true})).unwrap();
+        let mut app = SlideApp::new(s, Services::default());
+        let ctx = egui::Context::default();
+        for from in [json!(-1), json!(1.5), json!("1"), json!(3), json!(u64::MAX)] {
+            assert!(app.run("show.start", json!({"from": from})).is_err(), "{from}");
+            assert!(app.show.is_none(), "{from}");
+            let (req, _rx) = control::ControlRequest::new("show.start", json!({"from": from}));
+            let control::Outcome::Done(answer) = control::handle(&mut app, &ctx, &req) else { panic!("{from}") };
+            assert_eq!(answer["ok"], false, "{from}: {answer}");
+            assert!(app.show.is_none(), "{from}");
+        }
+        app.run("show.start", json!({"from": 1})).unwrap();
+        assert_eq!(app.show.as_ref().map(|s| (s.state.slide, s.state.ended)), Some((1, false)));
+        app.show = None;
+        let (req, _rx) = control::ControlRequest::new("show.start", json!({"from": 2, "reading": true}));
+        let control::Outcome::Done(answer) = control::handle(&mut app, &ctx, &req) else { panic!() };
+        assert_eq!(answer["ok"], true, "{answer}");
+        assert_eq!(app.show.as_ref().map(|s| (s.state.slide, s.reading)), Some((2, true)));
     }
 
     #[test]

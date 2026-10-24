@@ -72,4 +72,5 @@ fn apply_to_all_copies_the_picture() {
     let doc = &h.state().session.active().unwrap().doc;
     assert!(matches!(doc.slides[1].background, Some(Background::Fill { fill: Fill::Picture(_) })));
     assert_eq!(doc.slides[1].background, doc.slides[0].background);
+    assert_eq!(doc.masters[0].background, doc.slides[0].background);
 }

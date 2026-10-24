@@ -117,7 +117,7 @@ pub fn idct4_add(d: &[i32; 16], dst: &mut [u8], stride: usize) {
         o[3][j] = e - h;
     }
     for (i, row) in o.iter().enumerate() {
-        let Some(line) = dst.get_mut(i * stride..).and_then(|d| d.first_chunk_mut::<4>()) else {
+        let Some(line) = dst.get_mut(i * stride..).and_then(<[_]>::first_chunk_mut::<4>) else {
             return;
         };
         for (p, &v) in line.iter_mut().zip(row) {
@@ -173,7 +173,7 @@ pub fn idct8_add(d: &[i32; 64], dst: &mut [u8], stride: usize) {
         }
     }
     for (i, row) in o.iter().enumerate() {
-        let Some(line) = dst.get_mut(i * stride..).and_then(|d| d.first_chunk_mut::<8>()) else {
+        let Some(line) = dst.get_mut(i * stride..).and_then(<[_]>::first_chunk_mut::<8>) else {
             return;
         };
         for (p, &v) in line.iter_mut().zip(row) {

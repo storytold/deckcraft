@@ -561,3 +561,20 @@ fn print_slides_follow_the_settings() {
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
 }
+
+/// Options in the File tab opens the Preferences dialog, and Cancel closes it (#782, #752).
+#[test]
+fn options_in_backstage_opens_preferences_and_cancel_closes_it() {
+    let mut h = harness(new_app());
+    h.get_by_label("File").click();
+    h.run_steps(3);
+    assert!(h.state().backstage_open());
+    h.get_by_label("Options").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_some(), "Options opens Preferences dialog");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("preferences"));
+    h.query_all_by_role_and_label(Role::Button, "Cancel").next().expect("Cancel button").click_accesskit();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "Cancel closes Preferences dialog");
+    assert!(h.state().backstage_open(), "Backstage remains open");
+}

@@ -105,7 +105,7 @@ impl Opts {
 }
 
 fn para_chars(p: &Paragraph) -> Vec<char> {
-    p.runs.iter().flat_map(|r| r.text.chars()).collect()
+    p.runs.iter().flat_map(|r| r.content().chars()).collect()
 }
 
 /// Matches that lie wholly in plain text runs (never inside a field, equation or break).
@@ -113,7 +113,7 @@ fn para_matches(p: &Paragraph, o: &Opts) -> Vec<(usize, usize)> {
     let mut spans = vec![];
     let mut off = 0;
     for r in &p.runs {
-        let n = r.text.chars().count();
+        let n = r.char_len();
         spans.push((off, off + n, matches!(r.kind, RunKind::Text)));
         off += n;
     }
@@ -125,7 +125,7 @@ fn splice(p: &mut Paragraph, a: usize, b: usize, with: &str) {
     let mut off = 0;
     let mut placed = false;
     for r in &mut p.runs {
-        let chars: Vec<char> = r.text.chars().collect();
+        let chars: Vec<char> = r.content().chars().collect();
         let (s, e) = (off, off + chars.len());
         off = e;
         if e <= a || s >= b {
@@ -220,6 +220,34 @@ mod tests {
         assert_eq!(opts("cat", false, false).matches(&t).len(), 3);
         assert_eq!(opts("cat", true, false).matches(&t).len(), 2);
         assert_eq!(opts("cat", false, true).matches(&t), vec![(0, 3), (4, 7)]);
+    }
+
+    fn text_run(t: &str) -> Run {
+        Run { text: t.into(), props: RunProps::default(), kind: RunKind::Text }
+    }
+
+    fn br() -> Run {
+        Run { text: String::new(), props: RunProps::default(), kind: RunKind::Break }
+    }
+
+    #[test]
+    fn a_match_never_spans_a_line_break() {
+        let p = Paragraph { runs: vec![text_run("a"), br(), text_run("b")], ..Default::default() };
+        assert!(para_matches(&p, &opts("ab", true, false)).is_empty());
+    }
+
+    #[test]
+    fn offsets_count_a_line_break_as_one_char() {
+        let p = Paragraph { runs: vec![text_run("ab"), br(), text_run("cd")], ..Default::default() };
+        assert_eq!(para_matches(&p, &opts("cd", true, false)), vec![(3, 5)]);
+    }
+
+    #[test]
+    fn splice_after_a_line_break_keeps_the_break() {
+        let mut p = Paragraph { runs: vec![text_run("ab"), br(), text_run("cd")], ..Default::default() };
+        splice(&mut p, 3, 5, "X");
+        assert_eq!(p.text(), "ab\u{b}X");
+        assert_eq!(p.runs[1].kind, RunKind::Break);
     }
 
     #[test]

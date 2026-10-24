@@ -42,6 +42,7 @@ fn title(id: &str) -> &'static str {
         "altText" => "Alt Text",
         "outline" => "Slides from Outline",
         "renameSection" => "Rename Section",
+        "reuseSlides" => "Reuse Slides",
         "renameShape" => "Rename",
         "renameLayout" => "Rename Layout",
         "paragraph" => "Paragraph",
@@ -120,6 +121,21 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         back.params = ret;
         app.dialog = Some(back);
     }
+}
+
+/// Room the About credits need for their table; the About tab keeps its compact size.
+const CREDITS_SIZE: egui::Vec2 = vec2(640.0, 380.0);
+
+/// The Contributors / Models body in a block of its own fixed size, below the tab row. Sizing the
+/// dialog's `ui` instead (`set_min_size` / `set_max_height`) squeezed the tab row and the first
+/// credits row together, so the text was garbled and the tabs stopped answering (#843).
+fn credits_block(ui: &mut Ui, models: bool) -> Rect {
+    ui.allocate_ui(CREDITS_SIZE, |ui| {
+        ui.set_min_size(CREDITS_SIZE);
+        if models { crate::credits::models_ui(ui) } else { crate::credits::contributors_ui(ui) }
+    })
+    .response
+    .rect
 }
 
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
@@ -257,7 +273,7 @@ fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
         app.set_status("That picture is larger than 32 MB");
         return None;
     }
-    let name = std::path::Path::new(&path).file_name().and_then(|n| n.to_str()).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
+    let name = std::path::Path::new(&path).file_name().and_then(std::ffi::OsStr::to_str).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
     Some(json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&loaded)}))
 }
 
@@ -1076,6 +1092,25 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let hf = app.session.active().map(|s| s.doc.header_footer.clone()).unwrap_or_default();
             let date = check(ui, d, "Date and time", "date", hf.date);
             field(ui, d, "  Fixed date (empty = update automatically):", "dateText", &hf.date_text);
+            // The format applies to an automatic date; a fixed one is the text as typed.
+            let automatic = d.get("dateText", &hf.date_text).is_empty();
+            let fmt_now = if hf.date_format.is_empty() { "datetime1".to_string() } else { hf.date_format.clone() };
+            // Not `d.get`: that stores the default as if the user had picked it.
+            let fmt = d.fields.get("dateFormat").cloned().unwrap_or_else(|| fmt_now.clone());
+            let rows = date_rows("en-US");
+            let label = rows.iter().find(|(k, _)| *k == fmt).map(|(_, s)| s.clone()).unwrap_or_else(|| fmt.clone());
+            ui.add_enabled_ui(date && automatic, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("  Format:");
+                    egui::ComboBox::from_id_salt("hf-date-format").selected_text(label).width(200.0).show_ui(ui, |ui| {
+                        for (kind, sample) in &rows {
+                            if ui.selectable_label(fmt == *kind, sample).clicked() {
+                                d.fields.insert("dateFormat".into(), (*kind).to_string());
+                            }
+                        }
+                    });
+                });
+            });
             let num_on = check(ui, d, "Slide number", "num", hf.slide_number);
             let foot = check(ui, d, "Footer", "footer", hf.footer);
             field(ui, d, "  Footer text:", "footerText", &hf.footer_text);
@@ -1093,11 +1128,20 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             if apply || apply_all {
                 let dt = d.get("dateText", "");
                 let ft = d.get("footerText", "");
-                run(
-                    app,
-                    "design.headerFooter",
-                    json!({"date": date, "dateText": dt, "slideNumber": num_on, "footer": foot, "footerText": ft, "hideOnTitle": hide, "all": apply_all}),
-                );
+                let mut params = serde_json::Map::new();
+                params.insert("date".into(), json!(date));
+                params.insert("dateText".into(), json!(dt));
+                // Only a format the user picked: sending the default would rewrite every slide's
+                // existing date field (an imported datetime4, say) to datetime1.
+                if d.fields.contains_key("dateFormat") {
+                    params.insert("dateFormat".into(), json!(d.get("dateFormat", &fmt_now)));
+                }
+                params.insert("slideNumber".into(), json!(num_on));
+                params.insert("footer".into(), json!(foot));
+                params.insert("footerText".into(), json!(ft));
+                params.insert("hideOnTitle".into(), json!(hide));
+                params.insert("all".into(), json!(apply_all));
+                run(app, "design.headerFooter", serde_json::Value::Object(params));
             }
             apply || apply_all || d.fields.contains_key("cancel")
         }
@@ -1522,6 +1566,66 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
             ok || cancel
         }
+        "reuseSlides" => {
+            let path = d.params.get("path").and_then(Value::as_str).unwrap_or("").to_string();
+            let slides: Vec<(usize, String)> = d
+                .params
+                .get("slides")
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|x| {
+                            Some((usize::try_from(x.get("index")?.as_u64()?).ok()?, x.get("title").and_then(Value::as_str).unwrap_or("").to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or(path.clone());
+            ui.label(format!("Insert slides from {name} after the current slide:"));
+            // Unticked slides are remembered by index; everything starts ticked.
+            let off = |d: &Dialog, i: usize| d.fields.get(&format!("off{i}")).is_some_and(|v| v == "1");
+            ui.horizontal(|ui| {
+                if ui.small_button("Select All").clicked() {
+                    for (i, _) in &slides {
+                        d.fields.remove(&format!("off{i}"));
+                    }
+                }
+                if ui.small_button("Select None").clicked() {
+                    for (i, _) in &slides {
+                        d.fields.insert(format!("off{i}"), "1".into());
+                    }
+                }
+            });
+            egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+                for (i, title) in &slides {
+                    let mut on = !off(d, *i);
+                    let label = if title.trim().is_empty() { format!("{}  (no title)", i + 1) } else { format!("{}  {}", i + 1, title.trim()) };
+                    if ui.checkbox(&mut on, label).changed() {
+                        if on {
+                            d.fields.remove(&format!("off{i}"));
+                        } else {
+                            d.fields.insert(format!("off{i}"), "1".into());
+                        }
+                    }
+                }
+            });
+            let mut keep = d.params.get("keep").and_then(Value::as_bool).unwrap_or(false);
+            if ui.checkbox(&mut keep, "Keep source formatting").changed()
+                && let Some(o) = d.params.as_object_mut()
+            {
+                o.insert("keep".into(), json!(keep));
+            }
+            let picked: Vec<usize> = slides.iter().map(|(i, _)| *i).filter(|i| !off(d, *i)).collect();
+            let (ok, cancel) = buttons(ui, "Insert");
+            if ok {
+                if picked.is_empty() {
+                    app.set_status("Tick at least one slide to insert".to_string());
+                    return false;
+                }
+                app.reuse_slides(&path, keep, &picked);
+            }
+            ok || cancel
+        }
         "renameSection" | "renameShape" | "renameLayout" => {
             let cur = d.params.get("name").and_then(Value::as_str).unwrap_or("").to_string();
             field(ui, d, "Name:", "name", &cur);
@@ -1550,6 +1654,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ("PowerPoint Presentation (.pptx)", "pptx"),
                 ("Outline (.txt)", "outline"),
                 ("Animated GIF (.gif)", "gif"),
+                ("Outline/RTF (.rtf)", "rtf"),
             ] {
                 if ui.radio(fmt == f, l).clicked() {
                     d.fields.insert("fmt".into(), f.into());
@@ -2012,7 +2117,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             });
             ui.horizontal(|ui| {
                 if ui.button("+ Row").clicked() {
-                    let n = grid.first().map(|r| r.len()).unwrap_or(2);
+                    let n = grid.first().map(Vec::len).unwrap_or(2);
                     grid.push(vec![String::new(); n]);
                 }
                 if ui.button("+ Series").clicked() {
@@ -2091,15 +2196,12 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ui.separator();
             match tab.as_str() {
                 "contributors" | "models" => {
-                    // The credits need room for the table; the About tab keeps its compact size.
-                    ui.set_min_size(vec2(640.0, 380.0));
-                    ui.set_max_height(380.0);
-                    if tab == "models" { crate::credits::models_ui(ui) } else { crate::credits::contributors_ui(ui) }
+                    credits_block(ui, tab == "models");
                 }
                 _ => about(app, ui),
             }
-            let (ok, _) = buttons(ui, "Close");
-            ok
+            let (ok, cancel) = buttons(ui, "Close");
+            ok || cancel
         }
         "autocorrect" => {
             let pr = &mut app.session.prefs;
@@ -2454,21 +2556,7 @@ const DATE_LANGS: &[(&str, &str)] = &[
     ("sv-SE", "Swedish"),
 ];
 
-const DATE_KINDS: [&str; 13] = [
-    "datetime1",
-    "datetime2",
-    "datetime3",
-    "datetime4",
-    "datetime5",
-    "datetime6",
-    "datetime7",
-    "datetime8",
-    "datetime9",
-    "datetime10",
-    "datetime11",
-    "datetime12",
-    "datetime13",
-];
+use deckcraft_text::datetime::DATE_KINDS;
 
 /// Samples `field_text` can compute for `lang`. Named months and AM/PM exist for English only;
 /// other languages keep the numeric date and the 24-hour times.
@@ -2931,7 +3019,7 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
     let line_value = finite_pt(&d.get("lineValue", "1")).unwrap_or(1.0);
     let before_same = d.get("spaceBefore", "") == d.get("spaceBeforeSeed", "");
     let after_same = d.get("spaceAfter", "") == d.get("spaceAfterSeed", "");
-    let v = json!({
+    json!({
         "align": d.get("align", "left"),
         "indentLeft": before,
         "indentRight": after,
@@ -2945,8 +3033,7 @@ fn paragraph_return_params(d: &mut Dialog) -> Value {
         "lineValue": line_value,
         "tabs": d.params.get("tabs").cloned().unwrap_or_else(|| json!([])),
         "defaultTab": d.params.get("defaultTab").cloned().unwrap_or_else(|| json!(72.0)),
-    });
-    v
+    })
 }
 
 fn line_preset_label(kind: &str, value: &str) -> &'static str {
@@ -3196,7 +3283,18 @@ fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
 /// Home › Find / Replace: step through matches (slide text, table cells, notes) or replace them.
 fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let replace_mode = d.get("replace", "0") == "1";
-    field(ui, d, "Find what:", "text", "");
+    // "Find what:" has the keyboard when the dialog opens, so Ctrl+F and typing finds (#951).
+    let mut what = d.get("text", "");
+    ui.horizontal(|ui| {
+        ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Find what:"));
+        let r = ui.add(egui::TextEdit::singleline(&mut what).desired_width(180.0));
+        // Enter finds the next match and leaves the keyboard here, so the search can be changed.
+        if !d.fields.contains_key("focused") || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+            r.request_focus();
+            d.fields.insert("focused".into(), "1".into());
+        }
+    });
+    d.fields.insert("text".into(), what);
     if replace_mode {
         field(ui, d, "Replace with:", "with", "");
     }
@@ -3382,6 +3480,55 @@ mod tests {
         let mut h = link(Action::Url { url: address.into() }, tip);
         h.highlight_click = tip == "glow";
         h
+    }
+
+    /// Header & Footer ▸ Apply without picking a format leaves a slide's existing date field in
+    /// its own format instead of rewriting it to the default one.
+    #[test]
+    fn header_footer_apply_keeps_an_existing_date_format() {
+        use std::sync::Arc;
+
+        use egui::vec2;
+        use egui_kittest::kittest::Queryable as _;
+        use serde_json::json;
+
+        use crate::SlideApp;
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("design.headerFooter", &json!({"date": true, "dateText": "", "dateFormat": "datetime4", "all": true})).unwrap();
+        // A file whose document-level format is unset, as an imported deck's is.
+        Arc::make_mut(&mut session.doc_mut().unwrap().doc).header_footer.date_format = String::new();
+        let date_fields = |app: &SlideApp| -> Vec<String> {
+            app.session
+                .doc()
+                .unwrap()
+                .doc
+                .slides
+                .iter()
+                .flat_map(|sl| sl.shapes.iter())
+                .filter(|sh| sh.ph_type() == Some(deckcraft_model::PhType::Date))
+                .flat_map(|sh| sh.text.iter())
+                .flat_map(|t| t.paragraphs.iter())
+                .flat_map(|p| p.runs.iter())
+                .filter_map(|r| match &r.kind {
+                    deckcraft_model::text::RunKind::Field { field } => Some(field.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1200.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, crate::Services::default()),
+        );
+        harness.run_steps(2);
+        assert_eq!(date_fields(harness.state()), vec!["datetime4".to_string()]);
+        harness.state_mut().run("app.dialog", json!({"id": "headerFooter"})).unwrap();
+        harness.run_steps(2);
+        harness.get_by_label("Apply").click_accesskit();
+        harness.run_steps(3);
+        assert_eq!(date_fields(harness.state()), vec!["datetime4".to_string()], "the dialog left the field's format alone");
     }
 
     /// The Export… dialog (Animated GIF) shows the GIF options and exports through `file.export` (#171).
@@ -3684,3 +3831,63 @@ mod spelling_tests;
 #[cfg(test)]
 #[path = "paragraph_dialog_tests.rs"]
 mod paragraph_dialog_tests;
+
+#[cfg(test)]
+mod about_credits_tests {
+    use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
+
+    use super::{CREDITS_SIZE, Dialog, credits_block};
+    use crate::{Services, SlideApp};
+
+    fn tab_of(h: &Harness<'_, SlideApp>) -> String {
+        let d = h.state().dialog.as_ref().expect("the About dialog is open");
+        d.fields.get("tab").cloned().unwrap_or_else(|| "about".into())
+    }
+
+    /// The reported symptom (#843): in the real dialog the tabs stopped answering once Contributors
+    /// or Models was open. Click through Contributors, Models and back to About.
+    #[test]
+    fn about_dialog_tabs_keep_responding() {
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), Services::default());
+        app.dialog = Some(Dialog::new("about"));
+        let mut h = Harness::builder().with_size(egui::vec2(1440.0, 900.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(4);
+        assert_eq!(tab_of(&h), "about");
+        for label in ["Contributors", "Models", "About", "Models", "Contributors"] {
+            h.get_by_label(label).click();
+            h.run_steps(3);
+            assert_eq!(tab_of(&h), label.to_lowercase(), "clicking {label} switches the tab");
+        }
+    }
+
+    #[test]
+    fn credits_get_their_own_block_below_the_tab_row() {
+        for models in [false, true] {
+            let ctx = egui::Context::default();
+            let mut tabs = egui::Rect::NOTHING;
+            let mut block = egui::Rect::NOTHING;
+            let mut whole = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
+                tabs = ui.label("About").rect;
+                block = credits_block(ui, models);
+                whole = ui.min_rect();
+            });
+            out.textures_delta.clear();
+            assert_eq!(block.size(), CREDITS_SIZE, "models={models}");
+            assert!(block.min.y >= tabs.max.y, "the credits start below the tab row (models={models})");
+            assert!(whole.max.y >= block.max.y, "the dialog grows to hold the block (models={models})");
+            assert!(whole.height() > CREDITS_SIZE.y, "the tab row is not squeezed into the credits height (models={models})");
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "preferences_tests.rs"]
+mod preferences_tests;

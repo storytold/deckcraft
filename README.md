@@ -7,6 +7,10 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png" width="128" height="128" alt="DeckCraft icon: a presentation screen with a bar chart on an orange tile">
+</p>
+
 <h1 align="center">DeckCraft</h1>
 
 <p align="center">
@@ -25,6 +29,9 @@
   <img alt="License: MIT OR Apache-2.0" src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue?style=flat-square">
   <img alt="Written in Rust" src="https://img.shields.io/badge/written%20in-Rust-b7410e?style=flat-square">
   <img alt="Platforms" src="https://img.shields.io/badge/platforms-macOS%20%C2%B7%20Windows%20%C2%B7%20Linux%20%C2%B7%20BSD%20%C2%B7%20Web-555?style=flat-square">
+  <br>
+  <a href="https://sonarcloud.io/project/overview?id=storytold_deckcraft"><img alt="Scanned by SonarCloud" src="https://img.shields.io/badge/Scanned_by-SonarCloud-4b9fd5?style=flat-square&logo=sonarqubecloud&logoColor=white"></a>
+  <a href="https://coderabbit.ai"><img alt="Reviewed by CodeRabbit" src="https://img.shields.io/coderabbit/prs/github/storytold/deckcraft?style=flat-square&label=Reviewed%20by%20CodeRabbit&logo=coderabbit"></a>
 </p>
 
 <p align="center">
@@ -216,6 +223,41 @@ DirectX 12 shaders are compiled with FXC, which is part of Windows, so no `dxcom
 | Tarball | `deckcraft-<ver>-linux-x86_64.tar.gz` | `deckcraft-<ver>-linux-aarch64.tar.gz` | Unpack anywhere |
 
 RISC-V 64 (riscv64): `deckcraft-<ver>-linux-riscv64.tar.gz`, a tarball only (cross-compiled; needs glibc 2.39+, e.g. Ubuntu 24.04+).
+
+**Runtime libraries.** The window-system, GPU and file-dialog libraries DeckCraft needs are opened
+when the app starts (`dlopen` through `x11-dl`, `xkbcommon-dl`, `ash`, `glutin` and `rfd`) instead
+of being linked in, so `ldd` shows none of them: an install that satisfies the linked dependencies
+can still fail at start-up with a loader error and no hint of what to install. Only
+`libasound.so.2` (slide-show sound) is a hard link-time dependency, and only of the `deckcraft`
+GUI — `deckcraft-cli` uses neither sound nor a display. The `.deb` and `.rpm` declare the set in
+`packaging/linux/nfpm.yaml`; a tarball install or a musl system has to provide it itself:
+
+```sh
+apk add libx11 libxcursor libxrandr libxi libxkbcommon xkeyboard-config \
+        wayland-libs-client alsa-lib \
+        vulkan-loader mesa-vulkan-swrast \
+        mesa-gl mesa-egl mesa-dri-gallium \
+        xdg-desktop-portal
+```
+
+Alpine Linux `v3.22` names above; Void's musl variant uses the same `/lib/ld-musl-x86_64.so.1`
+loader and the same libraries as `libX11 libXcursor libXrandr libXi libxkbcommon xkeyboard-config
+wayland alsa-lib vulkan-loader mesa xdg-desktop-portal`. There is no musl build among the release
+artifacts yet — this is what a build from source on musl needs at run time, and what a future musl
+artifact will need (#954).
+
+- `mesa-vulkan-swrast` is the software Vulkan driver: it runs anywhere, VMs and containers
+  included. On a real GPU install your vendor's driver instead (`mesa-vulkan-intel`,
+  `mesa-vulkan-ati`, `mesa-vulkan-nouveau`, …).
+- Without Vulkan the app falls back to CPU rendering through Mesa's GL drivers. It works, but
+  slowly — a driver limit, not a DeckCraft bug.
+- `xdg-desktop-portal` (with `xdg-desktop-portal-gtk` or `-kde`; `-wlr` has no file chooser, so
+  on wlroots compositors install `zenity`) is what the Open and Save dialogs talk to; `xkeyboard-config` holds the XKB keyboard data `libxkbcommon` reads.
+- fontconfig and freetype are not needed: DeckCraft reads `/usr/share/fonts` itself and embeds its
+  presentation fonts.
+
+Building from source on musl also needs `build-base pkgconf alsa-lib-dev` (`alsa-lib-dev` is the
+ALSA headers).
 
 ### FreeBSD
 

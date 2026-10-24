@@ -318,6 +318,14 @@ pub(crate) fn str_param<'a>(p: &'a Value, key: &str) -> Option<&'a str> {
 pub(crate) fn usize_param(p: &Value, key: &str) -> Option<usize> {
     p.get(key).and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok())
 }
+/// An index param: `Ok(None)` when absent (callers may fall back to the selection), `Err` when
+/// present but not a valid index (negative, non-integer), so a bad index never acts on the selection.
+pub(crate) fn opt_usize_param(p: &Value, key: &str, cmd: &str) -> Result<Option<usize>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_u64().and_then(|v| usize::try_from(v).ok()).map(Some).ok_or_else(|| bad(cmd, format!("`{key}` is not a valid index: {v}"))),
+    }
+}
 /// A shape id param: `Ok(None)` when absent (callers may fall back to the selection), `Err` when
 /// present but not a valid id (negative, non-integer, beyond `u32`), so a bad id never edits the selection.
 pub(crate) fn id_param(p: &Value, key: &str, cmd: &str) -> Result<Option<ShapeId>> {

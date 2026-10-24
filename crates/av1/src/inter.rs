@@ -5,7 +5,16 @@ use std::sync::OnceLock;
 
 use crate::frame::Plane;
 use crate::mvpred::round2_signed64;
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    BLOCK_8X8, BLOCK_SIZES, COMPOUND_AVERAGE, COMPOUND_DIFFWTD, COMPOUND_DISTANCE, COMPOUND_INTRA, COMPOUND_WEDGE, DIV_LUT, DIV_LUT_BITS,
+    DIV_LUT_PREC_BITS, EIGHTTAP, EIGHTTAP_SHARP, EIGHTTAP_SMOOTH, FILTER_BITS, GLOBAL_GLOBALMV, GLOBALMV, II_H_PRED, II_SMOOTH_PRED, II_V_PRED,
+    II_WEIGHTS_1D, INTRA_FRAME, LAST_FRAME, LOCALWARP, LS_MV_MAX, MASK_MASTER_SIZE, MAX_FRAME_DISTANCE, MAX_SB_SIZE, MI_HEIGHT_LOG2, MI_WIDTH_LOG2,
+    NUM_4X4_BLOCKS_HIGH, NUM_4X4_BLOCKS_WIDE, OBMC, OBMC_MASK_2, OBMC_MASK_4, OBMC_MASK_8, OBMC_MASK_16, OBMC_MASK_32, QUANT_DIST_LOOKUP,
+    QUANT_DIST_WEIGHT, REF_SCALE_SHIFT, SCALE_SUBPEL_BITS, SUBPEL_BITS, SUBPEL_FILTERS, SUBPEL_MASK, TRANSLATION, WARP_PARAM_REDUCE_BITS,
+    WARPED_FILTERS, WARPEDDIFF_PREC_BITS, WARPEDMODEL_NONDIAGAFFINE_CLAMP, WARPEDMODEL_PREC_BITS, WARPEDMODEL_TRANS_CLAMP, WARPEDPIXEL_PREC_SHIFTS,
+    WEDGE_BITS, WEDGE_CODEBOOK, WEDGE_HORIZONTAL, WEDGE_MASTER_OBLIQUE_EVEN, WEDGE_MASTER_OBLIQUE_ODD, WEDGE_MASTER_VERTICAL, WEDGE_OBLIQUE27,
+    WEDGE_OBLIQUE63, WEDGE_OBLIQUE117, WEDGE_OBLIQUE153, WEDGE_TYPES, WEDGE_VERTICAL,
+};
 use crate::tile::TileDecoder;
 
 const PRED_STRIDE: usize = 128;
@@ -678,7 +687,7 @@ fn hpass<const W: usize>(src: &[u16], hf: &[i16; 8], out: &mut [i32], half: i32,
     let mut acc = [half; W];
     for t in 0..8 {
         let f = hf[t] as i32;
-        let Some(p) = src.get(t..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = src.get(t..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {
@@ -699,7 +708,7 @@ fn vpass<const W: usize>(rows: &[i32], vf: &[i16; 8], out: &mut [i32], half: i32
     let mut acc = [half; W];
     for t in 0..8 {
         let f = vf[t] as i32;
-        let Some(p) = rows.get(t * W..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = rows.get(t * W..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {

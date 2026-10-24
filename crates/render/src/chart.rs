@@ -29,31 +29,70 @@ pub fn series_color(ctx: &Ctx, c: &Chart, i: usize) -> Rgba {
     }
 }
 
+/// A series' one colour (lines, areas, markers): its solid fill, a pattern's foreground, else the
+/// palette's.
 pub(crate) fn series_fill(ctx: &Ctx, c: &Chart, i: usize, s: Option<&deckcraft_model::chart::Series>) -> Rgba {
     match s.and_then(|s| s.fill.as_ref()) {
         Some(Fill::Solid { color: cc }) => ctx.color(cc, None),
+        Some(Fill::Pattern(p)) => ctx.color(&p.fg, None),
         _ => series_color(ctx, c, i),
     }
 }
 
-/// The fill of point `k` of a series: its own (`c:dPt`) where the file gives one, else the series'.
-fn point_fill(ctx: &Ctx, c: &Chart, i: usize, s: &deckcraft_model::chart::Series, k: usize) -> Rgba {
-    match s.point_fills.iter().find(|(p, _)| *p == k).map(|(_, f)| f) {
-        Some(Fill::Solid { color: cc }) => ctx.color(cc, None),
-        _ => series_fill(ctx, c, i, Some(s)),
+/// How a bar, or its legend key, is painted.
+#[derive(Clone, Debug, PartialEq)]
+enum Paint {
+    Color(Rgba),
+    /// A preset pattern: name, foreground, background.
+    Pattern(String, Rgba, Rgba),
+    /// `a:noFill`: only the outline, if any, shows.
+    Nothing,
+}
+
+/// The paint of fill `f` as a bar or legend key draws it; the palette's `fallback` when the file
+/// gives none (or one a bar can't show).
+fn paint_of(ctx: &Ctx, f: Option<&Fill>, fallback: Rgba) -> Paint {
+    match f {
+        Some(Fill::Solid { color: cc }) => Paint::Color(ctx.color(cc, None)),
+        Some(Fill::Pattern(p)) => Paint::Pattern(p.preset.clone(), ctx.color(&p.fg, None), ctx.color(&p.bg, None)),
+        Some(Fill::None) => Paint::Nothing,
+        _ => Paint::Color(fallback),
     }
 }
 
-/// Fill of one bar: a `<c:dPt>` fill wins, and a single-series chart that varies colours by point uses one accent per point
-/// (not waterfalls, which are never read from a `<c:barChart>`).
-fn bar_fill(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::chart::Series) -> Rgba {
-    if s.point_fills.iter().any(|(k, _)| *k == pi) {
-        return point_fill(ctx, c, si, s, pi);
+/// Fill `r` (in the space `m` maps to the output) with `p`.
+fn fill_with(ctx: &mut RenderContext, p: &Paint, r: Rect, m: Affine) {
+    match p {
+        Paint::Color(c) => {
+            ctx.set_transform(m);
+            ctx.set_paint(color(*c, 1.0));
+            ctx.fill_rect(&r);
+        }
+        Paint::Pattern(name, fg, bg) => crate::pattern::fill(ctx, name, *fg, *bg, 1.0, &r.to_path(0.1), m),
+        Paint::Nothing => {}
+    }
+}
+
+/// A bar series' outline (`c:spPr/a:ln`) where the file gives it a solid colour: colour and width.
+fn bar_outline(ctx: &Ctx, s: &deckcraft_model::chart::Series) -> Option<(Rgba, f64)> {
+    let l = s.line.as_ref()?;
+    match l.fill.as_ref()? {
+        Fill::Solid { color: cc } => Some((ctx.color(cc, None), l.width.unwrap_or(0.75).clamp(0.0, 20.0))),
+        _ => None,
+    }
+}
+
+/// Paint of one bar: a `<c:dPt>` fill wins, and a single-series chart that varies colours by point uses one accent per point
+/// (not waterfalls, which are never read from a `<c:barChart>`). Pattern fills draw as patterns and
+/// `a:noFill` leaves the bar empty, as in PowerPoint.
+fn bar_paint(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::chart::Series) -> Paint {
+    if let Some((_, f)) = s.point_fills.iter().find(|(k, _)| *k == pi) {
+        return paint_of(ctx, Some(f), series_fill(ctx, c, si, Some(s)));
     }
     if c.vary_colors && c.series.len() == 1 && s.fill.is_none() && c.kind != ChartType::Waterfall {
-        return series_color(ctx, c, pi);
+        return Paint::Color(series_color(ctx, c, pi));
     }
-    series_fill(ctx, c, si, Some(s))
+    paint_of(ctx, s.fill.as_ref(), series_color(ctx, c, si))
 }
 
 fn polyline(pts: &[Point]) -> BezPath {
@@ -193,6 +232,17 @@ fn legend_layout(pos: &str, size: (f64, f64), area: Rect, base: f64, overlay: bo
     (origin, if overlay { area } else { plot })
 }
 
+/// An axis span to divide by: the span itself when positive, else 1 (no absolute floor, so tiny data keeps its scale).
+pub(crate) fn positive_span(s: f64) -> f64 {
+    if s > 0.0 && s.is_finite() { s } else { 1.0 }
+}
+
+/// The tick values of an axis (min, max, major step), one per step (at most 51).
+fn axis_ticks((lo, hi, st): (f64, f64, f64)) -> impl Iterator<Item = f64> {
+    let n = if st > 0.0 { (((hi - lo) / st).round() as i64).clamp(1, 50) } else { 1 };
+    (0..=n).map(move |k| lo + k as f64 * st)
+}
+
 pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64) {
     match c.kind {
         // Histograms and Pareto charts are drawn as the column (and line) chart of their bins.
@@ -205,9 +255,19 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h
     }
 }
 
+/// PowerPoint's default chart text colour: `tx1` with `lumMod` 65000 and `lumOff` 35000, which
+/// is 595959 on a light theme and a light grey on a dark one.
+pub fn default_text_color() -> ColorRef {
+    use deckcraft_color::ColorTransform;
+    ColorRef::scheme(SchemeSlot::Tx1).with(ColorTransform::LumMod(65000)).with(ColorTransform::LumOff(35000))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64, h: f64, boxes: Option<&crate::chartex::Boxes>) {
-    let text_col = c.text_color.as_ref().map(|t| rctx.color(t, None)).unwrap_or(Rgba::rgb(0x59, 0x59, 0x59));
+    // Text without a colour of its own takes PowerPoint's default, the theme's text colour at
+    // lumMod 65 % / lumOff 35 % (595959 on a light theme, light grey on a dark one), so a chart
+    // on a dark theme is readable (a fixed grey used to vanish there).
+    let text_col = rctx.color(c.text_color.as_ref().unwrap_or(&default_text_color()), None);
     let grid_col = Rgba::rgb(0xD9, 0xD9, 0xD9);
     if let Some(f) = &c.chart_fill {
         crate::paint::fill_path(
@@ -235,16 +295,17 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
     let pie = matches!(c.kind, ChartType::Pie | ChartType::Doughnut);
     // Legend placed by `c:legendPos`.
     let waterfall = c.kind == ChartType::Waterfall;
-    let legend_items: Vec<(String, Rgba)> = if waterfall {
-        ["Increase", "Decrease", "Total"].iter().enumerate().map(|(i, n)| (n.to_string(), series_color(rctx, c, i))).collect()
+    // Each legend entry: its name, its key's paint and the key's outline.
+    let legend_items: Vec<(String, Paint, Option<(Rgba, f64)>)> = if waterfall {
+        ["Increase", "Decrease", "Total"].iter().enumerate().map(|(i, n)| (n.to_string(), Paint::Color(series_color(rctx, c, i)), None)).collect()
     } else if matches!(c.kind, ChartType::Treemap | ChartType::Sunburst) {
         // A hierarchy's legend names its top-level groups.
-        c.category_tree().iter().enumerate().map(|(i, n)| (n.name.clone(), series_color(rctx, c, i))).collect()
+        c.category_tree().iter().enumerate().map(|(i, n)| (n.name.clone(), Paint::Color(series_color(rctx, c, i)), None)).collect()
     } else if matches!(c.kind, ChartType::Funnel | ChartType::RegionMap) {
         // A map draws its own colour scale.
         vec![]
     } else if pie {
-        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), series_color(rctx, c, i))).collect()
+        c.categories.iter().enumerate().map(|(i, n)| (n.clone(), Paint::Color(series_color(rctx, c, i)), None)).collect()
     } else {
         c.series
             .iter()
@@ -252,13 +313,24 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             .map(|(i, s)| {
                 let k = c.series_kind(s);
                 let line = !k.is_bar_like() && !matches!(k, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
-                (s.name.clone(), if line { series_line(rctx, c, i, s) } else { series_fill(rctx, c, i, Some(s)) })
+                if line {
+                    (s.name.clone(), Paint::Color(series_line(rctx, c, i, s)), None)
+                } else if k.is_bar_like() {
+                    let paint = if c.vary_colors && c.series.len() == 1 && s.fill.is_none() {
+                        Paint::Color(series_color(rctx, c, i))
+                    } else {
+                        paint_of(rctx, s.fill.as_ref(), series_color(rctx, c, i))
+                    };
+                    (s.name.clone(), paint, bar_outline(rctx, s))
+                } else {
+                    (s.name.clone(), Paint::Color(series_fill(rctx, c, i, Some(s))), None)
+                }
             })
             .collect()
     };
     if let (Some(pos), false) = (&c.legend, legend_items.is_empty()) {
         let vertical = matches!(pos.as_str(), "l" | "r" | "tr");
-        let item_ws: Vec<f64> = legend_items.iter().map(|(n, _)| n.chars().count() as f64 * base * 0.55 + base * 1.6).collect();
+        let item_ws: Vec<f64> = legend_items.iter().map(|(n, _, _)| n.chars().count() as f64 * base * 0.55 + base * 1.6).collect();
         let size = if vertical {
             (item_ws.iter().copied().fold(0.0, f64::max).min(w * 0.4), legend_items.len() as f64 * base * 1.5)
         } else {
@@ -267,10 +339,15 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         let (origin, plot_area) = legend_layout(pos, size, area, base, c.legend_overlay);
         area = plot_area;
         let (mut x, mut y) = (origin.x, origin.y);
-        for (name, col) in &legend_items {
-            ctx.set_transform(m);
-            ctx.set_paint(color(*col, 1.0));
-            ctx.fill_rect(&Rect::new(x, y + base * 0.3, x + base * 0.7, y + base));
+        for (name, paint, outline) in &legend_items {
+            let key = Rect::new(x, y + base * 0.3, x + base * 0.7, y + base);
+            fill_with(ctx, paint, key, m);
+            if let Some((oc, ow)) = outline.filter(|o| o.1 > 0.0) {
+                ctx.set_transform(m);
+                ctx.set_paint(color(oc, 1.0));
+                ctx.set_stroke(kurbo::Stroke::new(ow.min(base * 0.2)));
+                ctx.stroke_path(&key.to_path(0.1));
+            }
             let tw = name.chars().count() as f64 * base * 0.55 + base;
             label(ctx, rctx, m, name, Rect::new(x + base, y, x + base + tw, y + base * 1.3), base, Align::Left, Anchor::Middle, text_col, false);
             if vertical {
@@ -310,7 +387,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             ctx.set_paint(color(Rgba::WHITE, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(1.0));
             ctx.stroke_path(&p);
-            if c.data_labels {
+            if c.series_data_labels(s) {
                 let mid = a0 + sweep / 2.0;
                 let lp = Point::new(cen.x + r * 0.65 * mid.cos(), cen.y + r * 0.65 * mid.sin());
                 label(
@@ -322,7 +399,8 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                     base,
                     Align::Center,
                     Anchor::Middle,
-                    Rgba::WHITE,
+                    // On the slices themselves: white, unless the chart's text was given a colour.
+                    if c.text_color.is_some() { text_col } else { Rgba::WHITE },
                     false,
                 );
             }
@@ -379,10 +457,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
     };
     // A combo chart's secondary value axis, on the right (vertical value axes only).
     let second = if horiz { None } else { c.axis_scale(true, max_intervals) };
-    let ticks = |(lo, hi, st): (f64, f64, f64)| {
-        let n = (((hi - lo) / st.max(1e-12)).round() as i64).clamp(1, 50);
-        (0..=n).map(move |k| lo + k as f64 * st)
-    };
+    let ticks = axis_ticks;
     // Label gutters as wide as the longest value label.
     let primary_ticks: Vec<f64> = ticks((min, max, step)).map(|k| log.map_or(k, |(b, _)| b.powf(k))).collect();
     let label_w = |sec: bool, sc: (f64, f64, f64)| {
@@ -405,7 +480,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
     if let Some(f) = &c.plot_fill {
         crate::paint::fill_path(ctx, rctx, f, None, &plot.to_path(0.1), plot, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
     }
-    let span = (max - min).max(1e-9);
+    let span = positive_span(max - min);
     // Values past the axis limits (fixed ones, or zero on an axis that starts above it) stop at
     // the plot's edge.
     let to_v = |v: f64| {
@@ -414,13 +489,13 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
     };
     // A series' value as a position on its own axis.
     let to_axis = |sec: bool, v: f64| match (sec, second) {
-        (true, Some((min2, max2, _))) => plot.y1 - (v.max(min2).min(max2) - min2) / (max2 - min2).max(1e-9) * plot.height(),
+        (true, Some((min2, max2, _))) => plot.y1 - (v.max(min2).min(max2) - min2) / positive_span(max2 - min2) * plot.height(),
         _ => to_v(v),
     };
     // Minor gridlines, under the major ones: five to a major unit.
     if c.minor_gridlines {
         let minor = step / 5.0;
-        let n = (((max - min) / minor.max(1e-12)).round() as i64).clamp(1, 500);
+        let n = if minor > 0.0 { (((max - min) / minor).round() as i64).clamp(1, 500) } else { 1 };
         let mut g = BezPath::new();
         for k in (0..=n).filter(|k| k % 5 != 0) {
             // On a logarithmic axis `min`, `max` and `step` are exponents of the base.
@@ -514,10 +589,10 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
     // Scatter and bubble charts have a value x axis: one scale over every series' x values, with its
     // own tick labels in place of category names.
     let xscale = if horiz { None } else { value_x_scale(c, (plot.width() / (base * 2.5)).floor().clamp(2.0, 12.0) as usize) };
-    let to_x = |v: f64| xscale.map(|(lo, hi, _)| plot.x0 + (v - lo) / (hi - lo).max(1e-9) * plot.width());
+    let to_x = |v: f64| xscale.map(|(lo, hi, _)| plot.x0 + (v - lo) / positive_span(hi - lo) * plot.width());
     if let Some(sc) = xscale {
         for v in ticks(sc) {
-            let pos = plot.x0 + (v - sc.0) / (sc.1 - sc.0).max(1e-9) * plot.width();
+            let pos = plot.x0 + (v - sc.0) / positive_span(sc.1 - sc.0) * plot.width();
             label(
                 ctx,
                 rctx,
@@ -625,7 +700,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 .abs();
                 // A waterfall colours increases, decreases and totals, and joins each bar's end
                 // to the next bar's start.
-                let fill = if waterfall {
+                let paint = if waterfall {
                     let slot = if c.subtotals.contains(&i) {
                         2
                     } else if b < a {
@@ -633,13 +708,17 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                     } else {
                         0
                     };
-                    series_color(rctx, c, slot)
+                    Paint::Color(series_color(rctx, c, slot))
                 } else {
-                    bar_fill(rctx, c, *si, i, s)
+                    bar_paint(rctx, c, *si, i, s)
                 };
-                ctx.set_transform(m);
-                ctx.set_paint(color(fill, 1.0));
-                ctx.fill_rect(&r.abs());
+                fill_with(ctx, &paint, r.abs(), m);
+                if !waterfall && let Some((oc, ow)) = bar_outline(rctx, s).filter(|o| o.1 > 0.0) {
+                    ctx.set_transform(m);
+                    ctx.set_paint(color(oc, 1.0));
+                    ctx.set_stroke(kurbo::Stroke::new(ow));
+                    ctx.stroke_path(&r.abs().to_path(0.1));
+                }
                 if waterfall && i + 1 < ncat && !horiz {
                     let y = to_v(b);
                     let mut j = BezPath::new();
@@ -656,7 +735,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                         err_marks.push((mid, p0, p1, bar.min(base * 0.8) * 0.5, e.end_cap));
                     }
                 }
-                if c.data_labels {
+                if c.series_data_labels(s) {
                     let t = c.data_label(s, s.values.get(i).copied().flatten().unwrap_or(0.0));
                     let lr = if horiz {
                         Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1)
@@ -696,6 +775,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         let stacked = kind.stacked();
         let area_kind = matches!(kind, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
+        let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
@@ -719,7 +799,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 }
                 _ => plot.x0 + band * (slot(i) + 0.5),
             };
-            if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| e.range(&s.values, i, v)) {
+            if let Some((lo, hi)) = s.error_bars.as_ref().and_then(|e| series_stats.as_ref().and_then(|st| e.range_in(st, i, v))) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
             pts.push(Point::new(x, to_axis(sec, v)));
@@ -1053,6 +1133,12 @@ mod tests {
     use super::*;
 
     const AREA: Rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+
+    #[test]
+    fn tiny_data_gets_several_ticks() {
+        let sc = deckcraft_model::chart::axis_scale(1e-13, 5e-13, None, None, None, 8, true);
+        assert!(axis_ticks(sc).count() >= 3, "{sc:?}");
+    }
 
     #[test]
     fn scatter_x_is_a_value_scale_over_all_series() {

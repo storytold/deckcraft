@@ -169,3 +169,13 @@ fn dragging_a_section_moves_it_and_keeps_it_collapsed() {
     let (beta, alpha) = (h.get_by_label("Beta").rect(), h.get_by_label("Alpha").rect());
     assert!(beta.top() < alpha.top());
 }
+
+#[test]
+fn ctrl_a_selects_every_slide() {
+    let mut h = harness(false);
+    h.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
+    h.run_steps(2);
+    let st = h.state().session.active().unwrap();
+    let all = st.doc.slides.len();
+    assert_eq!(st.selection.slides.len(), all, "Ctrl+A in the sorter selects every slide");
+}

@@ -1,6 +1,6 @@
 //! Intra prediction process (8.5.1).
 
-use crate::tables::*;
+use crate::tables::{D45_PRED, D63_PRED, D117_PRED, D135_PRED, D153_PRED, D207_PRED, H_PRED, TM_PRED, V_PRED};
 
 /// Edge availability and geometry of one intra-predicted transform block.
 pub struct IntraEdge {

@@ -113,7 +113,15 @@ fn general(v: f64, dec: char) -> String {
     }
     let a = v.abs();
     let s = if !(1e-9..1e11).contains(&a) {
-        format!("{v:.5E}")
+        let s = format!("{v:.5E}");
+        match s.split_once('E') {
+            Some((m, e)) => {
+                let m = if m.contains('.') { m.trim_end_matches('0').trim_end_matches('.') } else { m };
+                let e: i32 = e.parse().unwrap_or(0);
+                format!("{m}E{}{:02}", if e < 0 { '-' } else { '+' }, e.abs())
+            }
+            None => s,
+        }
     } else {
         let digits = (10 - (a.log10().floor() as i32 + 1)).clamp(0, 10) as usize;
         let s = format!("{v:.digits$}");
@@ -150,7 +158,7 @@ pub fn format(code: &str, v: f64, lang: Option<&str>) -> String {
         ([pos, ..], v) => (*pos, v.abs(), v < 0.0),
         ([], v) => ("General", v.abs(), v < 0.0),
     };
-    if sec.trim().eq_ignore_ascii_case("general") || sec.trim().is_empty() {
+    if sec.trim().eq_ignore_ascii_case("general") || (secs.len() == 1 && sec.trim().is_empty()) {
         let s = general(v, dec);
         return if minus { format!("-{s}") } else { s };
     }
@@ -204,7 +212,12 @@ fn sci(toks: &[Tok], v: f64, sep: char, dec: char) -> Option<String> {
     let (mut m, mut exp) = (0.0, 0i32);
     if v != 0.0 {
         exp = v.log10().floor() as i32;
-        m = v / 10f64.powi(exp);
+        m = if exp < -300 {
+            // 10^exp underflows for subnormals; scale in two steps.
+            v * 1e300 / 10f64.powi(exp + 300)
+        } else {
+            v / 10f64.powi(exp)
+        };
         if !m.is_finite() {
             m = 0.0;
             exp = 0;
@@ -253,7 +266,7 @@ fn fixed(toks: &[Tok], first: usize, last: usize, v: f64, sep: char, dec: char) 
     let grouping = int_part.iter().any(|t| *t == Tok::Comma || matches!(t, Tok::Lit(s) if s.trim().is_empty()));
     // Commas right after the last digit scale by a thousand each (`#,##0,` = thousands).
     let after = toks.get(last + 1..).unwrap_or(&[]);
-    let scale_commas = if dot.is_none() { after.iter().take_while(|t| **t == Tok::Comma).count() } else { 0 };
+    let scale_commas = after.iter().take_while(|t| **t == Tok::Comma).count();
     let min_int = int_part.iter().filter(|t| **t == Tok::Digit('0')).count();
     let frac_digits: Vec<char> = frac_part.iter().filter_map(|t| if let Tok::Digit(c) = t { Some(*c) } else { None }).collect();
     let max_frac = frac_digits.len();
@@ -287,6 +300,12 @@ mod tests {
     const RUB: &str = r#"_-* #\ ##0\ "₽"_-;\-* #\ ##0\ "₽"_-;_-* "-"??\ "₽"_-;_-@_-"#;
 
     #[test]
+    fn scientific_subnormal() {
+        assert_eq!(format("0.00E+00", 5e-324, None), "4.94E-324");
+        assert_eq!(format("0.00E+00", f64::MIN_POSITIVE, None), "2.23E-308");
+    }
+
+    #[test]
     fn russian_accounting_roubles() {
         assert_eq!(format(RUB, 800_000.0, Some("ru-RU")), "800\u{a0}000 ₽");
         assert_eq!(format(RUB, 1_234_567.0, Some("ru-RU")), "1\u{a0}234\u{a0}567 ₽");
@@ -304,6 +323,10 @@ mod tests {
         assert_eq!(format("0%", 0.0, None), "0%");
         assert_eq!(format("General", 2.5, Some("ru-RU")), "2,5");
         assert_eq!(format("General", 400_000.0, Some("ru-RU")), "400000");
+        assert_eq!(format("General", 1.5e12, None), "1.5E+12");
+        assert_eq!(format("General", 1e-10, None), "1E-10");
+        assert_eq!(format("General", -2.5e-12, None), "-2.5E-12");
+        assert_eq!(format("General", 1e100, None), "1E+100");
         assert_eq!(format("0.00", 1.23456, None), "1.23");
         assert_eq!(format("#,##0.0#", 1234.5, None), "1,234.5");
         assert_eq!(format("#,##0,", 12_345_678.0, None), "12,346");
@@ -312,6 +335,42 @@ mod tests {
         assert_eq!(format("0;0", -3.0, None), "3");
         assert_eq!(format("0", -3.0, None), "-3");
         assert_eq!(format("\"x\"0", 5.0, None), "x5");
+    }
+
+    #[test]
+    fn trailing_commas_with_decimals() {
+        assert_eq!(format("0.0,,", 15_000_000.0, Some("en-US")), "15.0");
+        assert_eq!(format("0.00,\"K\"", 15_000.0, Some("en-US")), "15.00K");
+    }
+
+    #[test]
+    fn explicit_empty_sections_hide_their_values() {
+        for v in [3.0, -3.0, 0.0, -0.0] {
+            assert_eq!(format(";;;", v, None), "", "all sections empty: {v}");
+        }
+        for (code, positive, negative, zero) in [
+            (";0;0", "", "3", "0"),
+            ("0;;0", "3", "", "0"),
+            ("0;-0;", "3", "-3", ""),
+            (";0", "", "3", ""),
+            (r#"";"0;;"#, ";3", "", ""),
+            (r"\;0;;", ";3", "", ""),
+        ] {
+            assert_eq!(format(code, 3.0, None), positive, "positive: {code}");
+            assert_eq!(format(code, -3.0, None), negative, "negative: {code}");
+            assert_eq!(format(code, 0.0, None), zero, "zero: {code}");
+        }
+        assert_eq!(format("0;-0;", -0.0, None), "");
+    }
+
+    #[test]
+    fn blank_whole_codes_and_general_keep_their_fallback() {
+        for code in ["", " \t", "General", " general "] {
+            assert_eq!(format(code, 2.5, None), "2.5", "{code:?}");
+            assert_eq!(format(code, -2.5, None), "-2.5", "{code:?}");
+            assert_eq!(format(code, 0.0, None), "0", "{code:?}");
+            assert_eq!(format(code, 2.5, Some("de-DE")), "2,5", "{code:?}");
+        }
     }
 
     #[test]

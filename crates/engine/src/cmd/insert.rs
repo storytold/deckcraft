@@ -118,7 +118,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
         ),
@@ -577,7 +577,7 @@ fn commit_album(s: &mut Session, items: Vec<AlbumItem>, opts: AlbumOpts, replace
 }
 
 fn album_norm(s: &str) -> String {
-    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()
+    s.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_lowercase()
 }
 
 fn album_layout(p: &Value) -> Result<AlbumLayout> {
@@ -770,7 +770,7 @@ fn image_px(bytes: &[u8]) -> (f64, f64) {
 }
 
 fn file_stem(name: &str) -> String {
-    let base = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or(name);
+    let base = std::path::Path::new(name).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(name);
     let stem = match base.rsplit_once('.') {
         Some((s, ext)) if !s.is_empty() && !ext.is_empty() => s,
         _ => base,
@@ -1761,6 +1761,39 @@ fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+fn apply_bin_options(c: &mut deckcraft_model::chart::Chart, bin_count: Option<Option<u32>>, bin_size: Option<Option<f64>>) {
+    if let Some(n) = bin_count {
+        c.bin_count = n;
+        if n.is_some() {
+            c.bin_size = None;
+        }
+    }
+    if let Some(w) = bin_size {
+        c.bin_size = w;
+        if w.is_some() {
+            c.bin_count = None;
+        }
+    }
+}
+
+fn apply_subtotals_and_bars(c: &mut deckcraft_model::chart::Chart, p: &Value, subtotals: Option<&[usize]>) {
+    if let Some(t) = subtotals {
+        let n = c.series.first().map_or(0, |s| s.values.len());
+        let mut t: Vec<usize> = t.iter().copied().filter(|i| *i < n).collect();
+        t.sort_unstable();
+        t.dedup();
+        c.subtotals = t;
+    }
+    if let Some(b) = p.get("upDownBars").and_then(Value::as_bool) {
+        c.up_down_bars = b;
+        c.raw = None;
+    }
+    if let Some(q) = p.get("quartiles").and_then(Value::as_str) {
+        c.inclusive_quartiles = q.eq_ignore_ascii_case("inclusive");
+        c.raw = None;
+    }
+}
+
 fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
     // Histogram bins: a count or a width (setting one clears the other; null for automatic).
     let bin_count = p.get("binCount").map(|v| v.as_u64().map(|n| n.clamp(1, deckcraft_model::chart::MAX_BINS as u64) as u32));
@@ -1771,34 +1804,21 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
     // Waterfall total points.
     let subtotals: Option<Vec<usize>> =
         p.get("subtotals").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|i| i as usize).collect());
+    // Colour of the chart's text (title, axes, legend, data labels); null goes back to PowerPoint's
+    // default (tx1 at lumMod 65 % / lumOff 35 %).
+    let text_color = match p.get("textColor") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => {
+            Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
+        }
+    };
     with_chart(s, p, "chart.options", |c| {
-        if let Some(n) = bin_count {
-            c.bin_count = n;
-            if n.is_some() {
-                c.bin_size = None;
-            }
+        if let Some(t) = &text_color {
+            c.text_color = t.clone();
         }
-        if let Some(w) = bin_size {
-            c.bin_size = w;
-            if w.is_some() {
-                c.bin_count = None;
-            }
-        }
-        if let Some(t) = &subtotals {
-            let n = c.series.first().map_or(0, |s| s.values.len());
-            let mut t: Vec<usize> = t.iter().copied().filter(|i| *i < n).collect();
-            t.sort_unstable();
-            t.dedup();
-            c.subtotals = t;
-        }
-        if let Some(b) = p.get("upDownBars").and_then(Value::as_bool) {
-            c.up_down_bars = b;
-            c.raw = None;
-        }
-        if let Some(q) = p.get("quartiles").and_then(Value::as_str) {
-            c.inclusive_quartiles = q.eq_ignore_ascii_case("inclusive");
-            c.raw = None;
-        }
+        apply_bin_options(c, bin_count, bin_size);
+        apply_subtotals_and_bars(c, p, subtotals.as_deref());
         if bin_count.is_some() || bin_size.is_some() || subtotals.is_some() {
             c.raw = None;
         }
@@ -1810,6 +1830,10 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = bool_param(p, "dataLabels") {
             c.data_labels = v;
+            // A series' own setting would otherwise keep overriding the chart-wide switch.
+            for series in &mut c.series {
+                series.data_labels = None;
+            }
         }
         if let Some(v) = bool_param(p, "gridlines") {
             c.gridlines = v;

@@ -203,13 +203,17 @@ fn place_slides(app: &mut SlideApp, ui: &mut Ui, g: &Grid<'_>, budget: &mut u32,
                 let img = crate::textures::device_pixel_rect(Rect::from_min_size(cell.min + vec2(18.0, 8.0), vec2(g.tw, g.th)), ppp);
                 rects.push((i, cell));
                 let p = ui.painter();
-                match app.textures.thumb(ui.ctx(), g.doc, i, (img.width() * ppp).round() as u32, budget) {
+                // Only cells in view (plus a little margin) ask for a thumbnail, so a deck bigger
+                // than the thumbnail cache does not evict its own thumbnails forever (#969).
+                let near = ui.clip_rect().expand2(vec2(0.0, 2.0 * cell.height())).intersects(cell);
+                let tex = if near { app.textures.thumb(ui.ctx(), g.doc, i, (img.width() * ppp).round() as u32, budget) } else { None };
+                match tex {
                     Some(tex) => {
                         p.image(tex.id(), img, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
                     }
                     None => {
                         p.rect_filled(img, CornerRadius::ZERO, Color32::WHITE);
-                        need_more = true;
+                        need_more |= near;
                     }
                 }
                 let id = g.doc.slides.get(i).map(|s| s.id);

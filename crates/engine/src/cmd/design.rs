@@ -1,6 +1,7 @@
 //! Design tab and masters: themes, colours, fonts, backgrounds, slide size, header & footer,
 //! Slide Master view.
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use deckcraft_geom::Size;
@@ -20,7 +21,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Browse for Themes…",
             ["Design", "Themes"],
             None,
-            "{path} | {name, data: base64} — apply the theme of a .thmx, .pptx or .potx file",
+            "{path} | {name, data: base64} — apply a .pptx or .potx's slide master and layouts (slides move to the matching layouts), or a .thmx's theme",
             has_doc,
             browse_theme
         ),
@@ -160,6 +161,13 @@ fn browse_theme(s: &mut Session, p: &Value) -> Result<Value> {
     if !deckcraft_pptx::sniff(&bytes) {
         return Err(bad("design.browseTheme", "not a theme or PowerPoint file"));
     }
+    // A presentation or template brings its slide master and layouts, as in PowerPoint; a .thmx
+    // (its main part is a theme, not a presentation) brings the theme alone.
+    if let Ok(src) = super::file::open_presentation("theme.pptx", &bytes)
+        && src.masters.first().is_some_and(|m| !m.layouts.is_empty())
+    {
+        return apply_master(s, &src);
+    }
     let (theme, media) = deckcraft_pptx::import_theme(&bytes).map_err(|e| bad("design.browseTheme", e.to_string()))?;
     let name = theme.name.clone();
     s.edit(|doc, sel| {
@@ -177,6 +185,58 @@ fn browse_theme(s: &mut Session, p: &Value) -> Result<Value> {
         Ok(())
     })?;
     Ok(json!({"theme": name}))
+}
+
+/// Design › Browse for Themes… with a `.pptx` / `.potx`: its first master and layouts replace the
+/// master the current slide uses (a preserved master stays beside it), stretched to this deck's
+/// slide size. Each slide on it moves to the new layout with the same name, else the same kind,
+/// keeping its content as Layout does.
+fn apply_master(s: &mut Session, src: &Presentation) -> Result<Value> {
+    let from = src.masters.first().ok_or_else(|| bad("design.browseTheme", "no master"))?;
+    let theme = from.theme.name.clone();
+    s.edit(|doc, sel| {
+        let mi = master_index(doc, sel);
+        let old = doc.masters.get(mi).cloned().ok_or_else(|| bad("design.browseTheme", "no master"))?;
+        let (mut media, mut layouts) = Default::default();
+        let mut m = super::reuse::import_master("design.browseTheme", doc, src, from, &mut media, &mut layouts)?;
+        let (sx, sy) = (doc.slide_size.width / src.slide_size.width.max(1.0), doc.slide_size.height / src.slide_size.height.max(1.0));
+        if (sx - 1.0).abs() > 1e-9 || (sy - 1.0).abs() > 1e-9 {
+            scale_shapes(&mut m.shapes, sx, sy, 1.0, 0.0, 0.0);
+            for l in &mut m.layouts {
+                scale_shapes(&mut l.shapes, sx, sy, 1.0, 0.0, 0.0);
+            }
+        }
+        let moves: Vec<(usize, deckcraft_model::LayoutId)> =
+            doc.slides.iter().enumerate().filter_map(|(i, sl)| old.layout(sl.layout).and_then(|l| matching_layout(&m, l)).map(|l| (i, l))).collect();
+        let layouts = m.layouts.len();
+        if old.preserve {
+            doc.masters.insert(mi, Arc::new(m));
+        } else if let Some(slot) = doc.masters.get_mut(mi) {
+            *slot = Arc::new(m);
+        }
+        for (i, l) in &moves {
+            super::slide::apply_layout(doc, *i, *l)?;
+        }
+        if let Target::Layout { master, .. } = sel.target {
+            sel.target = Target::Master { master };
+        }
+        sel.shapes.clear();
+        sel.text = None;
+        Ok(json!({"theme": theme, "layouts": layouts, "slides": moves.len()}))
+    })
+}
+
+/// The layout of `m` a slide on `from` moves to: same name, else same kind (not for custom
+/// layouts), else Title and Content, else the first.
+fn matching_layout(m: &deckcraft_model::Master, from: &deckcraft_model::Layout) -> Option<deckcraft_model::LayoutId> {
+    use deckcraft_model::LayoutType;
+    let ls = &m.layouts;
+    ls.iter()
+        .find(|l| !from.name.is_empty() && l.name.trim().eq_ignore_ascii_case(from.name.trim()))
+        .or_else(|| ls.iter().find(|l| from.kind != LayoutType::Custom && l.kind == from.kind))
+        .or_else(|| ls.iter().find(|l| l.kind == LayoutType::TitleAndContent))
+        .or_else(|| ls.first())
+        .map(|l| l.id)
 }
 
 /// `theme` with every `media` id field rewritten through `map` (format-scheme picture fills).
@@ -592,6 +652,11 @@ fn background_of(doc: &Presentation, sel: &crate::Selection, index: Option<usize
     }
 }
 
+fn used_master_indices(doc: &Presentation) -> BTreeSet<usize> {
+    let fallback = (!doc.masters.is_empty()).then_some(0);
+    doc.slides.iter().filter_map(|sl| doc.masters.iter().position(|m| m.layout(sl.layout).is_some()).or(fallback)).collect()
+}
+
 fn backgrounds_already(doc: &Presentation, sel: &crate::Selection, index: Option<usize>, all: bool, bg: &Option<Background>) -> bool {
     match sel.target {
         Target::Master { master } => doc.masters.get(master).is_some_and(|m| m.background == *bg),
@@ -599,7 +664,16 @@ fn backgrounds_already(doc: &Presentation, sel: &crate::Selection, index: Option
         t @ (Target::Handout | Target::NotesMaster) => crate::page_master(doc, t).is_some_and(|m| m.background == *bg),
         Target::Slides => {
             let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![index.unwrap_or(sel.slide)] };
-            !list.is_empty() && list.iter().all(|i| doc.slides.get(*i).is_some_and(|sl| sl.background == *bg))
+            let slides_match = !list.is_empty() && list.iter().all(|i| doc.slides.get(*i).is_some_and(|sl| sl.background == *bg));
+            if all && bg.is_some() {
+                let masters = used_master_indices(doc);
+                let masters_match = !masters.is_empty() && masters.iter().all(|&idx| doc.masters.get(idx).is_some_and(|m| m.background == *bg));
+                let layouts_match = !masters.is_empty()
+                    && masters.iter().all(|&idx| doc.masters.get(idx).is_some_and(|m| m.layouts.iter().all(|l| l.background.is_none())));
+                slides_match && masters_match && layouts_match
+            } else {
+                slides_match
+            }
         }
     }
 }
@@ -622,6 +696,17 @@ fn write_background(doc: &mut Presentation, sel: &crate::Selection, index: Optio
             }
         }
         Target::Slides => {
+            if all && bg.is_some() {
+                for idx in used_master_indices(doc) {
+                    if let Some(m) = doc.masters.get_mut(idx) {
+                        let m = Arc::make_mut(m);
+                        m.background = bg.clone();
+                        for l in &mut m.layouts {
+                            l.background = None;
+                        }
+                    }
+                }
+            }
             let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![index.unwrap_or(sel.slide)] };
             for i in list {
                 if let Some(sl) = doc.slides.get_mut(i) {
@@ -639,7 +724,14 @@ fn copy_slide_background(s: &mut Session) -> Result<Value> {
             return Err(bad("design.background", "copy applies to slides"));
         }
         let bg = st.doc.slides.get(st.selection.slide).and_then(|sl| sl.background.clone());
-        if st.doc.slides.iter().all(|sl| sl.background == bg) {
+        let slides_match = st.doc.slides.iter().all(|sl| sl.background == bg);
+        let masters_match = if bg.is_some() {
+            let masters = used_master_indices(&st.doc);
+            !masters.is_empty() && masters.iter().all(|&idx| st.doc.masters.get(idx).is_some_and(|m| m.background == bg))
+        } else {
+            true
+        };
+        if slides_match && masters_match {
             return ok();
         }
         bg
@@ -821,6 +913,14 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = str_param(p, "dateText") {
             hf.date_text = v.into();
         }
+        if let Some(v) = str_param(p, "dateFormat") {
+            // Refused rather than ignored: a format that renders nothing would leave the
+            // placeholder showing its saved text for ever.
+            if !deckcraft_text::datetime::DATE_KINDS.contains(&v) {
+                return Err(bad("design.headerFooter", "dateFormat: one of datetime1…datetime13"));
+            }
+            hf.date_format = v.into();
+        }
         if let Some(v) = bool_param(p, "slideNumber") {
             hf.slide_number = v;
         }
@@ -836,6 +936,7 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let hf = hf.clone();
         let date_given = str_param(p, "dateText").is_some();
+        let format_given = str_param(p, "dateFormat").is_some();
         let all = bool_or(p, "all", true);
         let list: Vec<usize> = if all { (0..doc.slides.len()).collect() } else { vec![sel.slide] };
         for i in list {
@@ -880,7 +981,11 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
                             },
                             PhType::Date if hf.date_text.is_empty() => TextBody {
                                 paragraphs: vec![deckcraft_model::Paragraph {
-                                    runs: vec![Run { text: today(), props: Default::default(), kind: RunKind::Field { field: "datetime1".into() } }],
+                                    runs: vec![Run {
+                                        text: date_now(&hf.date_format),
+                                        props: Default::default(),
+                                        kind: RunKind::Field { field: date_kind(&hf.date_format).into() },
+                                    }],
                                     ..Default::default()
                                 }],
                                 ..Default::default()
@@ -901,9 +1006,9 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
                             sh.text = Some(TextBody::from_text(&hf.footer_text));
                         }
                     }
-                    (Some(pos), true) if k == PhType::Date && date_given => {
+                    (Some(pos), true) if k == PhType::Date && (date_given || format_given) => {
                         if let Some(sh) = sl.shapes.get_mut(pos) {
-                            set_date(sh, &hf.date_text);
+                            set_date(sh, &hf.date_text, &hf.date_format);
                         }
                     }
                     _ => {}
@@ -915,15 +1020,33 @@ fn header_footer(s: &mut Session, p: &Value) -> Result<Value> {
     ok()
 }
 
+/// The date field type `format` names, `datetime1` when it is empty or unknown.
+fn date_kind(format: &str) -> &str {
+    if deckcraft_text::datetime::DATE_KINDS.contains(&format) { format } else { "datetime1" }
+}
+
+/// The saved text of a date field of `format`, as it shows now.
+fn date_now(format: &str) -> String {
+    let kind = date_kind(format);
+    deckcraft_text::datetime::DateTime::now_local().and_then(|now| deckcraft_text::datetime::field_text(kind, None, now)).unwrap_or_else(today)
+}
+
 /// Point a slide's date placeholder at a fixed date (its own plain text) or, for an empty
 /// `fixed`, at an automatic date field (one it already has keeps its format).
-fn set_date(sh: &mut Shape, fixed: &str) {
+fn set_date(sh: &mut Shape, fixed: &str, format: &str) {
     let runs = || sh.text.iter().flat_map(|t| &t.paragraphs).flat_map(|p| &p.runs);
-    let has_field = runs().any(|r| matches!(&r.kind, RunKind::Field { field } if deckcraft_text::datetime::is_date_field(field)));
+    let field_now = runs().find_map(|r| match &r.kind {
+        RunKind::Field { field } if deckcraft_text::datetime::is_date_field(field) => Some(field.clone()),
+        _ => None,
+    });
+    let has_field = field_now.is_some();
     let props = runs().next().map(|r| r.props.clone()).unwrap_or_default();
+    let want = date_kind(format);
     let (text, kind) = match fixed {
-        "" if has_field => return,
-        "" => (today(), RunKind::Field { field: "datetime1".into() }),
+        // Automatic: keep the field, but follow a format that has changed.
+        "" if field_now.as_deref() == Some(want) => return,
+        "" if has_field && format.is_empty() => return,
+        "" => (date_now(format), RunKind::Field { field: want.into() }),
         _ if !has_field && sh.text.as_ref().is_some_and(|t| t.text() == fixed) => return,
         _ => (fixed.to_string(), RunKind::Text),
     };
@@ -943,18 +1066,21 @@ pub fn date_field_text(kind: &str) -> String {
     DateTime::now_local().and_then(|now| field_text(kind, None, now)).unwrap_or_default()
 }
 
-/// Days since 1970-01-01 → (year, month, day) (Howard Hinnant's algorithm).
+/// Days since 1970-01-01 → (year, month, day), exact for every `i64`.
 pub fn civil(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097);
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
+    use chrono::Datelike;
+    // `NaiveDate` covers only about ±262143 years, and the Gregorian calendar repeats every 400
+    // years (146_097 days). chrono converts the day within its cycle and whole cycles go back
+    // into the year (an i128 for i64::MAX/MIN). 1970-01-01 is `num_days_from_ce` 719_163, and
+    // 0..146_097 days from it always fits.
+    let (cycles, rest) = (z.div_euclid(146_097), z.rem_euclid(146_097));
+    match i32::try_from(rest + 719_163).ok().and_then(chrono::NaiveDate::from_num_days_from_ce_opt) {
+        Some(d) => {
+            let y = i128::from(d.year()) + i128::from(cycles) * 400;
+            (i64::try_from(y).unwrap_or(if y < 0 { i64::MIN } else { i64::MAX }), d.month(), d.day())
+        }
+        None => (1970, 1, 1),
+    }
 }
 
 fn master_view(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1456,6 +1582,8 @@ fn slide_number_paragraph() -> deckcraft_model::Paragraph {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use deckcraft_color::SchemeSlot;
     use deckcraft_model::style::PictureMode;
     use deckcraft_model::theme::{FontScheme, ScriptFont, builtin_color_schemes, builtin_font_schemes};
@@ -1495,6 +1623,11 @@ mod tests {
     fn civil_dates() {
         assert_eq!(super::civil(0), (1970, 1, 1));
         assert_eq!(super::civil(20_734), (2026, 10, 8));
+        // Past `NaiveDate`'s range the 400-year cycles carry the year, exactly, up to the extremes.
+        assert_eq!(super::civil(95_026_602), (262_144, 1, 1));
+        assert_eq!(super::civil(-96_465_964), (-262_145, 3, 1));
+        assert_eq!(super::civil(i64::MAX), (25_252_734_927_768_524, 7, 27));
+        assert_eq!(super::civil(i64::MIN), (-25_252_734_927_764_585, 6, 7));
     }
 
     #[test]
@@ -1727,12 +1860,195 @@ mod tests {
         s.execute("design.background", &json!({"copy": true})).unwrap();
         assert_eq!(undo_len(&s), n + 1, "copying an already shared background is not an undo step");
     }
+
+    #[test]
+    fn background_all_applies_to_master_and_new_slides_inherit() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+        let s0 = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        assert_eq!(s0["background"], "#121826");
+
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"color": "#0D0D0D", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1);
+
+        // Idempotency: re-applying the same background to all is a no-op (no extra undo step)
+        s.execute("design.background", &json!({"color": "#0D0D0D", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "re-applying already applied background is not an undo step");
+
+        // Slide 0 has new background, master has new background, layouts cleared
+        let doc = &s.doc().unwrap().doc;
+        assert!(matches!(doc.slides[0].background, Some(Background::Fill { .. })));
+        assert_eq!(doc.masters[0].background, doc.slides[0].background);
+        for l in &doc.masters[0].layouts {
+            assert!(l.background.is_none());
+        }
+
+        // Newly added slides inherit the master background (fixes #891)
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "new"})).unwrap();
+        let s0_after = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        let s1_after = s.execute("slide.inspect", &json!({"index": 1})).unwrap();
+        assert_eq!(s0_after["background"], "#0D0D0D");
+        assert_eq!(s1_after["background"], "#0D0D0D");
+
+        // Undo restores previous slide and master backgrounds
+        s.execute("edit.undo", &json!({})).unwrap(); // undos slide.new
+        assert_eq!(s.doc().unwrap().doc.slides.len(), 1);
+        s.execute("edit.undo", &json!({})).unwrap(); // undos design.background
+        let s0_reverted = s.execute("slide.inspect", &json!({"index": 0})).unwrap();
+        assert_eq!(s0_reverted["background"], "#121826");
+    }
+
+    #[test]
+    fn background_copy_from_slide_following_master_preserves_master_and_layout_backgrounds() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+        s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+
+        let custom_layout_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x22, 0x22, 0x22))) };
+        s.edit(|doc, _| {
+            let m = Arc::make_mut(&mut doc.masters[0]);
+            m.layouts[0].background = Some(custom_layout_bg.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        // Slide 0 follows master (background: None)
+        assert!(s.doc().unwrap().doc.slides[0].background.is_none());
+        // Give Slide 1 an explicit override
+        s.execute("design.background", &json!({"color": "#FF0000", "index": 1})).unwrap();
+        assert!(s.doc().unwrap().doc.slides[1].background.is_some());
+
+        let orig_master_bg = s.doc().unwrap().doc.masters[0].background.clone();
+        assert!(orig_master_bg.is_some());
+
+        // Select slide 0 (which follows master) and apply copy to all
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"copy": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1);
+
+        // Slide 1 has been reset to None (follows master), slide 0 remains None
+        let doc = &s.doc().unwrap().doc;
+        assert!(doc.slides[0].background.is_none());
+        assert!(doc.slides[1].background.is_none());
+
+        // Master and layout backgrounds survived!
+        assert_eq!(doc.masters[0].background, orig_master_bg);
+        assert_eq!(doc.masters[0].layouts[0].background, Some(custom_layout_bg));
+
+        // Idempotency: re-applying copy is a no-op
+        s.execute("design.background", &json!({"copy": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "re-copying when already matching is a no-op");
+    }
+
+    #[test]
+    fn background_reset_all_preserves_master_and_layout_backgrounds() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+        s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+
+        let custom_layout_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x33, 0x33, 0x33))) };
+        s.edit(|doc, _| {
+            let m = Arc::make_mut(&mut doc.masters[0]);
+            m.layouts[0].background = Some(custom_layout_bg.clone());
+            Ok(())
+        })
+        .unwrap();
+
+        let orig_master_bg = s.doc().unwrap().doc.masters[0].background.clone();
+        assert!(orig_master_bg.is_some());
+
+        // Set explicit backgrounds on both slides individually (master remains untouched)
+        s.execute("design.background", &json!({"color": "#0D0D0D", "index": 0})).unwrap();
+        s.execute("design.background", &json!({"color": "#0D0D0D", "index": 1})).unwrap();
+        assert!(s.doc().unwrap().doc.slides[0].background.is_some());
+        assert!(s.doc().unwrap().doc.slides[1].background.is_some());
+
+        // Now perform reset with all
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"reset": true, "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1);
+
+        // Slides reset to None to follow master
+        let doc = &s.doc().unwrap().doc;
+        assert!(doc.slides[0].background.is_none());
+        assert!(doc.slides[1].background.is_none());
+
+        // Master and layout backgrounds survived!
+        assert_eq!(doc.masters[0].background, orig_master_bg);
+        assert_eq!(doc.masters[0].layouts[0].background, Some(custom_layout_bg));
+
+        // Idempotency: re-running reset all is a no-op
+        s.execute("design.background", &json!({"reset": true, "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "re-resetting when already reset is a no-op");
+    }
+
+    #[test]
+    fn background_all_only_touches_used_masters() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+
+        // Add a second master to presentation
+        let second_master_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x55, 0x55, 0x55))) };
+        s.edit(|doc, _| {
+            let mut m2 = (*doc.masters[0]).clone();
+            m2.id = deckcraft_model::MasterId(999);
+            m2.background = Some(second_master_bg.clone());
+            doc.masters.push(Arc::new(m2));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(s.doc().unwrap().doc.masters.len(), 2);
+        // Slides only use master 0 (default layout)
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+
+        let doc = &s.doc().unwrap().doc;
+        // Master 0 updated
+        assert_eq!(doc.masters[0].background, doc.slides[0].background);
+        // Master 1 preserved!
+        assert_eq!(doc.masters[1].background, Some(second_master_bg));
+    }
+
+    #[test]
+    fn background_all_clears_layout_overrides_even_if_slides_and_master_match() {
+        let mut s = Session::with_new();
+        s.execute("file.new", &json!({"theme": "Nocturne"})).unwrap();
+
+        // Set all slides and master to #AA0000
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+        assert_eq!(s.doc().unwrap().doc.masters[0].background, s.doc().unwrap().doc.slides[0].background);
+
+        // Add a layout override on layout 0
+        let custom_bg = Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x12, 0x34, 0x56))) };
+        s.edit(|doc, _| {
+            let m = Arc::make_mut(&mut doc.masters[0]);
+            m.layouts[0].background = Some(custom_bg);
+            Ok(())
+        })
+        .unwrap();
+
+        // Re-run Apply to All with #AA0000. Must not be skipped as no-op; must clear layout override.
+        let n = undo_len(&s);
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "should execute and clear layout override, not treat as no-op");
+
+        let doc = &s.doc().unwrap().doc;
+        assert!(doc.masters[0].layouts[0].background.is_none());
+
+        // Now that layout override is cleared, repeating is an actual no-op
+        s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
+        assert_eq!(undo_len(&s), n + 1, "now it is truly a no-op");
+    }
 }
 
 #[cfg(test)]
 mod browse_theme_tests {
-    use deckcraft_model::PhType;
+    use std::sync::Arc;
+
     use deckcraft_model::text::RunKind;
+    use deckcraft_model::{Background, Fill, PhType};
     use serde_json::json;
 
     use crate::{Session, Target};
@@ -1756,6 +2072,108 @@ mod browse_theme_tests {
         assert_eq!(s.doc().unwrap().doc.masters[0].theme, before);
         assert!(s.execute("design.browseTheme", &json!({"data": "AAAA"})).is_err());
         assert!(s.execute("design.browseTheme", &json!({})).is_err());
+    }
+
+    /// A 4:3 brand template: a logo and a background on the master, its layouts renamed (so slides
+    /// can only find them by kind) and its content layout's title moved.
+    fn brand_template() -> (String, Vec<u8>, deckcraft_model::Xfrm) {
+        let mut img = image::RgbaImage::new(2, 2);
+        img.put_pixel(0, 0, image::Rgba([200, 20, 30, 255]));
+        let mut logo = Vec::new();
+        image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut logo), image::ImageFormat::Png).unwrap();
+        let mut t = Session::with_new();
+        t.execute("design.slideSize", &json!({"preset": "standard", "scale": "none"})).unwrap();
+        let title = t
+            .edit(|doc, _| {
+                let media = doc.add_media("logo.png", "image/png", logo.clone()).unwrap();
+                let id = deckcraft_model::ShapeId(doc.alloc_id().unwrap());
+                let m = Arc::make_mut(doc.masters.get_mut(0).unwrap());
+                m.shapes.push(deckcraft_model::Shape {
+                    id,
+                    name: "Logo".into(),
+                    kind: deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+                    xfrm: Some(deckcraft_model::Xfrm { x: 600.0, y: 20.0, w: 100.0, h: 40.0, ..Default::default() }),
+                    ..Default::default()
+                });
+                m.background =
+                    Some(Background::Fill { fill: Fill::solid(deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::rgb(0x0A, 0x2B, 0x4C))) });
+                for l in &mut m.layouts {
+                    l.name = format!("Brand {}", l.name);
+                }
+                let obj = m.layouts.iter_mut().find(|l| l.kind == deckcraft_model::LayoutType::TitleAndContent).unwrap();
+                let title = obj.shapes.iter_mut().find(|sh| sh.ph_type().is_some_and(PhType::is_title)).unwrap();
+                let x = deckcraft_model::Xfrm { x: 72.0, y: 400.0, w: 576.0, h: 80.0, ..Default::default() };
+                title.xfrm = Some(x);
+                Ok(x)
+            })
+            .unwrap();
+        (crate::cmd::base64_encode(&deckcraft_pptx::export_as(&t.doc().unwrap().doc, "potx").unwrap()), logo, title)
+    }
+
+    #[test]
+    fn a_template_brings_its_master_and_layouts_and_slides_follow() {
+        let (data, logo, title) = brand_template();
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "Point one"})).unwrap();
+        let before = s.doc().unwrap().doc.clone();
+        let n = undo_len(&s);
+        let r = s.execute("design.browseTheme", &json!({"name": "Brand.potx", "data": data})).unwrap();
+        assert_eq!(r["slides"], json!(2), "{r}");
+        assert_eq!(undo_len(&s), n + 1, "one undo step");
+
+        let doc = &s.doc().unwrap().doc;
+        assert!(doc.validate().is_empty(), "{:?}", doc.validate());
+        assert_eq!(doc.masters.len(), 1, "the old master is replaced");
+        let m = &doc.masters[0];
+        assert_ne!(m.id, before.masters[0].id);
+        assert!(m.layouts.iter().all(|l| l.name.starts_with("Brand ")));
+        assert!(matches!(m.background, Some(Background::Fill { fill: Fill::Solid { .. } })));
+        let pic = m.shapes.iter().find(|sh| sh.name == "Logo").expect("the master's logo comes along");
+        let deckcraft_model::ShapeKind::Picture { fill } = &pic.kind else { panic!("logo is a picture") };
+        assert_eq!(doc.media(fill.media).map(|m| m.data.as_ref().clone()), Some(logo));
+        // The 4:3 master stretches to this deck's 16:9.
+        let k = doc.slide_size.width / 720.0;
+        let px = pic.xfrm.unwrap();
+        assert!((px.x - 600.0 * k).abs() < 0.01 && (px.w - 100.0 * k).abs() < 0.01 && (px.y - 20.0).abs() < 0.01, "{px:?}");
+
+        // Each slide moved to the brand layout of its kind, and kept its text.
+        for (old, new) in before.slides.iter().zip(&doc.slides) {
+            let (_, was) = before.layout(old.layout).unwrap();
+            let (owner, now) = doc.layout(new.layout).expect("on a layout of the new master");
+            assert_eq!(owner.id, m.id);
+            assert_eq!(now.kind, was.kind);
+        }
+        let agenda = doc.slides.iter().find(|sl| sl.shapes.iter().any(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Agenda"))).unwrap();
+        assert!(agenda.shapes.iter().any(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "Point one")));
+        let (_, lay) = doc.layout(agenda.layout).unwrap();
+        let lt = lay.shapes.iter().find(|sh| sh.ph_type().is_some_and(PhType::is_title)).unwrap().xfrm.unwrap();
+        assert!((lt.x - title.x * k).abs() < 0.01 && (lt.y - title.y).abs() < 0.01, "{lt:?}");
+        let st = agenda.shapes.iter().find(|sh| sh.ph_type().is_some_and(PhType::is_title)).unwrap();
+        assert!(st.xfrm.is_none(), "the slide title follows the new layout");
+
+        s.execute("edit.undo", &json!({})).unwrap();
+        let doc = &s.doc().unwrap().doc;
+        assert_eq!(doc.masters, before.masters);
+        assert_eq!(doc.slides, before.slides);
+    }
+
+    #[test]
+    fn a_preserved_master_stays_beside_the_template() {
+        let (data, _, _) = brand_template();
+        let mut s = Session::with_new();
+        s.execute("view.slideMaster", &json!({"master": 0, "layout": 1})).unwrap();
+        s.execute("master.preserve", &json!({"preserve": true})).unwrap();
+        s.execute("view.slideMaster", &json!({"master": 0})).unwrap();
+        s.execute("master.preserve", &json!({"preserve": true})).unwrap();
+        let old = s.doc().unwrap().doc.masters[0].id;
+        s.execute("view.slideMaster", &json!({"master": 0, "layout": 1})).unwrap();
+        s.execute("design.browseTheme", &json!({"name": "Brand.pptx", "data": data})).unwrap();
+        let st = s.doc().unwrap();
+        assert_eq!(st.doc.masters.len(), 2);
+        assert_eq!(st.doc.masters[1].id, old);
+        assert_eq!(st.selection.target, Target::Master { master: 0 }, "Slide Master view shows the new master");
+        let new = &st.doc.masters[0];
+        assert!(st.doc.slides.iter().all(|sl| new.layout(sl.layout).is_some()));
     }
 
     fn undo_len(s: &crate::Session) -> usize {
@@ -1906,5 +2324,92 @@ mod browse_theme_tests {
         let box_ = title.xfrm.unwrap();
         assert!((box_.x - 60.0).abs() < 0.01 && (box_.y - 29.0).abs() < 0.01);
         assert!((box_.w - 840.0).abs() < 0.01 && (box_.h - 104.0).abs() < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod header_footer_date_tests {
+    use deckcraft_model::PhType;
+    use deckcraft_model::text::RunKind;
+    use serde_json::json;
+
+    use crate::Session;
+
+    /// The date field of the Date placeholders of every slide: (saved text, field type).
+    fn dates(s: &Session) -> Vec<(String, Option<String>)> {
+        let d = &s.doc().unwrap().doc;
+        d.slides
+            .iter()
+            .flat_map(|sl| sl.shapes.iter())
+            .filter(|sh| sh.ph_type() == Some(PhType::Date))
+            .flat_map(|sh| sh.text.iter())
+            .flat_map(|t| t.paragraphs.iter())
+            .flat_map(|p| p.runs.iter())
+            .map(|r| {
+                let kind = match &r.kind {
+                    RunKind::Field { field } => Some(field.clone()),
+                    _ => None,
+                };
+                (r.text.clone(), kind)
+            })
+            .collect()
+    }
+
+    fn sample(kind: &str) -> String {
+        let now = deckcraft_text::datetime::DateTime::now_local().expect("a local date");
+        deckcraft_text::datetime::field_text(kind, None, now).expect("a sample")
+    }
+
+    /// Runs `design.headerFooter` and checks the slide's date run is an automatic `kind` field.
+    /// The clock is read before and after the command, so a second ticking over between the
+    /// command and the read cannot fail the comparison. Returns the run text.
+    fn run_automatic(s: &mut Session, params: serde_json::Value, kind: &str) -> String {
+        let before = sample(kind);
+        s.execute("design.headerFooter", &params).unwrap();
+        let after = sample(kind);
+        let got = dates(s);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].1.as_deref(), Some(kind));
+        assert!(got[0].0 == before || got[0].0 == after, "{got:?} is neither {before:?} nor {after:?}");
+        got[0].0.clone()
+    }
+
+    /// Header & Footer's automatic date takes the format it is given. `HeaderFooter::date_format`
+    /// existed for this and was never read: the placeholder was always `datetime1`, and a
+    /// `dateFormat` parameter was accepted and silently dropped.
+    #[test]
+    fn the_automatic_date_takes_the_format_it_is_given() {
+        let mut s = Session::with_new();
+
+        // Default: the short date, as before.
+        run_automatic(&mut s, json!({"date": true, "dateText": "", "all": true}), "datetime1");
+
+        // A format: the field type changes and the saved text is that format's.
+        run_automatic(&mut s, json!({"date": true, "dateFormat": "datetime5", "all": true}), "datetime5");
+        assert_eq!(s.doc().unwrap().doc.header_footer.date_format, "datetime5");
+
+        // A time format works the same way, and these two differ, so the format is really read.
+        let time = run_automatic(&mut s, json!({"date": true, "dateFormat": "datetime11", "all": true}), "datetime11");
+        assert_ne!(time, sample("datetime5"));
+
+        // Asking again changes nothing (and does not rewrite the run).
+        let again = run_automatic(&mut s, json!({"date": true, "dateFormat": "datetime11", "all": true}), "datetime11");
+        assert_eq!(again, time);
+
+        // A fixed date still wins: plain text, no field.
+        s.execute("design.headerFooter", &json!({"date": true, "dateText": "4 July 1776", "all": true})).unwrap();
+        assert_eq!(dates(&s), vec![("4 July 1776".to_string(), None)]);
+
+        // Back to automatic: the remembered format comes back, not datetime1.
+        run_automatic(&mut s, json!({"date": true, "dateText": "", "dateFormat": "datetime11", "all": true}), "datetime11");
+
+        // An unknown format is refused rather than ignored, and changes nothing.
+        for bad in ["datetime0", "datetime14", "nonsense", ""] {
+            assert!(s.execute("design.headerFooter", &json!({"date": true, "dateFormat": bad})).is_err(), "{bad}");
+        }
+        assert_eq!(s.doc().unwrap().doc.header_footer.date_format, "datetime11");
+        let got = dates(&s);
+        assert_eq!(got.len(), 1, "{got:?}");
+        assert_eq!(got[0].1.as_deref(), Some("datetime11"));
     }
 }

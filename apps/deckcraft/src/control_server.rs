@@ -8,11 +8,11 @@
 //! socket may sit idle or blocked on a write.
 
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use deckcraft_ui_egui::ControlRequest;
 use serde_json::{Value, json};
@@ -61,12 +61,22 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
     }
 }
 
+/// How long the accepting thread waits after a failed accept. Accepting can keep failing, for
+/// example while the process has no file descriptors left, and retrying at once would keep a
+/// core busy until it recovers.
+const ACCEPT_RETRY: Duration = Duration::from_millis(100);
+
+/// The connections `incoming` accepts, calling `wait` after each failed accept.
+fn accepted<T>(incoming: impl Iterator<Item = std::io::Result<T>>, mut wait: impl FnMut()) -> impl Iterator<Item = T> {
+    incoming.filter_map(move |stream| stream.map_err(|_| wait()).ok())
+}
+
 /// Accept connections on `listener` under `limits`; requests arrive on the returned receiver.
 fn serve_listener(listener: TcpListener, limits: Limits, ctx: egui::Context) -> Receiver<ControlRequest> {
     let (tx, rx) = sync_channel::<ControlRequest>(limits.queue.max(1));
     let active = Arc::new(AtomicUsize::new(0));
     std::thread::spawn(move || {
-        for mut stream in listener.incoming().flatten() {
+        for mut stream in accepted(listener.incoming(), || std::thread::sleep(ACCEPT_RETRY)) {
             let _ = stream.set_write_timeout(Some(limits.write_timeout));
             if active.fetch_add(1, Ordering::SeqCst) >= limits.max_clients {
                 active.fetch_sub(1, Ordering::SeqCst);
@@ -170,6 +180,35 @@ fn is_http_request_line(text: &str) -> bool {
         || text.rsplit_once(' ').is_some_and(|(_, version)| version.starts_with("HTTP/"))
 }
 
+/// Close after the last reply so the peer can still read it. A peer that had sent another line
+/// before the reply arrived -- two lines in one write, which any script does -- leaves input
+/// unread in the socket, and closing a socket with unread input resets the connection: the reply
+/// already queued for the peer is discarded and it sees only the reset. Sending the FIN first and
+/// then draining, briefly and boundedly, makes the close orderly and the reason survive.
+fn close_politely(out: &TcpStream, reader: &mut BufReader<TcpStream>, grace: Duration) {
+    if out.shutdown(Shutdown::Write).is_err() {
+        return;
+    }
+    // Enough for a pipelined line or two; a peer that keeps talking is dropped at the deadline.
+    // The timeout is what is left of the grace before each read, not the whole of it: a peer that
+    // sends a byte just before each one expires would otherwise hold this thread, and its slot,
+    // for close to twice as long as the deadline says.
+    const MAX_DRAIN: usize = 64 << 10;
+    let until = Instant::now() + grace;
+    let mut sink = [0u8; 4 << 10];
+    let mut drained = 0;
+    while drained < MAX_DRAIN {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() || out.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match reader.read(&mut sink) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => drained += n,
+        }
+    }
+}
+
 fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context, limits: Limits) {
     if stream.set_read_timeout(Some(limits.idle_timeout)).is_err() || stream.set_write_timeout(Some(limits.write_timeout)).is_err() {
         return;
@@ -182,6 +221,7 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
             Line::Text(t) => t,
             Line::TooLong => {
                 let _ = writeln!(out, "{}", json!({"ok": false, "error": format!("request line longer than {} bytes", limits.max_line)}));
+                close_politely(&out, &mut reader, limits.write_timeout);
                 break;
             }
             Line::Closed => break,
@@ -189,8 +229,11 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
         let reply = match parse(&line) {
             Parsed::Blank => continue,
             Parsed::Reject(e) => {
-                // The connection closes either way; a peer that can't read the reason loses nothing.
+                // The connection closes either way, but the peer is told why first: see
+                // `close_politely`, without which a peer that had pipelined another line had this
+                // reply reset away and saw nothing.
                 let _ = writeln!(out, "{}", json!({"ok": false, "error": e}));
+                close_politely(&out, &mut reader, limits.write_timeout);
                 break;
             }
             Parsed::Request { id, method, params } => {
@@ -234,6 +277,18 @@ fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed accept is followed by a wait before the next one, so a listener that keeps
+    /// failing does not spin, and the connections around the failures still come through.
+    #[test]
+    fn a_failed_accept_waits_before_the_next() {
+        let failed = || Err(std::io::Error::other("no file descriptors left"));
+        let incoming = vec![failed(), Ok(1), failed(), failed(), Ok(2)];
+        let mut waits = 0;
+        let connections: Vec<i32> = super::accepted(incoming.into_iter(), || waits += 1).collect();
+        assert_eq!(connections, [1, 2]);
+        assert_eq!(waits, 3, "one wait per failed accept");
+    }
     use std::net::SocketAddr;
     use std::time::Instant;
 
@@ -325,6 +380,27 @@ mod tests {
         assert!(is_http_request_line("OPTIONS * HTTP/1.1"));
         assert!(is_http_request_line("PRI * HTTP/2.0"));
         assert!(!is_http_request_line("{\"method\":\"GET /\"}"));
+    }
+
+    /// A peer that pipelines -- two lines in one write, as a script does -- still reads why its
+    /// line was rejected. Closing with its second line unread resets the connection and discards
+    /// the reply already on its way, so the peer saw nothing at all; repeated here because it
+    /// depended on the timing of the two.
+    #[test]
+    fn a_pipelined_peer_still_reads_why_its_line_was_rejected() {
+        let (addr, rx) = server(small());
+        for _ in 0..12 {
+            let (mut r, mut w) = client(addr);
+            w.write_all(b"hello\n").unwrap();
+            // A second line, written after the first as a script writes it: it races the close.
+            let _ = w.write_all(b"{\"id\":2,\"method\":\"m\"}\n");
+            let replies = replies_until_closed(&mut r);
+            assert_eq!(replies.len(), 1, "{replies:?}");
+            assert_eq!(replies[0]["ok"], false);
+            assert!(replies[0]["error"].as_str().unwrap_or_default().contains("closing the connection"), "{replies:?}");
+        }
+        // The line after the rejected one is never dispatched, pipelined or not.
+        assert!(rx.try_recv().is_err(), "a line after the rejection was dispatched");
     }
 
     #[test]

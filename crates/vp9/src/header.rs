@@ -4,7 +4,10 @@
 use crate::boolcoder::BoolDecoder;
 use crate::error::{Error, Result, ensure};
 use crate::probs::FrameContext;
-use crate::tables::*;
+use crate::tables::{
+    ALTREF_FRAME, GOLDEN_FRAME, INV_MAP_TABLE, LAST_FRAME, LITERAL_TO_TYPE, MAX_SEGMENTS, MAX_TILE_WIDTH_B64, MIN_TILE_WIDTH_B64,
+    SEGMENTATION_FEATURE_BITS, SEGMENTATION_FEATURE_SIGNED, SWITCHABLE, TX_MODE_SELECT, TX_MODE_TO_BIGGEST_TX_SIZE,
+};
 use deckcraft_bitstream::BitReader;
 
 pub const KEY_FRAME: u8 = 0;

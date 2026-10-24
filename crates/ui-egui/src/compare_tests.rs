@@ -51,6 +51,18 @@ fn pane_opens_lists_changes_and_accept_all_applies_them() {
 }
 
 #[test]
+fn reject_all_empties_the_pane_and_keeps_the_deck() {
+    let (mut h, n) = harness();
+    let doc = h.state().session.active().unwrap().doc.clone();
+    h.get_by_label_contains("Reject All").click();
+    h.run_steps(3);
+    let st = h.state().session.active().unwrap();
+    assert!(std::sync::Arc::ptr_eq(&doc, &st.doc), "nothing applied");
+    assert_eq!(st.doc.slides.len(), n);
+    assert!(h.query_by_label("No differences left.").is_some());
+}
+
+#[test]
 #[ignore = "writes a screenshot for review"]
 fn screenshot() {
     let (mut h, _) = harness();

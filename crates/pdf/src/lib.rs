@@ -66,7 +66,7 @@ pub enum PageLayout {
 #[serde(default, rename_all = "camelCase")]
 pub struct PdfOptions {
     pub layout: PageLayout,
-    /// Raster resolution of slide artwork (dots per inch).
+    /// Raster resolution of slide artwork (dots per inch), lowered for a slide whose raster would pass 64M pixels.
     pub dpi: f64,
     /// Slide indices to export (0-based); `None` = all.
     pub slides: Option<Vec<usize>>,
@@ -131,6 +131,33 @@ pub fn export(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     write::guard(|| export_inner(pres, opts))
 }
 
+fn plan_pages(pres: &Presentation, opts: &PdfOptions, slides: &[usize], sw: f64, sh: f64) -> Vec<Vec<(usize, Rect)>> {
+    match opts.layout {
+        PageLayout::Slides => slides.iter().map(|&i| vec![(i, Rect::new(0.0, 0.0, sw, sh))]).collect(),
+        PageLayout::Notes => {
+            let b = notes_frames(pres, opts.paper).0;
+            slides.iter().map(|&i| vec![(i, b)]).collect()
+        }
+        PageLayout::Handouts { per_page } => {
+            let boxes = handout_boxes(per_page, opts.paper, sw / sh);
+            slides.chunks(boxes.len()).map(|c| c.iter().zip(&boxes).map(|(i, b)| (*i, *b)).collect()).collect()
+        }
+    }
+}
+
+fn build_outline(pres: &Presentation, pages: &[Vec<(usize, Rect)>]) -> Outline {
+    let mut outline = Outline::new();
+    for (p, v) in pages.iter().enumerate() {
+        for (i, _) in v {
+            let t = pres.slides[*i].title();
+            let t = t.lines().next().unwrap_or("").trim().to_string();
+            let label = if t.is_empty() { format!("Slide {}", i + 1) } else { format!("{}. {t}", i + 1) };
+            outline.push_child(OutlineNode::new(label, XyzDestination::new(p, Point::from_xy(0.0, 0.0))));
+        }
+    }
+    outline
+}
+
 fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     let slides: Vec<usize> = match &opts.slides {
         Some(v) => v.iter().copied().filter(|i| *i < pres.slides.len()).collect(),
@@ -153,29 +180,10 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
     let mut ex = Exporter { pres, opts, fonts: HashMap::new() };
     // Page plan: per page, the slides on it with their boxes (page points).
-    let pages: Vec<Vec<(usize, Rect)>> = match opts.layout {
-        PageLayout::Slides => slides.iter().map(|&i| vec![(i, Rect::new(0.0, 0.0, sw, sh))]).collect(),
-        PageLayout::Notes => {
-            let b = notes_frames(pres, opts.paper).0;
-            slides.iter().map(|&i| vec![(i, b)]).collect()
-        }
-        PageLayout::Handouts { per_page } => {
-            let boxes = handout_boxes(per_page, opts.paper, sw / sh);
-            slides.chunks(boxes.len()).map(|c| c.iter().zip(&boxes).map(|(i, b)| (*i, *b)).collect()).collect()
-        }
-    };
+    let pages = plan_pages(pres, opts, &slides, sw, sh);
     // Bookmarks and slide → page lookup for internal links.
     let page_of: HashMap<usize, usize> = pages.iter().enumerate().flat_map(|(p, v)| v.iter().map(move |(i, _)| (*i, p))).collect();
-    let mut outline = Outline::new();
-    for (p, v) in pages.iter().enumerate() {
-        for (i, _) in v {
-            let t = pres.slides[*i].title();
-            let t = t.lines().next().unwrap_or("").trim().to_string();
-            let label = if t.is_empty() { format!("Slide {}", i + 1) } else { format!("{}. {t}", i + 1) };
-            outline.push_child(OutlineNode::new(label, XyzDestination::new(p, Point::from_xy(0.0, 0.0))));
-        }
-    }
-    pdf.set_outline(outline);
+    pdf.set_outline(build_outline(pres, &pages));
 
     for v in &pages {
         let (pw, ph) = match opts.layout {
@@ -423,6 +431,16 @@ fn backdrop(mut img: deckcraft_render::Image) -> Image {
     Image::from_rgba8(img.pixels, img.width, img.height)
 }
 
+/// Most pixels one slide raster may have; it is RGBA, and the backdrop and the content are two rasters.
+const MAX_RASTER_PIXELS: f64 = 64_000_000.0;
+
+/// Render scale for a slide of `slide` units drawn `box_width` points wide at `dpi`, with the total pixel count capped.
+fn raster_scale(box_width: f64, slide: (f64, f64), dpi: f64) -> f64 {
+    let scale = (box_width / 72.0 * dpi.clamp(36.0, 600.0)) / slide.0;
+    let pixels = slide.0 * scale * slide.1 * scale;
+    if pixels > MAX_RASTER_PIXELS { scale * (MAX_RASTER_PIXELS / pixels).sqrt() } else { scale }
+}
+
 impl Exporter<'_> {
     fn font(&mut self, face: &deckcraft_fonts::FontFace) -> Result<Font> {
         if let Some(font) = self.fonts.get(&face.id()) {
@@ -439,7 +457,7 @@ impl Exporter<'_> {
         let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
-        let scale = (b.width() / 72.0 * self.opts.dpi.clamp(36.0, 600.0)) / sw;
+        let scale = raster_scale(b.width(), (sw, sh), self.opts.dpi);
         let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
         // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
         // on every slide that shares its layout, so the writer stores it once, and the slide's own

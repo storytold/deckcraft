@@ -6,6 +6,7 @@
 
 mod chart_parts;
 mod finite;
+pub mod rtf;
 
 #[cfg(test)]
 mod chart_parts_tests;
@@ -498,8 +499,9 @@ fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
             }
         }
         match &mut sh.kind {
-            deckcraft_model::ShapeKind::Picture { fill } => {
-                for c in &mut fill.crop {
+            deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { crop, .. } }
+            | deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { crop, .. }) => {
+                for c in crop {
                     *c = if c.is_finite() { c.clamp(-10.0, 1.0) } else { 0.0 };
                 }
             }
@@ -660,6 +662,7 @@ pub fn slides_to_outline(p: &Presentation) -> String {
             if let ShapeKind::Table(t) = &sh.kind {
                 for row in &t.rows {
                     let cells: Vec<String> = row.cells.iter().map(|c| c.text.text().replace(['\u{b}', '\n'], " ")).collect();
+                    out.push('\t');
                     out.push_str(&cells.join("\t"));
                     out.push('\n');
                 }
@@ -825,6 +828,18 @@ mod tests {
         let n = b.len();
         b.truncate(n / 2);
         assert!(load(&b).is_err());
+    }
+
+    /// A video's crop is brought into the same range as a picture's (#972).
+    #[test]
+    fn a_video_crop_is_repaired_like_a_picture_crop() {
+        use deckcraft_model::{MediaClip, Shape};
+        let mut p = Presentation::default();
+        let clip = MediaClip { video: true, crop: [f64::NAN, 0.25, -1e9, 0.0], ..Default::default() };
+        Arc::make_mut(&mut p.slides[0]).shapes.push(Shape { kind: ShapeKind::Media(clip), ..Default::default() });
+        let back = load(&save(&p).unwrap()).unwrap_or_else(|e| panic!("{e}"));
+        let ShapeKind::Media(m) = &back.slides[0].shapes.last().unwrap().kind else { panic!("media") };
+        assert_eq!(m.crop, [0.0, 0.25, -10.0, 0.0]);
     }
 
     /// Non-finite numbers are written as `null` by serde_json; the file still opens, with each
@@ -1057,23 +1072,49 @@ mod tests {
             assert_eq!(md_list_item(not), None, "{not:?}");
         }
     }
+
+    /// #814: slides_to_outline includes table cell text, which it used to skip.
+    #[test]
+    fn outline_includes_table_text() {
+        use deckcraft_model::table::{Cell, Row, Table};
+        use deckcraft_model::{Shape, ShapeKind, Xfrm};
+        let mut p = defaults::new_presentation(None);
+        let layout = defaults::layout_of_kind(&p, LayoutType::TitleAndContent).unwrap();
+        let mut s = defaults::new_slide(&mut p, layout).expect("slide");
+        s.shapes.retain(|sh| !sh.ph_type().is_some_and(|k| k.is_title()));
+        let mut body = Shape { xfrm: Some(Xfrm::new(0.0, 0.0, 600.0, 100.0)), ..Default::default() };
+        body.text = Some(TextBody::from_text("Text box body"));
+        s.shapes.push(body);
+
+        let mut table = Table { cols: vec![200.0, 200.0], ..Default::default() };
+        for texts in [["Cell A1", "Cell B1"], ["Cell A2", "Cell B2"]] {
+            let cells: Vec<Cell> = texts.iter().map(|t| Cell { text: TextBody::from_text(t), ..Default::default() }).collect();
+            table.rows.push(Row { height: 30.0, cells });
+        }
+        let mut tbl = Shape { xfrm: Some(Xfrm::new(0.0, 100.0, 400.0, 60.0)), ..Default::default() };
+        tbl.kind = ShapeKind::Table(table);
+        s.shapes.push(tbl);
+        p.slides = vec![std::sync::Arc::new(s)];
+
+        let out = slides_to_outline(&p);
+        assert!(out.contains("Text box body"), "{out}");
+        assert!(out.contains("Cell A1\tCell B1"), "{out}");
+        assert!(out.contains("Cell A2\tCell B2"), "{out}");
+    }
 }
 
-/// #814: slides_to_outline includes table cell text, which it used to skip.
 #[test]
-fn outline_includes_table_text() {
+fn outline_table_rows_are_indented_and_do_not_become_slides() {
     use deckcraft_model::table::{Cell, Row, Table};
     use deckcraft_model::{Shape, ShapeKind, Xfrm};
     let mut p = defaults::new_presentation(None);
     let layout = defaults::layout_of_kind(&p, LayoutType::TitleAndContent).unwrap();
     let mut s = defaults::new_slide(&mut p, layout).expect("slide");
-    s.shapes.retain(|sh| !sh.ph_type().is_some_and(|k| k.is_title()));
-    let mut body = Shape { xfrm: Some(Xfrm::new(0.0, 0.0, 600.0, 100.0)), ..Default::default() };
-    body.text = Some(TextBody::from_text("Text box body"));
-    s.shapes.push(body);
-
+    for sh in s.shapes.iter_mut().filter(|sh| sh.ph_type().is_some_and(|k| k.is_title())) {
+        sh.text = Some(TextBody::from_text("Slide title"));
+    }
     let mut table = Table { cols: vec![200.0, 200.0], ..Default::default() };
-    for texts in [["Cell A1", "Cell B1"], ["Cell A2", "Cell B2"]] {
+    for texts in [["A1", "B1"], ["A2", "B2"]] {
         let cells: Vec<Cell> = texts.iter().map(|t| Cell { text: TextBody::from_text(t), ..Default::default() }).collect();
         table.rows.push(Row { height: 30.0, cells });
     }
@@ -1083,7 +1124,11 @@ fn outline_includes_table_text() {
     p.slides = vec![std::sync::Arc::new(s)];
 
     let out = slides_to_outline(&p);
-    assert!(out.contains("Text box body"), "{out}");
-    assert!(out.contains("Cell A1\tCell B1"), "{out}");
-    assert!(out.contains("Cell A2\tCell B2"), "{out}");
+    let mut q = defaults::new_presentation(None);
+    q.slides.clear();
+    assert_eq!(outline_to_slides(&mut q, &out), 1, "table rows became slides: {out:?}");
+    assert_eq!(q.slides.len(), 1, "{out:?}");
+    let body = q.slides[0].shapes.iter().filter_map(|sh| sh.text.as_ref()).map(|t| t.text()).collect::<Vec<_>>().join("\n");
+    assert!(body.contains("A1\tB1"), "{body:?}");
+    assert!(body.contains("A2\tB2"), "{body:?}");
 }

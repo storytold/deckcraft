@@ -100,8 +100,15 @@ pub fn parents<'a>(ctx: &Ctx<'a>, shape: &Shape) -> (Option<&'a Shape>, Option<&
     }
 }
 
-/// The text style group (title / body / other) a shape draws from.
+/// The text style group (title / body / other) a shape draws from. Text in a table takes the
+/// master's other-text style, also when the table sits in a content placeholder, as in PowerPoint
+/// for Mac (a table cell is 14 pt under an `otherStyle` of 14 pt, a `defaultTextStyle` of 26 pt and
+/// a bulleted 36 pt `bodyStyle`, with or without `<p:ph idx="1"/>`, while a shape's or a text box's
+/// text is 26 pt); other shapes take the presentation's default text style.
 pub fn master_list_style<'a>(ctx: &Ctx<'a>, shape: &Shape) -> &'a ListStyle {
+    if matches!(shape.kind, crate::ShapeKind::Table(_)) {
+        return &ctx.master.other_style;
+    }
     match shape.ph_type() {
         Some(PhType::Title | PhType::CtrTitle) => &ctx.master.title_style,
         Some(
@@ -248,7 +255,9 @@ pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
 
 /// The merged level style (paragraph + run defaults) for paragraphs at `level` in `shape`.
 pub fn level_style(ctx: &Ctx, shape: &Shape, level: u8) -> LevelStyle {
-    let (lp, mp) = parents(ctx, shape);
+    // A table's text inherits nothing from a placeholder the table sits in: PowerPoint draws it in
+    // the other-text style even under list styles on the layout's and master's placeholders.
+    let (lp, mp) = if matches!(shape.kind, crate::ShapeKind::Table(_)) { (None, None) } else { parents(ctx, shape) };
     let mut out = LevelStyle::default();
     let add = |out: &mut LevelStyle, ls: Option<&LevelStyle>| {
         if let Some(l) = ls {

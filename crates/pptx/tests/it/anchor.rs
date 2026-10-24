@@ -1,5 +1,5 @@
 //! Text anchoring of shapes without an `anchor` of their own: the model centres a shape's text,
-//! a file without one puts it at the top (or where the theme's shape defaults say).
+//! a file without one puts it at the top, whatever the theme's shape defaults say.
 
 use std::io::{Cursor, Read, Write};
 
@@ -57,7 +57,8 @@ fn shapes_keep_their_middle_anchor_and_files_without_one_anchor_at_the_top() {
     let a = anchors(&deckcraft_pptx::import(&bare).expect("import"));
     assert!(a.iter().all(|x| *x == Some(Anchor::Top)), "{a:?}");
 
-    // ...unless the theme's shape defaults centre them, as Office's themes do.
+    // Also when the theme's shape defaults centre new shapes, as Office's themes do: PowerPoint
+    // for Mac draws `<a:bodyPr/>` at the top under such an `spDef` (synthetic probe exported as PDF).
     let themed = rewrite(&bare, |n, x| {
         if n.starts_with("ppt/theme/") {
             x.replace(
@@ -69,6 +70,5 @@ fn shapes_keep_their_middle_anchor_and_files_without_one_anchor_at_the_top() {
         }
     });
     let a = anchors(&deckcraft_pptx::import(&themed).expect("import"));
-    assert!(a.iter().all(|x| x.is_none() || *x == Some(Anchor::Middle)), "{a:?}");
-    assert!(a.iter().filter(|x| x.is_none()).count() >= 3, "{a:?}");
+    assert!(a.iter().all(|x| *x == Some(Anchor::Top)), "{a:?}");
 }

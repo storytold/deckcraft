@@ -5,8 +5,9 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use deckcraft_engine::{MediaStatus, Session};
+use deckcraft_geom::Xfrm;
 use deckcraft_media::{AudioOut, ClipParams, Frame, PlayState, Player, VideoFeed, VoiceSpec, VoiceStatus};
-use deckcraft_model::{MediaClip, Presentation, ShapeId, ShapeKind};
+use deckcraft_model::{MediaClip, Presentation, Shape, ShapeId, ShapeKind};
 use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Stroke, TextureHandle, Ui, pos2, vec2};
 
 use crate::icons::{self, Icon};
@@ -61,6 +62,26 @@ pub struct Gif {
     pub frame: usize,
     pub next: f64,
     pub paused: bool,
+}
+
+/// Pictures in `shapes` and in their groups, each with its xfrm in slide space. `group` is the
+/// enclosing group's slide-space xfrm and child space.
+fn collect_pictures<'a>(shapes: &'a [Shape], group: Option<(Xfrm, Xfrm)>, depth: usize, out: &mut Vec<(&'a Shape, Xfrm)>) {
+    if depth > 32 {
+        return;
+    }
+    for sh in shapes {
+        let Some(x) = sh.xfrm else { continue };
+        let x = match group {
+            Some((gx, ch)) => deckcraft_engine::cmd::arrange::child_to_parent(&gx, &ch, &x),
+            None => x,
+        };
+        match &sh.kind {
+            ShapeKind::Picture { .. } => out.push((sh, x)),
+            ShapeKind::Group { children, child } => collect_pictures(children, Some((x, *child)), depth + 1, out),
+            _ => {}
+        }
+    }
 }
 
 impl Default for MediaHost {
@@ -132,15 +153,17 @@ impl MediaHost {
         duration
     }
 
-    /// The animated GIF pictures directly on slide `index` at `now`: each plays from when it was
+    /// The animated GIF pictures on slide `index` at `now`: each plays from when it was
     /// first shown; a paused one holds its time and resumes from it. Clocks belong to `doc_uid`
     /// and are dropped when the open presentation changes.
     pub fn gifs(&mut self, doc_uid: u64, doc: &Presentation, index: usize, now: f64, paused: &HashSet<ShapeId>) -> Vec<Gif> {
         self.ensure_doc(doc_uid);
         let Some(slide) = doc.slides.get(index) else { return vec![] };
+        let mut pictures = vec![];
+        collect_pictures(&slide.shapes, None, 0, &mut pictures);
         let mut out = vec![];
-        for sh in &slide.shapes {
-            let (ShapeKind::Picture { fill }, Some(rect)) = (&sh.kind, sh.xfrm) else { continue };
+        for (sh, rect) in pictures {
+            let ShapeKind::Picture { fill } = &sh.kind else { continue };
             let Some(item) = doc.media(fill.media).filter(|m| m.data.starts_with(b"GIF8")) else { continue };
             let p = paused.contains(&sh.id);
             let c = self.gifs.entry(sh.id).or_insert((now, None));
@@ -174,6 +197,11 @@ impl MediaHost {
 
     pub fn owner(&self, id: ShapeId) -> Option<Owner> {
         self.owners.get(&id).map(|o| o.owner)
+    }
+
+    /// The clip voice `id` was started with.
+    pub fn clip(&self, id: ShapeId) -> Option<&MediaClip> {
+        self.owners.get(&id).map(|o| &o.clip)
     }
 
     /// Shapes with a voice (playing, paused or ended).
@@ -318,9 +346,10 @@ impl MediaHost {
     }
 
     /// Carry out a `media.*` request from the engine for presentation `doc_uid`.
-    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, action: &str, id: ShapeId, ms: Option<u64>, owner: Owner) {
+    /// `slide` is the slide the request comes from: shape ids are only unique per slide.
+    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, slide: usize, action: &str, id: ShapeId, ms: Option<u64>, owner: Owner) {
         self.ensure_doc(doc_uid);
-        let Some(clip) = find_clip(doc, id) else { return };
+        let Some(clip) = find_clip(doc, id, Some(slide)) else { return };
         let t = ms.map(|v| v as f64 / 1000.0);
         match action {
             "play" => self.play(doc_uid, doc, id, &clip, t, owner),
@@ -333,16 +362,29 @@ impl MediaHost {
     }
 }
 
-/// The clip of media shape `id` anywhere in the deck.
-pub fn find_clip(doc: &Presentation, id: ShapeId) -> Option<MediaClip> {
-    fn walk(shapes: &[deckcraft_model::Shape], id: ShapeId) -> Option<MediaClip> {
-        shapes.iter().find_map(|s| match &s.kind {
-            ShapeKind::Media(m) if s.id == id => Some(m.clone()),
-            ShapeKind::Group { children, .. } => walk(children, id),
-            _ => None,
-        })
-    }
-    doc.slides.iter().find_map(|s| walk(&s.shapes, id))
+/// The clip of media shape `id`. Ids are only unique per slide (the PPTX import numbers each slide
+/// afresh), so the `near` slide is searched first, then the rest of the deck.
+pub fn find_clip(doc: &Presentation, id: ShapeId, near: Option<usize>) -> Option<MediaClip> {
+    near.and_then(|i| clip_on(doc, i, id)).or_else(|| doc.slides.iter().find_map(|s| walk_clip(&s.shapes, id)))
+}
+
+/// The clip `id` on slide `index` only (inside groups too).
+pub fn clip_on(doc: &Presentation, index: usize, id: ShapeId) -> Option<MediaClip> {
+    doc.slides.get(index).and_then(|s| walk_clip(&s.shapes, id))
+}
+
+fn walk_clip(shapes: &[deckcraft_model::Shape], id: ShapeId) -> Option<MediaClip> {
+    shapes.iter().find_map(|s| match &s.kind {
+        ShapeKind::Media(m) if s.id == id => Some(m.clone()),
+        ShapeKind::Group { children, .. } => walk_clip(children, id),
+        _ => None,
+    })
+}
+
+/// Whether the voice `id`, playing `clip` (the clip it was started with), keeps playing on slide
+/// `to`: the clip plays across slides and `to` doesn't hold another clip under the same id.
+pub fn carries_over(clip: &MediaClip, doc: &Presentation, id: ShapeId, to: usize) -> bool {
+    clip.play_across_slides && clip_on(doc, to, id).is_none_or(|c| c.media == clip.media)
 }
 
 /// Media shapes directly on slide `index`: (id, box in slide points, clip).
@@ -363,9 +405,21 @@ pub fn clock(secs: f64) -> String {
     format!("{:02}:{:05.2}", (s / 60.0) as u32, s % 60.0)
 }
 
-/// Draw the playing video frame of `id` into `rect` (letterboxed to the frame's aspect).
-pub fn paint_frame(painter: &egui::Painter, host: &MediaHost, id: ShapeId, rect: Rect) -> bool {
+/// The part of a video frame a picture crop (left, top, right, bottom fractions) leaves visible.
+fn crop_uv(crop: [f64; 4]) -> Rect {
+    let [l, t, r, b] = crop.map(|v| if v.is_finite() { v.clamp(0.0, 0.99) as f32 } else { 0.0 });
+    Rect::from_min_max(pos2(l, t), pos2((1.0 - r).max(l + 0.01), (1.0 - b).max(t + 0.01)))
+}
+
+/// Draw the playing video frame of `id` into `rect`: letterboxed to the frame's aspect, or, when
+/// the video is cropped, the cropped part stretched over the whole box as PowerPoint shows it.
+pub fn paint_frame(painter: &egui::Painter, host: &MediaHost, id: ShapeId, rect: Rect, crop: [f64; 4]) -> bool {
     let Some(tex) = host.texture(id) else { return false };
+    if crop.iter().any(|v| *v > 0.0) {
+        painter.rect_filled(rect, CornerRadius::ZERO, Color32::BLACK);
+        painter.image(tex.id(), rect, crop_uv(crop), Color32::WHITE);
+        return true;
+    }
     let [w, h] = tex.size();
     let (w, h) = (w.max(1) as f32, h.max(1) as f32);
     let k = (rect.width() / w).min(rect.height() / h);
@@ -512,6 +566,12 @@ mod tests {
 
     use super::*;
 
+    #[test]
+    fn a_video_crop_shows_only_the_cropped_part_of_the_frame() {
+        assert_eq!(crop_uv([0.0; 4]), Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)));
+        assert_eq!(crop_uv([0.25, 0.5, 0.25, 0.0]), Rect::from_min_max(pos2(0.25, 0.5), pos2(0.75, 1.0)));
+    }
+
     /// 16-bit mono WAV of a constant level, `secs` long at 8 kHz.
     fn wav_level(secs: f64, amp: f32) -> Vec<u8> {
         let rate = 8_000u32;
@@ -616,5 +676,88 @@ mod tests {
         assert_eq!(host.gifs.get(&id).map(|c| c.0), Some(50.0), "a new document starts its own clock");
         host.set_document(None);
         assert!(host.gifs.is_empty());
+    }
+
+    #[test]
+    fn a_clip_is_looked_up_on_the_slide_it_was_asked_from() {
+        // The PPTX import numbers shapes per slide, so two slides can hold different clips under one id.
+        let (mut doc, id, first) = deck(4000, wav_level(0.05, 0.5));
+        let other = doc.add_media("two.wav", "audio/wav", wav_level(0.05, 0.25)).expect("media");
+        let mut second = (*doc.slides[0]).clone();
+        second.shapes.last_mut().expect("shape").kind = ShapeKind::Media(MediaClip { media: other, volume: 1.0, ..Default::default() });
+        doc.slides.push(Arc::new(second));
+        assert_eq!(find_clip(&doc, id, Some(0)).map(|c| c.media), Some(first.media));
+        assert_eq!(find_clip(&doc, id, Some(1)).map(|c| c.media), Some(other), "the second slide's own clip");
+        assert_eq!(find_clip(&doc, id, None).map(|c| c.media), Some(first.media), "without a hint: first match");
+        assert_eq!(find_clip(&doc, id, Some(9)).map(|c| c.media), Some(first.media), "a slide that doesn't exist");
+    }
+
+    #[test]
+    fn a_clip_across_slides_stops_where_the_next_slide_reuses_its_id() {
+        let (mut doc, id, first) = deck(4000, wav_level(0.05, 0.5));
+        let playing = MediaClip { play_across_slides: true, ..first.clone() };
+        let mut plain = (*doc.slides[0]).clone();
+        plain.shapes.clear();
+        doc.slides.push(Arc::new(plain));
+        assert!(carries_over(&playing, &doc, id, 1), "a slide without that id");
+        // Slide 0 holds the same media under that id, without Play Across Slides: the voice that
+        // came from elsewhere goes on (its own clip decides), here and on the next slide.
+        assert!(carries_over(&playing, &doc, id, 0), "the same media under that id");
+        assert!(!carries_over(&first, &doc, id, 1), "a clip that doesn't play across slides");
+        let other = doc.add_media("two.wav", "audio/wav", wav_level(0.05, 0.25)).expect("media");
+        let mut reused = (*doc.slides[0]).clone();
+        reused.shapes.last_mut().expect("shape").kind = ShapeKind::Media(MediaClip { media: other, volume: 1.0, autoplay: true, ..first.clone() });
+        doc.slides.push(Arc::new(reused));
+        assert!(!carries_over(&playing, &doc, id, 2), "another clip under that id");
+        let mut host = MediaHost::new(None);
+        host.play(1, &doc, id, &playing, None, Owner::Show);
+        assert_eq!(host.clip(id), Some(&playing), "the voice keeps the clip it was started with");
+    }
+
+    /// Two 1×1 frames (black, then white), 100 ms each.
+    fn two_frame_gif() -> Vec<u8> {
+        let mut b = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff".to_vec();
+        for pixel in [b"\x44\x01", b"\x4c\x01"] {
+            b.extend_from_slice(b"\x21\xf9\x04\x00\x0a\x00\x00\x00");
+            b.extend_from_slice(b"\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02");
+            b.extend_from_slice(pixel);
+            b.push(0);
+        }
+        b.push(0x3b);
+        b
+    }
+
+    #[test]
+    fn grouped_gifs_play_in_slide_space() {
+        let mut doc = Presentation::default();
+        let media = doc.add_media("a.gif", "image/gif", two_frame_gif()).expect("media");
+        let pic = |id: u32, x: f64| Shape {
+            id: ShapeId(id),
+            xfrm: Some(Xfrm::new(x, 0.0, 10.0, 10.0)),
+            kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+            ..Default::default()
+        };
+        // Child space 0..20 × 0..10 maps onto a 40 × 20 group at (100, 50): scale 2.
+        let inner = Shape {
+            id: ShapeId(9),
+            xfrm: Some(Xfrm::new(10.0, 0.0, 10.0, 10.0)),
+            kind: ShapeKind::Group { children: vec![pic(8, 0.0)], child: Xfrm::new(0.0, 0.0, 10.0, 10.0) },
+            ..Default::default()
+        };
+        let group = Shape {
+            id: ShapeId(10),
+            xfrm: Some(Xfrm::new(100.0, 50.0, 40.0, 20.0)),
+            kind: ShapeKind::Group { children: vec![pic(7, 0.0), inner], child: Xfrm::new(0.0, 0.0, 20.0, 10.0) },
+            ..Default::default()
+        };
+        Arc::make_mut(&mut doc.slides[0]).shapes.push(group);
+        let mut host = MediaHost::new(None);
+        host.gifs(1, &doc, 0, 10.0, &HashSet::new());
+        let gifs = host.gifs(1, &doc, 0, 10.15, &HashSet::new()).into_iter().map(|g| (g.id, g)).collect::<HashMap<_, _>>();
+        let a = gifs.get(&ShapeId(7)).expect("grouped GIF plays");
+        let b = gifs.get(&ShapeId(8)).expect("GIF in a nested group plays");
+        assert_eq!(a.frame, 1, "the clock runs");
+        assert_eq!((a.rect.x, a.rect.y, a.rect.w, a.rect.h), (100.0, 50.0, 20.0, 20.0));
+        assert_eq!((b.rect.x, b.rect.y, b.rect.w, b.rect.h), (120.0, 50.0, 20.0, 20.0));
     }
 }
