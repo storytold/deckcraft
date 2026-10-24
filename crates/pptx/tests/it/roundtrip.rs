@@ -1925,3 +1925,12 @@ fn zoom_inserts_linked_slide_pictures() {
     assert!(s.execute("insert.zoom", &json!({"slides": [42]})).is_err());
     assert!(s.execute("insert.zoom", &json!({"kind": "slide"})).is_err());
 }
+
+/// Show media controls is PowerPoint's `p14:showMediaCtrls` extension inside `p:showPr`.
+#[test]
+fn hidden_media_controls_survive_save_and_reopen() {
+    let mut p = Presentation::default();
+    p.show.show_media_controls = false;
+    assert!(!round(&p).show.show_media_controls);
+    assert!(round(&Presentation::default()).show.show_media_controls);
+}
