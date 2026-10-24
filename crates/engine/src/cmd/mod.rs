@@ -297,6 +297,16 @@ pub fn parse_params(doc: &str) -> std::result::Result<Vec<Param<'_>>, String> {
 /// growing would duplicate ids (#407).
 pub(crate) const NO_ID_SPACE: &str = "the presentation has used every object id and can hold no more";
 
+/// A style command whose keys are all optional is refused when it is given none of them, rather
+/// than answering `changed` for a call that sets nothing.
+pub(crate) fn require_any(p: &Value, cmd: &str, keys: &[&str]) -> Result<()> {
+    if keys.iter().any(|k| p.get(*k).is_some_and(|v| !v.is_null())) {
+        return Ok(());
+    }
+    let (last, rest) = keys.split_last().map_or(("", &[][..]), |(l, r)| (*l, r));
+    Err(bad(cmd, format!("`{cmd}` was given nothing to set: pass {} or {last}", rest.join(", "))))
+}
+
 pub(crate) fn bad(cmd: &str, msg: impl Into<String>) -> EngineError {
     EngineError::BadParams { cmd: cmd.into(), msg: msg.into() }
 }

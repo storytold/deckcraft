@@ -683,6 +683,7 @@ fn line_end(v: &str) -> Option<LineEnd> {
 }
 
 fn line(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(p, "shape.line", &["color", "none", "width", "dash", "cap", "join", "compound", "head", "tail", "headSize", "tailSize", "reset"])?;
     let reset = bool_or(p, "reset", false);
     let none = bool_or(p, "none", false);
     let color = color_param(p, "color");
@@ -802,6 +803,11 @@ fn shadow_preset(v: &Value) -> Option<Option<Shadow>> {
 }
 
 fn effects(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(
+        p,
+        "shape.effects",
+        &["shadow", "glow", "softEdges", "reflection", "bevel", "threeD", "shadowProps", "glowProps", "reflectionProps", "reset"],
+    )?;
     let reset = bool_or(p, "reset", false);
     let shadow = p.get("shadow").and_then(shadow_preset);
     let glow: Option<Option<Glow>> = p.get("glow").map(|g| match g {
@@ -1085,6 +1091,7 @@ fn crop(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn picture_adjust(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(p, "picture.adjust", &["brightness", "contrast", "saturation", "grayscale", "transparency", "reset"])?;
     edit_shapes(s, p, "picture.adjust", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {
             let a = &mut fill.adjust;

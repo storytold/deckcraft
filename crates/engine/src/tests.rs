@@ -4724,3 +4724,38 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+#[test]
+fn table_cell_align_sets_the_horizontal_alignment() {
+    use deckcraft_model::text::{Align, Anchor};
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    s.execute("table.cellAlign", &json!({"id": id.0, "align": "center", "cells": [[0, 0], [1, 0]]})).unwrap();
+    s.execute("table.cellAlign", &json!({"id": id.0, "align": "right", "anchor": "bottom", "cells": [[0, 1]]})).unwrap();
+    let t = table_of(&s, id);
+    let al = |r, c| t.cell(r, c).unwrap().text.paragraphs.iter().map(|p| p.props.align).collect::<Vec<_>>();
+    assert_eq!(al(0, 0), vec![Some(Align::Center)]);
+    assert_eq!(al(1, 0), vec![Some(Align::Center)]);
+    assert_eq!(al(0, 1), vec![Some(Align::Right)]);
+    assert_eq!(al(1, 1), vec![None], "other cells are untouched");
+    assert_eq!(t.cell(0, 1).unwrap().anchor, Some(Anchor::Bottom));
+    assert_eq!(t.cell(0, 0).unwrap().anchor, None, "align alone leaves the vertical anchor");
+    assert!(s.execute("table.cellAlign", &json!({"id": id.0, "align": "diagonal"})).is_err());
+}
+
+#[test]
+fn style_commands_given_nothing_to_set_are_refused() {
+    let mut s = session();
+    s.execute("insert.textBox", &json!({"text": "Hi", "rect": [50.0, 50.0, 200.0, 100.0]})).unwrap();
+    for cmd in ["shape.line", "shape.effects", "picture.adjust", "format.paragraph", "format.margins"] {
+        let rev = s.doc().unwrap().revision;
+        let e = s.execute(cmd, &json!({})).unwrap_err().to_string();
+        assert!(e.contains("given nothing to set") && e.contains(cmd), "{cmd}: {e}");
+        assert_eq!(s.doc().unwrap().revision, rev, "{cmd} changed the deck");
+    }
+    let e = s.execute("shape.line", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("pass color, none, width, dash"), "{e}");
+    // A key, even one that changes nothing visible, is something to set.
+    s.execute("shape.line", &json!({"width": 2})).unwrap();
+    s.execute("format.margins", &json!({"left": 5})).unwrap();
+}
