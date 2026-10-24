@@ -8,7 +8,9 @@ use serde_json::{Value, json};
 use crate::SlideApp;
 use crate::icons::{self, Icon};
 use crate::theme::{self, Tokens};
-use crate::widgets::{self, RIBBON_H, big_button, big_button_ex, color_split, dropdown, group, icon_toggle, rows, small_button, small_button_ex};
+use crate::widgets::{
+    self, RIBBON_H, big_button, big_button_ex, color_split, dropdown, dropdown_filtered, group, icon_toggle, rows, small_button, small_button_ex,
+};
 
 pub const TITLE_H: f32 = 38.0;
 
@@ -474,6 +476,47 @@ pub fn font_families(app: &SlideApp) -> Vec<String> {
     v
 }
 
+/// The type-ahead of the font name and font size comboboxes (#933): narrow `items` to what
+/// `query` names — case-insensitively, entries *starting* with the text first and entries
+/// containing it later — while an empty (or blank) query keeps the list exactly as it was, so the
+/// popup reads the same before anything is typed. Returns the positions, so the number-backed
+/// lists keep their own element type.
+fn matching<T: AsRef<str>>(items: &[T], query: &str) -> Vec<usize> {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return (0..items.len()).collect();
+    }
+    let mut before = Vec::new();
+    let mut after = Vec::new();
+    for (i, item) in items.iter().enumerate() {
+        let lower = item.as_ref().to_lowercase();
+        if lower.starts_with(&q) {
+            before.push(i);
+        } else if lower.contains(&q) {
+            after.push(i);
+        }
+    }
+    before.extend(after);
+    before
+}
+
+/// [`matching`] for any list of readable entries — the font family names.
+pub fn filter_options<'a, T: AsRef<str>>(items: &'a [T], query: &str) -> Vec<&'a T> {
+    matching(items, query).into_iter().map(|i| &items[i]).collect()
+}
+
+/// [`filter_options`] for a list of font family names.
+pub fn filter_families(fams: &[String], query: &str) -> Vec<String> {
+    filter_options(fams, query).into_iter().cloned().collect()
+}
+
+/// [`matching`] for the font sizes, which the list holds as numbers and the combobox shows as
+/// text (`24`, `8.5`) — so the query matches what the eye reads.
+pub fn filter_sizes(sizes: &[f64], query: &str) -> Vec<f64> {
+    let labels: Vec<String> = sizes.iter().map(|s| widgets::fmt_num(*s, "")).collect();
+    matching(&labels, query).into_iter().map(|i| sizes[i]).collect()
+}
+
 fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
     let en = enabled(app, "format.bold");
     group(ui, |ui| {
@@ -484,22 +527,27 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 let size = st.get("size").and_then(Value::as_f64);
                 let fams = font_families(app);
                 let theme_fonts: Vec<String> = fams.iter().take(2).cloned().collect();
-                dropdown(ui, "font", &font, 150.0, en, |ui| {
-                    for (k, f) in fams.iter().enumerate() {
-                        let label = if k == 0 && theme_fonts.len() == 2 {
-                            format!("{f} (Headings)")
-                        } else if k == 1 && theme_fonts.len() == 2 {
-                            format!("{f} (Body)")
-                        } else {
-                            f.clone()
+                dropdown_filtered(ui, "font", &font, 150.0, en, |ui, typed| {
+                    let shown = filter_options(&fams, typed);
+                    let mut theme_shown = false;
+                    let mut separated = false;
+                    for f in shown {
+                        let pos = fams.iter().position(|x| x.as_str() == f.as_str());
+                        let theme = matches!(pos, Some(0) | Some(1));
+                        if theme_shown && !theme && !separated {
+                            ui.separator();
+                            separated = true;
+                        }
+                        let label = match pos {
+                            Some(0) if theme_fonts.len() == 2 => format!("{f} (Headings)"),
+                            Some(1) if theme_fonts.len() == 2 => format!("{f} (Body)"),
+                            _ => f.to_string(),
                         };
                         if ui.button(egui::RichText::new(label)).clicked() {
-                            run(app, "format.font", json!({"family": f}));
+                            run(app, "format.font", json!({ "family": f.as_str() }));
                             ui.close();
                         }
-                        if k == 1 {
-                            ui.separator();
-                        }
+                        theme_shown |= theme;
                     }
                     ui.separator();
                     // Fonts installed while DeckCraft runs (e.g. into ~/.local/share/fonts).
@@ -509,10 +557,11 @@ fn font_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                     }
                 });
                 let size_text = size.map(|s| widgets::fmt_num(s, "")).unwrap_or_default();
-                dropdown(ui, "size", &size_text, 52.0, en, |ui| {
-                    for s in deckcraft_engine::cmd::format::SIZES.iter().chain([72.0, 80.0, 88.0, 96.0].iter()) {
-                        if ui.button(widgets::fmt_num(*s, "")).clicked() {
-                            run(app, "format.size", json!({"size": s}));
+                let sizes: Vec<f64> = deckcraft_engine::cmd::format::SIZES.iter().chain([72.0, 80.0, 88.0, 96.0].iter()).copied().collect();
+                dropdown_filtered(ui, "size", &size_text, 52.0, en, |ui, typed| {
+                    for s in filter_sizes(&sizes, typed) {
+                        if ui.button(widgets::fmt_num(s, "")).clicked() {
+                            run(app, "format.size", json!({ "size": s }));
                             ui.close();
                         }
                     }

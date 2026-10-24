@@ -240,6 +240,19 @@ pub fn rows<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 
 /// A text dropdown field (font name, size): shows `current`, opens a popup with `add_items`.
 pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool, add_items: impl FnOnce(&mut Ui)) -> Response {
+    dropdown_impl(ui, id, current, width, enabled, false, |ui, _| add_items(ui))
+}
+
+/// A [`dropdown`] with a type-ahead filter (#933): the popup opens with a field at the top, and
+/// whatever is typed there reaches `add_items` as its second argument, which narrows its list to
+/// those entries. The text belongs to one opening — a closed popup leaves none behind — and the
+/// field takes focus when the popup opens, so typing filters at once (the app's own shortcuts are
+/// parked while a field is focused, see `SlideApp::keyboard`).
+pub fn dropdown_filtered(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool, add_items: impl FnOnce(&mut Ui, &str)) -> Response {
+    dropdown_impl(ui, id, current, width, enabled, true, add_items)
+}
+
+fn dropdown_impl(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool, filtered: bool, add_items: impl FnOnce(&mut Ui, &str)) -> Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     let painter = ui.painter_at(rect);
@@ -260,8 +273,22 @@ pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool,
     );
     chevron(&painter, pos2(rect.max.x - 9.0, rect.center().y), 3.0, t.text_dim);
     let _ = id;
-    egui::Popup::menu(&resp).width(width.max(140.0)).show(|ui| {
-        egui::ScrollArea::vertical().max_height(360.0).show(ui, add_items);
+    let typed_id = resp.id.with("typeahead");
+    let popup = egui::Popup::menu(&resp).width(width.max(140.0));
+    if !filtered || !popup.is_open() {
+        ui.data_mut(|d| d.remove::<String>(typed_id));
+    }
+    popup.show(|ui| {
+        let mut typed = String::new();
+        if filtered {
+            typed = ui.data_mut(|d| d.get_temp::<String>(typed_id).unwrap_or_default());
+            let te = ui.add(egui::TextEdit::singleline(&mut typed).hint_text("Type to filter…").desired_width(f32::INFINITY));
+            ui.data_mut(|d| d.insert_temp(typed_id, typed.clone()));
+            if !te.has_focus() && typed.is_empty() {
+                te.request_focus();
+            }
+        }
+        egui::ScrollArea::vertical().max_height(360.0).show(ui, |ui| add_items(ui, &typed));
     });
     resp
 }

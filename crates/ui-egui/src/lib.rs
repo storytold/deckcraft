@@ -2086,6 +2086,8 @@ mod eyedropper_tests;
 #[cfg(test)]
 mod find_dialog_tests;
 #[cfg(test)]
+mod font_filter_tests;
+#[cfg(test)]
 mod huge_deck_tests;
 #[cfg(test)]
 mod ime_tests;
