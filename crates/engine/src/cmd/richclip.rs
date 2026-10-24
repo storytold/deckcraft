@@ -334,7 +334,7 @@ fn decode_text(raw: &str) -> String {
 fn numeric_char(digits: &str) -> Option<char> {
     let hex = digits.strip_prefix('x').or_else(|| digits.strip_prefix('X'));
     let n = if let Some(hex) = hex { u32::from_str_radix(hex, 16).ok()? } else { digits.parse().ok()? };
-    char::from_u32(n).filter(|c| !c.is_control() || *c == '\n')
+    char::from_u32(n).filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
 }
 
 /// Do the HTML's words and the paste's plain text say the same thing?
@@ -351,6 +351,12 @@ fn fold(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn numeric_tab_entity_decodes_to_tab() {
+        assert_eq!(decode_text("a&#9;b"), "a\tb");
+        assert_eq!(decode_text("a&#x9;b"), "a\tb");
+    }
 
     #[test]
     fn google_docs_normal_weight_wrapper_is_not_bold() {
