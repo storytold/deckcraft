@@ -113,6 +113,7 @@ fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let w = 22.0 + ui.fonts_mut(|f| f.layout_no_wrap(label.into(), theme::font(12.0), t.text).size().x) + 8.0;
     let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, on, label));
     if on || resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(4), if on { t.selected } else { t.hover });
     }
@@ -267,6 +268,7 @@ mod tests {
     use deckcraft_engine::Session;
     use egui::{Event, Modifiers, PointerButton};
     use egui_kittest::Harness;
+    use egui_kittest::kittest::Queryable;
     use serde_json::json;
 
     use crate::{Services, SlideApp};
@@ -289,12 +291,13 @@ mod tests {
         );
         h.run_steps(3);
         assert!(!h.state().ui.notes);
-        // The controls on the right start 560 points from the bar's right edge (x 132); the Notes
-        // button is the leftmost of them (x 167..231 at this width). The bar ends 8 points above
-        // the bottom edge and is 28 points high.
-        let y = size.y - 8.0 - 14.0;
-        let click = |h: &mut Harness<'_, SlideApp>, x: f32| {
-            let at = egui::pos2(x, y);
+        // The controls on the right start 560 points from the bar's right edge, which is 8 points
+        // inside the window (x 132); the Notes button is the leftmost of them. Its position depends
+        // on the interface font's widths, so the clicks use the position it was laid out at.
+        let right_x = size.x - 8.0 - 560.0;
+        let notes = h.get_by_label("Notes").rect();
+        assert!(notes.left() > right_x + 2.0, "the Notes button ({notes:?}) starts after x {right_x}");
+        let click = |h: &mut Harness<'_, SlideApp>, at: egui::Pos2| {
             h.hover_at(at);
             h.run_steps(1);
             for pressed in [true, false] {
@@ -303,9 +306,10 @@ mod tests {
             h.run_steps(3);
         };
         // The gap before the controls is outside the language name's clickable area.
-        click(&mut h, 150.0);
+        click(&mut h, egui::pos2((right_x + notes.left()) / 2.0, notes.center().y));
         assert!(h.state().dialog.is_none(), "the Language dialog stayed closed");
-        click(&mut h, 200.0);
+        assert!(!h.state().ui.notes, "the click in the gap did not reach the Notes button");
+        click(&mut h, notes.center());
         assert!(h.state().ui.notes, "the click reached the Notes button");
         assert!(h.state().dialog.is_none(), "the Language dialog stayed closed");
     }
