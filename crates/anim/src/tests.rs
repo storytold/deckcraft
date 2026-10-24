@@ -7,7 +7,10 @@ use deckcraft_model::{
     AnimClass, AnimStart, Animation, ColorRef, CustomShow, Presentation, Rgba, Shape, ShapeId, Slide, SlideId, TextBody, Transition, Xfrm,
 };
 
-use crate::*;
+use crate::{
+    AnimState, Layer, LinkJump, MotionPath, ShowAction, ShowState, Source, Timeline, TriggerPlay, default_path, ease, morph_crop, morph_frame,
+    morph_pairs, morph_xfrm, show_order, transition_frame, transition_layers,
+};
 
 const W: f64 = 960.0;
 const H: f64 = 540.0;

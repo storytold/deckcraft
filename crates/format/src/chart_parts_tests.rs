@@ -1,4 +1,4 @@
-use super::*;
+use super::Presentation;
 use deckcraft_model::chart::{Chart, ChartPart, ChartRel, ChartType};
 use deckcraft_model::{Master, Shape, ShapeId};
 use serde_json::{Value, json};

@@ -7,7 +7,7 @@ use deckcraft_geom::Xfrm;
 use deckcraft_model::{Fill, Presentation, Rgba, Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, str_param, text, usize_param, xfrm_of};
 use crate::{Result, Selection, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

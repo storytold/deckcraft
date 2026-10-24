@@ -4,7 +4,10 @@ use deckcraft_geom::{Affine, Point, Rect};
 use deckcraft_model::{Shape, ShapeKind, Table};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, bad, bool_or, bool_param, color_param, edit_shapes, f64_param, id_param, ok, str_param, table_drawn_heights, targets, usize_param,
+    xfrm_of,
+};
 use crate::{DocState, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

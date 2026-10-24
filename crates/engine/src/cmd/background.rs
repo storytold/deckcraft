@@ -8,7 +8,7 @@ use std::collections::VecDeque;
 use deckcraft_model::{ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, base64_encode, f64_or, targets};
 use crate::{Result, Session};
 
 /// Larger pictures are refused rather than matted slowly (16 megapixels).

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Cell, Fill, LayoutType, PhType, Presentation, Run, SchemeSlot, Shape, ShapeKind, ShapeStyle, Slide, TextBody, Theme, Xfrm, defaults, resolve,
+    style, text, theme, walk,
+};
 use crate::resolve::Ctx;
 
 #[test]

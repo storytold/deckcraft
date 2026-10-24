@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Ctx, Fill, Image, Opts, PathMorph, Point, Rect, RenderOpts, Renderer, SlideFields, TextMorph, crop_dest, dpi_for_scale, gif_frame, image_dpi,
+    images, morph_path, morph_text, parse_path, place_slide, render_blend, render_shapes, render_slide, text_transform,
+};
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
 use deckcraft_model::text::TextBody;

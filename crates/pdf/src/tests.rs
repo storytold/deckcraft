@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::*;
+use super::{Font, PageLayout, PdfError, PdfOptions, Presentation, export, handout_boxes, raster_scale};
 use deckcraft_model::text::TextBody;
 
 fn deck(n: usize) -> Presentation {

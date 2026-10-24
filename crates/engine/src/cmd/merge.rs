@@ -9,7 +9,7 @@ use i_overlay::core::overlay_rule::OverlayRule;
 use i_overlay::float::single::SingleFloatOverlay;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, base64_encode, str_param, targets, text, xfrm_of};
 use crate::{Result, Session};
 
 /// Closed polygons (slide points) describing a filled area (non-zero winding).

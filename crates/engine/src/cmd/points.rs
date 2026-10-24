@@ -10,7 +10,7 @@ use deckcraft_geom::{PathEl, Point, Xfrm};
 use deckcraft_model::{CustomPath, Geom, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, f64_param, id_param, ok, str_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

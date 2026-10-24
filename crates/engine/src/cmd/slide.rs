@@ -6,7 +6,7 @@ use deckcraft_model::text::TextBody;
 use deckcraft_model::{LayoutId, LayoutType, Presentation, Section, SlideId, defaults};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, ok, opt_usize_param, str_param, text, usize_param};
 use crate::{Result, Session, Target};
 
 pub fn specs() -> Vec<CommandSpec> {

@@ -2,7 +2,10 @@
 //! ribbons, gears, tabs and chart markers. Like the rest of `preset`, every outline is our own
 //! construction, fitted to how the shapes look and to what their adjust values mean.
 
-use super::*;
+use super::{
+    Corner, Dir, FillMode, Geometry, Handle, Pb, Point, Rect, Vec2, corner_rect, fill, fill_eo, fill_only, mid_sites, orient, shade, simple,
+    stroke_only, vis,
+};
 
 /// Builds the presets this module knows; `None` for any other name.
 pub(super) fn build(name: &str, w: f64, h: f64, a: &dyn Fn(usize) -> f64) -> Option<Geometry> {
