@@ -1580,6 +1580,89 @@ fn slide_ranges_parse_like_powerpoints_print_box() {
     assert_eq!(opts.slides, Some(vec![0, 1]), "indices past the end are dropped");
 }
 
+/// Settings › New Presentations: `file.new` without a theme or size takes them, and the font,
+/// from the prefs; what the call gives wins.
+#[test]
+fn new_presentations_follow_the_new_presentation_prefs() {
+    let mut s = Session::new();
+    let last = deckcraft_model::theme::builtin_themes().last().map(|t| t.name.clone()).unwrap();
+    s.prefs.new_theme = last.clone();
+    s.prefs.new_size = "standard".into();
+    s.prefs.new_font = "Georgia".into();
+    s.execute("file.new", &json!({})).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    assert_eq!(doc.slide_size, deckcraft_model::defaults::STANDARD);
+    let theme = &doc.masters[0].theme;
+    assert_eq!(theme.name, last);
+    assert_eq!((theme.fonts.major.latin.as_str(), theme.fonts.minor.latin.as_str()), ("Georgia", "Georgia"));
+
+    s.execute("file.new", &json!({"theme": "DeckCraft", "size": [960, 540]})).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    assert_eq!(doc.slide_size, deckcraft_model::defaults::WIDE);
+    assert_eq!(doc.masters[0].theme.name, "DeckCraft");
+
+    // A theme name that isn't built in falls back to the default.
+    s.prefs.new_theme = "No Such Theme".into();
+    s.execute("file.new", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.masters[0].theme.name, deckcraft_model::Theme::default().name);
+}
+
+/// Set as Default Shape is a pref: it survives saving and loading prefs.json.
+#[test]
+fn the_default_shape_is_kept_in_the_prefs() {
+    let mut s = Session::new();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [50, 50, 100, 60]})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#FF0000"})).unwrap();
+    s.execute("shape.setDefault", &json!({})).unwrap();
+    let saved = serde_json::to_vec(&s.prefs).unwrap();
+    let mut next = Session::new();
+    next.prefs = serde_json::from_slice(&saved).unwrap();
+    assert!(next.prefs.default_shape.as_ref().and_then(|d| d.fill.as_ref()).is_some());
+    next.execute("file.new", &json!({})).unwrap();
+    next.execute("shape.insert", &json!({"preset": "rect", "rect": [50, 50, 100, 60]})).unwrap();
+    let st = next.doc().unwrap();
+    let fill = st.selected_shapes().first().and_then(|sh| sh.fill.clone());
+    assert_eq!(fill, s.prefs.default_shape.as_ref().and_then(|d| d.fill.clone()), "a new shape in the next session has the look");
+}
+
+/// A picture fill stays out of the default shape: its picture belongs to one presentation, and
+/// new shapes elsewhere would show a missing or wrong picture.
+#[test]
+fn the_default_shape_leaves_a_picture_fill_out() {
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4)).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    let mut s = Session::new();
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [50, 50, 100, 60]})).unwrap();
+    s.execute("shape.fill", &json!({"picture": cmd::base64_encode(&png)})).unwrap();
+    s.execute("shape.line", &json!({"width": 4, "color": "#00FF00"})).unwrap();
+    s.execute("shape.setDefault", &json!({})).unwrap();
+    let d = s.prefs.default_shape.clone().expect("a default shape");
+    assert_eq!(d.fill, None, "no picture fill kept");
+    assert!(d.line.is_some(), "the rest of the look is kept");
+    s.execute("file.new", &json!({})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [50, 50, 100, 60]})).unwrap();
+    let fill = s.doc().unwrap().selected_shapes().first().and_then(|sh| sh.fill.clone());
+    assert!(!matches!(fill, Some(deckcraft_model::Fill::Picture(_))), "{fill:?}");
+    // A prefs.json from before this keeps the rest of the look but drops the picture fill.
+    let mut old = d;
+    old.fill = Some(deckcraft_model::Fill::Picture(Default::default()));
+    let prefs = crate::Prefs { default_shape: Some(old), ..crate::Prefs::default() }.sanitized();
+    let d = prefs.default_shape.expect("kept");
+    assert!(d.fill.is_none() && d.line.is_some());
+}
+
+/// A hand-edited prefs.json spells the new-presentation size its own way: "Standard" is read as
+/// standard everywhere, anything else as widescreen.
+#[test]
+fn the_new_presentation_size_is_one_spelling_after_loading() {
+    for (saved, kept) in [("Standard", "standard"), ("STANDARD", "standard"), ("standard", "standard"), ("huge", ""), ("", "")] {
+        let prefs = crate::Prefs { new_size: saved.into(), ..crate::Prefs::default() }.sanitized();
+        assert_eq!(prefs.new_size, kept, "{saved:?}");
+    }
+}
+
 #[test]
 fn outline_rtf_exports_and_opens_back() {
     let mut s = session();

@@ -109,7 +109,7 @@ mod tests {
         let (ui, prefs) = load(&d);
         let (ui, prefs) = (ui.unwrap(), prefs.unwrap());
         assert_eq!(ui.zoom, Some(*crate::ZOOM_RANGE.end()));
-        assert_eq!((ui.sorter_zoom, ui.ui_scale), (0.5, 3.0));
+        assert_eq!((ui.sorter_zoom, ui.ui_scale), (0.5, crate::MAX_UI_SCALE));
         assert!(ui.notes_height <= 2000.0 && ui.thumbs_width >= 60.0 && ui.pane_width <= 520.0);
         assert_eq!((ui.tab.as_str(), ui.pane.as_deref()), ("Home", None));
         assert_eq!(ui.recent.len(), crate::RECENT_MAX);

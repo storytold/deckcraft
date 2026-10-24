@@ -351,9 +351,12 @@ Detail in [localization-parity.md](localization-parity.md).
 
 ## AI features
 
-- **No Designer, Copilot, Speaker Coach, live subtitles or Translate.** All are Microsoft cloud
-  services; an offline rule-based Designer is in the catalogue (P2). Local models (speech-to-text
-  for subtitles, translation) need an owner decision on licensed models. 20–40 h.
+- **No Copilot chat, rewriting, Speaker Coach, live subtitles or Translate.** File › Settings › AI
+  (#732) connects your own OpenAI-compatible model (Ollama, LM Studio, OpenAI…) and drafts slides
+  from a prompt; asking it to rewrite, summarise or design a selection, a chat pane, images and the
+  web build are still to do. An offline rule-based Designer is in the catalogue (P2). Bundled local
+  models (speech-to-text for subtitles, translation) need an owner decision on licensed models.
+  15–35 h.
 
 ## Revision history
 
@@ -364,6 +367,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |
 | 2026-10-15 | trivial | PPTX trigger sequences keep later On Click steps instead of converting them to After Previous; mixed starts, independent buttons and paragraph builds have synthetic round-trip regressions |
+| 2026-10-14 | minor | AI features: your own model and Draft slides landed (#732); chat, rewriting and the web build remain |
 | 2026-10-16 | trivial | AutoFormat superscripts ordinals (1st, 22nd) as you type, with an AutoCorrect option to turn it off; automatic bulleted lists remain |
 | 2026-10-15 | minor | Edit Points: Straight/Curved Segment on a right-clicked segment and Open/Close Path on a point (`shape.segmentType`, `shape.openPath`, `shape.closePath`); left: Delete Segment and Add Point in the menu |
 | 2026-10-15 | trivial | Compare: slide-level Reject and Reject All landed; the entry keeps per-object accept and reject and the slide markers |

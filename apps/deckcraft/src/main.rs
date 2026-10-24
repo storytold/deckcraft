@@ -14,6 +14,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod ai_http;
 #[cfg(target_os = "macos")]
 mod apple_events;
 mod audio;
@@ -89,6 +90,9 @@ fn load_prefs(app: &mut SlideApp) {
     if let Some(prefs) = prefs {
         app.session.prefs = prefs;
     }
+    if let Some(dir) = config_dir() {
+        app.ai_key = ai_http::load_key(&dir);
+    }
 }
 
 fn save_prefs(app: &SlideApp) {
@@ -97,6 +101,9 @@ fn save_prefs(app: &SlideApp) {
     }
     if let Some(dir) = config_dir() {
         deckcraft_ui_egui::settings::save(&dir, &app.ui, &app.session.prefs);
+    }
+    if let Some(dir) = config_dir() {
+        ai_http::save_key(&dir, &app.ai_key);
     }
 }
 
@@ -111,6 +118,7 @@ fn services() -> Services {
                     &["wav", "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "aif", "aiff", "aifc", "caf", "wma", "weba", "mka"],
                 ),
                 "video" => d.add_filter("Video", &["mp4", "m4v", "mov", "webm", "mkv", "wmv"]),
+                "settings" => d.add_filter("DeckCraft settings", &["json"]),
                 "theme" => d.add_filter("Themes and presentations", &["thmx", "pptx", "potx", "ppsx"]).add_filter("Office Theme", &["thmx"]),
                 _ => d
                     .add_filter("Presentations", &["deckcraft", "pptx", "potx", "ppsx"])
@@ -130,6 +138,7 @@ fn services() -> Services {
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
             .then(|| Box::new(audio::CpalOut::default()) as Box<dyn deckcraft_media::AudioOut>),
+        ai_send: Some(Box::new(ai_http::send)),
         ..Default::default()
     }
 }
@@ -278,6 +287,8 @@ fn main() -> eframe::Result {
             for (f, e) in app.open_from_system(&files) {
                 log::error!("{f}: {e}");
             }
+            // Settings › General › When DeckCraft starts (nothing happens when something is open).
+            app.startup();
             if show {
                 app.start_show(0, false);
             }
