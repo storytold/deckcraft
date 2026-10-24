@@ -4,6 +4,9 @@ use deckcraft_model::defaults;
 use deckcraft_model::text::{Paragraph, Run};
 use deckcraft_model::{LayoutType, Presentation, Xfrm};
 
+#[path = "../../fonts/tests/support/font_fixture.rs"]
+mod test_font;
+
 fn setup(text: &str, w: f64, h: f64) -> (Presentation, Shape) {
     let mut p = Presentation::default();
     let lay = defaults::layout_of_kind(&p, LayoutType::TitleAndContent).unwrap();
@@ -34,6 +37,92 @@ fn wraps_long_text_into_lines() {
     // Lines cover the text without gaps (spaces at wraps are skipped).
     assert_eq!(l.lines[0].start, 0);
     assert!(!l.runs.is_empty());
+}
+
+#[test]
+fn localized_east_asian_family_keeps_the_requested_faces_line_metrics() {
+    let db = FontDb::global();
+    db.add_font(test_font::localized("Regular", 400));
+    db.add_font(test_font::font("DeckCraft Metrics Latin", "Regular", 400, &[], (600, 400), false));
+    assert!(db.face("DeckCraft Localized", "Regular").covers('字'));
+    assert!((db.face("DeckCraft Localized", "Regular").line_split - db.face("DeckCraft Metrics Latin", "Regular").line_split).abs() > 0.2);
+    let draw = |family: &str| {
+        let (p, mut sh) = setup("字字", 400.0, 160.0);
+        sh.ph = None;
+        let body = sh.text.as_mut().unwrap();
+        body.body.anchor = Some(Anchor::Middle);
+        body.paragraphs[0].props.bullet = Some(Bullet::None);
+        let props = &mut body.paragraphs[0].runs[0].props;
+        props.font = Some("DeckCraft Metrics Latin".into());
+        props.font_ea = Some(family.into());
+        props.size = Some(60.0);
+        lay(&p, &sh, 400.0, 160.0)
+    };
+    let canonical = draw("DeckCraft Localized");
+    let localized = draw("DeckCraft 测试字体");
+    assert_eq!(canonical.runs[0].face.family, "DeckCraft Localized");
+    assert_eq!(localized.runs[0].face.family, "DeckCraft Localized");
+    let latin = draw("DeckCraft Metrics Latin");
+    assert!((canonical.lines[0].baseline - latin.lines[0].baseline).abs() > 1.0, "the fixture has distinct line metrics");
+    assert!((canonical.lines[0].baseline - localized.lines[0].baseline).abs() < 1e-6);
+    assert!((canonical.content_height - localized.content_height).abs() < 1e-6);
+}
+
+#[test]
+fn fallback_alias_collision_does_not_change_configured_line_metrics() {
+    let db = FontDb::global();
+    for (slot_index, slot) in ["ea", "cs", "sym"].into_iter().enumerate() {
+        for (order, fallback_first) in [false, true].into_iter().enumerate() {
+            let case = slot_index * 2 + order;
+            let configured = format!("DeckCraft Ownership Canonical {case}");
+            let fallback = format!("DeckCraft Ownership Fallback {case}");
+            let code = if slot == "sym" { 0xf084 } else { 0xf0840 };
+            let character = char::from_u32(code + case as u32).unwrap();
+            let primary = test_font::font_with_chars(&configured, "Regular", 400, &[], (600, 400), false, &['A']);
+            let other = test_font::font_with_chars(&fallback, "Regular", 400, &[&configured], (900, 100), false, &[character]);
+            for font in if fallback_first { [other, primary] } else { [primary, other] } {
+                assert_eq!(db.add_font(font), 1);
+            }
+            assert_eq!(db.face(&configured, "Regular").family, configured);
+            assert!(!db.face(&configured, "Regular").covers(character));
+            assert!(db.face(&fallback, "Regular").covers(character));
+            let draw = |text: &str, slot_family: &str| {
+                let (p, mut shape) = setup(text, 400.0, 200.0);
+                shape.ph = None;
+                let body = shape.text.as_mut().unwrap();
+                body.body.anchor = Some(Anchor::Top);
+                body.body.inset_t = Some(0.0);
+                let para = &mut body.paragraphs[0];
+                para.props.bullet = Some(Bullet::None);
+                para.props.line_spacing = Some(Spacing::Pct(1.0));
+                let props = &mut para.runs[0].props;
+                props.font = Some(configured.clone());
+                props.font_ea = Some(if slot == "ea" { slot_family.into() } else { String::new() });
+                props.font_cs = Some(if slot == "cs" { slot_family.into() } else { String::new() });
+                props.font_sym = (slot == "sym").then(|| slot_family.into());
+                props.bold = Some(false);
+                props.italic = Some(false);
+                props.size = Some(60.0);
+                lay(&p, &shape, 400.0, 200.0)
+            };
+            let control = draw("AA", &configured);
+            let mixed = format!("A{character}");
+            let actual = draw(&mixed, &configured);
+            assert!(actual.runs.iter().any(|r| r.face.family == fallback), "the missing glyph really uses the collision face");
+            assert!(
+                (actual.lines[0].baseline - control.lines[0].baseline).abs() < 1e-6,
+                "{slot}, fallback first {fallback_first}: baseline {} vs {}, height {} vs {}",
+                actual.lines[0].baseline,
+                control.lines[0].baseline,
+                actual.content_height,
+                control.content_height
+            );
+            assert!((actual.content_height - control.content_height).abs() < 1e-6);
+            // A genuinely configured face still contributes its different ascent/descent.
+            let owned = draw(&mixed, &fallback);
+            assert!(owned.content_height > control.content_height + 1.0);
+        }
+    }
 }
 
 #[test]

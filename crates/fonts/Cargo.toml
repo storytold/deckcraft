@@ -16,3 +16,6 @@ unicode-bidi = { workspace = true }
 log = { workspace = true }
 # Last-resort face only (Ubuntu Light); no UI code.
 epaint_default_fonts = "0.36"
+
+[dev-dependencies]
+tempfile = "3"
