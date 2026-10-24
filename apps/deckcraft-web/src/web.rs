@@ -10,6 +10,9 @@ const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus",
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
 const CANVAS_ID: &str = "deckcraft_canvas";
 const LOADING_ID: &str = "deckcraft_loading";
+/// Faces the host page offers sit here, one per line as `Family | Style | path/to/file`, the path
+/// relative to the page (#957; the mechanism PhotoCraft documents in its HOSTING.md).
+const MANIFEST_URL: &str = "fonts/manifest.txt";
 
 pub fn start() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
@@ -22,6 +25,8 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        // Before the app starts, so the first slide already has the faces the host offers.
+        host_fonts().await;
         let mut options = eframe::WebOptions::default();
         if query().contains("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
@@ -64,6 +69,68 @@ pub fn start() {
 
 fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
+}
+
+/// Load the faces the host page offers through [`MANIFEST_URL`] before the app starts (#957). A
+/// page that offers none gets one 404 and the embedded faces only, as before.
+async fn host_fonts() {
+    let Some(window) = web_sys::window() else { return };
+    let manifest = match fetch_text(&window, MANIFEST_URL).await {
+        Ok(text) => text,
+        Err(e) => {
+            log::info!("no host fonts: {MANIFEST_URL}: {e}");
+            return;
+        }
+    };
+    for font in deckcraft_fonts::parse_host_manifest(&manifest) {
+        let bytes = match fetch_bytes(&window, &font.path).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log::warn!("host font {}: {e}", font.path);
+                continue;
+            }
+        };
+        // A face is filed under the family it declares (name id 16 when present, else id 1), so a
+        // manifest that names it something else is warned about and its own name kept.
+        let declared = deckcraft_fonts::declared_faces(&bytes);
+        if !declared.iter().any(|(family, _)| family.eq_ignore_ascii_case(&font.family)) {
+            let names = declared.iter().map(|(f, s)| format!("{f} {s}")).collect::<Vec<_>>().join(", ");
+            let names = if names.is_empty() { "no family at all".to_string() } else { names };
+            log::warn!(
+                "host font {} is listed as \"{}\" in {MANIFEST_URL} but declares {names}; it is used under the name it declares",
+                font.path,
+                font.family
+            );
+        }
+        if deckcraft_fonts::FontDb::global().add_font(bytes) == 0 {
+            log::warn!("host font {}: no face added (not a font file, or already present)", font.path);
+        }
+    }
+}
+
+/// A same-origin GET that answers with text.
+async fn fetch_text(window: &web_sys::Window, url: &str) -> Result<String, String> {
+    let promise = fetch(window, url).await?.text().map_err(|e| format!("{e:?}"))?;
+    let text = wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|e| format!("{e:?}"))?;
+    text.as_string().ok_or_else(|| format!("{url} did not answer with text"))
+}
+
+/// A same-origin GET that answers with the file's bytes, as the server holds them.
+async fn fetch_bytes(window: &web_sys::Window, url: &str) -> Result<Vec<u8>, String> {
+    let promise = fetch(window, url).await?.array_buffer().map_err(|e| format!("{e:?}"))?;
+    let buffer = wasm_bindgen_futures::JsFuture::from(promise).await.map_err(|e| format!("{e:?}"))?;
+    let buffer: js_sys::ArrayBuffer = buffer.dyn_into().map_err(|_| format!("{url} did not answer with bytes"))?;
+    Ok(js_sys::Uint8Array::new(&buffer).to_vec())
+}
+
+async fn fetch(window: &web_sys::Window, url: &str) -> Result<web_sys::Response, String> {
+    let request = web_sys::Request::new_with_str(url).map_err(|e| format!("{e:?}"))?;
+    let response = wasm_bindgen_futures::JsFuture::from(window.fetch_with_request(&request)).await.map_err(|e| format!("{e:?}"))?;
+    let response: web_sys::Response = response.dyn_into().map_err(|_| format!("{url} did not answer with a response"))?;
+    if !response.ok() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    Ok(response)
 }
 
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)

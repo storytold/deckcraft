@@ -71,6 +71,29 @@ Local test: `python3 -m http.server 8765` inside the folder, then open http://lo
   downloads) are blocked.
 - Don't send `X-Frame-Options: DENY` or a `frame-ancestors` CSP that excludes the embedding page.
 
+## Fonts
+
+The wasm carries the faces it was built with (the craft-fonts families and egui's own), so a deck
+that needs another typeface is drawn with a substitute. A host can offer faces of its own: put a
+`fonts/manifest.txt` next to `index.html`, one face per line —
+
+```
+Family | Style | path/to/file.otf
+Brand Sans | Regular | fonts/brand/BrandSans-Regular.otf
+Brand Sans | Bold | fonts/brand/BrandSans-Bold.otf
+```
+
+- Only the first three fields are read; blank lines and lines starting with `#` are ignored, and
+  the path is relative to the page.
+- The files are served as they are: no conversion, no preprocessing.
+- A face is filed under the family **it declares** (its `name` table: id 16 when the file has one,
+  else id 1), not under the name the manifest gives it. When the two differ the browser console
+  says so and the file's own name is used — that is the name a deck's text asks for.
+- A page without a manifest starts as it always has, with the embedded faces only.
+
+DeckCraft and the other crafting apps use the same file name and layout, so one `fonts/` directory
+can serve several of them.
+
 ## Renderer selection and fallback flags
 
 DeckCraft renders with wgpu. It uses **WebGPU** when the browser has it and falls back to

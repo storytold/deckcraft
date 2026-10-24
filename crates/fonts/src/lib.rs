@@ -15,7 +15,8 @@ mod shape;
 
 pub use fallback::{bundled_families, covers_cluster, is_emoji_cluster, ligature_carets};
 pub use fontdb::{
-    FALLBACK_FAMILY, FaceRef, FontDb, FontFace, LAST_RESORT_FAMILY, MISSING_FONT_FAMILY, base_style, bundled, substitutes, system_font_dirs,
+    FALLBACK_FAMILY, FaceRef, FontDb, FontFace, LAST_RESORT_FAMILY, MISSING_FONT_FAMILY, base_style, bundled, declared_faces, substitutes,
+    system_font_dirs,
 };
 pub use harfrust::Feature;
 use harfrust::Tag;
@@ -34,6 +35,39 @@ pub struct CraftFont {
 }
 
 include!(concat!(env!("OUT_DIR"), "/craft_fonts.rs"));
+
+/// One face a host page offers through its `fonts/manifest.txt` — the mechanism PhotoCraft
+/// documents in its HOSTING.md (#957). The web build otherwise only has the faces compiled into
+/// the wasm, so a deck that needs a brand or corporate typeface is drawn with a substitute.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostFont {
+    /// The family the file is expected to declare.
+    pub family: String,
+    /// The style the file is expected to declare.
+    pub style: String,
+    /// Where the font file is served, relative to the page that hosts the app.
+    pub path: String,
+}
+
+/// Parse a host's `fonts/manifest.txt`: one face per line as `Family | Style | path/to/file`.
+/// Only the first three fields are read; blank lines and lines starting with `#` are skipped, and
+/// a line without three non-empty fields is left out.
+pub fn parse_host_manifest(text: &str) -> Vec<HostFont> {
+    text.lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                return None;
+            }
+            let mut fields = line.split('|').map(str::trim);
+            let (family, style, path) = (fields.next()?, fields.next()?, fields.next()?);
+            if family.is_empty() || style.is_empty() || path.is_empty() {
+                return None;
+            }
+            Some(HostFont { family: family.to_string(), style: style.to_string(), path: path.to_string() })
+        })
+        .collect()
+}
 
 /// The craft-fonts faces for Japanese (`"Jpan"`), in manifest order. Empty without craft-fonts.
 pub fn japanese_fonts() -> impl Iterator<Item = &'static CraftFont> {
@@ -173,6 +207,47 @@ mod tests {
 
     fn any_face() -> std::sync::Arc<FontFace> {
         FontDb::global().face(DEFAULT_FAMILY, "Regular")
+    }
+
+    #[test]
+    fn a_host_manifest_reads_three_fields_and_skips_the_rest() {
+        let text = "\
+# Family | Style | path, relative to the page
+Inter | Semi Bold | fonts/inter/Inter-SemiBold.otf | this fourth field is not read
+
+DeckCraft Legacy  |  Semibold  |  legacy-semibold.ttf
+| no family | x.ttf
+Only Two Fields
+Inter | Regular |
+";
+        assert_eq!(
+            parse_host_manifest(text),
+            vec![
+                HostFont { family: "Inter".into(), style: "Semi Bold".into(), path: "fonts/inter/Inter-SemiBold.otf".into() },
+                HostFont { family: "DeckCraft Legacy".into(), style: "Semibold".into(), path: "legacy-semibold.ttf".into() },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_host_face_is_filed_under_the_family_it_declares() {
+        // The typographic family (name id 16) wins over the Windows GDI family (id 1), so a
+        // manifest that asks for "DeckCraft Legacy Semibold" can be warned about and the file's
+        // own name kept — the mistake that costs half an hour to see (#957).
+        let semibold = include_bytes!("../tests/fixtures/legacy-semibold.ttf").to_vec();
+        assert_eq!(declared_faces(&semibold), vec![("DeckCraft Legacy".to_string(), "Semibold".to_string())]);
+        let regular = include_bytes!("../tests/fixtures/legacy-regular.ttf").to_vec();
+        assert_eq!(declared_faces(&regular), vec![("DeckCraft Legacy".to_string(), "Regular".to_string())]);
+        assert_eq!(declared_faces(b"not a font at all"), Vec::new());
+
+        let db = FontDb::with_font_dirs(Vec::new());
+        assert_eq!(db.add_font(semibold), 1);
+        assert!(db.has_family("DeckCraft Legacy"));
+        assert!(db.styles("DeckCraft Legacy").iter().any(|s| s == "Semibold"));
+        // A file that isn't a font adds nothing and doesn't stop the ones after it.
+        assert_eq!(db.add_font(b"not a font at all".to_vec()), 0);
+        assert_eq!(db.add_font(regular), 1);
+        assert!(db.styles("DeckCraft Legacy").iter().any(|s| s == "Regular"));
     }
 
     #[test]

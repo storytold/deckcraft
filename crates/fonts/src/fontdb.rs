@@ -635,6 +635,14 @@ fn enumerate_faces(data: &[u8]) -> Vec<Found> {
     out
 }
 
+/// The family and style each face of a font file declares: the typographic family (name id 16)
+/// when the file has one, else the family (id 1), with its style beside it. A host font manifest
+/// is checked against these names (#957) — a face is filed under what it declares, not under what
+/// a page asks it to be called.
+pub fn declared_faces(bytes: &[u8]) -> Vec<(String, String)> {
+    enumerate_faces(bytes).into_iter().map(|(_, family, style, _)| (family, style)).collect()
+}
+
 /// The compiled-in last-resort face, for a database that somehow has no usable faces at all.
 pub(crate) fn last_resort_face() -> Arc<FontFace> {
     static FACE: std::sync::OnceLock<Arc<FontFace>> = std::sync::OnceLock::new();
