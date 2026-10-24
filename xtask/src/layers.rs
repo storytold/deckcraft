@@ -36,6 +36,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
     // Codecs and containers (ported from FilmCraft): L0 standalone leaves, L1 codecs over
     // `bitstream`, and `media` (probe, decode, playback mixer) at L2.
+    // Audit crate: raw OPC byte scanning (no workspace deps; standalone leaf).
+    ("audit", Class::Standalone),
     ("bitstream", Class::Standalone),
     ("matroska", Class::Standalone),
     ("ogg", Class::Standalone),

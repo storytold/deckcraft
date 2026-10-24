@@ -18,6 +18,19 @@ The shapes of one slide, with their ids, boxes and text, come from the slide.ins
   deckcraft-cli run --in deck.deckcraft --print --cmd 'slide.inspect={\"index\":0}'",
     },
     Subcommand {
+        name: "audit",
+        usage: "audit FILE",
+        summary: "report hidden information in a .pptx before sharing",
+        details: "Scans the raw .pptx bytes — never the document model — and prints a JSON
+report of what a recipient could learn: speaker notes, hidden slides,
+cropped images that still carry their full pixel data, comment authors,
+creator names in document properties, embedded media, macro and
+embedded-object parts, and package parts nothing references.
+
+Exit status: 0 when the deck is clean, 1 when findings are present
+(usable as a CI gate), 2 when the audit could not run.",
+    },
+    Subcommand {
         name: "render",
         usage: "render (FILE | --sample) [--slide N | --all] [--scale S] [--edit] [--transparent] OUT",
         summary: "draw slides as PNG images",

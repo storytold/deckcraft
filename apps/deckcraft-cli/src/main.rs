@@ -25,7 +25,12 @@ macro_rules! outln {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    // Raw OS arguments: `std::env::args()` panics on a non-UTF-8 file name,
+    // which would break the audit's 0/1/2 exit contract with status 101.
+    // Only the subcommand name is converted lossily for dispatch; the audit
+    // subcommand receives the original `OsString`s.
+    let raw: Vec<std::ffi::OsString> = std::env::args_os().skip(1).collect();
+    let args: Vec<String> = raw.iter().map(|a| a.to_string_lossy().into_owned()).collect();
     let rest = args.get(1..).unwrap_or(&[]);
     let asks_help = rest.iter().any(|a| a == "--help" || a == "-h");
     if let Some(page) = args.first().filter(|_| asks_help).and_then(|n| help::page(n)) {
@@ -70,6 +75,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Some("describe") => report(describe(rest.first().map(String::as_str))),
+        Some("audit") => audit_args(raw.get(1..).unwrap_or(&[]).to_vec()),
         Some("app") => report(app(rest)),
         Some("mcp") => report(mcp(rest)),
         Some("links") => {
@@ -547,6 +553,56 @@ fn describe(id: Option<&str>) -> Result<(), String> {
     Ok(())
 }
 
+/// `deckcraft-cli audit FILE`: report hidden information in a `.pptx` as JSON.
+///
+/// Exit contract: 0 when the deck is clean, 1 when findings are present
+/// (usable as a CI gate), 2 when the audit could not run. Usage errors are
+/// exit 2, never 1: a script must not mistake a typo for "findings present".
+///
+/// Takes the raw OS arguments (see `main`): a non-UTF-8 file name must reach
+/// the filesystem intact, and `main` never parses them as Unicode first.
+/// Tests drive this directly without touching the process's own arguments.
+fn audit_args(raw: Vec<std::ffi::OsString>) -> ExitCode {
+    use std::path::PathBuf;
+    // The raw OS arguments, not the lossy `String` args `main` parsed: a
+    // non-UTF-8 file name must reach the filesystem intact.
+    let mut file: Option<std::ffi::OsString> = None;
+    for arg in &raw {
+        let text = arg.to_string_lossy();
+        if text.starts_with("--") {
+            eprintln!("deckcraft-cli: audit: unknown option `{text}`");
+            return ExitCode::from(2);
+        }
+        if file.is_some() {
+            eprintln!("deckcraft-cli: audit: unexpected argument `{text}`");
+            return ExitCode::from(2);
+        }
+        file = Some(arg.clone());
+    }
+    let Some(file) = file else {
+        eprintln!("deckcraft-cli: audit needs a FILE");
+        return ExitCode::from(2);
+    };
+    let path = PathBuf::from(file);
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            eprintln!("deckcraft-cli: audit: cannot read {}: {e}", path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let findings = match deckcraft_audit::audit_bytes(&bytes) {
+        Ok(findings) => findings,
+        Err(e) => {
+            eprintln!("deckcraft-cli: audit: {}: {e}", path.display());
+            return ExitCode::from(2);
+        }
+    };
+    let report = serde_json::json!({ "file": path.display().to_string(), "findings": findings, "count": findings.len() });
+    outln!("{}", serde_json::to_string_pretty(&report).unwrap_or_default());
+    if findings.is_empty() { ExitCode::SUCCESS } else { ExitCode::FAILURE }
+}
+
 fn print_params(params: &[deckcraft_engine::cmd::Param]) {
     let name = |p: &deckcraft_engine::cmd::Param| {
         let or = if p.or { "or " } else { "" };
@@ -781,5 +837,133 @@ mod frame_path_tests {
     fn values_rounding_to_one_name_are_rejected() {
         assert!(frame_paths("f.png", &[0.1001, 0.1002]).is_err());
         assert!(frame_paths("f.png", &[0.5, 0.5]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod audit_tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use super::audit_args;
+    use std::ffi::OsString;
+    use std::io::Write;
+    use std::process::ExitCode;
+
+    const P: &str = "http://schemas.openxmlformats.org/presentationml/2006/main";
+    const RELS: &str = "http://schemas.openxmlformats.org/package/2006/relationships";
+
+    fn ospath(s: &str) -> OsString {
+        OsString::from(s)
+    }
+
+    /// A minimal .pptx whose only slide is hidden (`show="0"`).
+    fn hidden_slide_package() -> Vec<u8> {
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let files: &[(&str, String)] = &[
+            (
+                "[Content_Types].xml",
+                r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>"#.to_string(),
+            ),
+            (
+                "_rels/.rels",
+                format!(r#"<?xml version="1.0"?><Relationships xmlns="{RELS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>"#),
+            ),
+            (
+                "ppt/presentation.xml",
+                format!(r#"<?xml version="1.0"?><p:presentation xmlns:p="{P}"><p:sldIdLst/></p:presentation>"#),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                format!(r#"<?xml version="1.0"?><Relationships xmlns="{RELS}"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>"#),
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                format!(r#"<?xml version="1.0"?><p:sld xmlns:p="{P}" show="0"><p:cSld><p:spTree/></p:cSld></p:sld>"#),
+            ),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                format!(r#"<?xml version="1.0"?><Relationships xmlns="{RELS}"/>"#),
+            ),
+        ];
+        for (name, data) in files {
+            w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(data.as_bytes()).unwrap();
+        }
+        w.finish().unwrap().into_inner()
+    }
+
+    fn write_temp(name: &str, bytes: &[u8]) -> String {
+        let path = std::env::temp_dir().join(format!("deckcraft-cli-audit-{name}-{}", std::process::id()));
+        std::fs::write(&path, bytes).unwrap();
+        path.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn audit_clean_file_exits_zero() {
+        // A deck with a shown slide and no other parts: clean.
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-audit-clean-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("clean.pptx").to_string_lossy().into_owned();
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let files: &[(&str, String)] = &[
+            (
+                "[Content_Types].xml",
+                r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="xml" ContentType="application/xml"/></Types>"#.to_string(),
+            ),
+            (
+                "_rels/.rels",
+                format!(r#"<?xml version="1.0"?><Relationships xmlns="{RELS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="ppt/presentation.xml"/></Relationships>"#),
+            ),
+            (
+                "ppt/presentation.xml",
+                format!(r#"<?xml version="1.0"?><p:presentation xmlns:p="{P}"><p:sldIdLst/></p:presentation>"#),
+            ),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                format!(r#"<?xml version="1.0"?><Relationships xmlns="{RELS}"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/></Relationships>"#),
+            ),
+            (
+                "ppt/slides/slide1.xml",
+                format!(r#"<?xml version="1.0"?><p:sld xmlns:p="{P}"><p:cSld><p:spTree/></p:cSld></p:sld>"#),
+            ),
+            (
+                "ppt/slides/_rels/slide1.xml.rels",
+                format!(r#"<?xml version="1.0"?><Relationships xmlns="{RELS}"/>"#),
+            ),
+        ];
+        for (name, data) in files {
+            w.start_file(*name, zip::write::SimpleFileOptions::default()).unwrap();
+            w.write_all(data.as_bytes()).unwrap();
+        }
+        let bytes = w.finish().unwrap().into_inner();
+        std::fs::write(&path, &bytes).unwrap();
+        assert_eq!(audit_args(vec![ospath(&path)]), ExitCode::SUCCESS);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn audit_hidden_slide_exits_one() {
+        let path = write_temp("hidden", &hidden_slide_package());
+        assert_eq!(audit_args(vec![ospath(&path)]), ExitCode::FAILURE);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn audit_usage_errors_exit_two() {
+        // Unknown option, missing file, unreadable file, extra argument:
+        // all usage failures are exit 2, never 1.
+        assert_eq!(audit_args(vec![ospath("--bogus")]), ExitCode::from(2));
+        assert_eq!(audit_args(vec![]), ExitCode::from(2));
+        assert_eq!(audit_args(vec![ospath("/nonexistent/deck.pptx")]), ExitCode::from(2));
+        let path = write_temp("extra", &hidden_slide_package());
+        assert_eq!(audit_args(vec![ospath(&path), ospath("extra")]), ExitCode::from(2));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn audit_unreadable_zip_exits_two() {
+        let path = write_temp("notzip", b"definitely not a zip file");
+        assert_eq!(audit_args(vec![ospath(&path)]), ExitCode::from(2));
+        let _ = std::fs::remove_file(&path);
     }
 }
