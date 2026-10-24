@@ -4724,3 +4724,116 @@ fn slide_hide_and_layout_reject_invalid_index() {
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
 }
+
+/// HH9: Reset Picture discards the picture's formatting (adjustments, artistic effect, picture
+/// style effects and outline) but not the frame's shape (Change Shape / Crop to Shape).
+#[test]
+fn picture_reset_keeps_the_frame_shape() {
+    let mut img = image::RgbaImage::new(40, 30);
+    img.pixels_mut().for_each(|p| *p = image::Rgba([200, 30, 30, 255]));
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("insert.picture", &json!({"name": "a.png", "data": cmd::base64_encode(&png)})).unwrap();
+    s.execute("shape.change", &json!({"preset": "roundRect"})).unwrap();
+    s.execute("picture.adjust", &json!({"brightness": 0.3})).unwrap();
+    let geom = s.doc().unwrap().selected_shapes()[0].geom.clone();
+    assert_ne!(geom, deckcraft_model::Geom::preset("rect"));
+    s.execute("picture.reset", &json!({})).unwrap();
+    let sh = s.doc().unwrap().selected_shapes()[0].clone();
+    assert_eq!(sh.geom, geom, "the frame shape stays");
+    match &sh.kind {
+        deckcraft_model::ShapeKind::Picture { fill } => assert_eq!(fill.adjust, Default::default()),
+        _ => panic!("not a picture"),
+    }
+    let doc = command_specs().iter().find(|c| c.id == "picture.reset").unwrap().params;
+    assert!(doc.contains("frame shape"), "{doc}");
+}
+
+/// HH12: exporting the same slide twice to one PNG path after an edit overwrites the file with
+/// the new picture (not a bug: the second file differs).
+#[test]
+fn exporting_a_slide_again_overwrites_the_png_with_the_edit() {
+    /// Removes the folder when the test ends, a failed assertion included.
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let dir = std::env::temp_dir().join(format!("deckcraft-hh12-{}", std::process::id()));
+    let _cleanup = Cleanup(dir.clone());
+    let png = dir.join("slide.png");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = session();
+    let path = png.to_string_lossy().to_string();
+    s.execute("file.export", &json!({"path": path, "format": "png", "slide": 0, "scale": 0.5})).unwrap();
+    let first = std::fs::read(&png).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 400, 300]})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#FF0000"})).unwrap();
+    s.execute("file.export", &json!({"path": path, "format": "png", "slide": 0, "scale": 0.5})).unwrap();
+    let second = std::fs::read(&png).unwrap();
+    assert_ne!(first, second, "the second export replaced the file with the edited slide");
+}
+
+/// MM4: moving a group's child through a command refits the group's box to its children, as
+/// PowerPoint does, and the children stay where they were drawn.
+#[test]
+fn moving_a_group_child_refits_the_group() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, p: serde_json::Value| s.execute("shape.insert", &p).unwrap()["id"].as_u64().unwrap();
+    let a = ins(&mut s, json!({"preset": "rect", "rect": [100, 100, 100, 50]}));
+    let b = ins(&mut s, json!({"preset": "rect", "rect": [300, 100, 100, 50]}));
+    let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    let gb = |s: &Session| s.doc().unwrap().shape(ShapeId(g as u32)).unwrap().xfrm.unwrap();
+    assert_eq!((gb(&s).x, gb(&s).w), (100.0, 300.0));
+    s.execute("shape.move", &json!({"id": b, "dx": 100, "dy": 60})).unwrap();
+    let x = gb(&s);
+    assert_eq!((x.x, x.y, x.w, x.h), (100.0, 100.0, 400.0, 110.0), "group follows its children: {x:?}");
+    // The child is where it was moved to on the slide.
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert!(r.to_string().contains("400"), "{r}");
+    s.execute("shape.setBounds", &json!({"ids": [a], "x": 20, "y": 20, "w": 100, "h": 50})).unwrap();
+    let x = gb(&s);
+    assert_eq!((x.x, x.y, x.w), (20.0, 20.0, 480.0), "{x:?}");
+}
+
+#[test]
+fn action_button_fill_follows_the_theme() {
+    let mut s = session();
+    let id = s.execute("insert.actionButton", &json!({"kind": "next"})).unwrap()["id"].clone();
+    let fill = |s: &mut Session| {
+        let r = s.execute("slide.inspect", &json!({})).unwrap();
+        r["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap()["fill"].clone()
+    };
+    let before = fill(&mut s);
+    assert!(before.as_str().is_some_and(|f| f.starts_with('#')), "{before}");
+    s.execute("design.theme", &json!({"name": "Ember"})).unwrap();
+    let after = fill(&mut s);
+    assert_ne!(before, after, "the button takes the new theme's accent1");
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides[0].shapes.iter().find(|x| x.fill.is_none() && x.style.is_some()).unwrap();
+    assert!(sh.fill.is_none(), "no explicit fill: the style binds it to accent1");
+}
+
+/// In Slide Master / layout view the insert commands edit the master or layout; their answers say
+/// so with `editing`, and on slides carry no such key.
+#[test]
+fn insert_answers_carry_editing_in_master_and_layout_view() {
+    let mut s = session();
+    let ins = json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]});
+    s.execute("view.slideMaster", &json!({"layout": 0})).unwrap();
+    let r = s.execute("shape.insert", &ins).unwrap();
+    assert_eq!(r["editing"]["kind"], "layout", "{r}");
+    assert!(r["editing"]["name"].is_string(), "{r}");
+    let r = s.execute("insert.textBox", &json!({"rect": [10.0, 10.0, 100.0, 50.0], "text": "x"})).unwrap();
+    assert_eq!(r["editing"]["kind"], "layout", "{r}");
+    s.execute("view.slideMaster", &json!({"master": 0})).unwrap();
+    let r = s.execute("shape.insert", &ins).unwrap();
+    assert_eq!(r["editing"]["kind"], "master", "{r}");
+    s.execute("view.closeMaster", &json!({})).unwrap();
+    let r = s.execute("shape.insert", &ins).unwrap();
+    assert!(r.get("editing").is_none(), "{r}");
+}

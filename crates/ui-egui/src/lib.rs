@@ -385,7 +385,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
-    ("show.presenter", "Presenter View", None, "{on?: bool}"),
+    (
+        "show.presenter",
+        "Presenter View",
+        None,
+        "{on?: bool} → {on, window} (presenter view, with notes, a clock and the next slide, appears in its own separate window beside the show window when the show starts; window is always true)",
+    ),
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool, from?: effect index}"),
     ("app.home", "Home", None, "{on?}"),
@@ -971,7 +976,10 @@ impl SlideApp {
                     self.start_show(from, false);
                 }
             }
-            "show.presenter" => self.ui.presenter_view = self.flag(p, self.ui.presenter_view),
+            "show.presenter" => {
+                self.ui.presenter_view = self.flag(p, self.ui.presenter_view);
+                return Ok(json!({"on": self.ui.presenter_view, "window": true}));
+            }
             "show.end" => {
                 self.show = None;
                 self.media.stop_owned(media::Owner::Show);
@@ -2125,6 +2133,8 @@ mod huge_deck_tests;
 mod ime_tests;
 #[cfg(test)]
 mod last_color_tests;
+#[cfg(test)]
+mod presenter_tests;
 #[cfg(test)]
 mod replacefonts_tests;
 #[cfg(test)]

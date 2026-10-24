@@ -92,6 +92,12 @@ pub struct Change {
     pub kind: ChangeKind,
     /// Index in the open deck (for inserted: where it would go).
     pub slide: usize,
+    /// The editor's number of that slide (`slide` + 1).
+    pub number: usize,
+    /// Which side has it alone: `deck` (the open presentation; accepting deletes it) or `file`
+    /// (the compared file; accepting adds it). Absent when both have it and differ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub only_in: Option<&'static str>,
     /// Index in the revised deck (none for deleted).
     pub revised: Option<usize>,
     /// What differs, readable: `Title 1: text`, `Picture 3 inserted`, `notes`…
@@ -118,19 +124,33 @@ pub fn diff(cur: &Presentation, rev: &Presentation, by_position: bool) -> Vec<Ch
         let (Some(a), Some(b)) = (cur.slides.get(*i), rev.slides.get(*j)) else { continue };
         let details = slide_details(cur, a, rev, b);
         if !details.is_empty() {
-            out.push(Change { kind: ChangeKind::Changed, slide: *i, revised: Some(*j), details });
+            out.push(Change { kind: ChangeKind::Changed, slide: *i, number: i.saturating_add(1), only_in: None, revised: Some(*j), details });
         }
     }
     for (i, s) in cur.slides.iter().enumerate() {
         if !cur_matched.contains(&i) {
-            out.push(Change { kind: ChangeKind::Deleted, slide: i, revised: None, details: vec![slide_title(s)] });
+            out.push(Change {
+                kind: ChangeKind::Deleted,
+                slide: i,
+                number: i.saturating_add(1),
+                only_in: Some("deck"),
+                revised: None,
+                details: vec![slide_title(s)],
+            });
         }
     }
     for (j, s) in rev.slides.iter().enumerate() {
         if !rev_matched.contains(&j) {
             // After the open slide that matches the revised slide before it.
             let at = (0..j).rev().find_map(|k| pairs.iter().find(|p| p.1 == k).map(|p| p.0 + 1)).unwrap_or(0);
-            out.push(Change { kind: ChangeKind::Inserted, slide: at, revised: Some(j), details: vec![slide_title(s)] });
+            out.push(Change {
+                kind: ChangeKind::Inserted,
+                slide: at,
+                number: at.saturating_add(1),
+                only_in: Some("file"),
+                revised: Some(j),
+                details: vec![slide_title(s)],
+            });
         }
     }
     out.sort_by_key(|c| (c.slide, c.revised.unwrap_or(0)));
@@ -184,8 +204,14 @@ fn shape_details(cp: &Presentation, a: &Shape, rp: &Presentation, b: &Shape, out
     match (&a.xfrm, &b.xfrm) {
         (Some(x), Some(y)) if (x.x, x.y) != (y.x, y.y) && (x.w, x.h) == (y.w, y.h) => what.push("moved"),
         (Some(x), Some(y)) if (x.w, x.h) != (y.w, y.h) => what.push("resized"),
-        (x, y) if x.as_ref().map(|x| x.rot) != y.as_ref().map(|y| y.rot) => what.push("rotated"),
+        // No stored box means the layout's: unrotated and unflipped, the same as a stored 0.
+        (x, y) if x.as_ref().map_or(0.0, |x| x.rot) != y.as_ref().map_or(0.0, |y| y.rot) => what.push("rotated"),
         _ => {}
+    }
+    // A flip is reported alongside a move, resize or rotation, not hidden behind it.
+    let flips = |x: &Option<deckcraft_model::Xfrm>| x.as_ref().map_or((false, false), |x| (x.flip_h, x.flip_v));
+    if flips(&a.xfrm) != flips(&b.xfrm) {
+        what.push("flipped");
     }
     if a.fill != b.fill || a.line != b.line || a.style != b.style || a.effects != b.effects {
         what.push("formatting");
@@ -230,12 +256,12 @@ fn slide_details(cp: &Presentation, a: &Slide, rp: &Presentation, b: &Slide) -> 
                     shape_details(cp, sa, rp, sb, &mut out);
                 }
             }
-            _ => out.push(format!("{} deleted", shape_label(sa))),
+            _ => out.push(format!("{} deleted (only in the deck)", shape_label(sa))),
         }
     }
     for (k, sb) in b.shapes.iter().enumerate() {
         if !used.contains(&k) {
-            out.push(format!("{} inserted", shape_label(sb)));
+            out.push(format!("{} inserted (only in the file)", shape_label(sb)));
         }
     }
     let order = |s: &Slide| s.shapes.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
@@ -458,6 +484,41 @@ mod tests {
         let at = ins["slide"].as_u64().unwrap() as usize;
         assert_eq!(at, n, "after the open slide matching the revised one before it");
         assert_eq!(s.doc().unwrap().doc.slides.len(), n, "comparing alone changes nothing");
+    }
+
+    /// NN6: a slide reset drops the placeholders' stored boxes; comparing it with the copy from
+    /// before the reset must not call that a rotation (no stored box is rotation 0).
+    #[test]
+    fn a_reset_slide_is_not_rotated_against_its_earlier_copy() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "b"})).unwrap();
+        let ids: Vec<u32> = s.doc().unwrap().doc.slides[1].shapes.iter().map(|x| x.id.0).collect();
+        for id in &ids {
+            s.execute("shape.move", &json!({"ids": [id], "dx": 10, "dy": 0})).unwrap();
+            s.execute("shape.move", &json!({"ids": [id], "dx": -10, "dy": 0})).unwrap();
+        }
+        let before = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        s.execute("slide.reset", &json!({"index": 1})).unwrap();
+        let v = s.execute("review.compare", &json!({"name": "before.deckcraft", "data": before})).unwrap();
+        assert!(!v.to_string().contains("rotated"), "{v}");
+    }
+
+    #[test]
+    fn each_change_says_which_side_it_is_on() {
+        let (mut s, rev, _) = decks();
+        let v = s.execute("review.compare", &json!({"name": "rev.deckcraft", "data": rev})).unwrap();
+        for c in v["changes"].as_array().unwrap() {
+            assert_eq!(c["number"].as_u64().unwrap(), c["slide"].as_u64().unwrap() + 1, "{c}");
+            match c["kind"].as_str().unwrap() {
+                "deleted" => assert_eq!(c["onlyIn"], "deck", "{c}"),
+                "inserted" => assert_eq!(c["onlyIn"], "file", "{c}"),
+                _ => assert!(c.get("onlyIn").is_none(), "{c}"),
+            }
+        }
+        // A shape only in the open deck reads as only in the deck.
+        s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [10.0, 10.0, 40.0, 40.0]})).unwrap();
+        let v = s.execute("review.revisions", &json!({})).unwrap();
+        assert!(v.to_string().contains("deleted (only in the deck)"), "{v}");
     }
 
     #[test]
