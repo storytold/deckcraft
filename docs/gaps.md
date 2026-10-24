@@ -123,10 +123,15 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 20–35 h (import only, from the public [MS-PPT] spec). Owner decision whether it's
   worth it.
 
-### No OpenDocument `.odp`
-- **Evidence:** PowerPoint opens and saves `.odp`.
+### OpenDocument `.odp` is import-only
+- **Evidence:** PowerPoint opens and saves `.odp`. `crates/pptx/src/odp.rs` imports pages, text
+  frames (fonts, bold/italic/underline, colour, lists), rectangles, ellipses, preset custom shapes,
+  lines, pictures, tables (widths, fills, merges), groups (flattened), rotation and notes; master
+  pages become layouts with their background and decorative shapes. Solid, gradient and picture
+  fills and backgrounds and slide transitions are read. Charts, hatches and animations are
+  dropped, and there is no `.odp` save.
 - **Impact:** LibreOffice users and public-sector exchange.
-- **Estimate:** 12–20 h (read and write the common subset).
+- **Estimate:** 5–10 h (charts and animations on import, then writing the common subset).
 
 ### PDF export rasterizes slide artwork
 - **Evidence:** `crates/pdf` places each slide as an image under a selectable text layer, links and
@@ -419,6 +424,9 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-13 | minor | WordArt adjust handles: a selected text warp shows one yellow handle per adjust, and dragging it sets that guide value (gallery and command still open) |
 | 2026-10-14 | minor | Pen pressure scales ink width when the pointer reports it; tilt, pinch-zoom and other trackpad gestures remain |
 | 2026-10-13 | trivial | Chart workbook round-trip (#335) noted under the charts gap; editing chart data is still open |
+| 2026-10-13 | minor | `.odp` import reads gradient and picture fills and backgrounds and slide transitions |
+| 2026-10-13 | minor | `.odp` import reads tables, master pages (as layouts) and page backgrounds |
+| 2026-10-13 | minor | `.odp` import (first slice: shapes, text, pictures, notes); the gap is now masters, tables and save |
 | 2026-10-13 | minor | Shape, picture and table rendering checked against PowerPoint on ~150 synthetic edge-case slides; 3-D bevels, cameras and face lighting now render approximately (gap narrowed to extrusion, rigs and the 3-D pane) |
 | 2026-10-13 | minor | Interactive decks: triggers, return-to-slide state and click rules landed in the slide show; the remaining pieces are one new entry under Features |
 | 2026-10-12 | minor | IME composition in slide text and notes, and CJK interface text with real glyphs (#101): the IME gap is now Korean on the web and table-cell underlines |
