@@ -104,6 +104,12 @@ const SKIP: &[&str] = &[
     "rsidtbl",
     "object",
     "fldinst",
+    // A list item's rendered bullet or number, written before its text (Word: listtext; RTF 1.5 and
+    // older writers: pntext, pntxta, pntxtb). Its `\pard` must not reset the paragraph's indent.
+    "listtext",
+    "pntext",
+    "pntxta",
+    "pntxtb",
 ];
 
 /// `i + n`, or one character on when that would land inside a multi-byte character (a fallback
@@ -359,5 +365,13 @@ mod tests {
     fn reads_word_style_rtf_by_indent_and_hex_escapes() {
         let rtf = r"{\rtf1\ansi{\fonttbl{\f0 Arial;}}{\*\generator X;}\pard\b Title one\b0\par\pard\li720 Point \'93a\'94\par\pard\li1440 Sub\par}";
         assert_eq!(rtf_to_outline(rtf), "Title one\n\t\tPoint “a”\n\t\t\t\tSub\n");
+    }
+
+    /// Word writes a list item's bullet as `{\\listtext\\pard\\plain …\\'b7\\tab}` (older writers:
+    /// `{\\pntext …}`) after the paragraph's own `\\li`. That group is the rendered bullet, not text.
+    #[test]
+    fn word_list_bullets_are_not_text_and_keep_the_indent() {
+        let rtf = r"{\rtf1\ansi\pard Title\par\pard\fi-360\li720{\listtext\pard\plain\f1\'b7\tab}Point\par\pard\li720{\pntext\f1\'b7\tab}Old\par}";
+        assert_eq!(rtf_to_outline(rtf), "Title\n\t\tPoint\n\t\tOld\n");
     }
 }
