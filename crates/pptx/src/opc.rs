@@ -267,7 +267,11 @@ fn percent_decode(s: &str) -> String {
     while i < b.len() {
         let c = b.get(i).copied().unwrap_or(0);
         if c == b'%'
-            && let Some(h) = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok())
+            && let Some(h) = b
+                .get(i + 1..i + 3)
+                .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
         {
             out.push(h);
             i += 3;
@@ -450,6 +454,12 @@ mod tests {
     fn resolve_keeps_encoded_hash_and_strips_fragment() {
         assert_eq!(resolve("ppt/slides", "../media/a%23b.png"), "ppt/media/a#b.png");
         assert_eq!(resolve("ppt/slides", "../media/a.png#frag"), "ppt/media/a.png");
+    }
+
+    #[test]
+    fn resolve_percent_decode_requires_two_hex_digits() {
+        assert_eq!(resolve("ppt/slides", "../media/a%+5b.png"), "ppt/media/a%+5b.png");
+        assert_eq!(resolve("ppt/slides", "../media/a%20b.png"), "ppt/media/a b.png");
     }
 
     fn zip_of(entries: &[(&str, usize)]) -> Vec<u8> {
