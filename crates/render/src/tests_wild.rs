@@ -160,6 +160,15 @@ fn trimming_a_path_leaves_its_ends_off_by_arc_length() {
     assert!(trim_ends(&p, 60.0, 50.0).elements().is_empty());
     let r = Rect::new(0.0, 0.0, 10.0, 10.0).to_path(0.1);
     assert_eq!(trim_ends(&r, 3.0, 3.0).elements().len(), r.elements().len());
+
+    // Zero-length leading segments trimmed correctly without quadratic copy.
+    let mut p0 = BezPath::new();
+    p0.move_to((0.0, 0.0));
+    p0.line_to((0.0, 0.0));
+    p0.line_to((0.0, 0.0));
+    p0.line_to((50.0, 0.0));
+    let t0 = trim_ends(&p0, 10.0, 0.0);
+    assert_eq!(t0.elements().first(), Some(&PathEl::MoveTo(Point::new(10.0, 0.0))));
 }
 
 fn radial(focus: [f64; 4]) -> Shape {

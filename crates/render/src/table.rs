@@ -138,8 +138,17 @@ fn border_look(ctx: &Ctx, b: &TableBorder) -> (Rgba, f64) {
     }
 }
 
+pub fn resolve_style<'a>(ctx: &'a Ctx, t: &Table) -> Option<&'a TableStyleDef> {
+    ctx.pres.table_styles.iter().find(|d| d.id.eq_ignore_ascii_case(&t.style))
+}
+
+#[allow(dead_code)]
 pub fn look(ctx: &Ctx, t: &Table, r: usize, c: usize) -> CellLook {
-    if let Some(def) = ctx.pres.table_styles.iter().find(|d| d.id.eq_ignore_ascii_case(&t.style)) {
+    look_with_def(ctx, resolve_style(ctx, t), t, r, c)
+}
+
+pub fn look_with_def(ctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize) -> CellLook {
+    if let Some(def) = def {
         return look_def(ctx, def, t, r, c);
     }
     let a = accent(ctx, &t.style);
@@ -225,7 +234,11 @@ fn edges(sizes: &[f64]) -> Vec<f64> {
 
 /// A cell's text as drawn: its margins, anchor and direction, plus the table style's text colour and bold.
 pub fn cell_body(rctx: &Ctx, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
-    let lk = look(rctx, t, r, c);
+    cell_body_with_def(rctx, resolve_style(rctx, t), t, r, c, cell)
+}
+
+pub fn cell_body_with_def(rctx: &Ctx, def: Option<&TableStyleDef>, t: &Table, r: usize, c: usize, cell: &Cell) -> TextBody {
+    let lk = look_with_def(rctx, def, t, r, c);
     let mut body = cell.text.clone();
     let [ml, mr, mt, mb] = cell.margins.unwrap_or([7.2, 7.2, 3.6, 3.6]);
     body.body.inset_l = Some(ml);
@@ -257,6 +270,7 @@ pub fn cell_body(rctx: &Ctx, t: &Table, r: usize, c: usize, cell: &Cell) -> Text
 pub fn row_heights(rctx: &Ctx, t: &Table, fields: &dyn Fields) -> Vec<f64> {
     let xs = edges(&t.cols);
     let mut out = Vec::with_capacity(t.rows.len());
+    let style_def = resolve_style(rctx, t);
     for (ri, row) in t.rows.iter().enumerate() {
         let mut h = row.height.max(0.0);
         for (ci, cell) in row.cells.iter().enumerate().take(t.cols.len()) {
@@ -265,7 +279,7 @@ pub fn row_heights(rctx: &Ctx, t: &Table, fields: &dyn Fields) -> Vec<f64> {
             }
             let c1 = ci.saturating_add(cell.grid_span.max(1) as usize).min(t.cols.len());
             let (Some(x0), Some(x1)) = (xs.get(ci), xs.get(c1)) else { continue };
-            let body = cell_body(rctx, t, ri, ci, cell);
+            let body = cell_body_with_def(rctx, style_def, t, ri, ci, cell);
             let tmp = Shape::table_cell(body.clone());
             let need = deckcraft_text::fit_height(rctx, &tmp, &body, Rect::new(*x0, 0.0, *x1, h.max(1.0)), fields);
             if need.is_finite() {
@@ -332,14 +346,8 @@ pub fn draw(
     let _ = pres;
     let rects = cell_rects(t, &row_heights(rctx, t, fields));
     let covered = rects.iter().map(|(_, _, r)| *r).reduce(|a, b| a.union(b));
-    // Table backgrounds behind every cell: a file-defined style's, then the table's own fill.
-    let style_bg = rctx
-        .pres
-        .table_styles
-        .iter()
-        .find(|d| d.id.eq_ignore_ascii_case(&t.style))
-        .and_then(|d| d.background.as_ref())
-        .and_then(|b| style_fill(rctx, b));
+    let style_def = resolve_style(rctx, t);
+    let style_bg = style_def.and_then(|d| d.background.as_ref()).and_then(|b| style_fill(rctx, b));
     let own_bg = t.background.clone().map(|f| (f, None));
     if let Some(all) = rects.iter().map(|(_, _, r)| *r).reduce(|a, b| a.union(b)) {
         for (bg, ph) in style_bg.into_iter().chain(own_bg) {
@@ -349,7 +357,7 @@ pub fn draw(
     }
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        let lk = look(rctx, t, *r, *c);
+        let lk = look_with_def(rctx, style_def, t, *r, *c);
         ctx.set_transform(m);
         match &cell.fill {
             Some(f) => {
@@ -382,7 +390,7 @@ pub fn draw(
     // Borders: explicit cell borders, else the style's grid.
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        let lk = look(rctx, t, *r, *c);
+        let lk = look_with_def(rctx, style_def, t, *r, *c);
         let edges = [
             (rect.x0, rect.y0, rect.x0, rect.y1),
             (rect.x1, rect.y0, rect.x1, rect.y1),
@@ -422,7 +430,7 @@ pub fn draw(
         if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
             continue;
         }
-        let body = cell_body(rctx, t, *r, *c, cell);
+        let body = cell_body_with_def(rctx, style_def, t, *r, *c, cell);
         let tmp = Shape::table_cell(body.clone());
         #[cfg(test)]
         TEXT_CELLS_DRAWN.with(|n| n.set(n.get() + 1));

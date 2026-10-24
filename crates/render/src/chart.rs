@@ -37,18 +37,36 @@ pub(crate) fn series_fill(ctx: &Ctx, c: &Chart, i: usize, s: Option<&deckcraft_m
 }
 
 /// The fill of point `k` of a series: its own (`c:dPt`) where the file gives one, else the series'.
+#[allow(dead_code)]
 fn point_fill(ctx: &Ctx, c: &Chart, i: usize, s: &deckcraft_model::chart::Series, k: usize) -> Rgba {
-    match s.point_fills.iter().find(|(p, _)| *p == k).map(|(_, f)| f) {
-        Some(Fill::Solid { color: cc }) => ctx.color(cc, None),
-        _ => series_fill(ctx, c, i, Some(s)),
+    if let Some((_, Fill::Solid { color: cc })) = s.point_fills.iter().find(|(p, _)| *p == k) {
+        return ctx.color(cc, None);
     }
+    series_fill(ctx, c, i, Some(s))
 }
 
 /// Fill of one bar: a `<c:dPt>` fill wins, and a single-series chart that varies colours by point uses one accent per point
 /// (not waterfalls, which are never read from a `<c:barChart>`).
+#[allow(dead_code)]
 fn bar_fill(ctx: &Ctx, c: &Chart, si: usize, pi: usize, s: &deckcraft_model::chart::Series) -> Rgba {
-    if s.point_fills.iter().any(|(k, _)| *k == pi) {
-        return point_fill(ctx, c, si, s, pi);
+    bar_fill_cached(ctx, c, si, pi, s, None)
+}
+
+fn bar_fill_cached(
+    ctx: &Ctx,
+    c: &Chart,
+    si: usize,
+    pi: usize,
+    s: &deckcraft_model::chart::Series,
+    point_fills: Option<&std::collections::HashMap<usize, &Fill>>,
+) -> Rgba {
+    if let Some(Fill::Solid { color: cc }) = point_fills.and_then(|m| m.get(&pi)) {
+        return ctx.color(cc, None);
+    }
+    if point_fills.is_none()
+        && let Some((_, Fill::Solid { color: cc })) = s.point_fills.iter().find(|(k, _)| *k == pi)
+    {
+        return ctx.color(cc, None);
     }
     if c.vary_colors && c.series.len() == 1 && s.fill.is_none() && c.kind != ChartType::Waterfall {
         return series_color(ctx, c, pi);
@@ -289,6 +307,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         }
         let r = (area.width().min(area.height()) / 2.0) * 0.95;
         let cen = area.center();
+        let point_fills: std::collections::HashMap<usize, &Fill> = s.point_fills.iter().map(|(k, f)| (*k, f)).collect();
         let mut a0 = -std::f64::consts::FRAC_PI_2;
         for (i, v) in vals.iter().enumerate() {
             let sweep = v / total * std::f64::consts::TAU;
@@ -299,11 +318,9 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             p.extend(arc.append_iter(0.1));
             p.close_path();
             ctx.set_transform(m);
-            let col = s
-                .point_fills
-                .iter()
-                .find(|(k, _)| *k == i)
-                .and_then(|(_, f)| if let Fill::Solid { color: cc } = f { Some(rctx.color(cc, None)) } else { None })
+            let col = point_fills
+                .get(&i)
+                .and_then(|f| if let Fill::Solid { color: cc } = f { Some(rctx.color(cc, None)) } else { None })
                 .unwrap_or_else(|| series_color(rctx, c, i));
             ctx.set_paint(color(col, 1.0));
             ctx.fill_path(&p);
@@ -590,6 +607,13 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         let group = bar + step * (n - 1.0);
         // Error bars need each series' mean and spread: worked out once, not per point.
         let stats: Vec<deckcraft_model::chart::SeriesStats> = bars.iter().map(|(_, s)| deckcraft_model::chart::SeriesStats::of(&s.values)).collect();
+        let waterfall_ranges = if waterfall { c.waterfall_bars() } else { Vec::new() };
+        let subtotals: std::collections::HashSet<usize> =
+            if waterfall { c.subtotals.iter().copied().collect() } else { std::collections::HashSet::new() };
+        let bar_point_fills: Vec<std::collections::HashMap<usize, &Fill>> =
+            bars.iter().map(|(_, s)| s.point_fills.iter().map(|(k, f)| (*k, f)).collect()).collect();
+        let mut chart_ops: usize = 0;
+        const MAX_CHART_OPS: usize = 100_000;
         for i in 0..ncat {
             let mut pos_acc = 0.0;
             let mut neg_acc = 0.0;
@@ -599,11 +623,20 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 1.0
             };
             for (bi, (si, s)) in bars.iter().enumerate() {
+                chart_ops += 1;
+                if chart_ops > MAX_CHART_OPS {
+                    break;
+                }
                 let sec = c.on_secondary(s);
-                let v = s.values.get(i).copied().flatten().unwrap_or(0.0) / total;
+                let val = s.values.get(i).copied().flatten();
+                if val.is_none() && !stacked && !waterfall {
+                    continue;
+                }
+                let raw_v = val.unwrap_or(0.0);
+                let v = raw_v / total;
                 let start = band * slot(i) + (band - group) / 2.0 + if stacked { 0.0 } else { step * bi as f64 };
                 let (a, b) = if waterfall {
-                    c.waterfall_bars().get(i).copied().unwrap_or_default()
+                    waterfall_ranges.get(i).copied().unwrap_or_default()
                 } else if stacked {
                     if v >= 0.0 {
                         let r = (pos_acc, pos_acc + v);
@@ -626,7 +659,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                 // A waterfall colours increases, decreases and totals, and joins each bar's end
                 // to the next bar's start.
                 let fill = if waterfall {
-                    let slot = if c.subtotals.contains(&i) {
+                    let slot = if subtotals.contains(&i) {
                         2
                     } else if b < a {
                         1
@@ -635,7 +668,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                     };
                     series_color(rctx, c, slot)
                 } else {
-                    bar_fill(rctx, c, *si, i, s)
+                    bar_fill_cached(rctx, c, *si, i, s, bar_point_fills.get(bi))
                 };
                 ctx.set_transform(m);
                 ctx.set_paint(color(fill, 1.0));
@@ -656,8 +689,8 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
                         err_marks.push((mid, p0, p1, bar.min(base * 0.8) * 0.5, e.end_cap));
                     }
                 }
-                if c.data_labels {
-                    let t = c.data_label(s, s.values.get(i).copied().flatten().unwrap_or(0.0));
+                if c.data_labels && (val.is_some() || waterfall) {
+                    let t = c.data_label(s, raw_v);
                     let lr = if horiz {
                         Rect::new(r.x1 + 2.0, r.y0, r.x1 + 40.0, r.y1)
                     } else {
@@ -697,6 +730,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
         let area_kind = matches!(kind, ChartType::Area | ChartType::StackedArea | ChartType::FilledRadar);
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
+        let has_any_x = s.x_values.iter().any(|v| v.is_some());
         let mut pts = vec![];
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
@@ -711,11 +745,13 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, w: f64,
             };
             let x = match kind {
                 ChartType::Scatter | ChartType::Bubble => {
-                    match (s.x_values.get(i).copied().flatten().and_then(to_x), s.x_values.iter().flatten().next()) {
-                        (Some(x), _) => x,
+                    if let Some(x) = s.x_values.get(i).copied().flatten().and_then(to_x) {
+                        x
+                    } else if !has_any_x {
                         // No x values at all: the points are numbered 1, 2, 3...
-                        (None, None) => to_x(i as f64 + 1.0).unwrap_or(plot.x0 + band * (slot(i) + 0.5)),
-                        (None, Some(_)) => continue,
+                        to_x(i as f64 + 1.0).unwrap_or(plot.x0 + band * (slot(i) + 0.5))
+                    } else {
+                        continue;
                     }
                 }
                 _ => plot.x0 + band * (slot(i) + 0.5),
@@ -1123,5 +1159,24 @@ mod tests {
         c.kind = ChartType::Scatter;
         c.series[0].trendlines[0].kind = TrendlineType::Linear;
         assert_eq!(forecast_pad(&c), (0.0, 0.0));
+    }
+
+    #[test]
+    fn point_fills_override_and_fallback_to_series_fill() {
+        use deckcraft_model::style::Fill;
+        let c = Chart::sample(ChartType::Column);
+        let red = deckcraft_color::Rgba::rgb(255, 0, 0);
+        let s = deckcraft_model::chart::Series {
+            point_fills: vec![(1, Fill::Solid { color: deckcraft_model::style::ColorRef::rgb(red) })],
+            ..Default::default()
+        };
+        let pres = deckcraft_model::Presentation::default();
+        let master = deckcraft_model::Master::default();
+        let ctx = Ctx::for_master(&pres, &master);
+        let map: std::collections::HashMap<usize, &Fill> = s.point_fills.iter().map(|(k, f)| (*k, f)).collect();
+        let col = bar_fill_cached(&ctx, &c, 0, 1, &s, Some(&map));
+        assert_eq!(col, red);
+        let col0 = bar_fill_cached(&ctx, &c, 0, 0, &s, Some(&map));
+        assert_ne!(col0, red);
     }
 }
