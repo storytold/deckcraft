@@ -843,6 +843,92 @@ fn clicks_while_editing_a_cell_move_the_caret_between_cells() {
 }
 
 #[test]
+fn dragging_across_cells_selects_a_range_of_cells() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0, 100.0], json!([["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]]));
+    // The middle of cell (r, c): the table's top-left is (100, 100), rows are 40 pt high.
+    let mid = |r: usize, c: usize| (150.0 + 100.0 * c as f64, 120.0 + 40.0 * r as f64);
+    let cells = |s: &Session| s.doc().unwrap().selection.cells;
+    let drag = |s: &mut Session, kind, (x, y): (f64, f64)| s.pointer(tev(kind, x, y)).unwrap();
+    s.execute("text.edit", &json!({"id": id, "cell": [0, 0]})).unwrap();
+    drag(&mut s, PointerKind::Down, mid(0, 0));
+    drag(&mut s, PointerKind::Drag, mid(1, 1));
+    assert_eq!(cells(&s), Some((id, (0, 0), (1, 1))), "leaving the cell selects whole cells");
+    assert!(text_sel(&s).is_none());
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![id]);
+    // Back in the cell the drag started in, it selects text there again.
+    drag(&mut s, PointerKind::Drag, mid(0, 0));
+    assert_eq!((cells(&s), text_sel(&s).and_then(|t| t.cell)), (None, Some((0, 0))));
+    drag(&mut s, PointerKind::Drag, mid(2, 1));
+    drag(&mut s, PointerKind::Up, mid(2, 1));
+    assert_eq!(cells(&s), Some((id, (0, 0), (2, 1))));
+    // Shift+arrow moves the range's far corner.
+    let shift = Mods { shift: true, ..Default::default() };
+    s.key("ArrowRight", shift).unwrap();
+    assert_eq!(cells(&s), Some((id, (0, 0), (2, 2))));
+    s.key("ArrowUp", shift).unwrap();
+    assert_eq!(cells(&s), Some((id, (0, 0), (1, 2))));
+    let x = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+    assert_eq!((x.x, x.y), (100.0, 100.0), "Shift+arrow doesn't move the table");
+    // Formatting applies to the selected cells only.
+    s.execute("format.bold", &json!({})).unwrap();
+    s.execute("format.alignCenter", &json!({})).unwrap();
+    let t = table_of(&s, id);
+    let bold = |r: usize, c: usize| t.cell(r, c).unwrap().text.paragraphs[0].runs[0].props.bold == Some(true);
+    assert!(bold(0, 0) && bold(1, 2) && !bold(2, 0) && !bold(2, 2), "{t:?}");
+    let centered = |r: usize, c: usize| t.cell(r, c).unwrap().text.paragraphs[0].props.align.is_some();
+    assert!(centered(1, 1) && !centered(2, 1));
+    // Delete clears their text and keeps the table and the other cells.
+    s.key("Delete", Mods::default()).unwrap();
+    let t = table_of(&s, id);
+    let texts: Vec<String> = (0..3).flat_map(|r| (0..3).map(move |c| (r, c))).map(|(r, c)| t.cell(r, c).unwrap().text.text()).collect();
+    assert_eq!(texts, ["", "", "", "", "", "", "g", "h", "i"]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(table_of(&s, id).cell(0, 0).unwrap().text.text(), "a");
+    // Cut puts the cells' text on the clipboard, a tab between cells and a line per row, and
+    // clears them.
+    let r = s.execute("edit.cut", &json!({})).unwrap();
+    assert_eq!(r["text"], "a\tb\tc\nd\te\tf");
+    assert!(s.clipboard.shapes.is_empty());
+    assert_eq!(s.clipboard.text.as_ref().map(|b| b.paragraphs.len()), Some(2));
+    assert_eq!(table_of(&s, id).cell(1, 1).unwrap().text.text(), "");
+    assert_eq!(table_of(&s, id).cell(2, 1).unwrap().text.text(), "h");
+    s.execute("edit.undo", &json!({})).unwrap();
+    // A click in the table puts the caret in the clicked cell and ends the range.
+    drag(&mut s, PointerKind::Down, mid(2, 2));
+    drag(&mut s, PointerKind::Up, mid(2, 2));
+    assert_eq!((cells(&s), text_sel(&s).and_then(|t| t.cell)), (None, Some((2, 2))));
+    // A range that reaches into a merged cell takes all of it.
+    s.execute("table.merge", &json!({"id": id, "from": [0, 1], "to": [0, 2]})).unwrap();
+    s.execute("text.edit", &json!({"id": id, "cell": [1, 0]})).unwrap();
+    drag(&mut s, PointerKind::Down, mid(1, 0));
+    drag(&mut s, PointerKind::Drag, mid(0, 1));
+    drag(&mut s, PointerKind::Up, mid(0, 1));
+    assert_eq!(cells(&s), Some((id, (1, 0), (0, 1))));
+    let range = |s: &Session| cmd::table::selected_range(cells(s), id, &table_of(s, id));
+    assert_eq!(range(&s), Some(((0, 0), (1, 2))));
+    // Shift+arrow keeps the cell the range started from: Shift+Down moves the end to row 1, so the
+    // range no longer includes the merged cell in row 0.
+    s.key("ArrowDown", shift).unwrap();
+    assert_eq!(range(&s), Some(((1, 0), (1, 1))));
+    // Cut of a cell a merge covers takes the whole merged cell, and clears what it copied.
+    let merged = table_of(&s, id).cell(0, 1).unwrap().text.text();
+    assert!(!merged.is_empty());
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 2], "to": [0, 2]})).unwrap();
+    let r = s.execute("edit.cut", &json!({})).unwrap();
+    assert_eq!(r["text"].as_str(), Some(merged.as_str()));
+    assert_eq!(table_of(&s, id).cell(0, 1).unwrap().text.text(), "");
+    // Delete naming a shape deletes that shape, cells selected or not.
+    s.execute("table.selectCells", &json!({"id": id, "from": [1, 1], "to": [2, 2]})).unwrap();
+    s.execute("edit.delete", &json!({"id": id})).unwrap();
+    assert!(s.doc().unwrap().shape(id).is_none());
+    // A span past the table's edge (from a file) stops at the edge.
+    let mut t = deckcraft_model::Table::new(3, 3, 300.0, 40.0);
+    (t.rows[0].cells[0].row_span, t.rows[0].cells[0].grid_span) = (u32::MAX, u32::MAX);
+    assert_eq!(cmd::table::cell_block(&t, (1, 1), (2, 2)), ((0, 0), (2, 2)));
+}
+
+#[test]
 fn a_click_in_a_selected_table_enters_the_clicked_cell() {
     let mut s = session();
     let id = table_at(&mut s, &[200.0, 200.0], json!([["a", "b"], ["c", "Hello world"]]));

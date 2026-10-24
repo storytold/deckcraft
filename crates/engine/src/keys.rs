@@ -90,6 +90,21 @@ impl Session {
                 return Ok(json!({"handled": true}));
             }
         }
+        if !editing && has_shapes && !mods.cmd && mods.shift && !mods.alt {
+            // Shift+arrow grows or shrinks a selected range of table cells.
+            let d = match k {
+                "left" => Some((0, -1)),
+                "right" => Some((0, 1)),
+                "up" => Some((-1, 0)),
+                "down" => Some((1, 0)),
+                _ => None,
+            };
+            if let Some((dr, dc)) = d
+                && crate::cmd::table::extend_selected_cells(self, dr, dc)?
+            {
+                return Ok(json!({"handled": true}));
+            }
+        }
         if !editing && has_shapes && !mods.cmd {
             let step = if mods.alt { 1.0 } else { 6.0 };
             let d = match k {

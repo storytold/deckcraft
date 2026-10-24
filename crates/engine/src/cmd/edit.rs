@@ -123,6 +123,11 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
+    // Selected table cells copy as their text: a tab between cells and a paragraph per row.
+    if let Some(plain) = super::table::selected_cells_text(st).filter(|_| p.get("id").is_none() && p.get("ids").is_none()) {
+        s.clipboard = crate::Clipboard { text: Some(TextBody::from_text(&plain)), plain: plain.clone(), ..Default::default() };
+        return Ok(plain);
+    }
     let shapes: Vec<Shape> = st
         .selection
         .shapes
@@ -586,6 +591,11 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     }
     if slides_scope(s, p) && ids_param(p, "ids").is_none() {
         return s.execute("slide.delete", &json!({}));
+    }
+    // With table cells selected, Delete clears their text and keeps the table, as in PowerPoint.
+    let sel = &s.doc()?.selection;
+    if ids_param(p, "ids").is_none() && p.get("id").is_none() && sel.cells.is_some_and(|c| sel.shapes == [c.0]) {
+        return super::table::clear_selected_cells(s);
     }
     let ids = targets(s, p)?;
     if ids.is_empty() {

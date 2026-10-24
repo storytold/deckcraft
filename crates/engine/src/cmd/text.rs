@@ -1297,12 +1297,18 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
     if ids.is_empty() {
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
+    let cells = st.selection.cells;
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+        let id = sh.id;
         match &mut sh.kind {
             ShapeKind::Table(t) => {
-                for row in &mut t.rows {
-                    for c in &mut row.cells {
-                        ed::format_all(&mut c.text, f);
+                // Only the selected cells, when a range of them is selected.
+                let range = super::table::selected_range(cells, id, t);
+                for (r, row) in t.rows.iter_mut().enumerate() {
+                    for (c, cell) in row.cells.iter_mut().enumerate() {
+                        if super::table::in_range(range, r, c) {
+                            ed::format_all(&mut cell.text, f);
+                        }
                     }
                 }
             }
@@ -1388,12 +1394,17 @@ pub(crate) fn format_para(s: &mut Session, f: &(dyn Fn(&mut deckcraft_model::tex
     if ids.is_empty() {
         return Err(bad("format", SELECT_TEXT_OR_SHAPE));
     }
+    let cells = st.selection.cells;
     edit_shapes(s, &json!({"ids": ids}), "format", |sh| {
+        let id = sh.id;
         match &mut sh.kind {
             ShapeKind::Table(t) => {
-                for row in &mut t.rows {
-                    for c in &mut row.cells {
-                        c.text.paragraphs.iter_mut().for_each(f);
+                let range = super::table::selected_range(cells, id, t);
+                for (r, row) in t.rows.iter_mut().enumerate() {
+                    for (c, cell) in row.cells.iter_mut().enumerate() {
+                        if super::table::in_range(range, r, c) {
+                            cell.text.paragraphs.iter_mut().for_each(f);
+                        }
                     }
                 }
             }

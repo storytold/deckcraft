@@ -1061,6 +1061,20 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
             .map(|q| xf.to_screen(f.affine * q));
         poly(painter, pts, Stroke::new(2.0, t.accent));
     }
+    // Shade the selected table cells in the text-selection color, each merged cell as it is drawn.
+    if let Some((id, ..)) = st.selection.cells
+        && st.selection.text.is_none()
+        && let Some(sh) = st.shape(id)
+        && let deckcraft_model::ShapeKind::Table(table) = &sh.kind
+        && let Some(f) = deckcraft_engine::cmd::table::table_frame(st, sh)
+    {
+        use deckcraft_engine::cmd::table::{in_range, selected_range};
+        let range = selected_range(st.selection.cells, id, table);
+        for (_, _, cr) in f.cells.iter().filter(|(r, c, _)| range.is_some() && in_range(range, *r, *c)) {
+            let pts = [Point::new(cr.x0, cr.y0), Point::new(cr.x1, cr.y0), Point::new(cr.x1, cr.y1), Point::new(cr.x0, cr.y1)];
+            painter.add(egui::Shape::convex_polygon(pts.iter().map(|q| xf.to_screen(f.affine * *q)).collect(), t.text_selection, Stroke::NONE));
+        }
+    }
     // Smart guides, marquee, previews.
     for g in &app.session.tool.guides {
         let (a, b) =
