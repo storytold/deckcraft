@@ -107,7 +107,7 @@ struct Pic {
 
 impl Pic {
     fn is_p(&self) -> bool {
-        !self.idr && !self.b && self.mbs.iter().any(|m| m.is_none())
+        !self.idr && !self.b && self.mbs.iter().any(Option::is_none)
     }
     fn inter(&self) -> bool {
         self.b || self.is_p()

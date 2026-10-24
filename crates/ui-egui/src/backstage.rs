@@ -572,8 +572,8 @@ fn template_tiles(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) ->
 /// File name and folder of a recent path, split as text (nothing on disk is read).
 pub fn split_path(path: &str) -> (String, String) {
     let p = std::path::Path::new(path);
-    let name = p.file_name().and_then(|n| n.to_str()).unwrap_or(path).to_string();
-    let folder = p.parent().and_then(|f| f.to_str()).unwrap_or("").to_string();
+    let name = p.file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(path).to_string();
+    let folder = p.parent().and_then(std::path::Path::to_str).unwrap_or("").to_string();
     (name, folder)
 }
 
@@ -827,7 +827,7 @@ fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 app.set_status("Copied the path");
             }
             #[cfg(not(target_arch = "wasm32"))]
-            if let Some(dir) = std::path::Path::new(p).parent().and_then(|d| d.to_str())
+            if let Some(dir) = std::path::Path::new(p).parent().and_then(std::path::Path::to_str)
                 && ui.button("Open file location").clicked()
             {
                 app.open_url(&format!("file:///{}", dir.replace('\\', "/").trim_start_matches('/')));

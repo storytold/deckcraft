@@ -407,7 +407,7 @@ fn frame_paths(out: &str, ts: &[f64]) -> Result<Vec<String>, String> {
         return Ok(vec![out.to_string()]);
     }
     let p = std::path::Path::new(out);
-    let stem = p.file_stem().and_then(|x| x.to_str()).unwrap_or("frame");
+    let stem = p.file_stem().and_then(std::ffi::OsStr::to_str).unwrap_or("frame");
     let mut paths: Vec<String> = Vec::with_capacity(ts.len());
     for t in ts {
         let path = p.with_file_name(format!("{stem}-t{t:.3}.png")).to_string_lossy().into_owned();

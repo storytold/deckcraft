@@ -272,7 +272,7 @@ fn pick_album_picture(app: &mut SlideApp) -> Option<Value> {
         app.set_status("That picture is larger than 32 MB");
         return None;
     }
-    let name = std::path::Path::new(&path).file_name().and_then(|n| n.to_str()).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
+    let name = std::path::Path::new(&path).file_name().and_then(std::ffi::OsStr::to_str).filter(|s| !s.is_empty()).unwrap_or("picture").to_string();
     Some(json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&loaded)}))
 }
 

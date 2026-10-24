@@ -1217,7 +1217,7 @@ fn savedc_restores_text_colour_and_font() {
 fn efont(height: i32, esc: i32, weight: i32, italic: u8, charset: u8, face: &str) -> Vec<u8> {
     let mut v = cat(vec![h32(1), e32(height), e32(0), e32(esc), e32(esc), e32(weight)]);
     v.extend([italic, 0, 0, charset, 0, 0, 0, 0]);
-    let mut name: Vec<u8> = face.encode_utf16().flat_map(|u| u.to_le_bytes()).collect();
+    let mut name: Vec<u8> = face.encode_utf16().flat_map(u16::to_le_bytes).collect();
     name.resize(64, 0);
     v.extend(name);
     erec(82, &v)

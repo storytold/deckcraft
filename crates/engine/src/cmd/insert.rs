@@ -577,7 +577,7 @@ fn commit_album(s: &mut Session, items: Vec<AlbumItem>, opts: AlbumOpts, replace
 }
 
 fn album_norm(s: &str) -> String {
-    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()
+    s.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_lowercase()
 }
 
 fn album_layout(p: &Value) -> Result<AlbumLayout> {
@@ -770,7 +770,7 @@ fn image_px(bytes: &[u8]) -> (f64, f64) {
 }
 
 fn file_stem(name: &str) -> String {
-    let base = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or(name);
+    let base = std::path::Path::new(name).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(name);
     let stem = match base.rsplit_once('.') {
         Some((s, ext)) if !s.is_empty() && !ext.is_empty() => s,
         _ => base,

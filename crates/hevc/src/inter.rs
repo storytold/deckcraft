@@ -25,7 +25,7 @@ fn filt_w<const T: usize, const W: usize>(src: &[i16], step: usize, f: &[i8; T],
     let mut acc = [0i32; W];
     for k in 0..T {
         let c = f[k] as i32;
-        let Some(p) = src.get(k * step..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = src.get(k * step..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {

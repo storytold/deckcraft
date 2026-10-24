@@ -242,14 +242,14 @@ fn filter_rows<const W: usize>(
     }
     for i in 0..h {
         let ci = ((i + 2) * PAD_STRIDE + 2) as isize;
-        let Some(&x) = b16.get(ci as usize..).and_then(|r| r.first_chunk::<W>()) else {
+        let Some(&x) = b16.get(ci as usize..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         let (mut sum, mut max, mut min) = ([0i16; W], x, x);
         for &(off, weight, thr, adj) in taps {
             let (weight, thr) = (weight as i16, thr as i16);
             let start = (ci + off) as usize;
-            let Some(p) = b16.get(start..).and_then(|r| r.first_chunk::<W>()) else {
+            let Some(p) = b16.get(start..).and_then(<[_]>::first_chunk::<W>) else {
                 return;
             };
             for j in 0..W {

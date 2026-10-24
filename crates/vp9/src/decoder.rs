@@ -347,7 +347,7 @@ impl Decoder {
                 let sz = if last {
                     data.len() - pos
                 } else {
-                    let Some(&b) = data.get(pos..).and_then(|d| d.first_chunk::<4>()) else {
+                    let Some(&b) = data.get(pos..).and_then(<[_]>::first_chunk::<4>) else {
                         return Err(Error::Invalid("tile size beyond frame data".into()));
                     };
                     let s = u32::from_be_bytes(b) as usize;

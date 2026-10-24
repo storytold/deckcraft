@@ -678,7 +678,7 @@ fn hpass<const W: usize>(src: &[u16], hf: &[i16; 8], out: &mut [i32], half: i32,
     let mut acc = [half; W];
     for t in 0..8 {
         let f = hf[t] as i32;
-        let Some(p) = src.get(t..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = src.get(t..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {
@@ -699,7 +699,7 @@ fn vpass<const W: usize>(rows: &[i32], vf: &[i16; 8], out: &mut [i32], half: i32
     let mut acc = [half; W];
     for t in 0..8 {
         let f = vf[t] as i32;
-        let Some(p) = rows.get(t * W..).and_then(|s| s.first_chunk::<W>()) else {
+        let Some(p) = rows.get(t * W..).and_then(<[_]>::first_chunk::<W>) else {
             return;
         };
         for j in 0..W {

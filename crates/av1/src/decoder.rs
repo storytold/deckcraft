@@ -61,7 +61,7 @@ impl<T: Clone> Slot<T> {
     }
 
     fn set(&self, v: Result<T>) {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         *g = Some(v);
         self.cv.notify_all();
     }
@@ -71,12 +71,12 @@ impl<T: Clone> Slot<T> {
     }
 
     fn wait(&self) -> Result<T> {
-        let mut g = self.value.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = self.value.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         loop {
             if let Some(v) = g.as_ref() {
                 return v.clone();
             }
-            g = self.cv.wait(g).unwrap_or_else(|e| e.into_inner());
+            g = self.cv.wait(g).unwrap_or_else(std::sync::PoisonError::into_inner);
         }
     }
 }
