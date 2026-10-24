@@ -327,12 +327,18 @@ impl Dpb {
                     had5 = true;
                 }
                 6 => {
-                    for e in &mut self.entries {
-                        if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_frame_idx {
-                            e.mark = RefMark::Unused;
+                    let allowed = match self.max_long_term_frame_idx {
+                        Some(max) => m.long_term_frame_idx <= max,
+                        None => false,
+                    };
+                    if allowed {
+                        for e in &mut self.entries {
+                            if e.mark == RefMark::Long && e.long_term_frame_idx == m.long_term_frame_idx {
+                                e.mark = RefMark::Unused;
+                            }
                         }
+                        *cur_long = Some(m.long_term_frame_idx);
                     }
-                    *cur_long = Some(m.long_term_frame_idx);
                 }
                 _ => {}
             }
@@ -410,6 +416,11 @@ impl Dpb {
         } else {
             while self.entries.len() >= self.capacity {
                 if !self.bump(out) {
+                    if let Some(pos) = self.entries.iter().position(|e| !e.needed_for_output) {
+                        self.entries.remove(pos);
+                    } else {
+                        self.entries.remove(0);
+                    }
                     break;
                 }
             }

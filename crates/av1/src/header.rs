@@ -906,6 +906,9 @@ impl FrameHeader {
             let mut widest = 0;
             let mut start = 0;
             while start < sb_cols {
+                if t.mi_col_starts.len() >= MAX_TILE_COLS {
+                    return Err(Error::Invalid("tile_cols exceeds MAX_TILE_COLS"));
+                }
                 t.mi_col_starts.push(start << sb_shift);
                 let max_width = (sb_cols - start).min(max_tile_width_sb);
                 let size = r.ns(max_width)? + 1;
@@ -923,6 +926,9 @@ impl FrameHeader {
             let max_tile_height_sb = (max_tile_area_sb / widest.max(1)).max(1);
             let mut start = 0;
             while start < sb_rows {
+                if t.mi_row_starts.len() >= MAX_TILE_ROWS {
+                    return Err(Error::Invalid("tile_rows exceeds MAX_TILE_ROWS"));
+                }
                 t.mi_row_starts.push(start << sb_shift);
                 let max_height = (sb_rows - start).min(max_tile_height_sb);
                 let size = r.ns(max_height)? + 1;

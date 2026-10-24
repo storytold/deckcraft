@@ -466,6 +466,9 @@ impl Decoder {
                     let mut r = BitReader::new(payload);
                     let shown = self.frame_header(&mut r, temporal_id, spatial_id)?;
                     if let Some(o) = shown {
+                        if out.iter().filter(|(o, _, _)| matches!(o, Output::Existing { .. })).count() >= 32 {
+                            return Err(Error::Invalid("too many frame outputs in chunk"));
+                        }
                         out.push((o, tu, spatial_id));
                         continue;
                     }
