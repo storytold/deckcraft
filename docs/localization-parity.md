@@ -1,11 +1,17 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Japanese interface, second step: the dialog bodies and messages, the Format/selection panes and the File tab's page contents are drawn in Japanese too, 879 of ~1,050 strings, 84%; some tooltips and help text still English; previous: minor, Japanese interface, first step: a per-language TSV catalog, system-language following and the Interface language setting; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+DeckCraft's interface is written in English, and a catalog per language
+(`crates/ui-egui/src/i18n/*.tsv`) translates the strings the UI draws: English strings are the
+keys, so a string without a translation shows in English and coverage grows one entry at a time.
+The `language` setting follows the operating system by default; Preferences ▸ Interface language
+picks English or 日本語 by hand. The Japanese catalog (879 entries) covers the menus, ribbon tabs
+and buttons, status bar, command labels, command palette, the Preferences dialog and most dialog
+bodies and messages; some tooltips and help text still show English. Requests: #15 (follow the system
+language), #30 and PR #34 (Ukrainian, open). Dimension score: **~8% ready** (estimated: English
+complete, slide-text script support partly there), **55–90 h** to parity plus native-speaker
+review.
 
 ## How the numbers are measured
 
@@ -32,21 +38,22 @@ support partly there), **55–90 h** to parity plus native-speaker review.
 | French | fr | 0 (0%) | no | full (Latin) | no | none | yes (fr, fr-CA) | 3–5 |
 | Portuguese | pt | 0 (0%) | no | full (Latin) | no | none | yes (pt-BR, pt-PT) | 3–5 |
 | Indonesian | id | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
-| Japanese | ja | 0 (0%) | no | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | none | yes | 4–7 |
+| Japanese | ja | 879 of ~1,050 (84%) | menus, ribbon, status bar, Preferences, command labels and most dialog bodies and messages yes; some tooltips and help still English | renders with system or craft-fonts Japanese faces; IME composition (#101); vertical text is rotated, not laid out vertically | no | partial (in review) | yes | 2–4 |
 | German | de | 0 (0%) | no | full (Latin) | no | none | yes | 3–5 |
 | Korean | ko | 0 (0%) | no | system Hangul fonts, in the interface too; IME composition (#101) | no | none | yes | 4–7 |
 | Vietnamese | vi | 0 (0%) | no | stacked diacritics through HarfRust | no | none | **no** (Windows only) | 3–5 |
 
-Other languages shipped: **0** (Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
+Other languages shipped: **0** (Japanese, the first catalog, is in review with this change; Ukrainian is in review as PR #34). PowerPoint for Mac ships 16 more
 than the twelve above: Czech, Danish, Greek, Finnish, Hebrew, Hungarian, Italian, Dutch, Norwegian,
 Polish, Russian, Slovak, Swedish, Thai, Turkish and Traditional Chinese.
 
-Per-language hours assume the infrastructure exists: **8–14 h** once for a string catalog (copy a
-sibling app's approach, e.g. EffectCraft's menu and panel catalogs), a language setting that follows
-the system (#15), plural and number formatting, and an `xtask` check that every key has a
-translation. IME composition landed with #101 (slide text, table cells, notes and text fields;
-one undo step per composition, underlined in place); the hours that included it are kept until
-the next re-measure.
+Per-language hours assume the infrastructure exists. That infrastructure is now in DeckCraft: the
+sibling apps' TSV catalog format, system-language following, the Interface language setting and
+catalog tests (format, duplicates, placeholders, well-formed bundled files), so a new language is
+its catalog file plus one row in `LANGUAGES`. Remaining infrastructure work is plural and number
+formatting and an `xtask` check that every key has a translation. IME composition landed with #101
+(slide text, table cells, notes and text fields; one undo step per composition, underlined in
+place); the hours that included it are kept until the next re-measure.
 
 ## Proofing languages
 
@@ -58,6 +65,8 @@ common misspellings (`crates/engine/src/cmd/review.rs`); see [gaps.md](gaps.md#p
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Japanese interface, second step: 325 more catalog entries (879 of ~1,050, 84%) for the dialog bodies, their field labels and messages, the Format/selection panes, the File tab's page contents and the About window; the strings drawn by the shared field, check and choice helpers and by the backstage text helpers are translated too, and a catalog test pins the dialog coverage. Some tooltips and help text remain English |
+| 2026-10-21 | major | Japanese interface, first step: the TSV catalog system ported from the sibling apps, system-language following, the Interface language setting (auto \| English \| 日本語) in Preferences, and 554 Japanese strings covering the menus, ribbon, status bar, command labels, command palette and the Preferences dialog; other dialog bodies still English |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
 | 2026-10-10 | major | Created: twelve-language table, ~1,050 UI strings measured, PowerPoint for Mac's 26 languages from its bundle |

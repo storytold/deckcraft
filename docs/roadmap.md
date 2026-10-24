@@ -34,7 +34,7 @@ points and lead the beta plan.
    this repo, media options and rewind on save (#74, #77), relationship-bearing SmartArt and OLE
    (#203), EMF+ records and SVG. 31–55 h.
 3. **Review the open PRs:** equations (#55), browser print (#66), Morph alignment (#67), macOS
-   open-with (#68), font lookup (#80), Ukrainian (#34, after the catalog exists). 4–8 h.
+   open-with (#68), font lookup (#80), Ukrainian (#34; the string catalog it needs now exists). 4–8 h.
 
 ## Plan to beta (~120–210 h; ~40–70 h wall clock with 3–4 agents)
 

@@ -1148,7 +1148,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(tl!("Close")).clicked() {
             keep = false;
         }
         if child.button("▶").clicked() {
@@ -1236,7 +1236,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             for (i, secs) in show.timings.clone() {
                 let _ = app.run("transition.timing", json!({"index": i, "after": (secs * 1000.0).round() as u64}));
             }
-            app.set_status("Slide timings recorded.");
+            app.set_status(tl!("Slide timings recorded."));
         }
         let last = show.state.slide;
         let _ = app.run("slide.go", json!({"index": last}));
@@ -2061,7 +2061,7 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
+                    ui.label(egui::RichText::new(tl!("Notes")).size(13.0).color(Color32::from_gray(170)));
                     if ui.button("A-").clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
