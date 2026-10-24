@@ -134,6 +134,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-23 | Preset geometry: the `extra` module dispatches its 38 extra outlines on a typed `Name` enum instead of string compares, with a `from_str` parse at the entry point (behaviour unchanged) |
 | 2026-10-23 | Chart text colour: `chart.options {textColor}` and Font Color on a selected chart colour its title, axes, legend and data labels; the colour is written to the chart part (`c:txPr` on the axes, legend, labels and chart, the title's run defaults) so an imported chart keeps its `txPr` colours through an edit and a save; text without a colour of its own takes PowerPoint's default, the theme's text colour at 65 % plus 35 % (595959 on a light theme, light grey on a dark one) |
 | 2026-10-23 | Format Background ▸ Apply to All also sets the background of the slide masters the slides use (and clears their layouts' overrides), so new slides keep it (#891) |
 | 2026-10-22 | Table text takes the master's other-text style (`otherStyle`), shapes and text boxes the presentation's default text style, as PowerPoint for Mac draws them (synthetic probe: 14 pt cells under a 14 pt `otherStyle` and a 26 pt `defaultTextStyle`); a private deck's table had been drawn 20 pt instead of 18 |
@@ -278,6 +279,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-23 | trivial | Progress log: extra preset outlines dispatch on a `Name` enum |
 | 2026-10-22 | trivial | Progress log: Animation Pane ▸ Play From. Scores unchanged |
 | 2026-10-23 | trivial | Progress log: scroll bars on the zoomed slide pane (#1157). Scores and milestone names unchanged |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
