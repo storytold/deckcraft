@@ -1714,7 +1714,20 @@ impl SlideApp {
                 _ => {}
             }
         }
-        if ctx.memory(|m| m.focused().is_some()) || self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some() {
+        let modal = self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some();
+        // While slide text is being edited, the text owns the keyboard (#93). Tab and the arrow
+        // keys move egui's keyboard focus onto ordinary widgets (the window's drag handle, ribbon
+        // buttons), and that stray focus would swallow every later key and end text entry. Let it
+        // go; a real text field or an open menu keeps its keys.
+        if !modal
+            && self.session.active().is_some_and(|d| d.selection.text.is_some())
+            && !ctx.text_edit_focused()
+            && !ctx.any_popup_open()
+            && let Some(id) = ctx.memory(|m| m.focused())
+        {
+            ctx.memory_mut(|m| m.surrender_focus(id));
+        }
+        if ctx.memory(|m| m.focused().is_some()) || modal {
             return;
         }
         if self.backstage.is_some() {
@@ -2553,6 +2566,39 @@ mod tests {
             h.state().session.active().unwrap().doc.slides[0].shapes[0].text.as_ref().unwrap().paragraphs[1].level
         };
         assert_eq!(level(&harness), 1);
+    }
+
+    /// #93: Tab in an edited list indented the item but handed the keyboard to egui's focus
+    /// cycle: the stray focus (e.g. on the window's drag handle) swallowed every later key, so the
+    /// list could neither be typed into nor continued with Enter.
+    #[test]
+    fn tab_in_an_edited_list_keeps_the_keyboard() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+        harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+        harness.event(egui::Event::Text("one".into()));
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Tab); // Increase List Level
+        harness.run_steps(2);
+        harness.event(egui::Event::Text("sub".into()));
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter); // continues the list
+        harness.run_steps(2);
+        harness.event(egui::Event::Text("two".into()));
+        harness.run_steps(2);
+        assert_eq!(title_text(harness.state()), "one\nsub\ntwo", "typing after Tab must reach the text");
+        let body = harness.state().session.active().unwrap().doc.slides[0].shapes[0].text.clone().unwrap();
+        let levels: Vec<u8> = body.paragraphs.iter().map(|p| p.level).collect();
+        assert_eq!(levels, vec![0, 1, 1], "Tab indents one level; Enter keeps the level");
     }
 
     #[test]
