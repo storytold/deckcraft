@@ -1911,6 +1911,38 @@ fn group_child_scale_does_not_scale_line_widths() {
 }
 
 #[test]
+fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_pixels() {
+    // PowerPoint draws a picture's own fill behind its transparent pixels (and an old equation
+    // object's fallback picture on its coloured box). Here the left half of the image is clear.
+    let png = {
+        let img = image::RgbaImage::from_fn(8, 4, |x, _| if x < 4 { image::Rgba([0, 0, 0, 0]) } else { image::Rgba([20, 20, 160, 255]) });
+        let mut out = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let orange = Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 153, 0)));
+    for (object, fill) in [(false, None), (false, Some(orange.clone())), (true, Some(orange.clone()))] {
+        let mut p = Presentation::default();
+        let media = p.add_media("half.png", "image/png", png.clone()).expect("media");
+        let kind = if object {
+            ShapeKind::Opaque { xml: String::new(), preview: Some(media), label: "Equation.3".into(), parts: vec![] }
+        } else {
+            ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } }
+        };
+        let sh = Shape { id: ShapeId(630), xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)), kind, fill: fill.clone(), ..Default::default() };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let (clear, opaque) = (img.pixel(200, 200), img.pixel(400, 200));
+        assert!(opaque[2] > 140 && opaque[0] < 40, "the picture's own pixels ({object}): {opaque:?}");
+        if fill.is_some() {
+            assert_eq!(clear[..3], [255, 153, 0], "the fill behind the clear half ({object})");
+        } else {
+            assert!(clear[..3].iter().all(|v| *v > 240), "no fill: the slide shows through: {clear:?}");
+        }
+    }
+}
+
+#[test]
 fn a_picture_casts_its_shadow_from_its_pixels() {
     // PowerPoint shades only where a picture paints: a logo on a transparent background casts the
     // logo's shadow, not its frame's. Here the left half of the image is transparent.
