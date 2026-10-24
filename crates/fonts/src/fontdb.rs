@@ -484,25 +484,7 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
     }
     let home = std::env::var_os("HOME").map(std::path::PathBuf::from);
     if cfg!(target_os = "macos") {
-        dirs.extend(["/System/Library/Fonts", "/Library/Fonts"].map(Into::into));
-        if let Some(h) = &home {
-            dirs.push(h.join("Library/Fonts"));
-            // Fonts Microsoft Office downloads on demand (Aptos…), used where Office put them.
-            dirs.push(h.join("Library/Group Containers/UBF8T346G9.Office/FontCache/4/CloudFonts"));
-        }
-        // Fonts Office installs inside its apps.
-        for app in ["Microsoft PowerPoint", "Microsoft Word", "Microsoft Excel"] {
-            dirs.push(std::path::PathBuf::from(format!("/Applications/{app}.app/Contents/Resources/DFonts")));
-        }
-        // Fonts macOS ships as assets (PingFang, Yu Mincho, …): com_apple_MobileAsset_Font<N>.
-        for parent in ["/System/Library/AssetsV2", "/System/Library/AssetsV2/PreinstalledAssetsV2/InstallWithOs"] {
-            let Ok(entries) = std::fs::read_dir(parent) else { continue };
-            for e in entries.flatten() {
-                if e.file_name().to_string_lossy().starts_with("com_apple_MobileAsset_Font") {
-                    dirs.push(e.path());
-                }
-            }
-        }
+        dirs = macos_font_dirs(home.as_deref());
     } else if cfg!(windows) {
         let root = std::env::var_os("WINDIR").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
         dirs.push(root.join("Fonts"));
@@ -532,6 +514,38 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
     }
     let mut seen = std::collections::HashSet::new();
     dirs.retain(|d| seen.insert(d.clone()));
+    dirs
+}
+
+/// The macOS font folders for a home directory: the system's, the user's own, the fonts Office
+/// installs inside its apps, and the font assets macOS ships (`com_apple_MobileAsset_Font<N>`).
+///
+/// Microsoft Office's **containers** are deliberately not among them (#981): they hold another
+/// app's data, so on macOS 14 and later reading them raises the "would like to access data from
+/// other apps" prompt, whose `opendir` blocks until somebody answers it. The scan runs on the main
+/// thread before the first lookup, so a headless `deckcraft-cli render` hung behind a prompt nobody
+/// was there to dismiss. The Office families that live there are covered by [`substitutes`] instead.
+///
+/// Compiled for every target (`std::fs` only fails at run time on the web, and
+/// [`system_font_dirs`] returns before this is reached there).
+pub(crate) fn macos_font_dirs(home: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    let mut dirs: Vec<std::path::PathBuf> = vec!["/System/Library/Fonts".into(), "/Library/Fonts".into()];
+    if let Some(h) = home {
+        dirs.push(h.join("Library/Fonts"));
+    }
+    // Fonts Office installs inside its apps (bundle data, readable without a prompt).
+    for app in ["Microsoft PowerPoint", "Microsoft Word", "Microsoft Excel"] {
+        dirs.push(std::path::PathBuf::from(format!("/Applications/{app}.app/Contents/Resources/DFonts")));
+    }
+    // Fonts macOS ships as assets (PingFang, Yu Mincho, …): com_apple_MobileAsset_Font<N>.
+    for parent in ["/System/Library/AssetsV2", "/System/Library/AssetsV2/PreinstalledAssetsV2/InstallWithOs"] {
+        let Ok(entries) = std::fs::read_dir(parent) else { continue };
+        for e in entries.flatten() {
+            if e.file_name().to_string_lossy().starts_with("com_apple_MobileAsset_Font") {
+                dirs.push(e.path());
+            }
+        }
+    }
     dirs
 }
 

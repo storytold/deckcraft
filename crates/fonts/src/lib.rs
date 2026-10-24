@@ -176,6 +176,25 @@ mod tests {
     }
 
     #[test]
+    fn the_macos_scan_leaves_other_apps_data_alone() {
+        let home = std::path::Path::new("/Users/tester");
+        let dirs = fontdb::macos_font_dirs(Some(home));
+        assert!(dirs.contains(&std::path::PathBuf::from("/System/Library/Fonts")), "{dirs:?}");
+        assert!(dirs.contains(&home.join("Library/Fonts")), "{dirs:?}");
+        // Fonts inside Office's own app bundles stay: they are readable without a prompt.
+        assert!(dirs.iter().any(|d| d.ends_with("Microsoft PowerPoint.app/Contents/Resources/DFonts")), "{dirs:?}");
+        // Office's containers do not: they are another app's data, so on macOS 14+ reading them
+        // raises the privacy prompt that blocks the scan — and with it a headless render — until
+        // somebody answers it (#981). The families there are covered by `substitutes`.
+        assert!(!dirs.iter().any(|d| d.to_string_lossy().contains("UBF8T346G9.Office")), "{dirs:?}");
+        assert!(!dirs.iter().any(|d| d.to_string_lossy().contains("CloudFonts")), "{dirs:?}");
+        // Without a home the system folders are still scanned, and still nothing of Office's.
+        let none = fontdb::macos_font_dirs(None);
+        assert!(none.contains(&std::path::PathBuf::from("/Library/Fonts")), "{none:?}");
+        assert!(!none.iter().any(|d| d.to_string_lossy().contains("UBF8T346G9.Office")), "{none:?}");
+    }
+
+    #[test]
     fn emoji_clusters_are_recognised() {
         let c = |s: &str| s.chars().collect::<Vec<char>>();
         // As PowerPoint draws them: emoji-presentation characters (⭐ ✅ ☔ ⌚ ⏩) in colour even
