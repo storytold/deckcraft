@@ -1,10 +1,10 @@
 //! Slide show navigation: click steps, slide order (hidden slides, custom shows, ranges), loop
 //! and automatic advance.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
-use deckcraft_model::Presentation;
 use deckcraft_model::text::{Action, Hyperlink};
+use deckcraft_model::{Presentation, SlideId};
 
 use crate::Timeline;
 use crate::interact::SlideRun;
@@ -83,12 +83,25 @@ pub struct ShowState {
     pub zoom: Option<(usize, usize)>,
 }
 
+/// Index of each slide by id (the first slide wins a duplicate id), so resolving a custom show
+/// costs the sum of its two lists, not their product.
+fn slide_indices(pres: &Presentation) -> HashMap<SlideId, usize> {
+    let mut map = HashMap::with_capacity(pres.slides.len());
+    for (i, s) in pres.slides.iter().enumerate() {
+        map.entry(s.id).or_insert(i);
+    }
+    map
+}
+
 /// Slide indices the show visits in order: the custom show or range from Set Up Slide Show, minus
 /// hidden slides.
 pub fn show_order(pres: &Presentation) -> Vec<usize> {
     let n = pres.slides.len();
     let base: Vec<usize> = match pres.show.custom_show.as_ref().and_then(|name| pres.custom_shows.iter().find(|c| &c.name == name)) {
-        Some(cs) => cs.slides.iter().filter_map(|id| pres.slides.iter().position(|s| s.id == *id)).collect(),
+        Some(cs) => {
+            let index = slide_indices(pres);
+            cs.slides.iter().filter_map(|id| index.get(id).copied()).collect()
+        }
         None => match pres.show.range {
             Some((a, b)) => {
                 let a = (a.max(1) as usize).saturating_sub(1);
@@ -104,12 +117,9 @@ pub fn show_order(pres: &Presentation) -> Vec<usize> {
 /// Visible slides of custom show `name`, in that show's order.
 fn custom_indices(pres: &Presentation, name: &str) -> Option<Vec<usize>> {
     let cs = pres.custom_shows.iter().find(|c| c.name == name)?;
-    let order: Vec<usize> = cs
-        .slides
-        .iter()
-        .filter_map(|id| pres.slides.iter().position(|s| s.id == *id))
-        .filter(|&i| pres.slides.get(i).is_some_and(|s| !s.hidden))
-        .collect();
+    let index = slide_indices(pres);
+    let order: Vec<usize> =
+        cs.slides.iter().filter_map(|id| index.get(id).copied()).filter(|&i| pres.slides.get(i).is_some_and(|s| !s.hidden)).collect();
     if order.is_empty() { None } else { Some(order) }
 }
 
