@@ -705,10 +705,13 @@ impl Session {
                 }
             }
             Some(Hit::Shape { id, .. })
-                if !(mods.shift || mods.cmd) && st.selection.cells.is_some_and(|c| c.0 == id && st.selection.shapes == [id]) =>
+                if !(mods.shift || mods.cmd)
+                    && st.selection.cells.is_some_and(|c| c.0 == id && st.selection.shapes == [id])
+                    && in_table_cell(st, id, p) =>
             {
                 // A press in a table whose cells are selected starts again in the cell under the
-                // pointer: a click puts the caret there and a drag selects another range.
+                // pointer: a click puts the caret there and a drag selects another range. A press
+                // on the table outside its cells selects and moves the table like any shape.
                 let before = self.text_selection();
                 if self.edit_text_at(id, p)? {
                     self.select(|_, sel| sel.cells = None)?;
@@ -1988,6 +1991,15 @@ pub fn resize_box(o: &Xfrm, h: u8, d: Vec2, keep_aspect: bool, from_center: bool
     let local_c = Point::new((l + r) / 2.0 * sx + if sx < 0.0 { o.w } else { 0.0 }, (t + b) / 2.0 * sy + if sy < 0.0 { o.h } else { 0.0 });
     let c = o.affine() * Point::new(if o.flip_h { o.w - local_c.x } else { local_c.x }, if o.flip_v { o.h - local_c.y } else { local_c.y });
     Xfrm { x: c.x - nw / 2.0, y: c.y - nh / 2.0, w: nw, h: nh, rot: o.rot, flip_h: fh, flip_v: fv }
+}
+
+/// Whether `p` lies in a cell of table `id`, not in the grab band around it (`cell_at` would take
+/// the nearest cell).
+fn in_table_cell(st: &crate::DocState, id: ShapeId, p: Point) -> bool {
+    st.shape(id).and_then(|sh| cmd::table::table_frame(st, sh)).is_some_and(|f| {
+        let q = f.local(p);
+        (0.0..=f.width()).contains(&q.x) && (0.0..=f.height()).contains(&q.y) && f.cell_at(q).is_some()
+    })
 }
 
 fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<Hit> {

@@ -947,6 +947,27 @@ fn dragging_across_cells_selects_a_range_of_cells() {
     assert_eq!(cmd::table::cell_block(&t, (1, 1), (2, 2)), ((0, 0), (2, 2)));
 }
 
+#[test]
+fn pressing_a_table_outside_its_cells_with_a_range_selected_moves_the_table() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let drag = |s: &mut Session, kind, x: f64, y: f64| s.pointer(tev(kind, x, y)).unwrap();
+    s.execute("text.edit", &json!({"id": id, "cell": [0, 0]})).unwrap();
+    drag(&mut s, PointerKind::Down, 150.0, 120.0);
+    drag(&mut s, PointerKind::Drag, 250.0, 160.0);
+    drag(&mut s, PointerKind::Up, 250.0, 160.0);
+    assert_eq!(s.doc().unwrap().selection.cells, Some((id, (0, 0), (1, 1))));
+    // Just left of the table's edge, where a press still hits the table but no cell.
+    drag(&mut s, PointerKind::Down, 98.0, 120.0);
+    assert_eq!(s.doc().unwrap().selection.cells, None, "the range ends");
+    drag(&mut s, PointerKind::Drag, 148.0, 170.0);
+    drag(&mut s, PointerKind::Up, 148.0, 170.0);
+    let st = s.doc().unwrap();
+    assert!(st.selection.text.is_none());
+    assert_eq!(st.selection.shapes, vec![id]);
+    let x = st.shape(id).unwrap().xfrm.unwrap();
+    assert!((x.x - 150.0).abs() < 10.0 && (x.y - 150.0).abs() < 10.0, "the table moves: {x:?}");
+}
 
 #[test]
 fn a_click_in_a_selected_table_enters_the_clicked_cell() {
