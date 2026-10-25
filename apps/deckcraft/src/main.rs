@@ -25,6 +25,8 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+#[cfg(all(unix, not(target_os = "macos")))]
+mod x11_scale;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
@@ -181,9 +183,6 @@ fn app_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result {
-    // First, so every start-up record (and the engine's panic hook, installed with the first
-    // Session) is captured; see `logging`.
-    let logger = logging::install();
     let (control_port, files, sample, show) =
         match startup(std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()), std::env::args().skip(1)) {
             Startup::Help => {
@@ -196,6 +195,12 @@ fn main() -> eframe::Result {
             }
             Startup::Run { control_port, files, sample, show } => (control_port, files, sample, show),
         };
+    // Apply X11 scaling before logger setup; a successful re-exec must not duplicate log I/O.
+    #[cfg(all(unix, not(target_os = "macos")))]
+    x11_scale::apply();
+    // First, so every start-up record (and the engine's panic hook, installed with the first
+    // Session) is captured; see `logging`.
+    let logger = logging::install();
     log::info!("DeckCraft {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
     // The log file lives under the settings directory; opened after the arguments, so `--help` and
     // `--version` leave no file behind. Records logged until now are written to it first.
