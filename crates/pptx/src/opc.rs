@@ -34,6 +34,20 @@ pub const RT_BASE: &str = "http://schemas.openxmlformats.org/officeDocument/2006
 pub const RT_MEDIA: &str = "http://schemas.microsoft.com/office/2007/relationships/media";
 /// A 3-D model part (`.glb`). Office relationship, not an ECMA-376 base type.
 pub const RT_MODEL3D: &str = "http://schemas.microsoft.com/office/2017/06/relationships/model3d";
+
+/// Office packages name glTF binary `model/gltf.binary`, not the registered `model/gltf-binary`
+/// DeckCraft keeps internally: written one way, read either way.
+const GLB_PACKAGE: &str = "model/gltf.binary";
+
+/// The content type a package part is written with.
+pub fn package_content_type(ct: &str) -> &str {
+    if ct == "model/gltf-binary" { GLB_PACKAGE } else { ct }
+}
+
+/// The content type DeckCraft keeps for one read from a package.
+pub fn model_content_type(ct: String) -> String {
+    if ct == GLB_PACKAGE { "model/gltf-binary".into() } else { ct }
+}
 pub const RT_CORE: &str = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties";
 
 /// The files of a package, keyed by normalised part name (no leading slash, lowercase).
@@ -412,6 +426,7 @@ impl PackageOut {
     }
     /// Add a binary part; its extension gets a Default content type.
     pub fn binary(&mut self, name: &str, content_type: &str, data: Vec<u8>) {
+        let content_type = package_content_type(content_type);
         let ext = name.rsplit('.').next().unwrap_or("bin").to_ascii_lowercase();
         if !self.defaults.iter().any(|(e, _)| *e == ext) {
             self.defaults.push((ext, content_type.to_string()));

@@ -67,9 +67,15 @@ fn corpus() -> (Presentation, Vec<u8>, Vec<u8>, Vec<u8>) {
     let mut embedded = shape(&mut p, "Embedded", 340.0, 80.0, 144.0, 72.0);
     embedded.kind = ShapeKind::Opaque { xml: OLE.into(), preview: None, label: "DeckCraft.Note.1".into(), parts: vec![] };
     let mut block_shape = shape(&mut p, "Block", 40.0, 240.0, 120.0, 90.0);
-    block_shape.kind = ShapeKind::Model3d { media: block_id, poster: None };
+    block_shape.kind = ShapeKind::Model3d { media: block_id, poster: None, pose: Default::default() };
     let mut globe_shape = shape(&mut p, "Globe", 180.0, 240.0, 160.0, 120.0);
-    globe_shape.kind = ShapeKind::Model3d { media: globe_id, poster: Some(poster_id) };
+    let turned = deckcraft_model::Model3dPose {
+        rot: [20.0, 330.0, 15.0],
+        meter_per_unit: Some((40_000, 1_000_000)),
+        lights: Some(r#"<am3d:ambientLight><am3d:clr><a:scrgbClr r="50000" g="50000" b="50000"/></am3d:clr><am3d:illuminance n="1" d="2"/></am3d:ambientLight>"#.into()),
+        ..Default::default()
+    };
+    globe_shape.kind = ShapeKind::Model3d { media: globe_id, poster: Some(poster_id), pose: turned };
     let mut number = shape(&mut p, "Slide number", 360.0, 240.0, 80.0, 28.0);
     number.text = Some(field("4", "slidenum"));
     let mut date = shape(&mut p, "Date", 360.0, 276.0, 160.0, 28.0);
@@ -191,7 +197,16 @@ fn object_corpus_round_trips() {
     let (p, block, globe, poster) = corpus();
     let bytes = deckcraft_pptx::export(&p).expect("export");
     let types = zip_text(&bytes, "[Content_Types].xml");
-    assert!(types.contains("model/gltf-binary"), "{types}");
+    // Office packages spell glTF binary `model/gltf.binary`; DeckCraft keeps `model/gltf-binary`.
+    assert!(types.contains(r#"Extension="glb" ContentType="model/gltf.binary""#), "{types}");
+    let slide =
+        (1..=4).map(|i| zip_text(&bytes, &format!("ppt/slides/slide{i}.xml"))).find(|x| x.contains("am3d:model3d")).expect("a slide with models");
+    assert!(
+        slide.contains(r#"Requires="am3d""#) && slide.contains(r#"<a:graphicData uri="http://schemas.microsoft.com/office/drawing/2017/model3d">"#),
+        "{slide}"
+    );
+    assert!(slide.contains(r#"<am3d:rot ax="1200000" ay="19800000" az="900000"/>"#), "the turn in 60,000ths of a degree: {slide}");
+    assert!(slide.contains("am3d:camera") && slide.contains("am3d:objViewport"), "{slide}");
     assert!(zip_has_payload(&bytes, &block), "block model was not written");
     assert!(zip_has_payload(&bytes, &globe), "globe model was not written");
     let once = deckcraft_pptx::import(&bytes).expect("import");
@@ -220,10 +235,15 @@ fn object_corpus_round_trips() {
         assert!(block_media.name.to_ascii_lowercase().ends_with(".glb"), "{}", block_media.name);
 
         let globe_shape = by_name(q, "Globe");
-        let ShapeKind::Model3d { media, poster: Some(poster_media) } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
+        let ShapeKind::Model3d { media, poster: Some(poster_media), .. } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
         assert_eq!(globe_shape.xfrm, Some(Xfrm::new(180.0, 240.0, 160.0, 120.0)));
         assert_eq!(q.media(*media).expect("globe").data.as_ref(), globe.as_slice());
         assert_eq!(q.media(*poster_media).expect("poster").data.as_ref(), poster.as_slice());
+        let ShapeKind::Model3d { pose, .. } = &globe_shape.kind else { panic!("{:?}", globe_shape.kind) };
+        assert_eq!(pose.rot, [20.0, 330.0, 15.0]);
+        assert_eq!(pose.meter_per_unit, Some((40_000, 1_000_000)));
+        assert!(pose.camera.is_some(), "the camera written for it is read back");
+        assert!(pose.lights.as_deref().is_some_and(|l| l.contains("illuminance")), "{:?}", pose.lights);
 
         let narration = by_name(q, "Narration");
         let ShapeKind::Media(m) = &narration.kind else { panic!("{:?}", narration.kind) };
@@ -339,7 +359,7 @@ fn an_alternate_content_model_keeps_the_glb_and_its_poster() {
     for q in [&once, &twice] {
         assert!(q.slides[0].shapes.iter().all(|s| s.name != "Model poster"), "the fallback picture replaced the model");
         let s = by_name(q, "Model from file");
-        let ShapeKind::Model3d { media, poster: Some(poster_id) } = &s.kind else { panic!("{:?}", s.kind) };
+        let ShapeKind::Model3d { media, poster: Some(poster_id), .. } = &s.kind else { panic!("{:?}", s.kind) };
         assert_eq!(s.xfrm, Some(Xfrm::new(40.0, 50.0, 120.0, 90.0)));
         let model_item = q.media(*media).expect("glb");
         assert_eq!(model_item.data.as_ref(), model.as_slice());
@@ -370,4 +390,42 @@ fn an_ink_content_part_still_uses_its_fallback_picture() {
     let s = by_name(&p, "Ink poster");
     let ShapeKind::Picture { fill } = &s.kind else { panic!("{:?}", s.kind) };
     assert_eq!(p.media(fill.media).expect("poster").data.as_ref(), poster.as_slice());
+}
+
+/// The `am3d:model3d` form ([MS-ODRAWXML] 2.31): a graphic frame in an `am3d` choice, with the
+/// turn, camera and lights read into the pose, and the fallback picture as the poster. Content
+/// type spelled the Office way.
+#[test]
+fn an_am3d_graphic_frame_model_keeps_its_pose() {
+    let model = glb(7);
+    let poster = png([200, 40, 40]);
+    let frame = r#"<mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><mc:Choice xmlns:am3d="http://schemas.microsoft.com/office/drawing/2017/model3d" Requires="am3d"><p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="70" name="Turned model"/><p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr><p:xfrm><a:off x="508000" y="635000"/><a:ext cx="1524000" cy="1143000"/></p:xfrm><a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/drawing/2017/model3d"><am3d:model3d r:embed="rIdModel"><am3d:spPr><a:xfrm><a:off x="508000" y="635000"/><a:ext cx="1524000" cy="1143000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></am3d:spPr><am3d:camera><am3d:pos x="0" y="40000000" z="70000000"/><am3d:up dx="0" dy="36000000" dz="0"/><am3d:lookAt x="0" y="0" z="0"/><am3d:perspective fov="2700000"/></am3d:camera><am3d:trans><am3d:meterPerModelUnit n="25000" d="1000000"/><am3d:rot ax="600000" ay="2400000" az="0"/></am3d:trans><am3d:raster rName="Office3DRenderer" rVer="16.0"><am3d:blip r:embed="rIdPoster"/></am3d:raster><am3d:objViewport viewportSz="1524000"/><am3d:ambientLight><am3d:clr><a:scrgbClr r="50000" g="50000" b="50000"/></am3d:clr><am3d:illuminance n="500000" d="1000000"/></am3d:ambientLight></am3d:model3d></a:graphicData></a:graphic></p:graphicFrame></mc:Choice><mc:Fallback><p:pic><p:nvPicPr><p:cNvPr id="70" name="Turned model"/><p:cNvPicPr/><p:nvPr/></p:nvPicPr><p:blipFill><a:blip r:embed="rIdPoster"/><a:stretch><a:fillRect/></a:stretch></p:blipFill><p:spPr><a:xfrm><a:off x="508000" y="635000"/><a:ext cx="1524000" cy="1143000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic></mc:Fallback></mc:AlternateContent>"#;
+    let bytes = with_parts(&[("ppt/media/model3d1.glb", model.clone()), ("ppt/media/poster.png", poster.clone())], |name, s| {
+        match name {
+        "ppt/slides/slide1.xml" => s.replacen("</p:spTree>", &format!("{frame}</p:spTree>"), 1),
+        "ppt/slides/_rels/slide1.xml.rels" => s.replacen(
+            "</Relationships>",
+            r#"<Relationship Id="rIdModel" Type="http://schemas.microsoft.com/office/2017/06/relationships/model3d" Target="../media/model3d1.glb"/><Relationship Id="rIdPoster" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/poster.png"/></Relationships>"#,
+            1,
+        ),
+        "[Content_Types].xml" => s.replacen("<Default ", r#"<Default Extension="glb" ContentType="model/gltf.binary"/><Default "#, 1),
+        _ => s,
+    }
+    });
+    let once = deckcraft_pptx::import(&bytes).expect("import");
+    let twice = round(&once);
+    for q in [&once, &twice] {
+        let s = by_name(q, "Turned model");
+        let ShapeKind::Model3d { media, poster: Some(poster_id), pose } = &s.kind else { panic!("{:?}", s.kind) };
+        assert_eq!(s.xfrm, Some(Xfrm::new(40.0, 50.0, 120.0, 90.0)));
+        let item = q.media(*media).expect("glb");
+        assert_eq!((item.data.as_slice(), item.content_type.as_str()), (model.as_slice(), "model/gltf-binary"));
+        assert_eq!(q.media(*poster_id).expect("poster").data.as_ref(), poster.as_slice());
+        assert_eq!(pose.rot, [10.0, 40.0, 0.0]);
+        let cam = pose.camera.as_ref().expect("camera");
+        assert_eq!((cam.pos, cam.fov), ([0, 40_000_000, 70_000_000], Some(2_700_000)), "the camera above the model is kept");
+        assert_eq!(pose.meter_per_unit, Some((25_000, 1_000_000)));
+        assert!(pose.lights.as_deref().is_some_and(|l| l.contains("illuminance")));
+        assert_eq!(q.slides[0].shapes.iter().filter(|x| x.name == "Turned model").count(), 1, "the fallback picture is not a second shape");
+    }
 }

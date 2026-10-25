@@ -19,6 +19,7 @@ deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
 deckcraft-media = { workspace = true }
+deckcraft-mesh = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 i_overlay = { workspace = true }

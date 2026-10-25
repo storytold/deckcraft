@@ -40,9 +40,10 @@ The two flags (VectorCraft, PhotoCraft and the other Craft apps take the same on
 config works across the suite) keep the agent to the folders you give it:
 
 - Every file a command reads must lie inside the **read root**: `open_presentation` and
-  `file.open`, and `insert_picture`, `insert.picture`, `picture.change`, `insert.audio` and
-  `insert.video` with a `path`. Pictures, audio and video are copied into the deck when they are
-  inserted, so playing them later reads nothing from disk.
+  `file.open`, and `insert_picture`, `insert.picture`, `picture.change`, `insert.audio`,
+  `insert.video` and `insert.model3d` with a `path` (and the `.mtl` files an OBJ model names beside
+  it). Pictures, audio, video and 3-D models are copied into the deck when they are inserted, so
+  playing or showing them later reads nothing from disk.
 - Every file a command writes must lie inside the **write root**: `save_presentation`, `export`
   (every format, and every slide of an image export), `file.save`, `file.saveAs`, `file.export`,
   and `render_slide` with a `path`, plus the `.saving` temporary file a save goes through.

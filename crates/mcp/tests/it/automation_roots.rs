@@ -105,7 +105,7 @@ fn pictures_media_and_other_path_reads_are_confined() {
     ok(&mut server, "insert_picture", json!({"path": s(&base.join("in/pic.png"))}));
     let before = ok(&mut server, "inspect_slide", json!({}));
     refused(&mut server, "insert_picture", json!({"path": s(&base.join("outside/pic.png"))}), "outside the read root");
-    for command in ["insert.audio", "insert.video", "insert.picture", "picture.change"] {
+    for command in ["insert.audio", "insert.video", "insert.picture", "picture.change", "insert.model3d"] {
         let (error, text) = run(&mut server, command, json!({"path": s(&base.join("outside/pic.png"))}));
         assert!(error && text.contains("outside the read root"), "{command}: {text}");
     }

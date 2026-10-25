@@ -55,7 +55,8 @@ impl Imp<'_> {
         }
         let data = self.pkg.get(part)?.to_vec();
         let name = opc::file_of(self.pkg.original_name(part).unwrap_or(part)).to_string();
-        let content_type = self.pkg.content_type(part).filter(|c| !c.is_empty()).unwrap_or_else(|| crate::mime_for(&name).to_string());
+        let content_type =
+            opc::model_content_type(self.pkg.content_type(part).filter(|c| !c.is_empty()).unwrap_or_else(|| crate::mime_for(&name).to_string()));
         let id = MediaId(self.alloc());
         self.media.push(MediaItem { id, name, content_type, data: Arc::new(data), link: None });
         self.media_by_part.insert(key, id);
@@ -188,6 +189,12 @@ fn choice_has_model3d(el: &El, rels: &Rels) -> bool {
         if el.is("contentPart")
             && let Some(id) = el.attr("r:id").filter(|s| !s.is_empty())
             && rels.get(id).is_some_and(is_model3d)
+        {
+            return true;
+        }
+        if el.is("graphicData")
+            && let Some(id) = shapes::model3d_of(el).and_then(|m| m.attr("r:embed")).filter(|s| !s.is_empty())
+            && rels.get(id).is_some_and(|r| !r.external)
         {
             return true;
         }

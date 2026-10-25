@@ -912,6 +912,7 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
             (ToolKind::Ink { .. }, _) => egui::CursorIcon::Crosshair,
             (_, Some(Hit::Resize { id, handle })) => resize_cursor(&app.session, *id, *handle),
             (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
+            (_, Some(Hit::Model3dTurn { .. })) => egui::CursorIcon::Grab,
             (_, Some(Hit::TableColumn { .. })) => egui::CursorIcon::ResizeColumn,
             (_, Some(Hit::TableRow { .. })) => egui::CursorIcon::ResizeRow,
             (_, Some(Hit::Adjust { .. } | Hit::Warp { .. } | Hit::LineEnd { .. })) => egui::CursorIcon::PointingHand,
@@ -1039,6 +1040,9 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
             for hd in deckcraft_engine::tools::wordart_handles(&st.doc, &st.selection, sh, x.w, x.h) {
                 let q = xf.to_screen(a * hd.pos);
                 painter.circle(q, 4.5, Color32::from_rgb(0xFF, 0xD2, 0x3F), Stroke::new(1.0, Color32::from_rgb(0x8A, 0x6A, 0x00)));
+            }
+            if matches!(sh.kind, deckcraft_model::ShapeKind::Model3d { .. }) && st.selection.shapes.len() == 1 {
+                model_turn_handle(painter, xf.to_screen(x.center()), t);
             }
         }
     }
@@ -1205,6 +1209,20 @@ fn rotate_handle(p: &egui::Painter, c: Pos2, t: &Tokens) {
         fill: Color32::TRANSPARENT,
         stroke: Stroke::new(1.3, t.handle_stroke).into(),
     }));
+}
+
+/// The 3-D turn handle in the middle of a selected model: a disc crossed by an orbit and a
+/// meridian.
+fn model_turn_handle(p: &egui::Painter, c: Pos2, t: &Tokens) {
+    p.circle(c, 11.0, t.handle_fill, Stroke::new(1.0, t.handle_stroke));
+    let ellipse = |rx: f32, ry: f32| egui::epaint::PathShape {
+        points: (0..32).map(|i| i as f32 / 32.0 * std::f32::consts::TAU).map(|a| pos2(c.x + rx * a.cos(), c.y + ry * a.sin())).collect(),
+        closed: true,
+        fill: Color32::TRANSPARENT,
+        stroke: Stroke::new(1.2, t.handle_stroke).into(),
+    };
+    p.add(egui::Shape::Path(ellipse(7.0, 2.8)));
+    p.add(egui::Shape::Path(ellipse(2.8, 7.0)));
 }
 
 fn draw_preview(app: &SlideApp, p: &egui::Painter, xf: Xf, x: Xfrm, t: &Tokens) {

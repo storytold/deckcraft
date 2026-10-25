@@ -310,13 +310,58 @@ fn content_part(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<S
     if let Some(x) = e.child("xfrm") {
         s.xfrm = Some(dml::xfrm(x).0);
     }
-    s.kind = ShapeKind::Model3d { media, poster: None };
+    s.kind = ShapeKind::Model3d { media, poster: None, pose: Default::default() };
     Some(s)
 }
 
-/// A 3-D model wrapped in `mc:AlternateContent`: the model choice, plus the fallback picture.
-/// If the model part is missing, the fallback picture is the shape.
+/// `am3d:model3d` in a graphic frame's `a:graphicData`.
+pub(crate) fn model3d_of(gd: &El) -> Option<&El> {
+    gd.attr("uri").is_some_and(|u| u == crate::am3d::NS_AM3D).then(|| gd.child("model3d")).flatten()
+}
+
+/// The `.glb` an `am3d:model3d` embeds.
+fn model_media(imp: &mut Imp, part: &Part, m: &El) -> Option<deckcraft_model::MediaId> {
+    let rel = part.rels.get(m.attr("r:embed").filter(|s| !s.is_empty())?).filter(|r| !r.external)?;
+    let target = rel.target.clone();
+    imp.media_for(&target)
+}
+
+fn find_model_frame(el: &El) -> Option<&El> {
+    fn rec(el: &El, depth: usize) -> Option<&El> {
+        if depth > 16 {
+            return None;
+        }
+        if el.is("graphicFrame") && el.path(&["graphic", "graphicData"]).and_then(model3d_of).is_some() {
+            return Some(el);
+        }
+        el.elements().find_map(|c| rec(c, depth + 1))
+    }
+    rec(el, 0)
+}
+
+/// A 3-D model wrapped in `mc:AlternateContent`: the model choice (a graphic frame holding
+/// `am3d:model3d`, or a `p:contentPart`), plus the fallback picture. If the model part is missing,
+/// the fallback picture is the shape.
 fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Option<Shape> {
+    let fallback = |imp: &mut Imp| {
+        e.child("Fallback").and_then(|fb| {
+            let mut pics = vec![];
+            fb.find_all("blip", &mut pics);
+            pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
+        })
+    };
+    if let Some(gf) = e.children_named("Choice").find_map(find_model_frame)
+        && gf.path(&["graphic", "graphicData"]).and_then(model3d_of).and_then(|m| model_media(imp, part, m)).is_some()
+    {
+        let mut s = frame(imp, part, ctx, gf, 0);
+        let fb = fallback(imp);
+        if let ShapeKind::Model3d { poster, .. } = &mut s.kind
+            && fb.is_some()
+        {
+            *poster = fb;
+        }
+        return Some(s);
+    }
     if let Some(content) = e.children_named("Choice").find_map(find_content_part)
         && let Some(mut s) = content_part(imp, part, ctx, content)
     {
@@ -325,8 +370,8 @@ fn read_model_alternate(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> 
             fb.find_all("blip", &mut pics);
             pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
         });
-        if let ShapeKind::Model3d { media, .. } = s.kind {
-            s.kind = ShapeKind::Model3d { media, poster };
+        if let ShapeKind::Model3d { poster: slot, .. } = &mut s.kind {
+            *slot = poster;
         }
         return Some(s);
     }
@@ -421,6 +466,18 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
     let gd = e.path(&["graphic", "graphicData"]);
     let uri = gd.and_then(|g| g.attr("uri")).unwrap_or("");
     if let Some(gd) = gd {
+        // A 3-D model: its `.glb`, pose, and rasterized picture (the fallback picture, if the
+        // frame isn't inside an `mc:AlternateContent` that carries one).
+        if let Some(m) = model3d_of(gd)
+            && let Some(media) = model_media(imp, part, m)
+        {
+            if s.xfrm.is_none() {
+                s.xfrm = m.path(&["spPr", "xfrm"]).map(|x| dml::xfrm(x).0);
+            }
+            let poster = m.path(&["raster", "blip"]).and_then(|b| dml::media_ref(imp, part, b));
+            s.kind = ShapeKind::Model3d { media, poster, pose: crate::am3d::read_pose(m) };
+            return s;
+        }
         if let Some(tbl) = gd.child("tbl") {
             s.kind = ShapeKind::Table(table(imp, part, tbl));
             return s;

@@ -127,6 +127,8 @@ enum FilePurpose {
     Picture,
     Audio,
     Video,
+    /// Insert ▸ 3D Models (`insert.model3d`).
+    Model3d,
     /// Change Picture: the picture replaces the selected one (`picture.change`).
     ChangePicture,
     /// A drop, or any other purpose: decide from the name and bytes.
@@ -178,6 +180,7 @@ fn purpose_of(purpose: &str) -> FilePurpose {
         "picture" => FilePurpose::Picture,
         "audio" => FilePurpose::Audio,
         "video" => FilePurpose::Video,
+        "model3d" => FilePurpose::Model3d,
         _ => FilePurpose::Infer,
     }
 }
@@ -216,6 +219,8 @@ fn infer_command(name: &str, bytes: &[u8]) -> Option<&'static str> {
         Some("insert.audio")
     } else if ct.starts_with("video/") {
         Some("insert.video")
+    } else if deckcraft_engine::cmd::model3d::is_model(name, bytes) {
+        Some("insert.model3d")
     } else if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".rtf") {
         Some("slide.fromOutline")
     } else {
@@ -228,6 +233,7 @@ fn command_for(purpose: FilePurpose, name: &str, bytes: &[u8]) -> Result<&'stati
         FilePurpose::Picture => Some("insert.picture"),
         FilePurpose::Audio => Some("insert.audio"),
         FilePurpose::Video => Some("insert.video"),
+        FilePurpose::Model3d => Some("insert.model3d"),
         FilePurpose::ChangePicture => deckcraft_engine::cmd::insert::content_type(name, bytes).starts_with("image/").then_some("picture.change"),
         FilePurpose::Open => open_command(name),
         FilePurpose::Infer => infer_command(name, bytes),
@@ -448,6 +454,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.insertAudioDialog", "Audio from File…", None, "{}"),
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
+    ("app.insertModel3dDialog", "3D Model from File…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
@@ -1366,6 +1373,7 @@ impl SlideApp {
             "app.insertAudioDialog" => self.pick_and_insert("audio", "insert.audio"),
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
+            "app.insertModel3dDialog" => self.pick_and_insert("model3d", "insert.model3d"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
@@ -1642,6 +1650,10 @@ impl SlideApp {
                         let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
                         args["name"] = json!(name);
                         args["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+                        if cmd == "insert.model3d" {
+                            // Where to look for the files the model names (an OBJ's .mtl colours).
+                            args["path"] = json!(path);
+                        }
                         self.session.execute(cmd, &args)
                     }
                     _ => {

@@ -1,0 +1,16 @@
+[package]
+name = "deckcraft-mesh"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "DeckCraft meshes: STL, OBJ (with MTL colours), FBX (binary and ASCII) and glTF binary 3-D models read into triangle meshes and written as .glb"
+
+[lints]
+workspace = true
+
+[dependencies]
+thiserror = { workspace = true }
+log = { workspace = true }
+serde_json = { workspace = true }
+# zlib-compressed arrays in binary FBX.
+miniz_oxide = "0.9"

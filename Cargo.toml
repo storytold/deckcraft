@@ -27,6 +27,7 @@ deckcraft-engine = { path = "crates/engine" }
 deckcraft-mcp = { path = "crates/mcp" }
 deckcraft-ui-egui = { path = "crates/ui-egui" }
 deckcraft-media = { path = "crates/media" }
+deckcraft-mesh = { path = "crates/mesh" }
 # codecs (ported from FilmCraft, same owner and licence)
 deckcraft-bitstream = { path = "crates/bitstream" }
 deckcraft-h264 = { path = "crates/h264" }

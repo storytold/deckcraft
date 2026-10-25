@@ -279,7 +279,7 @@ pub fn tile_origin(bounds: Rect, align: &str, tile: (f64, f64), offset: (f64, f6
     Point::new(bounds.x0 + ax * (bounds.width() - tile.0) + ox, bounds.y0 + ay * (bounds.height() - tile.1) + oy)
 }
 
-fn draw_image(ctx: &mut RenderContext, image: &vello_cpu::Image, iw: f64, ih: f64, dest: Rect, m: Affine, alpha: f64) {
+pub(crate) fn draw_image(ctx: &mut RenderContext, image: &vello_cpu::Image, iw: f64, ih: f64, dest: Rect, m: Affine, alpha: f64) {
     let t = m * Affine::translate(dest.origin().to_vec2()) * Affine::scale_non_uniform(dest.width() / iw, dest.height() / ih);
     ctx.set_transform(t);
     if alpha < 0.999 {
@@ -292,7 +292,7 @@ fn draw_image(ctx: &mut RenderContext, image: &vello_cpu::Image, iw: f64, ih: f6
     }
 }
 
-fn missing(ctx: &mut RenderContext, b: Rect) {
+pub(crate) fn missing(ctx: &mut RenderContext, b: Rect) {
     ctx.set_paint(peniko::Color::from_rgba8(230, 230, 230, 255));
     ctx.fill_rect(&b);
     ctx.set_paint(peniko::Color::from_rgba8(160, 160, 160, 255));

@@ -186,3 +186,23 @@ fn a_dropped_file_stays_on_the_slide_it_was_dropped_on() {
     assert_eq!(pictures(&app, uid, slide0), 1, "{status}");
     assert_eq!(pictures(&app, uid, slide1), 0);
 }
+
+/// Insert ▸ 3D Models: the picked file becomes a 3-D model; a dropped STL is recognised as one.
+#[test]
+fn picked_and_dropped_models_become_3d_models() {
+    const STL: &[u8] = b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 0 1\nendloop\nendfacet\nendsolid t\n";
+    let (mut app, inbox, started) = setup();
+    app.run("app.insertModel3dDialog", json!({})).expect("dialog");
+    let (purpose, id) = started.lock().expect("request log")[0].clone();
+    assert_eq!(purpose, "model3d");
+    deliver(&inbox, id, "part.stl", STL.to_vec());
+    app.drain_inbox();
+    let models = |app: &SlideApp| {
+        app.session.active().unwrap().current_slide().unwrap().shapes.iter().filter(|s| matches!(s.kind, ShapeKind::Model3d { .. })).count()
+    };
+    assert_eq!(models(&app), 1);
+    assert_eq!(super::infer_command("part.stl", STL), Some("insert.model3d"));
+    assert_eq!(super::infer_command("scene.fbx", b"; FBX 7.4.0 project file"), Some("insert.model3d"));
+    // A picture is still a picture.
+    assert_eq!(super::infer_command("a.png", &png()), Some("insert.picture"));
+}

@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** minor (3-D models can be turned; checking the am3d form against PowerPoint remains; previous: minor, 3-D models drawn, with PPTX fallback pictures; rotation remains; previous: minor, Insert ▸ 3D Models embeds STL, OBJ, FBX and .glb; drawing them remains; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -290,8 +290,10 @@ artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripp
 background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), record
 audio/screen and record slide show (8–12 h), compare presentations beyond slide-level accept
 and reject (per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
-agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models and stock content
-(6–10 h; Insert › Icons places a Lucide stroke set).
+agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models beyond turning them
+(the perspective camera, PowerPoint's lights and the 3-D model animations are not drawn, the 3D
+Model Views gallery is a list without pictures, and the `am3d` wrapper, `rot` order and `.glb`
+content type DeckCraft writes need checking in PowerPoint: 2–4 h), and stock content (6–10 h; Insert › Icons places a Lucide stroke set).
 
 ## UI/UX
 
@@ -371,6 +373,9 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | minor | Smaller missing rows: turning 3-D models is in (drag, views, reset, `am3d` pose round trip); the perspective camera, lights, animations and a check in PowerPoint remain |
+| 2026-10-25 | minor | Smaller missing rows: 3-D models are drawn and get a fallback picture in PPTX; turning them and PowerPoint's `am3d` camera remain |
+| 2026-10-25 | minor | Smaller missing rows: inserting 3-D models is in (STL, OBJ, FBX, `.glb`); drawing them, rotating them and their fallback picture remain |
 | 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
 | 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |

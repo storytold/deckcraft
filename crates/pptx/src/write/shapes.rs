@@ -420,7 +420,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             let id = cx.id_for(s);
             media(w, x, o, id, s, m);
         }
-        ShapeKind::Model3d { media, poster } => write_model(w, x, o, cx, s, *media, *poster),
+        ShapeKind::Model3d { media, poster, pose } => write_model(w, x, o, cx, s, *media, *poster, pose),
         ShapeKind::Ink { strokes } => {
             // Ink becomes a group of freeform lines.
             let id = cx.id_for(s);
@@ -452,19 +452,10 @@ fn model_rel(x: &mut Exp, o: &mut Out, media: deckcraft_model::MediaId) -> Optio
     x.media_rel(o, media, crate::opc::RT_MODEL3D)
 }
 
-fn write_model_part(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, rid: &str) {
-    w.open("p:contentPart", A::new().a("r:id", rid));
-    w.open0("p:nvContentPartPr");
-    cnvpr(w, x, o, id, s);
-    w.empty0("p:cNvContentPartPr");
-    w.empty0("p:nvPr");
-    w.close("p:nvContentPartPr");
-    if let Some(xf) = &s.xfrm {
-        dml::xfrm(w, "p:xfrm", xf, None);
-    }
-    w.close("p:contentPart");
-}
-
+/// A 3-D model: an `mc:AlternateContent` whose `am3d` choice is a graphic frame holding
+/// `am3d:model3d` (the `.glb`, its camera and turn, and the fallback picture as its raster), and
+/// whose fallback is that picture for readers that can't show models.
+#[allow(clippy::too_many_arguments)]
 fn write_model(
     w: &mut W,
     x: &mut Exp,
@@ -473,6 +464,7 @@ fn write_model(
     s: &Shape,
     media: deckcraft_model::MediaId,
     poster: Option<deckcraft_model::MediaId>,
+    pose: &deckcraft_model::Model3dPose,
 ) {
     let Some(rid) = model_rel(x, o, media) else {
         log::warn!("pptx: 3-D model '{}' has no embedded part", s.name);
@@ -480,26 +472,38 @@ fn write_model(
     };
     let id = cx.id_for(s);
     let poster = poster.filter(|p| x.p.media(*p).is_some_and(|m| !m.data.is_empty()));
-    let Some(poster) = poster else {
-        write_model_part(w, x, o, id, s, &rid);
-        return;
-    };
-    // Older readers draw the fallback picture; readers that know `am3d` use the model.
+    let raster = poster.and_then(|p| x.media_rel(o, p, "image"));
+    let xf = s.xfrm.filter(Xfrm::is_finite).unwrap_or_default();
     w.open("mc:AlternateContent", A::new().a("xmlns:mc", NS_MC));
-    w.open("mc:Choice", A::new().a("xmlns:am3d", "http://schemas.microsoft.com/office/drawing/2017/model3d").a("Requires", "am3d"));
-    write_model_part(w, x, o, id, s, &rid);
+    w.open("mc:Choice", A::new().a("xmlns:am3d", crate::am3d::NS_AM3D).a("Requires", "am3d"));
+    w.open0("p:graphicFrame");
+    w.open0("p:nvGraphicFramePr");
+    cnvpr(w, x, o, id, s);
+    w.empty0("p:cNvGraphicFramePr");
+    w.empty0("p:nvPr");
+    w.close("p:nvGraphicFramePr");
+    dml::xfrm(w, "p:xfrm", &xf, None);
+    w.open0("a:graphic");
+    w.open("a:graphicData", A::new().a("uri", crate::am3d::NS_AM3D));
+    let frame = (dml::emu(xf.x), dml::emu(xf.y), dml::emu_pos(xf.w), dml::emu_pos(xf.h));
+    crate::am3d::write_model3d(w, &rid, frame, raster.as_deref(), pose);
+    w.close("a:graphicData");
+    w.close("a:graphic");
+    w.close("p:graphicFrame");
     w.close("mc:Choice");
-    w.open0("mc:Fallback");
-    let pic = Shape {
-        id: ShapeId(0),
-        name: s.name.clone(),
-        xfrm: s.xfrm,
-        kind: ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: poster, ..Default::default() } },
-        ..Default::default()
-    };
-    let pid = cx.ids.fresh();
-    shape_with_id(w, x, o, cx, &pic, pid);
-    w.close("mc:Fallback");
+    if let Some(poster) = poster {
+        w.open0("mc:Fallback");
+        let pic = Shape {
+            id: ShapeId(0),
+            name: s.name.clone(),
+            xfrm: s.xfrm,
+            kind: ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media: poster, ..Default::default() } },
+            ..Default::default()
+        };
+        let pid = cx.ids.fresh();
+        shape_with_id(w, x, o, cx, &pic, pid);
+        w.close("mc:Fallback");
+    }
     w.close("mc:AlternateContent");
 }
 

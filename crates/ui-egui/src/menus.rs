@@ -241,6 +241,7 @@ pub fn menu_tree() -> Vec<(&'static str, Vec<(&'static str, &'static str)>)> {
                 ("Edit Photo Album…", "insert.photoAlbumEdit"),
                 ("Audio from File…", "app.insertAudioDialog"),
                 ("Video from File…", "app.insertVideoDialog"),
+                ("3D Model from File…", "app.insertModel3dDialog"),
             ],
         ),
         (

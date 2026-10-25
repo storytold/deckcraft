@@ -929,6 +929,7 @@ dependencies = [
  "deckcraft-format",
  "deckcraft-geom",
  "deckcraft-media",
+ "deckcraft-mesh",
  "deckcraft-model",
  "deckcraft-pdf",
  "deckcraft-pptx",
@@ -1036,6 +1037,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckcraft-mesh"
+version = "0.11.1"
+dependencies = [
+ "log",
+ "miniz_oxide 0.9.1",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "deckcraft-metafile"
 version = "0.11.1"
 dependencies = [
@@ -1106,6 +1117,7 @@ dependencies = [
  "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-geom",
+ "deckcraft-mesh",
  "deckcraft-metafile",
  "deckcraft-model",
  "deckcraft-text",

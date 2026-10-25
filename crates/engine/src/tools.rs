@@ -82,6 +82,10 @@ pub enum Hit {
     Rotate {
         id: ShapeId,
     },
+    /// The 3-D turn handle in the middle of a selected 3-D model: dragging it turns the model.
+    Model3dTurn {
+        id: ShapeId,
+    },
     Adjust {
         id: ShapeId,
         index: usize,
@@ -157,6 +161,12 @@ enum Drag {
         start: f64,
         origs: Vec<(ShapeId, Xfrm)>,
     },
+    /// Turning a 3-D model from its pose at the press.
+    Model3dTurn {
+        id: ShapeId,
+        start: Point,
+        orig: deckcraft_model::Model3dPose,
+    },
     Adjust {
         id: ShapeId,
         index: usize,
@@ -223,6 +233,9 @@ enum Drag {
         pressed: bool,
     },
 }
+
+/// The 3-D turn handle's reach from a model's centre, in hit tolerances (its drawn radius on screen).
+pub const MODEL_HANDLE: f64 = 3.0;
 
 /// Shape-gallery names that draw a freeform path instead of a preset.
 pub const FREEFORM_TOOLS: [(&str, &str); 3] = [("curve", "Curve"), ("freeform", "Freeform: Shape"), ("scribble", "Freeform: Scribble")];
@@ -415,6 +428,9 @@ impl Session {
                     if (x.affine() * hd.pos - p).hypot() <= tol * 1.6 {
                         return Some(Hit::Warp { id: *id, index: hd.index });
                     }
+                }
+                if matches!(sh.kind, ShapeKind::Model3d { .. }) && st.selection.shapes.len() == 1 && (x.center() - p).hypot() <= tol * MODEL_HANDLE {
+                    return Some(Hit::Model3dTurn { id: *id });
                 }
                 let (pts, rot) = box_handles(&x);
                 if (rot - p).hypot() <= tol * 1.8 && st.selection.text.is_none() {
@@ -674,6 +690,13 @@ impl Session {
                 self.begin("Rotate");
                 self.tool.drag = Some(Drag::Rotate { ids, center, start, origs });
             }
+            Some(Hit::Model3dTurn { id }) => {
+                if let Some(ShapeKind::Model3d { pose, .. }) = st.shape(id).map(|s| &s.kind) {
+                    let orig = pose.clone();
+                    self.begin("Rotate 3D Model");
+                    self.tool.drag = Some(Drag::Model3dTurn { id, start: p, orig });
+                }
+            }
             // Only reached outside Edit Points (handled above).
             Some(Hit::Vertex { .. } | Hit::Handle { .. }) => {}
             Some(Hit::Adjust { id, index }) => {
@@ -898,6 +921,19 @@ impl Session {
                     }
                     self.set_xfrm(*id, nx)?;
                 }
+            }
+            Drag::Model3dTurn { id, start, orig } => {
+                // The turn so far, from the pose at the press (so the drag is undone as one step).
+                let rot = deckcraft_render::model3d_view(&orig).turned(p.x - start.x, p.y - start.y).rot;
+                self.edit(|doc, sel| {
+                    if let Some(ShapeKind::Model3d { pose, poster, .. }) =
+                        crate::shapes_mut(doc, sel).and_then(|l| deckcraft_model::find_shape_mut(l, id)).map(|s| &mut s.kind)
+                    {
+                        pose.rot = rot;
+                        *poster = None;
+                    }
+                    Ok(())
+                })?;
             }
             Drag::Adjust { id, index, orig } => {
                 let st = self.doc()?;
@@ -1329,6 +1365,7 @@ impl Session {
                 Hit::Shape { id, .. }
                 | Hit::Resize { id, .. }
                 | Hit::Rotate { id }
+                | Hit::Model3dTurn { id }
                 | Hit::Adjust { id, .. }
                 | Hit::LineEnd { id, .. }
                 | Hit::Handle { id, .. }
@@ -1392,6 +1429,7 @@ impl Session {
                 Some(
                     Hit::Resize { .. }
                         | Hit::Rotate { .. }
+                        | Hit::Model3dTurn { .. }
                         | Hit::Adjust { .. }
                         | Hit::Warp { .. }
                         | Hit::Frame { .. }

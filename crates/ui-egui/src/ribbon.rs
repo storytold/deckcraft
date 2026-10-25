@@ -152,6 +152,9 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_))) {
         v.push("Playback");
     }
+    if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Model3d { .. })) {
+        v.push("3D Model");
+    }
     v
 }
 
@@ -267,6 +270,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                         "Chart Design" => chart_design(app, ui),
                         "SmartArt Design" => smartart_design(app, ui),
                         "Playback" => playback(app, ui),
+                        "3D Model" => model3d_tab(app, ui),
                         "Slide Master" => slide_master(app, ui),
                         "Handout Master" => handout_master(app, ui),
                         "Notes Master" => notes_master(app, ui),
@@ -1357,6 +1361,7 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
         });
         let r = big_button(ui, Icon::Icons, "Icons", enabled(app, "insert.icon"));
         egui::Popup::menu(&r).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).width(340.0).show(|ui| icon_library(app, ui));
+        big(app, ui, Icon::Models3d, "3D\nModels", "app.insertModel3dDialog", json!({}));
         big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
         let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
         egui::Popup::menu(&r).show(|ui| {
@@ -3319,6 +3324,27 @@ fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
     arrange_group(app, ui);
 }
 
+/// The 3D Model tab: Reset and Reset and Size, and the 3D Model Views gallery. Dragging the
+/// handle in the middle of the model turns it freely.
+fn model3d_tab(app: &mut SlideApp, ui: &mut Ui) {
+    group(ui, |ui| {
+        rows(ui, |ui| {
+            small(app, ui, Icon::ResetPicture, "Reset 3D Model", "model3d.reset", json!({}));
+            small(app, ui, Icon::ResetPicture, "Reset 3D Model and Size", "model3d.reset", json!({"size": true}));
+        });
+    });
+    group(ui, |ui| {
+        let r = big_button(ui, Icon::Models3d, "3D Model\nViews", enabled(app, "model3d.view"));
+        egui::Popup::menu(&r).show(|ui| {
+            for (name, label, ..) in deckcraft_engine::cmd::model3d::VIEWS {
+                if ui.button(*label).clicked() {
+                    run(app, "model3d.view", json!({"view": name}));
+                }
+            }
+        });
+    });
+}
+
 fn playback(app: &mut SlideApp, ui: &mut Ui) {
     let m = app
         .session
@@ -3614,6 +3640,30 @@ mod tests {
         assert_eq!(marked(marked_options(&["asOne", "byParagraph"], Some(text_build_id(TextBuild::ByParagraph)))), vec!["byParagraph"]);
         assert_eq!(marked(marked_options(&["asOne", "byParagraph"], Some(text_build_id(TextBuild::AsOne)))), vec!["asOne"]);
         assert!(marked(marked_options(&["asOne", "byParagraph"], Some(text_build_id(TextBuild::ByWord)))).is_empty());
+    }
+
+    #[test]
+    fn a_selected_model_shows_the_3d_model_tab() {
+        const STL: &[u8] = b"solid t\nfacet normal 0 0 1\nouter loop\nvertex 0 0 0\nvertex 1 0 0\nvertex 0 0 1\nendloop\nendfacet\nendsolid t\n";
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        assert!(!contextual(&app).contains(&"3D Model"));
+        app.session.execute("insert.model3d", &json!({"name": "part.stl", "data": deckcraft_engine::cmd::base64_encode(STL)})).expect("insert");
+        assert!(contextual(&app).contains(&"3D Model"));
+        let ctx = egui::Context::default();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| model3d_tab(&mut app, ui));
+        out.textures_delta.clear();
+        let text: Vec<String> = out
+            .shapes
+            .iter()
+            .filter_map(|c| match &c.shape {
+                egui::Shape::Text(t) => Some(t.galley.job.text.clone()),
+                _ => None,
+            })
+            .collect();
+        for label in ["Reset 3D Model", "Reset 3D Model and Size"] {
+            assert!(text.iter().any(|t| t == label), "{label}: {text:?}");
+        }
+        assert!(text.iter().any(|t| t.contains("Views")), "{text:?}");
     }
 }
 

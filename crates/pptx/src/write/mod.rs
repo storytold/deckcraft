@@ -100,7 +100,7 @@ fn ext_for(content_type: &str, name: &str, data: &[u8]) -> String {
         "audio/x-ms-wma" => "wma",
         "audio/ogg" => "ogg",
         "audio/flac" => "flac",
-        "model/gltf-binary" => "glb",
+        "model/gltf-binary" | "model/gltf.binary" => "glb",
         _ => "",
     };
     if !by_ct.is_empty() {

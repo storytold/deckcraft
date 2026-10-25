@@ -306,12 +306,16 @@ pub enum ShapeKind {
     Ink {
         strokes: Vec<InkStroke>,
     },
-    /// A 3-D model (`p:contentPart` with a `model3d` relationship, usually a `.glb`).
-    /// `poster` is the fallback picture an `mc:AlternateContent` choice carried for older readers.
+    /// A 3-D model (`am3d:model3d`, or a `p:contentPart` with a `model3d` relationship): its
+    /// `.glb`, how it is turned and seen (`pose`), and `poster`, the fallback picture an
+    /// `mc:AlternateContent` choice carries for older readers. A poster that no longer matches the
+    /// pose is dropped, and a `.pptx` save draws a new one.
     Model3d {
         media: MediaId,
         #[serde(default)]
         poster: Option<MediaId>,
+        #[serde(default)]
+        pose: Model3dPose,
     },
     /// Something we read but don't model (SmartArt without fallback, OLE…): its XML is kept and its
     /// fallback picture, if any, is shown.
@@ -324,6 +328,48 @@ pub enum ShapeKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         parts: Vec<(String, String, MediaId)>,
     },
+}
+
+/// How a 3-D model is turned and seen (`am3d:trans`, `am3d:camera`), with the rest of its
+/// `am3d:model3d` settings kept so a `.pptx` writes them back as read.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Model3dPose {
+    /// The model's turn in degrees: about X, then Y, then Z (`am3d:rot` `ax`, `ay`, `az`).
+    pub rot: [f64; 3],
+    /// The camera a file set; `None`: in front of the model (on +Z), upright, looking at its origin.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub camera: Option<Model3dCamera>,
+    /// `am3d:meterPerModelUnit` as (numerator, denominator).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meter_per_unit: Option<(u64, u64)>,
+    /// `am3d:preTrans` and `am3d:postTrans` (`dx`, `dy`, `dz`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pre_trans: Option<[i64; 3]>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_trans: Option<[i64; 3]>,
+    /// `am3d:scale`: (numerator, denominator) for X, Y and Z.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scale: Option<[(i64, i64); 3]>,
+    /// `am3d:objViewport/@viewportSz` (EMU).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub viewport: Option<i64>,
+    /// The lights (`am3d:ambientLight`, `am3d:ptLight`…) as read, written back unchanged.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lights: Option<String>,
+}
+
+/// `am3d:camera`: where the camera stands, which way is up and where it looks, and its projection.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Model3dCamera {
+    pub pos: [i64; 3],
+    pub up: [i64; 3],
+    pub look_at: [i64; 3],
+    /// Perspective field of view in 60,000ths of a degree; `None` for orthographic.
+    pub fov: Option<i64>,
+    /// Orthographic `am3d:sz` (numerator, denominator).
+    pub ortho: Option<(u64, u64)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

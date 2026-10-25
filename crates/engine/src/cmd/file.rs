@@ -340,7 +340,11 @@ fn report_damage(s: &mut Session, damaged: &Damage) -> Result<()> {
 /// Encode the presentation in `format` (`deckcraft`, `pptx`, `potx`, `ppsx`, `outline`, `pdf`, `gif`).
 pub fn save_bytes(doc: &Presentation, format: &str) -> Result<Vec<u8>> {
     match format {
-        f @ ("pptx" | "potx" | "ppsx") => deckcraft_pptx::export_as(doc, f).map_err(|e| EngineError::Other(e.to_string())),
+        f @ ("pptx" | "potx" | "ppsx") => {
+            // Every 3-D model goes out with a fallback picture for readers that can't show it.
+            let posters = super::model3d::with_posters(doc);
+            deckcraft_pptx::export_as(posters.as_ref().unwrap_or(doc), f).map_err(|e| EngineError::Other(e.to_string()))
+        }
         "outline" | "txt" => Ok(deckcraft_format::slides_to_outline(doc).into_bytes()),
         "rtf" => Ok(deckcraft_format::rtf::slides_to_rtf(doc).into_bytes()),
         "pdf" => deckcraft_pdf::export(doc, &Default::default()).map_err(|e| EngineError::Other(e.to_string())),

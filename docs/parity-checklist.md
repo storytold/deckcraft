@@ -9,7 +9,7 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 24 | 12 | 56% |
+| P2 | 54 | 18 | 25 | 11 | 56% |
 
 | Area | Parity |
 |---|---|
@@ -26,7 +26,7 @@ The summary between `<!-- SUMMARY -->
 | Charts | 65% |
 | SmartArt | 50% |
 | Pictures | 60% |
-| Media | 67% |
+| Media | 71% |
 | Transitions | 100% |
 | Animations | 85% |
 | Slide show | 68% |
@@ -194,7 +194,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Media | Audio/video playback in the show (WMA/WMV not decodable yet) | P0 | P |
 | Media | Trim, fade in/out, volume, loop, play across slides | P2 | D |
 | Media | Record audio / screen recording | P2 | M |
-| Media | Icons, 3-D models, stock content | P2 | M |
+| Media | Icons, 3-D models, stock content | P2 | P |
 | Media | Embedded objects (OLE): insert; foreign objects kept on round trip | P2 | P |
 | Transitions | Transition gallery (fade, push, wipe, split, cover, uncover, zoom, morph…) | P0 | D |
 | Transitions | Effect options and duration | P0 | D |

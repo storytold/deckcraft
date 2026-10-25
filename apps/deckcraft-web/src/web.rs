@@ -8,6 +8,7 @@ const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt",
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
 const AUDIO_EXTS: &[&str] = &["wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff"];
 const VIDEO_EXTS: &[&str] = &["mp4", "m4v", "mov", "webm"];
+const MODEL_EXTS: &[&str] = &["glb", "fbx", "obj", "stl"];
 const CANVAS_ID: &str = "deckcraft_canvas";
 const LOADING_ID: &str = "deckcraft_loading";
 
@@ -126,6 +127,7 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
                 "picture" => rfd::AsyncFileDialog::new().add_filter("Pictures", PICTURE_EXTS),
                 "audio" => rfd::AsyncFileDialog::new().add_filter("Audio", AUDIO_EXTS),
                 "video" => rfd::AsyncFileDialog::new().add_filter("Video", VIDEO_EXTS),
+                "model3d" => rfd::AsyncFileDialog::new().add_filter("3D Models", MODEL_EXTS),
                 _ => rfd::AsyncFileDialog::new().add_filter("Presentations", PRESENTATION_EXTS),
             };
             wasm_bindgen_futures::spawn_local(async move {
