@@ -3,6 +3,7 @@
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Inbox, InboxEvent, InboxFile, Services, SlideApp};
 use wasm_bindgen::JsCast as _;
+use wasm_bindgen::JsValue;
 
 const PRESENTATION_EXTS: &[&str] = &["deckcraft", "pptx", "potx", "ppsx", "txt", "md"];
 const PICTURE_EXTS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "tif", "tiff"];
@@ -109,10 +110,106 @@ impl eframe::App for WebShell {
     }
 }
 
+static JS_FONT_ARRAY: std::sync::OnceLock<js_sys::Array> = std::sync::OnceLock::new();
+static FETCHING_FAMILIES: std::sync::OnceLock<std::sync::RwLock<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+
+fn fetching_set() -> &'static std::sync::RwLock<std::collections::HashSet<String>> {
+    FETCHING_FAMILIES.get_or_init(|| std::sync::RwLock::new(std::collections::HashSet::new()))
+}
+
+fn fetch_family_blobs(family: &str, ctx: &egui::Context) {
+    let Some(arr) = JS_FONT_ARRAY.get() else { return };
+    let family_lower = family.to_ascii_lowercase();
+
+    // Avoid duplicate concurrent fetches for the same family:
+    {
+        let mut set = fetching_set().write().unwrap_or_else(|e| e.into_inner());
+        if set.contains(&family_lower) || deckcraft_fonts::FontDb::global().is_loaded(family) {
+            return;
+        }
+        set.insert(family_lower);
+    }
+
+    let arr_len = arr.length();
+    for i in 0..arr_len {
+        let item = arr.get(i);
+        let item_family = js_sys::Reflect::get(&item, &JsValue::from_str("family")).ok().and_then(|v| v.as_string()).unwrap_or_default();
+        if !item_family.eq_ignore_ascii_case(family) {
+            continue;
+        }
+        let blob_fn: Option<js_sys::Function> = js_sys::Reflect::get(&item, &JsValue::from_str("blob")).ok().and_then(|v| v.dyn_into().ok());
+        let Some(blob_fn) = blob_fn else { continue };
+        let Ok(blob_prom) = blob_fn.call0(&item).and_then(|v| v.dyn_into::<js_sys::Promise>()) else { continue };
+
+        let ctx = ctx.clone();
+        let family_for_log = family.to_string();
+        wasm_bindgen_futures::spawn_local(async move {
+            let Ok(blob_val) = wasm_bindgen_futures::JsFuture::from(blob_prom).await else { return };
+            let Ok(blob) = blob_val.dyn_into::<web_sys::Blob>() else { return };
+            let Ok(buf) = wasm_bindgen_futures::JsFuture::from(blob.array_buffer()).await else { return };
+            let bytes = js_sys::Uint8Array::new(&buf).to_vec();
+            let added = deckcraft_fonts::FontDb::global().add_font(bytes);
+            if added > 0 {
+                log::info!("Loaded system font '{family_for_log}' ({added} face(s))");
+                ctx.request_repaint();
+            }
+        });
+    }
+}
+
+fn setup_system_fonts(ctx: egui::Context) -> (Option<Box<dyn Fn()>>, Option<Box<dyn Fn(&str)>>) {
+    let window = match web_sys::window() {
+        Some(w) => w,
+        None => return (None, None),
+    };
+    let query_prop = js_sys::Reflect::get(&window, &JsValue::from_str("queryLocalFonts")).ok();
+    if !query_prop.as_ref().is_some_and(|p| p.is_function()) {
+        return (None, None);
+    }
+
+    let fetch_ctx = ctx.clone();
+    let fetch_action: Box<dyn Fn(&str)> = Box::new(move |family: &str| {
+        fetch_family_blobs(family, &fetch_ctx);
+    });
+
+    let load_action: Box<dyn Fn()> = Box::new(move || {
+        let Some(window) = web_sys::window() else { return };
+        let Ok(query_val) = js_sys::Reflect::get(&window, &JsValue::from_str("queryLocalFonts")) else { return };
+        let Ok(query_fn) = query_val.dyn_into::<js_sys::Function>() else { return };
+        let Ok(prom_val) = query_fn.call0(&window) else { return };
+        let Ok(prom) = prom_val.dyn_into::<js_sys::Promise>() else { return };
+
+        let ctx = ctx.clone();
+        wasm_bindgen_futures::spawn_local(async move {
+            let Ok(result) = wasm_bindgen_futures::JsFuture::from(prom).await else {
+                log::info!("queryLocalFonts was not granted");
+                return;
+            };
+            let Ok(arr) = result.dyn_into::<js_sys::Array>() else { return };
+            log::info!("queryLocalFonts granted with {} fonts", arr.length());
+
+            let mut families: Vec<String> = Vec::with_capacity(arr.length() as usize);
+            for i in 0..arr.length() {
+                let item = arr.get(i);
+                let family = js_sys::Reflect::get(&item, &JsValue::from_str("family")).ok().and_then(|v| v.as_string()).unwrap_or_default();
+                if !family.is_empty() && !families.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
+                    families.push(family);
+                }
+            }
+            let _ = JS_FONT_ARRAY.set(arr);
+            deckcraft_fonts::FontDb::global().register_web_families(families);
+            ctx.request_repaint();
+        });
+    });
+
+    (Some(load_action), Some(fetch_action))
+}
+
 /// Web services: no file paths, so `pick_open`/`pick_save`/`read` stay `None` and the UI falls
 /// back to `open_async` (browser picker → inbox) and `download`.
 fn services(inbox: Inbox, ctx: egui::Context) -> Services {
     let open_inbox = inbox.clone();
+    let (load_system_fonts, fetch_font) = setup_system_fonts(ctx.clone());
     Services {
         open_async: Some(Box::new(move |purpose: &str, request: u64| {
             let inbox = open_inbox.clone();
@@ -141,6 +238,8 @@ fn services(inbox: Inbox, ctx: egui::Context) -> Services {
             }
         })),
         inbox: Some(inbox),
+        load_system_fonts,
+        fetch_font,
         ..Default::default()
     }
 }

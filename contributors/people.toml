@@ -42,6 +42,8 @@ sync_github_name = true
 display_name = "Netter"
 sync_github_name = false
 
+[people.GhostMitra]
+sync_github_name = true
 [people.dotCooCoo]
 real_name = "Robert Lee"
 sync_github_name = true

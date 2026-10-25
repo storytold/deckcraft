@@ -424,6 +424,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn web_catalog_registration() {
+        let db = FontDb::with_font_dirs(Vec::new());
+        assert!(!db.web_catalog_loaded());
+        assert!(!db.has_family("CustomWebFont"));
+        db.register_web_families(vec!["CustomWebFont".to_string()]);
+        assert!(db.web_catalog_loaded());
+        assert!(db.has_family("CustomWebFont"));
+        assert!(db.families().iter().any(|f| f == "CustomWebFont"));
     /// An Embedded OpenType header of `version` around `font`, with the font at the end.
     fn wrap_eot(font: &[u8], version: u32) -> Vec<u8> {
         let mut h = vec![0u8; 82];
