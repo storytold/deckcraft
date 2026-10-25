@@ -17,8 +17,10 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let Some(st) = app.session.active() else { return };
         let n = st.doc.slides.len();
         let left = match st.selection.target {
-            deckcraft_engine::Target::Slides => format!("Slide {} of {}", (st.selection.slide + 1).min(n.max(1)), n),
-            _ => "Slide Master".to_string(),
+            deckcraft_engine::Target::Slides => {
+                crate::i18n::format("Slide {} of {}", &[((st.selection.slide + 1).min(n.max(1))).to_string(), (n).to_string()])
+            }
+            _ => crate::i18n::tr("Slide Master").to_string(),
         };
         let p = ui.painter();
         // Left to right: slide counter, language, status message. Each starts at its usual column, or
@@ -29,14 +31,15 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         let right_x = rect.max.x - 560.0;
         // The selection's proofing language; a click opens Review › Language.
         let (lang, no_proof) = crate::dialogs::selected_language(app);
-        let name = crate::squiggles::display_lang_name(ui.ctx(), &lang) + if no_proof { " (not checked)" } else { "" };
+        let name = crate::i18n::tr(&crate::squiggles::display_lang_name(ui.ctx(), &lang)).to_string()
+            + if no_proof { crate::i18n::tr(" (not checked)") } else { "" };
         let lx = (rect.min.x + 120.0).max(sr.max.x + 16.0);
         let lclip = Rect::from_min_max(pos2(lx - 3.0, rect.min.y), pos2(right_x.max(lx - 3.0), rect.max.y));
         let lr = p.with_clip_rect(lclip).text(pos2(lx, rect.center().y), Align2::LEFT_CENTER, &name, theme::font(12.0), t.text_dim);
         let hit = lr.expand(3.0).intersect(lclip);
         if hit.is_positive() {
-            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text("Language");
-            resp.widget_info(|| named_with_value("Language", &name));
+            let resp = ui.interact(hit, ui.scope_id().with("status_lang"), Sense::click()).on_hover_text(crate::i18n::tr("Language"));
+            resp.widget_info(|| named_with_value(crate::i18n::tr("Language"), &name));
             if resp.clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("language"));
             }
@@ -118,6 +121,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
 /// Draw a small status icon with a tooltip and return its interaction response.
 fn small_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
     let resp = icon_button(ui, icon, on);
+    let tip = crate::i18n::tr(tip);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tip));
     resp.on_hover_text(tip)
 }
@@ -125,6 +129,7 @@ fn small_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
 /// A view button: screen readers hear its name and whether its view is the one shown.
 fn view_icon(ui: &mut Ui, icon: Icon, tip: &str, on: bool) -> egui::Response {
     let resp = icon_button(ui, icon, on);
+    let tip = crate::i18n::tr(tip);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, tip));
     resp.on_hover_text(tip)
 }
@@ -155,6 +160,7 @@ fn shown_text(ui: &Ui, rect: Rect, id: &str, text: &str) {
 /// Draw a labelled status icon, painting the text directly and exposing the toggle state as its
 /// accessible selected state.
 fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
+    let label = crate::i18n::tr(label);
     let t = Tokens::get(ui.ctx());
     let w = 22.0 + ui.fonts_mut(|f| f.layout_no_wrap(label.into(), theme::font(12.0), t.text).size().x) + 8.0;
     let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
@@ -162,10 +168,10 @@ fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
         ui.painter().rect_filled(r, CornerRadius::same(4), if on { t.selected } else { t.hover });
     }
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 11.0, r.center().y), vec2(15.0, 15.0)), icon, t.text_dim, false);
-    ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, label, theme::font(12.0), t.text_dim);
+    ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, crate::i18n::tr(label), theme::font(12.0), t.text_dim);
     // The visible label is painted directly, so name the interactive control explicitly and
     // expose the toggle state as selected: a screen reader hears "Notes, pressed" not "Notes".
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, crate::i18n::tr(label)));
     resp
 }
 
@@ -215,7 +221,11 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text("Click to add notes").frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+                        e.id(id)
+                            .hint_text(crate::i18n::tr("Click to add notes"))
+                            .frame(egui::Frame::NONE)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(2)
                     })
                 })
                 .inner;

@@ -965,6 +965,28 @@ fn hyperlinks_draw_in_the_hyperlink_colour_underlined() {
 }
 
 #[test]
+fn interface_placeholder_prompts_preserve_custom_prompts_and_document_data() {
+    let mut p = Presentation::default();
+    let slide = p.slides.first().unwrap();
+    let shape = slide.shapes.iter().find(|shape| shape.ph_type() == Some(PhType::Title) || shape.ph_type() == Some(PhType::CtrTitle)).unwrap();
+    let c = Ctx::for_slide(&p, slide).unwrap();
+    let before = p.clone();
+    assert_eq!(prompt_body(&c, shape, PhType::Title, Some("Натисніть, щоб додати заголовок")).text(), "Натисніть, щоб додати заголовок");
+    assert_eq!(p, before);
+
+    let layout_id = slide.layout;
+    let master = Arc::make_mut(p.masters.first_mut().unwrap());
+    let layout = master.layouts.iter_mut().find(|layout| layout.id == layout_id).unwrap();
+    let shape = layout.shapes.iter_mut().find(|shape| shape.ph_type() == Some(PhType::Title) || shape.ph_type() == Some(PhType::CtrTitle)).unwrap();
+    shape.ph.as_mut().unwrap().has_custom_prompt = true;
+    shape.text = Some(TextBody::from_text("Click to add title"));
+    let slide = p.slides.first().unwrap();
+    let shape = slide.shapes.iter().find(|shape| shape.ph_type() == Some(PhType::Title) || shape.ph_type() == Some(PhType::CtrTitle)).unwrap();
+    let c = Ctx::for_slide(&p, slide).unwrap();
+    assert_eq!(prompt_body(&c, shape, PhType::Title, Some("Натисніть, щоб додати заголовок")).text(), "Click to add title");
+}
+
+#[test]
 fn a_linear_gradient_ramps_like_powerpoint() {
     // Black to white, left to right: PowerPoint draws 105 a quarter of the way and 186 half way
     // (linear-light mix, S-shaped), not 64 and 128.
