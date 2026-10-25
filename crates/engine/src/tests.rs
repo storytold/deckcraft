@@ -967,6 +967,12 @@ fn pressing_a_table_outside_its_cells_with_a_range_selected_moves_the_table() {
     assert_eq!(st.selection.shapes, vec![id]);
     let x = st.shape(id).unwrap().xfrm.unwrap();
     assert!((x.x - 150.0).abs() < 10.0 && (x.y - 150.0).abs() < 10.0, "the table moves: {x:?}");
+    // A click (no drag) there keeps the table selected and puts no caret in the nearest cell.
+    let (x0, y0) = (x.x - 2.0, x.y + 20.0);
+    drag(&mut s, PointerKind::Down, x0, y0);
+    drag(&mut s, PointerKind::Up, x0, y0);
+    let st = s.doc().unwrap();
+    assert_eq!((st.selection.shapes.clone(), st.selection.text.is_none()), (vec![id], true));
 }
 
 #[test]

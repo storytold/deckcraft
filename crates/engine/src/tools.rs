@@ -739,15 +739,17 @@ impl Session {
                 let origs: Vec<(ShapeId, Xfrm)> =
                     ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
                 // A click (no drag) on text puts the caret there; unselected text boxes and
-                // placeholders take the caret straight away like PowerPoint. A click in a selected
-                // table puts the caret in the clicked cell.
+                // placeholders take the caret straight away like PowerPoint. A click in a cell of a
+                // selected table puts the caret there; a click on its grab band keeps the table selected.
                 let table = st.shape(id).is_some_and(|s| matches!(s.kind, ShapeKind::Table(_)));
                 // A click on the frame band of a text box selects the box whole, as PowerPoint
                 // does, so it can be moved, duplicated or deleted; only the inside takes the caret.
                 let on_frame = text
                     && is_text_first(st, id)
                     && st.shape(id).is_some_and(|s| edit_zone(&xfrm_of(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
-                let enter_text = (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected))).then_some((id, p));
+                let enter_text =
+                    (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected && in_table_cell(st, id, p))))
+                        .then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;
