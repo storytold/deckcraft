@@ -141,7 +141,7 @@ fn build_view_menu(view_items: &mut Vec<(&'static str, CheckMenuItem)>) -> Subme
     let sorter = check_item("view.sorter", "Slide Sorter", false, Some("CMD+2"));
     let notes = check_item("view.notesPage", "Notes Page", false, Some("CMD+3"));
     let outline = check_item("view.outline", "Outline View", false, Some("CMD+4"));
-    let reading = check_item("view.reading", "Reading View", false, Some("CMD+5"));
+    let reading = item("view.reading", "Reading View", Some("CMD+5"));
 
     view_items.push(("normal", normal.clone()));
     view_items.push(("sorter", sorter.clone()));
@@ -328,7 +328,7 @@ fn build_format_menu() -> Submenu {
         &item("format.themeColors", "Theme Colors…", None),
         &item("format.slideBackground", "Slide Background…", Some("CMD+SHIFT+2")),
         &PredefinedMenuItem::separator(),
-        &item("format.crop", "Crop", Some("SHIFT+C")),
+        &item("format.crop", "Crop", None),
         &item("format.object", "Format Object…", Some("CMD+SHIFT+1")),
     ]);
     format
@@ -447,7 +447,7 @@ fn build_window_menu() -> Submenu {
         &item("window.arrangeAll", "Arrange All", None),
         &item("window.nextPane", "Next Pane", None),
         &PredefinedMenuItem::separator(),
-        &item("window.bringAllToFront", "Bring All to Front", None),
+        &PredefinedMenuItem::bring_all_to_front(None),
     ]);
     window
 }
