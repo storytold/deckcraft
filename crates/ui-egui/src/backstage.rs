@@ -1350,7 +1350,7 @@ fn account(app: &mut SlideApp, ui: &mut Ui) {
         ui.vertical(|ui| {
             ui.set_width(340.0);
             heading(ui, "Appearance");
-            let dark = app.ui.brightness == theme::Brightness::Dark;
+            let dark = app.shown_brightness == theme::Brightness::Dark;
             egui::ComboBox::from_id_salt("backstage_appearance").width(260.0).selected_text(if dark { "Dark" } else { "Light" }).show_ui(ui, |ui| {
                 for (on, label) in [(false, "Light"), (true, "Dark")] {
                     if ui.selectable_label(dark == on, label).clicked() {

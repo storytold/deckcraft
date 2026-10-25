@@ -11,6 +11,7 @@ pub mod backstage;
 pub mod canvas;
 pub mod control;
 pub mod credits;
+pub mod desktop_theme;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
@@ -237,7 +238,9 @@ pub enum ViewMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
-    pub brightness: theme::Brightness,
+    /// Interface brightness: `None` follows the system, `Some` is the user's own choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brightness: theme::BrightnessPreference,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -283,7 +286,7 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
-            brightness: theme::Brightness::Light,
+            brightness: None,
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -382,6 +385,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("view.theme", "Display theme", None, "{value?: system|light|dark}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -494,6 +498,14 @@ pub struct SlideApp {
     pending_shots: Vec<(u64, Option<String>, Sender<ControlResponse>, f64)>,
     styled: bool,
     restyle: bool,
+    /// The desktop's light/dark choice, watched while the app runs (Linux has no winit answer).
+    desktop_theme: desktop_theme::DesktopTheme,
+    /// The last answer [`desktop_theme`] gave, so a frame that asks costs nothing.
+    desktop_dark: Option<bool>,
+    /// The last system theme observed from egui, including macOS and Windows.
+    last_system_dark: Option<bool>,
+    /// Brightness as last drawn, so a toggle flips away from what the user actually sees.
+    pub(crate) shown_brightness: theme::Brightness,
     fonts_ready: bool,
     last_time: f64,
     /// When AutoRecover data was last written (seconds, egui time).
@@ -579,6 +591,10 @@ impl SlideApp {
             pending_shots: vec![],
             styled: false,
             restyle: true,
+            desktop_theme: desktop_theme::DesktopTheme::start(),
+            desktop_dark: None,
+            last_system_dark: None,
+            shown_brightness: theme::Brightness::Light,
             fonts_ready: false,
             last_time: 0.0,
             last_recovery: 0.0,
@@ -957,9 +973,22 @@ impl SlideApp {
             }
             "view.collapseRibbon" => self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed,
             "view.dark" => {
-                let on = self.flag(p, self.ui.brightness == theme::Brightness::Dark);
-                self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
+                // No value toggles away from what is on screen; a value is the user's own choice.
+                let on = self.flag(p, self.shown_brightness == theme::Brightness::Dark);
+                self.ui.brightness = Some(if on { theme::Brightness::Dark } else { theme::Brightness::Light });
                 self.restyle = true;
+            }
+            "view.theme" => {
+                // `system` (no `brightness` saved), `light` or `dark`.
+                if let Some(v) = p.get("value").and_then(Value::as_str) {
+                    self.ui.brightness = match v {
+                        "system" => None,
+                        "light" => Some(theme::Brightness::Light),
+                        "dark" => Some(theme::Brightness::Dark),
+                        other => return Err(format!("unknown theme `{other}`; use system, light or dark")),
+                    };
+                    self.restyle = true;
+                }
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
             "view.newWindow" => return doc_window::command(self, p),
@@ -1600,8 +1629,23 @@ impl SlideApp {
         } else {
             self.fonts_ready = true;
         }
+        if let Some(answer) = self.desktop_theme.take_change() {
+            self.desktop_dark = Some(answer);
+            if self.ui.brightness.is_none() {
+                self.restyle = true;
+            }
+        }
+        let system = ctx.system_theme().map(|t| t == egui::Theme::Dark).or(self.desktop_dark);
+        if self.last_system_dark != system {
+            self.last_system_dark = system;
+            if self.ui.brightness.is_none() {
+                self.restyle = true;
+            }
+        }
         if self.restyle {
-            theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
+            let brightness = theme::resolve_brightness(self.ui.brightness, system, self.shown_brightness);
+            theme::apply(ctx, &theme::Tokens::for_brightness(brightness));
+            self.shown_brightness = brightness;
             self.restyle = false;
         }
         let now = ctx.input(|i| i.time);
@@ -2235,6 +2279,40 @@ mod tests {
         assert_eq!(corner_alpha(&got[2].1), 255, "JPEG has no transparency");
     }
 
+    /// "Use system setting" draws what the desktop says; an explicit choice stands on its own, and a
+    /// desktop that says nothing leaves the last choice standing.
+    #[test]
+    fn the_display_theme_follows_the_desktop_or_the_choice() {
+        use theme::{Brightness, resolve_brightness};
+        assert_eq!(resolve_brightness(None, Some(true), Brightness::Light), Brightness::Dark);
+        assert_eq!(resolve_brightness(None, Some(false), Brightness::Dark), Brightness::Light);
+        assert_eq!(resolve_brightness(None, None, Brightness::Dark), Brightness::Dark);
+        assert_eq!(resolve_brightness(Some(Brightness::Light), Some(true), Brightness::Dark), Brightness::Light);
+        assert_eq!(resolve_brightness(Some(Brightness::Dark), Some(false), Brightness::Light), Brightness::Dark);
+    }
+
+    /// A saved `brightness` is still read; no `brightness` at all means follow the system, and is not
+    /// saved back.
+    #[test]
+    fn a_saved_theme_survives_a_restart_and_system_is_the_default() {
+        let new = || SlideApp::new(Session::new(), Services::default());
+        let mut a = new();
+        a.run("view.theme", json!({"value": "dark"})).unwrap();
+        assert_eq!(a.ui.brightness, Some(theme::Brightness::Dark));
+        let saved = serde_json::to_string(&a.ui).unwrap();
+        assert!(saved.contains(r#""brightness":"dark""#), "{saved}");
+        assert_eq!(serde_json::from_str::<UiState>(&saved).unwrap().brightness, Some(theme::Brightness::Dark));
+
+        let mut fresh = new();
+        assert_eq!(fresh.ui.brightness, None);
+        fresh.run("view.theme", json!({"value": "light"})).unwrap();
+        assert_eq!(fresh.ui.brightness, Some(theme::Brightness::Light));
+        fresh.run("view.theme", json!({"value": "system"})).unwrap();
+        assert_eq!(fresh.ui.brightness, None);
+        assert!(!serde_json::to_string(&fresh.ui).unwrap().contains(r#""brightness":"#));
+        assert!(fresh.run("view.theme", json!({"value": "purple"})).unwrap_err().contains("system, light or dark"));
+    }
+
     fn title_text(app: &SlideApp) -> String {
         let d = app.session.active().unwrap();
         let sh = &d.doc.slides[0].shapes[0];
@@ -2757,7 +2835,19 @@ mod tests {
         let change = |harness: &mut egui_kittest::Harness<'static, SlideApp>| {
             harness.state_mut().run("app.preferences", json!({})).unwrap();
             harness.run_steps(2);
-            for label in ["Dark appearance", "Show smart guides", "Snap objects to grid"] {
+            harness
+                .query_all_by_role_and_label(egui::accesskit::Role::ComboBox, "Display theme")
+                .next()
+                .unwrap_or_else(|| panic!("no Display theme selector"))
+                .click_accesskit();
+            harness.run_steps(1);
+            harness
+                .query_all_by_role_and_label(egui::accesskit::Role::Button, "Dark")
+                .next()
+                .unwrap_or_else(|| panic!("no Dark theme option"))
+                .click_accesskit();
+            harness.run_steps(1);
+            for label in ["Show smart guides", "Snap objects to grid"] {
                 harness
                     .query_all_by_role_and_label(egui::accesskit::Role::CheckBox, label)
                     .next()

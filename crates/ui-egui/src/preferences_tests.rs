@@ -33,7 +33,7 @@ fn open_options(h: &mut Harness<'_, SlideApp>) {
 }
 
 fn dark(app: &SlideApp) -> bool {
-    app.ui.brightness == Brightness::Dark
+    app.ui.brightness == Some(Brightness::Dark)
 }
 
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
@@ -93,10 +93,15 @@ fn options_cancel_undoes_every_editing_setting() {
 #[test]
 fn options_cancel_puts_the_appearance_and_scale_back() {
     let mut h = harness();
-    let (dark_before, scale_before) = (dark(h.state()), h.state().ui.ui_scale);
+    let (brightness_before, scale_before) = (h.state().ui.brightness, h.state().ui.ui_scale);
     open_options(&mut h);
 
-    h.query_by_label("Dark appearance").expect("the checkbox is there").click();
+    h.query_all_by_role_and_label(egui::accesskit::Role::ComboBox, "Display theme")
+        .next()
+        .expect("the Display theme selector is there")
+        .click_accesskit();
+    h.run_steps(1);
+    h.query_all_by_role_and_label(egui::accesskit::Role::Button, "Dark").next().expect("the Dark theme option is there").click_accesskit();
     h.run_steps(2);
     assert!(dark(h.state()), "the appearance applies as it is toggled");
 
@@ -108,7 +113,7 @@ fn options_cancel_puts_the_appearance_and_scale_back() {
 
     h.key_press(egui::Key::Escape);
     h.run_steps(2);
-    assert_eq!(dark(h.state()), dark_before, "Esc restores the appearance");
+    assert_eq!(h.state().ui.brightness, brightness_before, "Esc restores the appearance choice");
     assert!((h.state().ui.ui_scale - scale_before).abs() < 1e-3, "Esc restores the size");
     assert!(h.state().dialog.is_none(), "and the dialog closes");
 }

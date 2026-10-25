@@ -160,7 +160,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
 /// What the Preferences dialog can change, as it was when the dialog opened.
 fn preferences_snapshot(app: &SlideApp) -> Value {
     json!({
-        "dark": app.ui.brightness == theme::Brightness::Dark,
+        "brightness": serde_json::to_value(app.ui.brightness).unwrap_or(Value::Null),
         "uiScale": app.ui.ui_scale,
         "prefs": serde_json::to_value(&app.session.prefs).unwrap_or(Value::Null),
     })
@@ -169,10 +169,16 @@ fn preferences_snapshot(app: &SlideApp) -> Value {
 /// Puts back the settings the Preferences dialog opened with (Cancel, Esc, the close button).
 fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     let Some(before) = d.params.get("before") else { return };
-    if let Some(dark) = before.get("dark").and_then(Value::as_bool)
-        && dark != (app.ui.brightness == theme::Brightness::Dark)
-    {
-        let _ = app.run("view.dark", json!({ "on": dark }));
+    if let Some(value) = before.get("brightness") {
+        let brightness: Option<theme::Brightness> = serde_json::from_value(value.clone()).ok();
+        if brightness != app.ui.brightness {
+            let value = match brightness {
+                None => "system",
+                Some(theme::Brightness::Light) => "light",
+                Some(theme::Brightness::Dark) => "dark",
+            };
+            let _ = app.run("view.theme", json!({ "value": value }));
+        }
     }
     if let Some(scale) = before.get("uiScale").and_then(Value::as_f64) {
         app.ui.ui_scale = scale as f32;
@@ -2257,25 +2263,36 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 d.params = json!({ "before": preferences_snapshot(app) });
             }
             ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
-            let mut dark = app.ui.brightness == theme::Brightness::Dark;
-            if ui.checkbox(&mut dark, "Dark appearance").changed() {
-                let _ = app.run("view.dark", json!({"on": dark}));
+            ui.horizontal(|ui| {
+                ui.label("Display theme");
+                let current = match app.ui.brightness {
+                    None => "Use system setting",
+                    Some(theme::Brightness::Dark) => "Dark",
+                    Some(theme::Brightness::Light) => "Light",
+                };
+                egui::ComboBox::from_label("Display theme").selected_text(current).width(180.0).show_ui(ui, |ui| {
+                    for (value, label) in [("system", "Use system setting"), ("light", "Light"), ("dark", "Dark")] {
+                        let chosen = app.ui.brightness
+                            == match value {
+                                "light" => Some(theme::Brightness::Light),
+                                "dark" => Some(theme::Brightness::Dark),
+                                _ => None,
+                            };
+                        if ui.selectable_label(chosen, label).clicked() {
+                            let _ = app.run("view.theme", json!({"value": value}));
+                        }
+                    }
+                });
+            });
+            let pending = d.get("uiScalePending", &app.ui.ui_scale.to_string());
+            let mut scale = pending.parse::<f32>().unwrap_or(app.ui.ui_scale);
+            let response = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text("Interface size"));
+            if response.changed() {
+                d.fields.insert("uiScalePending".into(), scale.to_string());
             }
-            // While the pointer holds the slider its value only waits in the dialog: applying it
-            // would rescale the slider under the pointer and run it to an end (#767). It applies
-            // on release, and at once from the keyboard.
-            let pending = d.fields.get("uiScale").and_then(|v| v.parse::<f32>().ok());
-            let mut scale = pending.unwrap_or(app.ui.ui_scale);
-            let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75).text("Interface size"));
-            if r.is_pointer_button_down_on() {
-                if r.changed() || pending.is_some() {
-                    d.fields.insert("uiScale".into(), scale.to_string());
-                }
-            } else {
-                if r.changed() || pending.is_some() {
-                    app.ui.ui_scale = scale;
-                }
-                d.fields.remove("uiScale");
+            if response.drag_stopped() || (response.changed() && !response.dragged()) {
+                app.ui.ui_scale = scale;
+                d.fields.remove("uiScalePending");
             }
             ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
             ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
