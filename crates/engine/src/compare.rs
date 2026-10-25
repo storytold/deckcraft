@@ -286,7 +286,11 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
         let Some(m) = rev.media(id) else { continue };
         match doc.media(id) {
             Some(x) if x.data == m.data => {}
-            None => doc.media.push(m.clone()),
+            None => {
+                // Keeps the revision's id, so later ids must start past it.
+                doc.media.push(m.clone());
+                doc.next_id = doc.next_id.max(id.0);
+            }
             Some(_) => {
                 let new = doc
                     .add_media(&m.name, &m.content_type, m.data.as_ref().clone())

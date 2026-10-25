@@ -245,7 +245,11 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
     let mut map = HashMap::new();
     for m in media {
         match doc.media(m.id) {
-            None => doc.media.push(m.clone()),
+            None => {
+                // Keeps the foreign id, so later ids must start past it.
+                doc.media.push(m.clone());
+                doc.next_id = doc.next_id.max(m.id.0);
+            }
             Some(x) if x.data == m.data => {}
             Some(_) => {
                 let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
