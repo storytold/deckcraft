@@ -196,6 +196,9 @@ enum Drag {
         shape: ShapeId,
         /// The text selection before the press, to tell whether the drag changed it.
         before: Option<TextTarget>,
+        /// The text selection the press made. In a table, a drag that leaves its cell selects
+        /// whole cells, and coming back to the cell restores this.
+        press: Option<TextSel>,
     },
     /// Dragging a table border: the right edge of column `index`, or the bottom edge of row
     /// `index`. `start` is the table-local press point, `size` the column's width or the row's
@@ -266,8 +269,13 @@ pub struct ToolState {
     pub edit_points: Option<ShapeId>,
     /// The vertex (path, index) whose control handles show in Edit Points.
     pub edit_vertex: Option<(usize, usize)>,
-    /// The point type last chosen for a vertex (path, index, type): handle drags follow it.
-    pub vertex_kind: Option<(usize, usize, String)>,
+    /// The segment (path, index of the vertex ending it) last right-clicked in Edit Points, for
+    /// the segment menu.
+    pub edit_segment: Option<(usize, usize)>,
+    /// Where on that segment the right click was (0..1), where Add Point puts the new point.
+    pub edit_segment_t: Option<f64>,
+    /// The point type last chosen for a vertex (shape, path, index, type): handle drags follow it.
+    pub vertex_kind: Option<(ShapeId, usize, usize, String)>,
     /// Drawing guides are shown (View › Guides): they can be dragged and shapes snap to them.
     pub guides_visible: bool,
     /// The guide being dragged and where it is now (slide points); `None` once dropped.
@@ -451,7 +459,7 @@ impl Session {
         }
         // A press (not a hover) settles an input method's composition, as clicking does in PowerPoint.
         if !matches!(ev.kind, PointerKind::Move) {
-            self.end_composition();
+            self.settle_composition();
         }
         match ev.kind {
             PointerKind::Move => {
@@ -519,10 +527,11 @@ impl Session {
     }
 
     pub(crate) fn begin(&mut self, label: &str) {
+        let vertex_kind = self.tool.vertex_kind.clone();
         if let Some(st) = self.active_mut()
             && st.interaction.is_none()
         {
-            st.interaction = Some(crate::Interaction { label: label.into(), doc: st.doc.clone(), selection: st.selection.clone() });
+            st.interaction = Some(crate::Interaction { label: label.into(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind });
         }
     }
 
@@ -531,8 +540,31 @@ impl Session {
             && let Some(i) = st.interaction.take()
             && !Arc::ptr_eq(&i.doc, &st.doc)
         {
-            crate::push_undo(st, HistoryEntry { label: i.label, doc: i.doc, selection: i.selection });
+            crate::push_undo(st, HistoryEntry { label: i.label, doc: i.doc, selection: i.selection, vertex_kind: i.vertex_kind });
         }
+    }
+
+    /// Cancels a point or handle drag in Edit Points when Esc is pressed: ends the drag, puts back the
+    /// document and selection saved at the press, and adds no undo step. Returns whether a drag was cancelled.
+    pub(crate) fn cancel_point_drag(&mut self) -> bool {
+        if !matches!(self.tool.drag, Some(Drag::Vertex { .. } | Drag::Handle { .. })) {
+            return false;
+        }
+        self.tool.drag = None;
+        if let Some(st) = self.active_mut()
+            && st.interaction.as_ref().is_some_and(|i| i.label == "Edit Points")
+            && let Some(i) = st.interaction.take()
+        {
+            // A modifier held during the drag may have set a point type; the drag is undone, so is that.
+            let kind = i.vertex_kind;
+            if !Arc::ptr_eq(&i.doc, &st.doc) {
+                st.doc = i.doc;
+                st.selection = i.selection;
+                st.revision += 1;
+            }
+            self.tool.vertex_kind = kind;
+        }
+        true
     }
 
     /// End the interaction only when it is the one `label` started. A twist must not commit a drag.
@@ -586,7 +618,8 @@ impl Session {
         // Clicking inside the text being edited moves the caret / starts a text selection.
         let before = self.text_selection();
         if let Some((shape, pos)) = self.place_caret(p, tol, mods.shift)? {
-            self.tool.drag = Some(Drag::TextSelect { shape, before });
+            let press = self.doc()?.selection.text.clone();
+            self.tool.drag = Some(Drag::TextSelect { shape, before, press });
             return Ok(json!({"caret": [pos.0, pos.1]}));
         }
         let hit = self.hit_test(p, tol);
@@ -671,6 +704,21 @@ impl Session {
                     self.tool.drag = Some(Drag::Warp { id, index, name, base, orig });
                 }
             }
+            Some(Hit::Shape { id, .. })
+                if !(mods.shift || mods.cmd)
+                    && st.selection.cells.is_some_and(|c| c.0 == id && st.selection.shapes == [id])
+                    && in_table_cell(st, id, p) =>
+            {
+                // A press in a table whose cells are selected starts again in the cell under the
+                // pointer: a click puts the caret there and a drag selects another range. A press
+                // on the table outside its cells selects and moves the table like any shape.
+                let before = self.text_selection();
+                if self.edit_text_at(id, p)? {
+                    self.select(|_, sel| sel.cells = None)?;
+                    let press = self.doc()?.selection.text.clone();
+                    self.tool.drag = Some(Drag::TextSelect { shape: id, before, press });
+                }
+            }
             Some(Hit::Shape { id, text }) => {
                 let selected = st.selection.shapes.contains(&id);
                 let toggle = mods.shift || mods.cmd;
@@ -691,10 +739,17 @@ impl Session {
                 let origs: Vec<(ShapeId, Xfrm)> =
                     ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
                 // A click (no drag) on text puts the caret there; unselected text boxes and
-                // placeholders take the caret straight away like PowerPoint. A click in a selected
-                // table puts the caret in the clicked cell.
+                // placeholders take the caret straight away like PowerPoint. A click in a cell of a
+                // selected table puts the caret there; a click on its grab band keeps the table selected.
                 let table = st.shape(id).is_some_and(|s| matches!(s.kind, ShapeKind::Table(_)));
-                let enter_text = (!toggle && ((text && (selected || is_text_first(st, id))) || (table && selected))).then_some((id, p));
+                // A click on the frame band of a text box selects the box whole, as PowerPoint
+                // does, so it can be moved, duplicated or deleted; only the inside takes the caret.
+                let on_frame = text
+                    && is_text_first(st, id)
+                    && st.shape(id).is_some_and(|s| edit_zone(&xfrm_of(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
+                let enter_text =
+                    (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected && in_table_cell(st, id, p))))
+                        .then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;
@@ -885,7 +940,18 @@ impl Session {
             Drag::Handle { id, path, index, out } => {
                 self.tool.drag = Some(Drag::Handle { id, path, index, out });
                 let side = if out { "out" } else { "in" };
-                if let Err(e) = self.execute_inner_move_handle(id, path, index, side, p) {
+                // Shift, Ctrl or Alt held while dragging a handle makes the point smooth, straight or
+                // corner, as in PowerPoint; Cmd and Option count as Ctrl and Alt.
+                let held = if mods.shift {
+                    Some("smooth")
+                } else if mods.cmd {
+                    Some("straight")
+                } else if mods.alt {
+                    Some("corner")
+                } else {
+                    None
+                };
+                if let Err(e) = self.execute_inner_move_handle(id, path, index, side, p, held) {
                     log::debug!("edit handle: {e}");
                 }
                 return Ok(Value::Null);
@@ -942,8 +1008,29 @@ impl Session {
                 };
                 self.tool.preview = Some(x);
             }
-            Drag::TextSelect { shape, .. } => {
-                // The selection stays in the shape or table cell where it started.
+            Drag::TextSelect { shape, press, .. } => {
+                // In a table, leaving the cell the drag started in selects whole cells, as in
+                // PowerPoint; coming back to that cell selects text in it again.
+                let st = self.doc()?;
+                if let Some(start) = press.as_ref().and_then(|t| t.cell)
+                    && let Some(f) = st.shape(shape).and_then(|sh| cmd::table::table_frame(st, sh))
+                    && let Some(cell) = f.cell_at(f.local(p))
+                {
+                    if cell != start {
+                        self.select(|_, sel| {
+                            sel.text = None;
+                            sel.shapes = vec![shape];
+                            sel.cells = Some((shape, start, cell));
+                        })?;
+                        return Ok(Value::Null);
+                    }
+                    if st.selection.text.is_none() {
+                        self.select(|_, sel| {
+                            sel.cells = None;
+                            sel.text = press;
+                        })?;
+                    }
+                }
                 let st = self.doc()?;
                 if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
                     let pos = cmd::text::text_pos_at(st, t, p);
@@ -1004,9 +1091,19 @@ impl Session {
         Ok(())
     }
 
-    fn execute_inner_move_handle(&mut self, id: ShapeId, path: usize, index: usize, side: &str, p: Point) -> Result<Value> {
-        let kind = self.tool.vertex_kind.clone().filter(|(pp, i, _)| (*pp, *i) == (path, index)).map(|k| k.2);
-        cmd::points::move_handle_raw(self, &json!({"id": id.0, "path": path, "index": index, "side": side, "x": p.x, "y": p.y, "type": kind}))
+    /// Moves a control handle during a drag. `held` is the point type set by the modifier held
+    /// during the drag; the point keeps that type for later drags, as after `shape.pointType`.
+    fn execute_inner_move_handle(&mut self, id: ShapeId, path: usize, index: usize, side: &str, p: Point, held: Option<&str>) -> Result<Value> {
+        let kind = match held {
+            Some(k) => Some(k.to_string()),
+            None => self.tool.vertex_kind.clone().filter(|(s, pp, i, _)| (*s, *pp, *i) == (id, path, index)).map(|k| k.3),
+        };
+        let r =
+            cmd::points::move_handle_raw(self, &json!({"id": id.0, "path": path, "index": index, "side": side, "x": p.x, "y": p.y, "type": kind}))?;
+        if let Some(k) = held {
+            self.tool.vertex_kind = Some((id, path, index, k.to_string()));
+        }
+        Ok(r)
     }
 
     fn up(&mut self, p: Point, mods: Mods) -> Result<Value> {
@@ -1243,12 +1340,26 @@ impl Session {
             ) => Some(*id),
             None => None,
         };
+        // Edit Points: the point or else the segment under the pointer picks the menu.
+        let picked = self.tool.editing_points(st).and_then(|eid| st.shape(eid)).map(|sh| match &hit {
+            Some(Hit::Vertex { path, index, .. }) => (Some((*path, *index)), None),
+            Some(Hit::Handle { .. }) => (None, None),
+            _ => (None, cmd::points::segment_at(&st.doc, &st.selection, sh, p, tol * 1.6)),
+        });
         if !id.is_some_and(|id| st.selection.shapes.contains(&id)) {
             self.select(|_, sel| {
                 sel.text = None;
                 sel.cells = None;
                 sel.shapes = id.into_iter().collect();
             })?;
+        }
+        if let Some((vertex, segment)) = picked {
+            // A control handle belongs to the picked point: its menu stays.
+            if !matches!(hit, Some(Hit::Handle { .. })) {
+                self.tool.edit_vertex = vertex;
+            }
+            self.tool.edit_segment = segment.map(|(path, seg, _)| (path, seg));
+            self.tool.edit_segment_t = segment.map(|(_, _, t)| t);
         }
         let st = self.doc()?;
         Ok(json!({
@@ -1669,8 +1780,9 @@ impl Session {
             }
             Ok(())
         })?;
+        let vertex_kind = self.tool.vertex_kind.clone();
         if let Some(st) = self.active_mut() {
-            crate::push_undo(st, HistoryEntry { label: "Erase".into(), doc: before, selection: sel_before });
+            crate::push_undo(st, HistoryEntry { label: "Erase".into(), doc: before, selection: sel_before, vertex_kind });
         }
         Ok(Value::Null)
     }
@@ -1881,6 +1993,15 @@ pub fn resize_box(o: &Xfrm, h: u8, d: Vec2, keep_aspect: bool, from_center: bool
     let local_c = Point::new((l + r) / 2.0 * sx + if sx < 0.0 { o.w } else { 0.0 }, (t + b) / 2.0 * sy + if sy < 0.0 { o.h } else { 0.0 });
     let c = o.affine() * Point::new(if o.flip_h { o.w - local_c.x } else { local_c.x }, if o.flip_v { o.h - local_c.y } else { local_c.y });
     Xfrm { x: c.x - nw / 2.0, y: c.y - nh / 2.0, w: nw, h: nh, rot: o.rot, flip_h: fh, flip_v: fv }
+}
+
+/// Whether `p` lies in a cell of table `id`, not in the grab band around it (`cell_at` would take
+/// the nearest cell).
+fn in_table_cell(st: &crate::DocState, id: ShapeId, p: Point) -> bool {
+    st.shape(id).and_then(|sh| cmd::table::table_frame(st, sh)).is_some_and(|f| {
+        let q = f.local(p);
+        (0.0..=f.width()).contains(&q.x) && (0.0..=f.height()).contains(&q.y) && f.cell_at(q).is_some()
+    })
 }
 
 fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<Hit> {

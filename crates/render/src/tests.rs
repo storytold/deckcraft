@@ -1,8 +1,12 @@
-use super::*;
+use super::{
+    Ctx, Fields, Fill, Image, Opts, PathMorph, Point, RENDERER, Rect, Region, RenderOpts, Renderer, Rgba, ShapeState, SlideFields, TextMorph,
+    crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, parse_path, pasteboard_region, place_slide,
+    render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
+};
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
 use deckcraft_model::text::TextBody;
-use deckcraft_model::{Chart, Geom, Presentation, Shape, ShapeId, ShapeKind, ShapeStyle, Table, Xfrm};
+use deckcraft_model::{Chart, Geom, PhType, Placeholder, Presentation, Shape, ShapeId, ShapeKind, ShapeStyle, Table, Xfrm};
 
 fn deck_with(shapes: Vec<Shape>) -> Presentation {
     let mut p = Presentation::default();
@@ -33,6 +37,33 @@ fn shape_fill_uses_theme_accent() {
     let px = img.pixel(200, 150);
     assert!((px[0] as i32 - accent.r as i32).abs() <= 2 && (px[2] as i32 - accent.b as i32).abs() <= 2, "{px:?} vs {accent:?}");
     assert_eq!(img.pixel(50, 50), [255, 255, 255, 255]);
+}
+
+/// #832: a quick style on an empty placeholder paints its fill. The style reference
+/// (`s.style`) carries the fill, but the empty-placeholder gate skipped the fill whenever the
+/// shape had no local fill, so the quick style only appeared once text was added. A
+/// placeholder with no style at all still shows nothing but its dashed outline.
+#[test]
+fn a_quick_style_fills_an_empty_placeholder() {
+    let placeholder = || Shape {
+        id: ShapeId(910),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        ph: Some(Placeholder { kind: PhType::Body, idx: 1, ..Default::default() }),
+        ..Default::default()
+    };
+    let p = deck_with(vec![Shape { style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)), ..placeholder() }]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, edit: true, ..Default::default() });
+    let accent = p.masters[0].theme.colors.get(deckcraft_color::SchemeSlot::Accent1);
+    // Lower right of the shape: the prompt text sits at the top of the text rect.
+    let px = img.pixel(280, 185);
+    assert!(
+        (px[0] as i32 - accent.r as i32).abs() <= 2 && (px[1] as i32 - accent.g as i32).abs() <= 2 && (px[2] as i32 - accent.b as i32).abs() <= 2,
+        "the quick style's fill is drawn on the empty placeholder: {px:?} vs {accent:?}"
+    );
+    // An unformatted empty placeholder stays empty: the gate is not simply gone.
+    let p = deck_with(vec![placeholder()]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, edit: true, ..Default::default() });
+    assert_eq!(img.pixel(280, 185), [255, 255, 255, 255], "an unformatted placeholder has no fill");
 }
 
 #[test]
@@ -338,6 +369,43 @@ fn chart_axis_titles_are_drawn() {
     let bottom = (380, 490, 580, 520);
     assert!(ink(&titled, left) > ink(&bare, left) + 30, "value axis title");
     assert!(ink(&titled, bottom) > ink(&bare, bottom) + 30, "category axis title");
+}
+
+#[test]
+fn column_series_draw_their_pattern_fill_and_no_fill_with_their_outline() {
+    // Three column series, as PowerPoint draws them: a red-on-yellow pattern, no fill with a blue
+    // outline, and no fill at all. None takes a palette colour; the legend keys match the bars.
+    use deckcraft_model::style::{Fill, PatternFill};
+    let rgb = |r, g, b| ColorRef::rgb(deckcraft_color::Rgba::rgb(r, g, b));
+    let mut c = Chart::sample(ChartType::Column);
+    c.title = None;
+    c.series.truncate(3);
+    c.categories = vec!["A".into()];
+    for s in &mut c.series {
+        s.values = vec![Some(10.0)];
+    }
+    c.series[0].fill = Some(Fill::Pattern(PatternFill { preset: "dkDnDiag".into(), fg: rgb(255, 0, 0), bg: rgb(255, 255, 0) }));
+    c.series[1].fill = Some(Fill::None);
+    c.series[1].line = Some(deckcraft_model::style::Line { width: Some(3.0), fill: Some(Fill::solid(rgb(0, 0, 255))), ..Default::default() });
+    c.series[2].fill = Some(Fill::None);
+    let sh =
+        Shape { id: ShapeId(625), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Chart(Box::new(c.clone())), ..Default::default() };
+    let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let count =
+        |f: &dyn Fn([u8; 4]) -> bool| (0..img.width).flat_map(|x| (0..img.height).map(move |y| (x, y))).filter(|(x, y)| f(img.pixel(*x, *y))).count();
+    let red = count(&|p| p[0] > 220 && p[1] < 40 && p[2] < 40);
+    let yellow = count(&|p| p[0] > 220 && p[1] > 220 && p[2] < 40);
+    let blue = count(&|p| p[0] < 40 && p[1] < 40 && p[2] > 220);
+    assert!(red > 1000 && yellow > 1000, "the pattern's two colours: {red} red, {yellow} yellow");
+    assert!(blue > 300, "the empty series' outline: {blue}");
+    // No palette colour: the theme's accents would show for any series drawn the old way.
+    let p = deck_with(vec![]);
+    let ctx = deckcraft_model::resolve::Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    for i in 0..3 {
+        let a = crate::chart::series_color(&ctx, &c, i);
+        let n = count(&|q| q[0].abs_diff(a.r) < 6 && q[1].abs_diff(a.g) < 6 && q[2].abs_diff(a.b) < 6);
+        assert!(n < 50, "palette colour {i} drawn on {n} pixels");
+    }
 }
 
 #[test]
@@ -1336,6 +1404,41 @@ fn a_table_fill_shows_behind_cells_without_their_own() {
     assert_eq!(img.pixel(50, 50)[..3], [255, 255, 255]);
 }
 
+#[test]
+fn table_body_text_is_dark_on_the_tinted_cells_of_a_dark_theme() {
+    // The default style (medium2) tints body cells towards white, so their text must be the
+    // theme's dark colour, as PowerPoint's medium styles set it (dk1): inheriting the text colour
+    // leaves it light, and unreadable, on a dark theme such as Nocturne.
+    let fill_and_darkest = |theme: &str| {
+        let mut t = Table::new(2, 2, 200.0, 40.0);
+        for (r, c) in [(0, 0), (0, 1), (1, 0), (1, 1)] {
+            t.cell_mut(r, c).unwrap().text = TextBody::from_text("Body");
+        }
+        let tbl = Shape { id: ShapeId(796), xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 80.0)), kind: ShapeKind::Table(t), ..Default::default() };
+        let mut p = deck_with(vec![tbl]);
+        let th = deckcraft_model::theme::builtin_themes().into_iter().find(|th| th.name == theme).unwrap();
+        std::sync::Arc::make_mut(&mut p.masters[0]).theme = th;
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let lum = |x, y| {
+            let px = img.pixel(x, y);
+            deckcraft_color::Rgba::rgb(px[0], px[1], px[2]).luminance()
+        };
+        // Body cell (1, 1) covers (200, 140)–(300, 180); its top-left corner is clear of the text
+        // (cell margins) and of the white grid line.
+        let fill = lum(203, 143);
+        let darkest = (143..177).flat_map(|y| (203..297).map(move |x| (x, y))).map(|(x, y)| lum(x, y)).fold(1.0_f64, f64::min);
+        (fill, darkest)
+    };
+    for theme in ["Nocturne", "Harbor"] {
+        let (fill, darkest) = fill_and_darkest(theme);
+        assert!(fill > 0.4, "{theme}: the body cell's fill is a light tint, luminance {fill}");
+        assert!(
+            darkest < 0.15 && darkest < fill / 3.0,
+            "{theme}: darkest pixel in the body cell has luminance {darkest} on a fill of {fill}: its text is not dark"
+        );
+    }
+}
+
 /// A white 280x200 pt rectangle at (20, 20) with `effects`, rendered at 1 px/pt.
 fn effect_box(effects: deckcraft_model::Effects) -> Image {
     use deckcraft_model::style::{Fill, Line};
@@ -1907,6 +2010,42 @@ fn group_child_scale_does_not_scale_line_widths() {
         let (n, d) = (inked(img), differing(&reference, img));
         assert!(n.abs_diff(drawn) * 20 < drawn, "{name}: {n} inked pixels against {drawn}");
         assert!(d * 20 < drawn, "{name}: {d} differing values against {drawn} inked pixels");
+    }
+}
+
+#[test]
+fn a_picture_and_an_embedded_objects_preview_draw_their_fill_behind_transparent_pixels() {
+    // PowerPoint draws a picture's own fill behind its transparent pixels (and an old equation
+    // object's fallback picture on its coloured box). Here the left half of the image is clear.
+    let png = {
+        let img = image::RgbaImage::from_fn(8, 4, |x, _| if x < 4 { image::Rgba([0, 0, 0, 0]) } else { image::Rgba([20, 20, 160, 255]) });
+        let mut out = std::io::Cursor::new(vec![]);
+        image::DynamicImage::ImageRgba8(img).write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    };
+    let orange = Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 153, 0)));
+    for (object, fill) in [(false, None), (false, Some(orange.clone())), (true, Some(orange.clone()))] {
+        let mut p = Presentation::default();
+        let media = p.add_media("half.png", "image/png", png.clone()).expect("media");
+        let kind = if object {
+            ShapeKind::Opaque { xml: String::new(), preview: Some(media), label: "Equation.3".into(), parts: vec![] }
+        } else {
+            ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } }
+        };
+        let sh = Shape { id: ShapeId(630), xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)), kind, fill: fill.clone(), ..Default::default() };
+        std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];
+        let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        let (clear, opaque) = (img.pixel(200, 200), img.pixel(400, 200));
+        assert!(opaque[2] > 140 && opaque[0] < 40, "the picture's own pixels ({object}): {opaque:?}");
+        if fill.is_some() {
+            assert_eq!(clear[..3], [255, 153, 0], "the fill behind the clear half ({object})");
+            // A fill-colour emphasis recolours that fill, as it does any shape's.
+            let tint = |_: ShapeId| ShapeState { tint: Some(deckcraft_color::Rgba::rgb(0, 160, 60)), ..Default::default() };
+            let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, state: Some(&tint), ..Default::default() });
+            assert_eq!(img.pixel(200, 200)[..3], [0, 160, 60], "the tinted fill behind the clear half ({object})");
+        } else {
+            assert!(clear[..3].iter().all(|v| *v > 240), "no fill: the slide shows through: {clear:?}");
+        }
     }
 }
 
@@ -2716,4 +2855,62 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(!changed.is_empty(), "an empty bullet must be visible");
     assert!(changed.iter().any(|(px, _)| px[0] == 179 && px[1] == 179 && px[2] == 179));
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
+}
+
+/// A chart that has no text colour of its own takes PowerPoint's default, the theme's text colour
+/// at 65 % plus 35 %: light on Nocturne's dark slides (it used to be a fixed grey, near-invisible
+/// there), 595959 grey on Harbor's light ones.
+#[test]
+fn chart_text_follows_the_theme_when_it_has_no_colour_of_its_own() {
+    let draw = |theme: &str, title: Option<&str>| {
+        let mut c = Chart::sample(ChartType::Column);
+        c.title = title.map(String::from);
+        c.legend = None;
+        c.data_labels = false;
+        let sh = Shape { id: ShapeId(630), xfrm: Some(Xfrm::new(0.0, 0.0, 960.0, 540.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        let mut p = deck_with(vec![sh]);
+        let t = deckcraft_model::theme::builtin_themes().into_iter().find(|t| t.name == theme).expect("theme");
+        std::sync::Arc::make_mut(&mut p.masters[0]).theme = t;
+        render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let lum = |px: [u8; 4]| (px[0] as u32 * 299 + px[1] as u32 * 587 + px[2] as u32 * 114) / 1000;
+    // Pixels in the title band that pass `f`.
+    let count = |img: &Image, f: &dyn Fn(u32) -> bool| {
+        (200..760u32).flat_map(|x| (4..70u32).map(move |y| (x, y))).filter(|(x, y)| f(lum(img.pixel(*x, *y)))).count()
+    };
+    let (dark_bare, dark_titled) = (draw("Nocturne", None), draw("Nocturne", Some("Quarterly revenue")));
+    assert!(lum(dark_bare.pixel(5, 5)) < 60, "Nocturne's slide is dark: {:?}", dark_bare.pixel(5, 5));
+    let light_ink = count(&dark_titled, &|l| l > 200) as i64 - count(&dark_bare, &|l| l > 200) as i64;
+    assert!(light_ink > 100, "the title is light on a dark theme (light pixels added: {light_ink})");
+    let (light_bare, light_titled) = (draw("Harbor", None), draw("Harbor", Some("Quarterly revenue")));
+    assert!(lum(light_bare.pixel(5, 5)) > 200, "Harbor's slide is light: {:?}", light_bare.pixel(5, 5));
+    // 595959 has luminance 89: dark, but not black.
+    let dark_ink = count(&light_titled, &|l| l < 120) as i64 - count(&light_bare, &|l| l < 120) as i64;
+    assert!(dark_ink > 100, "the title is dark on a light theme (dark pixels added: {dark_ink})");
+    let black_ink = count(&light_titled, &|l| l < 40) as i64 - count(&light_bare, &|l| l < 40) as i64;
+    assert!(black_ink < 20, "the title is PowerPoint's 595959 grey, not black (black pixels added: {black_ink})");
+}
+
+/// Pie data labels sit on the slices in white; a colour given to the chart's text (chart.options
+/// textColor, Font Color on the chart) colours them too, as it does the title and legend.
+#[test]
+fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
+    let draw = |colour: Option<ColorRef>| {
+        let mut c = Chart::sample(ChartType::Pie);
+        c.title = None;
+        c.legend = None;
+        c.data_labels = true;
+        c.text_color = colour;
+        let sh = Shape { id: ShapeId(632), xfrm: Some(Xfrm::new(0.0, 0.0, 400.0, 400.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() };
+        render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() })
+    };
+    let count = |img: &Image, f: &dyn Fn([u8; 4]) -> bool| {
+        (0..400u32).flat_map(|x| (0..400u32).map(move |y| (x, y))).filter(|(x, y)| f(img.pixel(*x, *y))).count()
+    };
+    let red = |p: [u8; 4]| p[0] > 200 && p[1] < 60 && p[2] < 60;
+    let white = |p: [u8; 4]| p[0] > 245 && p[1] > 245 && p[2] > 245;
+    let (plain, coloured) = (draw(None), draw(Some(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0)))));
+    assert_eq!(count(&plain, &red), 0, "no red without a text colour");
+    assert!(count(&coloured, &red) > 30, "the labels take the chart's red: {} red pixels", count(&coloured, &red));
+    assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
 }

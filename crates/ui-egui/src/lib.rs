@@ -9,6 +9,7 @@
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
+pub mod capture;
 pub mod control;
 pub mod credits;
 pub mod dialogs;
@@ -38,7 +39,7 @@ pub mod uifonts;
 pub mod widgets;
 
 use std::collections::HashMap;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Receiver;
 
 use deckcraft_engine::{Mods, Session, Target, UiRequest};
 use deckcraft_model::{LayoutId, MasterId, SlideId};
@@ -55,6 +56,46 @@ pub type PickFn = Box<dyn FnMut(&str) -> Option<String>>;
 /// not applied to whichever document happens to be active.
 pub type OpenAsyncFn = Box<dyn FnMut(&str, u64)>;
 pub type DownloadFn = Box<dyn FnMut(&str, &[u8])>;
+
+/// Temp key holding whether the current viewport is inside an egui UI pass.
+fn ime_in_ui_pass_key(viewport: egui::ViewportId) -> egui::Id {
+    egui::Id::unique(("deckcraft-ime-in-ui-pass", viewport))
+}
+
+/// Stable key marking that the IME pass hooks are installed.
+fn ime_pass_hooks_key() -> egui::Id {
+    egui::Id::unique(("deckcraft-ime-pass-hooks", "installed"))
+}
+
+/// Install the per-viewport UI-pass mode hooks exactly once for this [`egui::Context`].
+///
+/// Call this before the context's first `run_ui` (desktop/web shells and the test harness).
+/// The callbacks receive `&mut Ui`; they obtain the context through `ui.ctx()` and capture no
+/// context or app reference, so they cannot form a reference cycle. The flag distinguishes a
+/// full `run_ui` pass (where `App::logic` runs before the UI that owns the final output) from a
+/// standalone `run_logic` callback. It is only a mode marker, not an IME publication receipt.
+pub fn install_ime_pass_hooks(ctx: &egui::Context) {
+    if ctx.data(|d| d.get_temp::<bool>(ime_pass_hooks_key()).is_some_and(|v| v)) {
+        return;
+    }
+    ctx.on_begin_pass(
+        "deckcraft-ime-ui-pass-begin",
+        std::sync::Arc::new(|ui: &mut egui::Ui| {
+            let ctx = ui.ctx();
+            let key = ime_in_ui_pass_key(ctx.viewport_id());
+            ctx.data_mut(|d| d.insert_temp(key, true));
+        }),
+    );
+    ctx.on_end_pass(
+        "deckcraft-ime-ui-pass-end",
+        std::sync::Arc::new(|ui: &mut egui::Ui| {
+            let ctx = ui.ctx();
+            let key = ime_in_ui_pass_key(ctx.viewport_id());
+            ctx.data_mut(|d| d.insert_temp(key, false));
+        }),
+    );
+    ctx.data_mut(|d| d.insert_temp(ime_pass_hooks_key(), true));
+}
 
 /// A file the host finished reading for the request `id` from [`SlideApp::begin_external_file`].
 #[derive(Clone, Debug)]
@@ -154,7 +195,7 @@ fn open_command(name: &str) -> Option<&'static str> {
     let lower = name.to_ascii_lowercase();
     if is_presentation_name(&lower) {
         Some("file.openBytes")
-    } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".rtf") {
         Some("slide.fromOutline")
     } else {
         None
@@ -175,7 +216,7 @@ fn infer_command(name: &str, bytes: &[u8]) -> Option<&'static str> {
         Some("insert.audio")
     } else if ct.starts_with("video/") {
         Some("insert.video")
-    } else if lower.ends_with(".txt") || lower.ends_with(".md") {
+    } else if lower.ends_with(".txt") || lower.ends_with(".md") || lower.ends_with(".rtf") {
         Some("slide.fromOutline")
     } else {
         None
@@ -273,6 +314,10 @@ pub struct UiState {
     pub notes: bool,
     pub notes_height: f32,
     pub thumbs_width: f32,
+    /// Vertical scroll offset of the thumbnail pane, recorded each frame for the control
+    /// channel and tests; not persisted.
+    #[serde(skip)]
+    pub thumbs_scroll: f32,
     /// Open task pane: `format`, `animation`, `selection`, `comments`, `designer`, `background`,
     /// `smartart` (Text Pane).
     pub pane: Option<String>,
@@ -315,6 +360,7 @@ impl Default for UiState {
             notes: true,
             notes_height: 52.0,
             thumbs_width: 236.0,
+            thumbs_scroll: 0.0,
             pane: None,
             pane_width: 300.0,
             ruler: false,
@@ -463,6 +509,40 @@ struct AnimPreview {
     timeline: deckcraft_anim::Timeline,
 }
 
+/// The app state a queued synthetic control-channel input is meant for.
+///
+/// A batch is injected only while this identity is unchanged. eframe carries a raw-input batch
+/// from a logic-only (hidden) pass into the next full pass, so the hook also keeps the exact event
+/// list it appended and retracts it when the identity no longer matches: the stale click never
+/// reaches the new document, slide or canvas layout.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct InputTarget {
+    documents: usize,
+    active: Option<u64>,
+    slide: Option<usize>,
+    view: ViewMode,
+    zoom: Option<u32>,
+    canvas: Option<[u32; 4]>,
+    canvas_scale: u32,
+    /// Dialog, palette or Backstage view over the canvas. A modal transition changes what a
+    /// queued window-point click means even when the document and canvas layout are unchanged.
+    dialog: Option<egui::Id>,
+    /// Command palette query *and* highlighted entry: the keyboard target moves with the
+    /// selection even when the query does not.
+    palette: Option<egui::Id>,
+    backstage: Option<egui::Id>,
+    /// Active ribbon tab, whether the ribbon is collapsed, and its horizontal scroll offset.
+    /// A window-point click means a different button when any of them changes.
+    ribbon_tab: egui::Id,
+    ribbon_collapsed: bool,
+    ribbon_scroll: u32,
+    /// Full-screen slide show: the show instance, slide, step and the layout/mode state that
+    /// changes what a click at the same window point does.
+    show: Option<show::ShowInputState>,
+    /// Background-open progress window, identified by the file *and* the attempt.
+    opening: Option<(egui::Id, u64)>,
+}
+
 pub struct SlideApp {
     /// Shape Fill's last colour (a command colour parameter): the button applies it again. Accent 1 until one is picked.
     pub last_fill: serde_json::Value,
@@ -483,6 +563,8 @@ pub struct SlideApp {
     pub show: Option<show::Show>,
     /// Current slide's animations playing on the editor canvas (not the full-screen show).
     anim_preview: Option<AnimPreview>,
+    /// Where the Reuse Slides picker inserts: the presentation and slide current when it opened.
+    reuse_target: Option<FileTarget>,
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
     pub status: Option<(String, f64)>,
@@ -494,7 +576,37 @@ pub struct SlideApp {
     fonts_noted: std::collections::HashSet<u64>,
     pub perf: Perf,
     /// Synthetic input events (control channel `ui.click` etc.), injected one per frame.
-    pub synthetic: Vec<egui::Event>,
+    pub(crate) synthetic: Vec<egui::Event>,
+    /// A synthetic batch has been injected but the UI pass has not acknowledged it. While this
+    /// is set no second batch is injected, so a hidden/discarded frame cannot replay an event.
+    synthetic_pending: bool,
+    /// Events queued while an older batch is still pending. They belong to the target at the time
+    /// they were queued, so a later document change cannot make them fall in behind the old batch
+    /// and get cleared with it.
+    synthetic_next: Vec<egui::Event>,
+    synthetic_next_target: Option<InputTarget>,
+    /// The exact events appended to the pending `RawInput`; retracted on a target change.
+    synthetic_injected: Vec<egui::Event>,
+    /// Where `synthetic_injected` was appended in `RawInput::events`. Retraction uses this
+    /// index so an identical host event earlier in the batch is never removed instead.
+    synthetic_injected_at: Option<usize>,
+    /// Identity of the last injected synthetic batch (for diagnostics).
+    synthetic_generation: u64,
+    /// Document/slide/canvas identity the queued/injected batch belongs to.
+    synthetic_target: Option<InputTarget>,
+    /// Focus identity the pending batch was injected with; a focus change retracts it.
+    synthetic_focus: Option<egui::Id>,
+    /// `RawInput::time` of the pass the batch was injected into. A logic-only callback leaves
+    /// `InputState` from the previous pass; comparing this value keeps retraction from draining
+    /// an unrelated batch out of that stale input.
+    synthetic_injected_time: Option<f64>,
+    /// Horizontal scroll offset (as `f32` bits) of each ribbon tab, recorded for
+    /// [`InputTarget`]. Scroll state is per tab in egui, so the identity is too.
+    ribbon_scroll: HashMap<String, u32>,
+    /// Monotonic identity for a new slide show instance (`start_show`).
+    show_instance: u64,
+    /// Monotonic identity for a new background-open attempt.
+    opening_generation: u64,
     /// Canvas screen rect and points-per-slide-point scale (for control & tests).
     pub canvas_rect: Option<egui::Rect>,
     /// The Eyedropper is waiting for a click on the slide.
@@ -513,14 +625,13 @@ pub struct SlideApp {
     pending_urls: Vec<String>,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
-    shot_token: u64,
-    queued_shots: Vec<(u64, f64, u32)>,
-    pending_shots: Vec<(u64, Option<String>, Sender<ControlResponse>, f64)>,
+    /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
+    capture: capture::Capture,
     styled: bool,
     restyle: bool,
     fonts_ready: bool,
     last_time: f64,
-    /// When AutoRecover data was last written (seconds, egui time).
+    /// When AutoRecover data was last written (monotonic seconds, not wall time).
     pub last_recovery: f64,
     /// Quit was confirmed (changes saved or discarded): let the window close.
     pub quit_confirmed: bool,
@@ -550,6 +661,149 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// Owner/generation/cause bookkeeping for the canvas text IME producer.
+    ime_tracker: egui::ime_context::ImeContextTracker,
+    /// Canvas IME geometry for this pass: the caret while editing, or the selected shape.
+    ime_pending: Option<egui::Rect>,
+    /// The viewport this UI pass belongs to (not the last immediate child viewport drawn).
+    ime_frame_viewport: Option<egui::ViewportId>,
+    /// Viewport whose tracker state is current. Closing the editing window or the last
+    /// presentation releases it (`ImeContextTracker::end_viewport`), so a later owner in that
+    /// viewport starts from a fresh context.
+    pub(crate) ime_viewport: Option<egui::ViewportId>,
+    /// The platform composition we know about: the owner its pre-edit began in and whether the
+    /// application has since settled it. See `ime_event`.
+    ime_composition: Option<ImeComposition>,
+    /// Empty preedit cleared visible model text, but its terminal mutation may arrive later.
+    ime_terminal_pending: Option<ImeTerminalPending>,
+    /// A composition generation the application settled. Events queued for it in the settling
+    /// input batch stay stale until the pass that publishes its platform interrupt (or an accepted
+    /// pass with no descriptor, which resets the backend); the tombstone is retired there so later
+    /// commit-only input is not lost (see [`ImeCancelled`]).
+    ime_cancelled: Option<ImeCancelled>,
+    /// Monotonic composition generation; every accepted pre-edit starts a new one.
+    ime_generation: u64,
+    /// The last [`Session::composition_settles`] value seen.
+    ime_settles_seen: u64,
+    /// A composition the application settled has not been announced to the platform yet.
+    ime_interrupt_pending: bool,
+    /// Token-bound reset lifetime for the owning root viewport's custom canvas editor. The map is
+    /// keyed by viewport so a request or completion stamped for another viewport is never bound;
+    /// render-only child viewports are rejected before they can create or overwrite an entry.
+    ime_reset: HashMap<egui::ViewportId, ImeResetPhase>,
+}
+
+/// The platform's in-progress IME composition, as far as this editor tracks it.
+#[derive(Clone, Copy, Debug)]
+struct ImeComposition {
+    /// The target whose text the input method started composing in.
+    owner: egui::Id,
+    /// Generation of this composition; a new pre-edit after a settled generation starts the next.
+    generation: u64,
+    /// The application settled the composition itself (a click, a key, a command). The platform
+    /// may still hold it and must be interrupted rather than believed.
+    settled: bool,
+}
+
+/// A settled composition generation whose platform copy may still deliver the rest of the
+/// input batch it was queued in.
+///
+/// The tombstone lives only until the pass that publishes this generation's
+/// `should_interrupt_composition` in its platform output, because that is the point at which the
+/// backend resets (disables and re-enables) the platform composition. Events earlier in the same
+/// batch still belong to the old composition and are rejected; from the next batch on egui's
+/// events carry no generation, so an event the OS queued across the reset cannot be distinguished
+/// from a legitimate new composition (see `ime_event`).
+#[derive(Clone, Copy, Debug)]
+struct ImeCancelled {
+    owner: egui::Id,
+    generation: u64,
+}
+
+/// A cleared preedit still owns its separately delivered terminal delete/commit. Application
+/// work invalidates this snapshot; publishing an interrupt is not delivery of that terminal.
+/// Keep a cancelled record until the terminal commit (or platform enable/disable) is observed.
+struct ImeTerminalPending {
+    owner: egui::Id,
+    revision: u64,
+    anchor: (usize, usize),
+    caret: (usize, usize),
+    cancelled: bool,
+    /// An interruption has been observed since this guard was recorded. This stays distinct from
+    /// the origin snapshot even when there is no active destination to stamp: `interrupted_at ==
+    /// None` then means "interrupted with no target", not "not interrupted yet".
+    interrupted: bool,
+    /// The destination at which this terminal guard was last interrupted. Kept separately from
+    /// the retired origin above: repeated passes at the same interrupted destination must not
+    /// request another reset, while a genuinely newer target/selection/revision change still
+    /// supersedes the current fence. When `interrupted` is false, `None` means the origin snapshot
+    /// is still the reference; once interrupted, it means the interruption left no destination.
+    interrupted_at: Option<ImeTerminalStamp>,
+}
+
+/// The live target/selection stamp used to detect a new application interruption without
+/// discarding the retired composition's origin. Owner is optional because an interruption can
+/// remove the canvas target entirely.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImeTerminalStamp {
+    owner: Option<egui::Id>,
+    revision: u64,
+    anchor: Option<(usize, usize)>,
+    caret: Option<(usize, usize)>,
+}
+
+/// The live canvas target and caret/selection stamp a reset fence is bound to.
+///
+/// The retired composition's origin is deliberately absent: an app-originated interruption can
+/// move the destination, and the replacement request belongs to the current destination.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImeDestination {
+    owner: egui::Id,
+    revision: u64,
+    anchor: Option<(usize, usize)>,
+    caret: Option<(usize, usize)>,
+}
+
+/// The actual custom descriptor identity a reset request is allowed to acknowledge.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ImeDescriptorKey {
+    owner: egui::Id,
+    context_generation: u64,
+    purpose: egui::IMEPurpose,
+}
+
+impl ImeDescriptorKey {
+    /// Construct the exact custom-IME descriptor identity from owner, context generation, and
+    /// purpose.
+    fn new(owner: egui::Id, context_generation: u64, purpose: egui::IMEPurpose) -> Self {
+        Self { owner, context_generation, purpose }
+    }
+}
+
+/// Explicit lifetime of the canvas's token-bound IME reset fence.
+///
+/// This is separate from the composition provenance/tombstone state above. Only a matching
+/// ordered `ImeResetCompleted` clears `Awaiting`; `Enabled`, `Disabled`, empty preedits, idle
+/// passes and timers never do. `Suspended` retains no acceptable old id and may carry one newly
+/// requested id that a later eligible pass can bind.
+#[derive(Clone, Copy, Debug)]
+enum ImeResetPhase {
+    /// No interrupted composition guard.
+    Clear,
+    /// The exact newest request has been published for this destination/descriptor.
+    Awaiting { id: egui::ImeResetId, viewport: egui::ViewportId, destination: ImeDestination, output_context: ImeDescriptorKey },
+    /// Guarded but no old id is acceptable; `request` is a new, not-yet-bound fence.
+    Suspended { viewport: egui::ViewportId, needs_rearm: bool, request: Option<egui::ImeResetId> },
+    /// No fence could be allocated; remain fail-closed without retrying on idle output.
+    AllocationFailed { viewport: egui::ViewportId, destination: ImeDestination, output_context: ImeDescriptorKey },
+}
+
+impl ImeResetPhase {
+    /// Only `Clear` admits custom-canvas input; awaiting, suspended, and allocation-failed phases
+    /// remain fail-closed.
+    fn blocks_custom_input(self) -> bool {
+        !matches!(self, Self::Clear)
+    }
 }
 
 fn grid_options_touched(p: &Value) -> bool {
@@ -565,6 +819,8 @@ fn grid_flag(p: &Value, key: &str) -> Result<Option<bool>, String> {
 }
 
 impl SlideApp {
+    /// Build application UI state, taking ownership of audio output and initialising media, dialogs,
+    /// synthetic input, and timing fields.
     pub fn new(session: Session, mut services: Services) -> Self {
         let audio_out = services.audio_out.take();
         SlideApp {
@@ -581,6 +837,7 @@ impl SlideApp {
             thesaurus_query: String::new(),
             show: None,
             anim_preview: None,
+            reuse_target: None,
             media: media::MediaHost::new(audio_out),
             status: None,
             opening: None,
@@ -588,6 +845,18 @@ impl SlideApp {
             fonts_noted: Default::default(),
             perf: Perf { frame_ms: 0.0, render_ms: 0.0, fps: 0.0 },
             synthetic: vec![],
+            synthetic_pending: false,
+            synthetic_next: vec![],
+            synthetic_next_target: None,
+            synthetic_injected: vec![],
+            synthetic_injected_at: None,
+            synthetic_generation: 0,
+            synthetic_target: None,
+            synthetic_focus: None,
+            synthetic_injected_time: None,
+            ribbon_scroll: HashMap::new(),
+            show_instance: 0,
+            opening_generation: 0,
             canvas_rect: None,
             eyedropper: None,
             canvas_scale: 1.0,
@@ -598,9 +867,7 @@ impl SlideApp {
             backstage: None,
             pending_urls: vec![],
             pending_copy: None,
-            shot_token: 0,
-            queued_shots: vec![],
-            pending_shots: vec![],
+            capture: capture::Capture::default(),
             styled: false,
             restyle: true,
             fonts_ready: false,
@@ -620,6 +887,17 @@ impl SlideApp {
             twisting: false,
             next_file_id: 1,
             pending_files: Vec::new(),
+            ime_tracker: egui::ime_context::ImeContextTracker::new(),
+            ime_pending: None,
+            ime_frame_viewport: None,
+            ime_viewport: None,
+            ime_composition: None,
+            ime_terminal_pending: None,
+            ime_cancelled: None,
+            ime_generation: 0,
+            ime_settles_seen: 0,
+            ime_interrupt_pending: false,
+            ime_reset: HashMap::new(),
         }
     }
 
@@ -711,8 +989,72 @@ impl SlideApp {
         r
     }
 
-    pub(crate) fn docs_key(&self) -> (usize, Option<usize>) {
-        (self.session.documents().len(), self.session.active_index())
+    /// Return the current document count plus the active document uid, so callers can detect a
+    /// replacement document rather than only an index change.
+    pub(crate) fn docs_key(&self) -> (usize, Option<u64>) {
+        // The document uid, not just its index: closing one presentation and opening another
+        // must not look like the same document to the Backstage view or a queued input batch.
+        (self.session.documents().len(), self.session.active().map(|d| d.uid))
+    }
+
+    /// What a queued synthetic event is meant for. The control protocol hands out window
+    /// coordinates, so a document, slide, view, zoom or canvas-layout change between queueing and
+    /// the next UI pass makes the event stale.
+    fn input_target(&self) -> InputTarget {
+        let bits = |v: f32| if v.is_finite() { v.to_bits() } else { 0 };
+        InputTarget {
+            documents: self.session.documents().len(),
+            active: self.session.active().map(|d| d.uid),
+            slide: self.session.active().map(|d| d.selection.slide),
+            view: self.ui.view,
+            zoom: self.ui.zoom.map(bits),
+            canvas: self.canvas_rect.map(|r| [bits(r.min.x), bits(r.min.y), bits(r.max.x), bits(r.max.y)]),
+            canvas_scale: bits(self.canvas_scale),
+            dialog: self.dialog.as_ref().map(|d| egui::Id::unique(("dialog", d.id.as_str()))),
+            palette: self.palette.as_ref().map(|(q, sel)| egui::Id::unique(("palette", q.as_str(), *sel))),
+            backstage: self.backstage.as_ref().map(|b| egui::Id::unique(("backstage", b.page.id()))),
+            ribbon_tab: egui::Id::unique(("ribbon-tab", self.ui.tab.as_str())),
+            ribbon_collapsed: self.ui.ribbon_collapsed,
+            ribbon_scroll: self.ribbon_scroll.get(&self.ui.tab).copied().unwrap_or(0),
+            show: self.show.as_ref().map(show::Show::input_state),
+            opening: self.opening.as_ref().map(|o| (egui::Id::unique(("opening", o.path.as_str())), o.generation)),
+        }
+    }
+
+    /// Queue one synthetic control-channel event. The target is recorded when the batch starts,
+    /// before any host command in the same logic pass can change the document.
+    pub fn queue_input(&mut self, event: egui::Event) {
+        let target = self.input_target();
+        // A batch that was already injected keeps the target it was injected for until its UI
+        // pass consumes it or retracts it. New events queued meanwhile belong to the current
+        // target, so they wait in a separate batch instead of joining the old one and being
+        // cleared with it when that batch turns out to be stale.
+        if self.synthetic_pending {
+            if self.synthetic_next_target != Some(target) {
+                self.synthetic_next.clear();
+                self.synthetic_next_target = Some(target);
+            }
+            self.synthetic_next.push(event);
+            return;
+        }
+        if self.synthetic.is_empty() {
+            self.synthetic_target = Some(target);
+        } else if self.synthetic_target != Some(target) {
+            // The unsent queue belongs to a target that has already changed; drop it (and any
+            // older batch still waiting behind it) rather than appending a click intended for the
+            // new target to a stale batch.
+            self.synthetic.clear();
+            self.synthetic_next.clear();
+            self.synthetic_next_target = None;
+            self.synthetic_target = Some(target);
+        }
+        self.synthetic.push(event);
+    }
+
+    /// Events admitted by the control channel but not yet injected (including a batch waiting
+    /// behind the one currently in flight).
+    pub(crate) fn synthetic_queued_len(&self) -> usize {
+        self.synthetic.len() + self.synthetic_next.len()
     }
 
     /// The File tab's view is open over a presentation (not just the start screen with nothing
@@ -781,6 +1123,7 @@ impl SlideApp {
             "jpeg" | "jpg" => ("jpg", "jpeg", false),
             "pptx" => ("pptx", "pptx", false),
             "outline" | "txt" => ("txt", "outline", false),
+            "rtf" => ("rtf", "rtf", false),
             "deckcraft" => ("deckcraft", "deckcraft", false),
             "gif" => ("gif", "gif", false),
             other => {
@@ -1126,6 +1469,8 @@ impl SlideApp {
         Ok(Some(from))
     }
 
+    /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
+    /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
@@ -1140,8 +1485,10 @@ impl SlideApp {
             None => (wanted, None),
         };
         if let Some(d) = self.session.active() {
+            self.show_instance = self.show_instance.wrapping_add(1).max(1);
             let mut show = show::Show::new(&d.doc, from, reading, presenter);
             show.screens = screens;
+            show.instance = self.show_instance;
             self.show = Some(show);
         }
     }
@@ -1305,9 +1652,55 @@ impl SlideApp {
             return;
         };
         let Some(path) = pick("open") else { return };
-        match self.session.execute("slide.reuse", &json!({"path": path, "keepFormatting": keep})) {
-            Ok(r) => self.set_status(format!("Inserted {} slides from {path}", r["slides"])),
+        // Read the file once: the list shown and the slides inserted come from the same bytes, even
+        // if the file changes while the dialog is open. Without a reader the path is used as is.
+        let mut source = json!({});
+        match self.services.read.as_ref().map(|r| r(&path)) {
+            Some(Ok(bytes)) => {
+                let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+                source["name"] = json!(name);
+                source["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
+            }
+            Some(Err(e)) => {
+                self.set_status(e.to_string());
+                return;
+            }
+            None => source["path"] = json!(path),
+        }
+        // Offer the file's slides to choose from; all of them are ticked to begin with.
+        match self.session.execute("slide.reuseList", &source) {
+            Ok(list) => {
+                let mut d = dialogs::Dialog::new("reuseSlides");
+                d.params = json!({"path": path, "source": source, "keep": keep, "slides": list["slides"]});
+                self.reuse_target = Some(self.capture_file_target());
+                self.dialog = Some(d);
+            }
             Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    /// Insert the slides `picked` (indices) of `source` (the `name` + `data`, or `path`, that
+    /// `slide.reuseList` listed) after the slide that was current when the picker opened, in that
+    /// presentation, even if another one is active now; if it is closed or the slide is gone,
+    /// nothing is inserted. Returns whether they were inserted.
+    pub fn reuse_slides(&mut self, source: &Value, keep: bool, picked: &[usize]) -> bool {
+        let mut args = if source.is_object() { source.clone() } else { json!({}) };
+        args["keepFormatting"] = json!(keep);
+        args["slides"] = json!(picked);
+        let result = match self.reuse_target {
+            Some(target) if !self.viewing_target(&target) => self.execute_on_target(&target, "Reuse Slides", "slide.reuse", &args),
+            _ => self.session.execute("slide.reuse", &args).map(|_| ()).map_err(|e| e.to_string()),
+        };
+        match result {
+            Ok(()) => {
+                self.reuse_target = None;
+                self.set_status(format!("Inserted {} slides", picked.len()));
+                true
+            }
+            Err(e) => {
+                self.set_status(e);
+                false
+            }
         }
     }
 
@@ -1515,7 +1908,7 @@ impl SlideApp {
             }
         };
         let params = if cmd == "slide.fromOutline" {
-            json!({"text": String::from_utf8_lossy(bytes), "markdown": name.to_ascii_lowercase().ends_with(".md")})
+            json!({"text": deckcraft_engine::cmd::file::outline_text(bytes), "markdown": name.to_ascii_lowercase().ends_with(".md")})
         } else {
             json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(bytes)})
         };
@@ -1609,42 +2002,77 @@ impl SlideApp {
         }
     }
 
-    /// Per-frame logic before layout: styles, control requests, screenshots, shortcuts.
+    /// Keep a hidden show playing from logic alone. `run_logic` does not refresh
+    /// `InputState::time`, so the show anchors its last visible time to this monotonic instant
+    /// and advances from there. A forced hidden paint draws the current state but does not
+    /// advance it a second time, and no paused-show product policy is invented.
+    fn tick_hidden_show(&mut self, ctx: &egui::Context, now: web_time::Instant) {
+        let visible = show::viewport_visible(ctx);
+        let Some(doc) = self.session.active().map(|d| d.doc.clone()) else { return };
+        let Some(show) = self.show.as_mut() else { return };
+        if visible {
+            // A visible logic-only pass (`run_logic`) carries the last full frame's input time.
+            // Anchoring that stale time to `now` would move the hidden clock backwards if the
+            // window hides before the next full pass. `show::ui` already records the anchor on
+            // every visible full pass, where `InputState::time` is current.
+            return;
+        }
+        if !show.hidden_started() {
+            return;
+        }
+        let input_time = ctx.input(|i| i.time);
+        let show_time = show.hidden_logic_time(input_time, now);
+        let keep = show.advance_hidden(&doc, show_time);
+        let time_driven = show.hidden_time_driven(&doc);
+        if !keep {
+            self.show = None;
+            return;
+        }
+        if time_driven {
+            // A hidden event loop has no draw to piggyback on. A delayed repaint keeps the
+            // logic clock ticking; with no paint request pending eframe services it as a
+            // logic-only pass, not a visible frame.
+            ctx.request_repaint_after_for(std::time::Duration::from_millis(100), ctx.viewport_id());
+        }
+    }
+
+    /// Background work, run on every logic call (visible, hidden or `run_logic`).
+    ///
+    /// Only consumed queues and monotonic deadlines live here: control requests, asynchronous
+    /// opening/inbox results, screenshot completions/deadlines, AutoRecover pacing and media
+    /// clocks. UI events are handled in [`Self::ui`], where a forced hidden paint also arrives.
     pub fn logic(&mut self, ctx: &egui::Context) {
-        let scale = self.ui.ui_scale.clamp(0.5, 3.0);
-        if (ctx.zoom_factor() - scale).abs() > 1e-3 {
-            ctx.set_zoom_factor(scale);
+        if !Self::root_viewport_admitted(ctx) {
+            log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
+            return;
         }
-        if !self.styled {
-            theme::install_fonts_with(ctx, &self.ui_fonts.faces);
-            self.styled = true;
-            self.restyle = true;
-        } else {
-            self.fonts_ready = true;
-        }
-        if self.restyle {
-            theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
-            self.restyle = false;
-        }
-        let now = ctx.input(|i| i.time);
-        let dt = now - self.last_time;
-        if dt > 0.0 {
-            self.perf.fps = self.perf.fps * 0.9 + (1.0 / dt).min(240.0) * 0.1;
-        }
-        self.last_time = now;
-        self.drain_control(ctx);
-        self.poll_opening();
-        if self.fonts_ready {
+        self.tick_hidden_show(ctx, web_time::Instant::now());
+        // `raw_input_hook` runs before `App::logic`. In a full pass egui has already built
+        // `PointerState` and `keys_down` from every injected event, so retracting the events after
+        // this pass would not stop the derived click or key from reaching the UI. Defer instead:
+        // a control request, background-open result or inbox file that changes the document,
+        // target or modal owner waits until the admitted batch has been consumed by the old
+        // target's UI pass. A logic-only callback carries the RawInput into the next full pass
+        // (no live `InputState` here), so that pass still drains normally and the next
+        // `raw_input_hook` retracts a batch that went stale.
+        if !self.synthetic_batch_is_live(ctx) {
+            self.drain_control(ctx);
+            self.poll_opening();
+            // Inbox results are host file bytes and do not need fonts or a painted frame. A
+            // window that starts hidden must still apply a file picked before its first UI pass.
             self.drain_inbox();
         }
-        if !self.synthetic.is_empty() {
+        self.drain_screenshots();
+        // `raw_input_hook` ran before this logic pass. This is normally a no-op now that
+        // target-changing work is deferred for a live batch; it still covers a target change
+        // made by other logic, and keeps a logic-only batch pending for the next hook.
+        self.retract_synthetic_after_logic(ctx);
+        // Queued/settling screenshots force the bounded hidden paints they need; issued ones
+        // rely on the screenshot command and the completion callback, with only a deadline wake.
+        self.capture.request_paint_if_needed(ctx, web_time::Instant::now());
+        if !self.synthetic.is_empty() || !self.synthetic_next.is_empty() || self.synthetic_pending {
             ctx.request_repaint();
         }
-        if self.fonts_ready {
-            self.note_ui_text(ctx);
-        }
-        self.collect_screenshots(ctx);
-        self.issue_screenshots(ctx);
         // Closing the window with unsaved changes asks first.
         if ctx.input(|i| i.viewport().close_requested()) && !self.quit_confirmed && self.session.documents().iter().any(|d| d.is_dirty()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
@@ -1653,8 +2081,50 @@ impl SlideApp {
                 self.dialog = Some(dialogs::Dialog::new("quit"));
             }
         }
-        // AutoRecover: unsaved presentations are written to the recovery folder periodically.
-        if self.session.recovery_dir.is_some() && now - self.last_recovery > (self.session.prefs.recovery_minutes * 60.0).max(10.0) {
+        self.autosave_if_due(ctx);
+        self.tick_media_clock(ctx);
+        self.note_settled_composition(ctx);
+        // In a full run_ui pass the UI callback after this logic half still owns the pass's final
+        // IME descriptor. Only a standalone run_logic callback proves that no custom editor was
+        // painted for this tick. Do not infer this from cumulative frame counters or stale
+        // geometry.
+        if !self.ime_in_ui_pass(ctx) {
+            self.finalize_ime_logic(ctx);
+        }
+    }
+
+    /// Style, fonts and zoom setup. Runs in a real UI pass, not from `run_logic`, because
+    /// `set_fonts`/`set_visuals` only take effect for the pass that lays out the UI.
+    fn ui_setup(&mut self, ctx: &egui::Context) -> bool {
+        let scale = self.ui.ui_scale.clamp(0.5, 3.0);
+        if (ctx.zoom_factor() - scale).abs() > 1e-3 {
+            ctx.set_zoom_factor(scale);
+        }
+        if !self.styled {
+            theme::install_fonts_with(ctx, &self.ui_fonts.faces);
+            self.styled = true;
+            self.restyle = true;
+            // Font definitions take effect at the next pass boundary. Do not paint a language
+            // or symbol with the old font set while the new set is still pending.
+            ctx.request_discard("install interface fonts before layout");
+            return false;
+        }
+        if self.restyle {
+            theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
+            self.restyle = false;
+        }
+        self.fonts_ready = true;
+        true
+    }
+
+    /// AutoRecover on a monotonic deadline, even when nothing is painted.
+    fn autosave_if_due(&mut self, ctx: &egui::Context) {
+        if self.session.recovery_dir.is_none() {
+            return;
+        }
+        let every = (self.session.prefs.recovery_minutes * 60.0).max(10.0);
+        let now = monotonic_secs();
+        if now - self.last_recovery > every {
             self.last_recovery = now;
             if self.session.documents().iter().any(|d| d.is_dirty())
                 && let Err(e) = self.session.execute("file.recovery.save", &json!({}))
@@ -1662,17 +2132,40 @@ impl SlideApp {
                 self.set_status(format!("Couldn't save AutoRecover information: {e}"));
             }
         }
-        // On the web, dropped files can only be read asynchronously: the host reads them and
-        // delivers them through `Services::inbox`, tagged with the request captured at the drop.
-        #[cfg(not(target_arch = "wasm32"))]
-        for f in ctx.input(|i| i.raw.dropped_files.clone()) {
-            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
-            match f.bytes() {
-                Ok(bytes) => self.open_or_insert_bytes(&name, &bytes),
-                Err(e) => self.set_status(e),
-            }
+        if self.session.documents().iter().any(|d| d.is_dirty()) {
+            let wait = (every - (monotonic_secs() - self.last_recovery)).clamp(0.5, every);
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         }
-        canvas::trackpad_twist(self, ctx);
+    }
+
+    /// Issue due screenshots and finish pass-local UI bookkeeping. Call once at the end of a real
+    /// pass after layout; the outer [`Self::ui`] wrapper observes IME output after this returns.
+    fn ui_end(&mut self, ctx: &egui::Context) {
+        self.ime_frame_viewport = None;
+        self.capture.observe_ui(ctx);
+        if !ctx.will_discard() {
+            let doc = self.session.active().map(|d| d.uid);
+            self.capture.issue(ctx, doc, web_time::Instant::now());
+        }
+        if self.fonts_ready && !ctx.will_discard() {
+            self.synthetic_pending = false;
+            self.synthetic_injected.clear();
+            self.synthetic_injected_at = None;
+            self.synthetic_injected_time = None;
+            self.synthetic_focus = None;
+            if self.synthetic.is_empty() {
+                self.synthetic_target = None;
+            }
+            self.promote_next_synthetic();
+        }
+        if self.fonts_ready && !ctx.will_discard() {
+            let now = ctx.input(|i| i.time);
+            let dt = now - self.last_time;
+            if dt > 0.0 {
+                self.perf.fps = self.perf.fps * 0.9 + (1.0 / dt).min(240.0) * 0.1;
+            }
+            self.last_time = now;
+        }
     }
 
     /// Borrow faces for interface text in scripts the interface fonts lack (#101): the open
@@ -1701,40 +2194,930 @@ impl SlideApp {
         self.ui_fonts.apply(ctx);
     }
 
-    /// An input method's event for the slide's text (#101): the preedit is shown in the text and
-    /// replaced on each update; the commit replaces it as one undo step.
-    fn ime_event(&mut self, e: &egui::ImeEvent) {
-        let r = match e {
-            egui::ImeEvent::Preedit { text, active_range_chars } => {
-                self.session.compose_text(text, active_range_chars.as_ref().map(|r| (r.start, r.end)))
-            }
-            egui::ImeEvent::Commit(text) => self.session.commit_text(text),
-            #[allow(deprecated)]
-            egui::ImeEvent::Disabled => {
-                self.session.end_composition();
-                Ok(Value::Null)
-            }
-            _ => Ok(Value::Null),
+    /// Stable IME owner for the canvas text target: document, view, shape and table cell.
+    ///
+    /// The caret, selection, text, revision and geometry are deliberately absent, so ordinary
+    /// edits and caret movement keep the same owner. A new document, shape or cell is a new
+    /// owner; [`egui::ime_context::ImeTarget::replacement_epoch`] stays zero because that key
+    /// itself changes on replacement. `file.revert` keeps the ids, so a composition it settles is
+    /// covered by the settle interrupt and by [`Self::ime_event`]'s staleness check instead.
+    fn ime_target(&self) -> Option<egui::ime_context::ImeTarget> {
+        let st = self.session.active()?;
+        let (shape, cell, notes) = match &st.selection.text {
+            Some(t) => (t.shape, t.cell, t.notes),
+            None => (*st.selection.shapes.first()?, None, false),
         };
-        if let Err(e) = r {
-            self.set_status(e.to_string());
+        if st.selection.text.is_none() && st.selection.shapes.len() != 1 {
+            return None;
+        }
+        let target = match st.selection.target {
+            Target::Slides => (0u8, 0usize, 0usize),
+            Target::Master { master } => (1, master, 0),
+            Target::Layout { master, layout } => (2, master, layout),
+            Target::Handout => (3, 0, 0),
+            Target::NotesMaster => (4, 0, 0),
+        };
+        let owner = egui::Id::unique(("deckcraft-ime", st.uid, target, shape.0, cell, notes));
+        Some(egui::ime_context::ImeTarget::new(owner, 0))
+    }
+
+    /// The committed surrounding snapshot for the current edit target, or `Unavailable` when
+    /// there is an owner but no committed text to describe.
+    ///
+    /// An unavailable stamp carries the document revision. The tracker requires a strictly
+    /// increasing revision on both sides of a receipt that involves `Unavailable`; without it, a
+    /// wide selection or a commit that starts from a selected shape would poison the whole frame.
+    fn ime_receipt_stamp(&self) -> Option<egui::ime_context::ImeMutationStamp> {
+        let st = self.session.active()?;
+        self.ime_target()?;
+        Some(st.selection.text.as_ref().and_then(|t| deckcraft_engine::cmd::text::ime_surrounding(st, t)).map_or_else(
+            || egui::ime_context::ImeMutationStamp::unavailable_at_revision(st.revision),
+            |s| egui::ime_context::ImeMutationStamp::from_committed(&s.text, s.cursor, s.anchor, None),
+        ))
+    }
+
+    /// Report an application-origin edit in this frame. The tracker lets `Other` dominate any
+    /// earlier or later IME receipt in the same frame.
+    fn note_application_edit(&mut self, ctx: &egui::Context) {
+        let Some(viewport) = self.ime_frame_viewport else { return };
+        if let Some(target) = self.ime_target() {
+            let frame = ctx.cumulative_frame_nr_for(viewport);
+            self.ime_tracker.note_application_change(viewport, frame, target);
         }
     }
 
-    /// Inject synthetic events (one pointer event per frame).
-    pub fn raw_input_hook(&mut self, raw: &mut egui::RawInput) {
-        if self.synthetic.is_empty() {
+    /// Record the expected selection after an accepted IME event. Its own deletion may move
+    /// the caret/revision; that is not an application interruption of the following commit.
+    fn refresh_ime_terminal_selection(&mut self) {
+        let state = self.session.active().and_then(|st| st.selection.text.as_ref().map(|t| (st.revision, t.anchor, t.caret)));
+        if let (Some(pending), Some((revision, anchor, caret))) = (&mut self.ime_terminal_pending, state) {
+            pending.revision = revision;
+            pending.anchor = anchor;
+            pending.caret = caret;
+        }
+    }
+
+    /// The current live destination for an IME reset fence.
+    fn ime_destination(&self) -> Option<ImeDestination> {
+        let st = self.session.active()?;
+        let target = self.ime_target()?;
+        let (anchor, caret) = st.selection.text.as_ref().map_or((None, None), |t| (Some(t.anchor), Some(t.caret)));
+        Some(ImeDestination { owner: target.owner, revision: st.revision, anchor, caret })
+    }
+
+    /// Use the recorded IME viewport only while it matches the current context viewport.
+    fn ime_viewport_or(&self, ctx: &egui::Context) -> egui::ViewportId {
+        self.ime_frame_viewport.filter(|v| *v == ctx.viewport_id()).unwrap_or_else(|| ctx.viewport_id())
+    }
+
+    /// The reset guard belonging to exactly this viewport. There is deliberately no fallback to
+    /// another viewport's phase.
+    pub(crate) fn ime_reset_for(&self, viewport: egui::ViewportId) -> ImeResetPhase {
+        self.ime_reset.get(&viewport).copied().unwrap_or(ImeResetPhase::Clear)
+    }
+
+    /// Store a non-clear reset phase for one viewport, or remove the entry when the phase is `Clear`.
+    fn set_ime_reset(&mut self, viewport: egui::ViewportId, phase: ImeResetPhase) {
+        if matches!(phase, ImeResetPhase::Clear) {
+            let _ = self.ime_reset.remove(&viewport);
+        } else {
+            self.ime_reset.insert(viewport, phase);
+        }
+    }
+
+    /// The live stamp used to compare against the origin/interrupted terminal destination.
+    fn ime_terminal_stamp(&self) -> Option<ImeTerminalStamp> {
+        let st = self.session.active()?;
+        let (anchor, caret) = st.selection.text.as_ref().map_or((None, None), |t| (Some(t.anchor), Some(t.caret)));
+        Some(ImeTerminalStamp { owner: self.ime_target().map(|t| t.owner), revision: st.revision, anchor, caret })
+    }
+
+    /// Positive route predicate for the canvas IME producer: this pass must be one that can
+    /// actually paint `canvas::show` for the active document, with no modal, stock field or
+    /// overlay owning input.
+    ///
+    /// Sorter and Notes Page are editor views without a canvas producer, so they are named here
+    /// even though the retained selection still yields an `ime_target`. A hidden, unfocused or
+    /// closing window, a missing document/target, a focused stock field, modal dialog, palette,
+    /// Backstage, slide show and opening overlay lose admission too. The finalizer remains the
+    /// authority for this pass's actual descriptor; keeping this predicate positive means a view
+    /// added later is not admitted by omission simply because it does not call `canvas::show`.
+    fn ime_custom_canvas_route(&self, ctx: &egui::Context) -> bool {
+        matches!(self.ui.view, ViewMode::Normal | ViewMode::Outline | ViewMode::Reading)
+            && self.session.active().is_some()
+            && self.ime_target().is_some()
+            && ctx.input(|i| i.viewport().focused.unwrap_or(true))
+            && ctx.input(|i| i.viewport().visible() != Some(false))
+            && !ctx.input(|i| i.viewport().close_requested())
+            && ctx.memory(|m| m.focused().is_none())
+            && self.dialog.as_ref().is_none_or(|d| !d.modal())
+            && self.palette.is_none()
+            && self.backstage.is_none()
+            && self.show.is_none()
+            && self.opening.is_none()
+    }
+
+    /// The singleton app's session, composition tracker and terminal guard belong to its owning
+    /// viewport. View › New Window and Presenter View render through their own immediate
+    /// viewports and never call `logic`/`ui`; admitting such a callback would let a render-only
+    /// viewport mutate root composition state while only the reset map is per-viewport. Reject it
+    /// before any state changes instead of pretending to support multi-view editing.
+    fn root_viewport_admitted(ctx: &egui::Context) -> bool {
+        ctx.viewport_id() == egui::ViewportId::ROOT
+    }
+
+    /// Report whether the current pass is a full UI pass for the IME-owning viewport rather than
+    /// standalone logic.
+    fn ime_in_ui_pass(&self, ctx: &egui::Context) -> bool {
+        let key = ime_in_ui_pass_key(self.ime_viewport_or(ctx));
+        ctx.data(|d| d.get_temp::<bool>(key).unwrap_or(false))
+    }
+
+    /// A new application-origin interruption supersedes any previous pending fence.
+    ///
+    /// This runs from the logic half of a full pass and from raw input handling, before the
+    /// finalizer has seen this pass's actual custom descriptor. No request is allocated here:
+    /// putting a token into egui `Memory` now would let egui attach it to a later stock
+    /// descriptor, or to a canvas this route does not paint. Retire the superseded id
+    /// immediately and store an unbound `Suspended { request: None }`; only the finalizer may
+    /// allocate its one replacement after confirming an eligible custom output.
+    fn note_ime_interruption(&mut self, ctx: &egui::Context, fresh: bool) {
+        let viewport = self.ime_viewport_or(ctx);
+        if !fresh
+            && matches!(
+                self.ime_reset_for(viewport),
+                ImeResetPhase::Awaiting { viewport: guard_viewport, .. }
+                    | ImeResetPhase::Suspended { viewport: guard_viewport, .. }
+                    if guard_viewport == viewport
+            )
+        {
+            // This viewport already has a live or suspended guard. The finalizer replaces it
+            // once if the actual destination changed; do not churn a request per event.
             return;
         }
+        self.set_ime_reset(viewport, ImeResetPhase::Suspended { viewport, needs_rearm: true, request: None });
+    }
+
+    /// Custom admission was lost on this route. Retire the old id without inventing an
+    /// acknowledgement and block until a later eligible pass can request a replacement.
+    fn suspend_ime_reset(&mut self, viewport: egui::ViewportId) {
+        if self.ime_reset_for(viewport).blocks_custom_input() {
+            self.set_ime_reset(viewport, ImeResetPhase::Suspended { viewport, needs_rearm: true, request: None });
+        }
+    }
+
+    /// An ordered completion for the exact newest request. Wrong/foreign/obsolete markers are
+    /// inert; this never mutates text, caret or undo history.
+    fn ime_reset_completed(&mut self, request_id: egui::ImeResetId, ctx: &egui::Context) {
+        let viewport = self.ime_viewport_or(ctx);
+        if request_id.viewport_id() != viewport {
+            return;
+        }
+        if let ImeResetPhase::Awaiting { id, viewport: waiting_viewport, .. } = self.ime_reset_for(viewport)
+            && id == request_id
+            && waiting_viewport == viewport
+        {
+            self.set_ime_reset(viewport, ImeResetPhase::Clear);
+            // The exact ordered completion is the platform-reset boundary. It also releases a
+            // cleared-preedit terminal guard: the app no longer has to wait for the old
+            // Commit/Enabled/Disabled before a fresh composition may start. Events ordered
+            // before this marker remain rejected; a late old terminal after the reset has the
+            // same documented residual as any other event crossing a platform reset.
+            if self.ime_terminal_pending.as_ref().is_some_and(|p| p.cancelled) {
+                self.ime_terminal_pending = None;
+            }
+            if self.ime_composition.is_some_and(|c| c.settled) {
+                self.ime_composition = None;
+            }
+            self.ime_cancelled = None;
+            self.ime_interrupt_pending = false;
+        }
+    }
+
+    /// Controls-only routing for a route where the custom editor cannot mutate. Markers are
+    /// visited in raw order; stock text/key events stay untouched for the stock widgets.
+    fn route_ime_controls_only(&mut self, ctx: &egui::Context, events: &[egui::Event]) {
+        for e in events {
+            if let egui::Event::ImeResetCompleted { request_id } = e {
+                self.ime_reset_completed(*request_id, ctx);
+            }
+        }
+    }
+
+    /// Bind a suspended reset to the actual custom descriptor, or retire it on loss.
+    fn finalize_ime_reset(&mut self, ctx: &egui::Context, custom: Option<ImeDescriptorKey>) {
+        let viewport = self.ime_viewport_or(ctx);
+        let phase = self.ime_reset_for(viewport);
+        let actual = ctx.output(|o| o.ime.as_ref().map(|i| ImeDescriptorKey::new(i.owner, i.context_generation, i.purpose)));
+        let destination = self.ime_destination();
+        // The finalizer is the allocation authority, so it rechecks the positive canvas route
+        // and that this pass is not already known to be discarded. Sorter/Notes Page, a modal,
+        // palette, Backstage, show, opening overlay, hidden window, stock focus, font/layout
+        // discard or a missing target must suspend without putting a token into egui Memory.
+        let eligible = self.ime_custom_canvas_route(ctx) && !ctx.will_discard();
+        let custom_output = match (eligible, custom, actual, destination) {
+            (true, Some(custom), Some(actual), Some(destination)) if custom == actual => Some((custom, destination)),
+            _ => None,
+        };
+        let Some((output_context, destination)) = custom_output else {
+            match phase {
+                ImeResetPhase::Clear => {}
+                ImeResetPhase::Awaiting { .. } => {
+                    self.set_ime_reset(viewport, ImeResetPhase::Suspended { viewport, needs_rearm: true, request: None });
+                }
+                ImeResetPhase::Suspended { viewport: guard_viewport, request, .. } => {
+                    // A request that was not bound to the actual custom output in this pass is
+                    // retired locally; a later eligible activation obtains a fresh one. A guard
+                    // stamped for another viewport (or a request issued for one) is never reused.
+                    if guard_viewport != viewport || request.is_some() {
+                        self.set_ime_reset(viewport, ImeResetPhase::Suspended { viewport, needs_rearm: true, request: None });
+                    }
+                }
+                ImeResetPhase::AllocationFailed { .. } => {
+                    self.set_ime_reset(viewport, ImeResetPhase::Suspended { viewport, needs_rearm: true, request: None });
+                }
+            }
+            return;
+        };
+        match phase {
+            ImeResetPhase::Clear => {}
+            ImeResetPhase::Awaiting { viewport: old_viewport, destination: old_destination, output_context: old_context, .. } => {
+                if old_viewport != viewport || old_destination != destination || old_context != output_context {
+                    self.request_ime_rearm(ctx, viewport, destination, output_context);
+                }
+            }
+            ImeResetPhase::Suspended { viewport: guard_viewport, request, needs_rearm } => {
+                let request = if needs_rearm && guard_viewport == viewport {
+                    // Only a request issued for this exact viewport may be bound here.
+                    request.filter(|id| id.viewport_id() == viewport)
+                } else {
+                    None
+                };
+                match request.or_else(|| ctx.request_ime_reset(viewport)) {
+                    Some(id) => {
+                        self.set_ime_reset(viewport, ImeResetPhase::Awaiting { id, viewport, destination, output_context });
+                    }
+                    None => {
+                        self.set_ime_reset(viewport, ImeResetPhase::AllocationFailed { viewport, destination, output_context });
+                    }
+                }
+            }
+            ImeResetPhase::AllocationFailed { viewport: old_viewport, destination: old_destination, output_context: old_context } => {
+                // Repeated idle output for the same destination does not retry allocation.
+                if old_viewport != viewport || old_destination != destination || old_context != output_context {
+                    self.request_ime_rearm(ctx, viewport, destination, output_context);
+                }
+            }
+        }
+    }
+
+    /// Request one replacement IME reset token and record `Awaiting` on success or
+    /// `AllocationFailed` when no token can be allocated.
+    fn request_ime_rearm(&mut self, ctx: &egui::Context, viewport: egui::ViewportId, destination: ImeDestination, output_context: ImeDescriptorKey) {
+        match ctx.request_ime_reset(viewport) {
+            Some(id) => self.set_ime_reset(viewport, ImeResetPhase::Awaiting { id, viewport, destination, output_context }),
+            None => self.set_ime_reset(viewport, ImeResetPhase::AllocationFailed { viewport, destination, output_context }),
+        }
+    }
+
+    /// A standalone run_logic tick paints no custom geometry. Suspend once, without replaying
+    /// stale input; the next full UI pass can rearm from its actual descriptor.
+    fn finalize_ime_logic(&mut self, ctx: &egui::Context) {
+        let viewport = self.ime_viewport_or(ctx);
+        if self.ime_reset_for(viewport).blocks_custom_input() {
+            // Only this viewport's guard is touched. A root/child logic tick must not suspend or
+            // rebind another viewport's independent reset lifetime.
+            self.set_ime_reset(viewport, ImeResetPhase::Suspended { viewport, needs_rearm: true, request: None });
+        }
+    }
+
+    /// Note compositions the application settled since the last check (a click, a key, another
+    /// command). Those are announced to the platform as an interrupt in [`Self::observe_ime`],
+    /// and a platform event for them is stale from that moment on, even in the same pass.
+    fn note_settled_composition(&mut self, ctx: &egui::Context) {
+        let settles = self.session.composition_settles();
+        let current_stamp = self.ime_terminal_stamp();
+        // `file.close` then `file.new` can replace the active uid before any pass observes the
+        // empty document. That is not a safe boundary for the old terminal: the platform may
+        // still deliver its suffix. Keep the guard bound to its retired owner and treat the new
+        // destination as a fresh interruption; only exact reset completion or an observed
+        // teardown may clear the terminal metadata.
+        let pending_interrupted = self.ime_terminal_pending.as_ref().is_some_and(|p| {
+            let reference = if p.interrupted {
+                p.interrupted_at
+            } else {
+                Some(ImeTerminalStamp { owner: Some(p.owner), revision: p.revision, anchor: Some(p.anchor), caret: Some(p.caret) })
+            };
+            reference != current_stamp
+        });
+        if settles == self.ime_settles_seen && !pending_interrupted {
+            return;
+        }
+        let fresh = settles != self.ime_settles_seen;
+        self.ime_settles_seen = settles;
+        if let Some(pending) = &mut self.ime_terminal_pending {
+            pending.cancelled = true;
+            pending.interrupted = true;
+            // Compare later passes against the destination where interruption actually happened,
+            // not forever against the retired composition's origin. The destination may be absent
+            // (the interruption closed its target); `interrupted` keeps that distinct from "not
+            // interrupted yet".
+            pending.interrupted_at = current_stamp;
+        }
+        self.ime_interrupt_pending = true;
+        self.note_ime_interruption(ctx, fresh);
+        let cancelled = self.ime_composition.as_mut().map(|c| {
+            c.settled = true;
+            (c.owner, c.generation)
+        });
+        if let Some((owner, generation)) = cancelled {
+            // Retain a tombstone beyond the first stale event: clearing the composition must
+            // not let the rest of this input batch commit into the next target. `observe_ime`
+            // retires it in the pass that publishes the matching interrupt.
+            self.ime_cancelled = Some(ImeCancelled { owner, generation });
+        }
+    }
+
+    /// An input method's event for the slide's text (#101): the preedit is shown in the text and
+    /// replaced on each update; the commit replaces it as one undo step.
+    ///
+    /// An event only ever changes the target its composition began in. The application settles a
+    /// composition itself on a click, a key, a command or a target change, and the platform may
+    /// still hold it: pre-edits and commits queued for that generation in the settling input batch
+    /// are dropped (with [`egui::Memory::interrupt_ime`]) instead of being typed into whatever is
+    /// selected now. After the interrupt has been published the platform is reset, so the next
+    /// batch is treated as new input; egui's event payload has no generation, so an OS-queued
+    /// event that crosses that reset cannot be distinguished from a legitimate one.
+    ///
+    /// A receipt is captured immediately before and after a successful commit or
+    /// delete-surrounding mutation. Preedit, rejected/failed events and no-ops never earn
+    /// [`egui::output::ImeChangeCause::InputMethod`].
+    fn ime_event(&mut self, ctx: &egui::Context, e: &egui::ImeEvent) {
+        self.note_settled_composition(ctx);
+        let viewport = self.ime_frame_viewport.unwrap_or_else(|| ctx.viewport_id());
+        let frame = ctx.cumulative_frame_nr_for(viewport);
+        let target = self.ime_target();
+        let owner = target.map(|t| t.owner);
+        let accepted =
+            matches!(e, egui::ImeEvent::Commit(_) | egui::ImeEvent::DeleteSurrounding { .. } | egui::ImeEvent::DeleteSurroundingBytes { .. });
+        if self.reject_stale_ime_event(ctx, e, owner) {
+            return;
+        }
+        // Until the exact newest reset request completes at its ordered stream position, custom
+        // mutations stay blocked. Platform enable/disable signals are not acknowledgements and do
+        // not release this guard; they still settle the old composition below.
+        #[allow(deprecated)]
+        if self.ime_reset_for(viewport).blocks_custom_input() && !matches!(e, egui::ImeEvent::Disabled | egui::ImeEvent::Enabled) {
+            return;
+        }
+        let before = if accepted { self.ime_receipt_stamp() } else { None };
+        let r = self.apply_ime_event(e);
+        self.settle_ime_event_state(e, owner, r.is_ok());
+        if r.is_ok() && accepted {
+            self.refresh_ime_terminal_selection();
+        }
+        if let Err(e) = &r {
+            self.set_status(e.to_string());
+        } else if accepted
+            && let (Some(target), Some(before), Some(after)) = (target, before, self.ime_receipt_stamp())
+            && before != after
+            && r.as_ref().is_ok_and(|v| !v.is_null() && v.get("handled").and_then(Value::as_bool) != Some(false))
+        {
+            // A no-op receipt (an empty commit, a zero-length delete, same text reinserted) is
+            // not a mutation and must not poison the frame for a real commit later in the batch.
+            self.ime_tracker.note_input_method_apply(viewport, frame, target, before, after);
+        }
+    }
+
+    /// Drop an event that belongs to a composition the application already settled, or to another
+    /// owner; returns `true` when the event must not be applied.
+    ///
+    /// A commit or deletion belongs to the composition that began the pre-edit: another owner
+    /// (the user clicked elsewhere) or a composition the app already settled makes it stale.
+    /// While the reset is still pending, the tombstone rejects pre-edits too (the platform has
+    /// not yet been told to cancel its copy). `observe_ime` retires the tombstone in the pass
+    /// that publishes the interrupt (or in an accepted no-descriptor pass, which resets the
+    /// backend just the same), so a later commit-only is not lost forever: it is a
+    /// legitimate direct commit or a new platform composition. egui's events carry no
+    /// generation, so an event queued by the OS across that reset is indistinguishable from
+    /// one the user just typed; only events in the same input batch as the settle are rejected
+    /// deterministically. A cleared-preedit terminal is a distinct case: its pending owner
+    /// remains guarded across that output boundary until its actual commit/enable/disable
+    /// arrives. Publishing a reset is not evidence that the separately queued terminal was
+    /// delivered. With no incoming event epoch, the first ambiguous new composition after an
+    /// unobserved reset may be rejected; no timer guesses that it became safe.
+    /// The tombstone is not filtered by the *current* target: a click can change the owner in
+    /// the settling pass, and every remaining event of that batch still belongs to the
+    /// pre-reset composition. Filtering would let the event after the first dropped pre-edit
+    /// start composing in the new target before the platform is reset.
+    fn reject_stale_ime_event(&mut self, ctx: &egui::Context, e: &egui::ImeEvent, owner: Option<egui::Id>) -> bool {
+        let cancelled = self.ime_cancelled;
+        let pending_cancelled = self.ime_terminal_pending.as_ref().is_some_and(|p| p.cancelled);
+        #[allow(deprecated)]
+        let stale = !matches!(e, egui::ImeEvent::Disabled | egui::ImeEvent::Enabled)
+            && (self.ime_composition.is_some_and(|c| c.settled || Some(c.owner) != owner) || cancelled.is_some() || pending_cancelled);
+        if !stale {
+            return false;
+        }
+        if pending_cancelled && matches!(e, egui::ImeEvent::Commit(_)) {
+            // The old terminal finally arrived: reject it and release its pending owner now,
+            // so a new preedit later in this same raw batch can belong to the current target.
+            self.ime_terminal_pending = None;
+            self.ime_composition = None;
+            self.ime_cancelled = None;
+            self.ime_interrupt_pending = false;
+            return true;
+        }
+        if pending_cancelled {
+            // note_settled_composition already queued the reset. Do not also latch the
+            // frame's memory interrupt: a terminal later in this batch can consume it and
+            // permit a fresh preedit without resetting that new composition at pass end.
+            self.ime_composition = None;
+            return true;
+        }
+        if let Some(c) = cancelled {
+            log::debug!("IGNORING IME event for settled composition owner {:?} generation {}", c.owner, c.generation);
+        }
+        self.ime_composition = None;
+        // Ask the backend to drop its copy, so this is one stale event and not a stream.
+        ctx.memory_mut(|m| m.interrupt_ime());
+        true
+    }
+
+    /// Apply the document mutation an IME event asks for, before any receipt or tracker state.
+    fn apply_ime_event(&mut self, e: &egui::ImeEvent) -> deckcraft_engine::Result<Value> {
+        match e {
+            egui::ImeEvent::Preedit { text, active_range_chars } => {
+                self.session.compose_text(text, active_range_chars.as_ref().map(|r| (r.start, r.end)))
+            }
+            // A commit only replaces text that is being edited. It must never start editing a
+            // merely selected shape: without a tracked pre-edit, a stale platform commit would
+            // replace that shape's whole text.
+            egui::ImeEvent::Commit(text) => {
+                if self.session.active().is_some_and(|d| d.selection.text.is_some()) {
+                    self.session.commit_text(text)
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+            egui::ImeEvent::DeleteSurrounding { before_chars, after_chars } => {
+                if self.session.active().is_some_and(|d| d.selection.text.is_some()) {
+                    self.session.delete_surrounding(*before_chars, *after_chars, false)
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+            egui::ImeEvent::DeleteSurroundingBytes { before_bytes, after_bytes } => {
+                if self.session.active().is_some_and(|d| d.selection.text.is_some()) {
+                    self.session.delete_surrounding(*before_bytes, *after_bytes, true)
+                } else {
+                    Ok(Value::Null)
+                }
+            }
+            #[allow(deprecated)]
+            egui::ImeEvent::Disabled | egui::ImeEvent::Enabled => {
+                // The platform ended (or is about to restart) its composition itself.
+                self.session.end_composition();
+                Ok(Value::Null)
+            }
+        }
+    }
+
+    /// Update the tracked composition after `e` has been applied; `applied` says whether the
+    /// document mutation succeeded.
+    fn settle_ime_event_state(&mut self, e: &egui::ImeEvent, owner: Option<egui::Id>, applied: bool) {
+        match e {
+            // The platform ends its composition on a commit (and on Disabled/Enabled): nothing is
+            // left to interrupt. A pre-edit keeps (or starts) the tracked composition.
+            egui::ImeEvent::Commit(_) => {
+                self.ime_terminal_pending = None;
+                self.ime_composition = None;
+                self.ime_cancelled = None;
+                self.ime_interrupt_pending = false;
+            }
+            #[allow(deprecated)]
+            egui::ImeEvent::Disabled | egui::ImeEvent::Enabled => {
+                // A platform-side disable/enable already reset the composition. Do not carry an
+                // older app-settled interrupt into the next (possibly new) composition.
+                self.ime_terminal_pending = None;
+                self.ime_composition = None;
+                self.ime_cancelled = None;
+                self.ime_interrupt_pending = false;
+            }
+            egui::ImeEvent::Preedit { text, .. } => {
+                match (owner, applied, self.session.active().is_some_and(|d| d.composition.is_some())) {
+                    (Some(owner), true, true) => {
+                        // Updating the same composition keeps its generation. After a settle (or
+                        // a first pre-edit) this is a new generation and clears the tombstone.
+                        let generation = match self.ime_composition {
+                            Some(c) if c.owner == owner && !c.settled => c.generation,
+                            _ => {
+                                self.ime_generation = self.ime_generation.wrapping_add(1).max(1);
+                                self.ime_generation
+                            }
+                        };
+                        self.ime_composition = Some(ImeComposition { owner, generation, settled: false });
+                        self.ime_terminal_pending = None;
+                        self.ime_cancelled = None;
+                    }
+                    (Some(owner), true, false) if text.is_empty() && self.ime_composition.is_some_and(|c| !c.settled && c.owner == owner) => {
+                        // The model restored committed text, but no terminal was delivered. Keep
+                        // this owner across passes; a later pointer/key/target change must reject
+                        // its separately queued old delete/commit, even after an outgoing reset.
+                        if let Some(st) = self.session.active()
+                            && let Some(t) = &st.selection.text
+                        {
+                            self.ime_terminal_pending = Some(ImeTerminalPending {
+                                owner,
+                                revision: st.revision,
+                                anchor: t.anchor,
+                                caret: t.caret,
+                                cancelled: false,
+                                interrupted: false,
+                                interrupted_at: None,
+                            });
+                        }
+                    }
+                    _ => {
+                        self.ime_composition = None;
+                        self.ime_terminal_pending = None;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Observe the canvas IME owner once per pass and publish its descriptor.
+    ///
+    /// No canvas target, a Sorter/Notes Page view, a focused egui field, a modal, the palette,
+    /// the Backstage view, a slide show, an opening overlay, or an unfocused/hidden window means
+    /// the custom owner is hidden: the tracker is told so and the next focus starts a new
+    /// generation. The descriptor is rebuilt from the current committed text every pass.
+    ///
+    /// A composition the application settled itself is announced once as
+    /// `should_interrupt_composition`, so the backend cancels the platform's copy of it. That
+    /// settled pass is also the active-composition tombstone's lifecycle end. A cleared-preedit
+    /// terminal retains its separate pending owner until the incoming terminal is observed.
+    fn observe_ime(&mut self, ctx: &egui::Context) -> Option<ImeDescriptorKey> {
+        let viewport = self.ime_frame_viewport.unwrap_or_else(|| ctx.viewport_id());
+        self.note_settled_composition(ctx);
+        // The editing window going away really ends the viewport's context; a merely hidden
+        // owner (modal, palette, unfocused field) stays observed as unfocused instead.
+        if self.session.active().is_none() || ctx.input(|i| i.viewport().close_requested()) {
+            self.ime_interrupt_pending = false;
+            if let Some(old) = self.ime_viewport.take() {
+                self.ime_tracker.end_viewport(old);
+                // Explicit viewport destruction removes only that viewport's guard.
+                let _ = self.ime_reset.remove(&old);
+            }
+            let _ = self.ime_reset.remove(&viewport);
+            self.ime_composition = None;
+            self.ime_cancelled = None;
+            self.ime_terminal_pending = None;
+            return None;
+        }
+        if !ctx.input(|i| i.viewport().focused.unwrap_or(true)) {
+            // The native window itself lost focus: no custom editor is eligible this pass, even
+            // if the model still has a text selection and a last-pass geometry rect.
+            self.ime_tracker.observe(viewport, None);
+            return None;
+        }
+        let Some(rect) = self.ime_pending.take() else {
+            // No canvas editor was painted in this pass. A discarded font/layout pass publishes
+            // nothing the platform sees, so keep the interrupt and tombstone for a later pass.
+            // An accepted pass is a backend reset only when it publishes *no* IME descriptor at
+            // all: a focused stock `TextEdit` (notes pane, dialog, palette field) publishes its
+            // own `o.ime` while `ime_pending` is `None`, and that descriptor is not a reset. Gate
+            // retirement on the actual committed output, not on the absence of the canvas rect;
+            // otherwise the next legitimate commit in the focused field would be rejected.
+            let no_descriptor = ctx.output(|o| o.ime.is_none());
+            if !ctx.will_discard() && no_descriptor {
+                self.ime_interrupt_pending = false;
+                self.ime_cancelled = None;
+                if self.ime_composition.is_some_and(|c| c.settled) {
+                    self.ime_composition = None;
+                }
+            }
+            self.ime_tracker.observe(viewport, None);
+            return None;
+        };
+        if !self.ime_custom_canvas_route(ctx) {
+            // The canvas can still paint behind an opening overlay or a Sorter/Notes Page
+            // reroute, and a forced hidden paint can run after the window lost focus or
+            // visibility. The positive route and the UI wrapper both reject those, so a pending
+            // rect must not republish the custom owner.
+            self.ime_tracker.observe(viewport, None);
+            return None;
+        }
+        let Some(st) = self.session.active() else {
+            self.ime_interrupt_pending = false;
+            self.ime_tracker.observe(viewport, None);
+            return None;
+        };
+        let Some(target) = self.ime_target() else {
+            self.ime_interrupt_pending = false;
+            self.ime_cancelled = None;
+            self.ime_tracker.observe(viewport, None);
+            return None;
+        };
+        if self.ime_viewport != Some(viewport)
+            && let Some(old) = self.ime_viewport.replace(viewport)
+        {
+            self.ime_tracker.end_viewport(old);
+            let _ = self.ime_reset.remove(&old);
+        }
+        let committed = st.selection.text.as_ref().and_then(|t| deckcraft_engine::cmd::text::ime_surrounding(st, t));
+        let mut observation =
+            egui::ime_context::ImeObservation::new(ctx.cumulative_frame_nr_for(viewport), ctx.cumulative_pass_nr_for(viewport), target)
+                .purpose(egui::IMEPurpose::Normal)
+                .committed(committed.as_ref().map(|s| egui::ime_context::CommittedText::new(&s.text, s.cursor, s.anchor)));
+        if committed.is_none() {
+            observation = observation.unavailable_revision(st.revision);
+        }
+        let update = self.ime_tracker.observe(viewport, Some(observation))?;
+        // Clear the interrupt only once it is part of a settled pass's output descriptor. A
+        // discarded font/layout pass publishes nothing the platform sees, so keep it pending;
+        // that pass is not the boundary at which stale pre-edits become a new generation.
+        let interrupt = if ctx.will_discard() { false } else { std::mem::take(&mut self.ime_interrupt_pending) };
+        if interrupt {
+            // This pass's output carries the backend reset. The tombstone did its job for the
+            // events already processed in this batch; from the next batch on every pre-edit or
+            // commit is a new platform generation. A late event the OS queued across the reset
+            // has no generation in its payload, so it cannot be rejected without also dropping
+            // legitimate direct commits (documented residual in `ime_event`).
+            self.ime_cancelled = None;
+            if self.ime_composition.is_some_and(|c| c.settled) {
+                self.ime_composition = None;
+            }
+        }
+        let key = ImeDescriptorKey::new(update.owner, update.context_generation, update.purpose);
+        ctx.output_mut(|o| {
+            o.ime = Some(egui::output::IMEOutput {
+                owner: update.owner,
+                context_generation: update.context_generation,
+                purpose: update.purpose,
+                rect,
+                cursor_rect: rect,
+                should_interrupt_composition: interrupt,
+                reset_request: None,
+                change_cause: update.change_cause,
+                surrounding_text: update.surrounding_text,
+            });
+        });
+        Some(key)
+    }
+
+    /// Forget the injected or queued synthetic batch and everything recorded about it. Events
+    /// waiting in `synthetic_next` are a separate, newer batch and are promoted by the caller.
+    fn clear_synthetic_batch(&mut self) {
+        self.synthetic.clear();
+        self.synthetic_pending = false;
+        self.synthetic_injected.clear();
+        self.synthetic_injected_at = None;
+        self.synthetic_injected_time = None;
+        self.synthetic_target = None;
+        self.synthetic_focus = None;
+    }
+
+    /// Start the batch that was queued behind an older one once the older batch is gone.
+    fn promote_next_synthetic(&mut self) {
+        if self.synthetic_pending || !self.synthetic.is_empty() || self.synthetic_next.is_empty() {
+            return;
+        }
+        self.synthetic = std::mem::take(&mut self.synthetic_next);
+        self.synthetic_target = self.synthetic_next_target.take();
+        self.synthetic_focus = None;
+    }
+
+    /// A font/layout pass will be discarded: egui already consumed the injected events but the
+    /// app deliberately lays nothing out, so put them back at the head of the queue. The next
+    /// frame injects them again after the new fonts are installed; otherwise a control click that
+    /// happened to arrive on the very first frame would be acknowledged without ever reaching the
+    /// UI.
+    fn requeue_injected_synthetic(&mut self) {
+        if !self.synthetic_pending {
+            return;
+        }
+        let mut combined = std::mem::take(&mut self.synthetic_injected);
+        combined.append(&mut self.synthetic);
+        self.synthetic = combined;
+        self.synthetic_pending = false;
+        self.synthetic_injected_at = None;
+        self.synthetic_injected_time = None;
+        self.synthetic_focus = None;
+        if self.synthetic.is_empty() {
+            self.synthetic_target = None;
+            self.promote_next_synthetic();
+        }
+    }
+
+    /// Remove exactly the recorded synthetic events from `events`. The recorded index is tried
+    /// first so an identical host event earlier in the batch is never removed; the last exact
+    /// match is only a fallback for a raw input that was rewritten around the events.
+    fn drain_synthetic_from(&self, events: &mut Vec<egui::Event>) -> bool {
+        let injected = &self.synthetic_injected;
+        let n = injected.len();
+        if n == 0 {
+            return false;
+        }
+        let exact = self.synthetic_injected_at.filter(|start| events.get(*start..*start + n).is_some_and(|w| w == injected.as_slice()));
+        let at = exact.or_else(|| events.windows(n).rposition(|w| w == injected.as_slice()));
+        if let Some(at) = at {
+            events.drain(at..at + n);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Drop an injected batch whose document, canvas, focus or modal owner changed during
+    /// `logic`. eframe calls `raw_input_hook` before `App::logic`, so a control request drained
+    /// there can still retarget the same `RawInput`.
+    ///
+    /// This must not infer the pass phase from `ViewportInfo::visible()`: a visible root can run
+    /// logic-only (an overdue redraw), and a hidden root can run a full pass for a screenshot or
+    /// `RequestPaintWhileHidden`. A logic-only callback leaves `InputState` from the *previous*
+    /// pass; remove the batch only when the live input carries exactly what this pass injected
+    /// (same `RawInput::time` and the exact recorded event window). Otherwise keep the pending
+    /// bookkeeping so the next `raw_input_hook` can retract the events from the carried
+    /// `RawInput` before eframe delivers them in a full pass.
+    fn retract_synthetic_after_logic(&mut self, ctx: &egui::Context) {
+        if !self.synthetic_pending {
+            return;
+        }
+        let current = self.input_target();
+        let focus = ctx.memory(|m| m.focused());
+        if self.synthetic_target == Some(current) && focus == self.synthetic_focus {
+            return;
+        }
+        let injected_time = self.synthetic_injected_time;
+        let mut removed = false;
+        ctx.input_mut(|i| {
+            // A logic-only call keeps the previous pass's `InputState`; its `raw.time` is not the
+            // time of the RawInput this batch was injected into. Never drain an older batch that
+            // happens to look similar.
+            if i.raw.time != injected_time {
+                return;
+            }
+            let mut events = std::mem::take(&mut i.events);
+            let ok = self.drain_synthetic_from(&mut events);
+            i.events = events;
+            if ok {
+                // Keep `InputState::raw` consistent with what UI code reads as `events`.
+                let mut raw_events = std::mem::take(&mut i.raw.events);
+                let _ = self.drain_synthetic_from(&mut raw_events);
+                i.raw.events = raw_events;
+                removed = true;
+            }
+        });
+        if removed {
+            self.clear_synthetic_batch();
+            self.promote_next_synthetic();
+        } else {
+            // Logic-only (or a pass whose input does not contain the batch): the events are in
+            // eframe's carried RawInput. Keep `synthetic_pending`, `synthetic_injected` and the
+            // stale target so the next hook retracts them there. Events queued after the batch
+            // belong to the same stale target as well.
+            self.synthetic.clear();
+        }
+    }
+
+    /// True when the pending synthetic batch is in this pass's live `InputState`, i.e. this is
+    /// the full pass the batch was admitted for and egui has already derived pointer/key state
+    /// from it. A logic-only callback leaves the previous pass's `InputState` (with another
+    /// `raw.time`) and must not be mistaken for the live pass, so control/background work is
+    /// still drained there and the next `raw_input_hook` retracts a batch that went stale.
+    fn synthetic_batch_is_live(&self, ctx: &egui::Context) -> bool {
+        if !self.synthetic_pending || self.synthetic_injected.is_empty() {
+            return false;
+        }
+        let Some(injected_time) = self.synthetic_injected_time else { return false };
+        let injected = &self.synthetic_injected;
+        ctx.input(|i| i.raw.time == Some(injected_time) && i.events.windows(injected.len()).any(|w| w == injected.as_slice()))
+    }
+
+    /// Input that belongs to the pass about to run: native dropped files and one synthetic
+    /// control-channel batch. The synthetic batch is injected at most once; while it is
+    /// unacknowledged, later passes cannot replay it. A document, canvas, focus or modal change
+    /// drops the whole queued batch rather than typing into the wrong place.
+    ///
+    /// The hook always injects into the `RawInput`; it does not try to guess whether eframe will
+    /// run this as a full or a logic-only pass. `run_logic` does not consume events but eframe
+    /// carries the whole `RawInput` into the next full pass, so an already-injected batch is
+    /// retracted at the next hook if a control request changed the target, and otherwise is
+    /// delivered exactly once in the next real UI pass. `ViewportInfo::visible()` is not a phase
+    /// signal: a hidden root still gets a full pass for a screenshot or `RequestPaintWhileHidden`.
+    pub fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
+        #[cfg(not(target_arch = "wasm32"))]
+        for f in std::mem::take(&mut raw.dropped_files) {
+            let name = f.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "dropped file".into());
+            match f.bytes() {
+                Ok(bytes) => self.open_or_insert_bytes(&name, &bytes),
+                Err(e) => self.set_status(e),
+            }
+        }
+        let focus = ctx.memory(|m| m.focused());
+        if self.synthetic_pending {
+            let current = self.input_target();
+            if self.synthetic_target != Some(current) || focus != self.synthetic_focus {
+                // eframe keeps the whole RawInput from a logic-only pass in `pending_raw_input`
+                // and appends the next host input to it. The events are already in `raw.events`;
+                // clearing only the unsent queue would still deliver the stale click or key into
+                // the new document on the next full pass. Retract exactly the batch we appended.
+                let _ = self.drain_synthetic_from(&mut raw.events);
+                self.clear_synthetic_batch();
+                // New control input queued for the current target while the stale batch was in
+                // flight is a separate batch; keep it instead of clearing it with the old one.
+                self.promote_next_synthetic();
+            } else {
+                // This RawInput is the carrier for the next pass, and eframe refreshes its time
+                // on every call. Record the current time so `retract_synthetic_after_logic` can
+                // tell this full pass's live `InputState` from a logic-only callback's stale one.
+                self.synthetic_injected_time = raw.time;
+            }
+        }
+        if self.synthetic_pending || self.synthetic.is_empty() {
+            return;
+        }
+        let current = self.input_target();
+        if self.synthetic_target != Some(current) {
+            // The batch was queued for a document/slide/canvas that has since changed.
+            self.synthetic.clear();
+            self.synthetic_target = None;
+            self.promote_next_synthetic();
+            if self.synthetic.is_empty() {
+                return;
+            }
+            if self.synthetic_target != Some(current) {
+                // The newer batch is stale too: drop it rather than delivering it to this target.
+                self.synthetic.clear();
+                self.synthetic_target = None;
+                self.synthetic_next.clear();
+                self.synthetic_next_target = None;
+                return;
+            }
+        }
+        self.synthetic_generation = self.synthetic_generation.wrapping_add(1).max(1);
+        log::debug!("injecting synthetic input batch {}", self.synthetic_generation);
         let n = match self.synthetic.first() {
             Some(egui::Event::PointerMoved(_) | egui::Event::PointerButton { .. }) => 1,
             _ => self.synthetic.iter().position(|e| matches!(e, egui::Event::Key { pressed: false, .. })).map_or(self.synthetic.len(), |i| i + 1),
         };
-        if let Some(egui::Event::PointerMoved(p) | egui::Event::PointerButton { pos: p, .. }) = self.synthetic.first() {
-            raw.events.push(egui::Event::PointerMoved(*p));
-        }
         let n = n.min(self.synthetic.len());
-        raw.events.extend(self.synthetic.drain(..n));
+        let batch: Vec<egui::Event> = self.synthetic.drain(..n).collect();
+        let at = raw.events.len();
+        raw.events.extend(batch.iter().cloned());
+        self.synthetic_injected = batch;
+        self.synthetic_injected_at = Some(at);
+        self.synthetic_injected_time = raw.time;
+        self.synthetic_pending = true;
+        self.synthetic_focus = focus;
+    }
+
+    /// The app shortcuts that still make sense on the empty File/start screen: create, open,
+    /// the command palette, preferences and the File tab itself. Document commands (save, find,
+    /// hyperlink, show, zoom) stay out; none of them can act on a presentation that is not open.
+    fn start_screen_shortcut(key: egui::Key, m: Mods) -> bool {
+        use egui::Key::*;
+        matches!(
+            (key, m.cmd, m.shift, m.alt),
+            (O, true, false, false) | (P, true, true, false) | (Comma, true, false, false) | (F, false, false, true)
+        )
+    }
+
+    /// File-tab navigation and document-free shortcuts, also used on the start screen.
+    fn route_backstage_keys(&mut self, events: Vec<egui::Event>) {
+        if self.backstage.is_none() {
+            return;
+        }
+        // The File tab: its own keys (Esc goes back, arrows walk the side menu) and app
+        // shortcuts (New, Open, Command Palette…); typing, pasting or deleting would edit the
+        // hidden presentation.
+        let start_screen = self.session.active().is_none();
+        for e in events {
+            if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
+                let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
+                let handled = backstage::key(self, key, mods)
+                    // With no presentation the File home only owns the shortcuts that create or
+                    // open one. Borrowing the whole document shortcut table here would also arm
+                    // Save/Save As, hyperlink, find/replace, show and zoom against the empty
+                    // start screen, which is a scope expansion no editing route needs.
+                    || (mods.cmd || mods.alt)
+                        && (!start_screen || Self::start_screen_shortcut(key, mods))
+                        && menus::ui_shortcut(self, key, mods);
+                if handled {
+                    continue;
+                }
+                // Engine shortcuts that don't touch the hidden slide (Ctrl+N).
+                if mods.cmd
+                    && matches!(key, egui::Key::N)
+                    && let Err(e) = self.session.key(key_name(key), mods)
+                {
+                    self.set_status(e.to_string());
+                }
+            }
+        }
     }
 
     /// Keyboard and clipboard for the slide (when no text field has focus).
@@ -1744,8 +3127,13 @@ impl SlideApp {
         // key press, so the release of a V press never seen is the paste. Tracked even while a text
         // field has focus, so that a V typed there is not taken for one.
         let mut image_paste = false;
+        let mut pasted_image_event = false;
         for e in &events {
             match e {
+                egui::Event::PasteImage(_) => {
+                    pasted_image_event = true;
+                    self.v_seen = true;
+                }
                 egui::Event::Paste(_) | egui::Event::Key { key: egui::Key::V, pressed: true, .. } => self.v_seen = true,
                 egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. } => {
                     // Only a release with Command/Ctrl held is a paste: a bare V release is not.
@@ -1755,28 +3143,42 @@ impl SlideApp {
                 _ => {}
             }
         }
-        if ctx.memory(|m| m.focused().is_some()) || self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some() {
+        let viewport = self.ime_viewport_or(ctx);
+        if self.session.active().is_none() {
+            // No document: keep slide-editing input suspended, while the start screen's
+            // File-tab navigation and document-free shortcuts remain available.
+            self.suspend_ime_reset(viewport);
+            self.route_ime_controls_only(ctx, &events);
+            if self.palette.is_none() && self.dialog.as_ref().is_none_or(|d| !d.modal()) && ctx.memory(|m| m.focused().is_none()) {
+                self.route_backstage_keys(events);
+            }
+            self.drain_requests();
+            return;
+        }
+        let modal = self.dialog.as_ref().is_some_and(|d| d.modal()) || self.palette.is_some();
+        // While slide text is being edited, the text owns the keyboard (#93). Tab and the arrow
+        // keys move egui's keyboard focus onto ordinary widgets (the window's drag handle, ribbon
+        // buttons), and that stray focus would swallow every later key and end text entry. Let it
+        // go; a real text field or an open menu keeps its keys.
+        if !modal
+            && self.session.active().is_some_and(|d| d.selection.text.is_some())
+            && !ctx.text_edit_focused()
+            && !ctx.any_popup_open()
+            && let Some(id) = ctx.memory(|m| m.focused())
+        {
+            ctx.memory_mut(|m| m.surrender_focus(id));
+        }
+        if ctx.memory(|m| m.focused().is_some()) || modal {
+            // A stock field/modal/palette owns input now. Retire the custom fence, then visit
+            // controls in raw order; stock text/key events are left for the stock widgets.
+            self.suspend_ime_reset(viewport);
+            self.route_ime_controls_only(ctx, &events);
             return;
         }
         if self.backstage.is_some() {
-            // The File tab: its own keys (Esc goes back, arrows walk the side menu) and app
-            // shortcuts (New, Open, Command Palette…); typing, pasting or deleting would edit the
-            // hidden presentation.
-            for e in events {
-                if let egui::Event::Key { key, pressed: true, modifiers, .. } = e {
-                    let mods = Mods { shift: modifiers.shift, alt: modifiers.alt, cmd: modifiers.command || modifiers.ctrl };
-                    if backstage::key(self, key, mods) || !(mods.cmd || mods.alt) || menus::ui_shortcut(self, key, mods) {
-                        continue;
-                    }
-                    // Engine shortcuts that don't touch the hidden slide (Ctrl+N).
-                    if mods.cmd
-                        && matches!(key, egui::Key::N)
-                        && let Err(e) = self.session.key(key_name(key), mods)
-                    {
-                        self.set_status(e.to_string());
-                    }
-                }
-            }
+            self.suspend_ime_reset(viewport);
+            self.route_ime_controls_only(ctx, &events);
+            self.route_backstage_keys(events);
             self.drain_requests();
             return;
         }
@@ -1788,15 +3190,32 @@ impl SlideApp {
             }
         }
         for e in events {
+            // An earlier command in this raw batch may have settled the composition. Request the
+            // replacement at this ordered boundary, before the current event is considered.
+            self.note_settled_composition(ctx);
             match e {
+                egui::Event::ImeResetCompleted { request_id } => self.ime_reset_completed(request_id, ctx),
+                egui::Event::PasteImage(image) => match color_image_png(&image) {
+                    Ok(png) => {
+                        let params = json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)});
+                        if let Err(e) = self.session.execute("insert.picture", &params) {
+                            self.set_status(e.to_string());
+                        }
+                    }
+                    Err(e) => self.set_status(e),
+                },
                 egui::Event::Text(t) => {
+                    let revision = self.session.active().map(|d| d.revision);
                     if self.session.active().is_some_and(|d| d.selection.text.is_some() || d.selection.shapes.len() == 1)
                         && let Err(e) = self.session.type_text(&t)
                     {
                         self.set_status(e.to_string());
                     }
+                    if self.session.active().map(|d| d.revision) != revision {
+                        self.note_application_edit(ctx);
+                    }
                 }
-                egui::Event::Ime(ime) => self.ime_event(&ime),
+                egui::Event::Ime(ime) => self.ime_event(ctx, &ime),
                 egui::Event::Copy => self.publish_clipboard(ctx, false),
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
@@ -1805,7 +3224,10 @@ impl SlideApp {
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
                     // Text keeps its HTML (bold, italic, underline) when the host can read it.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
-                    let img = if text.is_empty() { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+                    // egui 0.37 sends `PasteImage` directly; the services fallback stays for
+                    // integrations that still send an empty `Paste`. Never insert twice.
+                    let img = if text.is_empty() && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+                    let revision = self.session.active().map(|d| d.revision);
                     let r = match img {
                         Some(png) => self
                             .session
@@ -1820,6 +3242,9 @@ impl SlideApp {
                     };
                     if let Err(e) = r {
                         self.set_status(e.to_string());
+                    }
+                    if self.session.active().map(|d| d.revision) != revision {
+                        self.note_application_edit(ctx);
                     }
                 }
                 egui::Event::Key { key, pressed: true, modifiers, .. } => {
@@ -1838,9 +3263,13 @@ impl SlideApp {
                         continue;
                     }
                     let name = key_name(key);
+                    let revision = self.session.active().map(|d| d.revision);
                     match self.session.key(name, mods) {
                         Ok(_) => {}
                         Err(e) => self.set_status(e.to_string()),
+                    }
+                    if self.session.active().map(|d| d.revision) != revision {
+                        self.note_application_edit(ctx);
                     }
                 }
                 _ => {}
@@ -1868,15 +3297,42 @@ impl SlideApp {
     }
 
     /// Lay out the whole window.
+    ///
+    /// Every return route, including fonts/layout discards, show mode, modal/Backstage and the
+    /// no-document paths, reaches the same outer reset observation and finalizer below. No early
+    /// route may publish or inspect IME output on its own.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
-        if !self.fonts_ready {
-            ctx.request_repaint();
+        if !Self::root_viewport_admitted(&ctx) {
+            log::debug!("ignoring SlideApp::ui for render-only viewport {:?}", ctx.viewport_id());
+            return;
+        }
+        self.ui_inner(ui);
+        // The last writer (all panels, dialogs, the custom producer and deferred child windows)
+        // has run. Observe the actual custom descriptor for this pass, then reconcile the reset
+        // lifetime against the actual committed output. This also runs for discarded passes.
+        self.ime_frame_viewport = Some(ctx.viewport_id());
+        let custom = self.observe_ime(&ctx);
+        self.finalize_ime_reset(&ctx, custom);
+    }
+
+    /// Run the admitted root UI pass, including setup gating, panels, canvas, dialogs, overlays, and
+    /// show mode.
+    fn ui_inner(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        self.ime_frame_viewport = Some(ctx.viewport_id());
+        self.ime_pending = None;
+        if !self.ui_setup(&ctx) {
+            // This pass is discarded for the new fonts. The input events were already consumed
+            // by egui, so keep them queued for the next frame instead of silently losing them.
+            self.requeue_injected_synthetic();
             return;
         }
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
-        self.tick_media(&ctx);
+        self.note_ui_text(&ctx);
+        self.media.sync_video_textures(&ctx);
+        canvas::trackpad_twist(self, &ctx);
         eyedropper::tick(self, &ctx);
         self.opening_ui(&ctx);
         if self.show.is_some() {
@@ -1884,6 +3340,7 @@ impl SlideApp {
             show::ui(self, ui);
             doc_window::show(self, &ctx);
             self.perf.frame_ms = now_ms() - t0;
+            self.ui_end(&ctx);
             return;
         }
         self.sync_backstage();
@@ -1941,11 +3398,13 @@ impl SlideApp {
         self.drain_requests();
         doc_window::show(self, &ctx);
         self.perf.frame_ms = now_ms() - t0;
+        self.ui_end(&ctx);
     }
 
-    /// Media clocks and video textures. Voices belong to the open presentation: closing the last
-    /// one, or switching decks, stops them. The editor's media also stops when its slide is left.
-    fn tick_media(&mut self, ctx: &egui::Context) {
+    /// Media clocks. Voices belong to the open presentation: closing the last one, or switching
+    /// decks, stops them. The editor's media also stops when its slide is left. This runs from
+    /// `logic` on every call so a minimized window keeps playing; texture upload stays in `ui`.
+    fn tick_media_clock(&mut self, ctx: &egui::Context) {
         let uid = self.session.active().map(|d| d.uid);
         self.media.set_document(uid);
         if !self.media.any_active() {
@@ -1966,13 +3425,18 @@ impl SlideApp {
                 self.media.stop(id);
             }
         }
-        self.media.tick(ctx, &mut self.session);
+        let playing = self.media.tick_clock(monotonic_secs(), &mut self.session);
+        if playing {
+            ctx.request_repaint_after(std::time::Duration::from_millis(15));
+        }
     }
 
     pub fn open_url(&mut self, url: &str) {
         self.pending_urls.push(url.to_string());
     }
 
+    /// Drain pending control requests, executing ordinary requests and admitting screenshots for
+    /// later saving and reply.
     fn drain_control(&mut self, ctx: &egui::Context) {
         let Some(rx) = self.control_rx.take() else { return };
         while let Ok(req) = rx.try_recv() {
@@ -1981,68 +3445,35 @@ impl SlideApp {
                 continue;
             }
             let reply = req.reply.clone();
+            let revision = self.session.active().map(|d| d.revision);
             match control::handle(self, ctx, &req) {
                 control::Outcome::Done(v) => {
                     let _ = reply.send(v);
                 }
                 control::Outcome::Screenshot { path } => {
-                    self.shot_token += 1;
-                    let token = self.shot_token;
-                    self.queued_shots.push((token, now_ms() + 120.0, 0));
-                    self.pending_shots.push((token, path, reply, now_ms() + 8000.0));
+                    let doc = self.session.active().map(|d| d.uid);
+                    if let Err(e) = self.capture.admit(path, reply.clone(), doc, web_time::Instant::now()) {
+                        let _ = reply.send(json!({"ok": false, "error": e}));
+                    }
                 }
+            }
+            if self.session.active().map(|d| d.revision) != revision {
+                self.note_application_edit(ctx);
             }
         }
         self.control_rx = Some(rx);
     }
 
-    fn issue_screenshots(&mut self, ctx: &egui::Context) {
-        let now = now_ms();
-        self.queued_shots.retain_mut(|(token, at, frames)| {
-            *frames += 1;
-            if now >= *at && *frames >= 3 {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::new(*token)));
-                false
-            } else {
-                true
-            }
-        });
-        if !self.queued_shots.is_empty() || !self.pending_shots.is_empty() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(16));
+    /// Save completed screenshots on the app thread and send exactly one reply each.
+    fn drain_screenshots(&mut self) {
+        let doc = self.session.active().map(|d| d.uid);
+        let completed = self.capture.drain(web_time::Instant::now(), doc);
+        for c in completed {
+            let v = control::save_screenshot(self, c.image.as_ref(), c.path.as_deref());
+            // Keep the aggregate charged through RGBA/PNG/base64 encoding and the write.
+            self.capture.release(c.reserved);
+            let _ = c.reply.send(v);
         }
-    }
-
-    fn collect_screenshots(&mut self, ctx: &egui::Context) {
-        if self.pending_shots.is_empty() {
-            return;
-        }
-        let events: Vec<_> = ctx.input(|i| {
-            i.raw
-                .events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Screenshot { user_data, image, .. } => {
-                        let token = user_data.data.as_ref().and_then(|d| d.downcast_ref::<u64>()).copied()?;
-                        Some((token, image.clone()))
-                    }
-                    _ => None,
-                })
-                .collect()
-        });
-        for (token, image) in events {
-            if let Some(i) = self.pending_shots.iter().position(|(t, ..)| *t == token) {
-                let (_, path, reply, _) = self.pending_shots.remove(i);
-                let _ = reply.send(control::save_screenshot(self, &image, path.as_deref()));
-            }
-        }
-        let now = now_ms();
-        self.pending_shots.retain(|(_, _, reply, deadline)| {
-            if now < *deadline {
-                return true;
-            }
-            let _ = reply.send(json!({"ok": false, "error": "no frame was presented (screen locked or window hidden); use ui.render"}));
-            false
-        });
     }
 }
 
@@ -2071,16 +3502,40 @@ pub fn key_name(key: egui::Key) -> &'static str {
     }
 }
 
+/// Seconds since this process's monotonic origin.
+///
+/// `web_time::Instant` is `std::time::Instant` natively and `performance.now()` on wasm; it never
+/// jumps backwards and is not `Date.now()` (which is wall time and may be zero/frozen in a
+/// browser). Use this for deadlines, show/media clocks and duration displays.
+static CLOCK_ORIGIN: std::sync::OnceLock<web_time::Instant> = std::sync::OnceLock::new();
+
+/// Monotonic seconds since the first call.
+pub fn monotonic_secs() -> f64 {
+    CLOCK_ORIGIN.get_or_init(web_time::Instant::now).elapsed().as_secs_f64()
+}
+
+/// Monotonic milliseconds. Kept for status/toast durations and frame timings; never wall time.
 pub fn now_ms() -> f64 {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs_f64() * 1000.0).unwrap_or(0.0)
+    monotonic_secs() * 1000.0
+}
+
+/// Largest clipboard image accepted into the document: 16 megapixels, the same bound as
+/// background removal. The image was already allocated by the integration; this keeps the
+/// RGBA copy, PNG and base64 from multiplying an arbitrarily large paste before `insert.picture`.
+const MAX_PASTE_IMAGE_PIXELS: usize = 16_000_000;
+
+/// Encode an egui color image as the PNG bytes `insert.picture` stores.
+fn color_image_png(image: &egui::ColorImage) -> Result<Vec<u8>, String> {
+    let [w, h] = image.size;
+    let pixels = w.checked_mul(h).ok_or_else(|| "the pasted image is too large".to_string())?;
+    if pixels == 0 {
+        return Err("the pasted image is empty".into());
     }
-    #[cfg(target_arch = "wasm32")]
-    {
-        js_now()
+    if pixels > MAX_PASTE_IMAGE_PIXELS {
+        return Err(format!("the pasted image is {w}×{h} pixels; the limit is 16 megapixels"));
     }
+    let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
+    Ok(deckcraft_render::Image { width: w as u32, height: h as u32, pixels: rgba }.to_png())
 }
 
 /// Images for the browser download: the current slide, or every slide (named `<name>1.png`,
@@ -2111,11 +3566,6 @@ fn web_image_files(
         .collect()
 }
 
-#[cfg(target_arch = "wasm32")]
-fn js_now() -> f64 {
-    js_sys::Date::now()
-}
-
 #[cfg(test)]
 mod animpane_tests;
 #[cfg(test)]
@@ -2125,7 +3575,11 @@ mod compare_tests;
 #[cfg(test)]
 mod eyedropper_tests;
 #[cfg(test)]
+mod field_frame_tests;
+#[cfg(test)]
 mod find_dialog_tests;
+#[cfg(test)]
+mod gpu_lock;
 #[cfg(test)]
 mod huge_deck_tests;
 #[cfg(test)]
@@ -2135,11 +3589,17 @@ mod last_color_tests;
 #[cfg(test)]
 mod replacefonts_tests;
 #[cfg(test)]
+mod reuse_picker_tests;
+#[cfg(test)]
 mod slide_size_tests;
+#[cfg(test)]
+mod split_button_tests;
 #[cfg(test)]
 mod texture_limit_tests;
 #[cfg(test)]
 mod ui_soak_tests;
+#[cfg(test)]
+mod units_tests;
 
 #[cfg(test)]
 #[path = "datetime_tests.rs"]
@@ -2596,6 +4056,39 @@ mod tests {
         assert_eq!(level(&harness), 1);
     }
 
+    /// #93: Tab in an edited list indented the item but handed the keyboard to egui's focus
+    /// cycle: the stray focus (e.g. on the window's drag handle) swallowed every later key, so the
+    /// list could neither be typed into nor continued with Enter.
+    #[test]
+    fn tab_in_an_edited_list_keeps_the_keyboard() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let title = harness.state().session.active().unwrap().doc.slides[0].shapes[0].id.0;
+        harness.state_mut().session.execute("text.edit", &json!({"id": title})).unwrap();
+        harness.event(egui::Event::Text("one".into()));
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter);
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Tab); // Increase List Level
+        harness.run_steps(2);
+        harness.event(egui::Event::Text("sub".into()));
+        harness.run_steps(2);
+        harness.key_press(egui::Key::Enter); // continues the list
+        harness.run_steps(2);
+        harness.event(egui::Event::Text("two".into()));
+        harness.run_steps(2);
+        assert_eq!(title_text(harness.state()), "one\nsub\ntwo", "typing after Tab must reach the text");
+        let body = harness.state().session.active().unwrap().doc.slides[0].shapes[0].text.clone().unwrap();
+        let levels: Vec<u8> = body.paragraphs.iter().map(|p| p.level).collect();
+        assert_eq!(levels, vec![0, 1, 1], "Tab indents one level; Enter keeps the level");
+    }
+
     #[test]
     fn home_needs_an_open_presentation() {
         let mut app = SlideApp::new(Session::new(), Services::default());
@@ -2776,6 +4269,41 @@ mod tests {
         assert_ne!(s.session.prefs.snap_to_grid, before.snap_to_grid, "Done keeps snap to grid");
     }
 
+    /// About dialog: Close and Cancel each close the dialog.
+    #[test]
+    fn about_dialog_close_and_cancel_close_it() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        harness.state_mut().run("app.about", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_some());
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Cancel")
+            .next()
+            .unwrap_or_else(|| panic!("no Cancel button in About dialog"))
+            .click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "Cancel closes About dialog");
+
+        harness.state_mut().run("app.about", json!({})).unwrap();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_some());
+        harness
+            .query_all_by_role_and_label(egui::accesskit::Role::Button, "Close")
+            .next()
+            .unwrap_or_else(|| panic!("no Close button in About dialog"))
+            .click_accesskit();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "Close closes About dialog");
+    }
+
     fn canvas_harness() -> egui_kittest::Harness<'static, SlideApp> {
         let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
             |ui, app: &mut SlideApp| {
@@ -2806,6 +4334,7 @@ mod tests {
     /// they can be selected and moved.
     #[test]
     fn off_slide_objects_show_on_the_pasteboard_and_can_be_selected_and_moved() {
+        let _gpu = crate::gpu_lock::gpu_lock();
         let mut harness = canvas_harness();
         let off =
             harness.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [1000.0, 100.0, 120.0, 80.0]})).unwrap()["id"]
@@ -3083,6 +4612,76 @@ mod tests {
         assert_eq!(body.paragraphs[0].runs[0].props.lang.as_deref(), Some("fr-FR"));
     }
 
+    /// Review > Language > Whole presentation marks every text box, not only the selected one.
+    #[test]
+    fn the_language_dialog_marks_the_whole_presentation() {
+        use egui_kittest::kittest::Queryable;
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let s = &mut harness.state_mut().session;
+        let title = s.active().unwrap().doc.slides[0].shapes[0].id.0;
+        s.execute("text.edit", &json!({"id": title})).unwrap();
+        s.execute("text.insert", &json!({"text": "Hola"})).unwrap();
+        s.execute("slide.new", &json!({"title": "Adiós"})).unwrap();
+        s.execute("text.edit", &json!({"id": s.active().unwrap().doc.slides[1].shapes[0].id.0})).unwrap();
+        s.execute("text.selectAll", &json!({})).unwrap();
+        harness.state_mut().run("app.dialog", json!({"id": "language"})).unwrap();
+        harness.run_steps(4);
+        harness.get_by_label("Whole presentation").click();
+        harness.run_steps(2);
+        harness.get_by_label("Español (España)").click();
+        harness.run_steps(2);
+        harness.get_by_label("OK").click();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none());
+        let d = harness.state().session.active().unwrap();
+        for sl in &d.doc.slides {
+            let body = sl.shapes[0].text.as_ref().unwrap();
+            assert_eq!(body.paragraphs[0].runs[0].props.lang.as_deref(), Some("es-ES"));
+        }
+    }
+
+    /// With nothing selected, Review > Language applies to the whole presentation without
+    /// choosing it, and Selected text can't be picked.
+    #[test]
+    fn the_language_dialog_marks_the_whole_presentation_with_nothing_selected() {
+        use egui_kittest::kittest::{NodeT, Queryable};
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let s = &mut harness.state_mut().session;
+        let title = s.active().unwrap().doc.slides[0].shapes[0].id.0;
+        s.execute("text.edit", &json!({"id": title})).unwrap();
+        s.execute("text.insert", &json!({"text": "Hola"})).unwrap();
+        s.execute("slide.new", &json!({"title": "Adiós"})).unwrap();
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        assert!(s.active().unwrap().selection.text.is_none() && s.active().unwrap().selection.shapes.is_empty());
+        harness.state_mut().run("app.dialog", json!({"id": "language"})).unwrap();
+        harness.run_steps(4);
+        assert!(harness.get_by_label("Selected text").accesskit_node().is_disabled());
+        harness.get_by_label("Español (España)").click();
+        harness.run_steps(2);
+        harness.get_by_label("OK").click();
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none());
+        let d = harness.state().session.active().unwrap();
+        for sl in &d.doc.slides {
+            let body = sl.shapes[0].text.as_ref().unwrap();
+            assert_eq!(body.paragraphs[0].runs[0].props.lang.as_deref(), Some("es-ES"));
+        }
+    }
+
     /// Speaker notes keep their formatting when edited in the notes pane: typing into a bold
     /// heading, Enter in a bulleted point, then saving as .pptx and reopening.
     #[test]
@@ -3121,7 +4720,7 @@ mod tests {
             SlideApp::new(session, Services::default()),
         );
         harness.run_steps(2);
-        let id = egui::Id::new("notes_edit");
+        let id = egui::Id::unique("notes_edit");
         let caret = |h: &mut egui_kittest::Harness<'_, SlideApp>, at: usize| {
             let mut st = egui::TextEdit::load_state(&h.ctx, id).unwrap_or_default();
             st.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(at))));
@@ -3378,6 +4977,7 @@ mod tests {
                 unit: egui::MouseWheelUnit::Point,
                 delta: step,
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Trackpad,
                 modifiers: egui::Modifiers::NONE,
             });
         }
@@ -3392,6 +4992,7 @@ mod tests {
         assert_eq!(crate::canvas::page_flick(egui::vec2(4.0, 10.0)), None);
     }
 
+    /// Test helper: place the pointer over the canvas centre, inject wheel notches, and step once.
     fn mouse_wheel(harness: &mut egui_kittest::Harness<'static, SlideApp>, notches: &[f32]) {
         let centre = harness.state().canvas_rect.unwrap().center();
         let input = harness.input_mut();
@@ -3401,6 +5002,7 @@ mod tests {
                 unit: egui::MouseWheelUnit::Line,
                 delta: egui::vec2(0.0, y),
                 phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Wheel,
                 modifiers: egui::Modifiers::NONE,
             });
         }
@@ -3499,6 +5101,8 @@ mod tests {
         assert_eq!(slide_at(h.state()), 0, "switching away without a hover still drops the fraction");
     }
 
+    /// Wheel input over a zoomed canvas pans it, while the same input outside the canvas must not
+    /// navigate slides.
     #[test]
     fn mouse_wheel_over_a_zoomed_canvas_pans_and_outside_the_canvas_does_not_navigate() {
         let mut h = flick_harness();
@@ -3519,6 +5123,7 @@ mod tests {
             unit: egui::MouseWheelUnit::Line,
             delta: egui::vec2(0.0, -3.0),
             phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
             modifiers: egui::Modifiers::NONE,
         });
         h.run_steps(30);
@@ -3650,5 +5255,732 @@ mod tests {
         let after = harness.state().ui.ui_scale;
         assert!(after > before + 0.3, "letting go applies the size dragged to: {before} -> {after}");
         assert!(harness.state().dialog.is_some(), "Preferences stays open");
+    }
+    /// The status bar's zoom slider has no room for a visible label; it still needs an accessible
+    /// name, and adding that name must not change the slider's shared control geometry at either
+    /// size.
+    #[test]
+    fn status_zoom_slider_is_named_without_growing_the_status_bar() {
+        for size in [egui::vec2(900.0, 560.0), egui::vec2(1440.0, 900.0)] {
+            let mut harness = egui_kittest::Harness::builder().with_size(size).build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                SlideApp::new(Session::with_new(), Services::default()),
+            );
+            harness.run_steps(3);
+            let mut zoom = harness.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Zoom");
+            let rect = zoom.next().unwrap_or_else(|| panic!("a named Zoom slider at {size:?}")).rect();
+            assert!(zoom.next().is_none(), "exactly one Zoom slider");
+            // egui 0.37's slider uses its own `slider_width` and the theme's control height
+            // (22 px), not the old hard-coded 110x18. Assert that real, shared geometry so the
+            // status row stays consistent with every other control instead of loosening a bound.
+            let style = harness.ctx.global_style();
+            let (expected_w, expected_h) = (style.spacing.slider_width, style.spacing.interact_size.y);
+            assert!(
+                (rect.width() - expected_w).abs() <= 0.5 && (rect.height() - expected_h).abs() <= 0.5,
+                "the status-bar slider uses the shared {expected_w}x{expected_h} control size at {size:?}: {rect:?}"
+            );
+        }
+    }
+
+    /// Accessibility names survive the port: the Preferences dialog and the Format Shape fill page
+    /// expose no unnamed input widgets, and the fill Transparency row has one named slider rather
+    /// than a visible label duplicated by `Slider::text`.
+    #[test]
+    fn preferences_and_format_pane_name_every_input() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(3);
+        harness.state_mut().run("app.preferences", json!({})).unwrap();
+        harness.run_steps(3);
+        harness.check_accessibility();
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(harness.state().dialog.is_none(), "Preferences closed before the pane check");
+
+        harness.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+        harness.state_mut().ui.pane = Some("format".into());
+        harness.state_mut().ui.format_tab = "fill".into();
+        harness.run_steps(3);
+        harness.check_accessibility();
+        let sliders: Vec<_> = harness.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").collect();
+        assert_eq!(sliders.len(), 1, "one fill Transparency slider");
+        assert!(sliders[0].rect().width() > 40.0, "the slider keeps room next to its one visible label: {:?}", sliders[0].rect());
+    }
+
+    /// A control `ui.screenshot` is admitted once, issued from a settled real UI pass, completed by
+    /// kittest's screenshot callback, and replied to exactly once after a logic drain.
+    #[test]
+    fn ui_screenshot_round_trips_through_the_callable_slot() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        harness.state_mut().control_rx = Some(rx);
+        let (req, reply) = ControlRequest::new("ui.screenshot", json!({}));
+        tx.send(req).unwrap();
+        harness.run_steps(2);
+        assert_eq!(harness.state().capture.pending(), 1, "the request is admitted");
+        harness.state_mut().capture.force_settle();
+        harness.run_steps(4);
+        let reply = reply.recv_timeout(std::time::Duration::from_secs(5)).expect("screenshot reply");
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert!(reply["result"]["width"].as_u64().is_some_and(|w| w > 0));
+        assert_eq!(harness.state().capture.pending(), 0);
+        assert_eq!(harness.state().capture.reserved_bytes(), 0, "the reservation is released after the reply");
+    }
+
+    /// A hidden/logic-only iteration drains control requests and autosave/screenshot queues; it does
+    /// not need a painted frame for those side effects.
+    #[test]
+    fn logic_drains_control_without_a_ui_pass() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let ctx = egui::Context::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.control_rx = Some(rx);
+        let (req, reply) = ControlRequest::new("ui.inspect", json!({}));
+        tx.send(req).unwrap();
+        app.logic(&ctx);
+        let v = reply.recv_timeout(std::time::Duration::from_secs(1)).expect("reply from a logic-only call");
+        assert_eq!(v["ok"], true, "{v}");
+    }
+
+    /// One synthetic pointer batch is injected at most once while it waits for a real UI pass.
+    /// eframe carries the whole `RawInput` from a logic-only frame into the next full pass, so a
+    /// document or layout change between them must retract the already-appended events too.
+    #[test]
+    fn synthetic_input_is_one_pending_batch_and_never_replays() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let ctx = egui::Context::default();
+        app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut raw);
+        assert_eq!(raw.events.len(), 1, "the one pending event is injected once");
+        assert!(app.synthetic.is_empty());
+        // eframe's next logic-only frame hands the same RawInput back to the hook. The batch is
+        // still unacknowledged, so it must not be appended again.
+        let mut carried = raw.clone();
+        app.raw_input_hook(&ctx, &mut carried);
+        assert_eq!(carried.events.len(), 1, "the unacknowledged batch is not injected twice");
+
+        // A settled UI pass acknowledges it; the next batch may then be injected. This test has
+        // no renderer, so clear the frame's texture uploads explicitly: egui 0.37 panics when a
+        // `TexturesDelta` with pending uploads is dropped.
+        app.fonts_ready = true;
+        app.styled = true;
+        ctx.run_ui(Default::default(), |ui| app.ui(ui)).drop_without_applying_deltas();
+
+        // Changing the document before the next pass drops a batch queued for the old one.
+        app.queue_input(egui::Event::PointerMoved(egui::pos2(20.0, 20.0)));
+        app.session.execute("file.new", &json!({})).unwrap();
+        let mut raw2 = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut raw2);
+        assert!(raw2.events.is_empty(), "a batch queued for the old document is dropped");
+        assert!(app.synthetic.is_empty());
+
+        // A pending batch for the current document is injected, then a document change before
+        // the next pass must retract it from the carried RawInput while keeping the newer click
+        // queued for the new document.
+        // The host supplies an identical pointer event before the injected batch: retraction must
+        // remove the batch at its recorded index, not the first identical window in the batch.
+        let moved = egui::Event::PointerMoved(egui::pos2(30.0, 30.0));
+        app.queue_input(moved.clone());
+        let mut raw3 = egui::RawInput::default();
+        raw3.events.push(moved.clone());
+        app.raw_input_hook(&ctx, &mut raw3);
+        assert_eq!(raw3.events, vec![moved.clone(), moved.clone()], "a settled pass permits the next batch");
+        app.session.execute("file.new", &json!({})).unwrap();
+        let newer = egui::Event::PointerMoved(egui::pos2(40.0, 40.0));
+        app.queue_input(newer.clone());
+        let host = egui::Event::Text("host".into());
+        let mut carried3 = raw3.clone();
+        carried3.events.push(host.clone());
+        app.raw_input_hook(&ctx, &mut carried3);
+        assert_eq!(
+            carried3.events,
+            vec![moved, host, newer],
+            "the stale batch is retracted, host input and the newer click for the changed document are kept"
+        );
+        assert!(app.synthetic.is_empty(), "the newer batch was injected, not cleared with the stale one");
+        assert!(app.synthetic_pending, "the newer batch is now the one in flight");
+
+        let mut raw4 = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut raw4);
+        assert!(raw4.events.is_empty(), "the in-flight batch is not injected twice");
+    }
+
+    /// The first real pass installs the interface fonts and asks egui to discard it before any
+    /// layout. A control click that arrived in that same pass has already been consumed by egui,
+    /// so the app must put it back in the queue for the next frame instead of acknowledging and
+    /// losing it.
+    #[test]
+    fn a_control_click_on_the_first_font_discard_is_requeued_and_lands() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.fonts_ready = true;
+        app.styled = true;
+        let ctx = egui::Context::default();
+        let pass = |app: &mut SlideApp, time: f64| {
+            let mut raw = egui::RawInput { time: Some(time), ..Default::default() };
+            raw.viewports.insert(
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo { minimized: Some(false), occluded: Some(false), native_pixels_per_point: Some(1.0), ..Default::default() },
+            );
+            app.raw_input_hook(&ctx, &mut raw);
+            ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            })
+            .drop_without_applying_deltas();
+        };
+        pass(&mut app, 1.0);
+        let size = app.session.active().unwrap().doc.slide_size;
+        app.session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, size.width, size.height]})).unwrap();
+        app.session.execute("edit.deselect", &json!({})).unwrap();
+        pass(&mut app, 2.0);
+        let point = app.slide_rect.expect("the canvas has been laid out").center();
+        assert!(app.session.active().unwrap().selection.shapes.is_empty());
+
+        // Back to the first-frame state: the next pass installs fonts and is discarded.
+        app.styled = false;
+        app.fonts_ready = false;
+        app.queue_input(egui::Event::PointerMoved(point));
+        app.queue_input(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        app.queue_input(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        pass(&mut app, 3.0);
+        assert!(app.session.active().unwrap().selection.shapes.is_empty(), "the discarded pass did not run the canvas");
+        assert!(!app.synthetic.is_empty(), "the click was requeued for the next frame");
+
+        // One pointer event is injected per pass: move, press, release.
+        for time in [4.0, 5.0, 6.0] {
+            pass(&mut app, time);
+        }
+        assert!(!app.session.active().unwrap().selection.shapes.is_empty(), "the requeued click selected the slide's shape");
+        assert!(!app.synthetic_pending && app.synthetic.is_empty(), "the click was consumed exactly once");
+    }
+
+    /// A modal opening changes what a queued window-point event means even when the document and
+    /// canvas are unchanged; the injected batch is retracted before it reaches the modal.
+    #[test]
+    fn synthetic_batch_is_retracted_when_a_modal_opens_first() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let ctx = egui::Context::default();
+        app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut raw);
+        assert_eq!(raw.events.len(), 1);
+        app.dialog = Some(crate::dialogs::Dialog::new("replaceFonts"));
+        app.raw_input_hook(&ctx, &mut raw);
+        assert!(raw.events.is_empty(), "the click queued for the canvas does not reach the modal");
+        assert!(!app.synthetic_pending);
+    }
+
+    /// A control click is admitted for the full pass it was queued for. In that pass egui has
+    /// already derived `PointerState` from the injected press/release, so retracting only the raw
+    /// events would still let the click reach a document opened by the same pass's logic. The
+    /// control request therefore waits: the old target's real `logic` + `ui` pass consumes the
+    /// whole pointer gesture, and the next pass (no synthetic input) applies the document change.
+    #[test]
+    fn synthetic_click_is_consumed_on_its_old_target_before_logic_changes_the_document() {
+        // The destination has one shape over the whole slide, so a click that leaked into it
+        // would leave the shape selected. Opening it creates a fresh document state with an
+        // empty selection.
+        let mut destination = Session::with_new();
+        let size = destination.active().unwrap().doc.slide_size;
+        destination.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, size.width, size.height]})).unwrap();
+        let data = destination.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.fonts_ready = true;
+        app.styled = true;
+        let ctx = egui::Context::default();
+        let pass = |app: &mut SlideApp, time: f64| {
+            let mut raw = egui::RawInput { time: Some(time), ..Default::default() };
+            raw.viewports.insert(
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo { minimized: Some(false), occluded: Some(false), native_pixels_per_point: Some(1.0), ..Default::default() },
+            );
+            app.raw_input_hook(&ctx, &mut raw);
+            ctx.run_ui(raw, |ui| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            })
+            .drop_without_applying_deltas();
+        };
+
+        pass(&mut app, 1.0);
+        app.run("shape.insert", json!({"preset": "rect", "rect": [100.0, 100.0, 200.0, 100.0]})).unwrap();
+        assert!(!app.session.active().unwrap().selection.shapes.is_empty(), "the old document has a selection to clear");
+        pass(&mut app, 2.0);
+        let old = app.session.active().unwrap().uid;
+        let slide = app.slide_rect.expect("the canvas has been laid out");
+        // Well away from the inserted rectangle, so a press on the bare canvas clears the
+        // selection in the old document.
+        let point = egui::pos2(slide.min.x + slide.width() * 0.8, slide.min.y + slide.height() * 0.8);
+        app.queue_input(egui::Event::PointerMoved(point));
+        app.queue_input(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: true,
+            modifiers: egui::Modifiers::NONE,
+        });
+        app.queue_input(egui::Event::PointerButton {
+            pos: point,
+            button: egui::PointerButton::Primary,
+            pressed: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.control_rx = Some(rx);
+        let (req, reply) =
+            ControlRequest::new("engine.execute", json!({"command": "file.openBytes", "params": {"name": "destination.deckcraft", "data": data}}));
+        tx.send(req).unwrap();
+
+        // `raw_input_hook` admits one pointer event per pass. Every one of those passes must stay
+        // on the old target; the control request may not create the destination before ui sees
+        // the press/release.
+        for time in [3.0, 4.0, 5.0] {
+            pass(&mut app, time);
+            assert_eq!(app.session.active().unwrap().uid, old, "the click's pass stays on its captured target");
+            assert_eq!(app.session.documents().len(), 1, "logic must not open the destination under the click");
+        }
+        assert!(!app.synthetic_pending, "the full passes consumed the gesture");
+        assert!(app.session.active().unwrap().selection.shapes.is_empty(), "the press selected the bare canvas on the old document");
+
+        // With no synthetic input pending, the next logic applies the deferred request. The
+        // destination's full-slide shape is unselected because no pointer state from the old
+        // pass was replayed into it.
+        pass(&mut app, 6.0);
+        let reply = reply.recv_timeout(std::time::Duration::from_secs(1)).expect("control reply after the click");
+        assert_eq!(reply["ok"], true, "{reply}");
+        assert_eq!(app.session.documents().len(), 2);
+        let active = app.session.active().unwrap();
+        assert_ne!(active.uid, old, "the destination opened only after the click was consumed");
+        assert!(!active.doc.slides[0].shapes.is_empty(), "the destination really has a clickable shape");
+        assert!(active.selection.shapes.is_empty(), "the old pass's click did not select the destination shape");
+    }
+
+    /// A queued control click belongs to the full-screen show, opening window and palette
+    /// selection that were on screen when it was queued; each transition is its own target.
+    #[test]
+    fn input_target_tracks_slideshow_opening_and_palette_selection() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let base = app.input_target();
+        app.start_show(0, true);
+        assert_ne!(app.input_target(), base, "a slideshow is a different input target");
+        let started = app.input_target();
+        app.show.as_mut().unwrap().state.step += 1;
+        let stepped = app.input_target();
+        assert_ne!(stepped, started, "the show step changes which click areas are live");
+        let reading_now = app.show.as_ref().unwrap().reading;
+        app.show.as_mut().unwrap().reading = !reading_now;
+        let reading = app.input_target();
+        assert_ne!(reading, stepped, "the reading layout moves the slide");
+        app.show.as_mut().unwrap().grid = true;
+        let grid = app.input_target();
+        assert_ne!(grid, reading, "See All Slides turns a click into a thumbnail choice");
+        app.show.as_mut().unwrap().ended = true;
+        let ended = app.input_target();
+        assert_ne!(ended, grid, "the end screen has different click targets");
+        app.show = None;
+        assert_eq!(app.input_target(), base, "leaving the show returns to the editor target");
+
+        // Starting the show again is a new instance even at the same slide, so an old batch cannot
+        // match by value after an ABA transition.
+        app.start_show(0, true);
+        let first_instance = app.input_target();
+        app.start_show(0, true);
+        assert_ne!(app.input_target(), first_instance, "a new show instance is a new target");
+        app.show = None;
+
+        app.opening = Some(crate::opening::Opening::for_test("/tmp/quarterly.pptx"));
+        assert_ne!(app.input_target(), base, "the background-open window is a different target");
+        let opening = app.input_target();
+        app.opening.as_mut().unwrap().generation = 2;
+        assert_ne!(app.input_target(), opening, "reopening the same path is a new attempt");
+        app.opening = None;
+
+        app.palette = Some(("open".into(), 0));
+        let first = app.input_target();
+        app.palette = Some(("open".into(), 1));
+        assert_ne!(app.input_target(), first, "the palette's highlighted entry is part of the target");
+        app.palette = None;
+
+        app.ui.tab = "Insert".into();
+        assert_ne!(app.input_target(), base, "another ribbon tab is another click target");
+        let insert = app.input_target();
+        app.ui.ribbon_collapsed = true;
+        assert_ne!(app.input_target(), insert, "collapsing the ribbon changes the layout under a click");
+        app.ui.ribbon_collapsed = false;
+        app.ribbon_scroll.insert("Insert".into(), 64.0_f32.to_bits());
+        assert_ne!(app.input_target(), insert, "scrolling the ribbon moves the buttons under a click");
+        app.ui.tab = "Home".into();
+        app.ribbon_scroll.remove("Insert");
+        assert_eq!(app.input_target(), base);
+    }
+
+    /// A click queued for the editor is retracted when a slideshow, background-open window or
+    /// different palette entry takes over before the input pass.
+    #[test]
+    fn input_target_changes_retract_a_queued_click() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let ctx = egui::Context::default();
+        let pointer = || egui::Event::PointerMoved(egui::pos2(10.0, 10.0));
+
+        app.queue_input(pointer());
+        app.start_show(0, true);
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut raw);
+        assert!(raw.events.is_empty(), "a click queued for the editor does not enter the slideshow");
+        assert!(app.synthetic.is_empty());
+        app.show = None;
+
+        app.queue_input(pointer());
+        app.opening = Some(crate::opening::Opening::for_test("/tmp/quarterly.pptx"));
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut raw);
+        assert!(raw.events.is_empty(), "a click queued for the editor does not enter the opening window");
+        app.opening = None;
+
+        app.palette = Some(("open".into(), 0));
+        app.queue_input(pointer());
+        app.palette = Some(("open".into(), 1));
+        let mut raw = egui::RawInput::default();
+        app.raw_input_hook(&ctx, &mut raw);
+        assert!(raw.events.is_empty(), "a click queued for one palette selection does not activate another");
+        assert!(app.synthetic.is_empty());
+    }
+
+    /// A logic-only callback does not consume events, but eframe carries the whole RawInput into
+    /// the next full pass. The hook injects without guessing the phase; when a control request
+    /// drained by that logic-only callback changes the document, the carried batch is retracted at
+    /// the next hook instead of being delivered into the new document.
+    #[test]
+    fn hidden_logic_pass_carries_a_synthetic_batch_and_drops_it_when_the_document_changes() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let ctx = egui::Context::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.control_rx = Some(rx);
+        app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
+        let mut hidden = egui::RawInput::default();
+        hidden.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo { minimized: Some(true), occluded: Some(true), native_pixels_per_point: Some(1.0), ..Default::default() },
+        );
+        app.raw_input_hook(&ctx, &mut hidden);
+        assert_eq!(hidden.events.len(), 1, "the batch is injected into the RawInput eframe will carry");
+        assert!(app.synthetic.is_empty());
+        assert!(app.synthetic_pending, "run_logic leaves the batch unacknowledged");
+
+        let (req, reply) = ControlRequest::new("engine.execute", json!({"command": "file.new", "params": {}}));
+        tx.send(req).unwrap();
+        let _ = ctx.run_logic(&hidden, |ctx| app.logic(ctx));
+        let v = reply.recv_timeout(std::time::Duration::from_secs(1)).expect("control reply from the hidden pass");
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(app.session.documents().len(), 2, "the hidden pass opened another document");
+        assert!(app.synthetic_pending, "a logic-only callback cannot retract the carried batch");
+
+        // eframe hands the hidden RawInput to the next visible pass, appending new host input.
+        let mut visible = hidden.clone();
+        visible.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo { minimized: Some(false), occluded: Some(false), native_pixels_per_point: Some(1.0), ..Default::default() },
+        );
+        let host = egui::Event::Text("host".into());
+        visible.events.push(host.clone());
+        app.raw_input_hook(&ctx, &mut visible);
+        assert_eq!(visible.events, vec![host.clone()], "the click queued for the old document is dropped");
+        assert!(app.synthetic.is_empty());
+        ctx.run_ui(visible, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+        assert!(app.synthetic.is_empty(), "nothing replays after the visible pass");
+    }
+
+    /// eframe may run logic-only for a *visible* root when a redraw deadline is overdue. The
+    /// previous pass's InputState is still live, so retraction must not drain an identical event
+    /// from it; the batch belongs to the carried RawInput and is removed at the next hook.
+    #[test]
+    fn visible_logic_pass_does_not_retract_from_the_previous_input_state() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        let ctx = egui::Context::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.control_rx = Some(rx);
+        let pointer = egui::Event::PointerMoved(egui::pos2(10.0, 10.0));
+
+        // Live InputState from the previous full pass, with an identical event at the same index.
+        let mut previous = egui::RawInput { time: Some(1.0), ..Default::default() };
+        previous.events.push(pointer.clone());
+        ctx.run_ui(previous, |_ui| {}).drop_without_applying_deltas();
+
+        app.queue_input(pointer.clone());
+        let mut raw = egui::RawInput { time: Some(2.0), ..Default::default() };
+        raw.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo { minimized: Some(false), occluded: Some(false), native_pixels_per_point: Some(1.0), ..Default::default() },
+        );
+        app.raw_input_hook(&ctx, &mut raw);
+        assert_eq!(raw.events, vec![pointer.clone()]);
+
+        let (req, reply) = ControlRequest::new("engine.execute", json!({"command": "file.new", "params": {}}));
+        tx.send(req).unwrap();
+        let _ = ctx.run_logic(&raw, |ctx| app.logic(ctx));
+        let v = reply.recv_timeout(std::time::Duration::from_secs(1)).expect("control reply from the visible logic pass");
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(app.session.documents().len(), 2);
+        assert!(app.synthetic_pending, "the carried batch is still pending");
+        assert_eq!(ctx.input(|i| i.events.clone()), vec![pointer.clone()], "the previous pass's events are untouched");
+
+        let mut next = raw.clone();
+        next.time = Some(3.0);
+        let host = egui::Event::Text("host".into());
+        next.events.push(host.clone());
+        app.raw_input_hook(&ctx, &mut next);
+        assert_eq!(next.events, vec![host.clone()], "the stale batch is removed from the carried RawInput");
+        assert!(!app.synthetic_pending);
+        assert!(app.synthetic.is_empty());
+    }
+
+    /// A batch injected in a logic-only pass is carried into the full pass with a refreshed
+    /// `RawInput::time`. That full pass must consume it on the old target: a control request
+    /// drained by the same logic waits until the next pass instead of changing the document
+    /// after egui has already derived the carried pointer state.
+    #[test]
+    fn carried_batch_is_consumed_before_the_full_pass_applies_a_control_change() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.fonts_ready = true;
+        app.styled = true;
+        let ctx = egui::Context::default();
+        let (tx, rx) = std::sync::mpsc::channel();
+        app.control_rx = Some(rx);
+        app.queue_input(egui::Event::PointerMoved(egui::pos2(10.0, 10.0)));
+        let mut hidden = egui::RawInput { time: Some(1.0), ..Default::default() };
+        hidden.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo { minimized: Some(true), occluded: Some(true), native_pixels_per_point: Some(1.0), ..Default::default() },
+        );
+        app.raw_input_hook(&ctx, &mut hidden);
+        let _ = ctx.run_logic(&hidden, |ctx| app.logic(ctx));
+        assert!(app.synthetic_pending, "the logic-only pass keeps the carried batch");
+
+        // eframe refreshes the carried input's time before calling the hook for the full pass.
+        let mut full = hidden.clone();
+        full.time = Some(2.0);
+        app.raw_input_hook(&ctx, &mut full);
+        assert!(app.synthetic_pending, "the carried batch is not injected twice");
+
+        let (req, reply) = ControlRequest::new("engine.execute", json!({"command": "file.new", "params": {}}));
+        tx.send(req).unwrap();
+        ctx.run_ui(full, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+        assert_eq!(app.session.documents().len(), 1, "the full pass's UI sees its captured document");
+        assert!(!app.synthetic_pending, "the full pass consumed the carried batch");
+
+        // The next pass has no synthetic input, so logic applies the deferred request.
+        let mut next = egui::RawInput { time: Some(3.0), ..Default::default() };
+        next.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo { minimized: Some(false), occluded: Some(false), native_pixels_per_point: Some(1.0), ..Default::default() },
+        );
+        app.raw_input_hook(&ctx, &mut next);
+        ctx.run_ui(next, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+        let v = reply.recv_timeout(std::time::Duration::from_secs(1)).expect("control reply after the full pass");
+        assert_eq!(v["ok"], true, "{v}");
+        assert_eq!(app.session.documents().len(), 2, "the deferred control request ran on the next pass");
+    }
+
+    /// `visible() == false` does not prove a logic-only pass: a screenshot or
+    /// `RequestPaintWhileHidden` makes eframe run the full UI. The synthetic batch must be
+    /// delivered there, not postponed until the viewport is visible.
+    #[test]
+    fn hidden_full_pass_receives_synthetic_ui_input() {
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.fonts_ready = true;
+        app.styled = true;
+        app.dialog = Some(crate::dialogs::Dialog::new("replaceFonts"));
+        app.queue_input(egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        });
+        let ctx = egui::Context::default();
+        let mut hidden = egui::RawInput { time: Some(4.0), ..Default::default() };
+        hidden.viewports.insert(
+            egui::ViewportId::ROOT,
+            egui::ViewportInfo { minimized: Some(true), occluded: Some(true), native_pixels_per_point: Some(1.0), ..Default::default() },
+        );
+        app.raw_input_hook(&ctx, &mut hidden);
+        assert_eq!(hidden.events.len(), 1, "a forced hidden full pass still gets the event");
+        assert!(app.synthetic_pending);
+
+        ctx.run_ui(hidden, |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+        assert!(app.dialog.is_none(), "the synthetic Escape reached the UI in the hidden full pass");
+        assert!(!app.synthetic_pending, "the full pass acknowledged the batch");
+        assert!(app.synthetic.is_empty());
+    }
+
+    /// egui 0.37 carries a clipboard image as `Event::PasteImage`; it inserts once, without
+    /// asking the host clipboard service for the same image again.
+    #[test]
+    fn paste_image_event_inserts_one_picture() {
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(900.0, 600.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        harness.run_steps(2);
+        let before = harness.state().session.active().unwrap().doc.slides[0].shapes.len();
+        let image = egui::ColorImage::filled([2, 2], egui::Color32::from_rgb(1, 2, 3));
+        harness.event(egui::Event::PasteImage(std::sync::Arc::new(image)));
+        harness.run_steps(2);
+        let after = harness.state().session.active().unwrap().doc.slides[0].shapes.len();
+        assert_eq!(after, before + 1, "one image is inserted");
+    }
+
+    /// A minimized/occluded show keeps playing from logic alone: the clock advances on wall
+    /// time, an After transition advances the slide without a draw, and a visible pass resumes
+    /// from the show state instead of inventing a paused-show policy.
+    #[test]
+    fn hidden_viewport_advances_show_and_presenter_clocks_from_logic() {
+        /// Nested helper in the hidden-show test: build root `RawInput` with the given time and
+        /// visibility flags.
+        fn raw_at(time: f64, minimized: bool, occluded: bool) -> egui::RawInput {
+            let mut raw = egui::RawInput { time: Some(time), ..Default::default() };
+            raw.viewports.insert(
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo { minimized: Some(minimized), occluded: Some(occluded), native_pixels_per_point: Some(1.0), ..Default::default() },
+            );
+            raw
+        }
+
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.session.execute("slide.new", &json!({})).unwrap();
+        app.session.execute("slide.new", &json!({})).unwrap();
+        app.session.execute("transition.timing", &json!({"index": 0, "after": 1000})).unwrap();
+        app.session.execute("transition.timing", &json!({"index": 1, "after": null})).unwrap();
+        app.start_show(0, false);
+        let ctx = egui::Context::default();
+
+        // A real visible UI pass starts the show and its clocks. There is no renderer here, so
+        // each frame's texture uploads are cleared explicitly (egui 0.37 panics on drop).
+        ctx.run_ui(raw_at(10.0, false, false), |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+        let start = app.show.as_ref().expect("show started").clock_snapshot();
+        assert_eq!(start.step_start, 10.0);
+        assert_eq!(start.show_start, 10.0);
+
+        // Hidden logic starts at the last visible egui time, then advances on the monotonic
+        // instant. Two seconds later the slide's After: 1 s transition has advanced the show.
+        let t0 = web_time::Instant::now();
+        app.show.as_mut().expect("show started").observe_visible_frame(10.0, t0);
+        let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, t0));
+        let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, t0 + std::time::Duration::from_secs(2)));
+        let hidden = app.show.as_ref().expect("hidden show");
+        assert_eq!(hidden.state.slide, 1, "the After transition advances without a draw");
+        assert!((hidden.clock_snapshot().slide_start - 12.0).abs() < 1e-9);
+        assert!((hidden.presenter_elapsed(12.0) - 2.0).abs() < 1e-9, "presenter time keeps running");
+
+        // A later hidden tick does not replay the transition or stack time.
+        let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, t0 + std::time::Duration::from_secs(3)));
+        assert_eq!(app.show.as_ref().unwrap().state.slide, 1);
+        assert!((app.show.as_ref().unwrap().clock_snapshot().slide_start - 12.0).abs() < 1e-9);
+
+        // A visible pass re-anchors to egui's real time and keeps the state it reached hidden.
+        ctx.run_ui(raw_at(20.0, false, false), |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+        let resumed = app.show.as_ref().expect("show resumed");
+        assert_eq!(resumed.state.slide, 1);
+        assert!((resumed.presenter_elapsed(20.0) - 10.0).abs() < 1e-9);
+        assert!((resumed.clock_snapshot().slide_start - 12.0).abs() < 1e-9);
+    }
+
+    /// A visible window can receive an overdue logic-only pass before the next paint. That pass
+    /// still carries the previous full frame's `InputState::time`; treating it as a visible frame
+    /// re-anchors the hidden clock to the later monotonic instant and loses elapsed show time.
+    /// Re-anchoring belongs to `show::ui`, which only runs on a real visible pass.
+    #[test]
+    fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
+        /// Nested helper in the overdue-logic test: build root `RawInput` with the given time and
+        /// visibility flags.
+        fn raw_at(time: f64, minimized: bool, occluded: bool) -> egui::RawInput {
+            let mut raw = egui::RawInput { time: Some(time), ..Default::default() };
+            raw.viewports.insert(
+                egui::ViewportId::ROOT,
+                egui::ViewportInfo { minimized: Some(minimized), occluded: Some(occluded), native_pixels_per_point: Some(1.0), ..Default::default() },
+            );
+            raw
+        }
+
+        let mut app = SlideApp::new(Session::with_new(), Services::default());
+        app.session.execute("slide.new", &json!({})).unwrap();
+        app.session.execute("slide.new", &json!({})).unwrap();
+        app.session.execute("transition.timing", &json!({"index": 0, "after": 2500})).unwrap();
+        app.session.execute("transition.timing", &json!({"index": 1, "after": null})).unwrap();
+        app.start_show(0, false);
+        let ctx = egui::Context::default();
+
+        // The full visible pass is the only pass that anchors the show: egui time 10.
+        ctx.run_ui(raw_at(10.0, false, false), |ui| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        })
+        .drop_without_applying_deltas();
+        let visible_anchor = web_time::Instant::now();
+
+        // An overdue visible logic-only pass does not refresh InputState::time. It must not move
+        // the hidden anchor from the full visible frame to this later instant.
+        let _ = ctx.run_logic(&raw_at(12.0, false, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(2)));
+        assert_eq!(ctx.input(|i| i.time), 10.0, "run_logic retains the last full pass's egui time");
+        assert_eq!(app.show.as_ref().unwrap().state.slide, 0);
+
+        // Three seconds after the full visible frame is past the slide's 2.5 s After delay. If the
+        // logic-only pass had re-anchored at +2 s, this hidden tick would still be only +1 s and
+        // the slide would not advance.
+        let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
+        assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
     }
 }

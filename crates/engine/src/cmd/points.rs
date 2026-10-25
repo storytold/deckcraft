@@ -10,7 +10,7 @@ use deckcraft_geom::{PathEl, Point, Xfrm};
 use deckcraft_model::{CustomPath, Geom, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, cmd, f64_param, has_selection, id_param, ok, str_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -24,7 +24,7 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             edit_points
         ),
-        cmd!(query "shape.points", "Points", [], None, "{id?} → {id, paths: [[[x, y] slide pt]], types: [[smooth|straight|corner]]} vertices of a freeform", has_selection, points),
+        cmd!(query "shape.points", "Points", [], None, "{id?} → {id, paths: [[[x, y] slide pt]], types: [[smooth|straight|corner]], segments: [[straight|curved|null]]} vertices of a freeform and the segment ending at each", has_selection, points),
         cmd!("shape.movePoint", "Move Point", [], None, "{path?: 0, index, x, y: slide pt, id?}", has_selection, move_point),
         cmd!(
             "shape.addPoint",
@@ -54,6 +54,42 @@ pub fn specs() -> Vec<CommandSpec> {
             move_handle
         ),
         cmd!("shape.deletePoint", "Delete Point", [], None, "{path?: 0, index, id?}", has_selection, delete_point),
+        cmd!(
+            "shape.deleteSegment",
+            "Delete Segment",
+            [],
+            None,
+            "{path?: 0, segment: index of the vertex ending it, id?}: removes a segment of a closed outline, which opens there; it starts at the segment's end and ends at its start",
+            has_selection,
+            delete_segment
+        ),
+        cmd!(
+            "shape.segmentType",
+            "Segment Type",
+            [],
+            None,
+            "{path?: 0, segment: index of the vertex ending it, type: straight|curved, id?} — straight drops the segment's handles; curved gives it handles at its thirds",
+            has_selection,
+            segment_type
+        ),
+        cmd!(
+            "shape.openPath",
+            "Open Path",
+            [],
+            None,
+            "{path?: 0, index, id?} — break a closed outline at a point, which becomes its two ends",
+            has_selection,
+            open_path
+        ),
+        cmd!(
+            "shape.closePath",
+            "Close Path",
+            [],
+            None,
+            "{path?: 0, index: any point of the open outline, id?} — join its ends with a straight segment (one point when they meet)",
+            has_selection,
+            close_path
+        ),
     ]
 }
 
@@ -281,6 +317,92 @@ fn remove_vertex(segs: &mut Vec<Seg>, si: usize) -> bool {
     true
 }
 
+/// The sub-path holding segment `si`: from its move up to the next move (or the end).
+fn subpath(segs: &[Seg], si: usize) -> (usize, usize) {
+    let from = segs.get(..=si).and_then(|s| s.iter().rposition(|x| matches!(x, Seg::M(_)))).unwrap_or(0);
+    let to = (si + 1..segs.len()).find(|j| matches!(segs.get(*j), Some(Seg::M(_)))).unwrap_or(segs.len());
+    (from, to)
+}
+
+/// The segment that ends at the vertex ending segment `si`: the closing edge for a closed
+/// sub-path's start, none for an open one's.
+fn ending_segment(segs: &[Seg], si: usize) -> Option<usize> {
+    if matches!(segs.get(si), Some(Seg::M(_))) {
+        (si + 1..segs.len()).take_while(|j| !matches!(segs.get(*j), Some(Seg::M(_)))).find(|j| closes_onto_start(segs, *j))
+    } else {
+        Some(si)
+    }
+}
+
+/// Whether segment `j` is a straight line or a curve.
+fn segment_kind(segs: &[Seg], j: usize) -> Option<&'static str> {
+    match segs.get(j)? {
+        Seg::L(_) => Some("straight"),
+        Seg::C(..) | Seg::Q(..) => Some("curved"),
+        Seg::M(_) | Seg::Z => None,
+    }
+}
+
+/// Makes segment `j` a straight line (dropping its handles) or a curve with handles at its
+/// thirds, so it keeps its shape until a handle is dragged.
+fn set_segment(segs: &mut [Seg], j: usize, curved: bool) {
+    if curved {
+        to_cubic(segs, j);
+    } else if let Some(s) = segs.get_mut(j)
+        && let Seg::C(_, _, p) | Seg::Q(_, p) = *s
+    {
+        *s = Seg::L(p);
+    }
+}
+
+/// Opens the closed sub-path through the vertex ending segment `si` there: it now starts and ends
+/// on that vertex, as two points. Returns false for an open sub-path.
+fn open_at(segs: &mut Vec<Seg>, si: usize) -> bool {
+    let (from, to) = subpath(segs, si);
+    let Some(z) = to.checked_sub(1).filter(|z| *z > si && matches!(segs.get(*z), Some(Seg::Z))) else { return false };
+    let Some(v) = segs.get(si).and_then(Seg::end) else { return false };
+    let (Some(after), Some(before)) = (segs.get(si + 1..z), segs.get(from + 1..=si)) else { return false };
+    let mut out = vec![Seg::M(v)];
+    out.extend_from_slice(after);
+    out.extend_from_slice(before);
+    segs.splice(from..to, out);
+    true
+}
+
+/// Deletes the segment ending at the vertex ending segment `si` from its closed sub-path, which
+/// opens there: it now starts at the segment's end and ends at its start. Returns false for an
+/// open sub-path.
+fn delete_segment_at(segs: &mut Vec<Seg>, si: usize) -> bool {
+    let (from, _) = subpath(segs, si);
+    if !open_at(segs, si) {
+        return false;
+    }
+    // The deleted segment now ends the sub-path.
+    let (_, to) = subpath(segs, from);
+    if to > from + 1 {
+        segs.remove(to - 1);
+    }
+    true
+}
+
+/// Closes the open sub-path through the vertex ending segment `si`: a straight segment joins its
+/// ends, or they become one point when they meet. Returns false for a closed sub-path.
+fn close_at(segs: &mut Vec<Seg>, si: usize) -> bool {
+    let (from, to) = subpath(segs, si);
+    let last = to.saturating_sub(1);
+    if last <= from || matches!(segs.get(last), Some(Seg::Z)) {
+        return false;
+    }
+    let (Some(Seg::M(start)), Some(end)) = (segs.get(from).copied(), segs.get(last).and_then(Seg::end)) else { return false };
+    let mut add = Vec::new();
+    if (start - end).hypot() >= 1e-6 {
+        add.push(Seg::L(start));
+    }
+    add.push(Seg::Z);
+    segs.splice(to..to, add);
+    true
+}
+
 /// Custom paths of a preset shape, in shape-local points.
 fn to_custom(sh: &Shape, w: f64, h: f64) -> Vec<CustomPath> {
     let geo = deckcraft_render::shape_geometry(sh, w, h);
@@ -402,6 +524,7 @@ pub(crate) fn prepare(s: &mut Session, id: ShapeId) -> Result<()> {
 fn edit_points(s: &mut Session, p: &Value) -> Result<Value> {
     let on = p.get("on").and_then(Value::as_bool).unwrap_or(s.tool.edit_points.is_none());
     s.tool.edit_vertex = None;
+    s.tool.edit_segment = None;
     if !on {
         s.tool.edit_points = None;
         return Ok(json!({"editing": Value::Null}));
@@ -436,17 +559,16 @@ fn points(s: &mut Session, p: &Value) -> Result<Value> {
     let sh = st.shape(id).ok_or_else(|| bad("shape.points", "no such shape"))?;
     let paths: Vec<Vec<[f64; 2]>> =
         slide_vertices(&st.doc, &st.selection, sh).into_iter().map(|v| v.into_iter().map(|q| [q.x, q.y]).collect()).collect();
-    let types: Vec<Vec<&str>> = match &sh.geom {
-        Geom::Custom { paths } => paths
-            .iter()
-            .map(|cp| {
-                let segs = parse(&cp.d);
-                vertices(&segs).iter().map(|si| point_kind(&segs, *si)).collect()
-            })
-            .collect(),
-        Geom::Preset { .. } => vec![],
-    };
-    Ok(json!({"id": id.0, "paths": paths, "types": types}))
+    let (mut types, mut kinds): (Vec<Vec<&str>>, Vec<Vec<Option<&str>>>) = (vec![], vec![]);
+    if let Geom::Custom { paths } = &sh.geom {
+        for cp in paths {
+            let segs = parse(&cp.d);
+            let vs = vertices(&segs);
+            types.push(vs.iter().map(|si| point_kind(&segs, *si)).collect());
+            kinds.push(vs.iter().map(|si| ending_segment(&segs, *si).and_then(|j| segment_kind(&segs, j))).collect());
+        }
+    }
+    Ok(json!({"id": id.0, "paths": paths, "types": types, "segments": kinds}))
 }
 
 /// Runs `f` on the segments of path `path` of `id` (in shape-local points), then refits the box.
@@ -502,26 +624,26 @@ fn add_point(s: &mut Session, p: &Value) -> Result<Value> {
     let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
     let seg = index_param(p, "segment", "shape.addPoint")?;
     let t = f64_param(p, "t").filter(|t| t.is_finite()).unwrap_or(0.5).clamp(0.01, 0.99);
-    edit_path(s, id, path, "shape.addPoint", move |segs, vs, _| {
+    let r = edit_path(s, id, path, "shape.addPoint", move |segs, vs, _| {
         let si = *vs.get(seg).ok_or_else(|| bad("shape.addPoint", "no such segment"))?;
         // The closing edge of a closed outline ends at the start: split it, not the start.
-        let si = if matches!(segs.get(si), Some(Seg::M(_))) {
-            (si + 1..segs.len()).find(|j| closes_onto_start(segs, *j)).ok_or_else(|| bad("shape.addPoint", "the first point ends no segment"))?
-        } else {
-            si
-        };
+        let si = ending_segment(segs, si).ok_or_else(|| bad("shape.addPoint", "the first point ends no segment"))?;
         if split(segs, si, t) { Ok(true) } else { Err(bad("shape.addPoint", "no segment ends at that point")) }
-    })
+    })?;
+    forget_kinds(s, path);
+    Ok(r)
 }
 
 fn delete_point(s: &mut Session, p: &Value) -> Result<Value> {
     let id = target(s, p, "shape.deletePoint")?;
     let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
     let index = index_param(p, "index", "shape.deletePoint")?;
-    edit_path(s, id, path, "shape.deletePoint", move |segs, vs, _| {
+    let r = edit_path(s, id, path, "shape.deletePoint", move |segs, vs, _| {
         let si = *vs.get(index).ok_or_else(|| bad("shape.deletePoint", "no such point"))?;
         if remove_vertex(segs, si) { Ok(true) } else { Err(bad("shape.deletePoint", "an outline keeps at least two points")) }
-    })
+    })?;
+    forget_kinds(s, path);
+    Ok(r)
 }
 
 /// The vertex of `sh` near slide point `p`: (path, index).
@@ -568,14 +690,34 @@ pub fn segment_at(doc: &deckcraft_model::Presentation, sel: &crate::Selection, s
                 vs.iter().position(|v| *v == si)
             };
             let Some(ev) = end_vertex else { continue };
+            let mut near: Option<(f64, f64)> = None;
             for k in 1..32 {
                 let t = k as f64 / 32.0;
                 if let Some(q) = at(t) {
                     let d = (q - local).hypot();
-                    if d <= tol && best.is_none_or(|b| d < b.0) {
-                        best = Some((d, pi, ev, t));
+                    if d <= tol && near.is_none_or(|n| d < n.0) {
+                        near = Some((d, t));
                     }
                 }
+            }
+            let Some((mut d, mut t)) = near else { continue };
+            // Narrow `t` down to the nearest place on the segment, where Add Point puts the point.
+            let mut step = 1.0 / 32.0;
+            for _ in 0..4 {
+                step /= 8.0;
+                let c = t;
+                for k in -8..=8 {
+                    let u = (c + f64::from(k) * step).clamp(0.0, 1.0);
+                    if let Some(q) = at(u) {
+                        let e = (q - local).hypot();
+                        if e < d {
+                            (d, t) = (e, u);
+                        }
+                    }
+                }
+            }
+            if best.is_none_or(|b| d < b.0) {
+                best = Some((d, pi, ev, t));
             }
         }
     }
@@ -740,7 +882,7 @@ fn point_type(s: &mut Session, p: &Value) -> Result<Value> {
         _ => return Err(bad("shape.pointType", "`type` is smooth, straight or corner")),
     };
     // A straight point's handles can be as long as each other; remember the choice for drags.
-    s.tool.vertex_kind = Some((path, index, kind.clone()));
+    s.tool.vertex_kind = Some((id, path, index, kind.clone()));
     edit_path(s, id, path, "shape.pointType", move |segs, vs, _| {
         let si = *vs.get(index).ok_or_else(|| bad("shape.pointType", "no such point"))?;
         set_type(segs, si, &kind);
@@ -783,4 +925,99 @@ pub fn kind_of(sh: &Shape, path: usize, index: usize) -> Option<&'static str> {
 /// `shape.moveHandle` for pointer drags.
 pub(crate) fn move_handle_raw(s: &mut Session, p: &Value) -> Result<Value> {
     move_handle(s, p)
+}
+
+fn segment_type(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = target(s, p, "shape.segmentType")?;
+    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let seg = index_param(p, "segment", "shape.segmentType")?;
+    let curved = match str_param(p, "type") {
+        Some("straight") => false,
+        Some("curved") => true,
+        _ => return Err(bad("shape.segmentType", "`type` is straight or curved")),
+    };
+    // Already that type: nothing to change, so no undo step.
+    let want = if curved { "curved" } else { "straight" };
+    if s.doc()?.shape(id).is_some_and(|sh| segment_kind_of(sh, path, seg) == Some(want)) {
+        return ok();
+    }
+    edit_path(s, id, path, "shape.segmentType", move |segs, vs, _| {
+        let si = *vs.get(seg).ok_or_else(|| bad("shape.segmentType", "no such segment"))?;
+        let j = ending_segment(segs, si).ok_or_else(|| bad("shape.segmentType", "the first point of an open outline ends no segment"))?;
+        set_segment(segs, j, curved);
+        Ok(true)
+    })
+}
+
+fn open_path(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = target(s, p, "shape.openPath")?;
+    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let index = index_param(p, "index", "shape.openPath")?;
+    let r = edit_path(s, id, path, "shape.openPath", move |segs, vs, _| {
+        let si = *vs.get(index).ok_or_else(|| bad("shape.openPath", "no such point"))?;
+        if open_at(segs, si) { Ok(true) } else { Err(bad("shape.openPath", "the outline is open already")) }
+    })?;
+    forget_kinds(s, path);
+    Ok(r)
+}
+
+fn close_path(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = target(s, p, "shape.closePath")?;
+    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let index = index_param(p, "index", "shape.closePath")?;
+    let r = edit_path(s, id, path, "shape.closePath", move |segs, vs, _| {
+        let si = *vs.get(index).ok_or_else(|| bad("shape.closePath", "no such point"))?;
+        if close_at(segs, si) { Ok(true) } else { Err(bad("shape.closePath", "the outline is closed already")) }
+    })?;
+    forget_kinds(s, path);
+    Ok(r)
+}
+
+fn delete_segment(s: &mut Session, p: &Value) -> Result<Value> {
+    let id = target(s, p, "shape.deleteSegment")?;
+    let path = p.get("path").and_then(Value::as_u64).unwrap_or(0) as usize;
+    let seg = index_param(p, "segment", "shape.deleteSegment")?;
+    let r = edit_path(s, id, path, "shape.deleteSegment", move |segs, vs, _| {
+        let si = *vs.get(seg).ok_or_else(|| bad("shape.deleteSegment", "no such segment"))?;
+        if ending_segment(segs, si).is_none() {
+            return Err(bad("shape.deleteSegment", "the first point of an open outline ends no segment"));
+        }
+        if delete_segment_at(segs, si) { Ok(true) } else { Err(bad("shape.deleteSegment", "only a segment of a closed outline can be deleted")) }
+    })?;
+    forget_kinds(s, path);
+    Ok(r)
+}
+
+/// The point where the segment ending at vertex `index` of path `path` of `sh` starts.
+pub fn segment_start_of(sh: &Shape, path: usize, index: usize) -> Option<usize> {
+    let Geom::Custom { paths } = &sh.geom else { return None };
+    let segs = parse(&paths.get(path)?.d);
+    let vs = vertices(&segs);
+    let j = ending_segment(&segs, *vs.get(index)?)?;
+    vs.iter().position(|v| Some(*v) == j.checked_sub(1))
+}
+
+/// Adding, deleting, opening or closing renumbers the points of `path`: a point type remembered
+/// for one of them would follow the wrong point.
+fn forget_kinds(s: &mut Session, path: usize) {
+    if s.tool.vertex_kind.as_ref().is_some_and(|k| k.1 == path) {
+        s.tool.vertex_kind = None;
+    }
+}
+
+/// Whether the segment ending at vertex `index` of path `path` of `sh` is straight or curved.
+pub fn segment_kind_of(sh: &Shape, path: usize, index: usize) -> Option<&'static str> {
+    let Geom::Custom { paths } = &sh.geom else { return None };
+    let segs = parse(&paths.get(path)?.d);
+    let si = *vertices(&segs).get(index)?;
+    segment_kind(&segs, ending_segment(&segs, si)?)
+}
+
+/// Whether the outline through vertex `index` of path `path` of `sh` is closed.
+pub fn closed_at(sh: &Shape, path: usize, index: usize) -> Option<bool> {
+    let Geom::Custom { paths } = &sh.geom else { return None };
+    let segs = parse(&paths.get(path)?.d);
+    let si = *vertices(&segs).get(index)?;
+    let (_, to) = subpath(&segs, si);
+    Some(matches!(segs.get(to.checked_sub(1)?), Some(Seg::Z)))
 }

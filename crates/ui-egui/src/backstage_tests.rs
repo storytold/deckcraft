@@ -12,7 +12,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use serde_json::json;
 
-use super::*;
+use crate::backstage::{Backstage, NAV_W, Nav, Page, PrintScope, entries, format_bytes, print_page_size, print_params, print_slides, split_path};
 use crate::{Services, SlideApp};
 
 fn harness(app: SlideApp) -> Harness<'static, SlideApp> {
@@ -456,6 +456,101 @@ fn the_start_screen_is_file_home() {
     assert!(h.state().backstage.is_none());
 }
 
+/// The start screen is not a hidden slide: typing, pasting and IME events must not create or
+/// edit a presentation while the File-tab navigation keys still work.
+#[test]
+fn start_screen_ignores_text_paste_and_ime_while_file_keys_navigate() {
+    let mut h = harness(SlideApp::new(Session::new(), Services::default()));
+    assert_eq!(page(&h), Some(Page::Home));
+    h.input_mut().events.extend([
+        egui::Event::Text("x".into()),
+        egui::Event::Paste("pasted".into()),
+        egui::Event::Ime(egui::ImeEvent::Preedit { text: "あ".into(), active_range_chars: None }),
+        egui::Event::Ime(egui::ImeEvent::Commit("あ".into())),
+        egui::Event::Key { key: Key::ArrowDown, physical_key: None, pressed: true, repeat: false, modifiers: Modifiers::default() },
+    ]);
+    h.run_steps(2);
+    assert!(h.state().session.active().is_none(), "no typing or IME event opened a presentation");
+    assert!(h.state().session.documents().is_empty(), "the start screen has no slide to edit");
+    assert!(h.state().status.is_none(), "typing, paste and IME were ignored, not run and refused");
+    assert_eq!(page(&h), Some(Page::New), "the File-tab arrow still navigates");
+    assert!(h.output().platform_output.ime.is_none(), "the start screen publishes no input-method descriptor");
+}
+
+/// The start screen keeps the shortcuts that open something in the app: the command palette and
+/// Preferences. Both are in-app windows, so no native dialog is involved.
+#[test]
+fn start_screen_opens_the_palette_and_preferences() {
+    let mut h = harness(SlideApp::new(Session::new(), Services::default()));
+    h.key_press_modifiers(Modifiers::COMMAND | Modifiers::SHIFT, Key::P);
+    h.run_steps(3);
+    assert!(h.state().palette.is_some(), "Ctrl+Shift+P opens the command palette");
+    assert!(h.state().session.active().is_none(), "without creating a presentation");
+
+    let mut h = harness(SlideApp::new(Session::new(), Services::default()));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Comma);
+    h.run_steps(3);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("preferences"), "Ctrl+, opens Preferences");
+    assert!(h.state().session.active().is_none(), "without creating a presentation");
+}
+
+/// Ctrl+O still asks the app's open dialog on the start screen, and Alt+F opens the File tab with
+/// the keyboard in its side menu. The open dialog is a mock service, not the host's picker.
+#[test]
+fn start_screen_opens_files_and_the_file_tab_from_the_keyboard() {
+    let opens: Rc<RefCell<Vec<String>>> = Default::default();
+    let log = opens.clone();
+    let services = Services {
+        pick_open: Some(Box::new(move |purpose: &str| {
+            log.borrow_mut().push(purpose.to_string());
+            None
+        })),
+        ..Default::default()
+    };
+    let mut h = harness(SlideApp::new(Session::new(), services));
+    h.key_press_modifiers(Modifiers::COMMAND, Key::O);
+    h.run_steps(3);
+    let asked = opens.borrow();
+    assert_eq!(asked.len(), 1, "Ctrl+O asks the app's open dialog once");
+    assert_eq!(asked[0], "open", "Ctrl+O reaches the app's open dialog");
+    assert!(h.state().session.active().is_none(), "a cancelled open leaves the start screen");
+    assert_eq!(page(&h), Some(Page::Home));
+
+    let mut h = harness(SlideApp::new(Session::new(), Services::default()));
+    assert_eq!(h.state().backstage.as_ref().and_then(|b| b.focus), None);
+    h.key_press_modifiers(Modifiers::ALT, Key::F);
+    h.run_steps(3);
+    assert_eq!(page(&h), Some(Page::Home), "Alt+F opens the File tab on Home");
+    assert_eq!(h.state().backstage.as_ref().and_then(|b| b.focus), Some(0), "with the keyboard in the side menu");
+}
+
+/// Document commands stay off the empty start screen: no save picker, find palette, hyperlink
+/// dialog, close prompt, status error or page change.
+#[test]
+fn start_screen_ignores_document_shortcuts() {
+    let saves: Rc<RefCell<Vec<String>>> = Default::default();
+    let log = saves.clone();
+    let services = Services {
+        pick_save: Some(Box::new(move |suggested: &str| {
+            log.borrow_mut().push(suggested.to_string());
+            None
+        })),
+        ..Default::default()
+    };
+    let mut h = harness(SlideApp::new(Session::new(), services));
+    for (mods, key) in [(Modifiers::COMMAND, Key::S), (Modifiers::COMMAND, Key::K), (Modifiers::COMMAND, Key::F), (Modifiers::COMMAND, Key::W)] {
+        h.key_press_modifiers(mods, key);
+        h.run_steps(2);
+        assert!(h.state().session.active().is_none(), "{key:?} did not open a presentation");
+        assert!(h.state().session.documents().is_empty(), "{key:?} created no document");
+        assert_eq!(page(&h), Some(Page::Home), "{key:?} left the start screen in place");
+        assert!(h.state().status.is_none(), "{key:?} was ignored rather than run and refused");
+        assert!(h.state().dialog.is_none(), "{key:?} opened no document dialog");
+        assert!(h.state().palette.is_none(), "{key:?} opened no find palette");
+    }
+    assert!(saves.borrow().is_empty(), "Ctrl+S did not ask for a file");
+}
+
 /// #346: a file picked in Open that can't be read used to drop back to the start screen without
 /// a word. The reason now shows over the start screen.
 #[test]
@@ -560,4 +655,21 @@ fn print_slides_follow_the_settings() {
     assert!((w - 841.89).abs() < 0.01 && (h - 595.28).abs() < 0.01);
     bs.print_layout = "slides";
     assert_eq!(print_page_size(&bs, &doc), (doc.slide_size.width as f32, doc.slide_size.height as f32), "slides print slide-shaped");
+}
+
+/// Options in the File tab opens the Preferences dialog, and Cancel closes it (#782, #752).
+#[test]
+fn options_in_backstage_opens_preferences_and_cancel_closes_it() {
+    let mut h = harness(new_app());
+    h.get_by_label("File").click();
+    h.run_steps(3);
+    assert!(h.state().backstage_open());
+    h.get_by_label("Options").click();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_some(), "Options opens Preferences dialog");
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("preferences"));
+    h.query_all_by_role_and_label(Role::Button, "Cancel").next().expect("Cancel button").click_accesskit();
+    h.run_steps(3);
+    assert!(h.state().dialog.is_none(), "Cancel closes Preferences dialog");
+    assert!(h.state().backstage_open(), "Backstage remains open");
 }

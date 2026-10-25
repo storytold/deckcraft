@@ -10,6 +10,7 @@ use crate::{Services, SlideApp};
 
 #[test]
 fn turn_guides_on_drag_one_and_drop_it_off_the_slide() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let app = SlideApp::new(s, Services::default());

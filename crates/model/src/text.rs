@@ -328,6 +328,19 @@ pub enum Action {
     PlayMedia,
 }
 
+/// Can a link from a (possibly untrusted) deck be opened outside it, by the slide show or by
+/// whoever opens an exported file? Only web pages and mail: `file:`, `javascript:`, relative paths
+/// and other schemes (OS protocol handlers, network shares) are not.
+pub fn safe_url(url: &str) -> bool {
+    let u = url.trim();
+    let Some((scheme, rest)) = u.split_once(':') else { return false };
+    match scheme.to_ascii_lowercase().as_str() {
+        "http" | "https" => rest.starts_with("//") && rest.len() > 2,
+        "mailto" => !rest.is_empty(),
+        _ => false,
+    }
+}
+
 fn custom_show_returns() -> bool {
     true
 }

@@ -5,7 +5,7 @@ use deckcraft_model::style::Fill;
 
 use crate::xml::El;
 
-/// Fills of chart parts never reference images we keep; read colour fills only.
+/// Fills of chart parts never reference images we keep; read colour and pattern fills only.
 fn simple_fill(sp: Option<&El>) -> Option<Fill> {
     let sp = sp?;
     for e in sp.elements() {
@@ -13,6 +13,7 @@ fn simple_fill(sp: Option<&El>) -> Option<Fill> {
             "noFill" => return Some(Fill::None),
             "solidFill" => return super::dml::color(e).map(|color| Fill::Solid { color }),
             "gradFill" => return Some(Fill::Gradient(super::dml::gradient(e))),
+            "pattFill" => return Some(Fill::Pattern(super::dml::pattern(e))),
             _ => {}
         }
     }
@@ -126,23 +127,21 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     let mut kinds: Vec<ChartType> = vec![];
     // The value axis the first plot group uses is the primary one; a group on another value axis
     // (a combo chart's line on the right) is on the secondary axis.
-    let val_ids: Vec<(&str, bool)> =
+    let val_map: std::collections::HashMap<&str, bool> =
         pa.children_named("valAx").filter_map(|a| Some((a.child_val("axId")?, matches!(a.child_val("axPos"), Some("l" | "r"))))).collect();
     // A group's value axis: its vertical one when it has two (scatter), else its one.
     let group_val_axis = |g: &El| {
         let ids: Vec<(&str, bool)> =
-            g.children_named("axId").filter_map(|a| a.attr("val")).filter_map(|id| val_ids.iter().find(|(v, _)| *v == id).copied()).collect();
+            g.children_named("axId").filter_map(|a| a.attr("val")).filter_map(|id| val_map.get(id).copied().map(|v| (id, v))).collect();
         ids.iter().find(|(_, vertical)| *vertical).or(ids.first()).map(|(id, _)| id.to_string())
     };
     // The primary value axis is the one on the left (bottom for bar charts); the secondary one
     // sits on the right or top, or crosses the category axis at its maximum.
     let secondary_placed = |a: &El| a.child_val("crosses") == Some("max") || matches!(a.child_val("axPos"), Some("r" | "t"));
+    let val_axes_by_id: std::collections::HashMap<&str, &El> = pa.children_named("valAx").filter_map(|a| Some((a.child_val("axId")?, a))).collect();
     let used: Vec<String> = pa.elements().filter(|g| g.local().ends_with("Chart")).filter_map(group_val_axis).collect();
-    let primary_val: Option<String> = used
-        .iter()
-        .find(|id| pa.children_named("valAx").find(|a| a.child_val("axId") == Some(id.as_str())).is_some_and(|a| !secondary_placed(a)))
-        .or(used.first())
-        .cloned();
+    let primary_val: Option<String> =
+        used.iter().find(|id| val_axes_by_id.get(id.as_str()).is_some_and(|a| !secondary_placed(a))).or(used.first()).cloned();
     for g in pa.elements() {
         let name = g.local();
         if !name.ends_with("Chart") {
@@ -213,7 +212,11 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         if let Some(v) = g.child_val("holeSize").and_then(|v| v.parse::<f64>().ok()) {
             c.hole_size = (v / 100.0).clamp(0.0, 0.9);
         }
-        if g.path(&["dLbls", "showVal"]).and_then(|v| v.bool("val")) == Some(true) {
+        // `<c:showVal/>` without a val attribute means true, as in the schema's default.
+        // The setting belongs to this plot group: a group that asks for no labels keeps them
+        // off, even when another group of a combo chart asks for them (#868).
+        let group_labels = g.path(&["dLbls", "showVal"]).map(|v| v.bool("val").unwrap_or(true));
+        if group_labels == Some(true) {
             c.data_labels = true;
         }
         kinds.push(kind);
@@ -230,8 +233,12 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
                 secondary_axis: secondary,
                 ..Default::default()
             };
-            if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).and_then(|v| v.bool("val")) {
+            // `<c:showVal/>` without a val attribute means true, as in the schema's default.
+            if let Some(d) = s.child("dLbls").and_then(|d| d.child("showVal")).map(|v| v.bool("val").unwrap_or(true)) {
                 ser.data_labels = Some(d);
+            } else if let Some(false) = group_labels {
+                // The group asks for no labels and the series does not say otherwise.
+                ser.data_labels = Some(false);
             }
             for t in s.children_named("trendline").take(16) {
                 if let Some(t) = trendline(t) {
@@ -410,15 +417,21 @@ fn text_color(e: Option<&El>) -> Option<deckcraft_model::ColorRef> {
 
 const MAX_KEPT_PARTS: usize = 256;
 const MAX_KEPT_DEPTH: usize = 8;
+pub const MAX_KEPT_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
 /// Relationships and parts a chart points at, so a later save can write them back.
-pub(crate) fn capture_kept(pkg: &crate::opc::Package, chart_part: &str) -> deckcraft_model::chart::ChartKept {
+pub(crate) fn capture_kept(imp: &mut super::Imp, chart_part: &str) -> deckcraft_model::chart::ChartKept {
     use deckcraft_model::chart::{ChartKept, ChartRel};
+
+    let key = crate::opc::norm(chart_part);
+    if let Some(cached) = imp.kept_charts.get(&key) {
+        return cached.clone();
+    }
 
     let mut kept = ChartKept::default();
     // The chart document itself is rewritten; don't store a second copy of it.
-    let mut seen = std::collections::HashMap::from([(crate::opc::norm(chart_part), true)]);
-    for r in pkg.rels(chart_part).items {
+    let mut seen = std::collections::HashMap::from([(key.clone(), true)]);
+    for r in imp.pkg.rels(chart_part).items {
         if !safe_rel(&r.id, &r.ty, &r.target_raw) {
             log::warn!("pptx: skipping chart relationship {}", r.id);
             continue;
@@ -427,10 +440,11 @@ pub(crate) fn capture_kept(pkg: &crate::opc::Package, chart_part: &str) -> deckc
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: String::new(), external: true });
             continue;
         }
-        if copy_part(pkg, &r.target, &mut kept.parts, &mut seen, 0) {
+        if copy_part(imp.pkg, &r.target, &mut kept.parts, &mut seen, &mut imp.kept_sidecar_bytes, 0) {
             kept.rels.push(ChartRel { id: r.id, rel_type: r.ty, target: r.target_raw, part: r.target, external: false });
         }
     }
+    imp.kept_charts.insert(key, kept.clone());
     kept
 }
 
@@ -444,6 +458,7 @@ fn copy_part(
     part: &str,
     out: &mut Vec<deckcraft_model::chart::ChartPart>,
     seen: &mut std::collections::HashMap<String, bool>,
+    retained_bytes: &mut usize,
     depth: usize,
 ) -> bool {
     use deckcraft_model::chart::ChartPart;
@@ -473,7 +488,14 @@ fn copy_part(
         return false;
     }
     let content_type = pkg.content_type(part).unwrap_or_default();
-    out.push(ChartPart { name, content_type, bytes: bytes.to_vec(), native_entry: None });
+    let stored_bytes = if *retained_bytes + bytes.len() <= MAX_KEPT_TOTAL_BYTES {
+        *retained_bytes += bytes.len();
+        bytes.to_vec()
+    } else {
+        log::warn!("pptx: chart sidecar retained byte budget exceeded for {part}");
+        Vec::new()
+    };
+    out.push(ChartPart { name, content_type, bytes: stored_bytes, native_entry: None });
     seen.insert(key, true);
     let rels_name = crate::opc::rels_path(part);
     if crate::opc::sidecar_part(&rels_name)
@@ -482,15 +504,21 @@ fn copy_part(
     {
         seen.insert(crate::opc::norm(&rels_name), true);
         let name = pkg.original_name(&rels_name).unwrap_or(&rels_name).trim_start_matches('/').to_string();
+        let stored_rels = if *retained_bytes + rels_bytes.len() <= MAX_KEPT_TOTAL_BYTES {
+            *retained_bytes += rels_bytes.len();
+            rels_bytes.to_vec()
+        } else {
+            Vec::new()
+        };
         out.push(ChartPart {
             name,
             content_type: "application/vnd.openxmlformats-package.relationships+xml".into(),
-            bytes: rels_bytes.to_vec(),
+            bytes: stored_rels,
             native_entry: None,
         });
         let targets: Vec<String> = pkg.rels(part).items.into_iter().filter(|r| !r.external).map(|r| r.target).collect();
         for target in targets {
-            copy_part(pkg, &target, out, seen, depth + 1);
+            copy_part(pkg, &target, out, seen, retained_bytes, depth + 1);
         }
     }
     true
@@ -555,6 +583,29 @@ mod tests {
         assert!(back.gridlines && back.minor_gridlines);
         c.minor_gridlines = false;
         assert!(!read_chart_xml(&crate::write::chart::chart_xml(&c).0).unwrap().minor_gridlines);
+    }
+
+    #[test]
+    fn series_pattern_fills_are_read_and_written_back() {
+        // A pattern-filled series and an empty one with an outline, as PowerPoint writes them.
+        let xml = br#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:spPr><a:pattFill prst="openDmnd"><a:fgClr><a:schemeClr val="accent4"/></a:fgClr><a:bgClr><a:schemeClr val="bg1"/></a:bgClr></a:pattFill></c:spPr><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>5</c:v></c:pt></c:numLit></c:val></c:ser><c:ser><c:idx val="1"/><c:spPr><a:noFill/><a:ln w="19050"><a:solidFill><a:schemeClr val="accent4"/></a:solidFill></a:ln></c:spPr><c:val><c:numLit><c:ptCount val="1"/><c:pt idx="0"><c:v>3</c:v></c:pt></c:numLit></c:val></c:ser></c:barChart></c:plotArea></c:chart></c:chartSpace>"#;
+        let c = read_chart_xml(xml).unwrap();
+        let accent4 = deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Accent4);
+        let pattern = deckcraft_model::style::PatternFill {
+            preset: "openDmnd".into(),
+            fg: accent4.clone(),
+            bg: deckcraft_model::ColorRef::scheme(deckcraft_color::SchemeSlot::Bg1),
+        };
+        assert_eq!(c.series[0].fill, Some(Fill::Pattern(pattern.clone())));
+        assert_eq!(c.series[1].fill, Some(Fill::None));
+        assert_eq!(c.series[1].line.as_ref().and_then(|l| l.fill.clone()), Some(Fill::solid(accent4)));
+        // Written out from the model (an edited chart), the pattern survives.
+        let mut edited = c.clone();
+        edited.raw = None;
+        edited.title = Some("Edited".into());
+        let back = read_chart_xml(&crate::write::chart::chart_xml(&edited).0).unwrap();
+        assert_eq!(back.series[0].fill, Some(Fill::Pattern(pattern)));
+        assert_eq!(back.series[1].fill, Some(Fill::None));
     }
 
     #[test]

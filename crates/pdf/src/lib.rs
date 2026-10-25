@@ -17,7 +17,7 @@ use craft_pdf::write::{self, Metadata, Writer, backend as krilla};
 
 use deckcraft_fonts::FontDb;
 use deckcraft_model::Presentation;
-use deckcraft_model::text::Action as ClickAction;
+use deckcraft_model::text::{Action as ClickAction, safe_url};
 use deckcraft_render::{PlacedText, RenderOpts};
 use krilla::action::{Action, LinkAction};
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
@@ -565,7 +565,9 @@ impl Exporter<'_> {
                 slide.and_then(|s| page_of.get(&s)).map(|p| Target::Destination(XyzDestination::new(*p, Point::from_xy(0.0, 0.0)).into()))
             };
             let target = match &l.link.action {
-                ClickAction::Url { url } => Some(Target::Action(Action::Link(LinkAction::new(url.clone())))),
+                // Only the links the slide show opens (web and mail): a reader of the file gets the rest
+                // as plain text.
+                ClickAction::Url { url } if safe_url(url) => Some(Target::Action(Action::Link(LinkAction::new(url.clone())))),
                 ClickAction::Slide { slide } => goto(pres.slides.iter().position(|x| x.id == *slide)),
                 ClickAction::NextSlide => goto(Some(i + 1)),
                 ClickAction::PreviousSlide => goto(i.checked_sub(1)),

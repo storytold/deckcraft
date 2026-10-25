@@ -4,10 +4,11 @@
 //! slide. Everything is computed here, offline.
 
 use deckcraft_geom::Xfrm;
+use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::{Fill, Presentation, Rgba, Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, cmd, has_slide, str_param, usize_param, xfrm_of};
 use crate::{Result, Selection, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -57,9 +58,44 @@ fn roles(shapes: &[Shape]) -> Roles {
     r
 }
 
-/// The ideas for slide `index` (none when it has nothing to arrange).
+/// Whether `s` paints a fill or an outline once inherited and style-referenced values are
+/// resolved, as the renderer does (`fill: None` alone means inherited, not invisible).
+fn shows(ctx: Option<&Ctx>, s: &Shape) -> bool {
+    let visible = |f: &Option<Fill>| f.as_ref().is_some_and(|f| !f.is_none());
+    match ctx {
+        Some(ctx) => visible(&resolve::fill(ctx, s).0) || visible(&resolve::line(ctx, s).0.fill),
+        None => visible(&s.fill) || visible(&s.line.as_ref().and_then(|l| l.fill.clone())),
+    }
+}
+
+/// Whether an idea may move this shape: a picture, a placeholder or a plain text box. Diagram
+/// boxes, connectors, groups, tables, charts and media are laid out by their own geometry, which
+/// the ideas do not know, so a slide holding one gets no ideas.
+fn arrangeable(ctx: Option<&Ctx>, s: &Shape) -> bool {
+    match s.kind {
+        ShapeKind::Picture { .. } => true,
+        ShapeKind::Shape => {
+            let is_title = s.ph.as_ref().is_some_and(|p| p.kind.is_title());
+            let has_text = s.text.as_ref().is_some_and(|t| !t.text().trim().is_empty());
+            // Only titles and shapes with text are moved (see `roles`): an empty one that shows
+            // (filled or outlined) would stay where it is, over the rearranged slide.
+            (s.ph.is_some() || s.text_box) && (is_title || has_text || !shows(ctx, s))
+        }
+        _ => false,
+    }
+}
+
+/// The ideas for slide `index` (none when it has nothing to arrange, or other content in the way).
 pub fn ideas_for(doc: &Presentation, index: usize) -> Vec<Idea> {
     let Some(slide) = doc.slides.get(index) else { return vec![] };
+    let ctx = Ctx::for_slide(doc, slide);
+    if slide.shapes.iter().any(|s| !s.hidden && !arrangeable(ctx.as_ref(), s)) {
+        return vec![];
+    }
+    // The ideas move one picture; a second would stay put, over the rearranged text.
+    if slide.shapes.iter().filter(|s| !s.hidden && matches!(s.kind, ShapeKind::Picture { .. })).count() > 1 {
+        return vec![];
+    }
     let r = roles(&slide.shapes);
     if r.picture.is_some() {
         PICTURE_IDEAS.to_vec()
@@ -249,6 +285,7 @@ mod tests {
         };
         let body = Shape {
             id: ShapeId(501),
+            text_box: true,
             xfrm: Some(Xfrm::new(50.0, 140.0, 860.0, 350.0)),
             text: Some(deckcraft_model::text::TextBody::from_text("one\ntwo")),
             ..Default::default()
@@ -412,6 +449,91 @@ mod tests {
         assert!(shape(&s, 500).fill.is_none());
         s.execute("edit.undo", &json!({})).unwrap();
         assert_eq!(shape(&s, 500).fill, Some(band_fill()));
+    }
+
+    #[test]
+    fn slides_with_diagrams_or_other_graphics_get_no_ideas() {
+        // A filled autoshape with text (a diagram box) is not text to restack.
+        let mut s = deck(false);
+        let slide = Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]);
+        slide.shapes.push(Shape {
+            id: ShapeId(510),
+            xfrm: Some(Xfrm::new(300.0, 200.0, 200.0, 80.0)),
+            fill: Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgba(200, 80, 20, 255)))),
+            text: Some(deckcraft_model::text::TextBody::from_text("Solar wind")),
+            ..Default::default()
+        });
+        assert!(ideas_for(&s.doc().unwrap().doc, 0).is_empty());
+        assert!(s.execute("design.applyIdea", &json!({"id": "titleColumn"})).is_err());
+        // A connector too, and a hidden one does not count.
+        let mut s = deck(false);
+        let slide = Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]);
+        slide.shapes.push(Shape {
+            id: ShapeId(511),
+            kind: ShapeKind::Connector { start: None, end: None },
+            xfrm: Some(Xfrm::new(300.0, 200.0, 100.0, 0.0)),
+            ..Default::default()
+        });
+        assert!(ideas_for(&s.doc().unwrap().doc, 0).is_empty());
+        Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]).shapes[2].hidden = true;
+        assert_eq!(ideas_for(&s.doc().unwrap().doc, 0).len(), 3);
+    }
+
+    #[test]
+    fn two_visible_pictures_get_no_ideas_but_a_hidden_second_one_does_not_count() {
+        let mut s = deck(true);
+        let slide = Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]);
+        slide.shapes.push(Shape {
+            id: ShapeId(503),
+            kind: ShapeKind::Picture { fill: PictureFill::default() },
+            xfrm: Some(Xfrm::new(600.0, 300.0, 200.0, 100.0)),
+            ..Default::default()
+        });
+        assert!(ideas_for(&s.doc().unwrap().doc, 0).is_empty());
+        assert!(s.execute("design.applyIdea", &json!({"id": "pictureLeft"})).is_err());
+        Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]).shapes[3].hidden = true;
+        assert_eq!(ideas_for(&s.doc().unwrap().doc, 0).len(), 4);
+    }
+
+    #[test]
+    fn an_empty_text_box_blocks_ideas_only_when_it_shows() {
+        let mut s = deck(false);
+        let slide = Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]);
+        slide.shapes.push(Shape { id: ShapeId(512), text_box: true, xfrm: Some(Xfrm::new(10.0, 10.0, 100.0, 40.0)), ..Default::default() });
+        assert_eq!(ideas_for(&s.doc().unwrap().doc, 0).len(), 3, "invisible and empty: nothing in the way");
+        let slide = Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]);
+        slide.shapes[2].fill = Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgba(200, 80, 20, 255))));
+        assert!(ideas_for(&s.doc().unwrap().doc, 0).is_empty(), "a filled empty box would stay on top");
+    }
+
+    #[test]
+    fn an_empty_box_with_an_explicit_no_fill_does_not_block_ideas() {
+        let mut s = deck(false);
+        let slide = Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]);
+        slide.shapes.push(Shape {
+            id: ShapeId(512),
+            text_box: true,
+            xfrm: Some(Xfrm::new(10.0, 10.0, 100.0, 40.0)),
+            fill: Some(Fill::None),
+            ..Default::default()
+        });
+        assert_eq!(ideas_for(&s.doc().unwrap().doc, 0).len(), 3, "an explicit no fill shows nothing");
+    }
+
+    #[test]
+    fn an_empty_box_filled_through_its_style_blocks_ideas() {
+        let mut s = deck(false);
+        let slide = Arc::make_mut(&mut Arc::make_mut(&mut s.doc_mut().unwrap().doc).slides[0]);
+        let mut style = deckcraft_model::style::ShapeStyle::accent(deckcraft_model::SchemeSlot::Accent1);
+        style.line_ref.0 = 0;
+        slide.shapes.push(Shape {
+            id: ShapeId(512),
+            text_box: true,
+            xfrm: Some(Xfrm::new(10.0, 10.0, 100.0, 40.0)),
+            style: Some(style),
+            ..Default::default()
+        });
+        assert!(ideas_for(&s.doc().unwrap().doc, 0).is_empty(), "the theme fill shows, so the box would stay on top");
     }
 
     #[test]

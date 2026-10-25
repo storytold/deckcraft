@@ -64,6 +64,25 @@ pub fn is_date_field(kind: &str) -> bool {
     kind.starts_with("datetime")
 }
 
+/// The date and time field types PowerPoint's Header and Footer and Insert ▸ Date & Time offer,
+/// in the order the dialogs list them. `datetime` and `datetimeFigureOut` are read as `datetime1`
+/// (see [`field_text`]) but are not offered as a choice.
+pub const DATE_KINDS: [&str; 13] = [
+    "datetime1",
+    "datetime2",
+    "datetime3",
+    "datetime4",
+    "datetime5",
+    "datetime6",
+    "datetime7",
+    "datetime8",
+    "datetime9",
+    "datetime10",
+    "datetime11",
+    "datetime12",
+    "datetime13",
+];
+
 /// The text date/time field `kind` shows at `now` in a run of language `lang` (BCP 47, e.g.
 /// `en-US`). `None` when `kind` isn't a date/time type this knows, `now` isn't a real date, or
 /// the format needs names in a language other than English: the field keeps its saved text.

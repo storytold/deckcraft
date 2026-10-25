@@ -6,7 +6,7 @@
 use std::collections::HashSet;
 
 use deckcraft_model::Shape;
-use egui::{Align2, CornerRadius, Id, Rect, Sense, Stroke, Ui, WidgetInfo, WidgetType, pos2, vec2};
+use egui::{Align2, CornerRadius, Id, Rect, Role, Sense, Stroke, Ui, WidgetInfo, pos2, vec2};
 use serde_json::json;
 
 use crate::SlideApp;
@@ -102,13 +102,14 @@ fn run(app: &mut SlideApp, id: &str, p: serde_json::Value) {
 
 /// Each row is a widget with an id of its own (keyboard focus sits on the selected row).
 fn row_id(id: u32) -> Id {
-    Id::new(("selection_pane_row", id))
+    Id::unique(("selection_pane_row", id))
 }
 
+/// Draw a small labelled icon button and return its interaction response.
 fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), if enabled { Sense::click() } else { Sense::hover() });
-    resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
+    resp.widget_info(|| WidgetInfo::labeled(Role::Button, enabled, label));
     if enabled && resp.hovered() {
         ui.painter().rect_filled(rect, CornerRadius::same(4), t.hover);
     }
@@ -117,6 +118,8 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
     resp.on_hover_text(label)
 }
 
+/// Render the Selection Pane and route visibility, order, rename, and selection actions through
+/// engine commands.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
@@ -157,7 +160,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let resp = ui.interact(r, row_id(row.id), Sense::click_and_drag());
         rects.push(r);
         let sel = selected.contains(&row.id);
-        resp.widget_info(|| WidgetInfo::selected(WidgetType::SelectableLabel, true, sel, &row.name));
+        resp.widget_info(|| WidgetInfo::selected(Role::Button, true, sel, &row.name));
         let painter = ui.painter_at(r);
         if sel {
             painter.rect_filled(r, CornerRadius::same(3), t.selected);
@@ -170,9 +173,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         if row.group {
             let open = !app.selpane.collapsed.contains(&row.id);
             let cr = Rect::from_center_size(pos2(x0 + 6.0, r.center().y), vec2(14.0, 14.0));
-            let cresp = ui.interact(cr, ui.id().with(("fold", row.id)), Sense::click());
+            let cresp = ui.interact(cr, ui.scope_id().with(("fold", row.id)), Sense::click());
             let label = format!("{} {}", if open { "Collapse" } else { "Expand" }, row.name);
-            cresp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &label));
+            cresp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
             icons::paint(&painter, cr, if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_dim, false);
             if cresp.clicked() {
                 if open {
@@ -188,8 +191,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let name_rect = Rect::from_min_max(pos2(name_x, r.min.y + 2.0), pos2(eye.min.x - 6.0, r.max.y - 2.0));
         let renaming = app.selpane.renaming.as_ref().filter(|(id, _)| *id == row.id).map(|(_, s)| s.clone());
         if let Some(mut buf) = renaming {
-            let edit_id = ui.id().with(("rename", row.id));
-            let out = ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(edit_id).font(theme::font(12.5)).margin(vec2(2.0, 1.0)));
+            let edit_id = ui.scope_id().with(("rename", row.id));
+            let out =
+                ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text("Name").font(theme::font(12.5)).margin(vec2(2.0, 1.0)));
             if !app.selpane.rename_started {
                 out.request_focus();
                 if let Some(mut s) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -218,12 +222,12 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let ink = if row.dimmed { t.text_faint } else { t.text_dim };
         icons::paint(&painter, eye, if row.hidden { Icon::EyeOff } else { Icon::Eye }, ink, false);
         icons::paint(&painter, lock, if row.locked { Icon::Lock } else { Icon::Unlock }, ink, false);
-        let eye_resp = ui.interact(eye.expand(3.0), ui.id().with(("eye", row.id)), Sense::click());
+        let eye_resp = ui.interact(eye.expand(3.0), ui.scope_id().with(("eye", row.id)), Sense::click());
         let eye_label = format!("{} {}", if row.hidden { "Show" } else { "Hide" }, row.name);
-        eye_resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &eye_label));
-        let lock_resp = ui.interact(lock.expand(3.0), ui.id().with(("lock", row.id)), Sense::click());
+        eye_resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &eye_label));
+        let lock_resp = ui.interact(lock.expand(3.0), ui.scope_id().with(("lock", row.id)), Sense::click());
         let lock_label = format!("{} {}", if row.locked { "Unlock" } else { "Lock" }, row.name);
-        lock_resp.widget_info(|| WidgetInfo::labeled(WidgetType::Button, true, &lock_label));
+        lock_resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &lock_label));
         if eye_resp.clicked() {
             run(app, "shape.visible", json!({"id": row.id, "visible": row.hidden}));
         } else if lock_resp.clicked() {

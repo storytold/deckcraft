@@ -6,7 +6,7 @@ use deckcraft_model::Transition;
 use deckcraft_model::anim::TRANSITIONS;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, always, bad, bool_param, cmd, has_slide, ok, str_param, usize_param};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -111,7 +111,11 @@ fn timing(s: &mut Session, p: &Value) -> Result<Value> {
                 }
                 match p.get("after") {
                     Some(Value::Null) => t.advance_after_ms = None,
-                    Some(v) => t.advance_after_ms = v.as_u64().map(|x| x.min(86_400_000) as u32),
+                    Some(v) => {
+                        if let Some(x) = v.as_u64() {
+                            t.advance_after_ms = Some(x.min(86_400_000) as u32);
+                        }
+                    }
                     None => {}
                 }
             }

@@ -732,6 +732,12 @@ impl Chart {
         crate::numfmt::format(code.map_or("General", String::as_str), v, self.lang.as_deref())
     }
 
+    /// Does series `s` show its data labels? The series' own `c:dLbls/c:showVal` wins — an
+    /// explicit `false` hides them even when the chart-wide setting is on (#868).
+    pub fn series_data_labels(&self, s: &Series) -> bool {
+        s.data_labels.unwrap_or(self.data_labels)
+    }
+
     fn waterfall_value_range(&self) -> (f64, f64) {
         let mut lo: f64 = 0.0;
         let mut hi: f64 = 0.0;
@@ -819,7 +825,7 @@ pub fn axis_scale(
     // Office's automatic limits ("How chart axis limits are determined", as Jon Peltier
     // summarises it): 5 % of the data range past the data, and zero when the values don't
     // sit within the top sixth of their largest magnitude. A single value is measured from zero.
-    let flat = hi - lo < 1e-12;
+    let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
     let pad = if !headroom {
         0.0
     } else if flat {
@@ -831,12 +837,15 @@ pub fn axis_scale(
     let auto_hi = if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) { 0.0 } else { hi + pad };
     let mut lo = fmin.unwrap_or(auto_lo);
     let mut hi = fmax.unwrap_or(auto_hi);
-    if hi - lo < 1e-12 {
+    let mag = lo.abs().max(hi.abs());
+    // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
+    let unit = if mag == 0.0 { 1.0 } else { mag };
+    if hi - lo <= 1e-12 * mag {
         // A fixed limit on the far side of the data: the automatic end gives way.
         match (fmin, fmax) {
-            (None, Some(_)) => lo = if hi > 0.0 { 0.0 } else { hi - hi.abs().max(1.0) },
+            (None, Some(_)) => lo = if hi > 0.0 { 0.0 } else { hi - hi.abs().max(unit) },
             (Some(_), None) if lo < 0.0 => hi = 0.0,
-            _ => hi = lo + lo.abs().max(1.0),
+            _ => hi = lo + unit,
         }
     }
     let n = max_intervals.clamp(1, 50) as f64;
@@ -844,6 +853,10 @@ pub fn axis_scale(
         Some(m) => m,
         None => {
             let mut step = 10f64.powf(((hi - lo) / n).log10().floor());
+            // Subnormal spans underflow to a zero (or non-finite) step: fall back to the unit.
+            if !(step > 0.0 && step.is_finite()) {
+                step = unit;
+            }
             let mut k = 0;
             // 1, 2, 5, 10, 20… × the magnitude until the intervals fit.
             while ((hi / step).ceil() - (lo / step).floor()) > n && k < 30 {
@@ -861,7 +874,9 @@ pub fn axis_scale(
 /// "Nice" axis scale: (min, max, major step) covering [lo, hi].
 pub fn nice_scale(lo: f64, hi: f64) -> (f64, f64, f64) {
     let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo.min(hi), lo.max(hi)) } else { (0.0, 1.0) };
-    let span = if hi - lo < 1e-12 { hi.abs().max(1.0) } else { hi - lo };
+    let data_mag = lo.abs().max(hi.abs());
+    let span = if hi - lo <= 1e-12 * data_mag { data_mag } else { hi - lo };
+    let span = if span == 0.0 { 1.0 } else { span };
     let raw = span / 5.0;
     let mag = 10f64.powf(raw.log10().floor());
     let norm = raw / mag;
@@ -876,15 +891,36 @@ pub fn nice_scale(lo: f64, hi: f64) -> (f64, f64, f64) {
     } else {
         10.0
     } * mag;
+    // Subnormal spans underflow to a zero or NaN step: use the span itself.
+    let step = if step > 0.0 && step.is_finite() { step } else { span };
     let min = (lo / step).floor() * step;
     let max = (hi / step).ceil() * step;
-    let max = if (max - min).abs() < 1e-12 { min + step } else { max };
+    let max = if (max - min).abs() <= 1e-12 * data_mag { min + step } else { max };
     (min, max, step)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiny_data_keeps_its_own_scale() {
+        let (min, max, step) = axis_scale(1e-13, 5e-13, None, None, None, 8, true);
+        assert!(min == 0.0 && (5e-13..1e-11).contains(&max), "{min} {max} {step}");
+        assert!(step > 0.0 && step < 1e-11);
+        let (min, max, step) = nice_scale(1e-13, 5e-13);
+        assert!(min <= 1e-13 && (5e-13..1e-11).contains(&max) && step < 1e-11, "{min} {max} {step}");
+        assert_eq!(axis_scale(0.0, 0.0, None, None, None, 8, true).1, 1.0);
+    }
+
+    #[test]
+    fn subnormal_data_gives_a_finite_scale() {
+        let (min, max, step) = axis_scale(0.0, 5e-324, None, None, None, 8, true);
+        assert!(min.is_finite() && max.is_finite() && step.is_finite(), "{min} {max} {step}");
+        assert!(step > 0.0 && max >= min, "{min} {max} {step}");
+        let (min, max, step) = nice_scale(0.0, f64::from_bits(1));
+        assert!(min.is_finite() && max.is_finite() && step > 0.0 && step.is_finite() && max > min, "{min} {max} {step}");
+    }
 
     #[test]
     fn log_axes_run_over_whole_powers() {
@@ -895,6 +931,20 @@ mod tests {
         c.y_log_base = Some(10.0);
         assert_eq!(c.log_axis_scale(8), Some((0.0, 5.0, 1.0)));
         assert_eq!(c.log_axis_scale(2), Some((0.0, 6.0, 3.0)));
+    }
+
+    /// #868: a series' own label setting wins; an unset series takes the chart-wide one.
+    #[test]
+    fn series_data_labels_override_the_chart_wide_setting() {
+        let mut c = Chart::sample(ChartType::Column);
+        c.data_labels = false;
+        let mut s = c.series[0].clone();
+        assert!(!c.series_data_labels(&s), "unset series follows the chart");
+        s.data_labels = Some(true);
+        assert!(c.series_data_labels(&s), "a series that asks for labels gets them");
+        c.data_labels = true;
+        s.data_labels = Some(false);
+        assert!(!c.series_data_labels(&s), "an explicit series false hides them anyway");
     }
 
     #[test]

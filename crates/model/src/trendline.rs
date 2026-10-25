@@ -241,26 +241,28 @@ fn linreg(xs: &[f64], ys: &[f64], intercept: Option<f64>) -> Option<(f64, f64)> 
             sxx += x * x;
             sxy += x * (y - b);
         }
-        if sxx.abs() < 1e-18 {
+        if sxx <= 0.0 || !sxx.is_finite() {
             return None;
         }
         let m = sxy / sxx;
         return (m.is_finite() && b.is_finite()).then_some((b, m));
     }
     let n = xs.len() as f64;
-    let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+    let mx = xs.iter().sum::<f64>() / n;
+    let my = ys.iter().sum::<f64>() / n;
+    let (mut sxx, mut sxy) = (0.0, 0.0);
     for (x, y) in xs.iter().zip(ys) {
-        sx += x;
-        sy += y;
-        sxx += x * x;
-        sxy += x * y;
+        let dx = x - mx;
+        sxx += dx * dx;
+        sxy += dx * (y - my);
     }
-    let den = n * sxx - sx * sx;
-    if den.abs() < 1e-18 {
+    // Constant x with a large offset leaves rounding residue in `mx`, so compare against the
+    // rounding scale of the mean instead of zero.
+    if sxx <= 4.0 * n * (f64::EPSILON * mx.abs()).powi(2) || !sxx.is_finite() {
         return None;
     }
-    let m = (n * sxy - sx * sy) / den;
-    let b = (sy - m * sx) / n;
+    let m = sxy / sxx;
+    let b = my - m * mx;
     (m.is_finite() && b.is_finite()).then_some((b, m))
 }
 
@@ -559,6 +561,51 @@ mod tests {
 
     fn line(kind: TrendlineType) -> Trendline {
         Trendline { kind, ..Default::default() }
+    }
+
+    #[test]
+    fn linear_fits_tiny_x_values() {
+        let xs = [1e-10, 2e-10, 3e-10, 4e-10, 5e-10];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of tiny x values");
+        assert!((fit.y(3e-10).unwrap() - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn linear_fits_offset_but_narrow_x_range() {
+        let xs = [45000.00, 45000.01, 45000.02, 45000.03, 45000.04];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of offset x values");
+        assert!((fit.y(45000.02).unwrap() - 3.0).abs() < 1e-4);
+        let xs = [1e7, 1e7 + 1.0, 1e7 + 2.0, 1e7 + 3.0, 1e7 + 4.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of 1e7 offset");
+        assert!((fit.y(1e7 + 2.0).unwrap() - 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn linear_fixed_intercept_on_offset_narrow_x_range() {
+        let xs = [1e7, 1e7 + 1.0, 1e7 + 2.0, 1e7 + 3.0, 1e7 + 4.0];
+        let ys: Vec<f64> = xs.iter().map(|x| 2.0 * x).collect();
+        let mut forced = line(TrendlineType::Linear);
+        forced.intercept = Some(0.0);
+        let fit = forced.fit(&xs, &ys).expect("fixed-intercept fit");
+        assert!((fit.y(1e7 + 2.0).unwrap() / (2.0 * (1e7 + 2.0)) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn linear_fixed_intercept_rejects_overflowing_x() {
+        let xs = [1e160, 2e160, 3e160];
+        let ys = [1.0, 2.0, 3.0];
+        let mut forced = line(TrendlineType::Linear);
+        forced.intercept = Some(0.0);
+        assert!(forced.fit(&xs, &ys).is_none());
+    }
+
+    #[test]
+    fn linear_rejects_constant_x_with_large_offset() {
+        let xs = [45000.1; 5];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        assert!(line(TrendlineType::Linear).fit(&xs, &ys).is_none());
     }
 
     #[test]

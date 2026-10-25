@@ -8,6 +8,7 @@ use serde_json::json;
 use crate::SlideApp;
 use crate::theme::{self, Tokens};
 
+/// Render the slide thumbnail pane, including section headers, selection, and scroll state.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
@@ -26,11 +27,13 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 master_list(app, ui);
                 return;
             }
-            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            let out = egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
                 ui.add_space(8.0);
                 list(app, ui);
                 ui.add_space(20.0);
             });
+            // Where the pane is scrolled to, for the control channel and tests (#917).
+            app.ui.thumbs_scroll = out.state.clamped_offset().y;
         });
     // Focus follows the last press: inside the pane keeps it, anywhere else (canvas, ribbon) drops it.
     if let Some(pos) = ui.input(|i| if i.pointer.primary_pressed() { i.pointer.interact_pos() } else { None }) {
@@ -38,6 +41,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     }
 }
 
+/// Render the scrollable thumbnail list, scrolling the current slide into view when it changes.
 fn list(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Some(st) = app.session.active() else { return };
@@ -47,6 +51,16 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     let width = ui.available_width();
     let tw = (width - 40.0).max(60.0);
     let th = tw * (doc.slide_size.height / doc.slide_size.width.max(1.0)) as f32;
+    // Scroll the current slide into view when it changes, so arrow-key navigation follows
+    // along in the pane (#917). The scroll itself is minimal, only when the thumbnail leaves
+    // the view, as in PowerPoint, so the user's own scrolling stands; the first frame only
+    // records the slide.
+    let scroll_key = ui.scope_id().with("thumb_scrolled_to");
+    let slide_changed = ui.data_mut(|d| {
+        let last: Option<usize> = d.get_temp(scroll_key);
+        d.insert_temp(scroll_key, cur);
+        last.is_some_and(|last| last != cur)
+    });
     let ppp = ui.ctx().pixels_per_point();
     let mut budget = 3u32;
     let mut rects = vec![];
@@ -146,14 +160,11 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
         if resp.clicked() {
             let (shift, cmd) = ui.input(|i| (i.modifiers.shift, i.modifiers.command));
             if let Some(id) = id {
-                if cmd {
+                if shift {
+                    // Shift: the slides between the current one and this one. Ctrl+Shift keeps what is selected.
+                    let _ = app.run("slide.selectRange", json!({"to": i, "add": cmd}));
+                } else if cmd {
                     let _ = app.run("slide.selectSlides", json!({"ids": [id.0], "add": true}));
-                } else if shift {
-                    let (a, b) = (cur.min(i), cur.max(i));
-                    let ids: Vec<u32> = doc.slides.iter().skip(a).take(b - a + 1).map(|s| s.id.0).collect();
-                    let _ = app.run("slide.selectSlides", json!({"ids": ids}));
-                    let _ = app.run("slide.go", json!({"index": i}));
-                    let _ = app.run("slide.selectSlides", json!({"ids": ids}));
                 } else {
                     let _ = app.run("slide.go", json!({"index": i}));
                 }
@@ -169,6 +180,10 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
     }
     if need_more {
         ui.ctx().request_repaint();
+    }
+    // Scroll the current slide's thumbnail into view when the slide changes (#917).
+    if slide_changed && let Some((_, row_rect)) = rects.iter().find(|(i, _)| *i == cur) {
+        ui.scroll_to_rect(*row_rect, None);
     }
     // Drag reorder: insertion line.
     if let Some((from, _)) = app.thumb_drag {
@@ -326,4 +341,59 @@ fn master_list(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use egui_kittest::Harness;
+
+    use super::*;
+    use crate::Services;
+    use deckcraft_engine::Session;
+
+    fn harness() -> Harness<'static, SlideApp> {
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(Session::with_new(), Services::default()),
+        );
+        h.run_steps(3);
+        h
+    }
+
+    /// Vertical scroll offset of the thumbnail pane, as recorded each frame by `show`.
+    fn thumbs_scroll(h: &Harness<'_, SlideApp>) -> f32 {
+        h.state().ui.thumbs_scroll
+    }
+
+    /// #917: navigating to a slide below the fold scrolls the pane to reveal it; a neighbour
+    /// that is already on screen does not move the pane.
+    #[test]
+    fn navigating_slides_keeps_the_current_thumbnail_visible() {
+        let mut h = harness();
+        for _ in 0..30 {
+            h.state_mut().session.execute("slide.new", &json!({})).unwrap();
+        }
+        // slide.new selects each new slide; back to the first so the pane starts at the top.
+        h.state_mut().session.execute("slide.go", &json!({"index": 0})).unwrap();
+        h.run_steps(3);
+        let last = h.state().session.active().unwrap().doc.slides.len() - 1;
+        assert_eq!(thumbs_scroll(&h), 0.0, "the pane starts at the top");
+
+        // Jump to the last slide: the pane follows and reveals it.
+        h.state_mut().session.execute("slide.go", &json!({"index": last})).unwrap();
+        h.run_steps(120); // the scroll eases in over several frames
+        let jumped = thumbs_scroll(&h);
+        assert!(jumped > 100.0, "the pane scrolled to the last slide, offset {jumped}");
+
+        // One slide up was already on screen after that scroll: the pane holds still.
+        h.state_mut().session.execute("slide.go", &json!({"index": last - 1})).unwrap();
+        h.run_steps(120);
+        let held = thumbs_scroll(&h);
+        assert!((held - jumped).abs() < 1.0, "no re-scroll for a visible slide: {jumped} -> {held}");
+    }
 }

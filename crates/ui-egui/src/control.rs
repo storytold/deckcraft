@@ -21,6 +21,7 @@ use deckcraft_engine::{Mods, PointerEvent};
 use serde_json::{Value, json};
 
 use crate::SlideApp;
+use crate::capture::{MAX_IMAGE_BYTES, MAX_TOTAL_BYTES, MemoryPlan};
 
 pub type ControlResponse = Value;
 
@@ -132,6 +133,7 @@ fn f(p: &Value, k: &str) -> Option<f32> {
     p.get(k).and_then(Value::as_f64).map(|v| v as f32)
 }
 
+/// Dispatch one decoded control request and return an outcome for its caller to reply with.
 pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> Outcome {
     let p = &req.params;
     let s = |k: &str| p.get(k).and_then(Value::as_str);
@@ -173,8 +175,8 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 && !show.ended
                 && let Some(key) = key_from(k)
             {
-                app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
-                app.synthetic.push(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE });
+                app.queue_input(egui::Event::Key { key, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE });
+                app.queue_input(egui::Event::Key { key, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE });
                 return ok(json!({"show": true}));
             }
             wrap(app.session.key(k, mods_from(p)).map_err(|e| e.to_string()))
@@ -197,7 +199,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             } else {
                 return err("missing `preedit` or `commit`");
             };
-            app.synthetic.push(egui::Event::Ime(ev));
+            app.queue_input(egui::Event::Ime(ev));
             ok(json!({"queued": true}))
         }
         "ui.tool.select" => {
@@ -213,7 +215,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         "ui.move" | "ui.click" | "ui.drag" => {
             let (Some(x), Some(y)) = (f(p, "x"), f(p, "y")) else { return err("missing x/y") };
             let pos = egui::pos2(x, y);
-            app.synthetic.push(egui::Event::PointerMoved(pos));
+            app.queue_input(egui::Event::PointerMoved(pos));
             if req.method == "ui.click" {
                 let button = match s("button") {
                     Some("right" | "secondary") => egui::PointerButton::Secondary,
@@ -221,13 +223,13 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 };
                 let count = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 3);
                 for _ in 0..count {
-                    app.synthetic.push(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
-                    app.synthetic.push(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
+                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: true, modifiers: egui::Modifiers::NONE });
+                    app.queue_input(egui::Event::PointerButton { pos, button, pressed: false, modifiers: egui::Modifiers::NONE });
                 }
             } else if req.method == "ui.drag" {
                 let (Some(tx), Some(ty)) = (f(p, "toX"), f(p, "toY")) else { return err("missing toX/toY") };
                 let steps = p.get("steps").and_then(Value::as_u64).unwrap_or(8).clamp(1, 120);
-                app.synthetic.push(egui::Event::PointerButton {
+                app.queue_input(egui::Event::PointerButton {
                     pos,
                     button: egui::PointerButton::Primary,
                     pressed: true,
@@ -235,9 +237,9 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 });
                 for k in 1..=steps {
                     let a = k as f32 / steps as f32;
-                    app.synthetic.push(egui::Event::PointerMoved(egui::pos2(x + (tx - x) * a, y + (ty - y) * a)));
+                    app.queue_input(egui::Event::PointerMoved(egui::pos2(x + (tx - x) * a, y + (ty - y) * a)));
                 }
-                app.synthetic.push(egui::Event::PointerButton {
+                app.queue_input(egui::Event::PointerButton {
                     pos: egui::pos2(tx, ty),
                     button: egui::PointerButton::Primary,
                     pressed: false,
@@ -245,7 +247,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
                 });
             }
             ctx.request_repaint();
-            ok(json!({"queued": app.synthetic.len()}))
+            ok(json!({"queued": app.synthetic_queued_len()}))
         }
         "ui.set" => {
             if let Some(t) = s("tab") {
@@ -346,7 +348,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
         }
         "show.end" => {
             if app.show.is_some() {
-                app.synthetic.push(egui::Event::Key {
+                app.queue_input(egui::Event::Key {
                     key: egui::Key::Escape,
                     physical_key: None,
                     pressed: true,
@@ -409,11 +411,38 @@ pub fn tool_kind(name: &str, preset: Option<&str>) -> Option<deckcraft_engine::T
     })
 }
 
+/// Encode and write a screenshot, or return inline base64 data, while enforcing the capture
+/// budgets and reporting encoding and write errors.
 pub fn save_screenshot(app: &mut SlideApp, image: &egui::ColorImage, path: Option<&str>) -> Value {
     let [w, h] = image.size;
+    let inline = path.is_none();
+    // The request was reserved from the same geometry; re-check the exact image before making
+    // the RGBA/PNG/base64 copies so a mismatched or oversized completion cannot allocate past
+    // the capture budget. A path reply deliberately never builds the base64 text.
+    let Some(plan) = MemoryPlan::for_image(w, h, inline) else {
+        return json!({"ok": false, "error": "the screenshot has no usable image size"});
+    };
+    if plan.color_image > MAX_IMAGE_BYTES {
+        return json!({"ok": false, "error": "the screenshot would exceed 128 MiB; use ui.render"});
+    }
+    if plan.peak > MAX_TOTAL_BYTES {
+        return json!({"ok": false, "error": "the screenshot would exceed the 256 MiB capture budget; use ui.render"});
+    }
+    if image.pixels.len().checked_mul(4) != Some(plan.color_image) {
+        return json!({"ok": false, "error": "the screenshot pixel data does not match its size"});
+    }
+    let Some((width, height)) = u32::try_from(w).ok().zip(u32::try_from(h).ok()) else {
+        return json!({"ok": false, "error": "the screenshot has no usable image size"});
+    };
     let rgba: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
-    let img = deckcraft_render::Image { width: w as u32, height: h as u32, pixels: rgba };
+    let img = deckcraft_render::Image { width, height, pixels: rgba };
     let png = img.to_png();
+    if png.is_empty() {
+        return json!({"ok": false, "error": "the screenshot could not be encoded"});
+    }
+    if png.len() > plan.png {
+        return json!({"ok": false, "error": "the screenshot PNG exceeded its reserved budget"});
+    }
     let Some(path) = path else {
         return json!({"ok": true, "result": {"width": w, "height": h, "png": deckcraft_engine::cmd::base64_encode(&png)}});
     };
@@ -431,6 +460,34 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// A path reply writes the PNG and returns no base64 text; an inline reply returns PNG
+    /// bytes base64-encoded once. Both go through the same checked memory plan.
+    #[test]
+    fn screenshot_reply_is_path_only_or_explicitly_inline() {
+        use std::sync::{Arc, Mutex};
+
+        let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+        let written = Arc::new(Mutex::new(Vec::new()));
+        let sink = Arc::clone(&written);
+        app.services.write = Some(Box::new(move |_path, bytes| {
+            *sink.lock().unwrap() = bytes.to_vec();
+            Ok(())
+        }));
+        let image = egui::ColorImage::filled([2, 2], egui::Color32::from_rgb(1, 2, 3));
+
+        let path_reply = save_screenshot(&mut app, &image, Some("/tmp/shot.png"));
+        assert_eq!(path_reply["ok"], true, "{path_reply}");
+        assert!(path_reply["result"].get("png").is_none(), "a path reply never builds base64");
+        let png = written.lock().unwrap().clone();
+        assert_eq!(png.get(..8), Some(&b"\x89PNG\r\n\x1a\n"[..]), "the writer gets a PNG");
+
+        let inline = save_screenshot(&mut app, &image, None);
+        assert_eq!(inline["ok"], true, "{inline}");
+        let text = inline["result"]["png"].as_str().expect("inline base64");
+        let decoded = deckcraft_engine::cmd::base64_decode(text).expect("valid base64");
+        assert_eq!(decoded, png, "the inline reply is the same PNG");
+    }
 
     /// `take` and `abandon` are exclusive: whoever wins, the request runs at most once (#719).
     #[test]

@@ -47,6 +47,7 @@ modules:
     build-commands:
       - cargo --offline build --release --locked -p deckcraft
       - install -Dm755 target/release/deckcraft /app/bin/deckcraft
+      - install -Dm644 NOTICE /app/share/doc/deckcraft/NOTICE
       - install -Dm644 packaging/linux/ai.storyteller.deckcraft.desktop /app/share/applications/ai.storyteller.deckcraft.desktop
       - install -Dm644 packaging/linux/ai.storyteller.deckcraft.mime.xml /app/share/mime/packages/ai.storyteller.deckcraft.xml
       - mkdir -p /app/share/icons && cp -R assets/app-icon/hicolor /app/share/icons/

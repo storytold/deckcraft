@@ -1334,7 +1334,9 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             let (y1, y2) = (h / 2.0 - h * k / 2.0, h / 2.0 + h * k / 2.0);
             let dx = (ss * a(1).max(0.0) / 1e5).min(w);
             if name == "notchedRightArrow" {
-                let n = dx * (k / 2.0) * 0.9;
+                // x1 = dy1 · dx2 / hd2 in presetShapeDefinitions, with dy1 = h·k/2: the notch's
+                // edges run parallel to the head's
+                let n = dx * k;
                 let pts = [(0.0, y1), (w - dx, y1), (w - dx, 0.0), (w, h / 2.0), (w - dx, h), (w - dx, y2), (0.0, y2), (n, h / 2.0)];
                 g.paths = vec![fill(Pb::new().poly(&pts).take())];
             } else {
@@ -1860,10 +1862,10 @@ fn wedge_rect(w: f64, h: f64, a0: f64, a1: f64, r: f64) -> Geometry {
     let r = r.min(w / 2.0).min(h / 2.0);
     // Walk clockwise from the top-left; insert the wedge on the edge facing the tip.
     let horiz = dx.abs() > dy.abs();
-    let (bx0, bx1) = (w * 5.0 / 12.0, w * 7.0 / 12.0);
-    let (by0, by1) = (h * 5.0 / 12.0, h * 7.0 / 12.0);
-    let (bx0, bx1) = if tip.x < w / 2.0 { (w * 2.0 / 12.0, w * 5.0 / 12.0) } else { (bx0 + w / 12.0 * 2.0 - w / 12.0 * 2.0, bx1 + w * 2.0 / 12.0) };
-    let (by0, by1) = if tip.y < h / 2.0 { (h * 2.0 / 12.0, h * 5.0 / 12.0) } else { (by0, by1 + h * 2.0 / 12.0) };
+    // The wedge's base: 2..5 twelfths of the edge on the tip's side of the centre when it is
+    // before it, 7..10 twelfths when after (presetShapeDefinitions' xg1/xg2, yg1/yg2).
+    let (bx0, bx1) = if tip.x < w / 2.0 { (w * 2.0 / 12.0, w * 5.0 / 12.0) } else { (w * 7.0 / 12.0, w * 10.0 / 12.0) };
+    let (by0, by1) = if tip.y < h / 2.0 { (h * 2.0 / 12.0, h * 5.0 / 12.0) } else { (h * 7.0 / 12.0, h * 10.0 / 12.0) };
     b.m(r, 0.0);
     if !inside && !horiz && dy < 0.0 {
         b.l(bx0, 0.0).l(tip.x, tip.y).l(bx1, 0.0);
@@ -2455,6 +2457,20 @@ mod tests {
     }
 
     #[test]
+    fn notched_arrow_notch_parallels_the_head() {
+        // presetShapeDefinitions: the notch's point is at x1 = dy1 · dx2 / hd2, so its edges run
+        // parallel to the head's (25 on a 200 × 100 arrow at the default adjusts).
+        for (w, h, adj, x1) in [(200.0, 100.0, [50000.0, 50000.0], 25.0), (300.0, 120.0, [80000.0, 30000.0], 28.8)] {
+            let g = build("notchedRightArrow", w, h, &adj).unwrap();
+            let notch = g.paths[0].path.elements().iter().find_map(|e| match e {
+                kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) if (p.y - h / 2.0).abs() < 1e-9 && p.x < w / 2.0 => Some(*p),
+                _ => None,
+            });
+            assert!(notch.is_some_and(|p| (p.x - x1).abs() < 1e-6), "{w}x{h} {adj:?}: notch at {notch:?}, want x = {x1}");
+        }
+    }
+
+    #[test]
     fn equation_shapes_match_powerpoints_outlines() {
         // Corners read off PowerPoint's own outlines of the presets at their default adjusts.
         let g = build("mathMultiply", 216.0, 216.0, &[]).unwrap();
@@ -2588,6 +2604,48 @@ mod tests {
             let area = filled[0].path.area().abs();
             assert!(area > 40.0 * 100.0 * 0.4 && area < 40.0 * 100.0, "{name}: {area}");
             assert!(g.paths.iter().any(|p| p.stroke && p.fill == FillMode::None), "{name}: the curve is outlined");
+        }
+    }
+
+    /// The end points of a path's move/line elements, in order.
+    fn vertices(p: &BezPath) -> Vec<Point> {
+        p.elements()
+            .iter()
+            .filter_map(|e| match e {
+                kurbo::PathEl::MoveTo(q) | kurbo::PathEl::LineTo(q) => Some(*q),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wedge_callout_mirrors_with_its_tip() {
+        // A tip below and right of the centre draws the mirror image of the same tip on the left;
+        // the same for a tip right of the centre, above or below it. presetShapeDefinitions puts
+        // the wedge's base at 2..5 twelfths of the edge on the near side of the centre and at
+        // 7..10 twelfths on the far side.
+        let (w, h) = (240.0, 120.0);
+        // Sorted and deduplicated: the outline closes on the corner it starts from, which the
+        // mirror moves to the opposite corner.
+        let sorted = |mut v: Vec<Point>| {
+            v.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+            v.dedup_by(|a, b| (*a - *b).hypot() < 1e-9);
+            v
+        };
+        for (right, left, flip_x) in [([10000.0, 80000.0], [-10000.0, 80000.0], true), ([80000.0, 10000.0], [80000.0, -10000.0], false)] {
+            let a = vertices(&build("wedgeRectCallout", w, h, &right).unwrap().paths[0].path);
+            let b = vertices(&build("wedgeRectCallout", w, h, &left).unwrap().paths[0].path);
+            let b: Vec<Point> = b.iter().map(|p| if flip_x { Point::new(w - p.x, p.y) } else { Point::new(p.x, h - p.y) }).collect();
+            let (a, b) = (sorted(a), sorted(b));
+            assert_eq!(a.len(), b.len(), "{right:?}: {a:?} vs mirrored {left:?}: {b:?}");
+            for (p, q) in a.iter().zip(&b) {
+                assert!((*p - *q).hypot() < 1e-6, "{right:?}: {a:?}\n is not the mirror of {left:?}: {b:?}");
+            }
+        }
+        // The bottom wedge of a tip right of the centre leaves the edge at 7/12 and 10/12 of the width.
+        let a = vertices(&build("wedgeRectCallout", w, h, &[10000.0, 80000.0]).unwrap().paths[0].path);
+        for x in [w * 7.0 / 12.0, w * 10.0 / 12.0] {
+            assert!(a.iter().any(|p| (p.x - x).abs() < 1e-6 && (p.y - h).abs() < 1e-6), "no wedge corner at ({x}, {h}): {a:?}");
         }
     }
 }

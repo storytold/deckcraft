@@ -8,7 +8,10 @@ use deckcraft_model::style::{Dash, Glow, Gradient, GradientShape, GradientStop, 
 use deckcraft_model::{ColorRef, Effects, Fill, Geom, Line, ShapeStyle};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, color_param, color_value, edit_geometry, edit_shapes, f64_param, has_selection,
+    has_slide, id_param, ok, str_param, targets, usize_param, with_param, xfrm_of,
+};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -1519,6 +1522,8 @@ fn ink_to_shape(s: &mut Session, _p: &Value) -> Result<Value> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use deckcraft_model::ShapeId;
+
     use super::*;
     use serde_json::json;
 
@@ -1646,7 +1651,7 @@ mod tests {
         let mut s = Session::with_new();
         s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [10.0, 10.0, 30.0, 30.0]})).unwrap();
         let st = s.active_mut().unwrap();
-        st.interaction = Some(crate::Interaction { label: "Move".into(), doc: st.doc.clone(), selection: st.selection.clone() });
+        st.interaction = Some(crate::Interaction { label: "Move".into(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind: None });
         s.execute("shape.rotate", &json!({"gesture": "end", "ids": []})).unwrap();
         assert_eq!(s.active().unwrap().interaction.as_ref().unwrap().label, "Move");
     }

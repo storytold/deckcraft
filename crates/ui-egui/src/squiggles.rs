@@ -64,16 +64,9 @@ struct Done {
     ranges: Vec<(Tag, usize, usize)>,
 }
 
+/// Return the shared application clock in milliseconds for spelling-squiggle animation timing.
 fn now_ms() -> f64 {
-    #[cfg(target_arch = "wasm32")]
-    {
-        js_sys::Date::now()
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-        T0.get_or_init(std::time::Instant::now).elapsed().as_secs_f64() * 1000.0
-    }
+    crate::now_ms()
 }
 
 /// The checking itself, step by step: the newest job of each kind, a paragraph at a time, with
@@ -249,6 +242,15 @@ pub const LANGS: &[(&str, &str)] = &[
 /// The display name of a language tag (the tag itself when it isn't in [`LANGS`]).
 pub fn lang_name(tag: &str) -> String {
     LANGS.iter().find(|(_, t)| t.eq_ignore_ascii_case(tag)).map_or_else(|| tag.to_string(), |(n, _)| n.to_string())
+}
+
+/// A language name the current interface fonts can actually draw: the native name when every
+/// character has a glyph, otherwise the tag. On a machine without a Korean, Chinese or Hebrew
+/// face, egui 0.37's strict missing-glyph policy would abort the frame instead of drawing boxes,
+/// so state the fallback explicitly (and never skip the row).
+pub fn display_lang_name(ctx: &egui::Context, tag: &str) -> String {
+    let name = lang_name(tag);
+    if ctx.fonts_mut(|f| f.has_glyphs(&egui::FontId::proportional(13.0), &name)) { name } else { tag.to_string() }
 }
 
 /// The flagged word (misspelt or repeated) of `pp` starting at `start`, with what the menu offers.

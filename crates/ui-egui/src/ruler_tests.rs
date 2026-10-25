@@ -34,6 +34,7 @@ fn ruler(h: &mut Harness<'_, SlideApp>) -> serde_json::Value {
 
 #[test]
 fn drag_indents_add_move_and_remove_tabs_on_the_ruler() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let mut s = Session::with_new();
     s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
     let id = s.execute("insert.textBox", &json!({"rect": [100, 150, 500, 40]})).unwrap()["id"].as_u64().unwrap();
@@ -105,6 +106,7 @@ fn editing_harness() -> Harness<'static, SlideApp> {
 
 #[test]
 fn the_tab_selector_picks_the_kind_of_stop_a_click_sets() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     use egui_kittest::kittest::Queryable;
     let mut h = editing_harness();
     let (slide, k) = (h.state().slide_rect.unwrap(), h.state().canvas_scale);
@@ -127,6 +129,7 @@ fn the_tab_selector_picks_the_kind_of_stop_a_click_sets() {
 
 #[test]
 fn tabs_dialog_sets_clears_and_applies_on_ok() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     use egui_kittest::kittest::Queryable;
     let mut h = editing_harness();
     h.state_mut().session.execute("format.tabs", &json!({"add": {"pos": 36}})).unwrap();

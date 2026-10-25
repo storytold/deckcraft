@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ColorRef, Fill, LayoutType, Paragraph, PhType, Placeholder, Presentation, Run, RunProps, SchemeSlot, Shape, ShapeId, ShapeKind, ShapeStyle,
+    Slide, Table, TextBody, Theme, Xfrm, defaults, ink_pressure_is_legacy, ink_sample_width, parent_of, resolve, sibling_list_mut, style, text,
+    theme, walk,
+};
 use crate::resolve::Ctx;
 
 #[test]
@@ -293,4 +297,28 @@ fn table_text_takes_the_masters_other_style_and_shapes_the_default_text_style() 
     assert_eq!(pt(&in_placeholder), Some(14.0), "a table in a content placeholder");
     assert_eq!(pt(&Shape { text: Some(body.clone()), ..Default::default() }), Some(26.0), "a shape");
     assert_eq!(pt(&Shape { text: Some(body), text_box: true, ..Default::default() }), Some(26.0), "a text box");
+}
+
+#[test]
+fn only_web_and_mail_links_are_safe_to_open() {
+    use crate::text::safe_url;
+    for url in ["https://example.com", " HTTP://example.com/x", "mailto:someone@example.com"] {
+        assert!(safe_url(url), "{url}");
+    }
+    let refused = [
+        "https://",
+        "mailto:",
+        "file:///C:/notes.pdf",
+        "notes.pdf",
+        "javascript:alert(1)",
+        "ms-msdt:/id PCWDiagnostic",
+        "ldap://attacker.example/x",
+        "//attacker.example/share",
+        "\\\\attacker.example\\share",
+        "smb://attacker.example/share",
+        "search-ms:query=x",
+    ];
+    for url in refused {
+        assert!(!safe_url(url), "{url}");
+    }
 }

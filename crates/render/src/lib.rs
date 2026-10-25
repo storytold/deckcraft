@@ -53,6 +53,7 @@ pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
 pub use images::{decode as decode_image, gif_frame};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
+pub use pattern::{is_fg as pattern_is_fg, presets as pattern_presets, tile as pattern_tile};
 pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts, place_slide, text_outline};
 pub use table::cell_body as table_cell_body;
 pub use table::cell_rects as table_cell_rects;
@@ -1024,6 +1025,51 @@ impl Renderer {
         }
     }
 
+    /// Fill the filled sub-paths of `geo` (a `w` × `h` shape placed by `m`) with `fl`, faded per
+    /// sub-path by `fade`: `useBgFill` shows the slide background through the shape and `grpFill`
+    /// the group's fill.
+    #[allow(clippy::too_many_arguments)]
+    fn fill_geometry(
+        &self,
+        ctx: &mut RenderContext,
+        f: &Frame,
+        rctx: &Ctx,
+        fl: &Fill,
+        fill_ph: Option<Rgba>,
+        geo: &Geometry,
+        (w, h): (f64, f64),
+        m: Affine,
+        fade: &dyn Fn(usize) -> deckcraft_geom::morph::Fade,
+    ) {
+        for (i, sp) in geo.paths.iter().enumerate() {
+            if sp.fill == FillMode::None || fade(i).fill <= 0.0 {
+                continue;
+            }
+            ctx.set_transform(m);
+            ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+            match (fl, &self.bg) {
+                // `useBgFill`: the slide's background, laid out on the slide (not the
+                // shape), shows through the shape.
+                (Fill::Background, Some((bg, ph, view))) => {
+                    let slide = Rect::new(0.0, 0.0, f.pres.slide_size.width, f.pres.slide_size.height);
+                    let path = (view.inverse() * m) * sp.path.clone();
+                    paint::fill_path(ctx, rctx, bg, *ph, &path, slide, *view, sp.fill, fade(i).fill, f.pres);
+                }
+                // `grpFill`: the group's fill, laid out over the whole group.
+                (Fill::Group, _) => {
+                    if let Some((gf, gm, gbox)) = &self.group_fill
+                        && gm.determinant().abs() > 1e-12
+                    {
+                        let path = (gm.inverse() * m) * sp.path.clone();
+                        paint::fill_path(ctx, rctx, gf, None, &path, *gbox, *gm, sp.fill, fade(i).fill, f.pres);
+                    }
+                }
+                _ => paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres),
+            }
+            ctx.set_fill_rule(peniko::Fill::NonZero);
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn geometry_shape(
         &mut self,
@@ -1120,6 +1166,13 @@ impl Renderer {
         // Fill.
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
+                // The picture's own fill shows behind its transparent pixels, as in PowerPoint (an
+                // emphasis tint recolours it, as it does any shape's fill).
+                if s.fill.as_ref().is_some_and(|f| !f.is_none())
+                    && let Some(fl) = &fill
+                {
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, &geo, (w, h), m, &fade);
+                }
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 ctx.push_clip_layer(&outline);
@@ -1130,6 +1183,13 @@ impl Renderer {
             // An object DeckCraft doesn't model (an embedded OLE object, an unknown graphic): its
             // preview picture, stretched over the frame, as PowerPoint draws it.
             ShapeKind::Opaque { preview: Some(media), .. } => {
+                // An embedded object's fallback picture can carry a fill (old equation objects
+                // drawn on coloured boxes): behind the preview, as for a picture.
+                if s.fill.as_ref().is_some_and(|f| !f.is_none())
+                    && let Some(fl) = &fill
+                {
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, &geo, (w, h), m, &fade);
+                }
                 ctx.set_transform(m);
                 let pf = deckcraft_model::style::PictureFill { media: *media, ..Default::default() };
                 paint::picture(ctx, f.pres, &pf, Rect::new(0.0, 0.0, w, h), m, None);
@@ -1152,35 +1212,9 @@ impl Renderer {
             }
             _ => {
                 if let Some(fl) = &fill
-                    && !(empty_ph && f.opts.edit && s.fill.is_none())
+                    && !(empty_ph && f.opts.edit && s.fill.is_none() && s.line.is_none() && s.style.is_none())
                 {
-                    for (i, sp) in geo.paths.iter().enumerate() {
-                        if sp.fill == FillMode::None || fade(i).fill <= 0.0 {
-                            continue;
-                        }
-                        ctx.set_transform(m);
-                        ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
-                        match (fl, &self.bg) {
-                            // `useBgFill`: the slide's background, laid out on the slide (not the
-                            // shape), shows through the shape.
-                            (Fill::Background, Some((bg, ph, view))) => {
-                                let slide = Rect::new(0.0, 0.0, f.pres.slide_size.width, f.pres.slide_size.height);
-                                let path = (view.inverse() * m) * sp.path.clone();
-                                paint::fill_path(ctx, rctx, bg, *ph, &path, slide, *view, sp.fill, fade(i).fill, f.pres);
-                            }
-                            // `grpFill`: the group's fill, laid out over the whole group.
-                            (Fill::Group, _) => {
-                                if let Some((gf, gm, gbox)) = &self.group_fill
-                                    && gm.determinant().abs() > 1e-12
-                                {
-                                    let path = (gm.inverse() * m) * sp.path.clone();
-                                    paint::fill_path(ctx, rctx, gf, None, &path, *gbox, *gm, sp.fill, fade(i).fill, f.pres);
-                                }
-                            }
-                            _ => paint::fill_path(ctx, rctx, fl, fill_ph, &sp.path, Rect::new(0.0, 0.0, w, h), m, sp.fill, fade(i).fill, f.pres),
-                        }
-                        ctx.set_fill_rule(peniko::Fill::NonZero);
-                    }
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, &geo, (w, h), m, &fade);
                 }
             }
         }
