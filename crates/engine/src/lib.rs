@@ -244,7 +244,9 @@ fn next_uid() -> u64 {
 }
 
 impl DocState {
-    pub fn new(doc: Presentation, path: Option<String>, title: String) -> Self {
+    pub fn new(mut doc: Presentation, path: Option<String>, title: String) -> Self {
+        fonts::install_embedded_fonts(&mut doc);
+        let missing_fonts = fonts::missing_fonts(&doc);
         let doc = Arc::new(doc);
         DocState {
             saved_doc: doc.clone(),
@@ -256,7 +258,7 @@ impl DocState {
             interaction: None,
             uid: next_uid(),
             title,
-            missing_fonts: Vec::new(),
+            missing_fonts,
             composition: None,
             compare: None,
             last_duplicate: None,
@@ -456,6 +458,11 @@ pub struct Clipboard {
     /// The copied shapes' theme colours (colour map applied) and fonts, for Paste Special ›
     /// Keep Source Formatting.
     pub source_theme: Option<(deckcraft_color::ColorScheme, deckcraft_model::theme::FontScheme)>,
+    /// Runtime font scope retained for Paste Special › Picture, without changing saved names.
+    pub source_font_aliases: Arc<Vec<(String, String)>>,
+    /// Embedded definitions and font bytes available to formatting-preserving paste.
+    pub source_fonts: Vec<deckcraft_model::EmbeddedFont>,
+    pub source_font_media: Vec<deckcraft_model::MediaItem>,
     /// How many times the shapes were pasted (each paste offsets further).
     pub pastes: u32,
 }
@@ -845,5 +852,7 @@ pub(crate) fn push_undo(st: &mut DocState, e: HistoryEntry) {
 mod soak_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_document_fonts;
 #[cfg(test)]
 mod tests_keys;

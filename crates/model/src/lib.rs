@@ -996,6 +996,9 @@ pub struct Presentation {
     pub next_id: u32,
     /// Embedded fonts. The face bytes live in [`Self::media`].
     pub embedded_fonts: Vec<EmbeddedFont>,
+    /// Runtime-only font aliases for this document's embedded faces. Saved names stay unchanged.
+    #[serde(skip)]
+    pub font_aliases: Arc<Vec<(String, String)>>,
     /// Table styles defined in the file (`ppt/tableStyles.xml`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub table_styles: Vec<table::TableStyleDef>,
@@ -1030,6 +1033,11 @@ impl Default for Presentation {
 }
 
 impl Presentation {
+    /// Resolve a saved family name only at the rendering font-database boundary.
+    pub fn render_font_family<'a>(&'a self, family: &'a str) -> &'a str {
+        self.font_aliases.iter().find(|(source, _)| source.eq_ignore_ascii_case(family.trim())).map_or(family, |(_, alias)| alias.as_str())
+    }
+
     /// A fresh id, unique across slides, shapes, layouts, masters and media in this deck. `None`
     /// once every id is in use (a hostile file can arrive that way): the deck cannot grow
     /// further, and callers must refuse the change rather than duplicate ids (#407).

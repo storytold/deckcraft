@@ -1,6 +1,6 @@
 # DeckCraft architecture
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: minor, community PR wave 2026-10-14: 320 engine commands, 41 dialogs, the `metafile` crate, 1,641 tests; duplicated L2/L5/L6 rows and headers folded; previous: minor, transition frames) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (document-local font alias registration API; previous: minor, native chart payloads stored in bounded ZIP members) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft is built today. The binding rules (layering, everything is a command, thin UI, never
 break wasm, never crash) are in [AGENTS.md](../AGENTS.md) §3–§5; this document describes what
@@ -26,6 +26,21 @@ nothing below L6 uses egui, eframe, winit or rfd.
 
 The media codecs and containers are clean-room pure Rust, 59k lines, shared in spirit with
 FilmCraft.
+
+## Document font registration
+
+`FontDb::add_document_fonts` accepts `(bytes, source_family, private_alias)` entries for document
+embedders. It selects faces by typographic or Windows family name before accepting a renamed
+single-family file; an unmatched multi-family collection contributes nothing. Selected styles,
+weights and variable instances stay intact, but only the private alias is registered: neither the
+original typographic name nor the Windows name can resolve to those faces.
+
+Callers must choose distinct aliases for different documents/subsets and resolve their text using
+those aliases. Aliases are ordinary database names, not access controls or separate databases.
+All styles in a call are published together; repeat alias/style registrations add nothing.
+`add_font` and installed-font loading retain their existing public names and deduplication.
+This is an additive library API; the application's PPTX registration path is unchanged.
+
 
 ## Data model
 
@@ -81,6 +96,7 @@ macOS, Windows, Linux, FreeBSD and web artifacts.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Document embedders can register font bytes under caller-owned aliases without exposing source family names; collection selection honors typographic/Windows names before single-family fallback. Application callers, parity scores and milestone scope unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one L2/L5/L6 row each; command registry 320 (`cmd!` registrations in `cmd/*`), 41 dialogs (titled in `dialogs.rs`), 202k lines, 24 crates (`metafile` added at L0), 1,641 tests. The per-PR rows below give the counts each PR saw on its own branch |
 | 2026-10-14 | minor | Size and Position dialog (`shape.sizePosition`): position, size, rotation, scale and lock aspect in one undo step. 227 commands, 28 dialogs |

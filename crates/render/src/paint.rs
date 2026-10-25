@@ -205,7 +205,7 @@ pub fn picture(ctx: &mut RenderContext, pres: &Presentation, pf: &PictureFill, b
     // of it, magnified (#762).
     let want = (dest.width().abs().max(dest.height().abs()) * px_scale).max(1.0);
     let frame = gif_time.and_then(|t| images::gif_pixmap(&item.data, &pf.adjust, t));
-    let Some(pm) = frame.or_else(|| images::decode_for(&item.data, want, &pf.adjust)) else {
+    let Some(pm) = frame.or_else(|| images::decode_for_presentation(&item.data, want, &pf.adjust, pres)) else {
         missing(ctx, bounds);
         return;
     };

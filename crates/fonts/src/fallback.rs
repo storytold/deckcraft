@@ -151,7 +151,7 @@ impl FontDb {
         {
             return f;
         }
-        let first = || chain.first().cloned().unwrap_or_else(|| self.face(crate::DEFAULT_FAMILY, style));
+        let first = || chain.first().cloned().unwrap_or_else(|| self.public_face(crate::DEFAULT_FAMILY, style));
         let Some(key) = cluster.iter().copied().find(|c| !ignorable(*c)) else { return first() };
         let script = cluster.iter().find_map(|c| script_of(*c));
         // Scripts with a platform cascade (Arabic, Hebrew, Thai, Devanagari): the bundled face,
@@ -161,7 +161,7 @@ impl FontDb {
             let bundled = bundled_families(s);
             for fam in &bundled {
                 let f = self.face(fam, style);
-                if f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
+                if !f.is_document_font() && f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
                     return f;
                 }
             }
@@ -171,7 +171,7 @@ impl FontDb {
                 }
                 if self.is_loaded(fam) || self.has_family(fam) {
                     let f = self.face(fam, style);
-                    if f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
+                    if !f.is_document_font() && f.family.eq_ignore_ascii_case(fam) && covers_cluster(&f, cluster) {
                         return f;
                     }
                 }
@@ -191,7 +191,7 @@ impl FontDb {
             _ => {
                 // Searched before `first` runs: it may load the default family, which needs the
                 // faces' write lock, so the read lock must not be held across it.
-                let found = self.read_faces().iter().find(|f| !f.is_color() && covers_cluster(f, cluster)).cloned();
+                let found = self.read_faces().iter().find(|f| !f.is_document_font() && !f.is_color() && covers_cluster(f, cluster)).cloned();
                 found.unwrap_or_else(first)
             }
         };
@@ -214,6 +214,7 @@ impl FontDb {
             let faces = db.read_faces();
             let mut v: Vec<&Arc<FontFace>> = faces
                 .iter()
+                .filter(|f| !f.is_document_font())
                 .filter(|f| !bundled.iter().any(|b| f.family.eq_ignore_ascii_case(b)) && !CRAFT_FONTS.iter().any(|c| c.family == f.family))
                 .filter(|f| covers_cluster(f, cluster))
                 .collect();

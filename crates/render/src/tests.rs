@@ -1860,6 +1860,92 @@ fn metafile_text_ink_lands_at_its_reference_point() {
 }
 
 #[test]
+fn metafile_document_fonts_keep_metrics_and_cached_pictures_scoped() {
+    use std::sync::Arc;
+
+    let bytes = include_bytes!("../../fonts/tests/fixtures/legacy-regular.ttf").to_vec();
+    let mut wider = bytes.clone();
+    // Keep the source family and square outline, changing only A's advance (700 -> 1000).
+    let tables = u16::from_be_bytes([wider[4], wider[5]]) as usize;
+    let hmtx = (0..tables).map(|i| 12 + 16 * i).find(|&r| &wider[r..r + 4] == b"hmtx").unwrap();
+    let offset = u32::from_be_bytes(wider[hmtx + 8..hmtx + 12].try_into().unwrap()) as usize;
+    wider[offset + 4..offset + 6].copy_from_slice(&1000_u16.to_be_bytes());
+    let db = deckcraft_fonts::FontDb::global();
+    assert_eq!(
+        db.add_document_fonts(vec![
+            (bytes, "DeckCraft Legacy".into(), "metafile-private-narrow".into()),
+            (wider, "DeckCraft Legacy".into(), "metafile-private-wide".into()),
+        ]),
+        2
+    );
+    let mut recs = font_records(-720, 0, " deckcraft legacy ", 0);
+    recs.push(text_record(360, 360, "AA", &[]));
+    let mut a = Presentation::default();
+    let media = a.add_media("scoped.wmf", "image/x-wmf", wmf_with(2880, 1440, &recs)).expect("media");
+    let fill = deckcraft_model::style::PictureFill { media, ..Default::default() };
+    Arc::make_mut(&mut a.slides[0]).shapes =
+        vec![Shape { id: ShapeId(606), xfrm: Some(Xfrm::new(0.0, 0.0, 288.0, 144.0)), kind: ShapeKind::Picture { fill }, ..Default::default() }];
+    a.font_aliases = Arc::new(vec![("DeckCraft Legacy".into(), "metafile-private-narrow".into())]);
+    let mut b = a.clone();
+    b.font_aliases = Arc::new(vec![("DeckCraft Legacy".into(), "metafile-private-wide".into())]);
+    let data = &a.media(media).expect("shared media").data;
+    assert!(Arc::ptr_eq(data, &b.media(media).unwrap().data));
+    let narrow = crate::metafile::rasterize_in(data, 288, Some(&a)).expect("narrow");
+    let wide = crate::metafile::rasterize_in(data, 288, Some(&b)).expect("wide");
+    let na = mf_ink(&narrow).expect("narrow squares");
+    let wb = mf_ink(&wide).expect("wide squares");
+    assert_eq!((na.0, na.1, na.3), (wb.0, wb.1, wb.3), "same source outlines and vertical metrics");
+    assert!((20..=23).contains(&(wb.2 - na.2)), "the second square follows its own font's advance: {na:?} vs {wb:?}");
+
+    let adj = deckcraft_model::style::PictureAdjust::default();
+    let cached_a = crate::images::decode_for_presentation(data, 288.0, &adj, &a).expect("cache a");
+    let cached_b = crate::images::decode_for_presentation(data, 288.0, &adj, &b).expect("cache b");
+    assert!(!Arc::ptr_eq(&cached_a, &cached_b), "identical metafile bytes do not share document fonts");
+    let snapshot = a.clone();
+    let cached_snapshot = crate::images::decode_for_presentation(data, 288.0, &adj, &snapshot).expect("snapshot cache");
+    assert!(Arc::ptr_eq(&cached_a, &cached_snapshot), "snapshots share the same font scope");
+    assert!(Arc::strong_count(&a.font_aliases) >= 3, "the cache retains the pointer-keyed scope");
+
+    let opts = RenderOpts { scale: 1.0, ..Default::default() };
+    let rendered_a = render_slide(&a, 0, &opts);
+    let rendered_b = render_slide(&b, 0, &opts);
+    assert!(rendered_a.pixel(100, 60)[0] < 20 && rendered_b.pixel(100, 60)[0] > 240);
+    assert!(rendered_a.pixel(140, 60)[0] > 240 && rendered_b.pixel(140, 60)[0] < 20);
+    assert_eq!(render_slide(&a, 0, &opts).pixels, rendered_a.pixels, "switching back restores the original scoped picture");
+    assert_eq!(render_slide(&b, 0, &opts).pixels, rendered_b.pixels);
+    let text = deckcraft_metafile::parse(data)
+        .expect("wmf")
+        .items
+        .into_iter()
+        .find_map(|item| match item {
+            deckcraft_metafile::Item::Text(text) => Some(text),
+            _ => None,
+        })
+        .expect("text");
+    assert_eq!(text.font.family.trim(), "deckcraft legacy", "source family is never replaced by the rendering alias");
+}
+
+#[test]
+fn raster_picture_cache_is_shared_across_document_font_scopes() {
+    use std::sync::Arc;
+
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(4, 2, image::Rgb([30, 60, 90])))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .expect("png");
+    let data = Arc::new(png.into_inner());
+    let a = Presentation { font_aliases: Arc::new(vec![("same source".into(), "raster-private-a".into())]), ..Default::default() };
+    let mut b = a.clone();
+    b.font_aliases = Arc::new(vec![("same source".into(), "raster-private-b".into())]);
+    let adj = deckcraft_model::style::PictureAdjust::default();
+    let standalone = crate::images::decode_for(&data, 64.0, &adj).expect("standalone");
+    let cached_a = crate::images::decode_for_presentation(&data, 64.0, &adj, &a).expect("a");
+    let cached_b = crate::images::decode_for_presentation(&data, 64.0, &adj, &b).expect("b");
+    assert!(Arc::ptr_eq(&standalone, &cached_a) && Arc::ptr_eq(&cached_a, &cached_b));
+    assert_eq!((cached_a.width(), cached_a.height()), (4, 2));
+}
+
+#[test]
 fn metafile_text_centre_baseline_and_escapement() {
     // TA_CENTER | TA_BASELINE at (72, 36) pt: the ink is centred on 144 px and sits on 72 px.
     let mut recs = font_records(-720, 0, "Arial", 24 | 6);

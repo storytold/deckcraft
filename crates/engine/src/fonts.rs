@@ -6,19 +6,36 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::text::{Bullet, TextBody};
 use deckcraft_model::{Presentation, Shape, ShapeKind};
 
-/// Load each embedded face into the font database, so text in that family draws with the file's
-/// font on a machine that doesn't have it. A face already loaded (bundled or installed) stays;
-/// the part bytes are kept either way. MicroType Express subsets have no TrueType or OpenType
-/// font to load and are left for the round trip.
-pub fn install_embedded_fonts(p: &Presentation) {
+/// Install supported embedded faces under private document-local families. Original names and
+/// unsupported MicroType Express subsets remain unchanged for editing and round trip.
+pub fn install_embedded_fonts(p: &mut Presentation) {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT_SCOPE: AtomicU64 = AtomicU64::new(1);
+    let scope = NEXT_SCOPE.fetch_add(1, Ordering::Relaxed);
     let db = FontDb::global();
+    let mut aliases: Vec<(String, String)> = Vec::new();
+    let mut faces = Vec::new();
     for font in &p.embedded_fonts {
+        let family = font.typeface.trim();
+        if family.is_empty() {
+            continue;
+        }
+        let alias = if let Some((_, alias)) = aliases.iter().find(|(source, _)| source.eq_ignore_ascii_case(family)) {
+            alias.clone()
+        } else {
+            let alias = format!("deckcraft-document-{scope}-font-{}", aliases.len());
+            aliases.push((family.to_owned(), alias.clone()));
+            alias
+        };
         for id in font.faces().into_iter().flatten() {
             let Some(item) = p.media(id) else { continue };
             let Some(sfnt) = deckcraft_fonts::embedded_sfnt(&item.data) else { continue };
-            db.add_font(sfnt.to_vec());
+            faces.push((sfnt.to_vec(), family.to_owned(), alias.clone()));
         }
     }
+    db.add_document_fonts(faces);
+    aliases.retain(|(_, alias)| db.has_family(alias));
+    p.font_aliases = std::sync::Arc::new(aliases);
 }
 
 /// The font families the slides' text is drawn in (theme fonts resolved, bullet fonts included)
@@ -27,7 +44,7 @@ pub fn missing_fonts(p: &Presentation) -> Vec<String> {
     let db = FontDb::global();
     let mut out: Vec<String> = Vec::new();
     for family in used_fonts(p) {
-        if !db.has_family(&family) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
+        if !db.has_family(p.render_font_family(&family)) && !out.iter().any(|f| f.eq_ignore_ascii_case(&family)) {
             out.push(family);
         }
     }
@@ -38,21 +55,21 @@ pub fn missing_fonts(p: &Presentation) -> Vec<String> {
 /// The families the slides' text runs and bullets are drawn in.
 pub fn used_fonts(p: &Presentation) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
-    let mut add = |f: String| {
-        let f = f.trim().to_string();
-        if !f.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(&f)) {
-            out.push(f);
+    let mut add = |f: &str| {
+        let f = f.trim();
+        if !f.is_empty() && !out.iter().any(|o| o.eq_ignore_ascii_case(f)) {
+            out.push(f.to_string());
         }
     };
     for slide in &p.slides {
         let Some(ctx) = Ctx::for_slide(p, slide) else { continue };
         deckcraft_model::walk(&slide.shapes, &mut |s, _| {
             if let Some(body) = &s.text {
-                body_fonts(&ctx, s, body, &mut add);
+                body_fonts(&ctx, s, body, false, None, &mut add);
             }
             if let ShapeKind::Table(t) = &s.kind {
                 for cell in t.rows.iter().flat_map(|r| &r.cells) {
-                    body_fonts(&ctx, s, &cell.text, &mut add);
+                    body_fonts(&ctx, s, &cell.text, false, None, &mut add);
                 }
             }
         });
@@ -60,21 +77,68 @@ pub fn used_fonts(p: &Presentation) -> Vec<String> {
     out
 }
 
-fn body_fonts(ctx: &Ctx, s: &Shape, body: &TextBody, add: &mut dyn FnMut(String)) {
-    for para in &body.paragraphs {
-        let has_text = para.runs.iter().any(|r| !r.text.trim().is_empty());
-        if !has_text {
+pub(crate) fn body_fonts(
+    ctx: &Ctx,
+    s: &Shape,
+    body: &TextBody,
+    include_slots: bool,
+    range: Option<(deckcraft_model::edit::Pos, deckcraft_model::edit::Pos)>,
+    add: &mut dyn FnMut(&str),
+) {
+    for (pi, para) in body.paragraphs.iter().enumerate() {
+        if range.is_some_and(|(a, b)| pi < a.0 || pi > b.0) {
             continue;
         }
-        for run in para.runs.iter().filter(|r| !r.text.trim().is_empty()) {
+        let mut offset = 0usize;
+        let mut has_text = false;
+        for run in &para.runs {
+            let (from, count) = if let Some((a, b)) = range {
+                let end = offset.saturating_add(run.char_len());
+                let from = if pi == a.0 { a.1.saturating_sub(offset) } else { 0 };
+                let to = if pi == b.0 { b.1.min(end).saturating_sub(offset) } else { end - offset };
+                offset = end;
+                if from >= to {
+                    continue;
+                }
+                if matches!(run.kind, deckcraft_model::text::RunKind::Text) { (from, to - from) } else { (0, usize::MAX) }
+            } else {
+                (0, usize::MAX)
+            };
+            let chars = run.text.chars().skip(from).take(count);
+            if !chars.clone().any(|c| !c.is_whitespace()) {
+                continue;
+            }
+            has_text = true;
             let r = resolve::run(ctx, s, para, &run.props);
-            add(resolve::font_family(ctx, &r));
+            add(&resolve::font_family(ctx, &r));
+            if include_slots {
+                let major = r.font.as_deref().is_some_and(|f| f.starts_with("+mj"));
+                for (explicit, fallback) in
+                    [(&r.font_ea, if major { "+mj-ea" } else { "+mn-ea" }), (&r.font_cs, if major { "+mj-cs" } else { "+mn-cs" }), (&r.font_sym, "")]
+                {
+                    add(&ctx.master.theme.font(explicit.as_deref().unwrap_or(fallback)));
+                }
+                let set = if major { &ctx.master.theme.fonts.major } else { &ctx.master.theme.fonts.minor };
+                let mut previous = None;
+                for script in chars.filter_map(deckcraft_fonts::script::script_of) {
+                    if previous == Some(script) {
+                        continue;
+                    }
+                    previous = Some(script);
+                    if let Ok(tag) = std::str::from_utf8(&script)
+                        && let Some(family) = set.script(tag)
+                    {
+                        add(family);
+                    }
+                }
+            }
         }
         let pp = resolve::para(ctx, s, para);
-        if matches!(pp.bullet, Some(Bullet::Char { .. }))
+        if has_text
+            && matches!(pp.bullet, Some(Bullet::Char { .. }))
             && let Some(f) = pp.bullet_font.as_deref()
         {
-            add(ctx.master.theme.font(f));
+            add(&ctx.master.theme.font(f));
         }
     }
 }

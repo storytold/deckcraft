@@ -436,7 +436,7 @@ fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgba>) -> Styl
     let family = resolve::font_family(ctx, r);
     let bold = r.bold.unwrap_or(false);
     let italic = r.italic.unwrap_or(false);
-    let face = FontDb::global().document_face(&family, style_name(bold, italic));
+    let face = FontDb::global().document_face(ctx.pres.render_font_family(&family), style_name(bold, italic));
     let fake_bold = bold && face.weight < 550.0;
     let fake_italic = italic && !face.italic;
     let size = (r.size.unwrap_or(18.0) * scale).clamp(0.5, 4000.0);
@@ -504,6 +504,7 @@ fn face_chain(ctx: &Ctx, st: &Style, slot: FontSlot, script: Option<ScriptTag>) 
     let db = FontDb::global();
     let mut chain: Vec<Arc<FontFace>> = Vec::with_capacity(3);
     let mut push = |family: &str| {
+        let family = ctx.pres.render_font_family(family);
         // Only families that exist: `FontDb::face` would substitute the default face.
         if db.has_family(family) {
             let f = db.face(family, st.style_name);
@@ -878,6 +879,7 @@ fn shape_cells(
             .sym
             .as_deref()
             .filter(|_| cluster.first().is_some_and(|c| ('\u{F000}'..='\u{F0FF}').contains(c)))
+            .map(|f| ctx.pres.render_font_family(f))
             .filter(|f| db.has_family(f))
             .map(|f| db.face(f, st.style_name))
             .filter(|f| covers_symbol(f, cluster.first().copied().unwrap_or(' ')));
@@ -1168,7 +1170,7 @@ fn symbol_map_char(face: &FontFace, ch: char, sym: Option<&str>) -> Option<char>
         return None;
     }
     let sym = sym?;
-    if !is_symbol_font(sym) || !face.family.eq_ignore_ascii_case(sym) {
+    if !is_symbol_font(sym) || !face.source_family().eq_ignore_ascii_case(sym) {
         return None;
     }
     symbol_font_draw(face, code)
@@ -1350,7 +1352,7 @@ fn symbol_font_draw(face: &FontFace, code: u32) -> Option<char> {
         return Some(pua);
     }
     // The table below is the Symbol font's encoding; Wingdings, Webdings and the like are not Symbol.
-    if !face.family.eq_ignore_ascii_case("symbol") {
+    if !face.source_family().eq_ignore_ascii_case("symbol") {
         return None;
     }
     if let Some(real) = symbol_unicode(code) {
@@ -1371,7 +1373,7 @@ fn symbol_font_draw(face: &FontFace, code: u32) -> Option<char> {
 /// symbol font that `face` is (not a substitute) and it has the glyph.
 fn symbol_font_char(face: &FontFace, c: &str, font: Option<&str>) -> Option<char> {
     let font = font?;
-    if !is_symbol_font(font) || !face.family.eq_ignore_ascii_case(font) {
+    if !is_symbol_font(font) || !face.source_family().eq_ignore_ascii_case(font) {
         return None;
     }
     let first = c.chars().next()?;
@@ -1936,7 +1938,10 @@ fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &BodyProps, opts
                     // The run's own fonts set the line; a fallback face (emoji, a symbol or a
                     // script the run's fonts lack) does not move the baseline in PowerPoint.
                     let own = Arc::ptr_eq(face, &st.face)
-                        || [st.ea.as_deref(), st.cs.as_deref(), st.sym.as_deref()].into_iter().flatten().any(|f| face.family.eq_ignore_ascii_case(f));
+                        || [st.ea.as_deref(), st.cs.as_deref(), st.sym.as_deref()]
+                            .into_iter()
+                            .flatten()
+                            .any(|f| face.source_family().eq_ignore_ascii_case(f));
                     let (a, d) = line_metrics(if own { face } else { &st.face }, sz);
                     asc = asc.max(a);
                     desc = desc.max(d);

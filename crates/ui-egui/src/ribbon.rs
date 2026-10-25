@@ -545,6 +545,13 @@ pub fn font_families(app: &SlideApp) -> Vec<String> {
     }
     v.extend(deckcraft_fonts::FontDb::global().families());
     v.dedup();
+    if let Some(st) = app.session.active() {
+        for (source, _) in st.doc.font_aliases.iter() {
+            if !v.iter().any(|family| family.eq_ignore_ascii_case(source)) {
+                v.push(source.clone());
+            }
+        }
+    }
     v
 }
 
@@ -3566,6 +3573,33 @@ fn chart_menu_types() -> Vec<Option<deckcraft_model::chart::ChartType>> {
 mod tests {
     use super::*;
     use deckcraft_model::anim::TextBuild;
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn font_picker_keeps_only_active_document_embedded_families() {
+        let mut p = deckcraft_model::Presentation::default();
+        let id = p.add_media("local.ttf", "font/ttf", include_bytes!("../../fonts/tests/fixtures/legacy-regular.ttf").to_vec()).unwrap();
+        p.embedded_fonts.push(deckcraft_model::EmbeddedFont { typeface: "DeckCraft Legacy".into(), regular: Some(id), ..Default::default() });
+        let mut session = deckcraft_engine::Session::new();
+        session.add_document(deckcraft_engine::DocState::new(p, None, "Embedded".into()));
+        let mut app = SlideApp::new(session, crate::Services::default());
+        let choices = font_families(&app);
+        assert!(choices.iter().any(|family| family == "DeckCraft Legacy"), "embedded family must remain selectable by its saved name");
+        assert!(!choices.iter().any(|family| family.starts_with("deckcraft-document-")), "private aliases must not appear in the picker");
+        use egui_kittest::kittest::Queryable;
+        let shape = app.session.execute("shape.insert", &json!({"preset": "rect", "rect": [20, 20, 200, 80], "text": "A"})).unwrap()["id"].clone();
+        app.session.execute("edit.select", &json!({"ids": [shape]})).unwrap();
+        let mut harness = egui_kittest::Harness::builder()
+            .with_size(egui::vec2(800.0, 600.0))
+            .build_ui_state(|ui, app: &mut SlideApp| font_group(app, ui, &json!({})), app);
+        harness.run_steps(2);
+        harness.get_by_label("font").click();
+        harness.run_steps(2);
+        assert!(harness.query_by_label("DeckCraft Legacy").is_some(), "the real font popup contains the original embedded name");
+        let app = harness.state_mut();
+        app.session.add_document(deckcraft_engine::DocState::new(deckcraft_model::Presentation::default(), None, "Other".into()));
+        assert!(!font_families(app).iter().any(|family| family == "DeckCraft Legacy"), "another document must not inherit the family");
+    }
 
     /// Paints one transition tile and one animation tile and returns the colour of every label.
     fn tile_label_colours(dark: bool) -> Vec<Color32> {

@@ -108,10 +108,12 @@ enum FontBytes {
 /// One loaded font face.
 pub struct FontFace {
     id: u32,
-    /// Typographic family name (e.g. "Source Sans 3").
+    /// Lookup family: the typographic family for public faces, a private alias for document fonts.
     pub family: String,
     /// Typographic style name (e.g. "Semibold", "Italic").
     pub style: String,
+    /// The document's declared family for a private alias; never a global lookup name.
+    source_family: Option<String>,
     /// The Windows (GDI) family and style names (`name` IDs 1 and 2) when the family differs from
     /// the typographic one: "Segoe UI Semibold" / "Regular" for Segoe UI Semibold. Documents name
     /// fonts this way.
@@ -208,6 +210,14 @@ impl std::fmt::Debug for FontFace {
 }
 
 impl FontFace {
+    /// The document's original font name, or the ordinary face's family. This identity is for
+    /// source-specific text handling, not font lookup; document faces are looked up by `family`.
+    pub fn source_family(&self) -> &str {
+        self.source_family.as_deref().unwrap_or(&self.family)
+    }
+    pub(crate) fn is_document_font(&self) -> bool {
+        self.source_family.is_some()
+    }
     pub fn data(&self) -> &[u8] {
         match &self.bytes {
             FontBytes::Static(b) => b,
@@ -691,6 +701,7 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, coords
         id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
         family,
         style,
+        source_family: None,
         legacy,
         weight,
         italic,
@@ -832,9 +843,9 @@ impl FontDb {
         self.catalog.read().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
-    /// Family names available (loaded plus cataloged system fonts), sorted and deduplicated.
+    /// Public family names available (loaded plus cataloged system fonts), sorted and deduplicated.
     pub fn families(&self) -> Vec<String> {
-        let mut v: Vec<String> = self.read_faces().iter().map(|f| f.family.clone()).collect();
+        let mut v: Vec<String> = self.read_faces().iter().filter(|f| !f.is_document_font()).map(|f| f.family.clone()).collect();
         #[cfg(not(target_arch = "wasm32"))]
         v.extend(self.read_catalog().iter().map(|c| c.family.clone()));
         v.sort_by_key(|a| a.to_lowercase());
@@ -864,23 +875,62 @@ impl FontDb {
     /// Add a user font (TTF/OTF/TTC bytes). Returns the number of faces added (0 if unparseable or
     /// every face was already present).
     pub fn add_font(&self, bytes: Vec<u8>) -> usize {
-        self.add_fonts(vec![bytes])
+        self.add_fonts(std::iter::once((bytes, None)))
+    }
+
+    /// Register `(bytes, source_family, private_alias)` font files without exposing their original
+    /// typographic or Windows family names. Faces matching either source name are selected first;
+    /// if none match, a single-family file accepts the document's declared name.
+    ///
+    /// All selected styles are published together. Returns the number of faces added (0 for
+    /// unparseable files, unmatched multi-family collections, empty aliases or existing styles).
+    /// Names are trimmed; family/style deduplication is case-insensitive, as with [`Self::add_font`].
+    /// Aliases are caller-chosen lookup names, not access controls: use a distinct alias for each
+    /// document's subset/content, and resolve its text through that alias. They are excluded from
+    /// global family discovery and fallback; explicit alias lookup and styles remain available.
+    pub fn add_document_fonts(&self, files: Vec<(Vec<u8>, String, String)>) -> usize {
+        self.add_fonts(files.into_iter().map(|(bytes, family, alias)| (bytes, Some((family, alias)))))
     }
 
     /// Add font files together: lookups see all of their faces or none, never part of a family.
     /// Returns the number of faces added.
-    fn add_fonts(&self, files: Vec<Vec<u8>>) -> usize {
+    fn add_fonts(&self, files: impl IntoIterator<Item = (Vec<u8>, Option<(String, String)>)>) -> usize {
         let present = |faces: &[Arc<FontFace>], family: &str, style: &str| {
             faces.iter().any(|f| f.family.eq_ignore_ascii_case(family) && f.style.eq_ignore_ascii_case(style))
         };
         let mut new = Vec::new();
-        for bytes in files {
+        for (bytes, registration) in files {
+            if registration.as_ref().is_some_and(|(_, alias)| alias.trim().is_empty()) {
+                continue;
+            }
             let data = Arc::new(bytes);
-            for (i, family, style, coords) in enumerate_faces(&data) {
+            let found = enumerate_faces(&data);
+            let matches = |index, family: &str, source: &str| {
+                family.eq_ignore_ascii_case(source.trim())
+                    || skrifa::FontRef::from_index(&data, index)
+                        .ok()
+                        .and_then(|f| name(&f, &[StringId::FAMILY_NAME]))
+                        .is_some_and(|legacy| legacy.eq_ignore_ascii_case(source.trim()))
+            };
+            let source_matches = registration.as_ref().is_some_and(|(source, _)| found.iter().any(|(i, family, _, _)| matches(*i, family, source)));
+            let single_family = registration.is_some()
+                && !source_matches
+                && found.first().is_some_and(|(_, first, _, _)| found.iter().all(|(_, family, _, _)| family.eq_ignore_ascii_case(first)));
+            for (i, mut family, style, coords) in found {
+                if let Some((source, alias)) = &registration {
+                    if (source_matches && !matches(i, &family, source)) || (!source_matches && !single_family) {
+                        continue;
+                    }
+                    family = alias.trim().to_owned();
+                }
                 if present(&self.read_faces(), &family, &style) {
                     continue;
                 }
-                if let Some(f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
+                if let Some(mut f) = make_face(FontBytes::Owned(data.clone()), i, family, style, coords) {
+                    if let Some((source, _)) = &registration {
+                        f.source_family = Some(source.trim().to_owned());
+                        f.legacy = None;
+                    }
                     new.push(Arc::new(f));
                 }
             }
@@ -999,7 +1049,13 @@ impl FontDb {
             p.dedup();
             p
         };
-        self.add_fonts(paths.iter().filter(|p| std::fs::metadata(p).is_ok_and(|m| font_file_ok(&m))).filter_map(|p| std::fs::read(p).ok()).collect());
+        self.add_fonts(
+            paths
+                .iter()
+                .filter(|p| std::fs::metadata(p).is_ok_and(|m| font_file_ok(&m)))
+                .filter_map(|p| std::fs::read(p).ok())
+                .map(|bytes| (bytes, None)),
+        );
         self.is_loaded(family)
     }
 
@@ -1007,22 +1063,31 @@ impl FontDb {
     /// an open substitute ([`substitutes`]), then to Inter. Installed system fonts are found by name
     /// whatever ran before.
     pub fn face(&self, family: &str, style: &str) -> Arc<FontFace> {
-        if let Some(f) = self.try_family(family, style) {
+        self.resolve_face(family, style, true)
+    }
+
+    pub(crate) fn public_face(&self, family: &str, style: &str) -> Arc<FontFace> {
+        self.resolve_face(family, style, false)
+    }
+
+    fn resolve_face(&self, family: &str, style: &str, allow_document: bool) -> Arc<FontFace> {
+        if let Some(f) = self.try_family(family, style).filter(|f| allow_document || !f.is_document_font()) {
             return f;
         }
         for sub in substitutes(family) {
-            if let Some(f) = self.try_family(sub, style) {
+            if let Some(f) = self.try_family(sub, style).filter(|f| !f.is_document_font()) {
                 return f;
             }
         }
         for sub in [FALLBACK_FAMILY, "Helvetica Neue", "Arial", "Liberation Sans", "DejaVu Sans", "Segoe UI"] {
-            if let Some(f) = self.try_family(sub, style) {
+            if let Some(f) = self.try_family(sub, style).filter(|f| !f.is_document_font()) {
                 return f;
             }
         }
         self.find(LAST_RESORT_FAMILY, "Regular")
-            .or_else(|| self.find(FALLBACK_FAMILY, "Regular"))
-            .or_else(|| self.read_faces().first().cloned())
+            .filter(|f| !f.is_document_font())
+            .or_else(|| self.find(FALLBACK_FAMILY, "Regular").filter(|f| !f.is_document_font()))
+            .or_else(|| self.read_faces().iter().find(|f| !f.is_document_font()).cloned())
             .unwrap_or_else(last_resort_face)
     }
 
@@ -1036,9 +1101,9 @@ impl FontDb {
             return self.face(family, style);
         }
         if let Some(twin) = office_twin(family) {
-            return self.face(twin, style);
+            return self.public_face(twin, style);
         }
-        self.face(MISSING_FONT_FAMILY, style)
+        self.public_face(MISSING_FONT_FAMILY, style)
     }
 
     fn try_family(&self, family: &str, style: &str) -> Option<Arc<FontFace>> {
@@ -1110,7 +1175,11 @@ impl FontDb {
                 None => coords.push((tag, v)),
             }
         }
-        let f = make_face(base.bytes.clone(), base.index, base.family.clone(), style.to_string(), coords)?;
+        let mut f = make_face(base.bytes.clone(), base.index, base.family.clone(), style.to_string(), coords)?;
+        f.source_family = base.source_family.clone();
+        if f.is_document_font() {
+            f.legacy = None;
+        }
         let f = Arc::new(f);
         self.faces.write().unwrap_or_else(std::sync::PoisonError::into_inner).push(f.clone());
         Some(f)
@@ -1195,7 +1264,7 @@ impl FontDb {
 
     fn loaded_fallback_filtered(&self, c: char, exclude: u32, accept: &impl Fn(&FontFace) -> bool) -> Option<Arc<FontFace>> {
         let faces = self.read_faces();
-        let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
+        let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| !f.is_document_font() && f.id != exclude).collect();
         order.sort_by_key(|f| (!f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32));
         order.into_iter().find(|f| f.covers(c) && accept(f)).cloned()
     }
@@ -1219,7 +1288,7 @@ impl FontDb {
                 return false;
             }
         }
-        let covered = |db: &FontDb| db.read_faces().iter().any(|f| f.covers(c) && accept(f));
+        let covered = |db: &FontDb| db.read_faces().iter().any(|f| !f.is_document_font() && f.covers(c) && accept(f));
         let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
         let loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Another thread may have loaded a face for `c` (faces are only ever added), or found
@@ -1264,7 +1333,8 @@ impl FontDb {
     pub(crate) fn color_face_for(&self, key: char, cluster: &[char]) -> Option<Arc<FontFace>> {
         let pick = |db: &FontDb| {
             let faces = db.read_faces();
-            let mut v: Vec<&Arc<FontFace>> = faces.iter().filter(|f| crate::covers_cluster(f, cluster) && f.is_color()).collect();
+            let mut v: Vec<&Arc<FontFace>> =
+                faces.iter().filter(|f| !f.is_document_font() && crate::covers_cluster(f, cluster) && f.is_color()).collect();
             v.sort_by_key(|f| (f.italic, (f.weight - 400.0).abs() as i32));
             v.first().map(|f| (*f).clone())
         };
@@ -1296,7 +1366,8 @@ impl FontDb {
         };
         let pick = |db: &FontDb| {
             let faces = db.read_faces();
-            let mut v: Vec<&Arc<FontFace>> = faces.iter().filter(|f| !f.is_color() && crate::covers_cluster(f, cluster)).collect();
+            let mut v: Vec<&Arc<FontFace>> =
+                faces.iter().filter(|f| !f.is_document_font() && !f.is_color() && crate::covers_cluster(f, cluster)).collect();
             v.sort_by_key(|f| (rank(f), f.italic, (f.weight - 400.0).abs() as i32));
             v.first().map(|f| (*f).clone())
         };

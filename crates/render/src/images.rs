@@ -1,10 +1,10 @@
-//! Decoded pictures shared by every render on this process, keyed by the media bytes' address and
-//! the requested size level and adjustments, so each picture is decoded once per size.
+//! Decoded pictures shared by every render on this process, keyed by the media bytes' address,
+//! requested size and adjustments. Metafiles also key the document's private font aliases.
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
-use deckcraft_model::style::PictureAdjust;
+use deckcraft_model::{Presentation, style::PictureAdjust};
 use vello_cpu::Pixmap;
 
 const BUDGET: usize = 512 << 20;
@@ -22,13 +22,15 @@ const BAD_BUDGET: usize = 64 << 20;
 
 struct Entry {
     _bytes: Arc<Vec<u8>>,
+    // Keep pointer-keyed font scopes alive, just as `_bytes` protects the media address.
+    _font_aliases: Option<Arc<Vec<(String, String)>>>,
     pm: Arc<Pixmap>,
     stamp: u64,
 }
 
 #[derive(Default)]
 struct Cache {
-    map: HashMap<(usize, u32, u64), Entry>,
+    map: HashMap<(usize, u32, u64, usize), Entry>,
     bytes: usize,
     clock: u64,
     /// Failed sources by address; each holds its bytes so the address can't be reused while it
@@ -119,16 +121,19 @@ fn duotone_rgb(a: &PictureAdjust) -> Option<(deckcraft_color::Rgba, deckcraft_co
 /// Decode encoded bytes (PNG, JPEG, GIF, WebP, BMP, TIFF; WMF and EMF drawn at
 /// [`crate::metafile::DEFAULT_SIDE`]) to straight RGBA.
 pub fn decode(bytes: &[u8]) -> Option<image::RgbaImage> {
-    decode_at(bytes, crate::metafile::DEFAULT_SIDE)
+    decode_at(bytes, crate::metafile::DEFAULT_SIDE, None)
 }
 
 /// [`decode`], with a metafile drawn with its longer side `side` px.
-fn decode_at(bytes: &[u8], side: u32) -> Option<image::RgbaImage> {
+fn decode_at(bytes: &[u8], side: u32, pres: Option<&Presentation>) -> Option<image::RgbaImage> {
     if bytes.len() > 512 << 20 {
         return None;
     }
     if crate::metafile::is_metafile(bytes) {
-        return crate::metafile::rasterize(bytes, side);
+        return match pres {
+            Some(pres) => crate::metafile::rasterize_in(bytes, side, Some(pres)),
+            None => crate::metafile::rasterize(bytes, side),
+        };
     }
     decode_raster(bytes, MAX_RGBA)
 }
@@ -319,13 +324,27 @@ fn png_crc(data: &[u8]) -> u32 {
 
 /// A premultiplied pixmap of the picture, downsampled so its longer side is near `want` px.
 pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Option<Arc<Pixmap>> {
+    decode_cached(bytes, want, adj, None)
+}
+
+/// Decode slide media with its document's private fonts; raster pictures retain the shared cache.
+pub(crate) fn decode_for_presentation(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust, pres: &Presentation) -> Option<Arc<Pixmap>> {
+    if pres.font_aliases.is_empty() || !crate::metafile::is_metafile(bytes) {
+        return decode_for(bytes, want, adj);
+    }
+    decode_cached(bytes, want, adj, Some(pres))
+}
+
+fn decode_cached(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust, pres: Option<&Presentation>) -> Option<Arc<Pixmap>> {
     let addr = Arc::as_ptr(bytes) as usize;
     if with(|c| c.is_bad(addr, bytes)) {
         return None;
     }
     // Power-of-two size buckets so zooming doesn't re-decode every frame.
     let bucket = (want.max(16.0).log2().ceil() as u32).min(15);
-    let key = (addr, bucket, adjust_key(adj));
+    let font_aliases = pres.map(|p| &p.font_aliases);
+    let scope = font_aliases.map_or(0, |aliases| Arc::as_ptr(aliases) as usize);
+    let key = (addr, bucket, adjust_key(adj), scope);
     if let Some(pm) = with(|c| {
         c.clock += 1;
         let clock = c.clock;
@@ -337,7 +356,7 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
         return Some(pm);
     }
     let target = 1u32 << bucket;
-    let Some(mut img) = decode_at(bytes, target) else {
+    let Some(mut img) = decode_at(bytes, target, pres) else {
         with(|c| c.mark_bad(addr, bytes));
         return None;
     };
@@ -354,7 +373,7 @@ pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Optio
         c.clock += 1;
         let n = w as usize * h as usize * 4;
         c.bytes += n;
-        c.map.insert(key, Entry { _bytes: bytes.clone(), pm: pm.clone(), stamp: c.clock });
+        c.map.insert(key, Entry { _bytes: bytes.clone(), _font_aliases: font_aliases.cloned(), pm: pm.clone(), stamp: c.clock });
         while c.bytes > BUDGET && c.map.len() > 1 {
             let Some(oldest) = c.map.iter().min_by_key(|(_, e)| e.stamp).map(|(k, _)| *k) else { break };
             if let Some(e) = c.map.remove(&oldest) {

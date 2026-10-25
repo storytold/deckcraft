@@ -373,6 +373,14 @@ pub fn ime_surrounding(st: &DocState, t: &TextSel) -> Option<ImeSurrounding> {
 
 /// Edit the active text body and selection; refits auto-sizing text boxes afterwards.
 pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut TextSel) -> T) -> Result<T> {
+    edit_text_before_fit(s, f, |_, _| Ok(()))
+}
+
+fn edit_text_before_fit<T>(
+    s: &mut Session,
+    f: impl FnOnce(&mut TextBody, &mut TextSel) -> T,
+    before_fit: impl FnOnce(&mut Session, &T) -> Result<()>,
+) -> Result<T> {
     let t0 = s.doc()?.selection.text.clone().ok_or_else(|| bad("text", NO_TEXT_POINT))?;
     // Materialise an inherited placeholder box before editing (so autofit can change it).
     let r = s.edit(|doc, sel| {
@@ -391,6 +399,7 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
         sel.text = Some(t);
         Ok(r)
     })?;
+    before_fit(s, &r)?;
     if !t0.notes && t0.cell.is_none() {
         fit_text_box(s, t0.shape)?;
     }
@@ -1126,22 +1135,31 @@ fn autocorrect_options(s: &mut Session, p: &Value) -> Result<Value> {
     }))
 }
 
-pub(crate) fn paste_body(s: &mut Session, src: &TextBody) -> Result<Value> {
+pub(crate) fn paste_body(s: &mut Session, src: &TextBody, retain_fonts: bool) -> Result<Value> {
     let inherited = inherited_aligns_for_edit(s);
-    let pos = edit_text(s, |body, t| {
-        let (a, b) = t.ordered();
-        let at = ed::delete(body, a, b);
-        let c = ed::insert_body(body, at, src);
-        t.anchor = c;
-        t.caret = c;
-        let last = body.paragraphs.len().saturating_sub(1);
-        for pi in at.0..=c.0.min(last) {
-            if let Some(para) = body.paragraphs.get_mut(pi) {
-                promote_rtl_if_needed(para, &inherited);
+    let (_, pos) = edit_text_before_fit(
+        s,
+        |body, t| {
+            let (a, b) = t.ordered();
+            let at = ed::delete(body, a, b);
+            let c = ed::insert_body(body, at, src);
+            t.anchor = c;
+            t.caret = c;
+            let last = body.paragraphs.len().saturating_sub(1);
+            for pi in at.0..=c.0.min(last) {
+                if let Some(para) = body.paragraphs.get_mut(pi) {
+                    promote_rtl_if_needed(para, &inherited);
+                }
             }
-        }
-        c
-    })?;
+            (at, c)
+        },
+        |s, &(a, b)| {
+            if retain_fonts {
+                super::edit::retain_pasted_text_fonts(s, a, b)?;
+            }
+            Ok(())
+        },
+    )?;
     Ok(json!({"caret": [pos.0, pos.1]}))
 }
 
