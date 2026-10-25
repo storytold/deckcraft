@@ -1,12 +1,17 @@
 //! Shape Format: position and size, rotation, flips, geometry, fill, outline, effects, styles,
 //! names and alt text.
 
+use std::collections::HashMap;
+
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::style::{Dash, Glow, Gradient, GradientShape, GradientStop, LineEnd, PatternFill, PictureFill, PictureMode, Reflection, Shadow};
 use deckcraft_model::{ColorRef, Effects, Fill, Geom, Line, ShapeStyle};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, color_param, color_value, edit_geometry, edit_shapes, f64_param, has_selection,
+    has_slide, id_param, ok, str_param, targets, usize_param, with_param, xfrm_of,
+};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -85,7 +90,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Fill",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color? | none?: true | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill",
+            "{color? | none?: true | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill; a group also formats its members",
             has_selection,
             fill
         ),
@@ -94,7 +99,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Outline",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize?, reset?, ids?}",
+            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
             has_selection,
             line
         ),
@@ -169,13 +174,24 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
+/// Keeps a side length in `0..=MAX_PT` so a huge value cannot exhaust memory when rendering.
+/// An overflow to infinity lands on the limit; NaN becomes 0.
+fn clamp_side(v: f64) -> f64 {
+    if v.is_nan() { 0.0 } else { v.clamp(0.0, MAX_PT) }
+}
+
+/// Keeps a coordinate within `±POS_LIMIT`.
+fn clamp_pos(v: f64) -> f64 {
+    if v.is_nan() { 0.0 } else { v.clamp(-POS_LIMIT, POS_LIMIT) }
+}
+
 fn move_by(s: &mut Session, p: &Value) -> Result<Value> {
     let (dx, dy) = (f64_param(p, "dx"), f64_param(p, "dy"));
     let (ax, ay) = (f64_param(p, "x"), f64_param(p, "y"));
     edit_geometry(s, p, "shape.move", |sh| {
         if let Some(x) = sh.xfrm.as_mut() {
-            x.x = ax.unwrap_or(x.x) + dx.unwrap_or(0.0);
-            x.y = ay.unwrap_or(x.y) + dy.unwrap_or(0.0);
+            x.x = clamp_pos(ax.unwrap_or(x.x) + dx.unwrap_or(0.0));
+            x.y = clamp_pos(ay.unwrap_or(x.y) + dy.unwrap_or(0.0));
         }
         Ok(())
     })
@@ -202,10 +218,12 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
                     x.h = h.unwrap_or(x.h);
                 }
             }
+            x.w = clamp_side(x.w);
+            x.h = clamp_side(x.h);
             // Rotated shapes resize about their centre; others keep the top-left.
             if x.rot != 0.0 {
-                x.x = cx - x.w / 2.0;
-                x.y = cy - x.h / 2.0;
+                x.x = clamp_pos(cx - x.w / 2.0);
+                x.y = clamp_pos(cy - x.h / 2.0);
             }
         }
         Ok(())
@@ -215,10 +233,10 @@ fn resize(s: &mut Session, p: &Value) -> Result<Value> {
 fn set_bounds(s: &mut Session, p: &Value) -> Result<Value> {
     edit_geometry(s, p, "shape.setBounds", |sh| {
         if let Some(x) = sh.xfrm.as_mut() {
-            x.x = f64_param(p, "x").unwrap_or(x.x);
-            x.y = f64_param(p, "y").unwrap_or(x.y);
-            x.w = f64_param(p, "w").unwrap_or(x.w).max(0.0);
-            x.h = f64_param(p, "h").unwrap_or(x.h).max(0.0);
+            x.x = clamp_pos(f64_param(p, "x").unwrap_or(x.x));
+            x.y = clamp_pos(f64_param(p, "y").unwrap_or(x.y));
+            x.w = clamp_side(f64_param(p, "w").unwrap_or(x.w));
+            x.h = clamp_side(f64_param(p, "h").unwrap_or(x.h));
         }
         Ok(())
     })
@@ -406,6 +424,8 @@ fn flip(s: &mut Session, p: &Value) -> Result<Value> {
             } else {
                 x.flip_h = !x.flip_h;
             }
+            // `Xfrm::affine` flips first and rotates second; a true mirror also negates the rotation.
+            x.rot = (360.0 - x.rot_norm()) % 360.0;
         }
         Ok(())
     })
@@ -518,6 +538,24 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     Some(Gradient { tile: [0.0; 4], stops, shape, rotate_with_shape: v.get("rotateWithShape").and_then(Value::as_bool).unwrap_or(true) })
 }
 
+/// Fill and outline apply to a group's visible members as well as its container. Other edits
+/// (notably geometry) still target only the selected shape. The whole traversal stays in one edit.
+fn edit_group_appearance(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<Value> {
+    fn apply(sh: &mut deckcraft_model::Shape, depth: usize, f: &dyn Fn(&mut deckcraft_model::Shape) -> Result<()>) -> Result<()> {
+        if depth > 64 {
+            return Ok(());
+        }
+        f(sh)?;
+        if let Some(children) = sh.children_mut() {
+            for child in children {
+                apply(child, depth + 1, f)?;
+            }
+        }
+        Ok(())
+    }
+    edit_shapes(s, p, cmd, |sh| apply(sh, 0, &f))
+}
+
 fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     let new_fill: Option<Option<Fill>> = if bool_or(p, "reset", false) {
         Some(None)
@@ -550,27 +588,26 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     }
     // Transparency on an inherited (style) fill needs the effective colour.
     let st = s.doc()?;
-    let ctx_fill: Vec<(deckcraft_model::ShapeId, Option<Fill>)> = {
+    let ctx_fill = {
         let ctx = super::text::ctx_for(&st.doc, &st.selection);
-        targets(s, p)?
-            .into_iter()
-            .filter_map(|id| {
-                st.shape(id).map(|sh| {
-                    (
-                        id,
-                        ctx.as_ref().and_then(|c| {
-                            let (f, ph) = deckcraft_model::resolve::fill(c, sh);
-                            f.map(|f| match f {
-                                Fill::Solid { color } => Fill::solid(ColorRef::rgb(c.color(&color, ph))),
-                                other => other,
-                            })
-                        }),
-                    )
-                })
-            })
-            .collect()
+        let mut fills = HashMap::new();
+        for id in targets(s, p)? {
+            if let Some(sh) = st.shape(id) {
+                deckcraft_model::walk(std::slice::from_ref(sh), &mut |sh, _| {
+                    let fill = ctx.as_ref().and_then(|c| {
+                        let (f, ph) = deckcraft_model::resolve::fill(c, sh);
+                        f.map(|f| match f {
+                            Fill::Solid { color } => Fill::solid(ColorRef::rgb(c.color(&color, ph))),
+                            other => other,
+                        })
+                    });
+                    fills.insert(sh.id, fill);
+                });
+            }
+        }
+        fills
     };
-    edit_shapes(s, p, "shape.fill", |sh| {
+    edit_group_appearance(s, p, "shape.fill", |sh| {
         if let Some(f) = &new_fill {
             sh.fill.clone_from(f);
         }
@@ -583,7 +620,7 @@ fn fill(s: &mut Session, p: &Value) -> Result<Value> {
             return Ok(());
         }
         if let Some(t) = transparency {
-            let base = sh.fill.clone().or_else(|| ctx_fill.iter().find(|(i, _)| *i == sh.id).and_then(|(_, f)| f.clone()));
+            let base = sh.fill.clone().or_else(|| ctx_fill.get(&sh.id).cloned().flatten());
             if let Some(Fill::Solid { mut color }) = base {
                 color.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_)));
                 if t > 0.0 {
@@ -675,7 +712,7 @@ fn line(s: &mut Session, p: &Value) -> Result<Value> {
         "miter" => deckcraft_model::style::LineJoin::Miter,
         _ => deckcraft_model::style::LineJoin::Round,
     });
-    edit_shapes(s, p, "shape.line", |sh| {
+    edit_group_appearance(s, p, "shape.line", |sh| {
         if reset {
             sh.line = None;
             return Ok(());
@@ -1485,8 +1522,99 @@ fn ink_to_shape(s: &mut Session, _p: &Value) -> Result<Value> {
 mod tests {
     #![allow(clippy::unwrap_used)]
 
+    use deckcraft_model::ShapeId;
+
     use super::*;
     use serde_json::json;
+
+    fn nested_group() -> (Session, Vec<ShapeId>, ShapeId, ShapeId) {
+        let mut s = Session::with_new();
+        let mut ids = vec![];
+        for i in 0..4 {
+            let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40 + i * 100, 100, 80, 60]})).unwrap()["id"].as_u64().unwrap();
+            s.execute("shape.line", &json!({"width": i + 1, "dash": "dash"})).unwrap();
+            ids.push(ShapeId(id as u32));
+        }
+        let group = |s: &mut Session, ids: &[ShapeId]| {
+            s.execute("edit.select", &json!({"ids": ids})).unwrap();
+            ShapeId(s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap() as u32)
+        };
+        let inner = group(&mut s, &ids[..2]);
+        let outer = group(&mut s, &[inner, ids[2]]);
+        (s, ids[..3].to_vec(), outer, ids[3])
+    }
+
+    #[test]
+    fn group_fill_reaches_nested_members_in_one_undo_step() {
+        let (mut s, members, group, outside) = nested_group();
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        let untouched = serde_json::to_value(s.doc().unwrap().shape(outside)).unwrap();
+        s.execute("shape.fill", &json!({"color": "#ff0000"})).unwrap();
+        for id in &members {
+            assert_eq!(s.doc().unwrap().shape(*id).unwrap().fill, Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0)))));
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![group]);
+        assert_eq!(serde_json::to_value(s.doc().unwrap().shape(outside)).unwrap(), untouched);
+        let filled = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), filled);
+
+        s.execute("shape.fill", &json!({"none": true})).unwrap();
+        assert!(members.iter().all(|id| s.doc().unwrap().shape(*id).unwrap().fill == Some(Fill::None)));
+        s.execute("shape.fill", &json!({"reset": true})).unwrap();
+        assert!(members.iter().all(|id| s.doc().unwrap().shape(*id).unwrap().fill.is_none()));
+    }
+
+    #[test]
+    fn group_outline_reaches_members_without_resetting_their_other_properties() {
+        let (mut s, members, group, outside) = nested_group();
+        let before = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        // Explicit ids work even when another object is selected.
+        s.execute("edit.select", &json!({"ids": [outside]})).unwrap();
+        s.execute("shape.line", &json!({"ids": [group], "color": "#00ff00"})).unwrap();
+        for (i, id) in members.iter().enumerate() {
+            let line = s.doc().unwrap().shape(*id).unwrap().line.as_ref().unwrap();
+            assert_eq!(line.fill, Some(Fill::solid(ColorRef::rgb(Rgba::rgb(0, 255, 0)))));
+            assert_eq!(line.width, Some((i + 1) as f64));
+            assert_eq!(line.dash, Some(Dash::Preset { name: "dash".into() }));
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![outside]);
+        let outlined = serde_json::to_value(&s.doc().unwrap().doc).unwrap();
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), before);
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(serde_json::to_value(&s.doc().unwrap().doc).unwrap(), outlined);
+        s.execute("shape.line", &json!({"ids": [group], "none": true})).unwrap();
+        assert!(members.iter().all(|id| s.doc().unwrap().shape(*id).unwrap().line.as_ref().unwrap().fill == Some(Fill::None)));
+        s.execute("shape.line", &json!({"ids": [group], "reset": true})).unwrap();
+        assert!(members.iter().all(|id| s.doc().unwrap().shape(*id).unwrap().line.is_none()));
+    }
+
+    #[test]
+    fn group_fill_transparency_keeps_each_members_inherited_colour() {
+        let (mut s, members, group, _) = nested_group();
+        s.execute("shape.fill", &json!({"ids": [members[1]], "color": "#00ff00"})).unwrap();
+        let colours: Vec<_> = {
+            let st = s.doc().unwrap();
+            let ctx = super::super::text::ctx_for(&st.doc, &st.selection).unwrap();
+            members
+                .iter()
+                .map(|id| {
+                    let (fill, ph) = deckcraft_model::resolve::fill(&ctx, st.shape(*id).unwrap());
+                    let Some(Fill::Solid { color }) = fill else { panic!("solid theme fill") };
+                    ctx.color(&color, ph)
+                })
+                .collect()
+        };
+        s.execute("shape.fill", &json!({"ids": [group], "transparency": 0.5})).unwrap();
+        for (id, colour) in members.iter().zip(colours) {
+            let mut expected = ColorRef::rgb(colour);
+            expected.mods.push(ColorTransform::Alpha(50000));
+            assert_eq!(s.doc().unwrap().shape(*id).unwrap().fill, Some(Fill::solid(expected)));
+        }
+    }
 
     fn rotation(s: &Session) -> f64 {
         let st = s.active().unwrap();
@@ -1523,7 +1651,7 @@ mod tests {
         let mut s = Session::with_new();
         s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [10.0, 10.0, 30.0, 30.0]})).unwrap();
         let st = s.active_mut().unwrap();
-        st.interaction = Some(crate::Interaction { label: "Move".into(), doc: st.doc.clone(), selection: st.selection.clone() });
+        st.interaction = Some(crate::Interaction { label: "Move".into(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind: None });
         s.execute("shape.rotate", &json!({"gesture": "end", "ids": []})).unwrap();
         assert_eq!(s.active().unwrap().interaction.as_ref().unwrap().label, "Move");
     }

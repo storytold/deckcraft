@@ -212,10 +212,11 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
     let mut pos = 0u64;
     let mut found_any = false;
     let mut hdr = [0u8; 27 + 255];
+    let mut scanner = CaptureScanner::new();
     while pos + 27 <= len {
         src.read_at(pos, &mut hdr[..27])?;
         if &hdr[..4] != b"OggS" || hdr[4] != 0 {
-            match find_capture(src, pos + 1, len)? {
+            match scanner.find(src, pos + 1, len)? {
                 Some(p) => {
                     if found_any {
                         warnings.push(format!("lost sync at byte {pos}; resumed at {p}"));
@@ -336,21 +337,47 @@ pub fn open(src: &(impl ByteSource + ?Sized)) -> Result<OggFile> {
     Ok(OggFile { streams, warnings })
 }
 
-fn find_capture(src: &(impl ByteSource + ?Sized), from: u64, len: u64) -> Result<Option<u64>> {
-    let mut at = from;
-    while at + 4 <= len {
-        let n = ((len - at) as usize).min(1 << 20);
-        let mut buf = vec![0u8; n];
-        src.read_at(at, &mut buf)?;
-        if let Some(i) = buf.windows(4).position(|w| w == b"OggS") {
-            return Ok(Some(at + i as u64));
-        }
-        if n < 4 {
-            break;
-        }
-        at += (n - 3) as u64;
+struct CaptureScanner {
+    buf: Vec<u8>,
+    buf_start: u64,
+    budget: usize,
+}
+
+impl CaptureScanner {
+    fn new() -> Self {
+        Self { buf: Vec::new(), buf_start: 0, budget: 32 * 1024 * 1024 }
     }
-    Ok(None)
+
+    fn find(&mut self, src: &(impl ByteSource + ?Sized), from: u64, len: u64) -> Result<Option<u64>> {
+        let mut at = from;
+        while at + 4 <= len {
+            let buf_end = self.buf_start + self.buf.len() as u64;
+            if at >= self.buf_start && at + 4 <= buf_end {
+                let off = (at - self.buf_start) as usize;
+                if let Some(i) = self.buf[off..].windows(4).position(|w| w == b"OggS") {
+                    return Ok(Some(at + i as u64));
+                }
+                at = buf_end.saturating_sub(3);
+                continue;
+            }
+            if self.budget == 0 {
+                return Ok(None);
+            }
+            let n = ((len - at) as usize).min(64 * 1024).min(self.budget);
+            if n < 4 {
+                break;
+            }
+            self.buf.resize(n, 0);
+            src.read_at(at, &mut self.buf)?;
+            self.buf_start = at;
+            self.budget = self.budget.saturating_sub(n);
+            if let Some(i) = self.buf.windows(4).position(|w| w == b"OggS") {
+                return Ok(Some(at + i as u64));
+            }
+            at += (n - 3) as u64;
+        }
+        Ok(None)
+    }
 }
 
 fn read_parts(src: &(impl ByteSource + ?Sized), parts: &[(u64, u32)]) -> Result<Vec<u8>> {

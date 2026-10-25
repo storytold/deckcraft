@@ -1,9 +1,10 @@
 //! The gradient editor of the Format pane (shape fill and slide background): preset variations,
-//! type, direction, angle and a stop bar (add, drag, recolour, set transparency, remove stops).
+//! type, direction, angle and a stop bar (add, drag, recolour, set transparency, remove stops); and
+//! the pattern editor: a gallery of the preset patterns with foreground and background colors.
 
 use deckcraft_color::{ColorScheme, ColorTransform, SchemeSlot};
 use deckcraft_model::ColorRef;
-use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
+use deckcraft_model::style::{Gradient, GradientShape, GradientStop, PatternFill};
 use egui::{Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -106,7 +107,7 @@ const DIRECTIONS_PATH: [(&str, [f64; 4]); 5] = [
 pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) -> Option<Gradient> {
     let t = Tokens::get(ui.ctx());
     let mut out: Option<Gradient> = None;
-    let sel_id = ui.id().with((id, "stop"));
+    let sel_id = ui.scope_id().with((id, "stop"));
     let mut sel: usize = ui.data_mut(|d| d.get_temp(sel_id).unwrap_or(0)).min(g.stops.len().saturating_sub(1));
 
     // Preset variations of the first stop's colour.
@@ -167,8 +168,8 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         GradientShape::Path { .. } => "Radial",
     };
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Type"));
-        egui::ComboBox::from_id_salt((id, "kind")).selected_text(kind).width(120.0).show_ui(ui, |ui| {
+        let field = ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Type"));
+        let combo = egui::ComboBox::from_id_salt((id, "kind")).selected_text(kind).width(120.0).show_ui(ui, |ui| {
             for k in ["Linear", "Radial", "Rectangular", "Path"] {
                 if ui.selectable_label(kind == k, k).clicked() && kind != k {
                     let focus = match &g.shape {
@@ -185,6 +186,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
                 }
             }
         });
+        let _ = combo.response.labelled_by(field.id);
     });
     ui.horizontal_wrapped(|ui| {
         ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Direction"));
@@ -210,7 +212,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     if let GradientShape::Linear { angle, .. } = &g.shape {
         ui.horizontal(|ui| {
             ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Angle"));
-            if let Some(a) = widgets::spinner(ui, &format!("{id}-angle"), *angle, 15.0, "°", 70.0) {
+            if let Some(a) = widgets::spinner(ui, &format!("{id}-angle"), "Angle", *angle, 15.0, "°", 70.0) {
                 out = Some(Gradient { shape: GradientShape::Linear { angle: a.rem_euclid(360.0), scaled: false }, ..g.clone() });
             }
         });
@@ -220,15 +222,17 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     ui.add_space(4.0);
     ui.label("Gradient stops");
     let (bar, bar_resp) = ui.allocate_exact_size(vec2(ui.available_width().min(260.0), 18.0), Sense::click());
+    bar_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Gradient bar"));
     paint_bar(ui, bar, g, sc);
     let (marks, _) = ui.allocate_exact_size(vec2(bar.width(), 14.0), Sense::hover());
-    let drag_id = ui.id().with((id, "drag"));
+    let drag_id = ui.scope_id().with((id, "drag"));
     let mut dragging: Option<(usize, f64)> = ui.data_mut(|d| d.get_temp(drag_id));
     for (i, s) in g.stops.iter().enumerate() {
         let pos = dragging.filter(|d| d.0 == i).map_or(s.pos, |d| d.1);
         let x = bar.min.x + pos as f32 * bar.width();
         let r = Rect::from_center_size(pos2(x, marks.center().y), vec2(10.0, 12.0));
-        let resp = ui.interact(r, ui.id().with((id, "mark", i)), Sense::click_and_drag());
+        let resp = ui.interact(r, ui.scope_id().with((id, "mark", i)), Sense::click_and_drag());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Gradient stop {}", i + 1)));
         let fill = c32(&s.color, sc);
         let stroke = if i == sel { Stroke::new(2.0, t.accent) } else { Stroke::new(1.0, t.handle_stroke) };
         let tri = vec![pos2(x, r.min.y), pos2(r.max.x, r.min.y + 4.0), pos2(r.max.x, r.max.y), pos2(r.min.x, r.max.y), pos2(r.min.x, r.min.y + 4.0)];
@@ -295,7 +299,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         });
         ui.horizontal(|ui| {
             ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Position"));
-            if let Some(v) = widgets::spinner(ui, &format!("{id}-pos-{sel}"), (s.pos * 100.0).round(), 5.0, "%", 70.0) {
+            if let Some(v) = widgets::spinner(ui, &format!("{id}-pos-{sel}"), "Position", (s.pos * 100.0).round(), 5.0, "%", 70.0) {
                 let mut ng = g.clone();
                 ng.stops[sel].pos = (v / 100.0).clamp(0.0, 1.0);
                 ng.stops.sort_by(|a, b| a.pos.total_cmp(&b.pos));
@@ -303,10 +307,10 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
             }
         });
         ui.horizontal(|ui| {
-            ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Transparency"));
-            let key = ui.id().with((id, "tr", sel));
+            let label = ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Transparency"));
+            let key = ui.scope_id().with((id, "tr", sel));
             let mut tr: f32 = ui.data_mut(|d| d.get_temp(key).unwrap_or(((1.0 - alpha_of(&s.color)) * 100.0) as f32));
-            let r = ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).suffix("%"));
+            let r = ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).suffix("%")).labelled_by(label.id);
             if r.changed() {
                 ui.data_mut(|d| d.insert_temp(key, tr));
             }
@@ -319,5 +323,188 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
         });
     }
     ui.data_mut(|d| d.insert_temp(sel_id, sel));
+    out
+}
+
+/// The gallery names of the DrawingML preset patterns.
+const PATTERN_LABELS: [(&str, &str); 54] = [
+    ("pct5", "5%"),
+    ("pct10", "10%"),
+    ("pct20", "20%"),
+    ("pct25", "25%"),
+    ("pct30", "30%"),
+    ("pct40", "40%"),
+    ("pct50", "50%"),
+    ("pct60", "60%"),
+    ("pct70", "70%"),
+    ("pct75", "75%"),
+    ("pct80", "80%"),
+    ("pct90", "90%"),
+    ("horz", "Horizontal"),
+    ("vert", "Vertical"),
+    ("ltHorz", "Light horizontal"),
+    ("ltVert", "Light vertical"),
+    ("dkHorz", "Dark horizontal"),
+    ("dkVert", "Dark vertical"),
+    ("narHorz", "Narrow horizontal"),
+    ("narVert", "Narrow vertical"),
+    ("dashHorz", "Dashed horizontal"),
+    ("dashVert", "Dashed vertical"),
+    ("cross", "Cross"),
+    ("dnDiag", "Downward diagonal"),
+    ("upDiag", "Upward diagonal"),
+    ("ltDnDiag", "Light downward diagonal"),
+    ("ltUpDiag", "Light upward diagonal"),
+    ("dkDnDiag", "Dark downward diagonal"),
+    ("dkUpDiag", "Dark upward diagonal"),
+    ("wdDnDiag", "Wide downward diagonal"),
+    ("wdUpDiag", "Wide upward diagonal"),
+    ("dashDnDiag", "Dashed downward diagonal"),
+    ("dashUpDiag", "Dashed upward diagonal"),
+    ("diagCross", "Diagonal cross"),
+    ("smCheck", "Small checkerboard"),
+    ("lgCheck", "Large checkerboard"),
+    ("smGrid", "Small grid"),
+    ("lgGrid", "Large grid"),
+    ("dotGrid", "Dotted grid"),
+    ("smConfetti", "Small confetti"),
+    ("lgConfetti", "Large confetti"),
+    ("horzBrick", "Horizontal brick"),
+    ("diagBrick", "Diagonal brick"),
+    ("solidDmnd", "Solid diamond"),
+    ("openDmnd", "Outlined diamond"),
+    ("dotDmnd", "Dotted diamond"),
+    ("plaid", "Plaid"),
+    ("sphere", "Sphere"),
+    ("weave", "Weave"),
+    ("divot", "Divot"),
+    ("shingle", "Shingle"),
+    ("wave", "Wave"),
+    ("trellis", "Trellis"),
+    ("zigZag", "Zig zag"),
+];
+
+/// The presets the gallery offers, in its 6 rows of 8. `horz`, `vert`, `cross`, `dnDiag`, `upDiag`
+/// and `diagCross` are left out, as in PowerPoint's gallery; a fill using one still draws.
+const PATTERN_GALLERY: [&str; 48] = [
+    "pct5",
+    "pct10",
+    "pct20",
+    "pct25",
+    "pct30",
+    "pct40",
+    "pct50",
+    "pct60",
+    "pct70",
+    "pct75",
+    "pct80",
+    "pct90",
+    "ltDnDiag",
+    "ltUpDiag",
+    "dkDnDiag",
+    "dkUpDiag",
+    "wdDnDiag",
+    "wdUpDiag",
+    "ltVert",
+    "ltHorz",
+    "narVert",
+    "narHorz",
+    "dkVert",
+    "dkHorz",
+    "dashDnDiag",
+    "dashUpDiag",
+    "dashHorz",
+    "dashVert",
+    "smConfetti",
+    "lgConfetti",
+    "zigZag",
+    "wave",
+    "diagBrick",
+    "horzBrick",
+    "weave",
+    "plaid",
+    "divot",
+    "dotGrid",
+    "dotDmnd",
+    "shingle",
+    "trellis",
+    "sphere",
+    "smGrid",
+    "lgGrid",
+    "smCheck",
+    "lgCheck",
+    "openDmnd",
+    "solidDmnd",
+];
+
+/// The presets the pattern gallery offers, in gallery order.
+pub fn pattern_gallery() -> impl Iterator<Item = &'static str> {
+    PATTERN_GALLERY.into_iter()
+}
+
+/// The name the gallery shows for preset `name` (the preset itself when it has none).
+pub fn pattern_label(name: &str) -> &str {
+    PATTERN_LABELS.iter().find(|(n, _)| *n == name).map_or(name, |(_, l)| l)
+}
+
+/// The command parameter for `pt` (`shape.fill {pattern}` / `design.background {pattern}`).
+pub fn pattern_json(pt: &PatternFill) -> Value {
+    json!({"preset": pt.preset, "fg": cref_param(&pt.fg), "bg": cref_param(&pt.bg)})
+}
+
+/// Paint preset `name` into `r`, two points per pattern cell.
+fn paint_pattern(p: &egui::Painter, r: Rect, name: &str, fg: Color32, bg: Color32) {
+    const CELL: f32 = 2.0;
+    p.rect_filled(r, CornerRadius::ZERO, bg);
+    let tile = deckcraft_render::pattern_tile(name);
+    let (nx, ny) = ((r.width() / CELL).floor().max(0.0) as usize, (r.height() / CELL).floor().max(0.0) as usize);
+    for y in 0..ny {
+        for x in 0..nx {
+            if deckcraft_render::pattern_is_fg(&tile, x, y) {
+                let min = r.min + vec2(x as f32 * CELL, y as f32 * CELL);
+                p.rect_filled(Rect::from_min_size(min, vec2(CELL, CELL)), CornerRadius::ZERO, fg);
+            }
+        }
+    }
+}
+
+/// The editor for `pt`: a gallery of the presets drawn in the current colors, then Foreground and
+/// Background color menus. Returns the new pattern when the user changed something.
+pub fn pattern_editor(ui: &mut Ui, pt: &PatternFill, sc: &ColorScheme) -> Option<PatternFill> {
+    let t = Tokens::get(ui.ctx());
+    let mut out: Option<PatternFill> = None;
+    let (fg, bg) = (c32(&pt.fg, sc), c32(&pt.bg, sc));
+    ui.label("Pattern");
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+        for name in pattern_gallery() {
+            let on = pt.preset == name;
+            let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+            paint_pattern(ui.painter(), r.shrink(2.0), name, fg, bg);
+            let stroke = if on || resp.hovered() || resp.has_focus() { Stroke::new(2.0, t.accent) } else { Stroke::new(1.0, t.border) };
+            ui.painter().rect_stroke(r.shrink(1.0), CornerRadius::same(2), stroke, egui::StrokeKind::Inside);
+            let label = pattern_label(name);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, on, label));
+            if resp.on_hover_text(label).clicked() && !on {
+                out = Some(PatternFill { preset: name.to_string(), ..pt.clone() });
+            }
+        }
+    });
+    for (label, foreground) in [("Foreground", true), ("Background", false)] {
+        ui.horizontal(|ui| {
+            ui.add_sized(vec2(80.0, 20.0), egui::Label::new(label));
+            let cur = if foreground { &pt.fg } else { &pt.bg };
+            let (sw, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+            ui.painter().rect(sw, CornerRadius::same(3), c32(cur, sc), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
+            let r = widgets::drop_button(ui, "", vec2(24.0, 20.0), true);
+            let name = format!("{label} color");
+            r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &name));
+            widgets::color_popup(&r).show(|ui| {
+                if let Some(Some(c)) = widgets::color_grid(ui, sc, None) {
+                    out = Some(if foreground { PatternFill { fg: c, ..pt.clone() } } else { PatternFill { bg: c, ..pt.clone() } });
+                }
+            });
+        });
+    }
     out
 }

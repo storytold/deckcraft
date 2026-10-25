@@ -459,44 +459,39 @@ pub fn next_case(s: &str) -> &'static str {
 
 /// Change case: `upper`, `lower`, `sentence`, `title`, `toggle`.
 pub fn change_case(s: &str, mode: &str) -> String {
-    match mode {
-        "upper" => s.to_uppercase(),
-        "lower" => s.to_lowercase(),
-        "toggle" => s.chars().map(|c| if c.is_uppercase() { c.to_lowercase().collect::<String>() } else { c.to_uppercase().collect() }).collect(),
-        "title" => {
-            let mut out = String::new();
-            let mut start = true;
-            for c in s.chars() {
-                if start && c.is_alphabetic() {
-                    out.extend(c.to_uppercase());
-                    start = false;
-                } else {
-                    out.extend(c.to_lowercase());
+    change_case_parts(&[s], mode).concat()
+}
+
+/// Change the case of consecutive pieces of text (the runs of a paragraph) as one string, so
+/// `title` and `sentence` carry their word/sentence state across piece boundaries. Each output
+/// piece is the changed form of the matching input piece, even where a character changes length.
+pub fn change_case_parts(parts: &[&str], mode: &str) -> Vec<String> {
+    let mut start = true;
+    parts
+        .iter()
+        .map(|s| match mode {
+            "upper" => s.to_uppercase(),
+            "lower" => s.to_lowercase(),
+            "toggle" => s.chars().map(|c| if c.is_uppercase() { c.to_lowercase().collect::<String>() } else { c.to_uppercase().collect() }).collect(),
+            _ => {
+                // `title` restarts after whitespace, sentence case after sentence punctuation.
+                let title = mode == "title";
+                let mut out = String::new();
+                for c in s.chars() {
+                    if start && c.is_alphabetic() {
+                        out.extend(c.to_uppercase());
+                        start = false;
+                    } else {
+                        out.extend(c.to_lowercase());
+                    }
+                    if (title && c.is_whitespace()) || (!title && matches!(c, '.' | '!' | '?')) {
+                        start = true;
+                    }
                 }
-                if c.is_whitespace() {
-                    start = true;
-                }
+                out
             }
-            out
-        }
-        _ => {
-            // sentence
-            let mut out = String::new();
-            let mut start = true;
-            for c in s.chars() {
-                if start && c.is_alphabetic() {
-                    out.extend(c.to_uppercase());
-                    start = false;
-                } else {
-                    out.extend(c.to_lowercase());
-                }
-                if matches!(c, '.' | '!' | '?') {
-                    start = true;
-                }
-            }
-            out
-        }
-    }
+        })
+        .collect()
 }
 
 #[cfg(test)]

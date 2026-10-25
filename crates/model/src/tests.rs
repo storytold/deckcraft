@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ColorRef, Fill, LayoutType, Paragraph, PhType, Placeholder, Presentation, Run, RunProps, SchemeSlot, Shape, ShapeId, ShapeKind, ShapeStyle,
+    Slide, Table, TextBody, Theme, Xfrm, defaults, ink_pressure_is_legacy, ink_sample_width, parent_of, resolve, sibling_list_mut, style, text,
+    theme, walk,
+};
 use crate::resolve::Ctx;
 
 #[test]
@@ -269,4 +273,52 @@ fn ink_width_follows_pressure_and_keeps_the_old_placeholder() {
     let floor = ink_sample_width(8.0, 0.0, false);
     assert!((floor - 0.64).abs() < 1e-4, "a light touch stays visible, got {floor}");
     assert!((ink_sample_width(8.0, f32::NAN, false) - 8.0).abs() < 1e-9);
+}
+
+#[test]
+fn table_text_takes_the_masters_other_style_and_shapes_the_default_text_style() {
+    // PowerPoint for Mac, with an otherStyle of 14 pt, a defaultTextStyle of 26 pt and a 36 pt
+    // bodyStyle: a table cell's text is 14 pt, also in a table placed in a content placeholder; a
+    // shape's and a text box's is 26 pt.
+    let mut p = Presentation::default();
+    let size = |pt: f64| crate::text::LevelStyle { run: RunProps { size: Some(pt), ..Default::default() }, ..Default::default() };
+    p.default_text_style.set(0, size(26.0));
+    std::sync::Arc::make_mut(&mut p.masters[0]).other_style.set(0, size(14.0));
+    std::sync::Arc::make_mut(&mut p.masters[0]).body_style.set(0, size(36.0));
+    let s = p.slides[0].clone();
+    let ctx = Ctx::for_slide(&p, &s).unwrap();
+    let para = Paragraph::default();
+    let pt = |sh: &Shape| resolve::run(&ctx, sh, &para, &RunProps::default()).size;
+    let body = crate::text::TextBody::from_text("Cell");
+    assert_eq!(pt(&Shape::table_cell(body.clone())), Some(14.0), "a table cell");
+    let table = Shape { kind: ShapeKind::Table(Table::default()), ..Default::default() };
+    assert_eq!(pt(&table), Some(14.0), "the table itself (its formatting state)");
+    let in_placeholder = Shape { ph: Some(Placeholder { kind: PhType::Obj, idx: 1, ..Default::default() }), ..table };
+    assert_eq!(pt(&in_placeholder), Some(14.0), "a table in a content placeholder");
+    assert_eq!(pt(&Shape { text: Some(body.clone()), ..Default::default() }), Some(26.0), "a shape");
+    assert_eq!(pt(&Shape { text: Some(body), text_box: true, ..Default::default() }), Some(26.0), "a text box");
+}
+
+#[test]
+fn only_web_and_mail_links_are_safe_to_open() {
+    use crate::text::safe_url;
+    for url in ["https://example.com", " HTTP://example.com/x", "mailto:someone@example.com"] {
+        assert!(safe_url(url), "{url}");
+    }
+    let refused = [
+        "https://",
+        "mailto:",
+        "file:///C:/notes.pdf",
+        "notes.pdf",
+        "javascript:alert(1)",
+        "ms-msdt:/id PCWDiagnostic",
+        "ldap://attacker.example/x",
+        "//attacker.example/share",
+        "\\\\attacker.example\\share",
+        "smb://attacker.example/share",
+        "search-ms:query=x",
+    ];
+    for url in refused {
+        assert!(!safe_url(url), "{url}");
+    }
 }

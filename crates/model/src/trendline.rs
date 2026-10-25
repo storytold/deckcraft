@@ -57,22 +57,7 @@ impl Trendline {
                 let yhat: Vec<f64> = xs.iter().map(|x| poly_y(&coeff, *x)).collect();
                 (Model::Poly(coeff), ys, yhat)
             }
-            TrendlineType::Exp => {
-                let pairs: Vec<(f64, f64)> = pairs.into_iter().filter(|(_, y)| *y > 0.0).collect();
-                if pairs.len() < 2 {
-                    return None;
-                }
-                let (xs, ln_y): (Vec<f64>, Vec<f64>) = pairs.iter().map(|(x, y)| (*x, y.ln())).unzip();
-                let fixed = intercept.filter(|c| *c > 0.0).map(|c| c.ln());
-                let (ln_c, b) = linreg(&xs, &ln_y, fixed)?;
-                let c = ln_c.exp();
-                if !c.is_finite() || c <= 0.0 {
-                    return None;
-                }
-                let ys: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
-                let yhat: Vec<f64> = xs.iter().map(|x| c * (b * x).exp()).collect();
-                (Model::Exp { c, b }, ys, yhat)
-            }
+            TrendlineType::Exp => fit_exp(&pairs, intercept)?,
             TrendlineType::Log => {
                 let pairs: Vec<(f64, f64)> = pairs.into_iter().filter(|(x, _)| *x > 0.0).collect();
                 if pairs.len() < 2 {
@@ -83,43 +68,10 @@ impl Trendline {
                 let yhat: Vec<f64> = ln_x.iter().map(|u| b + c * u).collect();
                 (Model::Log { b, c }, ys, yhat)
             }
-            TrendlineType::Power => {
-                let pairs: Vec<(f64, f64)> = pairs.into_iter().filter(|(x, y)| *x > 0.0 && *y > 0.0).collect();
-                if pairs.len() < 2 {
-                    return None;
-                }
-                let (ln_x, ln_y): (Vec<f64>, Vec<f64>) = pairs.iter().map(|(x, y)| (x.ln(), y.ln())).unzip();
-                let fixed = intercept.filter(|c| *c > 0.0).map(|c| c.ln());
-                let (ln_c, b) = linreg(&ln_x, &ln_y, fixed)?;
-                let c = ln_c.exp();
-                if !c.is_finite() || c <= 0.0 {
-                    return None;
-                }
-                let ys: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
-                let yhat: Vec<f64> = pairs.iter().map(|(x, _)| c * x.powf(b)).collect();
-                (Model::Power { c, b }, ys, yhat)
-            }
+            TrendlineType::Power => fit_power(&pairs, intercept)?,
             TrendlineType::MovingAvg => {
                 let period = self.period.unwrap_or(2).clamp(2, 255) as usize;
-                if pairs.len() <= period {
-                    return None;
-                }
-                let mut pts = Vec::new();
-                let mut ys = Vec::new();
-                let mut yhat = Vec::new();
-                for i in period - 1..pairs.len() {
-                    let window = &pairs[i + 1 - period..=i];
-                    let avg = window.iter().map(|(_, y)| y).sum::<f64>() / period as f64;
-                    if avg.is_finite() {
-                        pts.push((pairs[i].0, avg));
-                        ys.push(pairs[i].1);
-                        yhat.push(avg);
-                    }
-                }
-                if pts.len() < 2 {
-                    return None;
-                }
-                (Model::Moving(pts), ys, yhat)
+                fit_moving_avg(&pairs, period)?
             }
         };
         if yhat.iter().any(|v| !v.is_finite()) {
@@ -289,26 +241,28 @@ fn linreg(xs: &[f64], ys: &[f64], intercept: Option<f64>) -> Option<(f64, f64)> 
             sxx += x * x;
             sxy += x * (y - b);
         }
-        if sxx.abs() < 1e-18 {
+        if sxx <= 0.0 || !sxx.is_finite() {
             return None;
         }
         let m = sxy / sxx;
         return (m.is_finite() && b.is_finite()).then_some((b, m));
     }
     let n = xs.len() as f64;
-    let (mut sx, mut sy, mut sxx, mut sxy) = (0.0, 0.0, 0.0, 0.0);
+    let mx = xs.iter().sum::<f64>() / n;
+    let my = ys.iter().sum::<f64>() / n;
+    let (mut sxx, mut sxy) = (0.0, 0.0);
     for (x, y) in xs.iter().zip(ys) {
-        sx += x;
-        sy += y;
-        sxx += x * x;
-        sxy += x * y;
+        let dx = x - mx;
+        sxx += dx * dx;
+        sxy += dx * (y - my);
     }
-    let den = n * sxx - sx * sx;
-    if den.abs() < 1e-18 {
+    // Constant x with a large offset leaves rounding residue in `mx`, so compare against the
+    // rounding scale of the mean instead of zero.
+    if sxx <= 4.0 * n * (f64::EPSILON * mx.abs()).powi(2) || !sxx.is_finite() {
         return None;
     }
-    let m = (n * sxy - sx * sy) / den;
-    let b = (sy - m * sx) / n;
+    let m = sxy / sxx;
+    let b = my - m * mx;
     (m.is_finite() && b.is_finite()).then_some((b, m))
 }
 
@@ -325,6 +279,89 @@ fn poly_y(coeff: &[f64], x: f64) -> f64 {
     acc
 }
 
+fn fit_exp(pairs: &[(f64, f64)], intercept: Option<f64>) -> Option<(Model, Vec<f64>, Vec<f64>)> {
+    let pairs: Vec<(f64, f64)> = pairs.iter().copied().filter(|(_, y)| *y > 0.0).collect();
+    if pairs.len() < 2 {
+        return None;
+    }
+    let (xs, ln_y): (Vec<f64>, Vec<f64>) = pairs.iter().map(|(x, y)| (*x, y.ln())).unzip();
+    let fixed = intercept.filter(|c| *c > 0.0).map(f64::ln);
+    let (ln_c, b) = linreg(&xs, &ln_y, fixed)?;
+    let c = ln_c.exp();
+    if !c.is_finite() || c <= 0.0 {
+        return None;
+    }
+    let ys: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
+    let yhat: Vec<f64> = xs.iter().map(|x| c * (b * x).exp()).collect();
+    Some((Model::Exp { c, b }, ys, yhat))
+}
+
+fn fit_power(pairs: &[(f64, f64)], intercept: Option<f64>) -> Option<(Model, Vec<f64>, Vec<f64>)> {
+    let pairs: Vec<(f64, f64)> = pairs.iter().copied().filter(|(x, y)| *x > 0.0 && *y > 0.0).collect();
+    if pairs.len() < 2 {
+        return None;
+    }
+    let (ln_x, ln_y): (Vec<f64>, Vec<f64>) = pairs.iter().map(|(x, y)| (x.ln(), y.ln())).unzip();
+    let fixed = intercept.filter(|c| *c > 0.0).map(f64::ln);
+    let (ln_c, b) = linreg(&ln_x, &ln_y, fixed)?;
+    let c = ln_c.exp();
+    if !c.is_finite() || c <= 0.0 {
+        return None;
+    }
+    let ys: Vec<f64> = pairs.iter().map(|(_, y)| *y).collect();
+    let yhat: Vec<f64> = pairs.iter().map(|(x, _)| c * x.powf(b)).collect();
+    Some((Model::Power { c, b }, ys, yhat))
+}
+
+fn fit_moving_avg(pairs: &[(f64, f64)], period: usize) -> Option<(Model, Vec<f64>, Vec<f64>)> {
+    if pairs.len() <= period {
+        return None;
+    }
+    let mut pts = Vec::new();
+    let mut ys = Vec::new();
+    let mut yhat = Vec::new();
+    for i in period - 1..pairs.len() {
+        let window = &pairs[i + 1 - period..=i];
+        let avg = window.iter().map(|(_, y)| y).sum::<f64>() / period as f64;
+        if avg.is_finite() {
+            pts.push((pairs[i].0, avg));
+            ys.push(pairs[i].1);
+            yhat.push(avg);
+        }
+    }
+    if pts.len() < 2 {
+        return None;
+    }
+    Some((Model::Moving(pts), ys, yhat))
+}
+
+#[allow(clippy::needless_range_loop)]
+fn polyfit_with_intercept(xs: &[f64], ys: &[f64], order: usize, b0: f64) -> Option<Vec<f64>> {
+    let m = order;
+    let mut ata = vec![vec![0.0; m]; m];
+    let mut atb = vec![0.0; m];
+    for (x, y) in xs.iter().zip(ys) {
+        let dy = y - b0;
+        for i in 0..m {
+            let xi = x.powi((i + 1) as i32);
+            atb[i] += dy * xi;
+            for j in i..m {
+                ata[i][j] += xi * x.powi((j + 1) as i32);
+            }
+        }
+    }
+    for i in 0..m {
+        for j in 0..i {
+            ata[i][j] = ata[j][i];
+        }
+    }
+    let solved = solve(ata, atb)?;
+    let mut coeff = Vec::with_capacity(order + 1);
+    coeff.push(b0);
+    coeff.extend(solved);
+    coeff.iter().all(|v| v.is_finite()).then_some(coeff)
+}
+
 /// Polynomial through the normal equations. `x` is centred when the intercept is free, then
 /// expanded back to powers of `x`, so order 6 on category numbers stays solvable.
 #[allow(clippy::needless_range_loop)] // the index is the power in the normal equations
@@ -334,29 +371,7 @@ fn polyfit(xs: &[f64], ys: &[f64], order: usize, intercept: Option<f64>) -> Opti
         return None;
     }
     if let Some(b0) = intercept {
-        let m = order;
-        let mut ata = vec![vec![0.0; m]; m];
-        let mut atb = vec![0.0; m];
-        for (x, y) in xs.iter().zip(ys) {
-            let dy = y - b0;
-            for i in 0..m {
-                let xi = x.powi((i + 1) as i32);
-                atb[i] += dy * xi;
-                for j in i..m {
-                    ata[i][j] += xi * x.powi((j + 1) as i32);
-                }
-            }
-        }
-        for i in 0..m {
-            for j in 0..i {
-                ata[i][j] = ata[j][i];
-            }
-        }
-        let solved = solve(ata, atb)?;
-        let mut coeff = Vec::with_capacity(order + 1);
-        coeff.push(b0);
-        coeff.extend(solved);
-        return coeff.iter().all(|v| v.is_finite()).then_some(coeff);
+        return polyfit_with_intercept(xs, ys, order, b0);
     }
     let xm = xs.iter().sum::<f64>() / n as f64;
     let us: Vec<f64> = xs.iter().map(|x| x - xm).collect();
@@ -500,11 +515,12 @@ fn x_pow(p: f64) -> String {
 }
 
 fn poly_equation(coeff: &[f64]) -> Option<String> {
-    let scale = coeff.iter().map(|c| c.abs()).fold(0.0, f64::max).max(1.0);
+    // Drop terms that are negligible relative to the largest coefficient, so tiny-valued data keeps its terms.
+    let scale = coeff.iter().map(|c| c.abs()).fold(0.0, f64::max);
     let mut body = String::new();
     let mut first = true;
     for (k, c) in coeff.iter().enumerate().rev() {
-        if c.abs() < scale * 1e-8 {
+        if c.abs() <= scale * 1e-8 {
             continue;
         }
         let pow = match k {
@@ -514,7 +530,7 @@ fn poly_equation(coeff: &[f64]) -> Option<String> {
         };
         let mag = if pow.is_empty() {
             num(c.abs())
-        } else if (c.abs() - 1.0).abs() < scale * 1e-8 {
+        } else if (c.abs() - 1.0).abs() < scale.max(1.0) * 1e-8 {
             pow
         } else {
             format!("{}{}", num(c.abs()), pow)
@@ -545,6 +561,51 @@ mod tests {
 
     fn line(kind: TrendlineType) -> Trendline {
         Trendline { kind, ..Default::default() }
+    }
+
+    #[test]
+    fn linear_fits_tiny_x_values() {
+        let xs = [1e-10, 2e-10, 3e-10, 4e-10, 5e-10];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of tiny x values");
+        assert!((fit.y(3e-10).unwrap() - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn linear_fits_offset_but_narrow_x_range() {
+        let xs = [45000.00, 45000.01, 45000.02, 45000.03, 45000.04];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of offset x values");
+        assert!((fit.y(45000.02).unwrap() - 3.0).abs() < 1e-4);
+        let xs = [1e7, 1e7 + 1.0, 1e7 + 2.0, 1e7 + 3.0, 1e7 + 4.0];
+        let fit = line(TrendlineType::Linear).fit(&xs, &ys).expect("fit of 1e7 offset");
+        assert!((fit.y(1e7 + 2.0).unwrap() - 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn linear_fixed_intercept_on_offset_narrow_x_range() {
+        let xs = [1e7, 1e7 + 1.0, 1e7 + 2.0, 1e7 + 3.0, 1e7 + 4.0];
+        let ys: Vec<f64> = xs.iter().map(|x| 2.0 * x).collect();
+        let mut forced = line(TrendlineType::Linear);
+        forced.intercept = Some(0.0);
+        let fit = forced.fit(&xs, &ys).expect("fixed-intercept fit");
+        assert!((fit.y(1e7 + 2.0).unwrap() / (2.0 * (1e7 + 2.0)) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn linear_fixed_intercept_rejects_overflowing_x() {
+        let xs = [1e160, 2e160, 3e160];
+        let ys = [1.0, 2.0, 3.0];
+        let mut forced = line(TrendlineType::Linear);
+        forced.intercept = Some(0.0);
+        assert!(forced.fit(&xs, &ys).is_none());
+    }
+
+    #[test]
+    fn linear_rejects_constant_x_with_large_offset() {
+        let xs = [45000.1; 5];
+        let ys = [1.0, 2.0, 3.0, 4.0, 5.0];
+        assert!(line(TrendlineType::Linear).fit(&xs, &ys).is_none());
     }
 
     #[test]
@@ -619,5 +680,22 @@ mod tests {
         t.disp_r_sqr = true;
         let fit = t.fit(&[1.0, 2.0, 3.0], &[1.0, 2.0, 3.0]).expect("fit");
         assert_eq!(t.caption(&fit), "y = x\nR² = 1");
+    }
+
+    #[test]
+    fn equation_keeps_tiny_coefficients() {
+        let xs = [1.0, 2.0, 3.0, 4.0];
+        let lin = line(TrendlineType::Linear).fit(&xs, &[2e-9, 4e-9, 6e-9, 8e-9]).expect("linear");
+        assert_eq!(lin.equation().as_deref(), Some("y = 2.00e-9x"));
+        let mut poly = line(TrendlineType::Poly);
+        poly.order = Some(2);
+        let ys: Vec<f64> = xs.iter().map(|x| 3e-9 * x * x + 1e-9).collect();
+        let quad = poly.fit(&xs, &ys).expect("poly");
+        assert_eq!(quad.equation().as_deref(), Some("y = 3.00e-9x² + 1.00e-9"));
+        let ys: Vec<f64> = xs.iter().map(|x: &f64| 5e-9 * x.ln()).collect();
+        let log = line(TrendlineType::Log).fit(&xs, &ys).expect("log");
+        assert_eq!(log.equation().as_deref(), Some("y = 5.00e-9ln(x)"));
+        let zero = line(TrendlineType::Linear).fit(&xs, &[0.0; 4]).expect("zero");
+        assert_eq!(zero.equation().as_deref(), Some("y = 0"));
     }
 }

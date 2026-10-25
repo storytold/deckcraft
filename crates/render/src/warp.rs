@@ -16,6 +16,23 @@ const MAX_POINTS: usize = 40_000;
 
 /// The line of `l` a glyph of paragraph `para` on baseline `y` belongs to.
 fn line_of(l: &TextLayout, para: usize, y: f64) -> Option<usize> {
+    if let Some(&(first, count)) = l.para_lines.get(para) {
+        if count == 0 {
+            return None;
+        }
+        let end = (first + count).min(l.lines.len());
+        if first < end {
+            let mut best: Option<(usize, f64)> = None;
+            for (rel_i, li) in l.lines[first..end].iter().enumerate() {
+                let inside = y >= li.top - 0.01 && y <= li.bottom + 0.01;
+                let d = if inside { 0.0 } else { (li.baseline - y).abs() };
+                if best.is_none_or(|(_, bd)| d < bd) {
+                    best = Some((first + rel_i, d));
+                }
+            }
+            return best.map(|(i, _)| i);
+        }
+    }
     let mut best: Option<(usize, f64)> = None;
     for (i, li) in l.lines.iter().enumerate().filter(|(_, li)| li.para == para) {
         let inside = y >= li.top - 0.01 && y <= li.bottom + 0.01;

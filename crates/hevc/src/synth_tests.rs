@@ -7,7 +7,7 @@
 
 use crate::Decoder;
 use crate::cabac::{Contexts, NEXT_STATE, RANGE_TAB_LPS, init_contexts};
-use crate::spec_tables::*;
+use crate::spec_tables::{CU_SKIP, NUM_CTX, PRED_MODE, SPLIT_CU};
 use deckcraft_bitstream::{BitWriter, escape_rbsp};
 
 const W: usize = 96;

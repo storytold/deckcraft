@@ -7,7 +7,10 @@ use crate::error::Error;
 use crate::frame::Mv;
 use crate::inter::{self, RefPlane};
 use crate::intra::{self, IntraEdge};
-use crate::tables::*;
+use crate::tables::{
+    BLOCK_8X8, CAT_PROBS, COEFBAND_4X4, COEFBAND_8X8PLUS, DCT_DCT, ENERGY_CLASS, EXTRA_BITS, INTERP_EXTEND, INTRA_FRAME, MAX_TXSIZE, MODE2TXFM,
+    NUM_4X4_HIGH, NUM_4X4_WIDE, NUM_8X8_HIGH, NUM_8X8_WIDE, SS_SIZE_LOOKUP, TX_4X4, TX_32X32, neighbors, pareto_full, scan,
+};
 use crate::transform;
 
 /// round_mv_comp_q2 / q4 (8.5.2.1).

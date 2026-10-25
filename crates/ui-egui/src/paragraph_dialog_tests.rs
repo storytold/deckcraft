@@ -60,27 +60,37 @@ fn paragraph_button_aligns_text_in_one_undo() {
     assert_eq!(h.state().session.active().unwrap().history.undo.last().unwrap().label, "Paragraph…");
 }
 
+/// Paragraph-dialog tab settings apply the chosen stop and return to the paragraph controls.
 #[test]
 fn tabs_from_paragraph_applies_a_stop_and_returns() {
     let mut h = harness();
     h.get_by_label("Paragraph…").click();
     h.run_steps(2);
     h.state_mut().dialog.as_mut().unwrap().fields.insert("align".into(), "right".into());
-    h.get_by_label("Tabs…").click_accesskit();
-    h.run_steps(2);
+    // Settle the anchored window's geometry before hit-testing the button with the real pointer
+    // path. egui 0.37 keeps a window invisible for its first sizing frame; AccessKit can activate
+    // such a node, but a pointer must actually hit the visible button inside the window.
+    h.run_steps(3);
+    let tabs = h.get_by_label("Tabs…");
+    let rect = tabs.rect();
+    assert!(rect.min.x >= 0.0 && rect.max.x <= 1440.0 && rect.min.y >= 0.0 && rect.max.y <= 900.0, "Tabs… has settled on screen: {rect:?}");
+    tabs.click();
+    // The click switches the dialog at the end of one pass; wait for that and the first visible
+    // frame before querying the Tabs window's buttons.
+    h.run_steps(3);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("tabs"), "status {:?}", h.state().status);
     {
         let d = h.state_mut().dialog.as_mut().unwrap();
         d.fields.insert("stops".into(), "2:ctr".into());
     }
-    h.get_by_label("OK").click_accesskit();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "OK").click_accesskit();
     // The Tabs OK frame restores Paragraph; the next frame fills its fields.
     h.run_steps(2);
     assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("paragraph"), "status {:?}", h.state().status);
     assert_eq!(h.state().dialog.as_ref().unwrap().fields.get("align").map(String::as_str), Some("right"));
     assert_eq!(tabs_of(&h), vec![(144.0, "ctr".into())]);
     assert_eq!(h.state().session.active().unwrap().history.undo.last().unwrap().label, "Tabs…");
-    h.get_by_label("Cancel").click_accesskit();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Cancel").click_accesskit();
     h.run_steps(1);
     assert!(h.state().dialog.is_none());
     assert_eq!(align_of(&h).as_deref(), Some("ctr"), "cancelling Paragraph leaves the alignment shape.insert wrote");

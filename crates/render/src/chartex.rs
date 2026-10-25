@@ -24,7 +24,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
         return;
     }
     let value_label = |v: f64| c.data_label(s, v);
-    let labels = c.data_labels || c.kind == ChartType::Funnel;
+    let labels = c.series_data_labels(s) || c.kind == ChartType::Funnel;
     match c.kind {
         ChartType::Funnel => funnel(ctx, rctx, c, m, area, base, text_col, &vals, &value_label),
         ChartType::Treemap if !c.category_levels.is_empty() => tree_treemap(ctx, rctx, c, m, area, base, labels.then_some(&value_label)),
@@ -107,7 +107,7 @@ fn region_tiles(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
             ctx.fill_rect(&t);
             let dark = v.is_some_and(|v| (v - min) / span > 0.55);
             let mut text = name.clone();
-            if c.data_labels
+            if c.series_data_labels(s)
                 && let Some(v) = v
             {
                 text = format!(
@@ -170,19 +170,37 @@ pub fn squarify(vals: &[f64], r: Rect) -> Vec<Rect> {
     let mut i = 0;
     while i < order.len() {
         let short = free.width().min(free.height());
-        let worst = |row: &[usize]| {
-            let areas: Vec<f64> = row.iter().map(|&k| vals[k] * scale).collect();
-            let sum: f64 = areas.iter().sum();
-            let (mx, mn) = (areas.iter().copied().fold(0.0, f64::max), areas.iter().copied().fold(f64::MAX, f64::min));
-            ((short * short * mx) / (sum * sum)).max((sum * sum) / (short * short * mn))
-        };
+        if !short.is_finite() || short <= 1e-9 {
+            break;
+        }
+        let s2 = short * short;
+        let a0 = vals[order[i]] * scale;
+        let mut cur_sum = a0;
+        let mut cur_max = a0;
+        let mut cur_min = a0;
+        let mut cur_worst = ((s2 * cur_max) / (cur_sum * cur_sum)).max((cur_sum * cur_sum) / (s2 * cur_min));
         let mut end = i + 1;
-        while end < order.len() && worst(&order[i..=end]) <= worst(&order[i..end]) {
-            end += 1;
+        while end < order.len() {
+            let next_a = vals[order[end]] * scale;
+            let cand_sum = cur_sum + next_a;
+            let cand_max = cur_max.max(next_a);
+            let cand_min = cur_min.min(next_a);
+            let cand_worst = ((s2 * cand_max) / (cand_sum * cand_sum)).max((cand_sum * cand_sum) / (s2 * cand_min));
+            if cand_worst.is_finite() && cand_worst <= cur_worst {
+                cur_sum = cand_sum;
+                cur_max = cand_max;
+                cur_min = cand_min;
+                cur_worst = cand_worst;
+                end += 1;
+            } else {
+                break;
+            }
         }
         let row = &order[i..end];
-        let sum: f64 = row.iter().map(|&k| vals[k] * scale).sum();
-        let thick = sum / short;
+        let thick = cur_sum / short;
+        if !thick.is_finite() || thick <= 0.0 {
+            break;
+        }
         let mut at = 0.0;
         for &k in row {
             let len = vals[k] * scale / thick;
@@ -569,5 +587,14 @@ mod tests {
         };
         assert_eq!(c.waterfall_bars(), [(0.0, 100.0), (100.0, 140.0), (140.0, 115.0), (0.0, 115.0)]);
         assert_eq!(c.value_range(), (0.0, 140.0));
+    }
+
+    #[test]
+    fn squarify_handles_skewed_and_exhausted_rect() {
+        let vals = vec![1e12, 1e-6, 1e-6, 1e-6];
+        let r = Rect::new(0.0, 0.0, 100.0, 100.0);
+        let tiles = squarify(&vals, r);
+        assert_eq!(tiles.len(), vals.len());
+        assert!(tiles[0].area() > 0.0);
     }
 }

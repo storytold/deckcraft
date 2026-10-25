@@ -10,6 +10,7 @@ use crate::{Services, SlideApp};
 
 #[test]
 fn spelling_dialog_changes_and_ignores_words() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let aff = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\nSFX S Y 1\nSFX S 0 s .\n";
     let dic = "6\nthe/S\nslide/S\nquarter/S\nplan/S\nour\nfor\n";
     deckcraft_engine::spell::install("en-US", deckcraft_engine::spell::Dictionary::parse(aff.as_bytes(), dic.as_bytes()));
@@ -49,6 +50,7 @@ fn spelling_dialog_changes_and_ignores_words() {
 /// typed; the context menu's correction and Add to Dictionary clear them.
 #[test]
 fn squiggles_mark_misspelt_words_in_the_background() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let aff = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\nSFX S Y 1\nSFX S 0 s .\n";
     let dic = "7\nthe/S\nslide/S\nquarter/S\nplan/S\nour\nfor\nreview\n";
     deckcraft_engine::spell::install("xx-SQ", deckcraft_engine::spell::Dictionary::parse(aff.as_bytes(), dic.as_bytes()));
@@ -115,6 +117,7 @@ fn squiggles_mark_misspelt_words_in_the_background() {
 /// gets there a few milliseconds per frame.
 #[test]
 fn squiggles_in_table_cells_and_notes_and_on_the_ui_thread() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     let aff = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\nSFX S Y 1\nSFX S 0 s .\n";
     let dic = "10\nthe/S\nplan/S\nsales\nregion/S\ntotal/S\nnorth\nsouth\nremember\nto\nshow\n";
     deckcraft_engine::spell::install("xx-TB", deckcraft_engine::spell::Dictionary::parse(aff.as_bytes(), dic.as_bytes()));
@@ -192,6 +195,7 @@ fn right_click(h: &mut Harness<'_, SlideApp>, pos: egui::Pos2) {
 /// dialog marks text and Do Not Check Spelling clears its squiggles.
 #[test]
 fn notes_menu_language_dialog_and_repeated_words() {
+    let _gpu = crate::gpu_lock::gpu_lock();
     use egui::accesskit::Role;
     let aff = "SET UTF-8\nTRY esianrtolcdugmphbyfvkwzxjq\n";
     let dic = "6\nthe\nplan\nremember\nis\ngood\nwork\n";
@@ -233,7 +237,9 @@ fn notes_menu_language_dialog_and_repeated_words() {
     if let (Ok(path), Ok(img)) = (std::env::var("DECKCRAFT_PNG_OUT_NOTES"), h.render()) {
         let _ = img.save(path);
     }
-    // Right-click the notes' first word.
+    // Right-click the notes' first word, once the (background) notes check is in.
+    assert_eq!(h.state_mut().squiggles.settle_notes("Remmeber the the plan", "xx-NM"), vec![(0, 8), (13, 16)]);
+    h.run_steps(2);
     let notes = h.query_all_by_role(Role::MultilineTextInput).next().map(|n| n.rect()).unwrap();
     right_click(&mut h, egui::pos2(notes.left() + 14.0, notes.top() + 8.0));
     if let (Ok(path), Ok(img)) = (std::env::var("DECKCRAFT_PNG_OUT_NOTES_MENU"), h.render()) {
@@ -245,6 +251,7 @@ fn notes_menu_language_dialog_and_repeated_words() {
     let notes_text = |h: &Harness<'_, SlideApp>| h.state().session.active().unwrap().doc.slides[0].notes_text();
     assert_eq!(notes_text(&h), "Remember the the plan");
     // The repeated "the": its squiggle starts after "Remember the ".
+    h.state_mut().squiggles.settle_notes("Remember the the plan", "xx-NM");
     h.run_steps(4);
     let x = h.query_all_by_role(Role::MultilineTextInput).next().map(|n| n.rect()).unwrap();
     let mut found = false;

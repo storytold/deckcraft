@@ -328,6 +328,19 @@ pub enum Action {
     PlayMedia,
 }
 
+/// Can a link from a (possibly untrusted) deck be opened outside it, by the slide show or by
+/// whoever opens an exported file? Only web pages and mail: `file:`, `javascript:`, relative paths
+/// and other schemes (OS protocol handlers, network shares) are not.
+pub fn safe_url(url: &str) -> bool {
+    let u = url.trim();
+    let Some((scheme, rest)) = u.split_once(':') else { return false };
+    match scheme.to_ascii_lowercase().as_str() {
+        "http" | "https" => rest.starts_with("//") && rest.len() > 2,
+        "mailto" => !rest.is_empty(),
+        _ => false,
+    }
+}
+
 fn custom_show_returns() -> bool {
     true
 }
@@ -530,7 +543,7 @@ impl Paragraph {
         true
     }
     pub fn text(&self) -> String {
-        self.runs.iter().map(|r| r.content()).collect()
+        self.runs.iter().map(Run::content).collect()
     }
     pub fn char_len(&self) -> usize {
         self.runs.iter().map(Run::char_len).sum()
@@ -576,7 +589,7 @@ pub struct ListStyle {
 
 impl ListStyle {
     pub fn level(&self, l: u8) -> Option<&LevelStyle> {
-        self.levels.get(l as usize).and_then(|x| x.as_ref())
+        self.levels.get(l as usize).and_then(Option::as_ref)
     }
     pub fn set(&mut self, l: u8, s: LevelStyle) {
         let i = (l as usize).min(8);
@@ -603,6 +616,7 @@ pub struct TextBody {
 
 impl TextBody {
     pub fn from_text(text: &str) -> Self {
+        let text = text.replace("\r\n", "\n").replace('\r', "\n");
         TextBody { paragraphs: text.split('\n').map(Paragraph::new).collect(), ..Default::default() }
     }
     /// Plain text with `\n` between paragraphs.

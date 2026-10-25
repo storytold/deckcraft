@@ -12,7 +12,7 @@ use bands::{anti_collapse, denormalise_bands, quant_all_bands, renormalise_vecto
 use energy::{unquant_coarse_energy, unquant_energy_finalise, unquant_fine_energy};
 use mdct::ImdctScratch;
 use rate::{Mode, compute_allocation};
-use tables::*;
+use tables::{COMB_GAINS, EBANDS, MAX_LM, NB_EBANDS, OVERLAP, PREEMPH, SHORT_MDCT, SPREAD_ICDF, TAPSET_ICDF, TF_SELECT_TABLE, TRIM_ICDF};
 
 use crate::range::{BITRES, RangeDecoder};
 
@@ -578,7 +578,7 @@ fn tf_decode(start: usize, end: usize, is_transient: bool, tf_res: &mut [i32; NB
     let mut budget = dec.storage() as i32 * 8;
     let mut tell = dec.tell();
     let mut logp: u32 = if is_transient { 2 } else { 4 };
-    let tf_select_rsv = lm > 0 && tell + logp as i32 + 1 <= budget;
+    let tf_select_rsv = lm > 0 && tell + (logp as i32) < budget;
     budget -= tf_select_rsv as i32;
     let mut tf_changed = 0;
     let mut curr = 0;

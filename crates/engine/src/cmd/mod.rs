@@ -318,6 +318,14 @@ pub(crate) fn str_param<'a>(p: &'a Value, key: &str) -> Option<&'a str> {
 pub(crate) fn usize_param(p: &Value, key: &str) -> Option<usize> {
     p.get(key).and_then(Value::as_u64).and_then(|v| usize::try_from(v).ok())
 }
+/// An index param: `Ok(None)` when absent (callers may fall back to the selection), `Err` when
+/// present but not a valid index (negative, non-integer), so a bad index never acts on the selection.
+pub(crate) fn opt_usize_param(p: &Value, key: &str, cmd: &str) -> Result<Option<usize>> {
+    match p.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(v) => v.as_u64().and_then(|v| usize::try_from(v).ok()).map(Some).ok_or_else(|| bad(cmd, format!("`{key}` is not a valid index: {v}"))),
+    }
+}
 /// A shape id param: `Ok(None)` when absent (callers may fall back to the selection), `Err` when
 /// present but not a valid id (negative, non-integer, beyond `u32`), so a bad id never edits the selection.
 pub(crate) fn id_param(p: &Value, key: &str, cmd: &str) -> Result<Option<ShapeId>> {
@@ -347,6 +355,11 @@ pub(crate) fn with_param(p: &Value, key: &str, v: Value) -> Value {
 
 /// Targets: `ids` / `id` params, else the selection.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<ShapeId>> {
+    if let Some(a) = p.get("ids").and_then(Value::as_array)
+        && let Some(v) = a.iter().find(|v| v.as_u64().and_then(|v| u32::try_from(v).ok()).is_none())
+    {
+        return Err(bad("shape", format!("`ids` has an invalid shape id: {v}")));
+    }
     if let Some(ids) = ids_param(p, "ids")
         && !ids.is_empty()
     {
@@ -363,6 +376,8 @@ pub(crate) fn ok() -> Result<Value> {
 }
 
 /// Parse a colour param: `"#RRGGBB"`, `"accent1"`…, or `{"scheme":"accent2","lumMod":75000}`.
+/// A preset or system colour keeps its base: `{"preset":"red"}`,
+/// `{"system":"windowText","last":"#000000"}`.
 pub(crate) fn color_param(p: &Value, key: &str) -> Option<deckcraft_model::ColorRef> {
     let v = p.get(key)?;
     color_value(v)
@@ -383,6 +398,17 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
         Value::Object(o) => {
             let mut c = if let Some(s) = o.get("scheme").and_then(Value::as_str) {
                 ColorRef::scheme(deckcraft_color::SchemeSlot::from_xml(s)?)
+            } else if let Some(name) = o.get("preset").and_then(Value::as_str) {
+                if !deckcraft_color::is_preset_name(name) {
+                    return None;
+                }
+                ColorRef { base: deckcraft_model::ColorBase::Preset { name: name.to_string() }, mods: vec![] }
+            } else if let Some(name) = o.get("system").and_then(Value::as_str) {
+                if !deckcraft_color::is_system_name(name) {
+                    return None;
+                }
+                let last = deckcraft_color::Rgba::from_hex(o.get("last").and_then(Value::as_str)?)?;
+                ColorRef { base: deckcraft_model::ColorBase::System { name: name.to_string(), last }, mods: vec![] }
             } else {
                 ColorRef::rgb(deckcraft_color::Rgba::from_hex(o.get("rgb").and_then(Value::as_str)?)?)
             };
@@ -487,6 +513,10 @@ pub(crate) fn current_shapes<'a>(doc: &'a deckcraft_model::Presentation, sel: &c
         t @ (crate::Target::Handout | crate::Target::NotesMaster) => crate::page_master(doc, t).map(|m| &m.shapes),
         crate::Target::Layout { master, layout } => doc.masters.get(master).and_then(|m| m.layouts.get(layout)).map(|l| &l.shapes),
     }
+}
+
+pub(crate) fn current_names(doc: &deckcraft_model::Presentation, sel: &crate::Selection) -> std::collections::HashSet<String> {
+    current_shapes(doc, sel).map(|v| v.iter().map(|s| s.name.clone()).collect()).unwrap_or_default()
 }
 
 /// The command palette runs a command with `{}`. True when the params doc names a value that
@@ -630,5 +660,23 @@ mod tests {
         assert!(needs_arguments(export.params));
         assert!(!needs_arguments(save.params));
         assert!(needs_arguments(audio.params));
+    }
+
+    #[test]
+    fn preset_and_system_colors_keep_their_base() {
+        use deckcraft_color::{ColorTransform, Rgba};
+        use deckcraft_model::{ColorBase, ColorRef};
+        use serde_json::json;
+        let preset = color_value(&json!({"preset": "red", "lumMod": 50_000}));
+        assert_eq!(preset, Some(ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![ColorTransform::LumMod(50_000)] }));
+        let system = color_value(&json!({"system": "windowText", "last": "#123456"}));
+        assert_eq!(system, Some(ColorRef { base: ColorBase::System { name: "windowText".into(), last: Rgba::rgb(0x12, 0x34, 0x56) }, mods: vec![] }));
+        assert_eq!(color_value(&json!({"system": "windowText"})), None, "a system color needs its last value");
+        assert_eq!(color_value(&json!({"preset": "notAColor"})), None);
+        assert_eq!(color_value(&json!({"system": "notAColor", "last": "#000000"})), None);
+        for name in ["aliceBlue", "darkBlue", "ltSlateGrey"] {
+            assert!(color_value(&json!({"preset": name})).is_some(), "{name}");
+        }
+        assert!(color_value(&json!({"system": "3dDkShadow", "last": "#000000"})).is_some());
     }
 }

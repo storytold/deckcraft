@@ -31,28 +31,44 @@ pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> Respon
     big_button_ex(ui, icon, label, enabled, false, false).0
 }
 
-/// Large button; with `split`, the label row is a separate dropdown target (returns its response).
+/// Width of the dropdown target at the right of a large split button. It is reserved outside the
+/// whole label area, so no visible line of a one- or two-line label can open the menu.
+const SPLIT_ARROW_W: f32 = 14.0;
+
+/// Return the chevron-only sub-rectangle at the right edge of a split button.
+fn split_arrow_rect(rect: Rect) -> Rect {
+    Rect::from_min_max(pos2(rect.max.x - SPLIT_ARROW_W, rect.min.y + 38.0), rect.max)
+}
+
+/// Width of a large button: padding plus, for a split button, the reserved arrow strip.
+fn big_button_width(text_w: f32, split: bool) -> f32 {
+    (text_w + 10.0 + if split { SPLIT_ARROW_W } else { 0.0 }).max(40.0)
+}
+
+/// Large button; with `split`, the label row ends in a separate dropdown target (returns its
+/// response). Like Office's split buttons, the icon and the label text run the main command; only
+/// the chevron at the end of the label row opens the menu.
 pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split: bool, selected: bool) -> (Response, Option<Response>) {
     let t = Tokens::get(ui.ctx());
     let font = theme::font(11.0);
     let lines: Vec<&str> = wrap_label(label);
     let text_w = lines.iter().map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), t.text).size().x)).fold(0.0f32, f32::max);
-    let w = (text_w + 10.0 + if split && lines.len() == 1 { 10.0 } else { 0.0 }).max(40.0);
+    let w = big_button_width(text_w, split);
+    // The whole button runs the main command; the narrow strip at the end of the label row is the
+    // dropdown. A split button therefore has two named targets, not a third unnamed row target.
     let (rect, resp) = ui.allocate_exact_size(vec2(w, RIBBON_H - 2.0), if enabled { Sense::click() } else { Sense::hover() });
     // Named for screen readers and UI tests ("Ink to\nShape" reads "Ink to Shape").
     let spoken = label.replace('\n', " ");
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &spoken));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, &spoken));
     let painter = ui.painter_at(rect.expand(1.0));
-    let (main_rect, arrow_rect) = if split {
-        (Rect::from_min_max(rect.min, pos2(rect.max.x, rect.min.y + 38.0)), Some(Rect::from_min_max(pos2(rect.min.x, rect.min.y + 38.0), rect.max)))
-    } else {
-        (rect, None)
-    };
-    let main_resp =
-        if split { ui.interact(main_rect, resp.id.with("main"), if enabled { Sense::click() } else { Sense::hover() }) } else { resp.clone() };
+    let arrow_rect = split.then(|| split_arrow_rect(rect));
+    let main_resp = resp.clone();
     let arrow_resp = arrow_rect.map(|r| ui.interact(r, resp.id.with("arrow"), if enabled { Sense::click() } else { Sense::hover() }));
+    if split && let Some(a) = &arrow_resp {
+        a.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, format!("{spoken} options")));
+    }
     if let Some(c) = bg(ui, &main_resp, selected, &t) {
-        painter.rect_filled(if split { main_rect } else { rect }, CornerRadius::same(4), c);
+        painter.rect_filled(rect, CornerRadius::same(4), c);
     }
     if let (Some(ar), Some(a)) = (arrow_rect, &arrow_resp)
         && let Some(c) = bg(ui, a, false, &t)
@@ -62,17 +78,18 @@ pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split:
     let icon_rect = Rect::from_center_size(pos2(rect.center().x, rect.min.y + 19.0), vec2(30.0, 30.0));
     icons::paint(&painter, icon_rect, icon, t.text, !enabled);
     let col = if enabled { t.text } else { t.text_faint };
+    let label_rect = if split { Rect::from_min_max(rect.min, pos2(rect.max.x - SPLIT_ARROW_W, rect.max.y)) } else { rect };
     let mut y = rect.min.y + 39.0;
-    for (i, l) in lines.iter().enumerate() {
-        let last = i + 1 == lines.len();
+    for l in &lines {
         let label_w = ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), col).size().x);
-        let extra = if split && last { 9.0 } else { 0.0 };
-        let x = rect.center().x - (label_w + extra) / 2.0;
+        let x = label_rect.center().x - label_w / 2.0;
         painter.text(pos2(x, y), Align2::LEFT_TOP, l, font.clone(), col);
-        if split && last {
-            chevron(&painter, pos2(x + label_w + 5.0, y + 7.0), 3.0, col);
-        }
         y += 12.5;
+    }
+    if split {
+        // The chevron sits in the reserved strip beside the label's last line, never on its text.
+        let chevron_y = rect.min.y + 39.0 + 12.5 * lines.len().saturating_sub(1) as f32 + 7.0;
+        chevron(&painter, pos2(rect.max.x - 7.0, chevron_y), 3.0, col);
     }
     (if split { main_resp } else { resp }, arrow_resp)
 }
@@ -113,15 +130,33 @@ pub fn small_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, selecte
     small_button_ex(ui, icon, label, enabled, selected, false).0
 }
 
+/// Draw a small named button, optionally with a separately named options chevron, and return
+/// both click targets.
 pub fn small_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, selected: bool, split: bool) -> (Response, Option<Response>) {
+    small_button_named(ui, icon, label, if label.is_empty() { "Options" } else { label }, enabled, selected, split)
+}
+
+/// A small button whose accessible name is independent of its visible label. Split arrows are
+/// named after their own command, not a shared "More options", so assistive technology can tell
+/// Bullets, Numbering and the shape-format controls apart.
+pub fn small_button_named(
+    ui: &mut Ui,
+    icon: Icon,
+    label: &str,
+    name: &str,
+    enabled: bool,
+    selected: bool,
+    split: bool,
+) -> (Response, Option<Response>) {
     let t = Tokens::get(ui.ctx());
     let font = theme::font(12.0);
     let tw = if label.is_empty() { 0.0 } else { ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0 };
     let arrow_w = if split { 12.0 } else { 0.0 };
     let w = 24.0 + tw + arrow_w;
-    let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), if enabled { Sense::click() } else { Sense::hover() });
-    if !label.is_empty() {
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    // As in `big_button_ex`, a split row is two targets and must not add a third named node.
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, 22.0), if enabled && !split { Sense::click() } else { Sense::hover() });
+    if !name.is_empty() && !split {
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
     }
     let painter = ui.painter_at(rect);
     let main_rect = Rect::from_min_max(rect.min, pos2(rect.max.x - arrow_w, rect.max.y));
@@ -134,6 +169,12 @@ pub fn small_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, sele
             if enabled { Sense::click() } else { Sense::hover() },
         )
     });
+    if split {
+        main_resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, name));
+        if let Some(a) = &arrow_resp {
+            a.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, format!("{name} options")));
+        }
+    }
     if let Some(c) = bg(ui, &main_resp, selected, &t) {
         painter.rect_filled(main_rect, CornerRadius::same(4), c);
     }
@@ -152,6 +193,73 @@ pub fn small_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, sele
     (if split { main_resp } else { resp }, arrow_resp)
 }
 
+/// Open one menu from either half of a split control that has no separate main action.
+///
+/// Both halves keep their own names for assistive technology, but the popup has one stable id
+/// and one anchor spanning the complete painted control. Clicking the icon/label or the chevron
+/// therefore opens and closes the same menu, and neither named target is a dead end.
+pub fn split_menu(main: &Response, arrow: &Response, add: impl FnOnce(&mut Ui)) {
+    split_popup(main, arrow).show(|ui| add(ui));
+}
+
+/// The shared popup behind [`split_menu`], for callers that adjust its width or close behavior.
+pub fn split_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'a> {
+    // Pointer clicks read Context input, so resolve them before taking the data lock below.
+    let main_clicked = main.clicked();
+    let arrow_clicked = arrow.clicked();
+    let toggle = (main_clicked || arrow_clicked).then_some(egui::SetOpenCommand::Toggle);
+    let id = split_popup_id(main);
+    // The popup's geometry and identity are shared, but keyboard entry belongs to the half that
+    // opened it. Remember that origin while focus moves into the menu (or the Eyedropper runs).
+    let anchor = main.ctx.data_mut(|data| {
+        let key = id.with("anchor");
+        if arrow_clicked {
+            data.insert_temp(key, arrow.id);
+        } else if main_clicked {
+            data.insert_temp(key, main.id);
+        }
+        data.get_temp::<egui::Id>(key).unwrap_or(main.id)
+    });
+    egui::Popup::menu(main).id(id).anchor(main.rect.union(arrow.rect)).anchor_widget(anchor).open_memory(toggle)
+}
+
+/// A dropdown-only split whose menu contains a colour grid, retaining the Eyedropper hand-back.
+pub fn split_color_popup<'a>(main: &'a Response, arrow: &'a Response) -> egui::Popup<'a> {
+    let id = split_popup_id(main);
+    let mut popup = split_popup(main, arrow).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    if crate::eyedropper::result_waits_for(&main.ctx, id) {
+        popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
+    }
+    if popup.is_open() {
+        crate::eyedropper::note_open_menu(&main.ctx, id);
+    }
+    popup
+}
+
+/// Derive the popup id from the main button response so a split menu follows that button.
+fn split_popup_id(main: &Response) -> egui::Id {
+    main.id.with("split-menu")
+}
+
+/// A menu choice ticked in the icon column (Align to Slide…), its text lined up with the
+/// [`small_button`] items around it.
+pub fn check_item(ui: &mut Ui, label: &str, enabled: bool, on: bool) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let font = theme::font(12.0);
+    let tw = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0;
+    let (rect, resp) = ui.allocate_exact_size(vec2(24.0 + tw, 22.0), if enabled { Sense::click() } else { Sense::hover() });
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::CheckBox, enabled, on, label));
+    let painter = ui.painter_at(rect);
+    if let Some(c) = bg(ui, &resp, false, &t) {
+        painter.rect_filled(rect, CornerRadius::same(4), c);
+    }
+    if on {
+        icons::paint(&painter, Rect::from_center_size(pos2(rect.min.x + 12.0, rect.center().y), vec2(17.0, 17.0)), Icon::Check, t.text, !enabled);
+    }
+    painter.text(pos2(rect.min.x + 24.0, rect.center().y), Align2::LEFT_CENTER, label, font, if enabled { t.text } else { t.text_faint });
+    resp
+}
+
 /// A square icon toggle (B, I, U, alignment…).
 pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) -> Response {
     let t = Tokens::get(ui.ctx());
@@ -162,7 +270,7 @@ pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) 
     }
     icons::paint(&painter, rect.shrink(3.0), icon, t.text, !enabled);
     // Named for screen readers (and tests) by its tooltip.
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
     resp.on_hover_text(tip)
 }
 
@@ -171,11 +279,13 @@ pub fn color_split(ui: &mut Ui, icon: Icon, tip: &str, color: Color32, enabled: 
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(34.0, 22.0), Sense::hover());
     let main = ui.interact(Rect::from_min_size(rect.min, vec2(23.0, 22.0)), resp.id.with("m"), if enabled { Sense::click() } else { Sense::hover() });
+    main.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
     let arrow = ui.interact(
         Rect::from_min_max(pos2(rect.min.x + 23.0, rect.min.y), rect.max),
         resp.id.with("a"),
         if enabled { Sense::click() } else { Sense::hover() },
     );
+    arrow.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, format!("{tip} options")));
     let painter = ui.painter_at(rect);
     if let Some(c) = bg(ui, &main, false, &t) {
         painter.rect_filled(main.rect, CornerRadius::same(4), c);
@@ -240,6 +350,7 @@ pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool,
         if enabled { t.text } else { t.text_faint },
     );
     chevron(&painter, pos2(rect.max.x - 9.0, rect.center().y), 3.0, t.text_dim);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, if current.is_empty() { id } else { current }));
     let _ = id;
     egui::Popup::menu(&resp).width(width.max(140.0)).show(|ui| {
         egui::ScrollArea::vertical().max_height(360.0).show(ui, add_items);
@@ -351,7 +462,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         out = Some(None);
     }
     // "More Colors…": a hex field.
-    let id = ui.id().with("hex");
+    let id = ui.scope_id().with("hex");
     let mut hex: String = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_default());
     ui.horizontal(|ui| {
         ui.label("More Colors… #");
@@ -403,15 +514,16 @@ pub fn gallery(
     clicked
 }
 
-/// A labelled number field with up/down steppers. Returns the new value when committed.
-pub fn spinner(ui: &mut Ui, id: &str, value: f64, step: f64, suffix: &str, width: f32) -> Option<f64> {
+/// A number field with up/down steppers, named by the visible label of its row. Returns the new
+/// value when committed.
+pub fn spinner(ui: &mut Ui, id: &str, label: &str, value: f64, step: f64, suffix: &str, width: f32) -> Option<f64> {
     let t = Tokens::get(ui.ctx());
-    let key = ui.id().with(id);
+    let key = ui.scope_id().with(id);
     let mut text: String = ui.data_mut(|d| d.get_temp::<String>(key)).unwrap_or_else(|| fmt_num(value, suffix));
     let mut out = None;
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).font(theme::font(12.0)));
+        let r = ui.add(egui::TextEdit::singleline(&mut text).desired_width(width).font(theme::font(12.0))).accessible_name(format!("{label} value"));
         if r.has_focus() {
             ui.data_mut(|d| d.insert_temp(key, text.clone()));
         } else {
@@ -425,7 +537,9 @@ pub fn spinner(ui: &mut Ui, id: &str, value: f64, step: f64, suffix: &str, width
         }
         let (rect, _) = ui.allocate_exact_size(vec2(12.0, 22.0), Sense::hover());
         let up = ui.interact(Rect::from_min_max(rect.min, pos2(rect.max.x, rect.center().y)), key.with("up"), Sense::click());
+        up.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Increase {label}")));
         let down = ui.interact(Rect::from_min_max(pos2(rect.min.x, rect.center().y), rect.max), key.with("dn"), Sense::click());
+        down.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, format!("Decrease {label}")));
         let p = ui.painter();
         let c = rect.center();
         p.line_segment([pos2(c.x - 3.0, c.y - 3.0), pos2(c.x, c.y - 6.0)], Stroke::new(1.0, t.text_dim));
@@ -476,7 +590,9 @@ pub fn section(ui: &mut Ui, title: &str, open: bool) -> bool {
 /// A button with an optional label and a painted dropdown chevron (the UI font has no ▾).
 pub fn drop_button(ui: &mut Ui, label: &str, size: egui::Vec2, enabled: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
-    let r = ui.add_enabled(enabled, egui::Button::new(if label.is_empty() { String::new() } else { format!("{label}   ") }).min_size(size));
+    let r = ui
+        .add_enabled(enabled, egui::Button::new(if label.is_empty() { String::new() } else { format!("{label}   ") }).min_size(size))
+        .on_hover_text(if label.is_empty() { "Options" } else { label });
     let col = if enabled { t.text_dim } else { t.text_faint };
     chevron(ui.painter(), egui::pos2(r.rect.max.x - 8.0, r.rect.center().y), 3.0, col);
     r
@@ -491,6 +607,155 @@ mod tests {
     use super::*;
     use egui::accesskit::Role;
     use egui_kittest::kittest::Queryable;
+
+    /// Office's large split button: the icon and the visible label text run the main command;
+    /// only the chevron at the end of the label row opens the options menu. The old geometry made
+    /// the whole label row the arrow target, so clicking "Paste" opened its menu instead of
+    /// pasting.
+    #[test]
+    fn a_large_split_buttons_label_runs_the_command_and_its_chevron_opens_the_options() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let main_clicks = Rc::new(Cell::new(0u32));
+        let arrow_clicks = Rc::new(Cell::new(0u32));
+        let (main_counter, arrow_counter) = (main_clicks.clone(), arrow_clicks.clone());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(200.0, 100.0)).build_ui(move |ui| {
+            theme::install_fonts(ui.ctx());
+            let (main, arrow) = big_button_ex(ui, Icon::Paste, "Paste", true, true, false);
+            if main.clicked() {
+                main_counter.set(main_counter.get() + 1);
+            }
+            if arrow.is_some_and(|a| a.clicked()) {
+                arrow_counter.set(arrow_counter.get() + 1);
+            }
+        });
+        harness.run();
+        let main_rect = harness.get_by_role_and_label(Role::Button, "Paste").rect();
+        let arrow_rect = harness.get_by_role_and_label(Role::Button, "Paste options").rect();
+        let label = egui::pos2(main_rect.center().x, main_rect.min.y + 45.0);
+        assert!(main_rect.contains(label) && !arrow_rect.contains(label), "the visible label is outside the chevron strip");
+
+        /// Nested large-split-button test helper: move and press/release the primary pointer at a
+        /// position.
+        fn click(harness: &mut egui_kittest::Harness<'_, ()>, pos: egui::Pos2) {
+            harness.input_mut().events.push(egui::Event::PointerMoved(pos));
+            harness.run();
+            for pressed in [true, false] {
+                harness.input_mut().events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run();
+            }
+        }
+        click(&mut harness, label);
+        assert_eq!(main_clicks.get(), 1, "clicking the label runs the main command");
+        assert_eq!(arrow_clicks.get(), 0, "clicking the label does not open the menu");
+
+        click(&mut harness, arrow_rect.center());
+        assert_eq!(main_clicks.get(), 1, "clicking the chevron does not run the main command");
+        assert_eq!(arrow_clicks.get(), 1, "clicking the chevron opens the options");
+    }
+
+    /// A two-line split label reserves the arrow strip outside *all* visible text. The click
+    /// lands on the last line's widest glyph pixels (the old overlap) and runs the main command;
+    /// only the named arrow opens the menu.
+    #[test]
+    fn a_two_line_split_labels_last_text_pixels_run_the_command() {
+        use std::cell::Cell;
+        use std::rc::Rc;
+
+        let main_clicks = Rc::new(Cell::new(0u32));
+        let arrow_clicks = Rc::new(Cell::new(0u32));
+        let last_line = Rc::new(RefCell::new(None));
+        let (main_counter, arrow_counter) = (main_clicks.clone(), arrow_clicks.clone());
+        let (last_line_out, last_line_cell) = (last_line.clone(), last_line.clone());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(220.0, 100.0)).build_ui(move |ui| {
+            theme::install_fonts(ui.ctx());
+            let label = "Send\nBackward";
+            let (main, arrow) = big_button_ex(ui, Icon::SendBackward, label, true, true, false);
+            let font = theme::font(11.0);
+            let col = Tokens::get(ui.ctx()).text;
+            let lines = wrap_label(label);
+            let rect = main.rect;
+            let label_rect = Rect::from_min_max(rect.min, pos2(rect.max.x - SPLIT_ARROW_W, rect.max.y));
+            let last = lines.last().copied().unwrap_or_default();
+            let last_w = ui.fonts_mut(|f| f.layout_no_wrap(last.to_string(), font.clone(), col).size().x);
+            let y = rect.min.y + 39.0 + 12.5 * lines.len().saturating_sub(1) as f32;
+            let x = label_rect.center().x - last_w / 2.0;
+            *last_line_cell.borrow_mut() = Some(Rect::from_min_size(pos2(x, y), vec2(last_w, 12.0)));
+            if main.clicked() {
+                main_counter.set(main_counter.get() + 1);
+            }
+            if arrow.is_some_and(|a| a.clicked()) {
+                arrow_counter.set(arrow_counter.get() + 1);
+            }
+        });
+        harness.run();
+        let arrow_rect = harness.get_by_role_and_label(Role::Button, "Send Backward options").rect();
+        let text = last_line_out.borrow().expect("last line laid out");
+        assert!(text.max.x < arrow_rect.min.x, "the reserved strip is outside all visible text: {text:?} vs {arrow_rect:?}");
+        let label_pixels = pos2(text.max.x - 1.0, text.center().y);
+        assert!(!arrow_rect.contains(label_pixels));
+
+        /// Nested two-line-split-button test helper: move and press/release the primary pointer at a
+        /// position.
+        fn click(harness: &mut egui_kittest::Harness<'_, ()>, pos: egui::Pos2) {
+            harness.input_mut().events.push(egui::Event::PointerMoved(pos));
+            harness.run();
+            for pressed in [true, false] {
+                harness.input_mut().events.push(egui::Event::PointerButton {
+                    pos,
+                    button: egui::PointerButton::Primary,
+                    pressed,
+                    modifiers: egui::Modifiers::NONE,
+                });
+                harness.run();
+            }
+        }
+        click(&mut harness, label_pixels);
+        assert_eq!(main_clicks.get(), 1, "the last line's real text pixels run the main command");
+        assert_eq!(arrow_clicks.get(), 0, "the last line's text does not open the menu");
+
+        click(&mut harness, arrow_rect.center());
+        assert_eq!(main_clicks.get(), 1, "the arrow does not run the main command");
+        assert_eq!(arrow_clicks.get(), 1, "the arrow opens the options");
+    }
+
+    /// Small split arrows carry their own command name; bullets and numbering must not both be
+    /// announced as a generic "More options" target.
+    #[test]
+    fn small_split_arrows_are_named_for_their_own_commands() {
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 100.0)).build_ui(|ui| {
+            theme::install_fonts(ui.ctx());
+            let _ = small_button_named(ui, Icon::Bullets, "", "Bullets", true, false, true);
+            let _ = small_button_named(ui, Icon::Numbering, "", "Numbering", true, false, true);
+        });
+        harness.run();
+        for name in ["Bullets", "Bullets options", "Numbering", "Numbering options"] {
+            assert!(harness.get_by_role_and_label(Role::Button, name).rect().width() > 0.0, "{name} is a named target");
+        }
+        assert!(harness.query_by_role_and_label(Role::Button, "More options").is_none(), "no shared arrow name remains");
+    }
+
+    /// The custom ribbon dropdown is a real combo box in the accessibility tree, named by its
+    /// current value (0.37's strict unnamed-input check would otherwise reject it).
+    #[test]
+    fn the_dropdown_has_a_combo_box_role_and_a_name() {
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 200.0)).build_ui(|ui| {
+            theme::install_fonts(ui.ctx());
+            dropdown(ui, "font-size", "18 pt", 120.0, true, |ui| {
+                ui.label("12 pt");
+                ui.label("18 pt");
+            });
+        });
+        harness.run();
+        let combo = harness.get_by_role_and_label(Role::ComboBox, "18 pt");
+        assert!(combo.rect().width() > 100.0);
+    }
 
     /// #32: clicking the "More Colors" hex field closed the colour menu before anything could be
     /// typed. It stays open now; Enter picks the colour and closes it.
@@ -542,7 +807,7 @@ mod tests {
         assert!(harness.query_by_label("Eyedropper").is_none(), "choosing it closes the menu");
         assert!(picked.borrow().is_none(), "nothing is picked yet");
         // The app starts the Eyedropper from this request; here the colour is taken at once.
-        assert!(harness.ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("deckcraft.eyedropper.request"))).unwrap_or(false));
+        assert!(harness.ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::unique("deckcraft.eyedropper.request"))).unwrap_or(false));
         let menu = crate::eyedropper::open_menu(&harness.ctx).expect("the open menu noted its button");
         crate::eyedropper::store_result(&harness.ctx, menu, "00FF00");
         harness.run();

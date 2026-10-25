@@ -1,7 +1,14 @@
 //! Sequence header (5.5) and uncompressed frame header (5.9) parsing.
 
 use crate::bits::BitReader;
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    AFFINE, ALTREF_FRAME, ALTREF2_FRAME, BWDREF_FRAME, GM_ABS_ALPHA_BITS, GM_ABS_TRANS_BITS, GM_ABS_TRANS_ONLY_BITS, GM_ALPHA_PREC_BITS,
+    GM_TRANS_ONLY_PREC_BITS, GM_TRANS_PREC_BITS, GOLDEN_FRAME, IDENTITY, INTER_FRAME, INTRA_ONLY_FRAME, KEY_FRAME, LAST_FRAME, MAX_SEGMENTS,
+    MAX_TILE_AREA, MAX_TILE_COLS, MAX_TILE_ROWS, MAX_TILE_WIDTH, NUM_REF_FRAMES, ONLY_4X4, PRIMARY_REF_NONE, REF_FRAME_LIST, REFS_PER_FRAME,
+    RESTORATION_TILESIZE_MAX, RESTORE_NONE, RESTORE_SGRPROJ, RESTORE_SWITCHABLE, RESTORE_WIENER, ROTZOOM, SEG_LVL_ALT_Q, SEG_LVL_MAX,
+    SEG_LVL_REF_FRAME, SELECT_INTEGER_MV, SELECT_SCREEN_CONTENT_TOOLS, SUPERRES_DENOM_BITS, SUPERRES_DENOM_MIN, SUPERRES_NUM, SWITCH_FRAME,
+    TOTAL_REFS_PER_FRAME, TRANSLATION, TX_MODE_LARGEST, TX_MODE_SELECT, WARPEDMODEL_PREC_BITS,
+};
 use crate::{Error, Result};
 
 pub const EIGHTTAP: u8 = 0;
@@ -899,6 +906,9 @@ impl FrameHeader {
             let mut widest = 0;
             let mut start = 0;
             while start < sb_cols {
+                if t.mi_col_starts.len() >= MAX_TILE_COLS {
+                    return Err(Error::Invalid("tile_cols exceeds MAX_TILE_COLS"));
+                }
                 t.mi_col_starts.push(start << sb_shift);
                 let max_width = (sb_cols - start).min(max_tile_width_sb);
                 let size = r.ns(max_width)? + 1;
@@ -916,6 +926,9 @@ impl FrameHeader {
             let max_tile_height_sb = (max_tile_area_sb / widest.max(1)).max(1);
             let mut start = 0;
             while start < sb_rows {
+                if t.mi_row_starts.len() >= MAX_TILE_ROWS {
+                    return Err(Error::Invalid("tile_rows exceeds MAX_TILE_ROWS"));
+                }
                 t.mi_row_starts.push(start << sb_shift);
                 let max_height = (sb_rows - start).min(max_tile_height_sb);
                 let size = r.ns(max_height)? + 1;

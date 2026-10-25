@@ -1,7 +1,11 @@
 //! Super-resolution upscaling (7.16) and loop restoration (7.17).
 
 use crate::frame::{FrameBuf, Plane};
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    FILTER_BITS, RESTORE_NONE, RESTORE_SGRPROJ, RESTORE_WIENER, SGR_PARAMS, SGRPROJ_MTABLE_BITS, SGRPROJ_PRJ_BITS, SGRPROJ_RECIP_BITS,
+    SGRPROJ_RST_BITS, SGRPROJ_SGR_BITS, SUPERRES_EXTRA_BITS, SUPERRES_FILTER_OFFSET, SUPERRES_FILTER_TAPS, SUPERRES_SCALE_BITS, SUPERRES_SCALE_MASK,
+    UPSCALE_FILTER,
+};
 use crate::state::FrameState;
 
 /// Upscale a frame horizontally from FrameWidth to UpscaledWidth (7.16).

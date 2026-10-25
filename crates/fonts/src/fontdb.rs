@@ -161,12 +161,12 @@ pub struct FaceRef(&'static FontFace);
 impl FaceRef {
     /// The handle for a loaded face (memoised per face).
     pub fn of(face: &Arc<FontFace>) -> FaceRef {
-        static LEAKED: RwLock<Vec<Option<&'static FontFace>>> = RwLock::new(Vec::new());
+        static LEAKED: RwLock<Vec<Option<&FontFace>>> = RwLock::new(Vec::new());
         let id = face.id as usize;
-        if let Some(Some(f)) = LEAKED.read().unwrap_or_else(|e| e.into_inner()).get(id) {
+        if let Some(Some(f)) = LEAKED.read().unwrap_or_else(std::sync::PoisonError::into_inner).get(id) {
             return FaceRef(f);
         }
-        let mut w = LEAKED.write().unwrap_or_else(|e| e.into_inner());
+        let mut w = LEAKED.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         if w.len() <= id {
             w.resize(id + 1, None);
         }
@@ -743,7 +743,7 @@ pub fn base_style(style: &str) -> &str {
 }
 
 fn norm(s: &str) -> String {
-    s.chars().filter(|c| c.is_alphanumeric()).flat_map(|c| c.to_lowercase()).collect()
+    s.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect()
 }
 
 /// Weight implied by a style name.
@@ -807,7 +807,7 @@ impl FontDb {
     pub fn set_system_fallback(&self, on: bool) {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            self.sys.lock().unwrap_or_else(|e| e.into_inner()).enabled = on;
+            self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).enabled = on;
         }
         #[cfg(target_arch = "wasm32")]
         let _ = on;
@@ -822,14 +822,14 @@ impl FontDb {
     }
 
     pub(crate) fn read_faces(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<FontFace>>> {
-        self.faces.read().unwrap_or_else(|e| e.into_inner())
+        self.faces.read().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// The system font catalog, scanned first if it hasn't been yet.
     #[cfg(not(target_arch = "wasm32"))]
     fn read_catalog(&self) -> std::sync::RwLockReadGuard<'_, Vec<CatalogEntry>> {
         self.ensure_catalog();
-        self.catalog.read().unwrap_or_else(|e| e.into_inner())
+        self.catalog.read().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     /// Family names available (loaded plus cataloged system fonts), sorted and deduplicated.
@@ -885,7 +885,7 @@ impl FontDb {
                 }
             }
         }
-        let mut faces = self.faces.write().unwrap_or_else(|e| e.into_inner());
+        let mut faces = self.faces.write().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut added = 0;
         for f in new {
             // Checked again under the lock: another thread may have added the same face.
@@ -923,7 +923,7 @@ impl FontDb {
     #[cfg(not(target_arch = "wasm32"))]
     pub fn load_system_fonts(&self) -> usize {
         // Families load again from the new catalog when next looked up.
-        self.loaded_families.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        self.loaded_families.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clear();
         // The first scan, or a rescan once it is done (never both at once).
         let mut first = None;
         self.cataloged.get_or_init(|| first = Some(self.scan_font_dirs()));
@@ -959,7 +959,7 @@ impl FontDb {
                     }
                     continue;
                 }
-                let ext = p.extension().and_then(|e| e.to_str()).map(|e| e.to_ascii_lowercase());
+                let ext = p.extension().and_then(std::ffi::OsStr::to_str).map(str::to_ascii_lowercase);
                 if !matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) {
                     continue;
                 }
@@ -975,7 +975,7 @@ impl FontDb {
         }
         let n = found.len();
         log::debug!("cataloged {n} system font faces");
-        *self.catalog.write().unwrap_or_else(|e| e.into_inner()) = found;
+        *self.catalog.write().unwrap_or_else(std::sync::PoisonError::into_inner) = found;
         n
     }
 
@@ -983,7 +983,7 @@ impl FontDb {
     /// it is loaded.
     #[cfg(not(target_arch = "wasm32"))]
     fn load_cataloged(&self, family: &str) -> bool {
-        let loading = self.loading.lock().unwrap_or_else(|e| e.into_inner());
+        let loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         self.load_family(family, &loading)
     }
 
@@ -1047,7 +1047,7 @@ impl FontDb {
         // them rather than finding none and falling back to another family.
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let mut loaded = self.loaded_families.lock().unwrap_or_else(|e| e.into_inner());
+            let mut loaded = self.loaded_families.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             let key = family.to_lowercase();
             if !loaded.contains(&key) {
                 self.load_cataloged(family);
@@ -1112,7 +1112,7 @@ impl FontDb {
         }
         let f = make_face(base.bytes.clone(), base.index, base.family.clone(), style.to_string(), coords)?;
         let f = Arc::new(f);
-        self.faces.write().unwrap_or_else(|e| e.into_inner()).push(f.clone());
+        self.faces.write().unwrap_or_else(std::sync::PoisonError::into_inner).push(f.clone());
         Some(f)
     }
 
@@ -1214,20 +1214,20 @@ impl FontDb {
         }
         let seen = self.read_faces().len();
         {
-            let sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+            let sys = self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if !sys.enabled || sys.misses.contains(&c) {
                 return false;
             }
         }
         let covered = |db: &FontDb| db.read_faces().iter().any(|f| f.covers(c) && accept(f));
         let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
-        let loading = self.loading.lock().unwrap_or_else(|e| e.into_inner());
+        let loading = self.loading.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         // Another thread may have loaded a face for `c` (faces are only ever added), or found
         // there is none, while this one waited.
         if self.read_faces().len() != seen && covered(self) {
             return true;
         }
-        if self.sys.lock().unwrap_or_else(|e| e.into_inner()).misses.contains(&c) {
+        if self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).misses.contains(&c) {
             return false;
         }
         for fam in SYSTEM_FALLBACKS {
@@ -1238,7 +1238,8 @@ impl FontDb {
                 }
             }
         }
-        let mut paths: Vec<std::path::PathBuf> = self.catalog.read().unwrap_or_else(|e| e.into_inner()).iter().map(|e| e.path.clone()).collect();
+        let mut paths: Vec<std::path::PathBuf> =
+            self.catalog.read().unwrap_or_else(std::sync::PoisonError::into_inner).iter().map(|e| e.path.clone()).collect();
         paths.sort();
         paths.dedup();
         for p in paths {
@@ -1253,7 +1254,7 @@ impl FontDb {
             }
         }
         if remember_miss {
-            self.sys.lock().unwrap_or_else(|e| e.into_inner()).misses.insert(c);
+            self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).misses.insert(c);
         }
         false
     }
@@ -1326,10 +1327,10 @@ impl FontDb {
         if c.is_control() || c.is_whitespace() {
             return false;
         }
-        if !self.sys.lock().unwrap_or_else(|e| e.into_inner()).enabled {
+        if !self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner).enabled {
             return false;
         }
-        if MISSES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).contains(&c) {
+        if MISSES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(Default::default).contains(&c) {
             return false;
         }
         let mut paths: Vec<std::path::PathBuf> = self.read_catalog().iter().map(|e| e.path.clone()).collect();
@@ -1347,7 +1348,7 @@ impl FontDb {
                 return true;
             }
         }
-        MISSES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(c);
+        MISSES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(Default::default).insert(c);
         false
     }
 
@@ -1359,12 +1360,12 @@ impl FontDb {
             return false;
         }
         {
-            let sys = self.sys.lock().unwrap_or_else(|e| e.into_inner());
+            let sys = self.sys.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             if !sys.enabled {
                 return false;
             }
         }
-        if MISSES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).contains(&c) {
+        if MISSES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(Default::default).contains(&c) {
             return false;
         }
         let mut paths: Vec<std::path::PathBuf> = self.read_catalog().iter().map(|e| e.path.clone()).collect();
@@ -1382,14 +1383,14 @@ impl FontDb {
                 return true;
             }
         }
-        MISSES.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(Default::default).insert(c);
+        MISSES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(Default::default).insert(c);
         false
     }
 
     /// Glyph outline in font units, y-down (flipped), cached per (face, glyph).
     pub fn outline(&self, face: &FontFace, gid: u32) -> Arc<BezPath> {
         let key = (face.id, gid);
-        if let Some(p) = self.outlines.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        if let Some(p) = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get(&key) {
             return p.clone();
         }
         let mut pen = FlipPen(BezPath::new());
@@ -1399,7 +1400,7 @@ impl FontDb {
             let _ = g.draw(DrawSettings::unhinted(Size::unscaled(), face.location()), &mut pen);
         }
         let p = Arc::new(pen.0);
-        let mut cache = self.outlines.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = self.outlines.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         if cache.len() >= OUTLINE_CACHE_MAX {
             cache.clear();
         }

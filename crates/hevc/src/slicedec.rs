@@ -10,7 +10,11 @@ use crate::intra::{self, Refs};
 use crate::params::{Layout, Pps, Sps};
 use crate::picture::{FrameRef, RefPic};
 use crate::slice::{SliceHeader, SliceType};
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ABS_MVD_GT0, ABS_MVD_GT1, CBF_CHROMA, CBF_LUMA, CODED_SUB_BLOCK, CU_QP_DELTA_ABS, CU_SKIP, CU_TRANSQUANT_BYPASS, GT1, GT2, INTER_PRED_IDC,
+    INTRA_CHROMA, LAST_X_PREFIX, LAST_Y_PREFIX, MERGE_FLAG, MERGE_IDX, MVP_FLAG, PART_MODE, PRED_MODE, PREV_INTRA_LUMA, REF_IDX, RQT_ROOT_CBF,
+    SAO_MERGE, SAO_TYPE, SIG_COEFF, SPLIT_CU, SPLIT_TRANSFORM, TRANSFORM_SKIP,
+};
 use crate::tables::{CTX_IDX_MAP, LEVEL_SCALE, SCAN_4, qpc_420, scan_order};
 use crate::transform;
 use std::sync::Arc;
@@ -393,6 +397,37 @@ impl<'a> SliceDecoder<'a> {
         d.decode_data()
     }
 
+    /// Context initialisation / synchronisation at the start of a CTB (9.3.1, 9.3.2.1).
+    fn init_ctb_contexts(&mut self, layout: &Layout, ts: u32, rs: u32, wctb: u32, first: bool) -> Result<()> {
+        let ctb = 1i32 << self.sps.log2_ctb;
+        let first_in_tile = ts == 0 || layout.tile_id[ts as usize] != layout.tile_id[ts as usize - 1];
+        let wpp_row_start = self.pps.entropy_coding_sync
+            && (rs.is_multiple_of(wctb) || layout.tile_id[ts as usize] != layout.tile_id[layout.rs_to_ts[rs as usize - 1] as usize]);
+        if first_in_tile {
+            if !first {
+                init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type);
+            }
+            self.last_qp = self.slice_qp;
+        } else if wpp_row_start {
+            let (x0, y0) = (self.ctb_x, self.ctb_y);
+            let avail = self.pic.zavail(x0, y0, x0 + ctb, y0 - ctb, self.slice_addr);
+            match (&self.pic.wpp_ctx, avail) {
+                (Some(saved), true) => self.c.ctx = **saved,
+                _ => init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type),
+            }
+            self.last_qp = self.slice_qp;
+        } else if first && self.sh.dependent {
+            match &self.pic.ds_ctx {
+                Some((saved, qp)) => {
+                    self.c.ctx = **saved;
+                    self.last_qp = *qp;
+                }
+                None => return invalid("dependent slice segment without stored contexts"),
+            }
+        }
+        Ok(())
+    }
+
     fn decode_data(&mut self) -> Result<()> {
         let layout = self.pic.layout.clone();
         let wctb = self.pic.wctb as u32;
@@ -408,32 +443,7 @@ impl<'a> SliceDecoder<'a> {
             self.ctb_y = ry * ctb;
             self.pic.ctb_slice[rs as usize] = self.slice_idx;
             self.pic.ctb_addr[rs as usize] = self.slice_addr;
-            // context initialisation / synchronisation (9.3.1, 9.3.2.1)
-            let first_in_tile = ts == 0 || layout.tile_id[ts as usize] != layout.tile_id[ts as usize - 1];
-            let wpp_row_start = self.pps.entropy_coding_sync
-                && (rs.is_multiple_of(wctb) || layout.tile_id[ts as usize] != layout.tile_id[layout.rs_to_ts[rs as usize - 1] as usize]);
-            if first_in_tile {
-                if !first {
-                    init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type);
-                }
-                self.last_qp = self.slice_qp;
-            } else if wpp_row_start {
-                let (x0, y0) = (self.ctb_x, self.ctb_y);
-                let avail = self.pic.zavail(x0, y0, x0 + ctb, y0 - ctb, self.slice_addr);
-                match (&self.pic.wpp_ctx, avail) {
-                    (Some(saved), true) => self.c.ctx = **saved,
-                    _ => init_contexts(&mut self.c.ctx, self.slice_qp, self.init_type),
-                }
-                self.last_qp = self.slice_qp;
-            } else if first && self.sh.dependent {
-                match &self.pic.ds_ctx {
-                    Some((saved, qp)) => {
-                        self.c.ctx = **saved;
-                        self.last_qp = *qp;
-                    }
-                    None => return invalid("dependent slice segment without stored contexts"),
-                }
-            }
+            self.init_ctb_contexts(&layout, ts, rs, wctb, first)?;
             first = false;
             if self.sh.sao_luma || self.sh.sao_chroma {
                 self.parse_sao(rx, ry, rs)?;
@@ -502,54 +512,58 @@ impl<'a> SliceDecoder<'a> {
         let mut p = SaoParams::default();
         for c in 0..3 {
             let enabled = if c == 0 { self.sh.sao_luma } else { self.sh.sao_chroma };
-            if !enabled {
-                continue;
-            }
-            if c == 2 {
-                p.type_idx[2] = p.type_idx[1];
-                p.eo_class[2] = p.eo_class[1];
-            } else {
-                p.type_idx[c] = if self.dd(SAO_TYPE) == 0 {
-                    0
-                } else if self.bypass() == 0 {
-                    1
-                } else {
-                    2
-                };
-            }
-            if p.type_idx[c] == 0 {
-                continue;
-            }
-            let bd = if c == 0 { self.pic.bd_y } else { self.pic.bd_c };
-            let cmax = (1u32 << (bd.min(10) - 5)) - 1;
-            let mut abs = [0i16; 4];
-            for a in abs.iter_mut() {
-                let mut v = 0;
-                while v < cmax && self.bypass() == 1 {
-                    v += 1;
-                }
-                *a = v as i16;
-            }
-            if p.type_idx[c] == 1 {
-                for a in abs.iter_mut() {
-                    if *a != 0 && self.bypass() == 1 {
-                        *a = -*a;
-                    }
-                }
-                p.band_pos[c] = self.bypass_bits(5) as u8;
-                p.offsets[c] = abs;
-            } else {
-                p.offsets[c] = [abs[0], abs[1], -abs[2], -abs[3]];
-                if c == 0 {
-                    p.eo_class[0] = self.bypass_bits(2) as u8;
-                }
-                if c == 1 {
-                    p.eo_class[1] = self.bypass_bits(2) as u8;
-                }
+            if enabled {
+                self.parse_sao_component(&mut p, c);
             }
         }
         self.pic.sao[rs as usize] = p;
         Ok(())
+    }
+
+    /// SAO syntax of one enabled colour component `c` (7.3.8.3).
+    fn parse_sao_component(&mut self, p: &mut SaoParams, c: usize) {
+        if c == 2 {
+            p.type_idx[2] = p.type_idx[1];
+            p.eo_class[2] = p.eo_class[1];
+        } else {
+            p.type_idx[c] = if self.dd(SAO_TYPE) == 0 {
+                0
+            } else if self.bypass() == 0 {
+                1
+            } else {
+                2
+            };
+        }
+        if p.type_idx[c] == 0 {
+            return;
+        }
+        let bd = if c == 0 { self.pic.bd_y } else { self.pic.bd_c };
+        let cmax = (1u32 << (bd.min(10) - 5)) - 1;
+        let mut abs = [0i16; 4];
+        for a in abs.iter_mut() {
+            let mut v = 0;
+            while v < cmax && self.bypass() == 1 {
+                v += 1;
+            }
+            *a = v as i16;
+        }
+        if p.type_idx[c] == 1 {
+            for a in abs.iter_mut() {
+                if *a != 0 && self.bypass() == 1 {
+                    *a = -*a;
+                }
+            }
+            p.band_pos[c] = self.bypass_bits(5) as u8;
+            p.offsets[c] = abs;
+        } else {
+            p.offsets[c] = [abs[0], abs[1], -abs[2], -abs[3]];
+            if c == 0 {
+                p.eo_class[0] = self.bypass_bits(2) as u8;
+            }
+            if c == 1 {
+                p.eo_class[1] = self.bypass_bits(2) as u8;
+            }
+        }
     }
 
     fn coding_quadtree(&mut self, x0: i32, y0: i32, log2: u32, depth: u32) -> Result<()> {
@@ -822,6 +836,34 @@ impl<'a> SliceDecoder<'a> {
         self.c.init_engine()
     }
 
+    /// Most probable luma intra modes of the block at (xp, yp) (8.4.2).
+    fn mpm_list(&self, xp: i32, yp: i32) -> [u32; 3] {
+        let cand_a = if self.pic.zavail(xp, yp, xp - 1, yp, self.slice_addr) {
+            let b = self.pic.blk_at(xp - 1, yp);
+            if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
+        } else {
+            1
+        };
+        let cand_b = if self.pic.zavail(xp, yp, xp, yp - 1, self.slice_addr) && yp > ((yp >> self.sps.log2_ctb) << self.sps.log2_ctb) {
+            let b = self.pic.blk_at(xp, yp - 1);
+            if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
+        } else {
+            1
+        };
+        if cand_a == cand_b {
+            if cand_a < 2 { [0, 1, 26] } else { [cand_a, 2 + ((cand_a + 29) % 32), 2 + ((cand_a - 2 + 1) % 32)] }
+        } else {
+            let c = if cand_a != 0 && cand_b != 0 {
+                0
+            } else if cand_a != 1 && cand_b != 1 {
+                1
+            } else {
+                26
+            };
+            [cand_a, cand_b, c]
+        }
+    }
+
     fn parse_intra_modes(&mut self, x0: i32, y0: i32, n: i32, part: PartMode) -> Result<()> {
         let nb = if part == PartMode::PNxN { 2 } else { 1 };
         let pb = n / nb;
@@ -834,31 +876,7 @@ impl<'a> SliceDecoder<'a> {
             for i in 0..nb {
                 let k = (j * nb + i) as usize;
                 let (xp, yp) = (x0 + i * pb, y0 + j * pb);
-                // candidate modes (8.4.2)
-                let cand_a = if self.pic.zavail(xp, yp, xp - 1, yp, self.slice_addr) {
-                    let b = self.pic.blk_at(xp - 1, yp);
-                    if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
-                } else {
-                    1
-                };
-                let cand_b = if self.pic.zavail(xp, yp, xp, yp - 1, self.slice_addr) && yp > ((yp >> self.sps.log2_ctb) << self.sps.log2_ctb) {
-                    let b = self.pic.blk_at(xp, yp - 1);
-                    if b.flags & F_INTRA != 0 { b.ipm as u32 } else { 1 }
-                } else {
-                    1
-                };
-                let mut list = if cand_a == cand_b {
-                    if cand_a < 2 { [0, 1, 26] } else { [cand_a, 2 + ((cand_a + 29) % 32), 2 + ((cand_a - 2 + 1) % 32)] }
-                } else {
-                    let c = if cand_a != 0 && cand_b != 0 {
-                        0
-                    } else if cand_a != 1 && cand_b != 1 {
-                        1
-                    } else {
-                        26
-                    };
-                    [cand_a, cand_b, c]
-                };
+                let mut list = self.mpm_list(xp, yp);
                 let mode = if prev[k] {
                     let idx = if self.bypass() == 0 {
                         0
@@ -934,33 +952,39 @@ impl<'a> SliceDecoder<'a> {
         self.transform_unit(x0, y0, xb, yb, log2, blk_idx, cbf_luma, cbf_c)
     }
 
+    /// cu_qp_delta_abs / sign and QP update (7.3.8.14).
+    fn parse_cu_qp_delta(&mut self) -> Result<()> {
+        // cu_qp_delta_abs: prefix TU(5) with ctx 0,1,1,1,1, suffix EG0
+        let mut v = 0;
+        while v < 5 && self.dd(CU_QP_DELTA_ABS + if v == 0 { 0 } else { 1 }) == 1 {
+            v += 1;
+        }
+        if v == 5 {
+            let mut k = 0;
+            while self.bypass() == 1 {
+                v += 1 << k;
+                k += 1;
+                ensure!(k < 32, "invalid cu_qp_delta_abs");
+            }
+            v += self.bypass_bits(k) as i32;
+        }
+        if v != 0 && self.bypass() == 1 {
+            v = -v;
+        }
+        let off = 6 * (self.pic.bd_y as i32 - 8);
+        ensure!(v >= -(26 + off / 2) && v <= 25 + off / 2, "CuQpDeltaVal out of range");
+        self.is_cu_qp_delta_coded = true;
+        self.cu_qp_delta = v;
+        self.update_qp();
+        Ok(())
+    }
+
     fn transform_unit(&mut self, x0: i32, y0: i32, xb: i32, yb: i32, log2: u32, blk_idx: u32, cbf_luma: bool, cbf_c: [bool; 2]) -> Result<()> {
         let n = 1i32 << log2;
         let chroma_here = log2 > 2 || blk_idx == 3;
         let cbf_chroma = cbf_c[0] || cbf_c[1];
         if (cbf_luma || cbf_chroma) && self.pps.cu_qp_delta_enabled && !self.is_cu_qp_delta_coded {
-            // cu_qp_delta_abs: prefix TU(5) with ctx 0,1,1,1,1, suffix EG0
-            let mut v = 0;
-            while v < 5 && self.dd(CU_QP_DELTA_ABS + if v == 0 { 0 } else { 1 }) == 1 {
-                v += 1;
-            }
-            if v == 5 {
-                let mut k = 0;
-                while self.bypass() == 1 {
-                    v += 1 << k;
-                    k += 1;
-                    ensure!(k < 32, "invalid cu_qp_delta_abs");
-                }
-                v += self.bypass_bits(k) as i32;
-            }
-            if v != 0 && self.bypass() == 1 {
-                v = -v;
-            }
-            let off = 6 * (self.pic.bd_y as i32 - 8);
-            ensure!(v >= -(26 + off / 2) && v <= 25 + off / 2, "CuQpDeltaVal out of range");
-            self.is_cu_qp_delta_coded = true;
-            self.cu_qp_delta = v;
-            self.update_qp();
+            self.parse_cu_qp_delta()?;
         }
         // luma
         if self.cu_intra {

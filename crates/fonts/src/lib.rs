@@ -409,16 +409,38 @@ mod tests {
         assert!(feature("liga").is_some());
     }
 
+    /// When the Latin build input exists, the runtime catalogue carries the expected Latin faces;
+    /// required builds also assert their presence.
     #[test]
     fn craft_fonts_latin_when_present() {
+        let required = option_env!("CRAFT_FONTS_REQUIRED").is_some();
         if !CRAFT_FONTS.iter().any(|f| f.family == "Inter") {
+            assert!(!required, "CRAFT_FONTS_REQUIRED must embed Inter rather than skip the optional Latin manifest");
             eprintln!("skipped: built without craft-fonts' Latin manifest (set CRAFT_FONTS_DIR)");
             return;
+        }
+        let inter = |style: &str| CRAFT_FONTS.iter().find(|f| f.family == "Inter" && f.style == style);
+        let (regular, bold, variable) = (inter("Regular"), inter("Bold"), inter("Variable"));
+        if required {
+            assert!(
+                variable.is_some() || (regular.is_some() && bold.is_some()),
+                "CRAFT_FONTS_REQUIRED must embed Inter Regular and Bold (or a Variable face)"
+            );
         }
         let db = FontDb::with_font_dirs(Vec::new());
         db.set_system_fallback(false);
         assert_eq!(db.face("Inter", "Regular").family, "Inter");
         assert_eq!(db.face("Aptos", "Regular").family, "Inter");
+        if let (Some(regular), Some(bold)) = (regular, bold) {
+            // The build input carries one entry per face; real static Bold must not be the Regular
+            // file relabelled in the manifest.
+            assert_ne!(regular.bytes, bold.bytes, "Inter Bold must be a distinct face file from Regular");
+            let (r, b) = (db.face("Inter", "Regular"), db.face("Inter", "Bold"));
+            assert_eq!((r.family.as_str(), r.style.as_str()), ("Inter", "Regular"));
+            assert_eq!((b.family.as_str(), b.style.as_str()), ("Inter", "Bold"));
+            assert_ne!(r.id(), b.id(), "Inter Bold must load as its own face");
+            assert!(b.weight > r.weight, "Inter Bold weight {} is not above Regular {}", b.weight, r.weight);
+        }
         if CRAFT_FONTS.iter().any(|f| f.family == "Carlito") {
             assert_eq!(db.face("Calibri", "Bold").family, "Carlito");
         }

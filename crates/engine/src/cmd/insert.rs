@@ -8,7 +8,10 @@ use deckcraft_model::text::{AutoFit, RunKind, TextBody};
 use deckcraft_model::{Chart, ColorRef, Fill, Geom, Line, MediaClip, Shape, ShapeId, ShapeKind, ShapeStyle, Table};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, NO_ID_SPACE, always, bad, base64_decode, base64_encode, bool_or, bool_param, cmd, color_value, edit_shapes, has_doc, has_selection,
+    has_slide, has_text_or_shapes, ok, rect_param, str_param, usize_param, xfrm_of,
+};
 use crate::{EngineError, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -118,7 +121,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Chart Elements",
             ["Chart Design", "Chart Layouts"],
             None,
-            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, id?}",
+            "{title?: string|null, legend?: b|t|l|r|null, dataLabels?: bool, gridlines?: bool, palette?, binCount?: n|null, binSize?: n|null, subtotals?: [point index], quartiles?: exclusive|inclusive, upDownBars?: bool, textColor?: #RRGGBB|accent1..6|tx1…|null (title, axes, legend and labels; null for PowerPoint's default: the theme's text colour at 65 % plus 35 %, 595959 on a light theme), id?}",
             has_selection,
             chart_options
         ),
@@ -149,27 +152,38 @@ fn default_rect(s: &Session, w: f64, h: f64) -> Xfrm {
     Xfrm::new((size.width - w) / 2.0, (size.height - h) / 2.0, w, h)
 }
 
+/// The word an automatic shape name starts with ("Rectangle" in "Rectangle 3").
+pub(crate) fn auto_name_base(shape: &Shape) -> String {
+    match &shape.kind {
+        ShapeKind::Picture { .. } => "Picture".to_string(),
+        ShapeKind::Table(_) => "Table".to_string(),
+        ShapeKind::Chart(_) => "Chart".to_string(),
+        ShapeKind::Media(m) if m.video => "Video".to_string(),
+        ShapeKind::Media(_) => "Audio".to_string(),
+        ShapeKind::Model3d { .. } => "3D Model".to_string(),
+        _ if shape.text_box => "TextBox".to_string(),
+        _ => shape
+            .geom
+            .preset_name()
+            .and_then(deckcraft_geom::preset::info)
+            .map(|i| i.label.split(':').next().unwrap_or(i.label).trim().to_string())
+            .unwrap_or_else(|| "Shape".into()),
+    }
+}
+
+/// "{base} n" with the first `n` from the shape count + 1 that no shape on the slide already uses,
+/// so a gap left by a deleted shape never makes a second shape with the same name.
+pub(crate) fn first_free_name(base: &str, taken: &std::collections::HashSet<String>) -> String {
+    (taken.len() + 1..).map(|n| format!("{base} {n}")).find(|c| !taken.contains(c)).unwrap_or_default()
+}
+
 pub(crate) fn add_shape(s: &mut Session, cmd: &str, mut shape: Shape, select: bool) -> Result<ShapeId> {
     s.edit(|doc, sel| {
         shape.id = ShapeId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
         if shape.name.is_empty() {
-            let base = match &shape.kind {
-                ShapeKind::Picture { .. } => "Picture".to_string(),
-                ShapeKind::Table(_) => "Table".to_string(),
-                ShapeKind::Chart(_) => "Chart".to_string(),
-                ShapeKind::Media(m) if m.video => "Video".to_string(),
-                ShapeKind::Media(_) => "Audio".to_string(),
-                ShapeKind::Model3d { .. } => "3D Model".to_string(),
-                _ if shape.text_box => "TextBox".to_string(),
-                _ => shape
-                    .geom
-                    .preset_name()
-                    .and_then(deckcraft_geom::preset::info)
-                    .map(|i| i.label.split(':').next().unwrap_or(i.label).trim().to_string())
-                    .unwrap_or_else(|| "Shape".into()),
-            };
-            let n = super::current_shapes(doc, sel).map(|v| v.len()).unwrap_or(0) + 1;
-            shape.name = format!("{base} {n}");
+            let base = auto_name_base(&shape);
+            let taken = super::current_names(doc, sel);
+            shape.name = first_free_name(&base, &taken);
         }
         let id = shape.id;
         let list = crate::shapes_mut(doc, sel).ok_or_else(|| bad("insert", "no slide"))?;
@@ -577,7 +591,7 @@ fn commit_album(s: &mut Session, items: Vec<AlbumItem>, opts: AlbumOpts, replace
 }
 
 fn album_norm(s: &str) -> String {
-    s.chars().filter(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase()
+    s.chars().filter(char::is_ascii_alphanumeric).collect::<String>().to_ascii_lowercase()
 }
 
 fn album_layout(p: &Value) -> Result<AlbumLayout> {
@@ -770,7 +784,7 @@ fn image_px(bytes: &[u8]) -> (f64, f64) {
 }
 
 fn file_stem(name: &str) -> String {
-    let base = std::path::Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or(name);
+    let base = std::path::Path::new(name).file_name().and_then(std::ffi::OsStr::to_str).unwrap_or(name);
     let stem = match base.rsplit_once('.') {
         Some((s, ext)) if !s.is_empty() && !ext.is_empty() => s,
         _ => base,
@@ -1278,14 +1292,25 @@ fn media(s: &mut Session, p: &Value, video: bool) -> Result<Value> {
         }
         Err(_) => (0, 0, 0, false),
     };
-    let warning = (!playable).then(|| match &info {
-        Ok(i) => {
-            let codecs: Vec<&str> = i.audio.iter().map(|a| a.codec.as_str()).chain(i.video.iter().map(|v| v.codec.as_str())).collect();
-            format!("{name} was inserted, but it can't be played ({} isn't supported yet)", codecs.join(" / "))
-        }
-        Err(e) => format!("{name} was inserted, but it can't be played ({e})"),
-    });
     let decodable_video = info.as_ref().is_ok_and(|i| i.video.as_ref().is_some_and(|v| v.decodable));
+    let warning = if !playable {
+        Some(match &info {
+            Ok(i) => {
+                let codecs: Vec<&str> = i.audio.iter().map(|a| a.codec.as_str()).chain(i.video.iter().map(|v| v.codec.as_str())).collect();
+                format!("{name} was inserted, but it can't be played ({} isn't supported yet)", codecs.join(" / "))
+            }
+            Err(e) => format!("{name} was inserted, but it can't be played ({e})"),
+        })
+    } else if video && !decodable_video {
+        // A video codec without a decoder (VP8, say): the clip's audio still plays, but no frame
+        // can ever show — say so instead of leaving an unexplained black box (#1237).
+        info.as_ref()
+            .ok()
+            .and_then(|i| i.video.as_ref())
+            .map(|v| format!("{name} was inserted, but its video can't be played ({} isn't supported yet); only the audio plays", v.codec))
+    } else {
+        None
+    };
     let poster_png = if video && decodable_video { super::media::poster_png(&bytes, 0) } else { None };
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or_else(|| {
@@ -1761,6 +1786,39 @@ fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+fn apply_bin_options(c: &mut deckcraft_model::chart::Chart, bin_count: Option<Option<u32>>, bin_size: Option<Option<f64>>) {
+    if let Some(n) = bin_count {
+        c.bin_count = n;
+        if n.is_some() {
+            c.bin_size = None;
+        }
+    }
+    if let Some(w) = bin_size {
+        c.bin_size = w;
+        if w.is_some() {
+            c.bin_count = None;
+        }
+    }
+}
+
+fn apply_subtotals_and_bars(c: &mut deckcraft_model::chart::Chart, p: &Value, subtotals: Option<&[usize]>) {
+    if let Some(t) = subtotals {
+        let n = c.series.first().map_or(0, |s| s.values.len());
+        let mut t: Vec<usize> = t.iter().copied().filter(|i| *i < n).collect();
+        t.sort_unstable();
+        t.dedup();
+        c.subtotals = t;
+    }
+    if let Some(b) = p.get("upDownBars").and_then(Value::as_bool) {
+        c.up_down_bars = b;
+        c.raw = None;
+    }
+    if let Some(q) = p.get("quartiles").and_then(Value::as_str) {
+        c.inclusive_quartiles = q.eq_ignore_ascii_case("inclusive");
+        c.raw = None;
+    }
+}
+
 fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
     // Histogram bins: a count or a width (setting one clears the other; null for automatic).
     let bin_count = p.get("binCount").map(|v| v.as_u64().map(|n| n.clamp(1, deckcraft_model::chart::MAX_BINS as u64) as u32));
@@ -1771,34 +1829,21 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
     // Waterfall total points.
     let subtotals: Option<Vec<usize>> =
         p.get("subtotals").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_u64).map(|i| i as usize).collect());
+    // Colour of the chart's text (title, axes, legend, data labels); null goes back to PowerPoint's
+    // default (tx1 at lumMod 65 % / lumOff 35 %).
+    let text_color = match p.get("textColor") {
+        None => None,
+        Some(Value::Null) => Some(None),
+        Some(v) => {
+            Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
+        }
+    };
     with_chart(s, p, "chart.options", |c| {
-        if let Some(n) = bin_count {
-            c.bin_count = n;
-            if n.is_some() {
-                c.bin_size = None;
-            }
+        if let Some(t) = &text_color {
+            c.text_color = t.clone();
         }
-        if let Some(w) = bin_size {
-            c.bin_size = w;
-            if w.is_some() {
-                c.bin_count = None;
-            }
-        }
-        if let Some(t) = &subtotals {
-            let n = c.series.first().map_or(0, |s| s.values.len());
-            let mut t: Vec<usize> = t.iter().copied().filter(|i| *i < n).collect();
-            t.sort_unstable();
-            t.dedup();
-            c.subtotals = t;
-        }
-        if let Some(b) = p.get("upDownBars").and_then(Value::as_bool) {
-            c.up_down_bars = b;
-            c.raw = None;
-        }
-        if let Some(q) = p.get("quartiles").and_then(Value::as_str) {
-            c.inclusive_quartiles = q.eq_ignore_ascii_case("inclusive");
-            c.raw = None;
-        }
+        apply_bin_options(c, bin_count, bin_size);
+        apply_subtotals_and_bars(c, p, subtotals.as_deref());
         if bin_count.is_some() || bin_size.is_some() || subtotals.is_some() {
             c.raw = None;
         }
@@ -1810,6 +1855,10 @@ fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = bool_param(p, "dataLabels") {
             c.data_labels = v;
+            // A series' own setting would otherwise keep overriding the chart-wide switch.
+            for series in &mut c.series {
+                series.data_labels = None;
+            }
         }
         if let Some(v) = bool_param(p, "gridlines") {
             c.gridlines = v;

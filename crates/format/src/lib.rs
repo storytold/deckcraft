@@ -1,10 +1,15 @@
 //! The native `.deckcraft` format: a zip holding `presentation.json` (the model, minus media
-//! bytes), `media/<id>` files with the embedded media, and `mimetype`. Readers ignore unknown
+//! bytes), `media/<id>` and `chart-parts/<index>` binary entries, and `mimetype`. Readers ignore unknown
 //! fields, so newer files open in older builds with what those builds understand.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+mod chart_parts;
 mod finite;
+pub mod rtf;
+
+#[cfg(test)]
+mod chart_parts_tests;
 
 use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
@@ -20,9 +25,9 @@ pub const EXTENSION: &str = "deckcraft";
 pub const VERSION: u32 = 1;
 /// Largest entry we will inflate (guards against zip bombs).
 const MAX_ENTRY: u64 = 2 << 30;
-/// All embedded media together, inflated (#393).
+/// All embedded media and chart sidecars together, inflated (#393).
 const MAX_TOTAL_MEDIA: u64 = 4 << 30;
-/// Media items one file may list.
+/// Media items and chart sidecar parts one file may list.
 const MAX_MEDIA_ITEMS: usize = 100_000;
 
 /// What one load may inflate.
@@ -62,12 +67,10 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
         let w = |e: zip::result::ZipError| FormatError::Write(e.to_string());
         z.start_file("mimetype", stored).map_err(w)?;
         z.write_all(MIMETYPE.as_bytes()).map_err(|e| FormatError::Write(e.to_string()))?;
-        let m = Manifest {
-            format: "deckcraft".into(),
-            version: VERSION,
-            generator: format!("DeckCraft {}", env!("CARGO_PKG_VERSION")),
-            presentation: p.clone(),
-        };
+        let mut presentation = p.clone();
+        let parts = chart_parts::separate(&mut presentation)?;
+        let m =
+            Manifest { format: "deckcraft".into(), version: VERSION, generator: format!("DeckCraft {}", env!("CARGO_PKG_VERSION")), presentation };
         let json = serde_json::to_vec(&finite::Finite(&m)).map_err(|e| FormatError::Write(e.to_string()))?;
         z.start_file("presentation.json", deflate).map_err(w)?;
         z.write_all(&json).map_err(|e| FormatError::Write(e.to_string()))?;
@@ -79,6 +82,11 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
             let opts = if is_compressed(&item.content_type) { stored } else { deflate };
             z.start_file(format!("media/{}", item.id.0), opts).map_err(w)?;
             z.write_all(&item.data).map_err(|e| FormatError::Write(e.to_string()))?;
+        }
+        for (name, content_type, bytes) in parts {
+            let opts = if is_compressed(&content_type) { stored } else { deflate };
+            z.start_file(name, opts).map_err(w)?;
+            z.write_all(&bytes).map_err(|e| FormatError::Write(e.to_string()))?;
         }
         z.finish().map_err(w)?;
     }
@@ -119,14 +127,15 @@ fn read_entry_max(z: &mut zip::ZipArchive<Cursor<&[u8]>>, name: &str, max: u64) 
     Ok(out)
 }
 
-/// Read a presentation. Embedded media that is missing or damaged is left empty; use
-/// [`load_checked`] to learn which.
+/// Read a presentation. Missing media/chart parts are left empty; use [`load_checked`] to
+/// learn which. A damaged chart member refuses the file before further chart inflation.
 pub fn load(bytes: &[u8]) -> Result<Presentation> {
     load_checked(bytes).map(|(p, _)| p)
 }
 
-/// Read a presentation and list the embedded media that couldn't be read (missing, too large
-/// or failing its CRC), one message each. Linked media saved without its bytes isn't damage.
+/// Read a presentation and list media that couldn't be read, plus missing chart members.
+/// A chart member that is present but fails decoding, CRC or its entry limit refuses the file.
+/// Linked media saved without its bytes isn't damage.
 pub fn load_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>)> {
     load_within(bytes, Budget { total: MAX_TOTAL_MEDIA, items: MAX_MEDIA_ITEMS })
 }
@@ -140,7 +149,8 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     }
     let mut p = m.presentation;
     let mut damaged = vec![];
-    if p.media.len() > budget.items {
+    let items = p.media.len();
+    if items > budget.items {
         return Err(FormatError::Damaged(format!("{} media items (at most {})", p.media.len(), budget.items)));
     }
     // A repeated id names the same member: keep the first item, so the member is inflated once
@@ -163,6 +173,7 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
             Err(e) => damaged.push(e.to_string()),
         }
     }
+    chart_parts::restore(&mut p, &mut z, &mut left, items, budget.items, &mut damaged)?;
     repair(&mut p);
     Ok((p, damaged))
 }
@@ -197,12 +208,64 @@ pub fn repair(p: &mut Presentation) {
             }
         }
     }
+    reid_duplicate_shapes(p);
     p.slide_size = sane_slide_size(p.slide_size);
     // The notes page only lays out notes, but its size divides too.
     if !(p.notes_size.width.is_finite() && p.notes_size.width > 0.0 && p.notes_size.height.is_finite() && p.notes_size.height > 0.0) {
         p.notes_size = Presentation::default().notes_size;
     }
     sane_numbers(p);
+}
+
+/// Give a shape that repeats an id already used on its slide, layout or master (groups included)
+/// a fresh one, so edits, selection and the Selection Pane find one shape per id. The first keeps
+/// its id, and with it what animations and connectors point at. An exhausted id space leaves the
+/// rest as they are (#407).
+fn reid_duplicate_shapes(p: &mut Presentation) {
+    fn has_duplicates(shapes: &[deckcraft_model::Shape]) -> bool {
+        let mut seen = std::collections::HashSet::new();
+        let mut dup = false;
+        deckcraft_model::walk(shapes, &mut |sh, _| dup |= !seen.insert(sh.id));
+        dup
+    }
+    fn reid(shapes: &mut [deckcraft_model::Shape], seen: &mut std::collections::HashSet<deckcraft_model::ShapeId>, next: &mut u32, depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for sh in shapes {
+            if !seen.insert(sh.id)
+                && let Some(id) = (*next).max(1).checked_add(1)
+            {
+                *next = id;
+                sh.id = deckcraft_model::ShapeId(id);
+                seen.insert(sh.id);
+            }
+            if let deckcraft_model::ShapeKind::Group { children, .. } = &mut sh.kind {
+                reid(children, seen, next, depth + 1);
+            }
+        }
+    }
+    let mut next = p.next_id;
+    let mut fix = |shapes: &mut Vec<deckcraft_model::Shape>| {
+        if has_duplicates(shapes) {
+            reid(shapes, &mut std::collections::HashSet::new(), &mut next, 0);
+        }
+    };
+    for s in &mut p.slides {
+        if has_duplicates(&s.shapes) {
+            fix(&mut Arc::make_mut(s).shapes);
+        }
+    }
+    for m in p.masters.iter_mut().chain(p.notes_master.iter_mut()).chain(p.handout_master.iter_mut()) {
+        if has_duplicates(&m.shapes) || m.layouts.iter().any(|l| has_duplicates(&l.shapes)) {
+            let m = Arc::make_mut(m);
+            fix(&mut m.shapes);
+            for l in &mut m.layouts {
+                fix(&mut l.shapes);
+            }
+        }
+    }
+    p.next_id = next;
 }
 
 /// Smallest and largest slide side, in points: PowerPoint's 1–56 in, as Design › Slide Size allows.
@@ -350,6 +413,66 @@ fn sane_xfrm(x: &mut deckcraft_model::Xfrm) {
 
 fn sane_run(p: &mut deckcraft_model::text::RunProps) {
     p.size = p.size.filter(|v| v.is_finite() && *v > 0.0).map(|v| v.clamp(1.0, 4000.0));
+    for s in p.shadow.iter_mut().chain(p.inner_shadow.iter_mut()) {
+        sane_shadow(s);
+    }
+    if let Some(g) = p.glow.as_mut() {
+        g.radius = effect_size(g.radius, MAX_GLOW);
+    }
+    if let Some(r) = p.reflection.as_mut() {
+        sane_reflection(r);
+    }
+    p.soft_edge = p.soft_edge.map(|v| effect_size(v, MAX_SOFT_EDGE));
+}
+
+/// The largest effect sizes, in points: what Format Shape and `shape.effects` allow. A file can
+/// say anything, and the renderer's memory grows with these (a glow of 10^18 pt asked for 34 GB).
+const MAX_GLOW: f64 = 150.0;
+const MAX_SOFT_EDGE: f64 = 100.0;
+const MAX_SHADOW: f64 = 200.0;
+const MAX_REFLECTION: f64 = 100.0;
+
+/// `v` within 0..=`max`; not a number is 0.
+fn effect_size(v: f64, max: f64) -> f64 {
+    if v.is_finite() { v.clamp(0.0, max) } else { 0.0 }
+}
+
+fn sane_shadow(s: &mut deckcraft_model::style::Shadow) {
+    s.blur = effect_size(s.blur, MAX_SHADOW);
+    s.dist = effect_size(s.dist, MAX_SHADOW);
+    s.dir = if s.dir.is_finite() { s.dir.rem_euclid(360.0) } else { 0.0 };
+    // Perspective scale (1 = 100%) and skew (degrees).
+    for v in [&mut s.sx, &mut s.sy] {
+        *v = if v.is_finite() { v.clamp(-10.0, 10.0) } else { 1.0 };
+    }
+    for v in [&mut s.kx, &mut s.ky] {
+        *v = if v.is_finite() { v.clamp(-89.0, 89.0) } else { 0.0 };
+    }
+}
+
+fn sane_reflection(r: &mut deckcraft_model::style::Reflection) {
+    r.blur = effect_size(r.blur, MAX_REFLECTION);
+    r.dist = effect_size(r.dist, MAX_REFLECTION);
+}
+
+/// Run properties a list style hands down to the text that inherits it.
+fn sane_list_style(ls: &mut deckcraft_model::text::ListStyle) {
+    for level in ls.levels.iter_mut().flatten() {
+        sane_run(&mut level.run);
+    }
+}
+
+fn sane_effects(e: &mut deckcraft_model::Effects) {
+    for s in e.outer_shadow.iter_mut().chain(e.inner_shadow.iter_mut()) {
+        sane_shadow(s);
+    }
+    if let Some(g) = e.glow.as_mut() {
+        g.radius = effect_size(g.radius, MAX_GLOW);
+    }
+    e.soft_edge = e.soft_edge.map(|v| effect_size(v, MAX_SOFT_EDGE));
+    if let Some(r) = e.reflection.as_mut() {
+        sane_reflection(r);
+    }
 }
 
 fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
@@ -363,7 +486,11 @@ fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
         if let Some(l) = sh.line.as_mut() {
             l.width = l.width.filter(|v| v.is_finite() && *v >= 0.0).map(|v| v.min(1584.0));
         }
+        if let Some(e) = sh.effects.as_mut() {
+            sane_effects(e);
+        }
         if let Some(t) = sh.text.as_mut() {
+            sane_list_style(&mut t.list_style);
             for para in &mut t.paragraphs {
                 sane_run(&mut para.end_props);
                 for r in &mut para.runs {
@@ -372,14 +499,26 @@ fn sane_shapes(shapes: &mut [deckcraft_model::Shape], depth: usize) {
             }
         }
         match &mut sh.kind {
-            deckcraft_model::ShapeKind::Picture { fill } => {
-                for c in &mut fill.crop {
+            deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { crop, .. } }
+            | deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { crop, .. }) => {
+                for c in crop {
                     *c = if c.is_finite() { c.clamp(-10.0, 1.0) } else { 0.0 };
                 }
             }
             deckcraft_model::ShapeKind::Group { children, child } => {
                 sane_xfrm(child);
                 sane_shapes(children, depth + 1);
+            }
+            deckcraft_model::ShapeKind::Table(t) => {
+                for cell in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()) {
+                    sane_list_style(&mut cell.text.list_style);
+                }
+                for para in t.rows.iter_mut().flat_map(|r| r.cells.iter_mut()).flat_map(|c| c.text.paragraphs.iter_mut()) {
+                    sane_run(&mut para.end_props);
+                    for r in &mut para.runs {
+                        sane_run(&mut r.props);
+                    }
+                }
             }
             _ => {}
         }
@@ -395,11 +534,20 @@ pub fn sane_numbers(p: &mut Presentation) {
             *slide = Arc::new(fixed);
         }
     }
+    // What text and shapes inherit: the deck's default text style, each master's title, body and
+    // other styles, and the theme's effect styles that shape styles point at.
+    sane_list_style(&mut p.default_text_style);
     for m in p.masters.iter_mut().chain(p.notes_master.iter_mut()).chain(p.handout_master.iter_mut()) {
         let mut fixed = (**m).clone();
         sane_shapes(&mut fixed.shapes, 0);
         for l in &mut fixed.layouts {
             sane_shapes(&mut l.shapes, 0);
+        }
+        for ls in [&mut fixed.title_style, &mut fixed.body_style, &mut fixed.other_style] {
+            sane_list_style(ls);
+        }
+        for e in &mut fixed.theme.format.effects {
+            sane_effects(e);
         }
         if fixed != **m {
             *m = Arc::new(fixed);
@@ -492,7 +640,8 @@ pub fn markdown_to_slides(p: &mut Presentation, text: &str) -> usize {
 pub fn slides_to_outline(p: &Presentation) -> String {
     let mut out = String::new();
     for s in &p.slides {
-        out.push_str(&s.title());
+        // One line per title: a newline would start another slide on re-import.
+        out.push_str(&s.title().replace('\n', " "));
         out.push('\n');
         for sh in &s.shapes {
             if sh.ph_type().is_some_and(|k| k.is_title()) {
@@ -513,6 +662,7 @@ pub fn slides_to_outline(p: &Presentation) -> String {
             if let ShapeKind::Table(t) = &sh.kind {
                 for row in &t.rows {
                     let cells: Vec<String> = row.cells.iter().map(|c| c.text.text().replace(['\u{b}', '\n'], " ")).collect();
+                    out.push('\t');
                     out.push_str(&cells.join("\t"));
                     out.push('\n');
                 }
@@ -525,6 +675,54 @@ pub fn slides_to_outline(p: &Presentation) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chart_sidecars_are_optional_for_older_native_files() {
+        use deckcraft_model::chart::{Chart, ChartType};
+        let chart = Chart::sample(ChartType::Pie);
+        let mut json = serde_json::to_value(&chart).expect("chart JSON");
+        assert!(json.get("kept").is_none(), "empty sidecars should not enlarge ordinary files");
+        assert_eq!(serde_json::from_value::<Chart>(json.clone()).expect("old chart without kept"), chart);
+        json["kept"] = serde_json::json!({});
+        assert_eq!(serde_json::from_value::<Chart>(json).expect("empty sidecar"), chart);
+    }
+
+    #[test]
+    fn native_save_keeps_chart_relationships_and_payloads() {
+        use deckcraft_model::chart::{Chart, ChartKept, ChartPart, ChartRel, ChartType};
+        use deckcraft_model::{Shape, ShapeId, ShapeKind};
+        let kept = ChartKept {
+            rels: vec![ChartRel {
+                id: "rWorkbook".into(),
+                rel_type: "http://schemas.openxmlformats.org/officeDocument/2006/relationships/package".into(),
+                target: "../embeddings/data.xlsx".into(),
+                part: "ppt/embeddings/data.xlsx".into(),
+                external: false,
+            }],
+            parts: vec![ChartPart {
+                name: "ppt/embeddings/data.xlsx".into(),
+                content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet".into(),
+                bytes: vec![0, 255, 128, 42],
+                native_entry: None,
+            }],
+        };
+        let mut p = defaults::new_presentation(None);
+        let chart = Chart { kept: kept.clone(), ..Chart::sample(ChartType::Pie) };
+        let s = Shape { id: ShapeId(p.alloc_id().expect("id")), kind: ShapeKind::Chart(Box::new(chart)), ..Default::default() };
+        // Serialization must reach charts inside groups as well as top-level charts.
+        Arc::make_mut(&mut p.slides[0]).shapes = vec![Shape {
+            id: ShapeId(p.alloc_id().expect("group id")),
+            kind: ShapeKind::Group { children: vec![s], child: Default::default() },
+            ..Default::default()
+        }];
+        let mut q = load(&save(&p).expect("save")).expect("load");
+        for _ in 0..2 {
+            let ShapeKind::Group { children, .. } = &q.slides[0].shapes[0].kind else { panic!("group") };
+            let ShapeKind::Chart(chart) = &children[0].kind else { panic!("chart") };
+            assert_eq!(chart.kept, kept);
+            q = load(&save(&q).expect("save again")).expect("load again");
+        }
+    }
 
     /// The same package without the entries `drop` names.
     fn without(bytes: &[u8], drop: &str) -> Vec<u8> {
@@ -630,6 +828,18 @@ mod tests {
         let n = b.len();
         b.truncate(n / 2);
         assert!(load(&b).is_err());
+    }
+
+    /// A video's crop is brought into the same range as a picture's (#972).
+    #[test]
+    fn a_video_crop_is_repaired_like_a_picture_crop() {
+        use deckcraft_model::{MediaClip, Shape};
+        let mut p = Presentation::default();
+        let clip = MediaClip { video: true, crop: [f64::NAN, 0.25, -1e9, 0.0], ..Default::default() };
+        Arc::make_mut(&mut p.slides[0]).shapes.push(Shape { kind: ShapeKind::Media(clip), ..Default::default() });
+        let back = load(&save(&p).unwrap()).unwrap_or_else(|e| panic!("{e}"));
+        let ShapeKind::Media(m) = &back.slides[0].shapes.last().unwrap().kind else { panic!("media") };
+        assert_eq!(m.crop, [0.0, 0.25, -10.0, 0.0]);
     }
 
     /// Non-finite numbers are written as `null` by serde_json; the file still opens, with each
@@ -833,6 +1043,18 @@ mod tests {
     }
 
     #[test]
+    fn outline_export_keeps_multi_paragraph_title_on_one_line() {
+        let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut p, "Intro\n\tPoint one\nSecond\n\tMore"), 2);
+        let title = Arc::make_mut(&mut p.slides[0]).shapes.iter_mut().find(|s| s.ph_type().is_some_and(|k| k.is_title())).expect("title placeholder");
+        title.text = Some(TextBody::from_text("Line one\nLine two"));
+        let o = slides_to_outline(&p);
+        assert_eq!(o, "Line one Line two\n\tPoint one\nSecond\n\tMore\n");
+        let mut q = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut q, &o), 2);
+    }
+
+    #[test]
     fn markdown_headings_and_list_items() {
         assert_eq!(md_heading("# Intro"), Some("Intro"));
         assert_eq!(md_heading("   ### Deep ###  "), Some("Deep"));
@@ -850,23 +1072,49 @@ mod tests {
             assert_eq!(md_list_item(not), None, "{not:?}");
         }
     }
+
+    /// #814: slides_to_outline includes table cell text, which it used to skip.
+    #[test]
+    fn outline_includes_table_text() {
+        use deckcraft_model::table::{Cell, Row, Table};
+        use deckcraft_model::{Shape, ShapeKind, Xfrm};
+        let mut p = defaults::new_presentation(None);
+        let layout = defaults::layout_of_kind(&p, LayoutType::TitleAndContent).unwrap();
+        let mut s = defaults::new_slide(&mut p, layout).expect("slide");
+        s.shapes.retain(|sh| !sh.ph_type().is_some_and(|k| k.is_title()));
+        let mut body = Shape { xfrm: Some(Xfrm::new(0.0, 0.0, 600.0, 100.0)), ..Default::default() };
+        body.text = Some(TextBody::from_text("Text box body"));
+        s.shapes.push(body);
+
+        let mut table = Table { cols: vec![200.0, 200.0], ..Default::default() };
+        for texts in [["Cell A1", "Cell B1"], ["Cell A2", "Cell B2"]] {
+            let cells: Vec<Cell> = texts.iter().map(|t| Cell { text: TextBody::from_text(t), ..Default::default() }).collect();
+            table.rows.push(Row { height: 30.0, cells });
+        }
+        let mut tbl = Shape { xfrm: Some(Xfrm::new(0.0, 100.0, 400.0, 60.0)), ..Default::default() };
+        tbl.kind = ShapeKind::Table(table);
+        s.shapes.push(tbl);
+        p.slides = vec![std::sync::Arc::new(s)];
+
+        let out = slides_to_outline(&p);
+        assert!(out.contains("Text box body"), "{out}");
+        assert!(out.contains("Cell A1\tCell B1"), "{out}");
+        assert!(out.contains("Cell A2\tCell B2"), "{out}");
+    }
 }
 
-/// #814: slides_to_outline includes table cell text, which it used to skip.
 #[test]
-fn outline_includes_table_text() {
+fn outline_table_rows_are_indented_and_do_not_become_slides() {
     use deckcraft_model::table::{Cell, Row, Table};
     use deckcraft_model::{Shape, ShapeKind, Xfrm};
     let mut p = defaults::new_presentation(None);
     let layout = defaults::layout_of_kind(&p, LayoutType::TitleAndContent).unwrap();
     let mut s = defaults::new_slide(&mut p, layout).expect("slide");
-    s.shapes.retain(|sh| !sh.ph_type().is_some_and(|k| k.is_title()));
-    let mut body = Shape { xfrm: Some(Xfrm::new(0.0, 0.0, 600.0, 100.0)), ..Default::default() };
-    body.text = Some(TextBody::from_text("Text box body"));
-    s.shapes.push(body);
-
+    for sh in s.shapes.iter_mut().filter(|sh| sh.ph_type().is_some_and(|k| k.is_title())) {
+        sh.text = Some(TextBody::from_text("Slide title"));
+    }
     let mut table = Table { cols: vec![200.0, 200.0], ..Default::default() };
-    for texts in [["Cell A1", "Cell B1"], ["Cell A2", "Cell B2"]] {
+    for texts in [["A1", "B1"], ["A2", "B2"]] {
         let cells: Vec<Cell> = texts.iter().map(|t| Cell { text: TextBody::from_text(t), ..Default::default() }).collect();
         table.rows.push(Row { height: 30.0, cells });
     }
@@ -876,7 +1124,11 @@ fn outline_includes_table_text() {
     p.slides = vec![std::sync::Arc::new(s)];
 
     let out = slides_to_outline(&p);
-    assert!(out.contains("Text box body"), "{out}");
-    assert!(out.contains("Cell A1\tCell B1"), "{out}");
-    assert!(out.contains("Cell A2\tCell B2"), "{out}");
+    let mut q = defaults::new_presentation(None);
+    q.slides.clear();
+    assert_eq!(outline_to_slides(&mut q, &out), 1, "table rows became slides: {out:?}");
+    assert_eq!(q.slides.len(), 1, "{out:?}");
+    let body = q.slides[0].shapes.iter().filter_map(|sh| sh.text.as_ref()).map(|t| t.text()).collect::<Vec<_>>().join("\n");
+    assert!(body.contains("A1\tB1"), "{body:?}");
+    assert!(body.contains("A2\tB2"), "{body:?}");
 }

@@ -47,6 +47,7 @@ const GIF_SIDE: u32 = 1024;
 const GIF_BUDGET: usize = 64 << 20;
 const GIF_MAX_FRAMES: usize = 1000;
 const GIF_MAX_CANVAS: u64 = 4096 * 4096;
+const GIF_MAX_TOTAL_CANVAS_PIXELS: u64 = 256 * 1024 * 1024;
 const GIF_CACHE_BUDGET: usize = 192 << 20;
 
 /// The frames of an animated GIF and when each one ends, in seconds from the start of a loop.
@@ -76,7 +77,7 @@ impl Anim {
 static CACHE: Mutex<Option<Cache>> = Mutex::new(None);
 
 fn with<R>(f: impl FnOnce(&mut Cache) -> R) -> R {
-    let mut g = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    let mut g = CACHE.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     f(g.get_or_insert_with(Cache::default))
 }
 
@@ -394,13 +395,22 @@ fn decode_anim(bytes: &[u8], adj: &PictureAdjust) -> Option<Anim> {
     let k = (GIF_SIDE as f64 / w.max(h) as f64).min(1.0);
     let (nw, nh) = (((w as f64 * k).round() as u32).max(1), ((h as f64 * k).round() as u32).max(1));
     let size = nw as usize * nh as usize * 4;
+    let canvas_pixels = (w as u64) * (h as u64);
+    let mut total_canvas_pixels: u64 = 0;
     let (mut frames, mut ends, mut t) = (Vec::new(), Vec::new(), 0.0);
-    for f in dec.into_frames() {
-        let Ok(f) = f else { break };
+    let mut iter = dec.into_frames();
+    loop {
         if frames.len() >= GIF_MAX_FRAMES || (frames.len() + 1) * size > GIF_BUDGET {
             log::info!("animated GIF: keeping its first {} frames", frames.len());
             break;
         }
+        if total_canvas_pixels.saturating_add(canvas_pixels) > GIF_MAX_TOTAL_CANVAS_PIXELS {
+            log::info!("animated GIF: canvas pixel limit reached");
+            break;
+        }
+        let Some(f) = iter.next() else { break };
+        let Ok(f) = f else { break };
+        total_canvas_pixels = total_canvas_pixels.saturating_add(canvas_pixels);
         let (n, d) = f.delay().numer_denom_ms();
         let ms = if d == 0 { 0.0 } else { n as f64 / d as f64 };
         // Like browsers: frames of 10 ms or less show for 100 ms.

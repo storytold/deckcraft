@@ -4,12 +4,17 @@
 use deckcraft_model::edit as ed;
 use deckcraft_model::resolve;
 use deckcraft_model::text::{Align, Anchor, AutoFit, Bullet, Caps, ParaProps, RunProps, Spacing, Strike, TabStop, TextDir};
-use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot, Shape};
+use deckcraft_model::{ColorRef, ColorTransform, Effects, Fill, Line, SchemeSlot, Shape, ShapeKind};
 use serde_json::{Value, json};
+use std::sync::Arc;
 
 use super::text::{format_body, format_para, format_run};
-use super::*;
+use super::{
+    CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, color_param, edit_shapes, f64_or, f64_param, has_doc, has_text,
+    has_text_or_shapes, ids_param, ok, str_param,
+};
 use crate::{Result, Session};
+use deckcraft_model::ShapeId;
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
@@ -59,6 +64,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{lang?, noProof?: bool} (proofing language of the selected text, and Do Not Check Spelling)",
             has_text_or_shapes,
             language
+        ),
+        cmd!(
+            "format.languageAll",
+            "Language for All Text",
+            ["Review", "Language"],
+            None,
+            "{lang?, noProof?: bool} (proofing language of every text in the presentation: slides, tables, notes, masters and layouts, and the default for new text; one undo step)",
+            has_doc,
+            language_all
         ),
         cmd!("format.highlight", "Text Highlight Color", ["Home", "Font"], None, "{color? (absent = none)}", has_text_or_shapes, highlight),
         cmd!(
@@ -198,7 +212,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             direction
         ),
-        cmd!("format.columns", "Columns", ["Home", "Paragraph"], None, "{count, spacing?: pt}", has_text_or_shapes, columns),
+        cmd!(
+            "format.columns",
+            "Columns",
+            ["Home", "Paragraph"],
+            None,
+            "{count?: 1-16, spacing?: pt between columns}; a key left out keeps the shape's value, and with neither the Columns dialog opens",
+            has_text_or_shapes,
+            columns
+        ),
         cmd!("format.autofit", "Autofit", ["Format Shape", "Text Box"], None, "{mode: none|shrink|resize}", has_text_or_shapes, autofit),
         cmd!("format.wrap", "Wrap Text in Shape", ["Format Shape", "Text Box"], None, "{on: bool}", has_text_or_shapes, wrap),
         cmd!(
@@ -340,6 +362,27 @@ fn shrink(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 fn color(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color").ok_or_else(|| bad("format.color", "missing or invalid `color`"))?;
+    // A selected chart has no runs: Font Color colours its text (title, axes, legend, labels),
+    // which used to answer and change nothing.
+    let st = s.doc()?;
+    if st.selection.text.is_none() {
+        let charts: Vec<ShapeId> =
+            st.selection.shapes.iter().copied().filter(|id| matches!(st.shape(*id).map(|sh| &sh.kind), Some(ShapeKind::Chart(_)))).collect();
+        let only_charts = charts.len() == st.selection.shapes.len();
+        if !charts.is_empty() {
+            let tc = c.clone();
+            edit_shapes(s, &json!({"ids": charts}), "format.color", |sh| {
+                if let ShapeKind::Chart(ch) = &mut sh.kind {
+                    ch.text_color = Some(tc.clone());
+                    ch.raw = None;
+                }
+                Ok(())
+            })?;
+            if only_charts {
+                return ok();
+            }
+        }
+    }
     format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
 }
 /// `a:alpha` for `transparency` (0–1) on `c`, replacing any alpha it had; fully opaque drops it.
@@ -377,16 +420,17 @@ fn text_transparency(s: &mut Session, p: &Value) -> Result<Value> {
         r.fill = Some(f);
     })
 }
-fn language(s: &mut Session, p: &Value) -> Result<Value> {
+/// The `lang` and `noProof` params of the language commands, checked: a run-props setter.
+fn language_edit(id: &str, p: &Value) -> Result<impl Fn(&mut RunProps) + Send + Sync + 'static> {
     let lang = str_param(p, "lang").map(str::to_string);
     let no_proof = bool_param(p, "noProof");
     if lang.is_none() && no_proof.is_none() {
-        return Err(bad("format.language", "give `lang` or `noProof`"));
+        return Err(bad(id, "give `lang` or `noProof`"));
     }
     if lang.as_deref().is_some_and(|l| l.is_empty() || l.len() > 35 || !l.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')) {
-        return Err(bad("format.language", "`lang` is a language tag such as en-US"));
+        return Err(bad(id, "`lang` is a language tag such as en-US"));
     }
-    format_run(s, &move |r| {
+    Ok(move |r: &mut RunProps| {
         if let Some(l) = &lang {
             r.lang = Some(l.clone());
         }
@@ -394,6 +438,61 @@ fn language(s: &mut Session, p: &Value) -> Result<Value> {
             r.no_proof = n.then_some(true);
         }
     })
+}
+/// Review › Language on the selected text (or the selected shapes' text).
+fn language(s: &mut Session, p: &Value) -> Result<Value> {
+    let f = language_edit("format.language", p)?;
+    format_run(s, &f)
+}
+/// Every run in the deck, and the text styles new text inherits from, in one language.
+fn language_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let f = language_edit("format.languageAll", p)?;
+    /// Runs, end marks and the body's own list style levels (never creating one).
+    fn body(t: &mut deckcraft_model::text::TextBody, f: &dyn Fn(&mut RunProps)) {
+        ed::format_all(t, f);
+        t.list_style.levels.iter_mut().flatten().for_each(|lv| f(&mut lv.run));
+    }
+    /// Every text body in `list`: shapes, table cells and groups (nested at most 64 deep).
+    fn shapes(list: &mut [Shape], f: &dyn Fn(&mut RunProps), depth: usize) {
+        if depth > 64 {
+            return;
+        }
+        for sh in list {
+            if let Some(t) = &mut sh.text {
+                body(t, f);
+            }
+            match &mut sh.kind {
+                deckcraft_model::ShapeKind::Table(t) => t.rows.iter_mut().flat_map(|r| &mut r.cells).for_each(|c| body(&mut c.text, f)),
+                deckcraft_model::ShapeKind::Group { children, .. } => shapes(children, f, depth + 1),
+                _ => {}
+            }
+        }
+    }
+    /// A master or presentation text style's levels: what new text inherits.
+    fn styles(l: &mut deckcraft_model::text::ListStyle, f: &dyn Fn(&mut RunProps)) {
+        // Level 1 always, so a deck without a default text style gets one.
+        if l.level(0).is_none() {
+            l.set(0, Default::default());
+        }
+        l.levels.iter_mut().flatten().for_each(|lv| f(&mut lv.run));
+    }
+    s.edit(|doc, _| {
+        for sl in &mut doc.slides {
+            let sl = Arc::make_mut(sl);
+            shapes(&mut sl.shapes, &f, 0);
+            body(&mut sl.notes, &f);
+        }
+        let extra = [doc.notes_master.as_mut(), doc.handout_master.as_mut()];
+        for m in doc.masters.iter_mut().chain(extra.into_iter().flatten()) {
+            let m = Arc::make_mut(m);
+            shapes(&mut m.shapes, &f, 0);
+            m.layouts.iter_mut().for_each(|l| shapes(&mut l.shapes, &f, 0));
+            [&mut m.title_style, &mut m.body_style, &mut m.other_style].into_iter().for_each(|l| styles(l, &f));
+        }
+        styles(&mut doc.default_text_style, &f);
+        Ok(())
+    })?;
+    ok()
 }
 fn highlight(s: &mut Session, p: &Value) -> Result<Value> {
     let c = color_param(p, "color");
@@ -692,26 +791,34 @@ fn case(s: &mut Session, p: &Value) -> Result<Value> {
         }
         let m = if mode == "cycle" { ed::next_case(&ed::text_range(&body, a, b)).to_string() } else { mode.clone() };
         super::text::edit_text(s, move |body, t| {
-            for pi in a.0..=b.0 {
+            let last = body.paragraphs.len().saturating_sub(1);
+            for pi in a.0..=b.0.min(last) {
                 let Some(para) = body.paragraphs.get_mut(pi) else { continue };
                 let n = para.char_len();
                 let from = if pi == a.0 { a.1 } else { 0 };
                 let to = if pi == b.0 { b.1 } else { n };
                 let mut pos = 0;
-                for r in &mut para.runs {
+                let mut pieces = Vec::new();
+                for (ri, r) in para.runs.iter().enumerate() {
+                    // Breaks and fields are read for context (a break ends a word) but not rewritten.
                     let len = r.char_len();
-                    if r.kind == deckcraft_model::text::RunKind::Text {
-                        let rs = from.max(pos).saturating_sub(pos);
-                        let re = to.min(pos + len).saturating_sub(pos);
-                        if re > rs {
-                            let chars: Vec<char> = r.text.chars().collect();
-                            let mid: String = chars.get(rs..re).map(|c| c.iter().collect()).unwrap_or_default();
-                            let pre: String = chars.get(..rs).map(|c| c.iter().collect()).unwrap_or_default();
-                            let post: String = chars.get(re..).map(|c| c.iter().collect()).unwrap_or_default();
-                            r.text = format!("{pre}{}{post}", ed::change_case(&mid, &m));
-                        }
+                    let rs = from.max(pos).saturating_sub(pos);
+                    let re = to.min(pos + len).saturating_sub(pos);
+                    if re > rs {
+                        pieces.push((ri, rs, re));
                     }
                     pos += len;
+                }
+                let mids: Vec<String> = pieces
+                    .iter()
+                    .map(|&(ri, rs, re)| para.runs.get(ri).map(|r| r.content().chars().skip(rs).take(re - rs).collect()).unwrap_or_default())
+                    .collect();
+                let changed = ed::change_case_parts(&mids.iter().map(String::as_str).collect::<Vec<_>>(), &m);
+                for (&(ri, rs, re), new) in pieces.iter().zip(changed) {
+                    let Some(r) = para.runs.get_mut(ri).filter(|r| r.kind == deckcraft_model::text::RunKind::Text) else { continue };
+                    let pre: String = r.text.chars().take(rs).collect();
+                    let post: String = r.text.chars().skip(re).collect();
+                    r.text = format!("{pre}{new}{post}");
                 }
             }
             if collapsed {
@@ -734,9 +841,12 @@ fn case(s: &mut Session, p: &Value) -> Result<Value> {
     edit_shapes(s, &json!({}), "format.case", |sh| {
         if let Some(t) = sh.text.as_mut() {
             for para in &mut t.paragraphs {
-                for r in &mut para.runs {
+                // Breaks and fields are read for context (a break ends a word) but not rewritten.
+                let texts: Vec<&str> = para.runs.iter().map(|r| r.content()).collect();
+                let changed = ed::change_case_parts(&texts, &mode);
+                for (r, new) in para.runs.iter_mut().zip(changed) {
                     if r.kind == deckcraft_model::text::RunKind::Text {
-                        r.text = ed::change_case(&r.text, &mode);
+                        r.text = new;
                     }
                 }
             }
@@ -1079,12 +1189,45 @@ fn direction(s: &mut Session, p: &Value) -> Result<Value> {
     };
     format_body(s, &move |b| b.vert = Some(d))
 }
+/// The edited or first selected shape's columns as drawn: the count and the spacing in points.
+fn current_columns(s: &Session) -> (u32, f64) {
+    let Ok(st) = s.doc() else { return (1, 0.0) };
+    let id = match &st.selection.text {
+        Some(t) if !t.notes => Some(t.shape),
+        _ => st.selection.shapes.first().copied(),
+    };
+    let Some(sh) = id.and_then(|id| st.shape(id)) else { return (1, 0.0) };
+    let body = match super::text::ctx_for(&st.doc, &st.selection) {
+        Some(c) => resolve::body(&c, sh),
+        None => sh.text.as_ref().map(|b| b.body.clone()).unwrap_or_default(),
+    };
+    (body.columns.unwrap_or(1).clamp(1, 16), body.col_spacing.unwrap_or(0.0).max(0.0))
+}
 fn columns(s: &mut Session, p: &Value) -> Result<Value> {
-    let n = p.get("count").and_then(Value::as_u64).unwrap_or(1).clamp(1, 16) as u32;
-    let sp = f64_or(p, "spacing", 0.0).max(0.0);
+    const CMD: &str = "format.columns";
+    let count = match p.get("count") {
+        None => None,
+        Some(v) => {
+            let n = v
+                .as_f64()
+                .filter(|n| n.fract() == 0.0 && (1.0..=16.0).contains(n))
+                .ok_or_else(|| bad(CMD, "`count` must be a whole number from 1 to 16"))?;
+            Some(n as u32)
+        }
+    };
+    let spacing = finite_key(p, CMD, "spacing")?.map(clamp_pt);
+    if count.is_none() && spacing.is_none() {
+        let (count, spacing) = current_columns(s);
+        s.ui_requests.push(crate::UiRequest::Dialog { id: "columns".into(), params: json!({"count": count, "spacing": spacing}) });
+        return ok();
+    }
     format_body(s, &move |b| {
-        b.columns = Some(n);
-        b.col_spacing = Some(sp);
+        if let Some(n) = count {
+            b.columns = Some(n);
+        }
+        if let Some(sp) = spacing {
+            b.col_spacing = Some(sp);
+        }
     })
 }
 fn autofit(s: &mut Session, p: &Value) -> Result<Value> {
@@ -1160,6 +1303,31 @@ pub(crate) fn apply_painted(sh: &mut Shape, p: &Painted) {
     }
 }
 
+/// The paragraphs the text selection covers whole: it starts at or before their start and
+/// reaches their end. A paragraph the selection only touches the start of (it ends at offset
+/// 0, as after a triple-click) is not covered.
+fn covered_paragraphs(s: &Session) -> Vec<usize> {
+    let Ok(st) = s.doc() else { return vec![] };
+    let Some(t) = &st.selection.text else { return vec![] };
+    let Some(body) = super::text::body_of(st, t) else { return vec![] };
+    let (a, b) = t.ordered();
+    // A hostile selection can point past the body: walk only the paragraphs it has.
+    (a.0..=b.0.min(body.paragraphs.len().saturating_sub(1)))
+        .filter(|&pi| {
+            let Some(para) = body.paragraphs.get(pi) else { return false };
+            let starts = pi > a.0 || a.1 == 0;
+            let ends = if pi < b.0 {
+                true
+            } else if b.0 > a.0 && b.1 == 0 {
+                false
+            } else {
+                b.1 >= para.char_len()
+            };
+            starts && ends
+        })
+        .collect()
+}
+
 fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
     let Some((painted, sticky)) = s.painter.clone() else { return Err(bad("format.painterApply", "pick formatting with the Format Painter first")) };
     if !sticky {
@@ -1169,8 +1337,17 @@ fn painter_apply(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(r) = painted.run.clone() {
             format_run(s, &move |rp| *rp = r.clone())?;
         }
-        if let Some(pp) = painted.para.clone() {
-            format_para(s, &move |para| para.props = pp.clone())?;
+        // Paragraph formatting (bullets, alignment, spacing) goes only onto paragraphs the
+        // selection covers whole; painting part of a bulleted line changes just its text.
+        let covered = covered_paragraphs(s);
+        if let (Some(pp), false) = (painted.para.clone(), covered.is_empty()) {
+            super::text::edit_text(s, |body, _| {
+                for &pi in &covered {
+                    if let Some(para) = body.paragraphs.get_mut(pi) {
+                        para.props = pp.clone();
+                    }
+                }
+            })?;
         }
         return ok();
     }
@@ -1547,6 +1724,51 @@ mod tests {
         assert_eq!(s.doc().unwrap().history.undo.len(), n);
         assert_eq!(para(&s).align, Some(Align::Center));
         assert!(para(&s).indent.is_none());
+    }
+
+    fn body(s: &Session) -> deckcraft_model::text::BodyProps {
+        s.doc().unwrap().selected_shapes().first().and_then(|sh| sh.text.as_ref()).map(|t| t.body.clone()).unwrap_or_default()
+    }
+
+    #[test]
+    fn columns_set_the_number_and_spacing_and_a_left_out_key_keeps_its_value() {
+        let mut s = shape();
+        let n = s.doc().unwrap().history.undo.len();
+        s.execute("format.columns", &json!({"count": 4, "spacing": 36.0})).unwrap();
+        assert_eq!((body(&s).columns, body(&s).col_spacing), (Some(4), Some(36.0)));
+        assert_eq!(s.doc().unwrap().history.undo.len(), n + 1, "one undo step");
+        s.execute("format.columns", &json!({"count": 2})).unwrap();
+        assert_eq!((body(&s).columns, body(&s).col_spacing), (Some(2), Some(36.0)), "the spacing stays");
+        s.execute("format.columns", &json!({"spacing": 9.0})).unwrap();
+        assert_eq!((body(&s).columns, body(&s).col_spacing), (Some(2), Some(9.0)), "the number stays");
+    }
+
+    #[test]
+    fn columns_with_no_fields_open_the_dialog_with_the_shapes_values() {
+        let mut s = shape();
+        s.execute("format.columns", &json!({"count": 3, "spacing": 27.0})).unwrap();
+        let rev = s.doc().unwrap().revision;
+        let n = s.doc().unwrap().history.undo.len();
+        s.ui_requests.clear();
+        s.execute("format.columns", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().revision, rev);
+        assert_eq!(s.doc().unwrap().history.undo.len(), n);
+        let Some(UiRequest::Dialog { id, params }) = s.ui_requests.last() else { panic!("dialog request") };
+        assert_eq!(id, "columns");
+        assert_eq!(params["count"], 3);
+        assert_eq!(params["spacing"], 27.0);
+    }
+
+    #[test]
+    fn columns_reject_a_bad_number_or_spacing_without_editing() {
+        let mut s = shape();
+        let n = s.doc().unwrap().history.undo.len();
+        for p in [json!({"count": 0}), json!({"count": 17}), json!({"count": 2.5}), json!({"count": "two"}), json!({"spacing": "wide"})] {
+            let err = s.execute("format.columns", &p).unwrap_err().to_string();
+            assert!(err.contains("format.columns"), "{p}: {err}");
+        }
+        assert_eq!(s.doc().unwrap().history.undo.len(), n);
+        assert_eq!(body(&s).columns, None);
     }
 
     #[test]

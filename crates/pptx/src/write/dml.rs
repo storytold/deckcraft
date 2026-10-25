@@ -36,9 +36,10 @@ pub fn color(w: &mut W, c: &ColorRef) {
     let (tag, a) = match &c.base {
         ColorBase::Rgb { rgb } => ("a:srgbClr", A::new().a("val", rgb.hex())),
         ColorBase::Scheme { slot } => ("a:schemeClr", A::new().a("val", slot.xml_name())),
-        ColorBase::Preset { name } => ("a:prstClr", A::new().a("val", if name.is_empty() { "black" } else { name })),
+        // The reader keeps any name a file has; only names the schema allows are written.
+        ColorBase::Preset { name } => ("a:prstClr", A::new().a("val", if deckcraft_color::is_preset_name(name) { name } else { "black" })),
         ColorBase::System { name, last } => {
-            ("a:sysClr", A::new().a("val", if name.is_empty() { "windowText" } else { name }).a("lastClr", last.hex()))
+            ("a:sysClr", A::new().a("val", if deckcraft_color::is_system_name(name) { name } else { "windowText" }).a("lastClr", last.hex()))
         }
     };
     let rgb_alpha = match &c.base {
@@ -787,4 +788,24 @@ pub fn paragraph(w: &mut W, x: &mut Exp, o: &mut Out, p: &Paragraph, math: bool,
 
 pub fn has_math(tb: &TextBody) -> bool {
     tb.paragraphs.iter().flat_map(|p| &p.runs).any(|r| matches!(&r.kind, RunKind::Math { omml } if !omml.is_empty()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_color::Rgba;
+
+    #[test]
+    fn unknown_preset_and_system_names_save_as_black_and_window_text() {
+        let write = |base: ColorBase| {
+            let mut w = W::frag();
+            color(&mut w, &ColorRef { base, mods: vec![] });
+            w.s
+        };
+        assert_eq!(write(ColorBase::Preset { name: "notAColor".into() }), r#"<a:prstClr val="black"/>"#);
+        assert_eq!(write(ColorBase::Preset { name: "darkBlue".into() }), r#"<a:prstClr val="darkBlue"/>"#);
+        let last = Rgba::rgb(0x12, 0x34, 0x56);
+        assert_eq!(write(ColorBase::System { name: "notAColor".into(), last }), r#"<a:sysClr val="windowText" lastClr="123456"/>"#);
+        assert_eq!(write(ColorBase::System { name: "3dLight".into(), last }), r#"<a:sysClr val="3dLight" lastClr="123456"/>"#);
+    }
 }

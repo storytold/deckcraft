@@ -2,7 +2,7 @@
 //! (RFC 6716 §4.3.4 – §4.3.6).
 
 use super::rate::{Mode, QTHETA_OFFSET, QTHETA_OFFSET_TWOPHASE, get_pulses};
-use super::tables::*;
+use super::tables::{E_MEANS, EBANDS, NB_EBANDS, ORDERY, SHORT_MDCT};
 use crate::range::{BITRES, RangeDecoder, ilog};
 
 pub const SPREAD_NONE: usize = 0;
@@ -71,7 +71,7 @@ fn exp_rotation1(x: &mut [f32], len: usize, stride: usize, c: f32, s: f32) {
         x[i + stride] = c * x2 + s * x1;
         x[i] = c * x1 + ms * x2;
     }
-    if len >= 2 * stride + 1 {
+    if len > 2 * stride {
         for i in (0..=len - 2 * stride - 1).rev() {
             let x1 = x[i];
             let x2 = x[i + stride];

@@ -33,7 +33,8 @@ pub struct SubPath {
 }
 
 /// A draggable adjust handle (the yellow dot). `pos = origin + dir * value`; dragging projects
-/// the pointer onto `dir`.
+/// the pointer onto `dir`. An `angle` handle instead measures the pointer's angle about `origin`
+/// (1/60 000 degree, y down, 0° at +x).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Handle {
     pub index: usize,
@@ -42,14 +43,29 @@ pub struct Handle {
     pub dir: Vec2,
     pub min: f64,
     pub max: f64,
+    pub angle: bool,
 }
 
 impl Handle {
     fn new(index: usize, origin: Point, dir: Vec2, value: f64, min: f64, max: f64) -> Self {
-        Handle { index, pos: origin + dir * value, origin, dir, min, max }
+        Handle { index, pos: origin + dir * value, origin, dir, min, max, angle: false }
+    }
+    /// An angle handle on the `rx`×`ry` ellipse around `center` at visual angle `value`.
+    fn angle(index: usize, center: Point, rx: f64, ry: f64, value: f64) -> Self {
+        let t = vis(value / 60000.0, rx, ry).to_radians();
+        let pos = Point::new(center.x + rx * t.cos(), center.y + ry * t.sin());
+        Handle { index, pos, origin: center, dir: Vec2::ZERO, min: 0.0, max: 21600000.0, angle: true }
     }
     /// The adjust value for a pointer at `p` (shape-local space).
     pub fn value_at(&self, p: Point) -> f64 {
+        if self.angle {
+            let d = p - self.origin;
+            if !(d.x.is_finite() && d.y.is_finite()) || d.hypot() < 1e-9 {
+                return self.min;
+            }
+            let v = (d.y.atan2(d.x).to_degrees().rem_euclid(360.0) * 60000.0).round();
+            return if v >= self.max { self.min } else { v };
+        }
         let l2 = self.dir.hypot2();
         if l2 < 1e-18 {
             return self.min;
@@ -1082,7 +1098,15 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             b.m(p0.x, p0.y).arc(rx, ry, s0, sweep);
             let pi = Point::new(w / 2.0 + irx * si.to_radians().cos(), h / 2.0 + iry * si.to_radians().sin());
             b.l(pi.x, pi.y).arc(irx, iry, si, isweep).z();
-            simple(b.take(), full, w, h)
+            let mut g = simple(b.take(), full, w, h);
+            let c = Point::new(rx, ry);
+            g.handles.push(Handle::angle(0, c, rx - t / 2.0, ry - t / 2.0, a(0)));
+            // Thickness: slides inward from the outer edge along the end angle's ray.
+            let pe = Point::new(rx + rx * e0.to_radians().cos(), ry + ry * e0.to_radians().sin());
+            let u = (c - pe).normalize();
+            let u = if u.x.is_finite() && u.y.is_finite() { u } else { Vec2::ZERO };
+            g.handles.push(Handle::new(2, pe, u * (ss / 100000.0), a(2).clamp(0.0, 50000.0), 0.0, 50000.0));
+            g
         }
         "pie" | "chord" | "arc" => {
             let (rx, ry) = (w / 2.0, h / 2.0);
@@ -1095,7 +1119,7 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             let p0 = Point::new(rx + rx * s.to_radians().cos(), ry + ry * s.to_radians().sin());
             b.m(p0.x, p0.y).arc(rx, ry, s, sw);
             let text = Rect::new(w * 0.14645, h * 0.14645, w * 0.85355, h * 0.85355);
-            match name {
+            let mut g = match name {
                 "pie" => {
                     b.l(rx, ry).z();
                     simple(b.take(), text, w, h)
@@ -1111,7 +1135,11 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
                     f.close_path();
                     Geometry { paths: vec![fill_only(f), stroke_only(open)], text_rect: text, handles: vec![], sites: mid_sites(w, h) }
                 }
-            }
+            };
+            let c = Point::new(rx, ry);
+            g.handles.push(Handle::angle(0, c, rx, ry, a(0)));
+            g.handles.push(Handle::angle(1, c, rx, ry, a(1)));
+            g
         }
         "teardrop" => {
             let k = a(0).clamp(0.0, 200000.0) / 100000.0;
@@ -1306,7 +1334,9 @@ pub fn build(name: &str, w: f64, h: f64, adj: &[f64]) -> Option<Geometry> {
             let (y1, y2) = (h / 2.0 - h * k / 2.0, h / 2.0 + h * k / 2.0);
             let dx = (ss * a(1).max(0.0) / 1e5).min(w);
             if name == "notchedRightArrow" {
-                let n = dx * (k / 2.0) * 0.9;
+                // x1 = dy1 · dx2 / hd2 in presetShapeDefinitions, with dy1 = h·k/2: the notch's
+                // edges run parallel to the head's
+                let n = dx * k;
                 let pts = [(0.0, y1), (w - dx, y1), (w - dx, 0.0), (w, h / 2.0), (w - dx, h), (w - dx, y2), (0.0, y2), (n, h / 2.0)];
                 g.paths = vec![fill(Pb::new().poly(&pts).take())];
             } else {
@@ -1821,7 +1851,7 @@ fn ellipse_sites(w: f64, h: f64) -> Vec<Point> {
 
 fn tip_handle(w: f64, h: f64, tip: Point) -> Handle {
     // A free 2-D handle is represented as index 0 with zero direction; callers move both values.
-    Handle { index: 0, pos: tip, origin: Point::new(w / 2.0, h / 2.0), dir: Vec2::new(w / 1e5, h / 1e5), min: -1e6, max: 1e6 }
+    Handle { index: 0, pos: tip, origin: Point::new(w / 2.0, h / 2.0), dir: Vec2::new(w / 1e5, h / 1e5), min: -1e6, max: 1e6, angle: false }
 }
 
 fn wedge_rect(w: f64, h: f64, a0: f64, a1: f64, r: f64) -> Geometry {
@@ -1832,10 +1862,10 @@ fn wedge_rect(w: f64, h: f64, a0: f64, a1: f64, r: f64) -> Geometry {
     let r = r.min(w / 2.0).min(h / 2.0);
     // Walk clockwise from the top-left; insert the wedge on the edge facing the tip.
     let horiz = dx.abs() > dy.abs();
-    let (bx0, bx1) = (w * 5.0 / 12.0, w * 7.0 / 12.0);
-    let (by0, by1) = (h * 5.0 / 12.0, h * 7.0 / 12.0);
-    let (bx0, bx1) = if tip.x < w / 2.0 { (w * 2.0 / 12.0, w * 5.0 / 12.0) } else { (bx0 + w / 12.0 * 2.0 - w / 12.0 * 2.0, bx1 + w * 2.0 / 12.0) };
-    let (by0, by1) = if tip.y < h / 2.0 { (h * 2.0 / 12.0, h * 5.0 / 12.0) } else { (by0, by1 + h * 2.0 / 12.0) };
+    // The wedge's base: 2..5 twelfths of the edge on the tip's side of the centre when it is
+    // before it, 7..10 twelfths when after (presetShapeDefinitions' xg1/xg2, yg1/yg2).
+    let (bx0, bx1) = if tip.x < w / 2.0 { (w * 2.0 / 12.0, w * 5.0 / 12.0) } else { (w * 7.0 / 12.0, w * 10.0 / 12.0) };
+    let (by0, by1) = if tip.y < h / 2.0 { (h * 2.0 / 12.0, h * 5.0 / 12.0) } else { (h * 7.0 / 12.0, h * 10.0 / 12.0) };
     b.m(r, 0.0);
     if !inside && !horiz && dy < 0.0 {
         b.l(bx0, 0.0).l(tip.x, tip.y).l(bx1, 0.0);
@@ -2253,6 +2283,135 @@ mod tests {
     }
 
     #[test]
+    fn partial_circle_angle_handles_map_back() {
+        // Start 0° sits at the right of the ellipse, end 270° at its top.
+        for name in ["pie", "chord", "arc"] {
+            let g = build(name, 200.0, 100.0, &[0.0, 16200000.0]).unwrap();
+            assert_eq!(g.handles.iter().map(|h| h.index).collect::<Vec<_>>(), vec![0, 1], "{name}");
+            let (s, e) = (&g.handles[0], &g.handles[1]);
+            assert!((s.pos - Point::new(200.0, 50.0)).hypot() < 1e-6, "{name} {:?}", s.pos);
+            assert!((e.pos - Point::new(100.0, 0.0)).hypot() < 1e-6, "{name} {:?}", e.pos);
+            assert_eq!(s.value_at(s.pos), 0.0, "{name}");
+            assert_eq!(e.value_at(e.pos), 16200000.0, "{name}");
+            // Dragging to the bottom of the ellipse gives 90°.
+            assert_eq!(s.value_at(Point::new(100.0, 100.0)), 5400000.0, "{name}");
+            // Off-axis angles on a non-square ellipse: the visual 45° ray meets the 200×100
+            // ellipse at offset (√2000, √2000) from the centre.
+            let k = 2000f64.sqrt();
+            let g = build(name, 200.0, 100.0, &[2700000.0, 8100000.0]).unwrap();
+            let (s, e) = (&g.handles[0], &g.handles[1]);
+            assert!((s.pos - Point::new(100.0 + k, 50.0 + k)).hypot() < 1e-6, "{name} {:?}", s.pos);
+            assert!((e.pos - Point::new(100.0 - k, 50.0 + k)).hypot() < 1e-6, "{name} {:?}", e.pos);
+            for (deg, h) in [(45.0, s), (135.0, e)] {
+                let on = ((h.pos.x - 100.0) / 100.0).powi(2) + ((h.pos.y - 50.0) / 50.0).powi(2);
+                assert!((on - 1.0).abs() < 1e-9, "{name} {deg}° off ellipse: {:?}", h.pos);
+                assert!((h.value_at(h.pos) - deg * 60000.0).abs() <= 1.0, "{name} {deg}°: {}", h.value_at(h.pos));
+            }
+        }
+        for deg in [45.0, 135.0, 200.0, 315.0] {
+            let g = build("blockArc", 200.0, 100.0, &[deg * 60000.0, 0.0, 25000.0]).unwrap();
+            let start = g.handles.iter().find(|h| h.index == 0).unwrap();
+            // Thickness 25 → the handle runs on the 87.5×37.5 mid-ring ellipse.
+            let on = ((start.pos.x - 100.0) / 87.5).powi(2) + ((start.pos.y - 50.0) / 37.5).powi(2);
+            assert!((on - 1.0).abs() < 1e-9, "blockArc {deg}° off ring: {:?}", start.pos);
+            let d = start.pos - Point::new(100.0, 50.0);
+            assert!((d.y.atan2(d.x).to_degrees().rem_euclid(360.0) - deg).abs() < 1e-6, "blockArc {deg}°: {:?}", start.pos);
+            assert!((start.value_at(start.pos) - deg * 60000.0).abs() <= 1.0, "blockArc {deg}°");
+        }
+        let g = build("blockArc", 200.0, 100.0, &[10800000.0, 0.0, 25000.0]).unwrap();
+        let start = g.handles.iter().find(|h| h.index == 0).unwrap();
+        assert_eq!(start.value_at(start.pos), 10800000.0);
+        let thick = g.handles.iter().find(|h| h.index == 2).unwrap();
+        assert!((thick.value_at(thick.pos) - 25000.0).abs() <= 1.0);
+    }
+
+    #[test]
+    fn presets_with_adjust_values_expose_handles() {
+        // Presets whose adjust values have no handle of their own yet.
+        const NO_HANDLES: &[&str] = &[
+            "curvedConnector3",
+            "snip2SameRect",
+            "snip2DiagRect",
+            "snipRoundRect",
+            "round1Rect",
+            "round2SameRect",
+            "round2DiagRect",
+            "teardrop",
+            "halfFrame",
+            "corner",
+            "diagStripe",
+            "foldedCorner",
+            "smileyFace",
+            "moon",
+            "gear6",
+            "gear9",
+            "bracketPair",
+            "bracePair",
+            "leftBracket",
+            "rightBracket",
+            "leftBrace",
+            "rightBrace",
+            "leftRightArrow",
+            "upDownArrow",
+            "quadArrow",
+            "leftRightUpArrow",
+            "bentArrow",
+            "uturnArrow",
+            "curvedRightArrow",
+            "curvedLeftArrow",
+            "curvedUpArrow",
+            "curvedDownArrow",
+            "leftUpArrow",
+            "bentUpArrow",
+            "circularArrow",
+            "leftCircularArrow",
+            "leftRightCircularArrow",
+            "swooshArrow",
+            "rightArrowCallout",
+            "downArrowCallout",
+            "leftArrowCallout",
+            "upArrowCallout",
+            "leftRightArrowCallout",
+            "upDownArrowCallout",
+            "quadArrowCallout",
+            "mathPlus",
+            "mathMinus",
+            "mathMultiply",
+            "mathDivide",
+            "mathEqual",
+            "mathNotEqual",
+            "ribbon2",
+            "ribbon",
+            "ellipseRibbon2",
+            "ellipseRibbon",
+            "leftRightRibbon",
+            "verticalScroll",
+            "horizontalScroll",
+            "wave",
+            "doubleWave",
+            "borderCallout1",
+            "borderCallout2",
+            "borderCallout3",
+            "accentCallout1",
+            "accentCallout2",
+            "accentCallout3",
+            "callout1",
+            "callout2",
+            "callout3",
+            "accentBorderCallout1",
+            "accentBorderCallout2",
+            "accentBorderCallout3",
+        ];
+        for p in CATALOG {
+            if p.defaults.is_empty() || NO_HANDLES.contains(&p.name) {
+                continue;
+            }
+            let g = build(p.name, 200.0, 100.0, &[]).unwrap();
+            assert!(!g.handles.is_empty(), "{} has adjust values but no handles", p.name);
+        }
+    }
+
+    #[test]
     fn rect_area_and_ellipse_area() {
         let g = build("rect", 100.0, 50.0, &[]).unwrap();
         assert!((g.paths[0].path.area().abs() - 5000.0).abs() < 1e-6);
@@ -2295,6 +2454,20 @@ mod tests {
         assert!(on_path(&g, Point::new(w / 4.0, h / 5.0), 1e-3) && on_path(&g, Point::new(w * 0.75, 0.0), 1e-3));
         let g = build("flowChartMultidocument", w, h, &[]).unwrap();
         assert!(on_path(&g, at(2972.0, 0.0), 1e-6) && on_path(&g, at(18595.0, 18022.0), 1e-6));
+    }
+
+    #[test]
+    fn notched_arrow_notch_parallels_the_head() {
+        // presetShapeDefinitions: the notch's point is at x1 = dy1 · dx2 / hd2, so its edges run
+        // parallel to the head's (25 on a 200 × 100 arrow at the default adjusts).
+        for (w, h, adj, x1) in [(200.0, 100.0, [50000.0, 50000.0], 25.0), (300.0, 120.0, [80000.0, 30000.0], 28.8)] {
+            let g = build("notchedRightArrow", w, h, &adj).unwrap();
+            let notch = g.paths[0].path.elements().iter().find_map(|e| match e {
+                kurbo::PathEl::MoveTo(p) | kurbo::PathEl::LineTo(p) if (p.y - h / 2.0).abs() < 1e-9 && p.x < w / 2.0 => Some(*p),
+                _ => None,
+            });
+            assert!(notch.is_some_and(|p| (p.x - x1).abs() < 1e-6), "{w}x{h} {adj:?}: notch at {notch:?}, want x = {x1}");
+        }
     }
 
     #[test]
@@ -2431,6 +2604,48 @@ mod tests {
             let area = filled[0].path.area().abs();
             assert!(area > 40.0 * 100.0 * 0.4 && area < 40.0 * 100.0, "{name}: {area}");
             assert!(g.paths.iter().any(|p| p.stroke && p.fill == FillMode::None), "{name}: the curve is outlined");
+        }
+    }
+
+    /// The end points of a path's move/line elements, in order.
+    fn vertices(p: &BezPath) -> Vec<Point> {
+        p.elements()
+            .iter()
+            .filter_map(|e| match e {
+                kurbo::PathEl::MoveTo(q) | kurbo::PathEl::LineTo(q) => Some(*q),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn wedge_callout_mirrors_with_its_tip() {
+        // A tip below and right of the centre draws the mirror image of the same tip on the left;
+        // the same for a tip right of the centre, above or below it. presetShapeDefinitions puts
+        // the wedge's base at 2..5 twelfths of the edge on the near side of the centre and at
+        // 7..10 twelfths on the far side.
+        let (w, h) = (240.0, 120.0);
+        // Sorted and deduplicated: the outline closes on the corner it starts from, which the
+        // mirror moves to the opposite corner.
+        let sorted = |mut v: Vec<Point>| {
+            v.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+            v.dedup_by(|a, b| (*a - *b).hypot() < 1e-9);
+            v
+        };
+        for (right, left, flip_x) in [([10000.0, 80000.0], [-10000.0, 80000.0], true), ([80000.0, 10000.0], [80000.0, -10000.0], false)] {
+            let a = vertices(&build("wedgeRectCallout", w, h, &right).unwrap().paths[0].path);
+            let b = vertices(&build("wedgeRectCallout", w, h, &left).unwrap().paths[0].path);
+            let b: Vec<Point> = b.iter().map(|p| if flip_x { Point::new(w - p.x, p.y) } else { Point::new(p.x, h - p.y) }).collect();
+            let (a, b) = (sorted(a), sorted(b));
+            assert_eq!(a.len(), b.len(), "{right:?}: {a:?} vs mirrored {left:?}: {b:?}");
+            for (p, q) in a.iter().zip(&b) {
+                assert!((*p - *q).hypot() < 1e-6, "{right:?}: {a:?}\n is not the mirror of {left:?}: {b:?}");
+            }
+        }
+        // The bottom wedge of a tip right of the centre leaves the edge at 7/12 and 10/12 of the width.
+        let a = vertices(&build("wedgeRectCallout", w, h, &[10000.0, 80000.0]).unwrap().paths[0].path);
+        for x in [w * 7.0 / 12.0, w * 10.0 / 12.0] {
+            assert!(a.iter().any(|p| (p.x - x).abs() < 1e-6 && (p.y - h).abs() < 1e-6), "no wedge corner at ({x}, {h}): {a:?}");
         }
     }
 }

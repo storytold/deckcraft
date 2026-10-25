@@ -347,8 +347,14 @@ fn pic(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El) -> Shape {
     if vf.is_some() || af.is_some() || p14.is_some() {
         let media = p14.and_then(|m| dml::media_ref(imp, part, m)).or_else(|| vf.or(af).and_then(|f| dml::media_ref(imp, part, f)));
         if let Some(media) = media {
-            let mut clip =
-                MediaClip { media, video: vf.is_some() || af.is_none(), poster: pf.as_ref().map(|p| p.media), volume: 1.0, ..Default::default() };
+            let mut clip = MediaClip {
+                media,
+                video: vf.is_some() || af.is_none(),
+                poster: pf.as_ref().map(|p| p.media),
+                crop: pf.as_ref().map(|p| p.crop).unwrap_or_default(),
+                volume: 1.0,
+                ..Default::default()
+            };
             if let Some(m) = p14 {
                 if let Some(t) = m.child("trim") {
                     clip.trim_start_ms = ms(t.attr("st"));
@@ -424,7 +430,7 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
             && let Some(bytes) = imp.pkg.xml_bytes(&rel.target)
             && let Some(mut chart) = if uri.ends_with("/chartex") { super::read_chartex_xml(bytes) } else { super::read_chart_xml(bytes) }
         {
-            chart.kept = super::chart::capture_kept(imp.pkg, &rel.target);
+            chart.kept = super::chart::capture_kept(imp, &rel.target);
             s.kind = ShapeKind::Chart(Box::new(chart));
             return s;
         }
@@ -441,6 +447,17 @@ fn frame(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, e: &El, depth: usize) -> S
         pics.into_iter().find_map(|b| dml::media_ref(imp, part, b))
     }
     .or_else(|| gd.and_then(|g| g.find("oleObj")).and_then(|o| vml_preview(imp, part, o.attr("spid")?)));
+    // An embedded object's fallback picture (`p:oleObj/p:pic`) can carry a fill and an outline,
+    // which PowerPoint draws behind and around the preview (old equation objects on coloured
+    // boxes). The frame's own position stays.
+    if let Some(pr) = gd.and_then(|g| g.find("oleObj")).and_then(|o| o.find("pic")).and_then(|p| p.child("spPr")) {
+        if s.fill.is_none() {
+            s.fill = dml::fill_of(imp, part, pr);
+        }
+        if s.line.is_none() {
+            s.line = pr.child("ln").map(|ln| dml::line(imp, part, ln));
+        }
+    }
     let label = if let Some(o) = gd.and_then(|g| g.find("oleObj")) {
         o.attr("progId").or(o.attr("name")).unwrap_or("Object").to_string()
     } else if uri.ends_with("/diagram") {
@@ -510,6 +527,10 @@ fn vml_index(pkg: &crate::opc::Package, vml: &str) -> std::collections::HashMap<
 /// relationship id, which a save renumbers. Only diagrams whose drawing is missing or empty get
 /// here, and those are drawn from their data.
 fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId> {
+    let norm_target = crate::opc::norm(target);
+    if let Some(&id) = imp.media_by_part.get(&norm_target) {
+        return Some(id);
+    }
     fn strip(e: &mut El, depth: usize) {
         if depth > crate::xml::MAX_DEPTH {
             return;
@@ -531,11 +552,15 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
         data: std::sync::Arc::new(xml.into_bytes()),
         link: None,
     });
+    imp.media_by_part.insert(norm_target, id);
     Some(id)
 }
 
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
 fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
+    if depth > 8 {
+        return None;
+    }
     let rel_ids = gd.child("relIds")?;
     let dm = part.rels.get(rel_ids.attr("r:dm").unwrap_or(""))?;
     let data = imp.pkg.xml(&dm.target)?;

@@ -30,7 +30,17 @@ fn simple_fill(w: &mut W, f: &Fill) {
     match f {
         Fill::None => w.empty0("a:noFill"),
         Fill::Solid { color } => super::dml::solid(w, color),
-        Fill::Gradient(_) | Fill::Picture(_) | Fill::Pattern(_) | Fill::Group | Fill::Background => {
+        Fill::Pattern(p) => {
+            w.open("a:pattFill", A::new().a("prst", if p.preset.is_empty() { "pct5" } else { &p.preset }));
+            w.open0("a:fgClr");
+            super::dml::color(w, &p.fg);
+            w.close("a:fgClr");
+            w.open0("a:bgClr");
+            super::dml::color(w, &p.bg);
+            w.close("a:bgClr");
+            w.close("a:pattFill");
+        }
+        Fill::Gradient(_) | Fill::Picture(_) | Fill::Group | Fill::Background => {
             if let Fill::Gradient(g) = f
                 && let Some(s) = g.stops.first()
             {
@@ -58,14 +68,54 @@ fn sp_pr(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>) {
     w.close("c:spPr");
 }
 
-fn rich(w: &mut W, text: &str) {
+/// `a:defRPr` carrying the chart's text colour, where PowerPoint keeps it: the paragraph
+/// defaults of a title's rich text and of every `c:txPr`.
+fn def_rpr(w: &mut W, color: Option<&deckcraft_model::ColorRef>) {
+    match color {
+        Some(c) => {
+            w.open0("a:defRPr");
+            super::dml::solid(w, c);
+            w.close("a:defRPr");
+        }
+        None => w.empty0("a:defRPr"),
+    }
+}
+
+/// `c:txPr` with the chart's text colour (`Chart::text_color`) as the default run properties, on
+/// the axes, the legend, the data labels and the chart itself, as PowerPoint writes it. Nothing
+/// without a colour: the theme's default then applies on reading.
+fn tx_pr(w: &mut W, c: &Chart) {
+    let Some(color) = &c.text_color else { return };
+    w.open0("c:txPr");
+    w.empty0("a:bodyPr");
+    w.empty0("a:lstStyle");
+    w.open0("a:p");
+    w.open0("a:pPr");
+    def_rpr(w, Some(color));
+    w.close("a:pPr");
+    w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
+    w.close("a:p");
+    w.close("c:txPr");
+}
+
+fn rich(w: &mut W, text: &str, color: Option<&deckcraft_model::ColorRef>) {
     w.open0("c:tx");
     w.open0("c:rich");
     w.empty0("a:bodyPr");
     w.empty0("a:lstStyle");
     for line in text.split('\n') {
         w.open0("a:p");
+        if color.is_some() {
+            w.open0("a:pPr");
+            def_rpr(w, color);
+            w.close("a:pPr");
+        }
         w.open0("a:r");
+        if let Some(c) = color {
+            w.open("a:rPr", A::new().a("lang", "en-US"));
+            super::dml::solid(w, c);
+            w.close("a:rPr");
+        }
         w.elt("a:t", line);
         w.close("a:r");
         w.close("a:p");
@@ -74,9 +124,10 @@ fn rich(w: &mut W, text: &str) {
     w.close("c:tx");
 }
 
-fn title(w: &mut W, text: &str) {
+/// A title (the chart's or an axis's) in the chart's text colour.
+fn title(w: &mut W, text: &str, c: &Chart) {
     w.open0("c:title");
-    rich(w, text);
+    rich(w, text, c.text_color.as_ref());
     w.val("c:overlay", 0);
     w.close("c:title");
 }
@@ -217,7 +268,7 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
         }
     }
     if let Some(d) = s.data_labels {
-        data_labels(w, d);
+        data_labels(w, c, d);
     }
     // After labels, before the category and value caches (ECMA-376 series content order).
     if matches!(g, Group::Bar | Group::Line | Group::Area | Group::Scatter) {
@@ -325,8 +376,9 @@ fn trendline(w: &mut W, t: &Trendline) {
     w.close("c:trendline");
 }
 
-fn data_labels(w: &mut W, show: bool) {
+fn data_labels(w: &mut W, c: &Chart, show: bool) {
     w.open0("c:dLbls");
+    tx_pr(w, c);
     for (n, v) in [
         ("c:showLegendKey", false),
         ("c:showVal", show),
@@ -355,12 +407,13 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", "b");
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t);
+            title(w, t, c);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
+        tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
         w.val("c:crossBetween", "midCat");
@@ -374,12 +427,13 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", cat_pos);
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t);
+            title(w, t, c);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
+        tx_pr(w, c);
         w.val("c:crossAx", AX_VAL);
         w.val("c:crosses", "autoZero");
         w.val("c:auto", 1);
@@ -411,7 +465,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.empty0("c:minorGridlines");
     }
     if let Some(t) = &c.axis_titles.1 {
-        title(w, t);
+        title(w, t, c);
     }
     match c.y_format.as_deref().filter(|f| !f.is_empty()) {
         Some(f) => w.empty("c:numFmt", A::new().a("formatCode", f).a("sourceLinked", 0)),
@@ -420,6 +474,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
     w.val("c:majorTickMark", "none");
     w.val("c:minorTickMark", "none");
     w.val("c:tickLblPos", "nextTo");
+    tx_pr(w, c);
     w.val("c:crossAx", AX_CAT);
     w.val("c:crosses", "autoZero");
     w.val("c:crossBetween", if g == Group::Area || g == Group::Scatter { "midCat" } else { "between" });
@@ -468,7 +523,7 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
         series(w, c, s, *i, kind, g);
     }
     if c.data_labels {
-        data_labels(w, true);
+        data_labels(w, c, true);
     }
     match g {
         Group::Bar => {
@@ -576,7 +631,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.open0("c:chart");
     match &c.title {
         Some(t) => {
-            title(&mut w, t);
+            title(&mut w, t, c);
             w.val("c:autoTitleDeleted", 0);
         }
         None => w.val("c:autoTitleDeleted", 1),
@@ -654,6 +709,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         w.open0("c:legend");
         w.val("c:legendPos", p);
         w.val("c:overlay", u8::from(c.legend_overlay));
+        tx_pr(&mut w, c);
         w.close("c:legend");
     }
     w.val("c:plotVisOnly", 1);
@@ -662,6 +718,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     if let Some(f) = &c.chart_fill {
         sp_pr(&mut w, Some(f), None);
     }
+    tx_pr(&mut w, c);
     w.close("c:chartSpace");
     (w.finish(), false)
 }
@@ -750,11 +807,20 @@ pub fn write_kept(pkg: &mut crate::opc::PackageOut, chart_name: &str, c: &Chart,
         }
     }
     pkg.rels(chart_name, &rels);
+    let mut parts_by_norm = std::collections::HashMap::new();
+    for p in &c.kept.parts {
+        parts_by_norm.entry(norm(&p.name)).or_insert(p);
+    }
+    let mut seen_payloads = std::collections::HashSet::new();
     // The kept parts' own relationships, pointed at the new names.
     for p in c.kept.parts.iter().filter(|p| kept_payload(&p.name)) {
-        let Some(new_source) = names.get(&norm(&p.name)) else { continue };
+        let norm_name = norm(&p.name);
+        if !seen_payloads.insert(norm_name.clone()) {
+            continue;
+        }
+        let Some(new_source) = names.get(&norm_name) else { continue };
         let rp = norm(&rels_path(&p.name));
-        let Some(rels_part) = c.kept.parts.iter().find(|q| norm(&q.name) == rp) else { continue };
+        let Some(rels_part) = parts_by_norm.get(&rp) else { continue };
         let mut out = RelsOut::default();
         for r in crate::opc::rels_from_bytes(&rels_part.bytes, &p.name).items {
             if r.external {
@@ -857,7 +923,7 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
     for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { usize::MAX }) {
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
-        if s.data_labels.unwrap_or(c.data_labels) {
+        if c.series_data_labels(s) {
             w.open("cx:dataLabels", A::new().a("pos", if c.kind == ChartType::Funnel { "ctr" } else { "outEnd" }));
             w.empty("cx:visibility", A::new().a("seriesName", "0").a("categoryName", "0").a("value", "1"));
             w.close("cx:dataLabels");
@@ -971,7 +1037,57 @@ mod region_map_tests {
 
 #[cfg(test)]
 mod tests {
+    use deckcraft_color::{ColorTransform, Rgba};
+    use deckcraft_model::ColorRef;
     use deckcraft_model::chart::{Chart, ChartType};
+
+    /// The chart's text colour is written where PowerPoint keeps it (`c:txPr` on the axes, legend,
+    /// data labels and chart, the title's run defaults) and read back as the same colour.
+    #[test]
+    fn chart_text_colour_round_trips() {
+        let mut c = Chart::sample(ChartType::Column);
+        c.title = Some("Revenue".into());
+        c.legend = Some("b".into());
+        c.data_labels = true;
+        c.axis_titles = (Some("Quarter".into()), Some("EUR".into()));
+        let tinted = ColorRef::scheme(deckcraft_model::SchemeSlot::Accent2).with(ColorTransform::LumMod(75000));
+        c.text_color = Some(tinted.clone());
+        let xml = String::from_utf8(super::chart_xml(&c).0).unwrap();
+        // Axes (2), legend, data labels and the chart root; a title keeps it in its rich text.
+        assert!(xml.matches("<c:txPr>").count() >= 5, "{xml}");
+        assert!(xml.contains(r#"<a:schemeClr val="accent2"><a:lumMod val="75000"/></a:schemeClr>"#), "{xml}");
+        assert!(xml.contains("<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr><a:solidFill>"), "{xml}");
+        assert_eq!(crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap().text_color, Some(tinted));
+        // An RGB colour and no colour at all round-trip too.
+        c.text_color = Some(ColorRef::rgb(Rgba::rgb(255, 255, 255)));
+        let xml = super::chart_xml(&c).0;
+        assert_eq!(crate::read::chart::read_chart_xml(&xml).unwrap().text_color, c.text_color);
+        c.text_color = None;
+        let xml = String::from_utf8(super::chart_xml(&c).0).unwrap();
+        assert!(!xml.contains("<c:txPr>"), "{xml}");
+        assert_eq!(crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap().text_color, None);
+    }
+
+    /// An imported chart's `c:txPr` colour survives an edit that rebuilds the part from the model
+    /// (the colour used to be read but never written, so a save after any edit lost it).
+    #[test]
+    fn imported_text_colour_survives_an_edit_and_a_save() {
+        let xml = r#"<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><c:chart><c:plotArea><c:barChart><c:barDir val="col"/><c:ser><c:idx val="0"/><c:val><c:numRef><c:numCache><c:ptCount val="1"/><c:pt idx="0"><c:v>1</c:v></c:pt></c:numCache></c:numRef></c:val></c:ser><c:axId val="1"/><c:axId val="2"/></c:barChart><c:catAx><c:axId val="1"/><c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr><a:solidFill><a:schemeClr val="tx1"><a:lumMod val="65000"/><a:lumOff val="35000"/></a:schemeClr></a:solidFill></a:defRPr></a:pPr></a:p></c:txPr><c:crossAx val="2"/></c:catAx><c:valAx><c:axId val="2"/><c:crossAx val="1"/></c:valAx></c:plotArea></c:chart></c:chartSpace>"#;
+        let c = crate::read::chart::read_chart_xml(xml.as_bytes()).unwrap();
+        let grey = ColorRef::scheme(deckcraft_model::SchemeSlot::Tx1).with(ColorTransform::LumMod(65000)).with(ColorTransform::LumOff(35000));
+        assert_eq!(c.text_color, Some(grey.clone()));
+        // Unchanged: the part is written back as read.
+        assert!(super::chart_xml(&c).1);
+        // Edited (a title; the editor drops `raw` on any edit): rebuilt with the colour.
+        let mut e = c.clone();
+        e.title = Some("Units".into());
+        e.raw = None;
+        let (out, kept) = super::chart_xml(&e);
+        assert!(!kept);
+        let back = crate::read::chart::read_chart_xml(&out).unwrap();
+        assert_eq!(back.text_color, Some(grey));
+        assert_eq!(back.title.as_deref(), Some("Units"));
+    }
 
     #[test]
     fn reversed_category_axis_round_trips() {

@@ -34,6 +34,9 @@ pub struct Mods {
     pub cmd: bool,
 }
 
+/// A text selection's shape, table cell, notes flag, anchor and caret.
+type TextTarget = (ShapeId, Option<(usize, usize)>, bool, (usize, usize), (usize, usize));
+
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct PointerEvent {
@@ -191,6 +194,11 @@ enum Drag {
     },
     TextSelect {
         shape: ShapeId,
+        /// The text selection before the press, to tell whether the drag changed it.
+        before: Option<TextTarget>,
+        /// The text selection the press made. In a table, a drag that leaves its cell selects
+        /// whole cells, and coming back to the cell restores this.
+        press: Option<TextSel>,
     },
     /// Dragging a table border: the right edge of column `index`, or the bottom edge of row
     /// `index`. `start` is the table-local press point, `size` the column's width or the row's
@@ -261,8 +269,13 @@ pub struct ToolState {
     pub edit_points: Option<ShapeId>,
     /// The vertex (path, index) whose control handles show in Edit Points.
     pub edit_vertex: Option<(usize, usize)>,
-    /// The point type last chosen for a vertex (path, index, type): handle drags follow it.
-    pub vertex_kind: Option<(usize, usize, String)>,
+    /// The segment (path, index of the vertex ending it) last right-clicked in Edit Points, for
+    /// the segment menu.
+    pub edit_segment: Option<(usize, usize)>,
+    /// Where on that segment the right click was (0..1), where Add Point puts the new point.
+    pub edit_segment_t: Option<f64>,
+    /// The point type last chosen for a vertex (shape, path, index, type): handle drags follow it.
+    pub vertex_kind: Option<(ShapeId, usize, usize, String)>,
     /// Drawing guides are shown (View › Guides): they can be dragged and shapes snap to them.
     pub guides_visible: bool,
     /// The guide being dragged and where it is now (slide points); `None` once dropped.
@@ -280,7 +293,12 @@ impl ToolState {
 
     /// The shape in Edit Points, while it is still the one selected shape.
     pub fn editing_points(&self, st: &crate::DocState) -> Option<ShapeId> {
-        self.edit_points.filter(|id| st.selection.shapes.as_slice() == [*id] && st.selection.text.is_none() && st.shape(*id).is_some())
+        // Only a freeform has points: after Undo takes the conversion back, Edit Points is over.
+        self.edit_points.filter(|id| {
+            st.selection.shapes.as_slice() == [*id]
+                && st.selection.text.is_none()
+                && st.shape(*id).is_some_and(|sh| matches!(sh.geom, deckcraft_model::Geom::Custom { .. }))
+        })
     }
 
     /// A freeform path is being drawn (Enter/Escape/double-click finish it).
@@ -409,10 +427,12 @@ impl Session {
                 }
             }
         }
-        // The frame of the text being edited: grabbing it moves the box.
+        // The frame of the text being edited: grabbing it moves the box, unless a shape in front
+        // of the text covers that spot (#931).
         if let Some(e) = edited_box(st)
             && e.movable
             && edit_zone(&e.xfrm, p, tol) == EditZone::Frame
+            && !shape_in_front(st, st.shapes(), e.id, p, tol, 0)
         {
             return Some(Hit::Frame { id: e.id });
         }
@@ -439,7 +459,7 @@ impl Session {
         }
         // A press (not a hover) settles an input method's composition, as clicking does in PowerPoint.
         if !matches!(ev.kind, PointerKind::Move) {
-            self.end_composition();
+            self.settle_composition();
         }
         match ev.kind {
             PointerKind::Move => {
@@ -467,11 +487,17 @@ impl Session {
             PointerKind::Down => self.down(p, ev.mods, tol),
             PointerKind::Drag => self.drag(p, ev.mods, tol),
             PointerKind::Up => self.up(p, ev.mods),
-            PointerKind::DoubleClick => self.double_click(p, tol),
+            PointerKind::DoubleClick => {
+                let before = self.text_selection();
+                let r = self.double_click(p, tol)?;
+                self.paint_if_selection_changed(before, r)
+            }
             PointerKind::ContextClick => self.context_click(p, tol),
             PointerKind::TripleClick => {
                 if self.active().is_some_and(|d| d.selection.text.is_some()) {
-                    self.execute("text.selectParagraph", &json!({}))
+                    let before = self.text_selection();
+                    let r = self.execute("text.selectParagraph", &json!({}))?;
+                    self.paint_if_selection_changed(before, r)
                 } else {
                     Ok(Value::Null)
                 }
@@ -479,11 +505,33 @@ impl Session {
         }
     }
 
+    /// Format Painter applies once a text range is selected (drag, word or paragraph click).
+    fn paint_text_selection(&mut self) -> Result<Option<Value>> {
+        if self.painter.is_some() && self.doc()?.selection.text.as_ref().is_some_and(|t| t.is_range()) {
+            return self.execute("format.painterApply", &json!({})).map(Some);
+        }
+        Ok(None)
+    }
+
+    /// Where the text selection is: its shape, cell or notes, anchor and caret.
+    fn text_selection(&self) -> Option<TextTarget> {
+        self.active().and_then(|d| d.selection.text.as_ref()).map(|t| (t.shape, t.cell, t.notes, t.anchor, t.caret))
+    }
+
+    /// A double or triple click paints only the range it selected, not an older one it left alone.
+    fn paint_if_selection_changed(&mut self, before: Option<TextTarget>, r: Value) -> Result<Value> {
+        if self.text_selection() == before {
+            return Ok(r);
+        }
+        self.paint_text_selection().map(|a| a.unwrap_or(r))
+    }
+
     pub(crate) fn begin(&mut self, label: &str) {
+        let vertex_kind = self.tool.vertex_kind.clone();
         if let Some(st) = self.active_mut()
             && st.interaction.is_none()
         {
-            st.interaction = Some(crate::Interaction { label: label.into(), doc: st.doc.clone(), selection: st.selection.clone() });
+            st.interaction = Some(crate::Interaction { label: label.into(), doc: st.doc.clone(), selection: st.selection.clone(), vertex_kind });
         }
     }
 
@@ -492,8 +540,31 @@ impl Session {
             && let Some(i) = st.interaction.take()
             && !Arc::ptr_eq(&i.doc, &st.doc)
         {
-            crate::push_undo(st, HistoryEntry { label: i.label, doc: i.doc, selection: i.selection });
+            crate::push_undo(st, HistoryEntry { label: i.label, doc: i.doc, selection: i.selection, vertex_kind: i.vertex_kind });
         }
+    }
+
+    /// Cancels a point or handle drag in Edit Points when Esc is pressed: ends the drag, puts back the
+    /// document and selection saved at the press, and adds no undo step. Returns whether a drag was cancelled.
+    pub(crate) fn cancel_point_drag(&mut self) -> bool {
+        if !matches!(self.tool.drag, Some(Drag::Vertex { .. } | Drag::Handle { .. })) {
+            return false;
+        }
+        self.tool.drag = None;
+        if let Some(st) = self.active_mut()
+            && st.interaction.as_ref().is_some_and(|i| i.label == "Edit Points")
+            && let Some(i) = st.interaction.take()
+        {
+            // A modifier held during the drag may have set a point type; the drag is undone, so is that.
+            let kind = i.vertex_kind;
+            if !Arc::ptr_eq(&i.doc, &st.doc) {
+                st.doc = i.doc;
+                st.selection = i.selection;
+                st.revision += 1;
+            }
+            self.tool.vertex_kind = kind;
+        }
+        true
     }
 
     /// End the interaction only when it is the one `label` started. A twist must not commit a drag.
@@ -545,8 +616,10 @@ impl Session {
             ToolKind::Select => {}
         }
         // Clicking inside the text being edited moves the caret / starts a text selection.
+        let before = self.text_selection();
         if let Some((shape, pos)) = self.place_caret(p, tol, mods.shift)? {
-            self.tool.drag = Some(Drag::TextSelect { shape });
+            let press = self.doc()?.selection.text.clone();
+            self.tool.drag = Some(Drag::TextSelect { shape, before, press });
             return Ok(json!({"caret": [pos.0, pos.1]}));
         }
         let hit = self.hit_test(p, tol);
@@ -631,6 +704,21 @@ impl Session {
                     self.tool.drag = Some(Drag::Warp { id, index, name, base, orig });
                 }
             }
+            Some(Hit::Shape { id, .. })
+                if !(mods.shift || mods.cmd)
+                    && st.selection.cells.is_some_and(|c| c.0 == id && st.selection.shapes == [id])
+                    && in_table_cell(st, id, p) =>
+            {
+                // A press in a table whose cells are selected starts again in the cell under the
+                // pointer: a click puts the caret there and a drag selects another range. A press
+                // on the table outside its cells selects and moves the table like any shape.
+                let before = self.text_selection();
+                if self.edit_text_at(id, p)? {
+                    self.select(|_, sel| sel.cells = None)?;
+                    let press = self.doc()?.selection.text.clone();
+                    self.tool.drag = Some(Drag::TextSelect { shape: id, before, press });
+                }
+            }
             Some(Hit::Shape { id, text }) => {
                 let selected = st.selection.shapes.contains(&id);
                 let toggle = mods.shift || mods.cmd;
@@ -651,10 +739,17 @@ impl Session {
                 let origs: Vec<(ShapeId, Xfrm)> =
                     ids.iter().filter_map(|i| st.shape(*i).filter(|s| !s.locked).map(|s| (*i, xfrm_of(&st.doc, &st.selection, s)))).collect();
                 // A click (no drag) on text puts the caret there; unselected text boxes and
-                // placeholders take the caret straight away like PowerPoint. A click in a selected
-                // table puts the caret in the clicked cell.
+                // placeholders take the caret straight away like PowerPoint. A click in a cell of a
+                // selected table puts the caret there; a click on its grab band keeps the table selected.
                 let table = st.shape(id).is_some_and(|s| matches!(s.kind, ShapeKind::Table(_)));
-                let enter_text = (!toggle && ((text && (selected || is_text_first(st, id))) || (table && selected))).then_some((id, p));
+                // A click on the frame band of a text box selects the box whole, as PowerPoint
+                // does, so it can be moved, duplicated or deleted; only the inside takes the caret.
+                let on_frame = text
+                    && is_text_first(st, id)
+                    && st.shape(id).is_some_and(|s| edit_zone(&xfrm_of(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
+                let enter_text =
+                    (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected && in_table_cell(st, id, p))))
+                        .then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;
@@ -845,7 +940,18 @@ impl Session {
             Drag::Handle { id, path, index, out } => {
                 self.tool.drag = Some(Drag::Handle { id, path, index, out });
                 let side = if out { "out" } else { "in" };
-                if let Err(e) = self.execute_inner_move_handle(id, path, index, side, p) {
+                // Shift, Ctrl or Alt held while dragging a handle makes the point smooth, straight or
+                // corner, as in PowerPoint; Cmd and Option count as Ctrl and Alt.
+                let held = if mods.shift {
+                    Some("smooth")
+                } else if mods.cmd {
+                    Some("straight")
+                } else if mods.alt {
+                    Some("corner")
+                } else {
+                    None
+                };
+                if let Err(e) = self.execute_inner_move_handle(id, path, index, side, p, held) {
                     log::debug!("edit handle: {e}");
                 }
                 return Ok(Value::Null);
@@ -902,8 +1008,29 @@ impl Session {
                 };
                 self.tool.preview = Some(x);
             }
-            Drag::TextSelect { shape } => {
-                // The selection stays in the shape or table cell where it started.
+            Drag::TextSelect { shape, press, .. } => {
+                // In a table, leaving the cell the drag started in selects whole cells, as in
+                // PowerPoint; coming back to that cell selects text in it again.
+                let st = self.doc()?;
+                if let Some(start) = press.as_ref().and_then(|t| t.cell)
+                    && let Some(f) = st.shape(shape).and_then(|sh| cmd::table::table_frame(st, sh))
+                    && let Some(cell) = f.cell_at(f.local(p))
+                {
+                    if cell != start {
+                        self.select(|_, sel| {
+                            sel.text = None;
+                            sel.shapes = vec![shape];
+                            sel.cells = Some((shape, start, cell));
+                        })?;
+                        return Ok(Value::Null);
+                    }
+                    if st.selection.text.is_none() {
+                        self.select(|_, sel| {
+                            sel.cells = None;
+                            sel.text = press;
+                        })?;
+                    }
+                }
                 let st = self.doc()?;
                 if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
                     let pos = cmd::text::text_pos_at(st, t, p);
@@ -964,9 +1091,19 @@ impl Session {
         Ok(())
     }
 
-    fn execute_inner_move_handle(&mut self, id: ShapeId, path: usize, index: usize, side: &str, p: Point) -> Result<Value> {
-        let kind = self.tool.vertex_kind.clone().filter(|(pp, i, _)| (*pp, *i) == (path, index)).map(|k| k.2);
-        cmd::points::move_handle_raw(self, &json!({"id": id.0, "path": path, "index": index, "side": side, "x": p.x, "y": p.y, "type": kind}))
+    /// Moves a control handle during a drag. `held` is the point type set by the modifier held
+    /// during the drag; the point keeps that type for later drags, as after `shape.pointType`.
+    fn execute_inner_move_handle(&mut self, id: ShapeId, path: usize, index: usize, side: &str, p: Point, held: Option<&str>) -> Result<Value> {
+        let kind = match held {
+            Some(k) => Some(k.to_string()),
+            None => self.tool.vertex_kind.clone().filter(|(s, pp, i, _)| (*s, *pp, *i) == (id, path, index)).map(|k| k.3),
+        };
+        let r =
+            cmd::points::move_handle_raw(self, &json!({"id": id.0, "path": path, "index": index, "side": side, "x": p.x, "y": p.y, "type": kind}))?;
+        if let Some(k) = held {
+            self.tool.vertex_kind = Some((id, path, index, k.to_string()));
+        }
+        Ok(r)
     }
 
     fn up(&mut self, p: Point, mods: Mods) -> Result<Value> {
@@ -1097,6 +1234,10 @@ impl Session {
                 let _ = cmd::text::fit_text_box(self, id);
                 self.refit_after_resize(id)?;
             }
+            Some(Drag::TextSelect { before, .. }) => {
+                out = self.paint_if_selection_changed(before, out)?;
+                self.commit();
+            }
             Some(_) => self.commit(),
             None => {}
         }
@@ -1199,12 +1340,26 @@ impl Session {
             ) => Some(*id),
             None => None,
         };
+        // Edit Points: the point or else the segment under the pointer picks the menu.
+        let picked = self.tool.editing_points(st).and_then(|eid| st.shape(eid)).map(|sh| match &hit {
+            Some(Hit::Vertex { path, index, .. }) => (Some((*path, *index)), None),
+            Some(Hit::Handle { .. }) => (None, None),
+            _ => (None, cmd::points::segment_at(&st.doc, &st.selection, sh, p, tol * 1.6)),
+        });
         if !id.is_some_and(|id| st.selection.shapes.contains(&id)) {
             self.select(|_, sel| {
                 sel.text = None;
                 sel.cells = None;
                 sel.shapes = id.into_iter().collect();
             })?;
+        }
+        if let Some((vertex, segment)) = picked {
+            // A control handle belongs to the picked point: its menu stays.
+            if !matches!(hit, Some(Hit::Handle { .. })) {
+                self.tool.edit_vertex = vertex;
+            }
+            self.tool.edit_segment = segment.map(|(path, seg, _)| (path, seg));
+            self.tool.edit_segment_t = segment.map(|(_, _, t)| t);
         }
         let st = self.doc()?;
         Ok(json!({
@@ -1228,7 +1383,10 @@ impl Session {
             None => edited_box(st).is_some_and(|e| edit_zone(&e.xfrm, p, tol) != EditZone::Outside),
             Some(_) => xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p),
         };
+        // A shape in front of the edited text takes the click, as in PowerPoint (#931).
+        let in_front = shape_in_front(st, st.shapes(), t.shape, p, tol, 0);
         if !inside
+            || in_front
             || matches!(
                 self.hit_test(p, tol),
                 Some(
@@ -1439,6 +1597,13 @@ impl Session {
     /// Smart guides: snap `r` edges/centres to the slide and other shapes. Returns the offset to
     /// apply and the guides to draw.
     fn snap_rect(&self, r: Rect, exclude: &[ShapeId], tol: f64, enabled: bool) -> (Vec2, Vec<Guide>) {
+        self.snap_edges(r, exclude, tol, enabled, [true; 3], [true; 3])
+    }
+
+    /// `snap_rect` looking only at some of `r`'s edges: `xs_on` is left, centre, right and `ys_on`
+    /// top, centre, bottom. Resizing passes just the edges being dragged, so a fixed edge that
+    /// already sits on a line (distance 0) doesn't win and leave the dragged edge unsnapped.
+    fn snap_edges(&self, r: Rect, exclude: &[ShapeId], tol: f64, enabled: bool, xs_on: [bool; 3], ys_on: [bool; 3]) -> (Vec2, Vec<Guide>) {
         let Some(st) = self.active() else { return (Vec2::ZERO, vec![]) };
         if !enabled || !self.prefs.smart_guides {
             return (Vec2::ZERO, vec![]);
@@ -1476,7 +1641,7 @@ impl Session {
             }
         }
         let mut best_x: Option<(f64, f64, Rect)> = None;
-        for edge in [r.x0, r.center().x, r.x1] {
+        for edge in [r.x0, r.center().x, r.x1].into_iter().zip(xs_on).filter_map(|(e, on)| on.then_some(e)) {
             for (x, b) in &xs {
                 let d = x - edge;
                 if d.abs() <= tol && best_x.is_none_or(|(bd, _, _)| d.abs() < bd.abs()) {
@@ -1485,7 +1650,7 @@ impl Session {
             }
         }
         let mut best_y: Option<(f64, f64, Rect)> = None;
-        for edge in [r.y0, r.center().y, r.y1] {
+        for edge in [r.y0, r.center().y, r.y1].into_iter().zip(ys_on).filter_map(|(e, on)| on.then_some(e)) {
             for (y, b) in &ys {
                 let d = y - edge;
                 if d.abs() <= tol && best_y.is_none_or(|(bd, _, _)| d.abs() < bd.abs()) {
@@ -1499,32 +1664,49 @@ impl Session {
             off.x = d;
             let rr = r + Vec2::new(d, 0.0);
             guides.push(Guide { vertical: true, pos: x, from: b.y0.min(rr.y0), to: b.y1.max(rr.y1) });
-        } else if self.prefs.snap_to_grid {
-            off.x = deckcraft_geom::snap(r.x0, self.prefs.grid_spacing) - r.x0;
+        } else if self.prefs.snap_to_grid && xs_on.contains(&true) {
+            let at = if xs_on[0] {
+                r.x0
+            } else if xs_on[2] {
+                r.x1
+            } else {
+                r.center().x
+            };
+            off.x = deckcraft_geom::snap(at, self.prefs.grid_spacing) - at;
         }
         if let Some((d, y, b)) = best_y {
             off.y = d;
             let rr = r + Vec2::new(0.0, d);
             guides.push(Guide { vertical: false, pos: y, from: b.x0.min(rr.x0), to: b.x1.max(rr.x1) });
-        } else if self.prefs.snap_to_grid {
-            off.y = deckcraft_geom::snap(r.y0, self.prefs.grid_spacing) - r.y0;
+        } else if self.prefs.snap_to_grid && ys_on.contains(&true) {
+            let at = if ys_on[0] {
+                r.y0
+            } else if ys_on[2] {
+                r.y1
+            } else {
+                r.center().y
+            };
+            off.y = deckcraft_geom::snap(at, self.prefs.grid_spacing) - at;
         }
         (off, guides)
     }
 
+    /// Snap the edges that resize handle `handle` drags in the resized box `x` to the smart guides.
     fn snap_resize(&mut self, x: Xfrm, _orig: &Xfrm, handle: u8, id: ShapeId, tol: f64) -> Xfrm {
         if x.rot != 0.0 {
             self.tool.guides.clear();
             return x;
         }
         let r = x.rect();
-        let (off, guides) = self.snap_rect(r, &[id], tol * 1.5, true);
+        // Only the dragged edges move, so only they look for a line to snap to. The handles sit in
+        // the box's unflipped frame: in a flipped box, also one that a drag past the opposite edge
+        // just flipped, the dragged handle is on the other side.
+        let (left, right) = (matches!(handle, 0 | 6 | 7), matches!(handle, 2..=4));
+        let (top, bottom) = (matches!(handle, 0..=2), matches!(handle, 4..=6));
+        let (moves_left, moves_right) = if x.flip_h { (right, left) } else { (left, right) };
+        let (moves_top, moves_bottom) = if x.flip_v { (bottom, top) } else { (top, bottom) };
+        let (off, guides) = self.snap_edges(r, &[id], tol * 1.5, true, [moves_left, false, moves_right], [moves_top, false, moves_bottom]);
         let mut nx = x;
-        // Only the dragged edges move.
-        let moves_left = matches!(handle, 0 | 6 | 7);
-        let moves_right = matches!(handle, 2..=4);
-        let moves_top = matches!(handle, 0..=2);
-        let moves_bottom = matches!(handle, 4..=6);
         if moves_left {
             nx.x += off.x;
             nx.w -= off.x;
@@ -1598,8 +1780,9 @@ impl Session {
             }
             Ok(())
         })?;
+        let vertex_kind = self.tool.vertex_kind.clone();
         if let Some(st) = self.active_mut() {
-            crate::push_undo(st, HistoryEntry { label: "Erase".into(), doc: before, selection: sel_before });
+            crate::push_undo(st, HistoryEntry { label: "Erase".into(), doc: before, selection: sel_before, vertex_kind });
         }
         Ok(Value::Null)
     }
@@ -1648,6 +1831,27 @@ struct EditedBox {
     xfrm: Xfrm,
     /// Its frame can be grabbed to move it: not a line (no frame to grab) and not locked.
     movable: bool,
+}
+
+/// Whether a visible shape drawn in front of `target` is under `p`: the shapes above it in its
+/// list, topmost first, and inside a group that holds it, the members above it.
+fn shape_in_front(st: &crate::DocState, shapes: &[Shape], target: ShapeId, p: Point, tol: f64, depth: usize) -> bool {
+    if depth > 64 {
+        return false;
+    }
+    for s in shapes.iter().rev() {
+        if s.id == target {
+            return false;
+        }
+        if deckcraft_model::find_shape(std::slice::from_ref(s), target).is_some() {
+            // The group holding the text: look among its members.
+            return shape_in_front(st, s.children(), target, p, tol, depth + 1);
+        }
+        if !s.hidden && hit_shape(st, s, p, tol).is_some() {
+            return true;
+        }
+    }
+    false
 }
 
 fn edited_box(st: &crate::DocState) -> Option<EditedBox> {
@@ -1789,6 +1993,15 @@ pub fn resize_box(o: &Xfrm, h: u8, d: Vec2, keep_aspect: bool, from_center: bool
     let local_c = Point::new((l + r) / 2.0 * sx + if sx < 0.0 { o.w } else { 0.0 }, (t + b) / 2.0 * sy + if sy < 0.0 { o.h } else { 0.0 });
     let c = o.affine() * Point::new(if o.flip_h { o.w - local_c.x } else { local_c.x }, if o.flip_v { o.h - local_c.y } else { local_c.y });
     Xfrm { x: c.x - nw / 2.0, y: c.y - nh / 2.0, w: nw, h: nh, rot: o.rot, flip_h: fh, flip_v: fv }
+}
+
+/// Whether `p` lies in a cell of table `id`, not in the grab band around it (`cell_at` would take
+/// the nearest cell).
+fn in_table_cell(st: &crate::DocState, id: ShapeId, p: Point) -> bool {
+    st.shape(id).and_then(|sh| cmd::table::table_frame(st, sh)).is_some_and(|f| {
+        let q = f.local(p);
+        (0.0..=f.width()).contains(&q.x) && (0.0..=f.height()).contains(&q.y) && f.cell_at(q).is_some()
+    })
 }
 
 fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<Hit> {

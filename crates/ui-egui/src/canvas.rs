@@ -41,6 +41,12 @@ fn mods(ui: &Ui) -> Mods {
 /// The selected shapes turn with the fingers. The whole twist is one undo step. Pinch-zoom
 /// and two-finger scrolling are left as they are.
 pub(crate) fn trackpad_twist(app: &mut SlideApp, ctx: &egui::Context) {
+    if ctx.will_discard() {
+        // Multi-pass layout runs this function again with the input already consumed. Acting on
+        // the discarded pass would start the twist and the replay would immediately end it,
+        // splitting one gesture into two undo steps.
+        return;
+    }
     let delta = ctx.input(|i| i.rotation_delta());
     let delta = if delta.is_finite() { delta.clamp(-std::f32::consts::PI, std::f32::consts::PI) } else { 0.0 };
     let turning = delta.abs() > 1e-4;
@@ -95,11 +101,64 @@ pub(crate) fn page_flick(wheel: egui::Vec2) -> Option<bool> {
     (along.abs() > MIN_FLICK).then_some(along < 0.0)
 }
 
+/// Discrete wheel input must not share the trackpad's gesture cooldown. Keep all the steps,
+/// including several notches delivered in one frame, and clamp at each end of the deck.
+///
+/// High-resolution and free-spin wheels send fractions of a line (0.125 per event on Windows), so
+/// the delta is accumulated in `carry` and each whole line is one slide; a change of direction
+/// drops what was left over. Returns the target, `None` when no wheel event was read.
+fn wheel_slide_target(events: &[egui::Event], current: usize, slides: usize, carry: &mut f32) -> Option<usize> {
+    let last = slides.checked_sub(1)?;
+    let mut target = current.min(last);
+    let mut handled = false;
+    for event in events {
+        if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
+            && matches!(unit, egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page)
+            && !modifiers.ctrl
+            && !modifiers.command
+            && !modifiers.shift
+            && delta.y.is_finite()
+            && delta.y.abs() > 0.0
+            && delta.y.abs() >= delta.x.abs()
+        {
+            if *carry * delta.y < 0.0 {
+                *carry = 0.0;
+            }
+            *carry += delta.y;
+            // The small slack keeps sums such as 10 × 0.1 from falling just short of a line.
+            let whole = (carry.abs() + 1e-4).floor();
+            *carry -= whole.copysign(*carry);
+            let steps = whole.min(slides as f32) as usize;
+            target = if delta.y < 0.0 { target.saturating_add(steps).min(last) } else { target.saturating_sub(steps) };
+            handled = true;
+        }
+    }
+    handled.then_some(target)
+}
+
+fn trackpad_scroll(events: &[egui::Event]) -> egui::Vec2 {
+    events.iter().fold(egui::Vec2::ZERO, |sum, event| match event {
+        egui::Event::MouseWheel { unit: egui::MouseWheelUnit::Point, delta, modifiers, .. } if !modifiers.ctrl && !modifiers.command => sum + *delta,
+        _ => sum,
+    })
+}
+
+/// Paint the editing canvas, including rulers, selection handles, overlays, and current
+/// zoom/scroll state.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let avail = ui.available_rect_before_wrap();
     app.canvas_rect = Some(avail);
     let Some(st) = app.session.active() else { return };
+    // The leftover fraction of a wheel line belongs to one presentation. Drop it whenever another
+    // one is drawn here, hovered or not, so switching away and back starts from zero.
+    let carry_id = ui.scope_id().with("wheel_carry");
+    let doc_uid = st.uid;
+    ui.data_mut(|d| {
+        if d.get_temp::<(u64, f32)>(carry_id).is_none_or(|(uid, _)| uid != doc_uid) {
+            d.insert_temp(carry_id, (doc_uid, 0.0_f32));
+        }
+    });
     if st.doc.slides.is_empty() && st.selection.target == Target::Slides {
         let resp = ui.allocate_rect(avail, Sense::click());
         ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
@@ -109,7 +168,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     // Scroll when zoomed beyond the window.
-    let scroll_id = ui.id().with("canvas_scroll");
+    let scroll_id = ui.scope_id().with("canvas_scroll");
     let last_id = scroll_id.with("last");
     let mut offset: egui::Vec2 = ui.data_mut(|d| d.get_temp(scroll_id).unwrap_or_default());
     let last: Option<(Rect, f32)> = ui.data_mut(|d| d.get_temp(last_id));
@@ -131,23 +190,72 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         offset = content_rect.min + at * scale - anchor;
     }
     let overflow = vec2((content_rect.width() + 56.0 - avail.width()).max(0.0), (content_rect.height() + 56.0 - avail.height()).max(0.0));
-    if resp.hovered() && !zooming {
+    // Scroll bars on the axes that overflow (#1157). They sit over the canvas edge and take their
+    // presses before the slide does; the rulers keep their strips.
+    let inset = if app.ui.ruler { 16.0 } else { 0.0 };
+    let mut on_bar = false;
+    let mut bar_active = [false; 2];
+    for axis in 0..2 {
+        let Some((track, thumb, travel)) = scroll_bar(avail, inset, overflow, offset, axis) else { continue };
+        let bar_id = scroll_id.with(("bar", axis));
+        let bar = ui.interact(track, bar_id, Sense::click_and_drag());
+        on_bar |= bar.hovered();
+        bar_active[axis] = bar.hovered() || bar.dragged();
+        // Where the button went down and the offset then: egui calls a press a click until it
+        // moves 6 pt, so the release point can't tell the thumb from the track, and drag_delta
+        // misses those first points.
+        let grab_id = bar_id.with("grab");
+        if bar.is_pointer_button_down_on()
+            && let Some(origin) = ui.input(|i| i.pointer.primary_pressed().then(|| i.pointer.press_origin()).flatten())
+        {
+            ui.data_mut(|d| d.insert_temp(grab_id, (origin, offset[axis])));
+        }
+        let grab: Option<(Pos2, f32)> = ui.data_mut(|d| d.get_temp(grab_id));
+        if let Some((origin, start)) = grab {
+            if bar.dragged_by(egui::PointerButton::Primary)
+                && travel > 0.0
+                && let Some(p) = bar.interact_pointer_pos()
+            {
+                if last.is_some_and(|(_, s)| (scale - s).abs() > 1e-6) {
+                    // A zoom during the drag moved the slide about its anchor: carry on from there.
+                    ui.data_mut(|d| d.insert_temp(grab_id, (p, offset[axis])));
+                } else {
+                    offset[axis] = start + (p[axis] - origin[axis]) * overflow[axis] / travel;
+                }
+            } else if bar.clicked() && !thumb.contains(origin) {
+                // A click on the track beside the thumb moves one window's length toward it.
+                let page = avail.size()[axis] * 0.9;
+                offset[axis] += if origin[axis] < thumb.min[axis] { -page } else { page };
+            }
+            if bar.drag_stopped() || bar.clicked() {
+                ui.data_mut(|d| d.remove_temp::<(Pos2, f32)>(grab_id));
+            }
+        }
+    }
+    if (resp.hovered() || on_bar) && !zooming {
         if overflow != egui::Vec2::ZERO {
             offset -= wheel;
-        } else if !app.anim_preview_active()
-            && app.session.tool.marquee.is_none()
-            && !app.session.tool.dragging()
-            && let Some(next) = page_flick(wheel)
-        {
-            // A fitted slide: the mouse wheel and a trackpad swipe turn the page. Pinch zoom is
-            // the branch above and is left alone.
-            let gate = ui.id().with("wheel_gate");
-            // No previous flick yet: the first one must turn the page, not wait out the gap.
-            let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(f64::NEG_INFINITY));
-            let now = ui.input(|i| i.time);
-            if now - last > 0.35 {
-                ui.data_mut(|d| d.insert_temp(gate, now));
-                let _ = app.run(if next { "slide.next" } else { "slide.previous" }, json!({}));
+        } else if !app.anim_preview_active() && app.session.tool.marquee.is_none() && !app.session.tool.dragging() {
+            let (_, mut carry): (u64, f32) = ui.data_mut(|d| d.get_temp(carry_id).unwrap_or_default());
+            let wheel_step = app.session.active().and_then(|d| {
+                let current = d.selection.slide;
+                ui.input(|i| wheel_slide_target(&i.events, current, d.doc.slides.len(), &mut carry)).map(|target| (current, target))
+            });
+            ui.data_mut(|d| d.insert_temp(carry_id, (doc_uid, carry)));
+            if let Some((current, index)) = wheel_step {
+                if index != current {
+                    let _ = app.run("slide.go", json!({"index": index}));
+                }
+            } else if let Some(next) = page_flick(ui.input(|i| trackpad_scroll(&i.events))) {
+                // Point-based trackpad gestures keep their cooldown. Raw input avoids reading
+                // the smoothed tail of a discrete mouse notch as another page turn.
+                let gate = ui.scope_id().with("wheel_gate");
+                let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(f64::NEG_INFINITY));
+                let now = ui.input(|i| i.time);
+                if now - last > 0.35 {
+                    ui.data_mut(|d| d.insert_temp(gate, now));
+                    let _ = app.run(if next { "slide.next" } else { "slide.previous" }, json!({}));
+                }
             }
         }
     }
@@ -255,7 +363,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         draw_guides(app, &painter, xf, slide_rect, &t);
     }
     if app.ui.ruler {
-        ruler(&painter, avail, slide_rect, scale, &t);
+        ruler(&painter, avail, slide_rect, scale, app.session.prefs.units, &t);
         ruler_markers(app, ui, &painter, avail, xf, &t);
     }
     pointer(app, ui, &resp, xf);
@@ -272,6 +380,42 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         context_menu(app, &resp);
     }
+    for (axis, active) in bar_active.into_iter().enumerate() {
+        if let Some((track, thumb, _)) = scroll_bar(avail, inset, overflow, offset, axis) {
+            painter.rect_filled(track, CornerRadius::ZERO, t.chrome);
+            let fill = if active { t.text_dim } else { t.text_faint };
+            painter.rect_filled(thumb.shrink(2.0), CornerRadius::same(3), fill);
+        }
+    }
+}
+
+/// Thickness of the canvas scroll bars, in points.
+const SCROLL_BAR: f32 = 10.0;
+
+/// The canvas scroll bar along `axis` (0 across, 1 down): its track, its thumb for `offset`, and
+/// how far the thumb can travel. `None` when the slide fits that way. `inset` keeps the rulers'
+/// strips clear.
+fn scroll_bar(avail: Rect, inset: f32, overflow: egui::Vec2, offset: egui::Vec2, axis: usize) -> Option<(Rect, Rect, f32)> {
+    let over = overflow[axis];
+    if !over.is_finite() || over <= 0.0 {
+        return None;
+    }
+    // Both bars showing leave the corner between them empty.
+    let corner = if overflow[1 - axis] > 0.0 { SCROLL_BAR } else { 0.0 };
+    let track = if axis == 0 {
+        Rect::from_min_max(pos2(avail.min.x + inset, avail.max.y - SCROLL_BAR), pos2(avail.max.x - corner, avail.max.y))
+    } else {
+        Rect::from_min_max(pos2(avail.max.x - SCROLL_BAR, avail.min.y + inset), pos2(avail.max.x, avail.max.y - corner))
+    };
+    let len = track.size()[axis].max(0.0);
+    let view = avail.size()[axis];
+    let thumb_len = (len * view / (view + over)).max(SCROLL_BAR * 2.0).min(len);
+    let travel = (len - thumb_len).max(0.0);
+    let at = travel * (offset[axis] / over).clamp(0.0, 1.0);
+    let mut thumb = track;
+    thumb.min[axis] = track.min[axis] + at;
+    thumb.max[axis] = thumb.min[axis] + thumb_len;
+    Some((track, thumb, travel))
 }
 
 /// The canvas `avail` in texture pixels (`pixel`: one pixel's size in points) from the slide's
@@ -318,17 +462,18 @@ pub fn ime_area(app: &SlideApp, xf: Xf) -> Option<Rect> {
 /// Turn the input method on for the slide while it takes typing, with its candidate window at
 /// the insertion point (#101). Without this egui leaves it off, and a Korean keyboard types
 /// separate jamo (ㅇ ㅏ ㄴ) instead of syllables. A focused text field sets its own.
-fn ime_output(app: &SlideApp, ui: &Ui, xf: Xf) {
+///
+/// This only records the screen rect for this pass. [`crate::SlideApp`] observes the committed
+/// text, owner and cause once at the end of the pass, after every IME event and editor command
+/// has settled.
+fn ime_output(app: &mut SlideApp, ui: &Ui, xf: Xf) {
     let ctx = ui.ctx();
     if ctx.memory(|m| m.focused().is_some()) || app.dialog.as_ref().is_some_and(|d| d.modal()) || app.palette.is_some() || app.backstage_open() {
         return;
     }
     let Some(r) = ime_area(app, xf) else { return };
     let to_global = ctx.layer_transform_to_global(ui.layer_id()).unwrap_or_default();
-    let r = to_global * r;
-    ctx.output_mut(|o| {
-        o.ime = Some(egui::output::IMEOutput { purpose: egui::IMEPurpose::Normal, rect: r, cursor_rect: r, should_interrupt_composition: false });
-    });
+    app.ime_pending = Some(to_global * r);
 }
 
 /// Play/pause on an animated GIF under the pointer or selected on its own.
@@ -347,7 +492,8 @@ fn gif_buttons(app: &mut SlideApp, ui: &mut Ui, xf: Xf, gifs: &[crate::media::Gi
         }
         let b = crate::media::gif_button_rect(r);
         // Sensing drags too keeps the press from reaching the canvas (selecting or moving the GIF).
-        let resp = ui.interact(b, ui.id().with(("gif_button", g.id.0)), Sense::click_and_drag());
+        let resp = ui.interact(b, ui.scope_id().with(("gif_button", g.id.0)), Sense::click_and_drag());
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, if g.paused { "Play animated GIF" } else { "Pause animated GIF" }));
         crate::media::paint_gif_button(ui.painter(), b, g.paused, resp.hovered());
         if resp.clicked() {
             toggle = Some(g.id);
@@ -371,7 +517,7 @@ fn media_frames(app: &SlideApp, painter: &egui::Painter, xf: Xf) {
     }
     for (id, x, clip) in crate::media::slide_media(&d.doc, d.selection.slide) {
         if clip.video {
-            crate::media::paint_frame(painter, &app.media, id, screen_rect(xf, &x));
+            crate::media::paint_frame(painter, &app.media, id, screen_rect(xf, &x), clip.crop);
         }
     }
 }
@@ -433,44 +579,52 @@ fn master_tex(
     Some((crate::textures::upload_editor(ctx, "master-canvas", crate::textures::to_color_image(&img, false)), region))
 }
 
-fn ruler(p: &egui::Painter, avail: Rect, slide: Rect, scale: f32, t: &Tokens) {
+/// The ruler's numbered step in points and the ticks per step: quarter inches, or half
+/// centimetres. Any other unit (only a hand-edited `prefs.json` gives one) keeps inches, since a
+/// tick per point or pixel would be a solid bar.
+pub(crate) fn ruler_steps(unit: deckcraft_geom::Unit) -> (f64, u32) {
+    match unit {
+        deckcraft_geom::Unit::Centimeters => (unit.points_per_unit(), 2),
+        _ => (72.0, 4),
+    }
+}
+
+fn ruler(p: &egui::Painter, avail: Rect, slide: Rect, scale: f32, unit: deckcraft_geom::Unit, t: &Tokens) {
     let top = Rect::from_min_max(avail.min, pos2(avail.max.x, avail.min.y + 16.0));
     let left = Rect::from_min_max(avail.min, pos2(avail.min.x + 16.0, avail.max.y));
     p.rect_filled(top, CornerRadius::ZERO, t.card);
     p.rect_filled(left, CornerRadius::ZERO, t.card);
-    let inch = 72.0 * scale;
-    let mut k = 0;
-    loop {
-        let x = slide.min.x + k as f32 * inch / 4.0;
-        if x > slide.max.x {
-            break;
-        }
-        let h = if k % 4 == 0 {
+    let (step, sub) = ruler_steps(unit);
+    let tick = step as f32 * scale / sub as f32;
+    let len = |k: u32| {
+        if k.is_multiple_of(sub) {
             8.0
-        } else if k % 2 == 0 {
+        } else if k.is_multiple_of(2) {
             5.0
         } else {
             3.0
-        };
+        }
+    };
+    let mut k = 0;
+    loop {
+        let x = slide.min.x + k as f32 * tick;
+        if x > slide.max.x {
+            break;
+        }
+        let h = len(k);
         p.line_segment([pos2(x, top.max.y - h), pos2(x, top.max.y)], Stroke::new(1.0, t.text_faint));
-        if k % 4 == 0 {
-            p.text(pos2(x + 2.0, top.min.y + 1.0), Align2::LEFT_TOP, format!("{}", k / 4), theme::font(8.0), t.text_dim);
+        if k.is_multiple_of(sub) {
+            p.text(pos2(x + 2.0, top.min.y + 1.0), Align2::LEFT_TOP, format!("{}", k / sub), theme::font(8.0), t.text_dim);
         }
         k += 1;
     }
     let mut k = 0;
     loop {
-        let y = slide.min.y + k as f32 * inch / 4.0;
+        let y = slide.min.y + k as f32 * tick;
         if y > slide.max.y {
             break;
         }
-        let w = if k % 4 == 0 {
-            8.0
-        } else if k % 2 == 0 {
-            5.0
-        } else {
-            3.0
-        };
+        let w = len(k);
         p.line_segment([pos2(left.max.x - w, y), pos2(left.max.x, y)], Stroke::new(1.0, t.text_faint));
         k += 1;
     }
@@ -513,8 +667,9 @@ fn ruler_markers(app: &mut SlideApp, ui: &mut Ui, p: &egui::Painter, avail: Rect
     let area = Rect::from_min_max(pos2(sx(0.0), top.min.y + 2.0), pos2(sx(width), top.max.y - 1.0)).intersect(top);
     p.rect_stroke(area, CornerRadius::ZERO, Stroke::new(1.0, t.text_faint.gamma_multiply(0.5)), egui::StrokeKind::Inside);
 
-    let resp = ui.interact(top, ui.id().with("ruler_markers"), Sense::click_and_drag());
-    let id = ui.id().with("ruler_drag");
+    let resp = ui.interact(top, ui.scope_id().with("ruler_markers"), Sense::click_and_drag());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Text ruler"));
+    let id = ui.scope_id().with("ruler_drag");
     let mut drag: Option<RulerDrag> = ui.data(|d| d.get_temp::<RulerDrag>(id));
     let pointer = resp.interact_pointer_pos().or(resp.hover_pos());
     if resp.drag_started()
@@ -580,17 +735,17 @@ fn ruler_markers(app: &mut SlideApp, ui: &mut Ui, p: &egui::Painter, avail: Rect
     }
     // The tab selector in the ruler's corner: a click cycles left, center, right, decimal; a click
     // on the ruler then sets that kind of stop.
-    let kind_id = ui.id().with("ruler_tab_kind");
+    let kind_id = ui.scope_id().with("ruler_tab_kind");
     let mut kind: usize = ui.data(|d| d.get_temp(kind_id)).unwrap_or(0);
     let corner = Rect::from_min_size(avail.min, vec2(16.0, 16.0));
-    let cr = ui.interact(corner, ui.id().with("ruler_tab_selector"), Sense::click());
+    let cr = ui.interact(corner, ui.scope_id().with("ruler_tab_selector"), Sense::click());
     const KINDS: [(&str, &str); 4] = [("l", "Left Tab"), ("ctr", "Center Tab"), ("r", "Right Tab"), ("dec", "Decimal Tab")];
     if cr.clicked() {
         kind = (kind + 1) % KINDS.len();
         ui.data_mut(|d| d.insert_temp(kind_id, kind));
     }
     let (kind_align, kind_label) = KINDS[kind % KINDS.len()];
-    cr.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, kind_label));
+    cr.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, kind_label));
     let cr = cr.on_hover_text(format!("{kind_label} (click to change)"));
     p.rect_stroke(
         corner.shrink(2.0),
@@ -753,34 +908,35 @@ fn pointer(app: &mut SlideApp, ui: &Ui, resp: &egui::Response, xf: Xf) {
     if let Err(e) = r {
         app.set_status(e.to_string());
     }
-    // Cursor.
-    let cursor = match (&app.session.tool.kind, &app.session.tool.hover) {
-        (ToolKind::Shape { .. }, _) => egui::CursorIcon::Crosshair,
-        (ToolKind::TextBox, _) => egui::CursorIcon::Text,
-        (ToolKind::Ink { .. }, _) => egui::CursorIcon::Crosshair,
-        (_, Some(Hit::Resize { handle, .. })) => match handle {
-            0 | 4 => egui::CursorIcon::ResizeNwSe,
-            2 | 6 => egui::CursorIcon::ResizeNeSw,
-            1 | 5 => egui::CursorIcon::ResizeVertical,
-            _ => egui::CursorIcon::ResizeHorizontal,
-        },
-        (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
-        (_, Some(Hit::TableColumn { .. })) => egui::CursorIcon::ResizeColumn,
-        (_, Some(Hit::TableRow { .. })) => egui::CursorIcon::ResizeRow,
-        (_, Some(Hit::Adjust { .. } | Hit::Warp { .. } | Hit::LineEnd { .. })) => egui::CursorIcon::PointingHand,
-        (_, Some(Hit::Shape { text: true, .. })) => {
-            if app.session.active().is_some_and(|d| d.selection.text.is_some()) {
-                egui::CursorIcon::Text
-            } else {
-                egui::CursorIcon::Move
+    // Cursor. The Format and Animation Painters override everything: their whole point is to
+    // tell the user the tool is armed and waiting for a click (#830).
+    let painter_armed = app.session.painter.is_some() || app.session.anim_painter.is_some();
+    let cursor = if painter_armed {
+        egui::CursorIcon::Copy
+    } else {
+        match (&app.session.tool.kind, &app.session.tool.hover) {
+            (ToolKind::Shape { .. }, _) => egui::CursorIcon::Crosshair,
+            (ToolKind::TextBox, _) => egui::CursorIcon::Text,
+            (ToolKind::Ink { .. }, _) => egui::CursorIcon::Crosshair,
+            (_, Some(Hit::Resize { id, handle })) => resize_cursor(&app.session, *id, *handle),
+            (_, Some(Hit::Rotate { .. })) => egui::CursorIcon::Alias,
+            (_, Some(Hit::TableColumn { .. })) => egui::CursorIcon::ResizeColumn,
+            (_, Some(Hit::TableRow { .. })) => egui::CursorIcon::ResizeRow,
+            (_, Some(Hit::Adjust { .. } | Hit::Warp { .. } | Hit::LineEnd { .. })) => egui::CursorIcon::PointingHand,
+            (_, Some(Hit::Shape { text: true, .. })) => {
+                if app.session.active().is_some_and(|d| d.selection.text.is_some()) {
+                    egui::CursorIcon::Text
+                } else {
+                    egui::CursorIcon::Move
+                }
             }
+            (_, Some(Hit::Shape { .. } | Hit::Frame { .. })) => egui::CursorIcon::Move,
+            _ => match app.session.tool.guide_drag.map(|g| g.0).or(app.session.tool.guide_hover) {
+                Some(i) if app.session.active().and_then(|d| d.doc.guides.get(i)).is_some_and(|g| g.vertical) => egui::CursorIcon::ResizeHorizontal,
+                Some(_) => egui::CursorIcon::ResizeVertical,
+                None => egui::CursorIcon::Default,
+            },
         }
-        (_, Some(Hit::Shape { .. } | Hit::Frame { .. })) => egui::CursorIcon::Move,
-        _ => match app.session.tool.guide_drag.map(|g| g.0).or(app.session.tool.guide_hover) {
-            Some(i) if app.session.active().and_then(|d| d.doc.guides.get(i)).is_some_and(|g| g.vertical) => egui::CursorIcon::ResizeHorizontal,
-            Some(_) => egui::CursorIcon::ResizeVertical,
-            None => egui::CursorIcon::Default,
-        },
     };
     if resp.hovered() {
         ui.ctx().set_cursor_icon(cursor);
@@ -923,6 +1079,20 @@ fn overlays(app: &mut SlideApp, ui: &Ui, painter: &egui::Painter, xf: Xf, t: &To
         let pts = [Point::new(cr.x0, cr.y0), Point::new(cr.x1, cr.y0), Point::new(cr.x1, cr.y1), Point::new(cr.x0, cr.y1)]
             .map(|q| xf.to_screen(f.affine * q));
         poly(painter, pts, Stroke::new(2.0, t.accent));
+    }
+    // Shade the selected table cells in the text-selection color, each merged cell as it is drawn.
+    if let Some((id, ..)) = st.selection.cells
+        && st.selection.text.is_none()
+        && let Some(sh) = st.shape(id)
+        && let deckcraft_model::ShapeKind::Table(table) = &sh.kind
+        && let Some(f) = deckcraft_engine::cmd::table::table_frame(st, sh)
+    {
+        use deckcraft_engine::cmd::table::{in_range, selected_range};
+        let range = selected_range(st.selection.cells, id, table);
+        for (_, _, cr) in f.cells.iter().filter(|(r, c, _)| range.is_some() && in_range(range, *r, *c)) {
+            let pts = [Point::new(cr.x0, cr.y0), Point::new(cr.x1, cr.y0), Point::new(cr.x1, cr.y1), Point::new(cr.x0, cr.y1)];
+            painter.add(egui::Shape::convex_polygon(pts.iter().map(|q| xf.to_screen(f.affine * *q)).collect(), t.text_selection, Stroke::NONE));
+        }
     }
     // Smart guides, marquee, previews.
     for g in &app.session.tool.guides {
@@ -1082,7 +1252,39 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
     resp.context_menu(|ui| {
         let editing = app.session.active().and_then(|d| app.session.tool.editing_points(d).and_then(|id| d.shape(id).cloned()));
         if let Some(sh) = editing {
-            if let Some((path, index)) = app.session.tool.edit_vertex {
+            if let Some((path, index)) = app.session.tool.edit_segment {
+                let cur = deckcraft_engine::cmd::points::segment_kind_of(&sh, path, index);
+                for (l, k) in [("Straight Segment", "straight"), ("Curved Segment", "curved")] {
+                    if ui.radio(cur == Some(k), l).clicked() {
+                        let _ = app.run("shape.segmentType", json!({"path": path, "segment": index, "type": k}));
+                        ui.close();
+                    }
+                }
+                // Each of these renumbers the points, so the picked segment is dropped.
+                if ui.button("Add Point").clicked() {
+                    let t = app.session.tool.edit_segment_t.unwrap_or(0.5);
+                    let _ = app.run("shape.addPoint", json!({"path": path, "segment": index, "t": t}));
+                    app.session.tool.edit_segment = None;
+                    ui.close();
+                }
+                let closed = deckcraft_engine::cmd::points::closed_at(&sh, path, index);
+                if ui.add_enabled(closed == Some(true), egui::Button::new("Delete Segment")).clicked() {
+                    let _ = app.run("shape.deleteSegment", json!({"path": path, "segment": index}));
+                    app.session.tool.edit_segment = None;
+                    ui.close();
+                }
+                // Open Path opens the outline at the segment's start point.
+                let (label, id, at) = match closed {
+                    Some(false) => ("Close Path", "shape.closePath", index),
+                    _ => ("Open Path", "shape.openPath", deckcraft_engine::cmd::points::segment_start_of(&sh, path, index).unwrap_or(index)),
+                };
+                if ui.button(label).clicked() {
+                    let _ = app.run(id, json!({"path": path, "index": at}));
+                    app.session.tool.edit_segment = None;
+                    ui.close();
+                }
+                ui.separator();
+            } else if let Some((path, index)) = app.session.tool.edit_vertex {
                 let cur = deckcraft_engine::cmd::points::kind_of(&sh, path, index);
                 for (l, k) in [("Smooth Point", "smooth"), ("Straight Point", "straight"), ("Corner Point", "corner")] {
                     if ui.radio(cur == Some(k), l).clicked() {
@@ -1092,6 +1294,16 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 }
                 if ui.button("Delete Point").clicked() {
                     let _ = app.run("shape.deletePoint", json!({"path": path, "index": index}));
+                    app.session.tool.edit_vertex = None;
+                    ui.close();
+                }
+                let (label, id) = match deckcraft_engine::cmd::points::closed_at(&sh, path, index) {
+                    Some(false) => ("Close Path", "shape.closePath"),
+                    _ => ("Open Path", "shape.openPath"),
+                };
+                if ui.button(label).clicked() {
+                    let _ = app.run(id, json!({"path": path, "index": index}));
+                    // The points are numbered from the new start now.
                     app.session.tool.edit_vertex = None;
                     ui.close();
                 }
@@ -1347,16 +1559,156 @@ fn grid_fits(span: f32, step: f32) -> bool {
     span.is_finite() && span > 0.0 && step >= 1.0 && span / step <= 800.0
 }
 
+/// The resize cursor for `handle` of shape `id`: the handle's resize axis is computed in the
+/// shape's own space and mapped through its transform, so a rotated or flipped shape shows the
+/// diagonal that matches where the drag actually goes (#745). Without a transform the mapping
+/// reduces to the classic NW/NE/E/SE/S/SW/W assignment.
+fn resize_cursor(session: &deckcraft_engine::Session, id: deckcraft_model::ShapeId, handle: u8) -> egui::CursorIcon {
+    // The resize handles are drawn from the shape's effective box (a placeholder inherits it
+    // from its layout), so the cursor follows the same one.
+    let Some(d) = session.active() else { return egui::CursorIcon::Default };
+    let Some(sh) = d.shape(id) else { return egui::CursorIcon::Default };
+    let x = deckcraft_engine::cmd::xfrm_of(&d.doc, &d.selection, sh);
+    // The resize axis in the shape's own coordinates, as (dx, dy) from the box centre toward
+    // the handle. Corners resize along the diagonal, edge handles along their edge. The
+    // direction is normalised - the diagonal at 45 degrees whatever the shape's proportions -
+    // so a wide rectangle still shows a diagonal cursor on its corners.
+    let (dx, dy): (f64, f64) = match handle {
+        0 => (-1.0, -1.0),
+        1 => (0.0, -1.0),
+        2 => (1.0, -1.0),
+        3 => (1.0, 0.0),
+        4 => (1.0, 1.0),
+        5 => (0.0, 1.0),
+        6 => (-1.0, 1.0),
+        _ => (-1.0, 0.0),
+    };
+    // Map through the linear part of the transform (rotation, flips): two points along the
+    // axis, the difference is the slide-space direction.
+    let centre = Point::new(x.x + x.w / 2.0, x.y + x.h / 2.0);
+    let a = x.affine();
+    let p0 = a * centre;
+    let p1 = a * Point::new(centre.x + dx, centre.y + dy);
+    let v = p1 - p0;
+    if !v.x.is_finite() || !v.y.is_finite() || (v.x.abs() < 1e-12 && v.y.abs() < 1e-12) {
+        return egui::CursorIcon::Default;
+    }
+    // Angle in [0, 180): 0° = right (horizontal), 45° = down-right (NW-SE), 90° = down
+    // (vertical), 135° = down-left (NE-SW). Pick the closest of the four.
+    let mut deg = v.y.atan2(v.x).to_degrees();
+    if deg < 0.0 {
+        deg += 180.0;
+    }
+    if (22.5..67.5).contains(&deg) {
+        egui::CursorIcon::ResizeNwSe
+    } else if (67.5..112.5).contains(&deg) {
+        egui::CursorIcon::ResizeVertical
+    } else if (112.5..157.5).contains(&deg) {
+        egui::CursorIcon::ResizeNeSw
+    } else {
+        egui::CursorIcon::ResizeHorizontal
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+    use std::sync::Arc;
+
     use deckcraft_engine::Session;
     use egui::{Event, Modifiers, MouseWheelUnit, Pos2, TouchPhase, pos2, vec2};
     use egui_kittest::Harness;
+    use egui_kittest::kittest::{NodeT, Queryable};
 
     use super::*;
     use crate::{Services, SlideApp};
+
+    /// #745: the resize cursor follows the handle's on-screen diagonal. A 45°-rotated shape's
+    /// NW corner sits at the top-right of the screen, where the drag axis is NE-SW — the old
+    /// fixed handle-to-cursor mapping showed NW-SE there.
+    #[test]
+    fn resize_cursor_tracks_rotation() {
+        let mut s = Session::with_new();
+        // A square shape: the NW handle's diagonal is at 45° unrotated, so each 45° of shape
+        // rotation cleanly moves the cursor to the next of the four resize directions.
+        let id = s.execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [100.0, 100.0, 100.0, 100.0]})).unwrap()["id"]
+            .as_u64()
+            .unwrap() as u32;
+        let sid = deckcraft_model::ShapeId(id);
+        // Unrotated: the NW handle (0) drags the NW-SE diagonal.
+        assert_eq!(resize_cursor(&s, sid, 0), egui::CursorIcon::ResizeNwSe);
+        assert_eq!(resize_cursor(&s, sid, 4), egui::CursorIcon::ResizeNwSe);
+        assert_eq!(resize_cursor(&s, sid, 2), egui::CursorIcon::ResizeNeSw);
+        assert_eq!(resize_cursor(&s, sid, 6), egui::CursorIcon::ResizeNeSw);
+        assert_eq!(resize_cursor(&s, sid, 1), egui::CursorIcon::ResizeVertical);
+        assert_eq!(resize_cursor(&s, sid, 3), egui::CursorIcon::ResizeHorizontal);
+        // 45° rotation: the NW corner's drag axis rotates 45° with the shape — it is now vertical.
+        {
+            let doc = s.doc_mut().unwrap();
+            let pres = Arc::make_mut(&mut doc.doc);
+            let slide = Arc::make_mut(&mut pres.slides[0]);
+            if let Some(sh) = slide.shapes.iter_mut().find(|x| x.id == sid)
+                && let Some(x) = sh.xfrm.as_mut()
+            {
+                x.rot = 45.0;
+            }
+        }
+        assert_eq!(resize_cursor(&s, sid, 0), egui::CursorIcon::ResizeVertical, "45°: NW handle drags vertically");
+        assert_eq!(resize_cursor(&s, sid, 2), egui::CursorIcon::ResizeHorizontal, "45°: NE handle drags horizontally");
+        // 90° rotation: the NW corner is at the top-right; the drag axis is NE-SW.
+        {
+            let doc = s.doc_mut().unwrap();
+            let pres = Arc::make_mut(&mut doc.doc);
+            let slide = Arc::make_mut(&mut pres.slides[0]);
+            if let Some(sh) = slide.shapes.iter_mut().find(|x| x.id == sid)
+                && let Some(x) = sh.xfrm.as_mut()
+            {
+                x.rot = 90.0;
+            }
+        }
+        assert_eq!(resize_cursor(&s, sid, 0), egui::CursorIcon::ResizeNeSw, "90°: the diagonal is NE-SW");
+        assert_eq!(resize_cursor(&s, sid, 2), egui::CursorIcon::ResizeNwSe, "90°: NE diagonal is NW-SE");
+        assert_eq!(resize_cursor(&s, sid, 1), egui::CursorIcon::ResizeHorizontal, "90°: the top edge is horizontal");
+    }
+
+    /// #745: a corner handle shows a diagonal cursor whatever the shape's proportions. The
+    /// corner's direction is the diagonal, not the line to the box's centre, so a wide
+    /// rectangle's NW corner still drags along the NW-SE diagonal.
+    #[test]
+    fn a_wide_shape_keeps_its_corner_cursors_diagonal() {
+        let mut s = Session::with_new();
+        let id = s.execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [100.0, 100.0, 400.0, 80.0]})).unwrap()["id"]
+            .as_u64()
+            .unwrap() as u32;
+        let sid = deckcraft_model::ShapeId(id);
+        assert_eq!(resize_cursor(&s, sid, 0), egui::CursorIcon::ResizeNwSe, "the NW corner drags NW-SE");
+        assert_eq!(resize_cursor(&s, sid, 4), egui::CursorIcon::ResizeNwSe, "the SE corner drags NW-SE");
+        assert_eq!(resize_cursor(&s, sid, 2), egui::CursorIcon::ResizeNeSw, "the NE corner drags NE-SW");
+        assert_eq!(resize_cursor(&s, sid, 6), egui::CursorIcon::ResizeNeSw, "the SW corner drags NE-SW");
+        // The edges keep their own cursors.
+        assert_eq!(resize_cursor(&s, sid, 1), egui::CursorIcon::ResizeVertical, "the top edge drags vertically");
+        assert_eq!(resize_cursor(&s, sid, 3), egui::CursorIcon::ResizeHorizontal, "the right edge drags horizontally");
+    }
+
+    /// #745: a placeholder that inherits its box from the layout still shows a resize cursor.
+    /// Its handles are drawn from the inherited box, so the cursor follows that one.
+    #[test]
+    fn a_placeholder_that_inherits_its_box_has_a_resize_cursor() {
+        let s = Session::with_new();
+        let st = s.doc().unwrap();
+        let ph = st
+            .current_slide()
+            .unwrap()
+            .shapes
+            .iter()
+            .find(|sh| sh.xfrm.is_none() && sh.ph.is_some())
+            .expect("the new slide has a placeholder without a box of its own")
+            .id;
+        assert_eq!(resize_cursor(&s, ph, 0), egui::CursorIcon::ResizeNwSe, "the NW corner drags NW-SE");
+        assert_eq!(resize_cursor(&s, ph, 2), egui::CursorIcon::ResizeNeSw, "the NE corner drags NE-SW");
+        assert_eq!(resize_cursor(&s, ph, 1), egui::CursorIcon::ResizeVertical, "the top edge drags vertically");
+    }
 
     fn harness() -> Harness<'static, SlideApp> {
         let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
@@ -1376,8 +1728,16 @@ mod tests {
         pos2((p.x - r.min.x) / s, (p.y - r.min.y) / s)
     }
 
+    /// Test helper: inject a platform-command-modified line wheel event and run thirty harness
+    /// steps.
     fn ctrl_wheel(h: &mut Harness<'_, SlideApp>, lines: f32) {
-        let wheel = Event::MouseWheel { unit: MouseWheelUnit::Line, delta: vec2(0.0, lines), phase: TouchPhase::Move, modifiers: Modifiers::COMMAND };
+        let wheel = Event::MouseWheel {
+            unit: MouseWheelUnit::Line,
+            delta: vec2(0.0, lines),
+            phase: TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers: Modifiers::COMMAND,
+        };
         h.event(wheel);
         // egui spreads a wheel notch over several frames.
         h.run_steps(30);
@@ -1440,6 +1800,130 @@ mod tests {
         h.state_mut().run("view.zoomOut", serde_json::json!({})).unwrap();
         h.run_steps(2);
         assert_near(mid, slide_point(&h, c), "zoom out");
+    }
+
+    /// Drags with the primary button from `a` to `b`; `during` runs after every move.
+    fn drag_with(h: &mut Harness<'_, SlideApp>, a: Pos2, b: Pos2, mut during: impl FnMut(&SlideApp)) {
+        h.hover_at(a);
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        for i in 1..=8 {
+            h.event(Event::PointerMoved(a + (b - a) * (i as f32 / 8.0)));
+            h.run_steps(1);
+            during(h.state());
+        }
+        h.event(Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+
+    /// #1157: a slide zoomed past the window has a scroll bar on each axis that overflows, and
+    /// dragging its thumb pans the slide, not a marquee on the canvas.
+    #[test]
+    fn scroll_bars_pan_a_zoomed_slide() {
+        let mut h = harness();
+        let fit = h.state().canvas_scale;
+        h.state_mut().ui.zoom = Some(fit * 3.0);
+        h.run_steps(3);
+        let canvas = h.state().canvas_rect.unwrap();
+        let before = h.state().slide_rect.unwrap();
+        let no_marquee =
+            |app: &SlideApp| assert!(app.session.tool.marquee.is_none() && !app.session.tool.dragging(), "the bar drag reached the slide");
+
+        // Zoomed about the middle, so each thumb sits in the middle of its track.
+        let bottom = pos2(canvas.center().x, canvas.max.y - 4.0);
+        drag_with(&mut h, bottom, bottom + vec2(150.0, 0.0), no_marquee);
+        let after = h.state().slide_rect.unwrap();
+        assert!(before.min.x - after.min.x > 150.0, "the horizontal thumb pans right: {before:?} -> {after:?}");
+        assert!((before.min.y - after.min.y).abs() < 1.0, "only across: {before:?} -> {after:?}");
+
+        let right = pos2(canvas.max.x - 4.0, canvas.center().y);
+        drag_with(&mut h, right, right + vec2(0.0, 100.0), no_marquee);
+        let down = h.state().slide_rect.unwrap();
+        assert!(after.min.y - down.min.y > 100.0, "the vertical thumb pans down: {after:?} -> {down:?}");
+        assert!((after.min.x - down.min.x).abs() < 1.0, "only down: {after:?} -> {down:?}");
+
+        // A click on the track beside the thumb pages back toward it.
+        let left = pos2(canvas.min.x + 20.0, canvas.max.y - 4.0);
+        h.hover_at(left);
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: left, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.event(Event::PointerButton { pos: left, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+        let paged = h.state().slide_rect.unwrap();
+        assert!(paged.min.x - down.min.x > 100.0, "a track click pages left: {down:?} -> {paged:?}");
+        assert!(h.state().session.tool.marquee.is_none());
+
+        // The ends of the tracks reach the slide's far edges.
+        drag_with(&mut h, right, right + vec2(0.0, 2000.0), |_| {});
+        let end = h.state().slide_rect.unwrap();
+        assert!((end.max.y - (canvas.max.y - 28.0)).abs() < 2.0, "the bottom of the slide comes into view: {end:?} in {canvas:?}");
+    }
+
+    /// A press on the thumb that ends just past its end is a nudge, not a page: the track click
+    /// is decided where the button went down, not where it came up.
+    #[test]
+    fn a_short_press_on_the_thumb_does_not_page() {
+        let mut h = harness();
+        let fit = h.state().canvas_scale;
+        h.state_mut().ui.zoom = Some(fit * 3.0);
+        h.run_steps(3);
+        let (canvas, before) = (h.state().canvas_rect.unwrap(), h.state().slide_rect.unwrap());
+        let overflow = vec2((before.width() + 56.0 - canvas.width()).max(0.0), (before.height() + 56.0 - canvas.height()).max(0.0));
+        let offset = canvas.min + vec2(28.0, 28.0) - before.min;
+        let (_, thumb, _) = scroll_bar(canvas, 0.0, overflow, offset, 0).unwrap();
+        let (a, b) = (pos2(thumb.max.x - 3.0, canvas.max.y - 4.0), pos2(thumb.max.x + 3.0, canvas.max.y - 4.0));
+        h.hover_at(a);
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: a, button: egui::PointerButton::Primary, pressed: true, modifiers: Modifiers::NONE });
+        h.run_steps(1);
+        h.event(Event::PointerMoved(b));
+        h.run_steps(1);
+        h.event(Event::PointerButton { pos: b, button: egui::PointerButton::Primary, pressed: false, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+        let after = h.state().slide_rect.unwrap();
+        let moved = before.min.x - after.min.x;
+        assert!((0.0..40.0).contains(&moved), "a 6 pt nudge of the thumb, not a page: {before:?} -> {after:?}");
+    }
+
+    /// Only the primary button drags a thumb: a right or middle drag after a left one leaves the
+    /// slide where it is.
+    #[test]
+    fn only_the_primary_button_drags_a_thumb() {
+        let mut h = harness();
+        let fit = h.state().canvas_scale;
+        h.state_mut().ui.zoom = Some(fit * 3.0);
+        h.run_steps(3);
+        let canvas = h.state().canvas_rect.unwrap();
+        let bottom = pos2(canvas.center().x, canvas.max.y - 4.0);
+        drag_with(&mut h, bottom, bottom + vec2(40.0, 0.0), |_| {});
+        let before = h.state().slide_rect.unwrap();
+        for button in [egui::PointerButton::Secondary, egui::PointerButton::Middle] {
+            let a = pos2(canvas.center().x + 40.0, canvas.max.y - 4.0);
+            h.hover_at(a);
+            h.run_steps(1);
+            h.event(Event::PointerButton { pos: a, button, pressed: true, modifiers: Modifiers::NONE });
+            h.run_steps(1);
+            for i in 1..=4 {
+                h.event(Event::PointerMoved(a + vec2(30.0 * i as f32, 0.0)));
+                h.run_steps(1);
+            }
+            h.event(Event::PointerButton { pos: a + vec2(120.0, 0.0), button, pressed: false, modifiers: Modifiers::NONE });
+            h.run_steps(2);
+            let after = h.state().slide_rect.unwrap();
+            assert!((before.min - after.min).length() < 1.0, "{button:?} drag moved the slide: {before:?} -> {after:?}");
+        }
+    }
+
+    /// A slide that fits has no scroll bars: a drag along the canvas edge is a marquee.
+    #[test]
+    fn a_fitted_slide_has_no_scroll_bars() {
+        let mut h = harness();
+        let canvas = h.state().canvas_rect.unwrap();
+        let a = pos2(canvas.center().x, canvas.max.y - 4.0);
+        let mut marquee = false;
+        drag_with(&mut h, a, a + vec2(150.0, 0.0), |app| marquee |= app.session.tool.marquee.is_some());
+        assert!(marquee, "the drag selects on the canvas");
     }
 
     fn app_with_table() -> (egui_kittest::Harness<'static, SlideApp>, deckcraft_model::ShapeId) {
@@ -1583,6 +2067,84 @@ mod tests {
         assert!((t.cols[0] - 240.0).abs() < 0.5 && (t.cols[1] - 160.0).abs() < 0.5, "{:?}", t.cols);
     }
 
+    fn right_click(h: &mut Harness<'_, SlideApp>, pos: Pos2) {
+        h.event(Event::PointerMoved(pos));
+        h.step();
+        for pressed in [true, false] {
+            h.event(Event::PointerButton { pos, button: egui::PointerButton::Secondary, pressed, modifiers: Modifiers::NONE });
+            h.step();
+        }
+        h.run_steps(2);
+    }
+
+    /// In Edit Points, right-clicking a segment offers Straight/Curved Segment and right-clicking
+    /// a point offers Open Path, then Close Path once the outline is open.
+    #[test]
+    fn edit_points_menu_sets_segment_types_and_opens_the_path() {
+        let mut h = harness();
+        h.state_mut().run("slide.layout", json!({"layout": "blank"})).unwrap();
+        h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [200, 150, 300, 200]})).unwrap();
+        h.state_mut().run("shape.editPoints", json!({"on": true})).unwrap();
+        h.run_steps(3);
+        let q = |h: &mut Harness<'_, SlideApp>| h.state_mut().session.execute("shape.points", &json!({})).unwrap();
+        // The middle of the right edge: the segment ending at point 2.
+        let p = screen(h.state(), 500.0, 250.0);
+        right_click(&mut h, p);
+        h.get_by_label("Curved Segment").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["segments"][0], json!(["straight", "straight", "curved", "straight"]));
+        // The bottom-right corner: Open Path breaks the outline there.
+        let p = screen(h.state(), 500.0, 350.0);
+        right_click(&mut h, p);
+        h.get_by_label("Open Path").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0].as_array().map(Vec::len), Some(5));
+        right_click(&mut h, p);
+        h.get_by_label("Close Path").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0].as_array().map(Vec::len), Some(4));
+    }
+
+    /// In Edit Points, right-clicking a segment offers Add Point at the pointer, Delete Segment on
+    /// a closed outline, and Open Path at the segment's start point.
+    #[test]
+    fn edit_points_segment_menu_adds_points_and_deletes_segments() {
+        let mut h = harness();
+        h.state_mut().run("slide.layout", json!({"layout": "blank"})).unwrap();
+        h.state_mut().run("shape.insert", json!({"preset": "rect", "rect": [200, 150, 300, 200]})).unwrap();
+        h.state_mut().run("shape.editPoints", json!({"on": true})).unwrap();
+        h.run_steps(3);
+        let q = |h: &mut Harness<'_, SlideApp>| h.state_mut().session.execute("shape.points", &json!({})).unwrap();
+        // A quarter of the way along the top edge: the new point goes there.
+        let p = screen(h.state(), 275.0, 150.0);
+        right_click(&mut h, p);
+        h.get_by_label("Add Point").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0], json!([[200.0, 150.0], [275.0, 150.0], [500.0, 150.0], [500.0, 350.0], [200.0, 350.0]]));
+        // The right edge: Open Path opens the outline at its top end.
+        let p = screen(h.state(), 500.0, 250.0);
+        right_click(&mut h, p);
+        h.get_by_label("Open Path").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0][0], json!([500.0, 150.0]));
+        assert_eq!(q(&mut h)["paths"][0].as_array().map(Vec::len), Some(6));
+        h.state_mut().run("edit.undo", json!({})).unwrap();
+        h.run_steps(3);
+        // Delete Segment removes the right edge: the outline now runs from its bottom end to its top end.
+        right_click(&mut h, p);
+        h.get_by_label("Delete Segment").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["paths"][0], json!([[500.0, 350.0], [200.0, 350.0], [200.0, 150.0], [275.0, 150.0], [500.0, 150.0]]));
+        assert_eq!(q(&mut h)["segments"][0][0], json!(null));
+        // On the open outline Delete Segment is grayed out; Close Path joins the ends again.
+        let p = screen(h.state(), 350.0, 350.0);
+        right_click(&mut h, p);
+        assert!(h.get_by_label("Delete Segment").accesskit_node().is_disabled());
+        h.get_by_label("Close Path").click();
+        h.run_steps(3);
+        assert_eq!(q(&mut h)["segments"][0][0], json!("straight"));
+    }
+
     #[test]
     fn grid_step_follows_spacing_and_rejects_unusable_values() {
         let step = super::grid_line_step(72.0, 0.5).unwrap_or(0.0);
@@ -1593,6 +2155,37 @@ mod tests {
         assert!(super::grid_line_step(1_000.0, 1.0).is_none());
         assert!(super::grid_line_step(6.0, 0.0).is_none());
         assert!(super::grid_line_step(6.0, 0.1).is_none(), "a 6 pt grid at 10% zoom is finer than one screen point");
+    }
+
+    /// #830: when the Format or Animation Painter is armed, the cursor shows the copy icon so the
+    /// user can see the tool is waiting for a click.
+    #[test]
+    fn format_painter_sets_the_cursor() {
+        let mut h = harness();
+        // Hover over the canvas so the pointer function runs and sets the cursor.
+        h.hover_at(egui::pos2(600.0, 400.0));
+        h.run_steps(2);
+        let before = h.output().platform_output.cursor_icon;
+        assert_ne!(before, egui::CursorIcon::Copy, "no painter is armed yet");
+        // Arming the format painter overrides the cursor to Copy (#830).
+        h.state_mut().session.painter = Some((Default::default(), false));
+        h.run_steps(3);
+        let after = h.output().platform_output.cursor_icon;
+        assert_eq!(after, egui::CursorIcon::Copy, "the format painter arms the Copy cursor");
+    }
+
+    /// #830: the Animation Painter arms the same cursor.
+    #[test]
+    fn animation_painter_sets_the_cursor() {
+        let mut h = harness();
+        h.hover_at(egui::pos2(600.0, 400.0));
+        h.run_steps(2);
+        let before = h.output().platform_output.cursor_icon;
+        assert_ne!(before, egui::CursorIcon::Copy, "no painter is armed yet");
+        h.state_mut().session.anim_painter = Some((vec![], false));
+        h.run_steps(3);
+        let after = h.output().platform_output.cursor_icon;
+        assert_eq!(after, egui::CursorIcon::Copy, "the animation painter arms the Copy cursor");
     }
 }
 

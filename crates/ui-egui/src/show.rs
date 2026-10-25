@@ -13,6 +13,9 @@ use crate::SlideApp;
 use crate::theme;
 
 pub struct Show {
+    /// Monotonic identity of this show instance. Starting a show again (even at the same slide
+    /// and step) is a new instance, so a queued click cannot cross an ABA transition.
+    pub(crate) instance: u64,
     pub state: ShowState,
     pub reading: bool,
     pub presenter: bool,
@@ -27,13 +30,19 @@ pub struct Show {
     step_end: f64,
     trans: Option<Transition>,
     tex: Option<(Key, TextureHandle)>,
+    /// The shapes stacked above the playing videos, drawn over the video frames (#1005).
+    overlay: Option<(Key, Vec<ShapeId>, TextureHandle)>,
     next_tex: Option<(usize, TextureHandle)>,
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
+    /// The current slide's backdrop, under its animation frames.
+    backdrop: Option<Backdrop>,
     blank: Option<Color32>,
     /// See All Slides covers the show until a slide is chosen.
     pub grid: bool,
+    /// The Presenter View's own See All Slides: the grid replaces the slide and notes in that window only; the audience keeps the slide.
+    pub presenter_grid: bool,
     /// The next click on the slide zooms in there.
     pub zoom_arm: bool,
     zoom: Option<Zoom>,
@@ -67,6 +76,10 @@ pub struct Show {
     media_clock: Option<(usize, f64)>,
     /// Media effects set off and not yet carried out: (shape, effect id).
     media_cues: Vec<(ShapeId, String)>,
+    /// Hidden-logic time anchor: the last visible egui time and the monotonic instant of that
+    /// visible frame. `run_logic` does not refresh `InputState::time`, so this lets a hidden show
+    /// keep playing from wall time without a draw.
+    hidden_anchor: Option<(f64, web_time::Instant)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -93,8 +106,55 @@ fn render_threads() -> u16 {
     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) }
 }
 
+/// What a slide's backdrop was rendered for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct BackKey {
+    slide: usize,
+    size: (u32, u32),
+    doc: usize,
+}
+
+/// A slide's backdrop (background, master and layout graphics), kept while the slide is shown so
+/// animation frames render only the slide's own shapes over it. The backdrop can cost far more
+/// than the shapes: a full-slide picture with a glow in the layout made animations crawl at 2–3
+/// frames a second. `rx` brings it from another thread when it is rendered ahead of time.
+struct Backdrop {
+    /// The presentation it was rendered from, held so its address (in `key`) can't be reused by
+    /// a later edit while the backdrop is kept.
+    doc: std::sync::Arc<Presentation>,
+    key: BackKey,
+    img: Option<std::sync::Arc<deckcraft_render::Image>>,
+    rx: Option<std::sync::mpsc::Receiver<deckcraft_render::Image>>,
+}
+
+fn render_backdrop(doc: &Presentation, key: BackKey, threads: u16) -> deckcraft_render::Image {
+    let opts = RenderOpts { scale: key.size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(key.size), threads, ..Default::default() };
+    deckcraft_render::render_slide_part(doc, key.slide, deckcraft_render::SlidePart::Backdrop, &opts)
+}
+
+/// `top` laid over `back` (both premultiplied RGBA of the same size; `top` alone otherwise).
+fn over(back: &deckcraft_render::Image, top: &deckcraft_render::Image) -> egui::ColorImage {
+    if back.width != top.width || back.height != top.height || back.pixels.len() != top.pixels.len() {
+        return crate::textures::to_color_image(top, false);
+    }
+    let px = back
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(top.pixels.as_chunks::<4>().0)
+        .map(|(b, t)| {
+            let k = 255 - t[3] as u32;
+            let mix = |i: usize| (t[i] as u32 + (b[i] as u32 * k + 127) / 255).min(255) as u8;
+            Color32::from_rgba_premultiplied(mix(0), mix(1), mix(2), mix(3))
+        })
+        .collect();
+    egui::ColorImage::new([top.width as usize, top.height as usize], px)
+}
+
 #[allow(clippy::too_many_arguments)]
-/// Slide `idx` at `step`, `t` seconds into it, `size` pixels, with `hidden` media hidden.
+/// Slide `idx` at `step`, `t` seconds into it, `size` pixels, with `hidden` media hidden. With a
+/// `backdrop` (of this slide, at this size), only the slide's shapes are rendered, over it.
 fn render_frame(
     doc: &Presentation,
     idx: usize,
@@ -107,6 +167,7 @@ fn render_frame(
     threads: u16,
     plays: &[TriggerPlay],
     stamps: &[StepStamp],
+    backdrop: Option<&deckcraft_render::Image>,
 ) -> egui::ColorImage {
     let f = move |id: ShapeId| {
         let mut st = state_for(&tl, id, step, t, plays, stamps);
@@ -115,19 +176,67 @@ fn render_frame(
         }
         st
     };
-    let img = deckcraft_render::render_slide(
-        doc,
-        idx,
-        &RenderOpts {
-            scale: size.0 as f64 / doc.slide_size.width.max(1.0),
-            size: Some(size),
-            state: Some(&f),
-            gif_times: times,
-            threads,
-            ..Default::default()
-        },
-    );
+    let opts = RenderOpts {
+        scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+        size: Some(size),
+        state: Some(&f),
+        gif_times: times,
+        threads,
+        ..Default::default()
+    };
+    match backdrop {
+        Some(back) => over(back, &deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts)),
+        None => crate::textures::to_color_image(&deckcraft_render::render_slide(doc, idx, &opts), false),
+    }
+}
+
+/// Render only the slide's own shapes except `skip`, over transparency: what is stacked above a
+/// playing video, to be drawn over the video frame.
+#[allow(clippy::too_many_arguments)]
+fn render_overlay(
+    doc: &Presentation,
+    idx: usize,
+    tl: Timeline,
+    step: usize,
+    t: f64,
+    size: (u32, u32),
+    hidden: Vec<ShapeId>,
+    skip: &[ShapeId],
+    times: &[(ShapeId, f64)],
+    threads: u16,
+    plays: &[TriggerPlay],
+    stamps: &[StepStamp],
+) -> egui::ColorImage {
+    let f = move |id: ShapeId| {
+        let mut st = state_for(&tl, id, step, t, plays, stamps);
+        if hidden.contains(&id) {
+            st.visible = false;
+        }
+        st
+    };
+    let opts = RenderOpts {
+        scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+        size: Some(size),
+        state: Some(&f),
+        skip,
+        gif_times: times,
+        threads,
+        ..Default::default()
+    };
+    let img = deckcraft_render::render_slide_part(doc, idx, deckcraft_render::SlidePart::Content, &opts);
     crate::textures::to_color_image(&img, false)
+}
+
+/// The shapes of slide `idx` to leave out when drawing what is stacked above the lowest of the
+/// playing `videos` (that video, everything below it and the other videos). Empty when nothing
+/// is above a video: the video frame is then painted last.
+fn below_playing_video(doc: &Presentation, idx: usize, videos: &[ShapeId]) -> Vec<ShapeId> {
+    let Some(slide) = doc.slides.get(idx) else { return vec![] };
+    let Some(first) = slide.shapes.iter().position(|s| videos.contains(&s.id)) else { return vec![] };
+    if slide.shapes.iter().skip(first + 1).all(|s| videos.contains(&s.id)) {
+        return vec![];
+    }
+    slide.shapes.iter().enumerate().filter(|(i, s)| *i <= first || videos.contains(&s.id)).map(|(_, s)| s.id).collect()
 }
 
 /// Media on slide `idx` hidden until it plays, as it is when the slide is entered.
@@ -148,7 +257,7 @@ fn start_prefetch(doc: &std::sync::Arc<Presentation>, next: usize, size: (u32, u
     let threads = render_threads().saturating_sub(1).max(1);
     let spawned = std::thread::Builder::new().name("show-prefetch".into()).spawn(move || {
         let tl = ShowState::timeline(&doc, next);
-        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[]));
+        let _ = tx.send(render_frame(&doc, next, tl, 0, 0.0, size, hidden, &[], threads, &[], &[], None));
     });
     spawned.ok().map(|_| Prefetch { key, rx })
 }
@@ -168,9 +277,48 @@ struct Transition {
     dur: f64,
 }
 
+/// A copy of the show's clock origins for regressions that must not depend on wall time.
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct ClockSnapshot {
+    pub step_start: f64,
+    pub slide_start: f64,
+    pub step_end: f64,
+    pub show_start: f64,
+    pub last_move: f64,
+}
+
+/// The parts of a show that change what a window-point event means. Coordinates are relative
+/// to the whole viewport, so the step, end screen, reading/presenter layout, pen/grid/zoom modes
+/// and blank screen all have to match the batch's target as well as the instance and slide.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ShowInputState {
+    pub instance: u64,
+    pub slide: usize,
+    pub step: usize,
+    pub ended: bool,
+    pub reading: bool,
+    pub presenter: bool,
+    pub grid: bool,
+    pub pen: bool,
+    pub laser: bool,
+    pub blank: Option<[u8; 4]>,
+    pub zoom: Option<[u32; 3]>,
+    pub zoom_arm: bool,
+}
+
+/// True unless the root viewport explicitly reports itself minimized or fully occluded.
+/// Integrations that do not report visibility stay visible rather than freezing the show.
+pub(crate) fn viewport_visible(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.viewport().visible() != Some(false))
+}
+
 impl Show {
+    /// Initialise show state at the requested slide with reading/presenter modes; an out-of-range
+    /// slide starts an ended show.
     pub fn new(doc: &Presentation, from: usize, reading: bool, presenter: bool) -> Self {
         Show {
+            instance: 0,
             state: ShowState::start_at(doc, from),
             reading,
             presenter,
@@ -183,10 +331,13 @@ impl Show {
             step_end: 0.0,
             trans: None,
             tex: None,
+            overlay: None,
             next_tex: None,
             prefetch: None,
+            backdrop: None,
             blank: None,
             grid: false,
+            presenter_grid: false,
             zoom_arm: false,
             zoom: None,
             thumbs: vec![],
@@ -208,7 +359,126 @@ impl Show {
             links: None,
             media_clock: None,
             media_cues: vec![],
+            hidden_anchor: None,
         }
+    }
+
+    /// Identity of the show state a queued window-point event belongs to.
+    pub(crate) fn input_state(&self) -> ShowInputState {
+        let bits = |v: f32| if v.is_finite() { v.to_bits() } else { 0 };
+        ShowInputState {
+            instance: self.instance,
+            slide: self.state.slide,
+            step: self.state.step,
+            ended: self.ended || self.state.ended,
+            reading: self.reading,
+            presenter: self.presenter,
+            grid: self.grid,
+            pen: self.pen,
+            laser: self.laser,
+            blank: self.blank.map(|c| [c.r(), c.g(), c.b(), c.a()]),
+            zoom: self.zoom.map(|z| [bits(z.nx), bits(z.ny), bits(z.scale)]),
+            zoom_arm: self.zoom_arm,
+        }
+    }
+
+    /// The show time for a hidden logic pass. `run_logic` leaves `InputState::time` at the last
+    /// visible frame, so anchor that value to the monotonic instant of the visible frame and
+    /// advance from wall time. Only a full visible UI pass re-anchors to egui's real frame time;
+    /// a visible logic-only pass must not reuse its stale input time as a new anchor.
+    pub(crate) fn hidden_logic_time(&self, visible_time: f64, now: web_time::Instant) -> f64 {
+        let (base, at) = self.hidden_anchor.unwrap_or((visible_time, now));
+        base + now.saturating_duration_since(at).as_secs_f64()
+    }
+
+    /// A visible UI pass drives the clocks through its real frame time and records the anchor a
+    /// later hidden logic tick advances from.
+    pub(crate) fn observe_visible_frame(&mut self, visible_time: f64, now: web_time::Instant) {
+        self.hidden_anchor = Some((visible_time, now));
+    }
+
+    /// Whether hidden logic is running a show that has already passed its first visible frame.
+    pub(crate) fn hidden_started(&self) -> bool {
+        self.started
+    }
+
+    /// Whether hidden logic still has time-driven work, so it must keep requesting wake-ups.
+    pub(crate) fn hidden_time_driven(&self, doc: &Presentation) -> bool {
+        self.started && !self.ended && (self.state.playing || self.trans.is_some() || self.autoplay || self.state.advance_after(doc).is_some())
+    }
+
+    /// Advance the show's own clocks and automatic steps on a hidden logic pass. Drawing is a
+    /// separate concern, so a minimized show keeps playing instead of inventing a pause policy.
+    /// Returns false when the show should close (preview ended).
+    pub(crate) fn advance_hidden(&mut self, doc: &Presentation, now: f64) -> bool {
+        self.tick_triggers(doc, now);
+        self.expire_goto(now);
+        if self.trans.as_ref().is_some_and(|trans| now - trans.start >= trans.dur.max(0.01)) {
+            self.trans = None;
+        }
+        let mut actions = Vec::new();
+        let mut keep = self.queue_clock_actions(doc, now, &mut actions);
+        for action in actions {
+            if !self.apply(action, doc, now) {
+                keep = false;
+            }
+        }
+        if self.state.playing {
+            let step = self.state.step;
+            self.cue_media(doc, step, now - self.step_start);
+        }
+        keep
+    }
+
+    /// Queue the step/auto-advance actions for `now`. Shared by the visible UI pass and the
+    /// hidden logic tick so both read the same clock. Returns false when a preview should close.
+    fn queue_clock_actions(&mut self, doc: &Presentation, now: f64, actions: &mut Vec<ShowAction>) -> bool {
+        let (step, playing) = (self.state.step, self.state.playing);
+        let t_step = if playing { now - self.step_start } else { 0.0 };
+        if playing {
+            let dur = self.timeline(doc).step_duration(step);
+            if t_step >= dur {
+                actions.push(self.state.step_done(doc));
+                self.step_end = now;
+            }
+        } else if self.trans.is_none() {
+            // Auto-advance (After: timings) or autoplay preview. An automatic first step is started
+            // by `ShowState` as the slide appears; starting it here too replayed it after Back (#844).
+            let idle = now - self.step_end.max(self.slide_start);
+            let cur_step = self.state.step;
+            let n_steps = self.timeline(doc).steps();
+            let step_due = self.autoplay && cur_step < n_steps && idle > 0.3;
+            let holding = self.grid || self.presenter_grid || self.zoom.is_some() || self.zoom_arm;
+            if !holding && (step_due || (!self.rehearse && self.state.auto_advance_due(doc, idle) && !self.ended)) {
+                actions.push(self.state.next(doc));
+            } else if self.preview_only && cur_step >= n_steps && idle > 0.8 {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The clock origins used by the show, for deterministic hidden/resume regressions.
+    #[cfg(test)]
+    pub(crate) fn clock_snapshot(&self) -> ClockSnapshot {
+        ClockSnapshot {
+            step_start: self.step_start,
+            slide_start: self.slide_start,
+            step_end: self.step_end,
+            show_start: self.show_start,
+            last_move: self.last_move,
+        }
+    }
+
+    /// Presenter elapsed seconds at `now`, using the same clock as the view.
+    #[cfg(test)]
+    pub(crate) fn presenter_elapsed(&self, now: f64) -> f64 {
+        self.timer.elapsed(now)
+    }
+
+    /// True while the pointer moved in the last 2.5 s; the media controls and GIF button hide after that.
+    fn pointer_awake(&self, now: f64) -> bool {
+        now - self.last_move < 2.5
     }
 
     /// Pen and laser are different pointers: turning one on puts the other away.
@@ -230,6 +500,37 @@ impl Show {
     fn arrow(&mut self) {
         self.pen = false;
         self.laser = false;
+    }
+
+    /// The backdrop for `key`: kept from earlier, waited for if it is being rendered ahead of
+    /// time, or rendered now.
+    fn backdrop(&mut self, doc: &std::sync::Arc<Presentation>, key: BackKey) -> std::sync::Arc<deckcraft_render::Image> {
+        if let Some(b) = self.backdrop.as_mut().filter(|b| b.key == key && std::sync::Arc::ptr_eq(&b.doc, doc)) {
+            if b.img.is_none() {
+                b.img = b.rx.take().and_then(|rx| rx.recv().ok()).map(std::sync::Arc::new);
+            }
+            if let Some(img) = &b.img {
+                return img.clone();
+            }
+        }
+        let img = std::sync::Arc::new(render_backdrop(doc, key, render_threads()));
+        self.backdrop = Some(Backdrop { doc: doc.clone(), key, img: Some(img.clone()), rx: None });
+        img
+    }
+
+    /// Start rendering the backdrop for `key` on another thread, unless it is already there or
+    /// on its way. Nothing on the web (no threads): the first animation frame renders it.
+    fn prefetch_backdrop(&mut self, doc: &std::sync::Arc<Presentation>, key: BackKey) {
+        if cfg!(target_arch = "wasm32") || self.backdrop.as_ref().is_some_and(|b| b.key == key && std::sync::Arc::ptr_eq(&b.doc, doc)) {
+            return;
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        let worker_doc = doc.clone();
+        let threads = render_threads().saturating_sub(1).max(1);
+        let spawned = std::thread::Builder::new().name("show-backdrop".into()).spawn(move || {
+            let _ = tx.send(render_backdrop(&worker_doc, key, threads));
+        });
+        self.backdrop = spawned.ok().map(|_| Backdrop { doc: doc.clone(), key, img: None, rx: Some(rx) });
     }
 
     fn timeline(&mut self, doc: &Presentation) -> &Timeline {
@@ -367,6 +668,11 @@ fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPl
     }
 }
 
+/// Whether starting the show takes the whole screen. Reading view and "Browsed by an individual (window)" stay in the window.
+fn show_fills_screen(reading: bool, show_type: &str) -> bool {
+    !reading && show_type != "browsed"
+}
+
 fn fit(avail: Rect, doc: &Presentation) -> Rect {
     // Loaded sizes are repaired, but a zero side here would make every rectangle NaN.
     let side = |v: f64| if v.is_finite() { (v as f32).max(1.0) } else { 1.0 };
@@ -422,7 +728,8 @@ fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Option<usize>, t
 
 /// Read the current viewport's show keys before its widgets can consume them. Both the
 /// audience window and Presenter View use this path, including animation steps and end-of-show.
-fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) -> bool {
+/// `presenter` is true for Presenter View, where G opens that window's own grid (#1130).
+fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, presenter: bool) -> bool {
     let keys: Vec<(egui::Key, egui::Modifiers)> = ctx.input(|i| {
         i.events
             .iter()
@@ -433,10 +740,16 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
     let mut actions = vec![];
     for (k, m) in keys {
         use egui::Key::*;
-        if show.grid && !matches!(k, Escape | Minus) {
+        let presenter_grid = presenter && show.presenter_grid;
+        let grid_open = if presenter { show.presenter_grid } else { show.grid };
+        if grid_open && !matches!(k, Escape | Minus) {
             // See All Slides takes no other keys until a slide is chosen.
             if k == G && plain(m) {
-                show.grid = false;
+                if presenter_grid {
+                    show.presenter_grid = false;
+                } else {
+                    show.grid = false;
+                }
             } else {
                 continue;
             }
@@ -444,7 +757,7 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
             match k {
                 Escape | Minus => {
                     let cancelled = k == Escape && show.clear_goto();
-                    if !cancelled && !show.back_out() {
+                    if !cancelled && !show.back_out(presenter) {
                         keep = false;
                     }
                 }
@@ -491,7 +804,7 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
                 B | Period => toggle_blank(show, Color32::BLACK),
                 W | Comma => toggle_blank(show, Color32::WHITE),
                 E => show.strokes.clear(),
-                G if plain(m) => show.grid = true,
+                G if plain(m) => show.open_grid(presenter),
                 Z if plain(m) => show.zoom_key(),
                 T if plain(m) => show.timer.toggle(now),
                 R if plain(m) => show.timer.reset(now),
@@ -518,6 +831,8 @@ fn keyboard(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) 
     keep
 }
 
+/// Draw and advance the active show, handling hidden frames, timing, input, transitions, and
+/// presenter/reading presentation.
 pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     let ctx = ui.ctx().clone();
     let Some((doc_uid, doc)) = app.session.active().map(|d| (d.uid, d.doc.clone())) else {
@@ -526,19 +841,40 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     };
     let now = ctx.input(|i| i.time);
     let Some(mut show) = app.show.take() else { return };
+    if !viewport_visible(&ctx) {
+        // A forced hidden paint (for example a pending screenshot) draws the current frame;
+        // the show clocks are advanced by logic, not by this draw, so it must not advance them a
+        // second time. Keep drawing the last frame rather than returning a blank.
+        if show.started {
+            let full = ui.max_rect();
+            let avail = if show.reading { Rect::from_min_max(full.min, pos2(full.max.x, full.max.y - 34.0)) } else { full };
+            let srect = fit(avail, &doc);
+            let painter = ui.painter_at(full);
+            painter.rect_filled(full, CornerRadius::ZERO, Color32::BLACK);
+            if let Some((_, tex)) = &show.tex {
+                painter.image(tex.id(), srect, unit_uv(), Color32::WHITE);
+            }
+        }
+        app.show = Some(show);
+        return;
+    }
+    show.observe_visible_frame(now, web_time::Instant::now());
     if !show.started {
         show.started = true;
         show.slide_start = now;
         show.step_start = now;
+        // The first step is settled at the show's own start: every clock origin is a real frame
+        // time, so hiding and resuming shifts all of them by the same interval.
+        show.step_end = now;
         show.show_start = now;
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
-        if !show.reading {
+        if show_fills_screen(show.reading, &doc.show.show_type) {
             ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
         }
         show.after_enter(&doc, now);
     }
-    let mut keep = keyboard(&ctx, &mut show, &doc, now);
+    let mut keep = keyboard(&ctx, &mut show, &doc, now, false);
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
     if moved {
         show.last_move = now;
@@ -559,8 +895,13 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         && show.zoom.is_none()
         && !show.zoom_arm
         && !show.reading_bar_hit(&ctx)
-        && !pointer_on_media_bar(&ctx, ui, &doc, &show);
-    let gif_click = if clicked && on_slide && doc.show.show_media_controls { gif_hit(&ctx, ui, &show, doc_uid, &doc, app) } else { None };
+        && !pointer_on_media_bar(&ctx, ui, &doc, &show, now);
+    // The button is drawn only while the pointer is awake; a hidden button takes no click.
+    let gif_click = if clicked && on_slide && doc.show.show_media_controls && show.pointer_awake(now) {
+        gif_hit(&ctx, ui, &show, doc_uid, &doc, app)
+    } else {
+        None
+    };
     let media_click = if clicked && on_slide && gif_click.is_none() { media_hit(&ctx, ui, &show, &doc) } else { None };
     let under = if on_slide && gif_click.is_none() && media_click.is_none() { shapes_under_pointer(&ctx, ui, &mut show, &doc, now) } else { None };
     let pointing = under.as_ref().is_some_and(|u| u.pick.is_some());
@@ -597,7 +938,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         }
     } else if clicked && show.zoom.is_some() && !show.pen && !show.reading_bar_hit(&ctx) {
         show.dismiss_zoom();
-    } else if clicked && !show.pen && !show.reading_bar_hit(&ctx) && !pointer_on_media_bar(&ctx, ui, &doc, &show) {
+    } else if clicked && !show.pen && !show.reading_bar_hit(&ctx) && !pointer_on_media_bar(&ctx, ui, &doc, &show, now) {
         if show.ended {
             keep = false;
         } else if show.blank.is_some() {
@@ -615,6 +956,17 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     }
     if secondary && !show.ended && !show.grid && show.zoom.is_none() && !show.zoom_arm {
         actions.push(show.state.prev(&doc));
+    }
+    // Ctrl+wheel (Cmd+wheel on a Mac) zooms around the pointer, as in PowerPoint (#1286). egui
+    // keeps it out of `smooth_scroll_delta`, so it does not also turn the page below.
+    let line_points = ctx.options(|o| o.input_options.line_scroll_speed);
+    if !show.grid
+        && !show.ended
+        && show.blank.is_none()
+        && let Some(p) = pointer
+        && let Some(lines) = ctx.input(|i| wheel_zoom_lines(&i.events, line_points))
+    {
+        show.wheel_zoom(srect, p, lines);
     }
     // A trackpad swipe (and the mouse wheel) turns the page. The pen is drawing, so a flick
     // there stays on the slide. Pinch zoom is not a show gesture.
@@ -640,28 +992,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             keep = false;
         }
     }
-    // Step clock.
-    let (step, playing) = (show.state.step, show.state.playing);
-    let t_step = if playing { now - show.step_start } else { 0.0 };
-    if playing {
-        let dur = show.timeline(&doc).step_duration(step);
-        if t_step >= dur {
-            actions.push(show.state.step_done(&doc));
-            show.step_end = now;
-        }
-    } else if show.trans.is_none() {
-        // Auto-advance (After: timings) or autoplay preview.
-        let idle = now - show.step_end.max(show.slide_start);
-        let cur_step = show.state.step;
-        let next_auto = show.timeline(&doc).step_is_auto(cur_step);
-        let n_steps = show.timeline(&doc).steps();
-        let step_due = cur_step < n_steps && ((show.autoplay && idle > 0.3) || next_auto);
-        let holding = show.grid || show.zoom.is_some() || show.zoom_arm;
-        if !holding && (step_due || (!show.rehearse && show.state.auto_advance_due(&doc, idle) && !show.ended)) {
-            actions.push(show.state.next(&doc));
-        } else if show.preview_only && cur_step >= n_steps && idle > 0.8 {
-            keep = false;
-        }
+    // Step clock, shared with the hidden logic tick.
+    if !show.queue_clock_actions(&doc, now, &mut actions) {
+        keep = false;
     }
     for a in actions {
         if !show.apply(a, &doc, now) {
@@ -714,6 +1047,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         let gif = crate::media::gif_key(&gifs);
         let done: Vec<(ShapeId, usize)> = plays.iter().map(|p| (p.trigger, p.step)).collect();
         let key = Key { slide: idx, step, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: hidden.clone(), plays: done, gif };
+        let back_key = BackKey { slide: idx, size, doc: key.doc };
         let tex = if !animating && show.tex.as_ref().is_some_and(|(k, _)| *k == key) {
             show.tex.as_ref().map(|(_, t)| t.clone())
         } else {
@@ -726,7 +1060,9 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 Some(ci) => ci,
                 None => {
                     let tl = show.timeline(&doc).clone();
-                    render_frame(&doc, idx, tl, step, t, size, hidden.clone(), &times, render_threads(), &plays, &stamps)
+                    // Animating: the backdrop doesn't change, only the shapes over it are drawn.
+                    let back = animating.then(|| show.backdrop(&doc, back_key));
+                    render_frame(&doc, idx, tl, step, t, size, hidden.clone(), &times, render_threads(), &plays, &stamps, back.as_deref())
                 }
             };
             let tex = match show.tex.take() {
@@ -736,11 +1072,15 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 }
                 None => crate::textures::upload(&ctx, "show", ci),
             };
-            show.tex = Some((key, tex.clone()));
+            show.tex = Some((key.clone(), tex.clone()));
             Some(tex)
         };
         // While this slide rests, render the next one's first frame (not one with GIFs, whose
         // frame depends on when it is entered).
+        // A slide with animations gets its backdrop ready while it rests, so they start smoothly.
+        if !animating && !show.timeline(&doc).is_empty() {
+            show.prefetch_backdrop(&doc, back_key);
+        }
         if !animating && show.trans.is_none() && !show.preview_only {
             let next = show.state.peek_next(&doc);
             let wanted = next.filter(|n| app.media.gifs(doc_uid, &doc, *n, now, &app.session.gif_paused).is_empty());
@@ -842,23 +1182,51 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             // Playing video: the current frame in its box, or full screen.
             let (sw, sh) = (doc.slide_size.width as f32, doc.slide_size.height as f32);
             let uv = show.zoom_uv();
+            let mut framed: Vec<ShapeId> = vec![];
+            let mut full_screen = false;
             for (id, x, clip) in &media {
                 if !clip.video || hidden.contains(id) {
                     continue;
                 }
                 let r = if clip.full_screen && app.media.is_playing(*id) {
+                    full_screen = true;
                     full
                 } else {
                     slide_box(srect, uv, sw, sh, x.x as f32, x.y as f32, x.w as f32, x.h as f32)
                 };
-                crate::media::paint_frame(&painter, &app.media, *id, r);
+                if crate::media::paint_frame(&painter, &app.media, *id, r, clip.crop) {
+                    framed.push(*id);
+                }
+            }
+            // Shapes stacked above a playing video show over it, as in PowerPoint (#1005); a video
+            // playing full screen covers the whole slide.
+            let skip = if full_screen { vec![] } else { below_playing_video(&doc, idx, &framed) };
+            if skip.is_empty() {
+                show.overlay = None;
+            } else {
+                let fresh = !animating && show.overlay.as_ref().is_some_and(|(k, s, _)| *k == key && *s == skip);
+                if !fresh {
+                    let tl = show.timeline(&doc).clone();
+                    let ci = render_overlay(&doc, idx, tl, step, t, size, hidden.clone(), &skip, &times, render_threads(), &plays, &stamps);
+                    let handle = match show.overlay.take() {
+                        Some((_, _, mut h)) => {
+                            crate::textures::replace(&ctx, &mut h, ci);
+                            h
+                        }
+                        None => crate::textures::upload(&ctx, "show-overlay", ci),
+                    };
+                    show.overlay = Some((key.clone(), skip, handle));
+                }
+                if let Some((_, _, h)) = &show.overlay {
+                    painter.image(h.id(), srect, uv, Color32::WHITE);
+                }
             }
             // Play/pause on the animated GIF under the pointer, and the audio/video bar.
             // Slide Show ▸ Show Media Controls hides both (the click still plays a clip).
             // Not while zoomed: the controls sit where the whole slide would be.
             if doc.show.show_media_controls && !show.zoom_arm && show.zoom.is_none() {
                 let k = srect.width() / sw.max(1.0);
-                if let Some(p) = ctx.input(|i| i.pointer.hover_pos()).filter(|_| !show.pen && !show.laser && now - show.last_move < 2.5) {
+                if let Some(p) = ctx.input(|i| i.pointer.hover_pos()).filter(|_| !show.pen && !show.laser && show.pointer_awake(now)) {
                     for g in &gifs {
                         let r = on_screen(srect, k, &g.rect);
                         if r.contains(p) {
@@ -867,7 +1235,8 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                         }
                     }
                 }
-                if let Some((id, clip, bar)) = media_bar_target(&ctx, &doc, &show, srect) {
+                if let Some((id, clip, bar)) = media_bar_target(&ctx, &doc, &show, srect).filter(|_| show.pointer_awake(now)) {
+                    ctx.request_repaint_after(std::time::Duration::from_millis(500));
                     let action = {
                         let status = app.media.status(id);
                         crate::media::control_bar(ui, bar, status.as_ref(), &clip)
@@ -900,7 +1269,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
     }
     // Pen.
-    let resp = ui.interact(full, ui.id().with("show_pen"), if show.pen { Sense::drag() } else { Sense::hover() });
+    let resp = ui.interact(full, ui.scope_id().with("show_pen"), if show.pen { Sense::drag() } else { Sense::hover() });
+    if show.pen {
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
+    }
     if show.pen {
         if resp.drag_started() {
             show.strokes.push(vec![]);
@@ -918,10 +1290,12 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         ctx.set_cursor_icon(egui::CursorIcon::None);
     } else if show.zoom_arm || show.grid {
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+    } else if !show.pointer_awake(now) && !show.reading {
+        // Idle first: a still pointer hides also over a clickable shape, such as a playing clip.
+        ctx.set_cursor_icon(egui::CursorIcon::None);
+        ctx.request_repaint_after(std::time::Duration::from_millis(500));
     } else if pointing {
         ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
-    } else if now - show.last_move > 2.5 && !show.reading {
-        ctx.set_cursor_icon(egui::CursorIcon::None);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));
     }
     let pen_col = theme::to_color32(doc.show.pen_color);
@@ -976,7 +1350,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
             let a = show.state.prev(&doc);
             show.apply(a, &doc, now);
         }
-    } else if !show.grid && (now - show.last_move < 2.5 || show.zoom_arm) {
+    } else if !show.grid && (show.pointer_awake(now) || show.zoom_arm) {
         let bar = tool_bar_rect(full);
         painter.rect_filled(bar, CornerRadius::same(17), Color32::from_black_alpha(140));
         let mut child =
@@ -1075,11 +1449,11 @@ fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentat
     // [Stop Previous Sound] ends a transition sound still playing.
     let stop_previous = trans.is_some_and(|t| t.stop_sound);
     let keep: Vec<ShapeId> = match cur {
-        Some(_) => app
+        Some(i) => app
             .media
             .ids()
             .into_iter()
-            .filter(|id| crate::media::find_clip(doc, *id).is_some_and(|c| c.play_across_slides))
+            .filter(|id| app.media.clip(*id).is_some_and(|c| crate::media::carries_over(c, doc, *id, i)))
             // A transition sound plays to its end, as in PowerPoint, unless the new slide has its own.
             .chain((sound.is_none() && !stop_previous).then_some(TRANSITION_SOUND).filter(|id| app.media.is_playing(*id)))
             .collect(),
@@ -1108,7 +1482,7 @@ fn show_media(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentat
 /// the clip is already playing, Pause toggles, Stop stops.
 fn run_media_cues(app: &mut SlideApp, show: &mut Show, doc_uid: u64, doc: &Presentation) {
     for (id, effect) in std::mem::take(&mut show.media_cues) {
-        let Some(clip) = crate::media::find_clip(doc, id) else { continue };
+        let Some(clip) = crate::media::find_clip(doc, id, Some(show.state.slide)) else { continue };
         match effect.as_str() {
             "pause" => app.media.toggle(doc_uid, doc, id, &clip, crate::media::Owner::Show),
             "stop" => app.media.stop(id),
@@ -1164,8 +1538,8 @@ fn media_bar_target(ctx: &egui::Context, doc: &Presentation, show: &Show, srect:
 }
 
 /// True when the pointer is on a visible playback bar, so that click must not advance the show.
-fn pointer_on_media_bar(ctx: &egui::Context, ui: &Ui, doc: &Presentation, show: &Show) -> bool {
-    if !doc.show.show_media_controls || show.pen || show.ended || show.blank.is_some() {
+fn pointer_on_media_bar(ctx: &egui::Context, ui: &Ui, doc: &Presentation, show: &Show, now: f64) -> bool {
+    if !doc.show.show_media_controls || !show.pointer_awake(now) || show.pen || show.ended || show.blank.is_some() {
         return false;
     }
     let Some(p) = ctx.input(|i| i.pointer.interact_pos().or(i.pointer.hover_pos())) else { return false };
@@ -1320,6 +1694,15 @@ impl Show {
         }
     }
 
+    /// G opens See All Slides in the window it was pressed in: Presenter View's grid stays off the audience screen (#1130).
+    fn open_grid(&mut self, presenter: bool) {
+        if presenter {
+            self.presenter_grid = true;
+        } else {
+            self.grid = true;
+        }
+    }
+
     /// Z, or the Zoom button: arm a click-to-zoom, or leave a zoom that is already on.
     fn zoom_key(&mut self) {
         if self.zoom.is_some() || self.zoom_arm {
@@ -1330,9 +1713,36 @@ impl Show {
         }
     }
 
-    /// Esc closes See All Slides, then a zoom, and only then leaves the show.
-    fn back_out(&mut self) -> bool {
-        if self.grid {
+    /// Ctrl/Cmd+wheel: `lines` notches in (positive) or out around the slide point under `p`.
+    /// Back to the whole slide leaves the zoom. A pointer off the slide does nothing.
+    fn wheel_zoom(&mut self, srect: Rect, p: Pos2, lines: f32) {
+        let uv = self.zoom_uv();
+        let Some((nx, ny)) = norm_on_slide(srect, uv, p) else { return };
+        let from = self.zoom.map_or(1.0, |z| z.scale);
+        let scale = (from * 2f32.powf(lines / WHEEL_NOTCHES_PER_DOUBLING)).min(WHEEL_ZOOM_MAX);
+        if !scale.is_finite() {
+            return;
+        }
+        self.zoom_arm = false;
+        if scale <= 1.0 + 1e-3 {
+            self.zoom = None;
+            return;
+        }
+        // The new window puts (nx, ny) at the same place on screen as before.
+        let w = 1.0 / scale;
+        let fx = (p.x - srect.min.x) / srect.width();
+        let fy = (p.y - srect.min.y) / srect.height();
+        let x = (nx - fx * w).clamp(0.0, 1.0 - w);
+        let y = (ny - fy * w).clamp(0.0, 1.0 - w);
+        self.zoom = Some(Zoom { nx: x + w * 0.5, ny: y + w * 0.5, scale });
+    }
+
+    /// Esc closes the See All Slides of the window it was pressed in, then a zoom, and only then leaves the show.
+    fn back_out(&mut self, presenter: bool) -> bool {
+        if presenter && self.presenter_grid {
+            self.presenter_grid = false;
+            true
+        } else if !presenter && self.grid {
             self.grid = false;
             true
         } else {
@@ -1440,6 +1850,10 @@ impl Show {
 const GOTO_HOLD: f64 = 3.0;
 const GOTO_DIGITS: usize = 4;
 const ZOOM_SCALE: f32 = 2.0;
+/// Four notches double the zoom, so the wheel passes through the click-zoom's 2× on its way to 4×.
+const WHEEL_NOTCHES_PER_DOUBLING: f32 = 4.0;
+/// PowerPoint's slide show magnifier goes up to 400%.
+const WHEEL_ZOOM_MAX: f32 = 4.0;
 const GRID_CAP: usize = 48;
 const TOOL_BAR_W: f32 = 520.0;
 const NOTES_DEFAULT: f32 = 18.0;
@@ -1555,6 +1969,26 @@ fn zoom_uv(nx: f32, ny: f32, scale: f32) -> Rect {
     let x = (nx - w * 0.5).clamp(0.0, 1.0 - w);
     let y = (ny - w * 0.5).clamp(0.0, 1.0 - w);
     Rect::from_min_size(pos2(x, y), vec2(w, w))
+}
+
+/// The Ctrl/Cmd+wheel movement this frame in wheel lines (up is positive), `None` when there was
+/// none. Read from the raw events: egui's `zoom_delta` also carries the trackpad pinch, which is
+/// not a show gesture.
+fn wheel_zoom_lines(events: &[egui::Event], line_points: f32) -> Option<f32> {
+    let mut lines = None;
+    for event in events {
+        if let egui::Event::MouseWheel { unit, delta, modifiers, .. } = event
+            && (modifiers.ctrl || modifiers.command)
+        {
+            let along = if delta.x.abs() > delta.y.abs() { delta.x } else { delta.y };
+            let n = match unit {
+                egui::MouseWheelUnit::Point => along / line_points.max(1.0),
+                egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => along,
+            };
+            *lines.get_or_insert(0.0) += if n.is_finite() { n } else { 0.0 };
+        }
+    }
+    lines
 }
 
 fn zoom_frame(slide: Rect, uv: Rect) -> Rect {
@@ -1723,6 +2157,7 @@ fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usi
     Some(tex)
 }
 
+/// Render the presenter window and set `keep` false when the user ends or closes the show.
 fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64, keep: &mut bool) {
     let cur = show.state.slide;
     let next = show.state.peek_next(doc);
@@ -1743,7 +2178,8 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
         show.next_tex = Some((n, crate::textures::upload(ctx, "presenter-next", crate::textures::to_color_image(&img, false))));
     }
     let next_tex = show.next_tex.as_ref().filter(|(k, _)| Some(*k) == next).map(|(_, t)| t.clone());
-    let notes = doc.slides.get(cur).map(|s| s.notes_text()).unwrap_or_default();
+    let no_notes = deckcraft_model::text::TextBody::default();
+    let notes = doc.slides.get(cur).map_or(&no_notes, |s| &s.notes);
     let clock = wall_clock();
     // The presenter clock only moves when this window is drawn again.
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
@@ -1756,7 +2192,7 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
         egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
         |ui, _| {
-            if !keyboard(ui.ctx(), show, doc, now) {
+            if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
             }
             ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
@@ -1798,8 +2234,8 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                     if button(ui, if show.blank == Some(Color32::WHITE) { "White on" } else { "White" }).clicked() {
                         toggle_blank(show, Color32::WHITE);
                     }
-                    if button(ui, if show.grid { "All slides on" } else { "All slides" }).clicked() {
-                        show.grid = !show.grid;
+                    if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
+                        show.presenter_grid = !show.presenter_grid;
                     }
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
@@ -1807,6 +2243,23 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                 });
                 ui.add_space(8.0);
                 let avail = ui.available_rect_before_wrap();
+                if show.presenter_grid {
+                    // The grid fills this window; the audience keeps seeing the current slide.
+                    paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
+                    let hit = ui.interact(avail, ui.scope_id().with("presenter_grid"), Sense::click());
+                    if hit.clicked()
+                        && let Some(p) = hit.interact_pointer_pos()
+                        && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
+                        && let Some(&i) = grid_indices(doc.slides.len()).get(n)
+                    {
+                        show.presenter_grid = false;
+                        show.blank = None;
+                        show.zoom = None;
+                        show.zoom_arm = false;
+                        actions.push(show.state.goto(doc, i));
+                    }
+                    return;
+                }
                 let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
                 let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
                 let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
@@ -1819,7 +2272,8 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                     ui.painter().rect_stroke(mark, CornerRadius::ZERO, Stroke::new(2.0, Color32::WHITE), egui::StrokeKind::Inside);
                 }
                 if show.zoom_arm {
-                    let hit = ui.interact(cr, ui.id().with("presenter_zoom"), Sense::click());
+                    let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
+                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
                     if hit.clicked()
                         && let Some(p) = hit.interact_pointer_pos()
                         && cr.width() > 1.0
@@ -1858,13 +2312,13 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
                 let notes_rect = Rect::from_min_max(pos2(right.min.x, notes_head.max.y + 4.0), right.max);
                 let mut child = ui.new_child(egui::UiBuilder::new().max_rect(notes_rect));
                 egui::ScrollArea::vertical().show(&mut child, |ui| {
-                    ui.label(
-                        egui::RichText::new(if notes.is_empty() { "No notes." } else { &notes }).size(show.notes_px).color(Color32::from_gray(230)),
-                    );
+                    presenter_notes(ui, notes, show.notes_px);
                 });
             });
             if ui.input(|i| i.viewport().close_requested()) {
                 show.presenter = false;
+                // A grid left open in the closed window would hold auto-advance for the rest of the show.
+                show.presenter_grid = false;
             }
         },
     );
@@ -1875,11 +2329,299 @@ fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Presentation, no
     }
 }
 
+/// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.
+fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
+    let color = Color32::from_gray(230);
+    if notes.text().is_empty() {
+        ui.label(egui::RichText::new("No notes.").size(px).color(color))
+    } else {
+        crate::notes::view(ui, notes, &crate::notes::Look { size: px, color: Some(color) })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
     use super::*;
+
+    /// #1005: shapes stacked above a playing video must be drawn over its frame; the video, what
+    /// is below it and other videos stay out of that overlay.
+    #[test]
+    fn shapes_above_a_playing_video_are_the_overlay() {
+        let mut session = deckcraft_engine::Session::with_new();
+        for _ in 0..3 {
+            session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, 100.0, 100.0]})).unwrap();
+        }
+        let mut doc = (*session.active().unwrap().doc).clone();
+        // Keep only the three inserted rects (a new slide may start with placeholders).
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        let keep = slide.shapes.len() - 3;
+        slide.shapes.drain(..keep);
+        let ids: Vec<ShapeId> = slide.shapes.iter().map(|s| s.id).collect();
+        slide.shapes[1].kind = deckcraft_model::ShapeKind::Media(deckcraft_model::MediaClip { video: true, ..Default::default() });
+        // Video in the middle: the shape above it is drawn over it.
+        assert_eq!(below_playing_video(&doc, 0, &[ids[1]]), vec![ids[0], ids[1]]);
+        // Video on top: nothing above it, the frame is painted last as before.
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.swap(1, 2);
+        assert!(below_playing_video(&doc, 0, &[ids[1]]).is_empty());
+        // No video playing.
+        assert!(below_playing_video(&doc, 0, &[]).is_empty());
+    }
+
+    /// #968: over a shape a click acts on (a clip with its play trigger, a link) the pointing hand
+    /// never gave way to the idle hide, so a still pointer stayed on the playing video.
+    #[test]
+    fn a_still_cursor_hides_over_a_clickable_shape() {
+        let mut session = deckcraft_engine::Session::with_new();
+        let size = session.active().unwrap().doc.slide_size;
+        let r = session.execute("shape.insert", &json!({"preset": "rect", "rect": [0.0, 0.0, size.width, size.height]})).unwrap();
+        session.execute("insert.hyperlink", &json!({"url": "https://example.org", "ids": [r["id"]]})).unwrap();
+        let app = SlideApp::new(session, crate::Services::default());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        harness.hover_at(pos2(500.0, 350.0));
+        harness.run_steps(2);
+        assert_eq!(harness.output().platform_output.cursor_icon, egui::CursorIcon::PointingHand);
+        harness.run_steps(12);
+        assert_eq!(harness.output().platform_output.cursor_icon, egui::CursorIcon::None, "still for 3 s: hidden");
+    }
+
+    /// #1130: the Presenter View's All slides button opens the grid in that window, not on the audience screen.
+    #[test]
+    fn presenter_all_slides_does_not_cover_the_audience_screen() {
+        use egui_kittest::kittest::Queryable;
+
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let doc = session.active().unwrap().doc.clone();
+        let show = Show::new(&doc, 0, false, true);
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+            |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+                let now = ui.input(|i| i.time);
+                presenter_window(ui.ctx(), show, doc, now, keep);
+            },
+            (doc, show, true),
+        );
+        harness.run_steps(2);
+        harness.get_by_label("All slides").click();
+        harness.run_steps(2);
+        assert!(harness.state().1.presenter_grid, "the grid opens in the Presenter View");
+        assert!(!harness.state().1.grid, "the audience screen keeps showing the slide");
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(!harness.state().1.presenter_grid, "Esc closes the Presenter View grid");
+        assert!(harness.state().2, "and does not end the show");
+        harness.key_press(egui::Key::G);
+        harness.run_steps(2);
+        assert!(harness.state().1.presenter_grid, "G in Presenter View opens its own grid");
+        assert!(!harness.state().1.grid, "G in Presenter View leaves the audience screen alone");
+        harness.key_press(egui::Key::G);
+        harness.run_steps(2);
+        assert!(!harness.state().1.presenter_grid, "G again closes it");
+    }
+
+    /// A silent mono 8 kHz WAV, so the clip has a real duration to seek in.
+    fn silent_wav(secs: u32) -> Vec<u8> {
+        let rate = 8_000u32;
+        let data = vec![0u8; (rate * secs * 2) as usize];
+        let mut b = Vec::new();
+        b.extend_from_slice(b"RIFF");
+        b.extend_from_slice(&(36 + data.len() as u32).to_le_bytes());
+        b.extend_from_slice(b"WAVEfmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&1u16.to_le_bytes());
+        b.extend_from_slice(&rate.to_le_bytes());
+        b.extend_from_slice(&(rate * 2).to_le_bytes());
+        b.extend_from_slice(&2u16.to_le_bytes());
+        b.extend_from_slice(&16u16.to_le_bytes());
+        b.extend_from_slice(b"data");
+        b.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        b.extend_from_slice(&data);
+        b
+    }
+
+    /// A running show on a slide with one 10 s clip. Returns the harness, the clip, a point on the
+    /// bar's seek track, and what `pointer_on_media_bar` said on the last frame.
+    fn show_with_clip() -> (egui_kittest::Harness<'static, SlideApp>, ShapeId, Pos2, std::rc::Rc<std::cell::Cell<bool>>) {
+        let size = vec2(1000.0, 700.0);
+        let mut session = deckcraft_engine::Session::with_new();
+        let id = ShapeId(4000);
+        session
+            .edit(|doc, _| {
+                let media = doc.add_media("clip.wav", "audio/wav", silent_wav(10)).unwrap();
+                let (w, h) = (doc.slide_size.width, doc.slide_size.height);
+                let clip = deckcraft_model::MediaClip { media, video: true, volume: 1.0, duration_ms: 10_000, ..Default::default() };
+                let xfrm = deckcraft_geom::Xfrm::new(w * 0.2, h * 0.2, w * 0.6, h * 0.6);
+                let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+                slide.shapes.push(deckcraft_model::Shape {
+                    id,
+                    xfrm: Some(xfrm),
+                    kind: deckcraft_model::ShapeKind::Media(clip),
+                    ..Default::default()
+                });
+                Ok(())
+            })
+            .unwrap();
+        let on_bar = std::rc::Rc::new(std::cell::Cell::new(false));
+        let seen = on_bar.clone();
+        let slide = std::rc::Rc::new(std::cell::Cell::new(Rect::NOTHING));
+        let slide_seen = slide.clone();
+        // Presenter view opens an embedded window over the whole screen here, which takes the clicks.
+        let mut app = SlideApp::new(session, crate::Services::default());
+        app.ui.presenter_view = false;
+        let mut harness = egui_kittest::Harness::builder().with_size(size).with_step_dt(0.25).build_ui_state(
+            move |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
+                    let now = ui.input(|i| i.time);
+                    seen.set(pointer_on_media_bar(ui.ctx(), ui, &d.doc, show, now));
+                    slide_seen.set(shown_slide_rect(ui, show, &d.doc));
+                }
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        let doc = harness.state().session.active().unwrap().doc.clone();
+        let bar = slide_media_bars(slide.get(), &doc, 0)[0].3;
+        let track = pos2(bar.min.x + bar.width() * 0.8, bar.center().y);
+        (harness, id, track, on_bar)
+    }
+
+    /// Press and release the primary button at `p`.
+    fn click_at(harness: &mut egui_kittest::Harness<'static, SlideApp>, p: Pos2) {
+        for pressed in [true, false] {
+            harness.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+            harness.step();
+        }
+    }
+
+    /// #967: hovering a clip shows its bar and a click on the bar seeks. After 3 s without moving
+    /// the bar is gone, and a click where it was acts on the clip itself (play), not on the bar.
+    #[test]
+    fn media_controls_hide_when_pointer_is_idle() {
+        // Awake: the bar is there and a click on its timeline seeks, leaving the clip paused.
+        let (mut harness, id, track, on_bar) = show_with_clip();
+        harness.hover_at(track);
+        harness.run_steps(2);
+        assert!(harness.state().show.as_ref().unwrap().pointer_awake(harness.ctx.input(|i| i.time)));
+        assert!(on_bar.get(), "the bar is under a pointer that just moved");
+        click_at(&mut harness, track);
+        harness.run_steps(2);
+        let status = harness.state().media.status(id).expect("the click on the bar cued the clip");
+        assert!(!harness.state().media.is_playing(id), "a bar click seeks, it does not play");
+        assert!(status.position > 1.0, "seeked along the timeline, at {}", status.position);
+
+        // Idle: same spot, no movement for 3 s.
+        let (mut harness, id, track, on_bar) = show_with_clip();
+        harness.hover_at(track);
+        harness.run_steps(2);
+        assert!(on_bar.get());
+        harness.run_steps(12);
+        assert!(!harness.state().show.as_ref().unwrap().pointer_awake(harness.ctx.input(|i| i.time)));
+        assert!(!on_bar.get(), "the bar is hidden once the pointer is idle");
+        click_at(&mut harness, track);
+        harness.run_steps(2);
+        assert!(harness.state().media.is_playing(id), "the click reached the clip");
+        let at = harness.state().media.status(id).map_or(0.0, |s| s.position);
+        assert!(at < 5.0, "the click did not seek along the timeline, position {at}");
+    }
+
+    /// Two 1×1 frames (black, then white), 100 ms each.
+    fn two_frame_gif() -> Vec<u8> {
+        let mut b = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff".to_vec();
+        for pixel in [b"\x44\x01", b"\x4c\x01"] {
+            b.extend_from_slice(b"\x21\xf9\x04\x00\x0a\x00\x00\x00");
+            b.extend_from_slice(b"\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02");
+            b.extend_from_slice(pixel);
+            b.push(0);
+        }
+        b.push(0x3b);
+        b
+    }
+
+    /// A running show on the first of two slides; slide 1 holds a large animated GIF. Returns the
+    /// harness, the GIF, and its play/pause button's centre.
+    fn show_with_gif() -> (egui_kittest::Harness<'static, SlideApp>, ShapeId, Pos2) {
+        let mut session = deckcraft_engine::Session::with_new();
+        // The GIF is on slide 1, the slide the editor has selected, with a slide after it.
+        session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        session.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        session.execute("slide.go", &json!({"index": 1})).unwrap();
+        let id = ShapeId(4100);
+        session
+            .edit(|doc, _| {
+                let media = doc.add_media("a.gif", "image/gif", two_frame_gif()).unwrap();
+                let (w, h) = (doc.slide_size.width, doc.slide_size.height);
+                let slide = std::sync::Arc::make_mut(&mut doc.slides[1]);
+                slide.shapes.push(deckcraft_model::Shape {
+                    id,
+                    xfrm: Some(deckcraft_geom::Xfrm::new(w * 0.2, h * 0.2, w * 0.6, h * 0.6)),
+                    kind: deckcraft_model::ShapeKind::Picture { fill: deckcraft_model::style::PictureFill { media, ..Default::default() } },
+                    ..Default::default()
+                });
+                Ok(())
+            })
+            .unwrap();
+        let slide = std::rc::Rc::new(std::cell::Cell::new(Rect::NOTHING));
+        let slide_seen = slide.clone();
+        let mut app = SlideApp::new(session, crate::Services::default());
+        app.ui.presenter_view = false;
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(0.25).build_ui_state(
+            move |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                if let (Some(show), Some(d)) = (app.show.as_ref(), app.session.active()) {
+                    slide_seen.set(shown_slide_rect(ui, show, &d.doc));
+                }
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(1, false);
+        harness.run_steps(2);
+        let doc = harness.state().session.active().unwrap().doc.clone();
+        let srect = slide.get();
+        let k = srect.width() / doc.slide_size.width.max(1.0) as f32;
+        let rect = doc.slides[1].shapes.last().unwrap().xfrm.unwrap();
+        let button = crate::media::gif_button_rect(on_screen(srect, k, &rect)).center();
+        (harness, id, button)
+    }
+
+    /// The GIF's play/pause button is drawn only while the pointer is awake, so a click on its
+    /// spot after 2.5 s without movement advances the show instead of pausing the GIF.
+    #[test]
+    fn gif_button_click_needs_an_awake_pointer() {
+        let (mut harness, id, button) = show_with_gif();
+        harness.hover_at(button);
+        harness.run_steps(2);
+        click_at(&mut harness, button);
+        harness.run_steps(2);
+        assert!(harness.state().session.gif_paused.contains(&id), "an awake pointer's click pauses the GIF");
+        assert_eq!(harness.state().show.as_ref().unwrap().state.slide, 1);
+
+        let (mut harness, id, button) = show_with_gif();
+        harness.hover_at(button);
+        harness.run_steps(2);
+        harness.run_steps(12);
+        assert!(!harness.state().show.as_ref().unwrap().pointer_awake(harness.ctx.input(|i| i.time)));
+        click_at(&mut harness, button);
+        harness.run_steps(2);
+        assert!(!harness.state().session.gif_paused.contains(&id), "the hidden button is not clickable");
+        assert_eq!(harness.state().show.as_ref().unwrap().state.slide, 2, "the click advanced the show");
+    }
 
     /// Send real egui key events to the presenter UI, without the audience window's handler.
     #[test]
@@ -1981,9 +2723,57 @@ mod tests {
         let p = start_prefetch(&doc, 1, size).expect("prefetch starts");
         assert_eq!(p.key, Key { slide: 1, step: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize, hidden: vec![], gif: 0, plays: vec![] });
         let got = p.rx.recv().expect("the frame arrives");
-        let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[]);
+        let want = render_frame(&doc, 1, ShowState::timeline(&doc, 1), 0, 0.0, size, vec![], &[], 0, &[], &[], None);
         assert_eq!(got.size, want.size);
         assert_eq!(got.pixels, want.pixels);
+    }
+
+    /// A glowing full-slide picture in a layout made every animation frame re-render (and re-blur)
+    /// the backdrop: 2–3 frames a second. Frames now draw the slide's shapes over the kept
+    /// backdrop, and must look the same as a whole-slide render.
+    #[test]
+    fn an_animation_frame_over_the_kept_backdrop_matches_a_full_render() {
+        let mut s = deckcraft_engine::Session::with_new();
+        let r = s.execute("shape.insert", &json!({"preset": "star5", "rect": [100.0, 100.0, 300.0, 200.0]})).unwrap();
+        s.execute("animation.set", &json!({"effect": "fade", "ids": [r["id"]]})).unwrap();
+        let mut doc = (*s.active().unwrap().doc).clone();
+        // A glowing master graphic under the animated star.
+        let mut deco = doc.slides[0].shapes.last().unwrap().clone();
+        deco.id = ShapeId(9000);
+        deco.xfrm = deco.xfrm.map(|x| deckcraft_geom::Xfrm { x: x.x - 60.0, y: x.y + 40.0, ..x });
+        deco.effects = Some(deckcraft_model::Effects {
+            glow: Some(deckcraft_model::style::Glow {
+                color: deckcraft_model::style::ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 120, 255)),
+                radius: 12.0,
+            }),
+            ..Default::default()
+        });
+        std::sync::Arc::make_mut(&mut doc.masters[0]).shapes.push(deco);
+        let doc = std::sync::Arc::new(doc);
+        let size = (480, 270);
+        let key = BackKey { slide: 0, size, doc: std::sync::Arc::as_ptr(&doc) as usize };
+        let mut show = Show::new(&doc, 0, false, false);
+        show.prefetch_backdrop(&doc, key);
+        let back = show.backdrop(&doc, key);
+        let tl = ShowState::timeline(&doc, 0);
+        assert!(!tl.is_empty());
+        // Half-way through the fade, the star half see-through over the glow.
+        let fast = render_frame(&doc, 0, tl.clone(), 0, 0.25, size, vec![], &[], 0, &[], &[], Some(&back));
+        let full = render_frame(&doc, 0, tl, 0, 0.25, size, vec![], &[], 0, &[], &[], None);
+        assert_eq!(fast.size, full.size);
+        let worst = fast
+            .pixels
+            .iter()
+            .zip(&full.pixels)
+            .map(|(a, b)| a.to_array().iter().zip(b.to_array()).map(|(x, y)| x.abs_diff(y)).max().unwrap_or(0))
+            .max();
+        assert!(worst.is_some_and(|d| d <= 2), "frames differ by up to {worst:?}");
+        // The backdrop is kept, not rendered again.
+        assert!(std::sync::Arc::ptr_eq(&back, &show.backdrop(&doc, key)));
+        // Another document under the same key (an edit whose copy reused the old address) gets
+        // its own backdrop.
+        let edited = std::sync::Arc::new((*doc).clone());
+        assert!(!std::sync::Arc::ptr_eq(&back, &show.backdrop(&edited, key)));
     }
 
     #[test]
@@ -2130,6 +2920,150 @@ mod tests {
         assert!((back.0 - 0.5).abs() < 1e-3 && (back.1 - 0.5).abs() < 1e-3);
     }
 
+    fn near(a: f32, b: f32) -> bool {
+        (a - b).abs() < 1e-3
+    }
+
+    /// #1286: Ctrl+wheel zooms around the pointer, four notches per doubling, up to 4× (the most
+    /// PowerPoint's magnifier goes); zooming back to the whole slide leaves the zoom.
+    #[test]
+    fn wheel_zoom_keeps_the_point_under_the_pointer_and_stops_at_4x() {
+        let doc = deckcraft_model::Presentation::default();
+        let mut show = Show::new(&doc, 0, false, false);
+        // A 16:9 slide, not at the origin, and a pointer off its centre.
+        let srect = Rect::from_min_size(pos2(40.0, 30.0), vec2(320.0, 180.0));
+        let p = pos2(40.0 + 320.0 * 0.2, 30.0 + 180.0 * 0.3);
+        show.wheel_zoom(srect, p, 4.0);
+        let (_, _, scale) = show.zoom_view().expect("zoomed in");
+        assert!(near(scale, 2.0), "four notches double, got {scale}");
+        // The window keeps the slide's shape: half the width and half the height of the slide.
+        let uv = show.zoom_uv();
+        assert!(near(uv.width(), 0.5) && near(uv.height(), 0.5), "{uv:?}");
+        assert!(near(uv.min.x, 0.2 - 0.5 * 0.2) && near(uv.min.y, 0.3 - 0.5 * 0.3), "{uv:?}");
+        let under = norm_on_slide(srect, uv, p).expect("on the slide");
+        assert!(near(under.0, 0.2) && near(under.1, 0.3), "the point under the pointer moved to {under:?}");
+
+        // Again from the zoomed view: the same slide point stays under the pointer.
+        show.wheel_zoom(srect, p, 2.0);
+        let (_, _, scale) = show.zoom_view().expect("zoomed in");
+        assert!(near(scale, 2f32.powf(1.5)), "{scale}");
+        let under = norm_on_slide(srect, show.zoom_uv(), p).expect("on the slide");
+        assert!(near(under.0, 0.2) && near(under.1, 0.3), "{under:?}");
+
+        show.wheel_zoom(srect, p, 40.0);
+        let (_, _, scale) = show.zoom_view().expect("zoomed in");
+        assert!(near(scale, 4.0), "capped at 4×, got {scale}");
+        assert!(near(show.zoom_uv().width(), 0.25));
+
+        show.wheel_zoom(srect, p, -7.0);
+        assert!(show.zoom_view().is_some(), "one notch short of the whole slide is still zoomed");
+        show.wheel_zoom(srect, p, -1.0);
+        assert!(show.zoom_view().is_none(), "back to the whole slide leaves the zoom");
+        assert_eq!(show.zoom_uv(), unit_uv());
+        show.wheel_zoom(srect, p, -3.0);
+        assert!(show.zoom_view().is_none(), "zooming out of the whole slide does nothing");
+
+        // Off the slide (the letterbox) the wheel does not zoom.
+        show.wheel_zoom(srect, pos2(10.0, 10.0), 4.0);
+        assert!(show.zoom_view().is_none());
+        // An armed click-zoom gives way to the wheel.
+        show.zoom_arm = true;
+        show.wheel_zoom(srect, p, 4.0);
+        assert!(!show.zoom_arm && show.zoom_view().is_some());
+    }
+
+    #[test]
+    fn wheel_zoom_reads_only_the_wheel_with_ctrl_or_cmd() {
+        let wheel = |unit, y: f32, modifiers| egui::Event::MouseWheel {
+            unit,
+            delta: vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers,
+        };
+        use egui::MouseWheelUnit::{Line, Point};
+        assert_eq!(wheel_zoom_lines(&[wheel(Line, 1.0, egui::Modifiers::CTRL)], 40.0), Some(1.0));
+        assert_eq!(wheel_zoom_lines(&[wheel(Line, -2.0, egui::Modifiers::COMMAND)], 40.0), Some(-2.0));
+        assert_eq!(wheel_zoom_lines(&[wheel(Point, 20.0, egui::Modifiers::CTRL), wheel(Point, 20.0, egui::Modifiers::CTRL)], 40.0), Some(1.0));
+        assert_eq!(wheel_zoom_lines(&[wheel(Line, 1.0, egui::Modifiers::NONE)], 40.0), None, "a plain wheel turns the page");
+        assert_eq!(wheel_zoom_lines(&[wheel(Line, 1.0, egui::Modifiers::SHIFT)], 40.0), None);
+        assert_eq!(wheel_zoom_lines(&[egui::Event::Zoom(2.0)], 40.0), None, "a pinch is not a show gesture");
+        assert_eq!(wheel_zoom_lines(&[wheel(Line, f32::NAN, egui::Modifiers::CTRL)], 40.0), Some(0.0));
+    }
+
+    /// A running show on the first of three slides, with presenter view off.
+    fn show_of_three() -> egui_kittest::Harness<'static, SlideApp> {
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        session.execute("slide.new", &json!({})).unwrap();
+        let mut app = SlideApp::new(session, crate::Services::default());
+        app.ui.presenter_view = false;
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).with_step_dt(1.0 / 60.0).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        harness
+    }
+
+    fn show_wheel(harness: &mut egui_kittest::Harness<'static, SlideApp>, at: Pos2, y: f32, modifiers: egui::Modifiers) {
+        harness.input_mut().events.push(egui::Event::PointerMoved(at));
+        harness.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: vec2(0.0, y),
+            phase: egui::TouchPhase::Move,
+            source: egui::MouseWheelSource::Wheel,
+            modifiers,
+        });
+        harness.run_steps(40);
+    }
+
+    /// #1286: in the show, Ctrl+wheel (Cmd+wheel on a Mac) zooms the slide and does not turn the
+    /// page; the plain wheel still turns it.
+    #[test]
+    fn ctrl_wheel_zooms_the_show_and_the_plain_wheel_turns_the_page() {
+        for held in [egui::Modifiers::CTRL, egui::Modifiers::COMMAND] {
+            let mut h = show_of_three();
+            let centre = pos2(500.0, 350.0);
+            show_wheel(&mut h, centre, 4.0, held);
+            let show = h.state().show.as_ref().expect("still showing");
+            assert_eq!(show.state.slide, 0, "{held:?}: the zoom wheel does not turn the page");
+            let (_, _, scale) = show.zoom_view().expect("zoomed in");
+            assert!(near(scale, 2.0), "{held:?}: {scale}");
+
+            show_wheel(&mut h, centre, -4.0, held);
+            let show = h.state().show.as_ref().expect("still showing");
+            assert_eq!(show.state.slide, 0, "{held:?}: zooming out does not go back a page either");
+            assert!(show.zoom_view().is_none(), "{held:?}: back to the whole slide");
+
+            show_wheel(&mut h, centre, -3.0, egui::Modifiers::NONE);
+            assert_eq!(h.state().show.as_ref().expect("still showing").state.slide, 1, "the plain wheel turns the page");
+        }
+    }
+
+    #[test]
+    fn escape_only_closes_the_grid_of_its_own_window() {
+        let mut s = deckcraft_engine::Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        let doc = s.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, true);
+        show.presenter_grid = true;
+        assert!(!show.back_out(false), "audience Esc leaves the show, the Presenter View grid stays");
+        assert!(show.presenter_grid);
+        assert!(show.back_out(true));
+        assert!(!show.presenter_grid);
+        show.grid = true;
+        assert!(!show.back_out(true), "Presenter View Esc does not close the audience grid");
+        assert!(show.grid);
+        assert!(show.back_out(false));
+        assert!(!show.grid);
+    }
+
     #[test]
     fn escape_leaves_the_grid_then_the_zoom_and_blank_toggles() {
         let mut s = deckcraft_engine::Session::with_new();
@@ -2138,12 +3072,12 @@ mod tests {
         let mut show = Show::new(&doc, 0, false, true);
         show.grid = true;
         show.zoom = Some(Zoom::at(0.2, 0.3));
-        assert!(show.back_out());
+        assert!(show.back_out(false));
         assert!(!show.grid);
         assert!(show.zoom.is_some(), "closing the grid leaves the zoom");
-        assert!(show.back_out());
+        assert!(show.back_out(false));
         assert!(show.zoom.is_none());
-        assert!(!show.back_out());
+        assert!(!show.back_out(false));
         show.zoom_key();
         assert!(show.zoom_arm);
         show.zoom_key();
@@ -2157,6 +3091,83 @@ mod tests {
         show.zoom = Some(Zoom::at(0.4, 0.6));
         assert!(show.apply(ShowAction::Slide(1), &doc, 1.0));
         assert!(show.zoom.is_none(), "a new slide is shown whole");
+    }
+
+    /// #1128: the presenter drew the notes as plain text, so bullets, numbers and bold were lost
+    /// although the notes pane shows them; the notes stay selectable.
+    #[test]
+    fn presenter_notes_keep_bullets_numbers_and_bold() {
+        use deckcraft_model::text::{Bullet, ParaProps, Paragraph, Run, RunProps, TextBody};
+        let point = |text: &str, bullet: Bullet| Paragraph {
+            level: 1,
+            props: ParaProps { bullet: Some(bullet), ..Default::default() },
+            runs: vec![Run::new(text)],
+            ..Default::default()
+        };
+        let num = || Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: 1 };
+        let notes = TextBody {
+            paragraphs: vec![
+                Paragraph { runs: vec![Run::with("Opening", RunProps { bold: Some(true), ..Default::default() })], ..Default::default() },
+                point("Welcome", Bullet::Char { char: "•".into() }),
+                point("Agenda", num()),
+                point("Demo", num()),
+            ],
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        theme::install_fonts(&ctx);
+        let mut sense = None;
+        let mut out = ctx.run_ui(Default::default(), |ui| sense = Some(presenter_notes(ui, &notes, 24.0).sense));
+        out.textures_delta.clear();
+        assert!(sense.unwrap().senses_drag(), "the notes can be selected, as the plain label could");
+        let mut texts = vec![];
+        let mut stack: Vec<egui::Shape> = out.shapes.into_iter().map(|c| c.shape).collect();
+        while let Some(shape) = stack.pop() {
+            match shape {
+                egui::Shape::Vec(v) => stack.extend(v),
+                egui::Shape::Text(t) => texts.push(t.galley),
+                _ => {}
+            }
+        }
+        let painted: Vec<&str> = texts.iter().map(|g| g.job.text.as_str()).collect();
+        for marker in ["•", "1.", "2."] {
+            assert!(painted.contains(&marker), "{marker} is drawn: {painted:?}");
+        }
+        let notes_galley = texts.iter().find(|g| g.job.text.contains("Agenda")).expect("the notes are drawn");
+        let font_of = |s: &str| {
+            let b = notes_galley.job.text.find(s).unwrap();
+            notes_galley.job.sections.iter().find(|x| (x.byte_range.start.0..x.byte_range.end.0).contains(&b)).unwrap().format.font_id.clone()
+        };
+        assert_eq!(font_of("Opening"), theme::bold(24.0), "bold runs stay bold at the pane's size");
+        assert_eq!(font_of("Agenda"), theme::font(24.0));
+    }
+
+    /// Hidden logic keeps playing from wall time even though `run_logic` leaves egui's input
+    /// time at the last visible frame. A visible pass re-anchors instead of shifting a pause.
+    #[test]
+    fn hidden_logic_advances_the_show_and_visible_frames_reanchor() {
+        let mut s = deckcraft_engine::Session::with_new();
+        s.execute("slide.new", &json!({})).unwrap();
+        let doc = s.active().unwrap().doc.clone();
+        let mut show = Show::new(&doc, 0, false, true);
+        show.started = true;
+        show.step_start = 10.0;
+        show.slide_start = 10.0;
+        show.step_end = 10.0;
+        show.show_start = 10.0;
+        show.last_move = 10.0;
+        show.timer = PresenterTimer::start(10.0);
+        let t0 = web_time::Instant::now();
+        show.observe_visible_frame(10.0, t0);
+        assert_eq!(show.hidden_logic_time(10.0, t0), 10.0, "the first hidden tick starts at the last visible time");
+        let hidden = show.hidden_logic_time(10.0, t0 + std::time::Duration::from_secs(2));
+        assert!((hidden - 12.0).abs() < 1e-9, "hidden logic advances the show time: {hidden}");
+        assert!((show.presenter_elapsed(hidden) - 2.0).abs() < 1e-9, "presenter time keeps running");
+        assert!((show.clock_snapshot().step_start - 10.0).abs() < 1e-9, "the clock origin is not shifted");
+        let later = show.hidden_logic_time(10.0, t0 + std::time::Duration::from_secs(5));
+        assert!((later - 15.0).abs() < 1e-9, "repeated hidden ticks do not stack a pause: {later}");
+        show.observe_visible_frame(20.0, t0 + std::time::Duration::from_secs(10));
+        assert_eq!(show.hidden_logic_time(20.0, t0 + std::time::Duration::from_secs(10)), 20.0, "a visible frame re-anchors");
     }
 
     #[test]
@@ -2231,6 +3242,14 @@ mod tests {
     }
 
     #[test]
+    fn browsed_by_an_individual_stays_in_a_window() {
+        assert!(!show_fills_screen(false, "browsed"));
+        assert!(!show_fills_screen(true, "speaker"));
+        assert!(show_fills_screen(false, "speaker"));
+        assert!(show_fills_screen(false, "kiosk"));
+    }
+
+    #[test]
     fn the_next_preview_fits_its_column_whatever_the_slide_shape() {
         let right = Rect::from_min_size(pos2(700.0, 100.0), vec2(400.0, 600.0));
         let mut s = deckcraft_engine::Session::with_new();
@@ -2245,5 +3264,85 @@ mod tests {
         // 16:9 still takes the column's full width.
         let doc = s.active().unwrap().doc.clone();
         assert_eq!(next_rect(right, &doc).width(), 400.0);
+    }
+
+    #[test]
+    fn back_leaves_a_slide_whose_first_animation_is_with_previous() {
+        // #844: Back on such a slide undid its first step, and the next frame played that step
+        // again by itself, so Back never reached the slide before.
+        let mut session = deckcraft_engine::Session::with_new();
+        session.execute("slide.new", &json!({})).unwrap();
+        let id = session.active().unwrap().doc.slides[1].shapes[0].id;
+        session
+            .execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id.0], "start": "withPrevious", "duration": 500}))
+            .unwrap();
+        let app = SlideApp::new(session, crate::Services::default());
+        let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        harness.key_press(egui::Key::ArrowRight);
+        // The first step plays by itself and ends (0.5 s; a frame is 0.25 s).
+        harness.run_steps(8);
+        let st = &harness.state().show.as_ref().unwrap().state;
+        assert_eq!((st.slide, st.step, st.playing), (1, 1, false), "on slide 2, fully built");
+        for _ in 0..5 {
+            harness.key_press(egui::Key::ArrowLeft);
+            harness.run_steps(2);
+        }
+        let st = &harness.state().show.as_ref().unwrap().state;
+        assert_eq!(st.slide, 0, "five Backs leave slide 2 (step {}, playing {})", st.step, st.playing);
+    }
+
+    /// Click-target state follows show instance, reading/presenter modes, grid, and other layout
+    /// changes instead of retaining a stale target.
+    #[test]
+    fn input_state_tracks_the_modes_that_move_show_click_targets() {
+        let session = deckcraft_engine::Session::with_new();
+        let doc = &session.active().unwrap().doc;
+        let mut show = Show::new(doc, 0, false, false);
+        let base = show.input_state();
+        assert_eq!(show.input_state(), base);
+
+        show.instance += 1;
+        assert_ne!(show.input_state(), base, "a new show instance is a new input target");
+        show.instance = base.instance;
+
+        show.reading = true;
+        assert_ne!(show.input_state(), base, "the reading layout moves the slide");
+        show.reading = false;
+
+        show.presenter = true;
+        assert_ne!(show.input_state(), base, "presenter view changes the available area");
+        show.presenter = false;
+
+        show.grid = true;
+        assert_ne!(show.input_state(), base, "See All Slides replaces the slide with thumbnails");
+        show.grid = false;
+
+        show.pen = true;
+        assert_ne!(show.input_state(), base, "the pen changes what a drag means");
+        show.pen = false;
+
+        show.laser = true;
+        assert_ne!(show.input_state(), base, "the laser changes what a drag means");
+        show.laser = false;
+
+        show.zoom_arm = true;
+        assert_ne!(show.input_state(), base, "armed zoom changes what a click means");
+        show.zoom_arm = false;
+
+        show.zoom = Some(Zoom::at(0.25, 0.75));
+        assert_ne!(show.input_state(), base, "a zoomed slide has a different click mapping");
+        show.zoom = None;
+
+        show.blank = Some(Color32::BLACK);
+        assert_ne!(show.input_state(), base, "a blank screen has no slide click targets");
     }
 }

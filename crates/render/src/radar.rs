@@ -28,8 +28,8 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
     let r = (area.width().min(area.height()) / 2.0 - base * 1.9).max(base);
     let cen = area.center();
     let (min, max, step) = c.axis_scale(false, 5).unwrap_or((0.0, 1.0, 0.2));
-    let span = (max - min).max(1e-9);
-    let ticks = (((max - min) / step.max(1e-12)).round() as i64).clamp(1, 20);
+    let span = crate::chart::positive_span(max - min);
+    let ticks = if step > 0.0 { (((max - min) / step).round() as i64).clamp(1, 20) } else { 1 };
     ctx.set_transform(m);
     ctx.set_stroke(kurbo::Stroke::new(0.75));
     ctx.set_paint(color(grid_col, 1.0));
@@ -120,7 +120,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
                 }
             }
         }
-        if c.data_labels || s.data_labels == Some(true) {
+        if c.series_data_labels(s) {
             for (i, q) in pts.iter().enumerate() {
                 if let Some(v) = s.values.get(i).copied().flatten() {
                     let t = c.data_label(s, v);

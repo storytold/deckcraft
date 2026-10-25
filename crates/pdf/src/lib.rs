@@ -17,7 +17,7 @@ use craft_pdf::write::{self, Metadata, Writer, backend as krilla};
 
 use deckcraft_fonts::FontDb;
 use deckcraft_model::Presentation;
-use deckcraft_model::text::Action as ClickAction;
+use deckcraft_model::text::{Action as ClickAction, safe_url};
 use deckcraft_render::{PlacedText, RenderOpts};
 use krilla::action::{Action, LinkAction};
 use krilla::annotation::{Annotation, LinkAnnotation, Target};
@@ -66,7 +66,7 @@ pub enum PageLayout {
 #[serde(default, rename_all = "camelCase")]
 pub struct PdfOptions {
     pub layout: PageLayout,
-    /// Raster resolution of slide artwork (dots per inch).
+    /// Raster resolution of slide artwork (dots per inch), lowered for a slide whose raster would pass 64M pixels.
     pub dpi: f64,
     /// Slide indices to export (0-based); `None` = all.
     pub slides: Option<Vec<usize>>,
@@ -131,6 +131,33 @@ pub fn export(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     write::guard(|| export_inner(pres, opts))
 }
 
+fn plan_pages(pres: &Presentation, opts: &PdfOptions, slides: &[usize], sw: f64, sh: f64) -> Vec<Vec<(usize, Rect)>> {
+    match opts.layout {
+        PageLayout::Slides => slides.iter().map(|&i| vec![(i, Rect::new(0.0, 0.0, sw, sh))]).collect(),
+        PageLayout::Notes => {
+            let b = notes_frames(pres, opts.paper).0;
+            slides.iter().map(|&i| vec![(i, b)]).collect()
+        }
+        PageLayout::Handouts { per_page } => {
+            let boxes = handout_boxes(per_page, opts.paper, sw / sh);
+            slides.chunks(boxes.len()).map(|c| c.iter().zip(&boxes).map(|(i, b)| (*i, *b)).collect()).collect()
+        }
+    }
+}
+
+fn build_outline(pres: &Presentation, pages: &[Vec<(usize, Rect)>]) -> Outline {
+    let mut outline = Outline::new();
+    for (p, v) in pages.iter().enumerate() {
+        for (i, _) in v {
+            let t = pres.slides[*i].title();
+            let t = t.lines().next().unwrap_or("").trim().to_string();
+            let label = if t.is_empty() { format!("Slide {}", i + 1) } else { format!("{}. {t}", i + 1) };
+            outline.push_child(OutlineNode::new(label, XyzDestination::new(p, Point::from_xy(0.0, 0.0))));
+        }
+    }
+    outline
+}
+
 fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     let slides: Vec<usize> = match &opts.slides {
         Some(v) => v.iter().copied().filter(|i| *i < pres.slides.len()).collect(),
@@ -153,29 +180,10 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
     let mut ex = Exporter { pres, opts, fonts: HashMap::new() };
     // Page plan: per page, the slides on it with their boxes (page points).
-    let pages: Vec<Vec<(usize, Rect)>> = match opts.layout {
-        PageLayout::Slides => slides.iter().map(|&i| vec![(i, Rect::new(0.0, 0.0, sw, sh))]).collect(),
-        PageLayout::Notes => {
-            let b = notes_frames(pres, opts.paper).0;
-            slides.iter().map(|&i| vec![(i, b)]).collect()
-        }
-        PageLayout::Handouts { per_page } => {
-            let boxes = handout_boxes(per_page, opts.paper, sw / sh);
-            slides.chunks(boxes.len()).map(|c| c.iter().zip(&boxes).map(|(i, b)| (*i, *b)).collect()).collect()
-        }
-    };
+    let pages = plan_pages(pres, opts, &slides, sw, sh);
     // Bookmarks and slide → page lookup for internal links.
     let page_of: HashMap<usize, usize> = pages.iter().enumerate().flat_map(|(p, v)| v.iter().map(move |(i, _)| (*i, p))).collect();
-    let mut outline = Outline::new();
-    for (p, v) in pages.iter().enumerate() {
-        for (i, _) in v {
-            let t = pres.slides[*i].title();
-            let t = t.lines().next().unwrap_or("").trim().to_string();
-            let label = if t.is_empty() { format!("Slide {}", i + 1) } else { format!("{}. {t}", i + 1) };
-            outline.push_child(OutlineNode::new(label, XyzDestination::new(p, Point::from_xy(0.0, 0.0))));
-        }
-    }
-    pdf.set_outline(outline);
+    pdf.set_outline(build_outline(pres, &pages));
 
     for v in &pages {
         let (pw, ph) = match opts.layout {
@@ -398,6 +406,41 @@ fn grey(v: u8, opacity: f32) -> Fill {
     }
 }
 
+/// Premultiplied RGBA (the renderer's pixels) to the straight RGBA the writer stores.
+fn straight(rgba: &mut [u8]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = px[3] as u32;
+        if a != 0 && a != 255 {
+            for c in &mut px[..3] {
+                *c = (((*c as u32 * 255 + a / 2) / a).min(255)) as u8;
+            }
+        }
+    }
+}
+
+/// A backdrop raster as one PDF image, composited onto white (slides are normally opaque). Equal
+/// backdrops become equal images, which the writer stores once.
+fn backdrop(mut img: deckcraft_render::Image) -> Image {
+    for px in img.pixels.as_chunks_mut::<4>().0 {
+        let a = px[3] as u32;
+        for c in &mut px[..3] {
+            *c = (*c as u32 + (255 - a)).min(255) as u8;
+        }
+        px[3] = 255;
+    }
+    Image::from_rgba8(img.pixels, img.width, img.height)
+}
+
+/// Most pixels one slide raster may have; it is RGBA, and the backdrop and the content are two rasters.
+const MAX_RASTER_PIXELS: f64 = 64_000_000.0;
+
+/// Render scale for a slide of `slide` units drawn `box_width` points wide at `dpi`, with the total pixel count capped.
+fn raster_scale(box_width: f64, slide: (f64, f64), dpi: f64) -> f64 {
+    let scale = (box_width / 72.0 * dpi.clamp(36.0, 600.0)) / slide.0;
+    let pixels = slide.0 * scale * slide.1 * scale;
+    if pixels > MAX_RASTER_PIXELS { scale * (MAX_RASTER_PIXELS / pixels).sqrt() } else { scale }
+}
+
 impl Exporter<'_> {
     fn font(&mut self, face: &deckcraft_fonts::FontFace) -> Result<Font> {
         if let Some(font) = self.fonts.get(&face.id()) {
@@ -414,26 +457,27 @@ impl Exporter<'_> {
         let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
         let k = b.width() / sw;
         // Raster at the requested dpi relative to the box size on paper.
-        let scale = (b.width() / 72.0 * self.opts.dpi.clamp(36.0, 600.0)) / sw;
-        let img = deckcraft_render::render_slide(pres, i, &RenderOpts { scale, threads: 4, ..Default::default() });
-        if img.width > 0 && img.height > 0 {
-            let (w, h) = (img.width, img.height);
+        let scale = raster_scale(b.width(), (sw, sh), self.opts.dpi);
+        let ropts = RenderOpts { scale, threads: 4, ..Default::default() };
+        // Two rasters per slide: the backdrop (background, master and layout graphics) is the same
+        // on every slide that shares its layout, so the writer stores it once, and the slide's own
+        // shapes draw over it (#845).
+        let back = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Backdrop, &ropts);
+        let front = deckcraft_render::render_slide_part(pres, i, deckcraft_render::SlidePart::Content, &ropts);
+        let (w, h) = (back.width, back.height);
+        if w > 0
+            && h > 0
+            && let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32)
+        {
+            s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
+            s.draw_image(backdrop(back), size);
             // Taken, not copied: a print-resolution slide is ~16 MB.
-            let mut rgba = img.pixels;
-            for px in rgba.as_chunks_mut::<4>().0 {
-                // Composite onto white (slides are normally opaque).
-                let a = px[3] as u32;
-                for c in &mut px[..3] {
-                    *c = (*c as u32 + (255 - a)).min(255) as u8;
-                }
-                px[3] = 255;
+            let mut rgba = front.pixels;
+            if rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0) {
+                straight(&mut rgba);
+                s.draw_image(Image::from_rgba8(rgba, w, h), size);
             }
-            let image = Image::from_rgba8(rgba, w, h);
-            if let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32) {
-                s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
-                s.draw_image(image, size);
-                s.pop();
-            }
+            s.pop();
         }
         if self.opts.frame_slides && self.opts.layout != PageLayout::Slides {
             let p = kurbo::Shape::to_path(&b, 0.1);
@@ -521,7 +565,9 @@ impl Exporter<'_> {
                 slide.and_then(|s| page_of.get(&s)).map(|p| Target::Destination(XyzDestination::new(*p, Point::from_xy(0.0, 0.0)).into()))
             };
             let target = match &l.link.action {
-                ClickAction::Url { url } => Some(Target::Action(Action::Link(LinkAction::new(url.clone())))),
+                // Only the links the slide show opens (web and mail): a reader of the file gets the rest
+                // as plain text.
+                ClickAction::Url { url } if safe_url(url) => Some(Target::Action(Action::Link(LinkAction::new(url.clone())))),
                 ClickAction::Slide { slide } => goto(pres.slides.iter().position(|x| x.id == *slide)),
                 ClickAction::NextSlide => goto(Some(i + 1)),
                 ClickAction::PreviousSlide => goto(i.checked_sub(1)),

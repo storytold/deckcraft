@@ -1,6 +1,6 @@
 //! Synthetic Ogg streams: a small page writer (RFC 3533) and Opus-like packets.
 
-use super::*;
+use super::{Codec, Error, OpusTiming, Packet, Stream, crc32, open, opus_packet_samples, sniff};
 
 /// Write one page holding `segments` (lacing already computed by `lace`).
 fn page(out: &mut Vec<u8>, flags: u8, granule: i64, serial: u32, seq: u32, lacing: &[u8], body: &[u8]) {

@@ -169,3 +169,43 @@ fn dragging_a_section_moves_it_and_keeps_it_collapsed() {
     let (beta, alpha) = (h.get_by_label("Beta").rect(), h.get_by_label("Alpha").rect());
     assert!(beta.top() < alpha.top());
 }
+
+#[test]
+fn ctrl_a_selects_every_slide() {
+    let mut h = harness(false);
+    h.key_combination_modifiers(egui::Modifiers::COMMAND, &[egui::Key::A]);
+    h.run_steps(2);
+    let st = h.state().session.active().unwrap();
+    let all = st.doc.slides.len();
+    assert_eq!(st.selection.slides.len(), all, "Ctrl+A in the sorter selects every slide");
+}
+
+fn selected(h: &Harness<'_, SlideApp>) -> Vec<usize> {
+    let st = h.state().session.active().unwrap();
+    let mut v: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
+    v.sort_unstable();
+    v
+}
+
+#[test]
+fn shift_and_ctrl_shift_clicks_select_ranges() {
+    use egui::Modifiers;
+    let mut h = harness(false);
+    let click = |h: &mut Harness<'_, SlideApp>, n: usize, m: Modifiers| {
+        h.get_by_label(&format!("Slide {n}")).click_modifiers(m);
+        h.run_steps(2);
+    };
+    // Click slide 2, Shift+click slide 4: slides 2–4, slide 4 current.
+    click(&mut h, 2, Modifiers::NONE);
+    click(&mut h, 4, Modifiers::SHIFT);
+    assert_eq!(selected(&h), vec![1, 2, 3]);
+    assert_eq!(h.state().session.active().unwrap().selection.slide, 3);
+    // A second Shift+click extends from slide 2 again, not from slide 4.
+    click(&mut h, 1, Modifiers::SHIFT);
+    assert_eq!(selected(&h), vec![0, 1]);
+    // Click 1, Ctrl+click 2, Ctrl+Shift+click 4: the range joins what is selected.
+    click(&mut h, 1, Modifiers::NONE);
+    click(&mut h, 3, Modifiers::COMMAND);
+    click(&mut h, 4, Modifiers::COMMAND | Modifiers::SHIFT);
+    assert_eq!(selected(&h), vec![0, 2, 3]);
+}

@@ -42,27 +42,17 @@ impl DateTime {
 
     /// A real calendar date and time of day.
     fn is_valid(&self) -> bool {
-        let leap = self.year % 4 == 0 && (self.year % 100 != 0 || self.year % 400 == 0);
-        let days = match self.month {
-            1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
-            4 | 6 | 9 | 11 => 30,
-            2 if leap => 29,
-            2 => 28,
-            _ => return false,
-        };
-        (1..=9999).contains(&self.year) && (1..=days).contains(&self.day) && self.hour < 24 && self.minute < 60 && self.second < 61
+        let date_ok = (1..=9999).contains(&self.year) && chrono::NaiveDate::from_ymd_opt(self.year, self.month, self.day).is_some();
+        date_ok && self.hour < 24 && self.minute < 60 && self.second < 61
     }
 
-    /// Day of the week, 0 = Sunday (days since 1970-01-01, Howard Hinnant's algorithm).
+    /// Day of the week, 0 = Sunday.
     fn weekday(&self) -> usize {
-        let (y, m, d) = (i64::from(self.year), i64::from(self.month), i64::from(self.day));
-        let y = if m <= 2 { y - 1 } else { y };
-        let era = y.div_euclid(400);
-        let yoe = y - era * 400;
-        let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-        let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-        let days = era * 146_097 + doe - 719_468;
-        (days + 4).rem_euclid(7) as usize
+        match chrono::NaiveDate::from_ymd_opt(self.year, self.month, self.day) {
+            // `chrono::Weekday::num_days_from_sunday` is 0 = Sunday.
+            Some(d) => chrono::Datelike::weekday(&d).num_days_from_sunday() as usize,
+            None => 0,
+        }
     }
 }
 
@@ -73,6 +63,25 @@ const DAYS: [&str; 7] = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday",
 pub fn is_date_field(kind: &str) -> bool {
     kind.starts_with("datetime")
 }
+
+/// The date and time field types PowerPoint's Header and Footer and Insert ▸ Date & Time offer,
+/// in the order the dialogs list them. `datetime` and `datetimeFigureOut` are read as `datetime1`
+/// (see [`field_text`]) but are not offered as a choice.
+pub const DATE_KINDS: [&str; 13] = [
+    "datetime1",
+    "datetime2",
+    "datetime3",
+    "datetime4",
+    "datetime5",
+    "datetime6",
+    "datetime7",
+    "datetime8",
+    "datetime9",
+    "datetime10",
+    "datetime11",
+    "datetime12",
+    "datetime13",
+];
 
 /// The text date/time field `kind` shows at `now` in a run of language `lang` (BCP 47, e.g.
 /// `en-US`). `None` when `kind` isn't a date/time type this knows, `now` isn't a real date, or
