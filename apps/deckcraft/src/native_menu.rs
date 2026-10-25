@@ -16,11 +16,13 @@ pub struct NativeMenu {
     view_items: Vec<(&'static str, CheckMenuItem)>,
 }
 
+/// Creates a standard menu item with an identifier, label, and optional accelerator string.
 fn item(id: &'static str, label: &'static str, acc: Option<&'static str>) -> MenuItem {
     let accel = acc.and_then(|a| Accelerator::from_str(a).ok());
     MenuItem::with_id(id, label, true, accel)
 }
 
+/// Builds the DeckCraft application menu (About, Preferences, Services, Hide, Quit).
 fn build_app_menu() -> Submenu {
     let app_menu = Submenu::new("DeckCraft", true);
     let _ = app_menu.append_items(&[
@@ -39,6 +41,7 @@ fn build_app_menu() -> Submenu {
     app_menu
 }
 
+/// Builds the File menu containing presentation lifecycle and document export actions.
 fn build_file_menu() -> Submenu {
     let file = Submenu::new("File", true);
     let _ = file.append_items(&[
@@ -87,6 +90,7 @@ fn build_file_menu() -> Submenu {
     file
 }
 
+/// Builds the Edit menu containing undo/redo, clipboard, find/replace, and selection commands.
 fn build_edit_menu() -> Submenu {
     let edit = Submenu::new("Edit", true);
     let _ = edit.append_items(&[
@@ -129,11 +133,13 @@ fn build_edit_menu() -> Submenu {
     edit
 }
 
+/// Creates a checkable menu item for toggling view modes and options.
 fn check_item(id: &'static str, label: &'static str, checked: bool, acc: Option<&'static str>) -> CheckMenuItem {
     let accel = acc.and_then(|a| Accelerator::from_str(a).ok());
     CheckMenuItem::with_id(id, label, true, checked, accel)
 }
 
+/// Builds the View menu containing presentation view modes, zoom controls, and UI toggles.
 fn build_view_menu(view_items: &mut Vec<(&'static str, CheckMenuItem)>) -> Submenu {
     let view = Submenu::new("View", true);
 
@@ -201,6 +207,7 @@ fn build_view_menu(view_items: &mut Vec<(&'static str, CheckMenuItem)>) -> Subme
     view
 }
 
+/// Builds the Insert menu containing slide, media, shape, and text box insertion commands.
 fn build_insert_menu() -> Submenu {
     let insert = Submenu::new("Insert", true);
     let _ = insert
@@ -298,6 +305,7 @@ fn build_insert_menu() -> Submenu {
     insert
 }
 
+/// Builds the Format menu containing font formatting, text alignment, and object style options.
 fn build_format_menu() -> Submenu {
     let format = Submenu::new("Format", true);
     let _ = format.append_items(&[
@@ -334,6 +342,7 @@ fn build_format_menu() -> Submenu {
     format
 }
 
+/// Builds the Arrange menu containing z-order, grouping, alignment, and distribution commands.
 fn build_arrange_menu() -> Submenu {
     let arrange = Submenu::new("Arrange", true);
     let _ = arrange.append_items(&[
@@ -379,11 +388,12 @@ fn build_arrange_menu() -> Submenu {
     arrange
 }
 
+/// Builds the Tools menu containing spelling, thesaurus, translation, and accessibility options.
 fn build_tools_menu() -> Submenu {
     let tools = Submenu::new("Tools", true);
     let _ = tools.append_items(&[
         &item("dialog:spelling", "Spelling…", None),
-        &item("tools.thesaurus", "Thesaurus…", Some("CTRL+ALT+CMD+R")),
+        &item("review.thesaurusPane", "Thesaurus…", Some("CTRL+ALT+CMD+R")),
         &item("tools.translate", "Translate…", None),
         &item("dialog:language", "Set Proofing Language…", None),
         &item("dialog:preferences", "AutoCorrect Options…", None),
@@ -400,6 +410,7 @@ fn build_tools_menu() -> Submenu {
     tools
 }
 
+/// Builds the Slide Show menu for controlling playback and presentation setup.
 fn build_slide_show_menu() -> Submenu {
     let show = Submenu::new("Slide Show", true);
     let _ = show.append_items(&[
@@ -437,6 +448,7 @@ fn build_slide_show_menu() -> Submenu {
     show
 }
 
+/// Builds the Window menu integrated with macOS system window management.
 fn build_window_menu() -> Submenu {
     let window = Submenu::new("Window", true);
     let _ = window.append_items(&[
@@ -452,6 +464,7 @@ fn build_window_menu() -> Submenu {
     window
 }
 
+/// Builds the Help menu offering command palette search and community support links.
 fn build_help_menu() -> Submenu {
     let help = Submenu::new("Help", true);
     let _ = help.append_items(&[
@@ -464,6 +477,7 @@ fn build_help_menu() -> Submenu {
 }
 
 impl NativeMenu {
+    /// Installs the native macOS menu bar onto NSApp and registers the event handler.
     pub fn install(ctx: &egui::Context) -> NativeMenu {
         let menu = Menu::new();
         let mut view_items = Vec::new();
@@ -495,6 +509,7 @@ impl NativeMenu {
         NativeMenu { _menu: menu, events: rx, view_items }
     }
 
+    /// Polls pending native menu events, dispatches commands to SlideApp, and syncs view states.
     pub fn poll(&self, app: &mut SlideApp, ctx: &egui::Context) {
         while let Ok(event) = self.events.try_recv() {
             let id = event.id().as_ref();
@@ -540,10 +555,10 @@ impl NativeMenu {
                         let _ = app.run("edit.paste", json!({}));
                     }
                     "edit.replace" => {
-                        app.palette = Some((String::new(), 0));
+                        let _ = app.run("app.replace", json!({}));
                     }
                     "slide.reuse" => {
-                        let _ = app.run("app.openDialog", json!({}));
+                        let _ = app.run("app.reuseSlidesDialog", json!({}));
                     }
                     "app.closePresentation" => {
                         if app.session.active().is_none() {
@@ -573,7 +588,7 @@ impl NativeMenu {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
                     }
                     "window.new" => {
-                        let _ = app.run("file.new", json!({}));
+                        let _ = app.run("view.newWindow", json!({}));
                     }
                     "window.arrangeAll" => {
                         app.set_status("Window arrangement is not available yet");
@@ -598,16 +613,16 @@ impl NativeMenu {
                         app.palette = Some((String::new(), 0));
                     }
                     "format.alignLeft" => {
-                        let _ = app.run("text.align", json!({"align": "left"}));
+                        let _ = app.run("format.align", json!({"align": "left"}));
                     }
                     "format.alignCenter" => {
-                        let _ = app.run("text.align", json!({"align": "center"}));
+                        let _ = app.run("format.align", json!({"align": "center"}));
                     }
                     "format.alignRight" => {
-                        let _ = app.run("text.align", json!({"align": "right"}));
+                        let _ = app.run("format.align", json!({"align": "right"}));
                     }
                     "format.justify" => {
-                        let _ = app.run("text.align", json!({"align": "justify"}));
+                        let _ = app.run("format.align", json!({"align": "justify"}));
                     }
                     "format.slideBackground" => {
                         app.ui.pane = Some("background".into());
@@ -655,19 +670,19 @@ impl NativeMenu {
                         let _ = app.run("arrange.distribute", json!({"dir": "vertical"}));
                     }
                     "shape.rect" => {
-                        let _ = app.run("insert.shape", json!({"preset": "rect"}));
+                        let _ = app.run("shape.insert", json!({"preset": "rect"}));
                     }
                     "shape.roundRect" => {
-                        let _ = app.run("insert.shape", json!({"preset": "roundRect"}));
+                        let _ = app.run("shape.insert", json!({"preset": "roundRect"}));
                     }
                     "shape.ellipse" => {
-                        let _ = app.run("insert.shape", json!({"preset": "ellipse"}));
+                        let _ = app.run("shape.insert", json!({"preset": "ellipse"}));
                     }
                     "shape.line" => {
-                        let _ = app.run("insert.shape", json!({"preset": "line"}));
+                        let _ = app.run("shape.insert", json!({"preset": "line"}));
                     }
                     "shape.arrow" => {
-                        let _ = app.run("insert.shape", json!({"preset": "rightArrow"}));
+                        let _ = app.run("shape.insert", json!({"preset": "rightArrow"}));
                     }
                     cmd => {
                         if let Err(e) = app.run(cmd, json!({})) {
