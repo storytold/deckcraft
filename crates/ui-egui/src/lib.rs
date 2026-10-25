@@ -286,7 +286,8 @@ impl Screens {
         if self.list.len() < 2 {
             return None;
         }
-        let presenter = self.current.or(self.primary).filter(|i| self.list.contains(i)).or_else(|| self.list.first().copied())?;
+        let listed = |i: &usize| self.list.contains(i);
+        let presenter = self.current.filter(listed).or(self.primary.filter(listed)).or_else(|| self.list.first().copied())?;
         let slides = self.list.iter().copied().find(|i| *i != presenter)?;
         Some((slides, presenter))
     }

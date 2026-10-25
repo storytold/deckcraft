@@ -2763,6 +2763,7 @@ mod tests {
         assert_eq!(two(None, None).for_presenter_view(), Some((1, 0)));
         // A screen number that isn't listed is ignored.
         assert_eq!(two(Some(7), None).for_presenter_view(), Some((1, 0)));
+        assert_eq!(two(Some(7), Some(1)).for_presenter_view(), Some((0, 1)), "an unlisted current falls back to the main screen");
         let three = Screens { list: vec![0, 2, 3], current: Some(2), primary: None };
         assert_eq!(three.for_presenter_view(), Some((0, 2)));
     }
