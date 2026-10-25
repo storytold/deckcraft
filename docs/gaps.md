@@ -61,6 +61,12 @@ revision history.
 - **Impact:** long-session crash rate is sampled in CI; RSS is not measured directly.
 - **Estimate:** 1–2 h (RSS sampling per platform).
 
+### A control-server timing test may fail under load
+- **Evidence:** `silent_refused_peers_do_not_delay_the_next_refusal` in
+  `apps/deckcraft/src/control_server.rs` asserts that a refusal arrives in under 1 s, so it can
+  fail on a busy machine although the server behaves correctly.
+- **Estimate:** under 1 h (a looser bound or a logical clock).
+
 ## File formats
 
 Detail in [file-format-parity.md](file-format-parity.md).
@@ -260,9 +266,17 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   `review.thesaurus` looks up the selected word (checklist row partial). AutoCorrect has
   PowerPoint's options (two initial capitals, sentence and day capitals, caps lock, fractions, an
   editable replace list), and AutoFormat superscripts ordinals (1st) and starts bulleted and
-  numbered lists (`* `, `1. `, Backspace puts the typed text back) as you type; no undo of a
-  single correction.
-- **Estimate:** 1–2 h (bundle openly licensed dictionaries).
+  numbered lists (`* `, `1. `) as you type; no undo of a single correction. Automatic lists start
+  only while Replace text as you type is on, where PowerPoint has a separate AutoFormat option,
+  and Backspace right after one puts the typed lead back, which PowerPoint does not.
+- **Estimate:** 1–2 h (bundle openly licensed dictionaries; under 1 h for the AutoFormat option).
+
+### Copying text and cell ranges
+- **Evidence:** a copied text range carries no media, so a picture bullet in it is lost when
+  pasted into another deck; the writer saves a bullet whose picture is missing as `•`. A copied
+  range of table cells is tab-separated text, not a table, so pasting it makes text rather than
+  cells.
+- **Estimate:** 2–4 h.
 
 ### Equations
 - **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
@@ -357,6 +371,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
 | 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
 | 2026-10-24 | trivial | Columns dialog (number and spacing of text columns); dialog count 41 → 42 |
