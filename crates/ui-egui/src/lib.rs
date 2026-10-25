@@ -9,6 +9,7 @@
 pub mod animtimeline;
 pub mod backstage;
 pub mod canvas;
+pub mod chartgallery;
 pub mod control;
 pub mod credits;
 pub mod dialogs;

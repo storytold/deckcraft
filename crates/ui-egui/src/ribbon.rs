@@ -1261,15 +1261,17 @@ fn insert(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::SmartArt, "SmartArt", "app.dialog", json!({"id": "smartart"}));
         let r = big_button(ui, Icon::Chart, "Chart", enabled(app, "insert.chart"));
         egui::Popup::menu(&r).show(|ui| {
-            for k in chart_menu_types() {
-                if k.is_none() {
-                    ui.separator();
+            let mut pick = crate::chartgallery::picker(ui, &deckcraft_model::chart::ChartType::MAIN, None);
+            ui.separator();
+            // The Office 2016 types, by name.
+            for k in chart_menu_types().into_iter().skip_while(Option::is_some).flatten() {
+                if ui.button(k.label()).clicked() {
+                    pick = Some(k);
                 }
-                if let Some(k) = k
-                    && ui.button(k.label()).clicked()
-                {
-                    run(app, "insert.chart", json!({"type": format!("{k:?}")}));
-                }
+            }
+            if let Some(k) = pick {
+                run(app, "insert.chart", json!({"type": format!("{k:?}")}));
+                ui.close();
             }
         });
     });
@@ -3077,18 +3079,25 @@ fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
 fn chart_design(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         let r = big_button(ui, Icon::ChangeChartType, "Change\nChart Type", true);
+        let current = app
+            .session
+            .active()
+            .and_then(|d| d.selected_shapes().into_iter().find_map(|s| if let ShapeKind::Chart(c) = &s.kind { Some(c.kind) } else { None }));
         egui::Popup::menu(&r).show(|ui| {
-            for k in chart_menu_types() {
-                let Some(k) = k else {
-                    ui.separator();
-                    continue;
-                };
+            let mut pick = crate::chartgallery::picker(ui, &deckcraft_model::chart::ChartType::MAIN, current);
+            ui.separator();
+            // The Office 2016 types, by name.
+            for k in chart_menu_types().into_iter().skip_while(Option::is_some).flatten() {
                 if ui.button(k.label()).clicked() {
-                    // Replace the chart's type keeping its data.
-                    if let Some(id) = app.session.active().and_then(|d| d.selection.shapes.first().copied()) {
-                        let _ = app.run("chart.type", json!({"id": id.0, "type": format!("{k:?}")}));
-                    }
+                    pick = Some(k);
                 }
+            }
+            if let Some(k) = pick {
+                // Replace the chart's type keeping its data.
+                if let Some(id) = app.session.active().and_then(|d| d.selection.shapes.first().copied()) {
+                    let _ = app.run("chart.type", json!({"id": id.0, "type": format!("{k:?}")}));
+                }
+                ui.close();
             }
         });
         big(app, ui, Icon::EditData, "Edit\nData", "app.dialog", json!({"id": "chartData"}));
