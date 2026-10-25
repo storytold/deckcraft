@@ -394,8 +394,14 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
             let mut c = if let Some(s) = o.get("scheme").and_then(Value::as_str) {
                 ColorRef::scheme(deckcraft_color::SchemeSlot::from_xml(s)?)
             } else if let Some(name) = o.get("preset").and_then(Value::as_str) {
+                if !deckcraft_color::is_preset_name(name) {
+                    return None;
+                }
                 ColorRef { base: deckcraft_model::ColorBase::Preset { name: name.to_string() }, mods: vec![] }
             } else if let Some(name) = o.get("system").and_then(Value::as_str) {
+                if !deckcraft_color::is_system_name(name) {
+                    return None;
+                }
                 let last = deckcraft_color::Rgba::from_hex(o.get("last").and_then(Value::as_str)?)?;
                 ColorRef { base: deckcraft_model::ColorBase::System { name: name.to_string(), last }, mods: vec![] }
             } else {
@@ -657,5 +663,11 @@ mod tests {
         let system = color_value(&json!({"system": "windowText", "last": "#123456"}));
         assert_eq!(system, Some(ColorRef { base: ColorBase::System { name: "windowText".into(), last: Rgba::rgb(0x12, 0x34, 0x56) }, mods: vec![] }));
         assert_eq!(color_value(&json!({"system": "windowText"})), None, "a system color needs its last value");
+        assert_eq!(color_value(&json!({"preset": "notAColor"})), None);
+        assert_eq!(color_value(&json!({"system": "notAColor", "last": "#000000"})), None);
+        for name in ["aliceBlue", "darkBlue", "ltSlateGrey"] {
+            assert!(color_value(&json!({"preset": name})).is_some(), "{name}");
+        }
+        assert!(color_value(&json!({"system": "3dDkShadow", "last": "#000000"})).is_some());
     }
 }
