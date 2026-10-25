@@ -1,7 +1,7 @@
 //! A slide's animation sequence: click steps, effect start times and per-shape state over time.
 
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 use deckcraft_model::anim::{BuildRole, TextBuild, paragraph_build_roles};
 use deckcraft_model::style::Fill;
@@ -88,7 +88,7 @@ struct Effect {
     timing: EffectTiming,
     /// Shared by every paragraph effect of one animation, so a large motion path is not copied
     /// per paragraph.
-    spec: Rc<EffectSpec>,
+    spec: Arc<EffectSpec>,
     after: After,
 }
 
@@ -165,11 +165,14 @@ impl Timeline {
         let accent = scheme.map(|s| s.get(SchemeSlot::Accent1)).unwrap_or(Rgba::rgb(0x15, 0x60, 0x82));
 
         let mut tl = Timeline::default();
+        if slide.animations.is_empty() {
+            return tl;
+        }
         // Every shape by id, built once: resolving each animation's target by tree search would
         // cost shapes x animations.
         let shapes = shape_index(&slide.shapes);
         // Paragraph targets of each shape, worked out for its first by-paragraph animation only.
-        let mut para_cache: HashMap<ShapeId, Rc<Vec<Option<usize>>>> = HashMap::new();
+        let mut para_cache: HashMap<ShapeId, Arc<Vec<Option<usize>>>> = HashMap::new();
         // Group the animations by sequence in one pass, sequences in order of first appearance
         // (main first), so many distinct triggers cost linear work, not a scan per trigger.
         let mut seqs: Vec<(Sequence, Vec<usize>)> = vec![(Sequence::Main, Vec::new())];
@@ -200,8 +203,8 @@ impl Timeline {
                 }
                 let shape = shapes.get(&a.shape).copied();
                 // Paragraph targets of this animation.
-                let paras: Rc<Vec<Option<usize>>> = match (a.paragraph, a.text_build) {
-                    (Some(p), _) => Rc::new(vec![Some(p as usize)]),
+                let paras: Arc<Vec<Option<usize>>> = match (a.paragraph, a.text_build) {
+                    (Some(p), _) => Arc::new(vec![Some(p as usize)]),
                     (None, TextBuild::ByParagraph) => {
                         let cached = para_cache.entry(a.shape).or_insert_with(|| {
                             let mut v: Vec<Option<usize>> = vec![];
@@ -221,15 +224,15 @@ impl Timeline {
                             if v.is_empty() {
                                 v.push(None)
                             }
-                            Rc::new(v)
+                            Arc::new(v)
                         });
-                        Rc::clone(cached)
+                        Arc::clone(cached)
                     }
-                    _ => Rc::new(vec![None]),
+                    _ => Arc::new(vec![None]),
                 };
                 let xf = xfrm_of(a.shape).or_else(|| shape.and_then(|s| s.xfrm)).unwrap_or(Xfrm::new(sw / 4.0, sh / 4.0, sw / 2.0, sh / 2.0));
                 let xf = sanitize_xfrm(xf, sw, sh);
-                let spec = Rc::new(build_spec(a, xf, sw, sh, &resolve));
+                let spec = Arc::new(build_spec(a, xf, sw, sh, &resolve));
                 let dur = secs(a.duration_ms);
                 let delay = secs(a.delay_ms);
                 let until_next_click = a.repeat == u32::MAX;
@@ -298,7 +301,7 @@ impl Timeline {
                             span,
                             class: a.class,
                         },
-                        spec: Rc::clone(&spec),
+                        spec: Arc::clone(&spec),
                         after: after.clone(),
                     });
                 }
