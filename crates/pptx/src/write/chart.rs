@@ -68,46 +68,59 @@ fn sp_pr(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>) {
     w.close("c:spPr");
 }
 
-/// `a:defRPr` carrying the chart's text colour, where PowerPoint keeps it: the paragraph
-/// defaults of a title's rich text and of every `c:txPr`.
-fn def_rpr(w: &mut W, color: Option<&deckcraft_model::ColorRef>) {
+/// `a:defRPr sz` for a text size in points (hundredths, in the range the schema allows).
+fn sz(pt: f64) -> i64 {
+    if pt.is_finite() { (pt * 100.0).round().clamp(100.0, 400_000.0) as i64 } else { 1000 }
+}
+
+/// `a:defRPr` carrying the chart's text colour and size, where PowerPoint keeps them: the
+/// paragraph defaults of a title's rich text and of every `c:txPr`.
+fn def_rpr(w: &mut W, color: Option<&deckcraft_model::ColorRef>, size: Option<f64>) {
+    let a = A::new().o("sz", size.map(sz));
     match color {
         Some(c) => {
-            w.open0("a:defRPr");
+            w.open("a:defRPr", a);
             super::dml::solid(w, c);
             w.close("a:defRPr");
         }
-        None => w.empty0("a:defRPr"),
+        None => w.empty("a:defRPr", a),
     }
 }
 
-/// `c:txPr` with the chart's text colour (`Chart::text_color`) as the default run properties, on
-/// the axes, the legend, the data labels and the chart itself, as PowerPoint writes it. Nothing
-/// without a colour: the theme's default then applies on reading.
+/// `c:txPr` with the chart's text colour (`Chart::text_color`) and size (`Chart::text_size`) as
+/// the default run properties, on the axes, the legend, the data labels and the chart itself, as
+/// PowerPoint writes it. Nothing without either: the theme's default then applies on reading.
 fn tx_pr(w: &mut W, c: &Chart) {
-    let Some(color) = &c.text_color else { return };
+    tx_pr_sized(w, c, c.text_size);
+}
+
+/// [`tx_pr`] with another text size (data labels drawn smaller than the chart's text).
+fn tx_pr_sized(w: &mut W, c: &Chart, size: Option<f64>) {
+    if c.text_color.is_none() && size.is_none() {
+        return;
+    }
     w.open0("c:txPr");
     w.empty0("a:bodyPr");
     w.empty0("a:lstStyle");
     w.open0("a:p");
     w.open0("a:pPr");
-    def_rpr(w, Some(color));
+    def_rpr(w, c.text_color.as_ref(), size);
     w.close("a:pPr");
     w.empty("a:endParaRPr", A::new().a("lang", "en-US"));
     w.close("a:p");
     w.close("c:txPr");
 }
 
-fn rich(w: &mut W, text: &str, color: Option<&deckcraft_model::ColorRef>) {
+fn rich(w: &mut W, text: &str, color: Option<&deckcraft_model::ColorRef>, size: Option<f64>) {
     w.open0("c:tx");
     w.open0("c:rich");
     w.empty0("a:bodyPr");
     w.empty0("a:lstStyle");
     for line in text.split('\n') {
         w.open0("a:p");
-        if color.is_some() {
+        if color.is_some() || size.is_some() {
             w.open0("a:pPr");
-            def_rpr(w, color);
+            def_rpr(w, color, size);
             w.close("a:pPr");
         }
         w.open0("a:r");
@@ -124,10 +137,10 @@ fn rich(w: &mut W, text: &str, color: Option<&deckcraft_model::ColorRef>) {
     w.close("c:tx");
 }
 
-/// A title (the chart's or an axis's) in the chart's text colour.
-fn title(w: &mut W, text: &str, c: &Chart) {
+/// A title (the chart's or an axis's) in the chart's text colour, at `size` points when known.
+fn title(w: &mut W, text: &str, c: &Chart, size: Option<f64>) {
     w.open0("c:title");
-    rich(w, text, c.text_color.as_ref());
+    rich(w, text, c.text_color.as_ref(), size);
     w.val("c:overlay", 0);
     w.close("c:title");
 }
@@ -268,7 +281,7 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
         }
     }
     if let Some(d) = s.data_labels {
-        data_labels(w, c, d);
+        data_labels(w, c, g, d);
     }
     // After labels, before the category and value caches (ECMA-376 series content order).
     if matches!(g, Group::Bar | Group::Line | Group::Area | Group::Scatter) {
@@ -376,9 +389,12 @@ fn trendline(w: &mut W, t: &Trendline) {
     w.close("c:trendline");
 }
 
-fn data_labels(w: &mut W, c: &Chart, show: bool) {
+fn data_labels(w: &mut W, c: &Chart, g: Group, show: bool) {
     w.open0("c:dLbls");
-    tx_pr(w, c);
+    // At the size they are drawn: a bar's or radar point's label at 0.9 of the chart's text, a
+    // slice's at its full size.
+    let size = c.text_size.map(|t| if matches!(g, Group::Bar | Group::Radar) { t * 0.9 } else { t });
+    tx_pr_sized(w, c, size);
     for (n, v) in [
         ("c:showLegendKey", false),
         ("c:showVal", show),
@@ -407,7 +423,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", "b");
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t, c);
+            title(w, t, c, c.text_size);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "out");
@@ -427,7 +443,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.val("c:delete", 0);
         w.val("c:axPos", cat_pos);
         if let Some(t) = &c.axis_titles.0 {
-            title(w, t, c);
+            title(w, t, c, c.text_size);
         }
         w.empty("c:numFmt", A::new().a("formatCode", "General").a("sourceLinked", 1));
         w.val("c:majorTickMark", "none");
@@ -465,7 +481,7 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
         w.empty0("c:minorGridlines");
     }
     if let Some(t) = &c.axis_titles.1 {
-        title(w, t, c);
+        title(w, t, c, c.text_size);
     }
     match c.y_format.as_deref().filter(|f| !f.is_empty()) {
         Some(f) => w.empty("c:numFmt", A::new().a("formatCode", f).a("sourceLinked", 0)),
@@ -523,7 +539,7 @@ fn plot_group(w: &mut W, c: &Chart, kind: ChartType, list: &[(usize, &Series)]) 
         series(w, c, s, *i, kind, g);
     }
     if c.data_labels {
-        data_labels(w, c, true);
+        data_labels(w, c, g, true);
     }
     match g {
         Group::Bar => {
@@ -599,7 +615,15 @@ fn kept_chartex(c: &Chart) -> Option<Vec<u8>> {
 }
 
 /// The chart part XML, and whether it is the original part (so its relationships still apply).
+#[cfg(test)]
 pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
+    chart_xml_in(c, None)
+}
+
+/// [`chart_xml`] for a chart drawn in a `frame` (width, height in points). A chart written from
+/// the model then carries the text sizes DeckCraft draws it at (`Chart::text_sizes`): without
+/// them PowerPoint falls back to 10 pt text and an 18 pt title, whatever the chart's size.
+pub fn chart_xml_in(c: &Chart, frame: Option<(f64, f64)>) -> (Vec<u8>, bool) {
     // Reuse the kept part when the chart is unchanged since it was read.
     if let Some(raw) = &c.raw
         && !raw.contains(NS_CX)
@@ -623,6 +647,16 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
             }
         }
     }
+    // Written from the model: with the frame's size, the sizes the chart is drawn at.
+    let sized;
+    let c = match frame {
+        Some((fw, fh)) => {
+            let (text, title) = c.text_sizes(fw, fh);
+            sized = Chart { text_size: Some(text), title_size: Some(title), ..c.clone() };
+            &sized
+        }
+        None => c,
+    };
     let mut w = W::new();
     w.open("c:chartSpace", A::new().a("xmlns:c", NS_C).a("xmlns:a", NS_A).a("xmlns:r", NS_R));
     w.val("c:date1904", 0);
@@ -631,7 +665,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
     w.open0("c:chart");
     match &c.title {
         Some(t) => {
-            title(&mut w, t, c);
+            title(&mut w, t, c, c.title_size);
             w.val("c:autoTitleDeleted", 0);
         }
         None => w.val("c:autoTitleDeleted", 1),
@@ -1098,5 +1132,52 @@ mod tests {
         assert!(crate::read::chart::read_chart_xml(&xml).unwrap().cat_reversed);
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
+    }
+
+    #[test]
+    fn a_written_chart_carries_the_text_sizes_it_is_drawn_at() {
+        // Without sizes PowerPoint draws 10 pt text and an 18 pt title at any chart size; with
+        // them it draws what DeckCraft draws (whole points: a 560 x 360 chart at 16 and 22 pt).
+        let mut c = Chart::sample(ChartType::Column);
+        c.title = Some("Sales".into());
+        c.axis_titles = (Some("Month".into()), None);
+        c.raw = None;
+        let read = |c: &Chart, frame| crate::read::chart::read_chart_xml(&super::chart_xml_in(c, frame).0).unwrap();
+        let big = read(&c, Some((560.0, 360.0)));
+        assert_eq!((big.text_size, big.title_size), (Some(16.0), Some(22.0)));
+        assert_eq!(c.text_sizes(560.0, 360.0), (16.0, 22.0), "the sizes the renderer draws at");
+        let xml = String::from_utf8(super::chart_xml_in(&c, Some((560.0, 360.0))).0).unwrap();
+        assert!(xml.contains(r#"<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1600"/>"#), "{xml}");
+        assert_eq!(xml.matches(r#"<a:defRPr sz="2200"/>"#).count(), 1, "the chart title");
+        assert!(xml.contains(r#"<c:title><c:tx><c:rich><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1600"/></a:pPr><a:r><a:t>Month"#));
+        // A bar's data labels at the 0.9 of the text they are drawn at, a slice's at all of it.
+        c.series[0].data_labels = Some(true);
+        let labelled = String::from_utf8(super::chart_xml_in(&c, Some((560.0, 360.0))).0).unwrap();
+        assert!(labelled.contains(r#"<c:dLbls><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1440"/>"#), "{labelled}");
+        assert_eq!(read(&c, Some((560.0, 360.0))).text_size, Some(16.0), "labels don't set the chart's size");
+        let mut pie = c.clone();
+        pie.kind = ChartType::Pie;
+        let pie = String::from_utf8(super::chart_xml_in(&pie, Some((560.0, 360.0))).0).unwrap();
+        assert!(pie.contains(r#"<c:dLbls><c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr><a:defRPr sz="1600"/>"#), "{pie}");
+        c.series[0].data_labels = None;
+        let small = read(&c, Some((300.0, 200.0)));
+        assert_eq!((small.text_size, small.title_size), (Some(9.0), Some(13.0)));
+        // The file's own sizes are written back as they are, with or without a frame.
+        c.text_size = Some(11.97);
+        c.title_size = Some(18.62);
+        let own = read(&c, Some((560.0, 360.0)));
+        assert_eq!((own.text_size, own.title_size), (Some(11.97), Some(18.62)));
+        assert_eq!(read(&c, None).text_size, Some(11.97));
+        // No frame and no sizes: none written (the chart keeps choosing its own).
+        c.text_size = None;
+        c.title_size = None;
+        let bare = read(&c, None);
+        assert_eq!((bare.text_size, bare.title_size), (None, None));
+        // With a text colour as well, both go in the same default run properties.
+        c.text_color = Some(ColorRef::rgb(Rgba::rgb(0x40, 0x40, 0x40)));
+        let xml = String::from_utf8(super::chart_xml_in(&c, Some((560.0, 360.0))).0).unwrap();
+        assert!(xml.contains(r#"<a:defRPr sz="1600"><a:solidFill><a:srgbClr val="404040"/></a:solidFill></a:defRPr>"#), "{xml}");
+        let both = read(&c, Some((560.0, 360.0)));
+        assert_eq!((both.text_size, both.title_size, both.text_color), (Some(16.0), Some(22.0), c.text_color.clone()));
     }
 }
