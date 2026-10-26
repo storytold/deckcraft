@@ -9,12 +9,12 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 18 | 24 | 12 | 56% |
+| P2 | 54 | 18 | 25 | 11 | 56% |
 
 | Area | Parity |
 |---|---|
 | Application shell | 81% |
-| Files | 76% |
+| Files | 78% |
 | Slides | 92% |
 | Views | 98% |
 | Masters & themes | 92% |
@@ -58,7 +58,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Files | Open PowerPoint .pptx | P0 | D |
 | Files | Save as PowerPoint .pptx | P0 | D |
 | Files | Open/save .potx/.ppsx/.pptm variants (.potx/.ppsx open and save with their own content types; no .pptm) | P2 | P |
-| Files | Legacy .ppt (binary) import | P2 | M |
+| Files | Legacy .ppt (binary) import (`crates/ppt`; no transitions, animations, links or tables) | P2 | P |
 | Files | Save as template | P1 | D |
 | Files | Autosave and crash recovery | P0 | D |
 | Files | Document properties | P2 | D |

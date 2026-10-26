@@ -1001,6 +1001,7 @@ dependencies = [
  "deckcraft-media",
  "deckcraft-model",
  "deckcraft-pdf",
+ "deckcraft-ppt",
  "deckcraft-pptx",
  "deckcraft-render",
  "deckcraft-text",
@@ -1150,6 +1151,21 @@ dependencies = [
  "serde",
  "thiserror 2.0.21",
  "wasm-bindgen-test",
+]
+
+[[package]]
+name = "deckcraft-ppt"
+version = "0.11.1"
+dependencies = [
+ "deckcraft-color",
+ "deckcraft-engine",
+ "deckcraft-geom",
+ "deckcraft-model",
+ "image",
+ "log",
+ "miniz_oxide 0.9.1",
+ "serde_json",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
