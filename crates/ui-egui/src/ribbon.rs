@@ -875,6 +875,12 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
                 toggle(app, ui, Icon::AlignCenter, "Center", "format.alignCenter", al == "ctr");
                 toggle(app, ui, Icon::AlignRight, "Align Right", "format.alignRight", al == "r");
                 toggle(app, ui, Icon::Justify, "Justify", "format.justify", al == "just");
+                if paragraph_direction_button(ui, "¶←", "Right-to-Left Paragraph", b("rtl"), en).clicked() {
+                    run(app, "format.rtl", json!({"on": true}));
+                }
+                if paragraph_direction_button(ui, "→¶", "Left-to-Right Paragraph", !b("rtl"), en).clicked() {
+                    run(app, "format.rtl", json!({"on": false}));
+                }
                 let r = icon_toggle(ui, Icon::TextDirection, "Text Direction", en, false);
                 egui::Popup::menu(&r).show(|ui| {
                     for (l, d) in [
@@ -904,6 +910,19 @@ fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
             });
         });
     });
+}
+
+/// An explicit paragraph-direction control, shown alongside paragraph alignment.
+fn paragraph_direction_button(
+    ui: &mut Ui,
+    glyph: &str,
+    label: &'static str,
+    selected: bool,
+    enabled: bool,
+) -> egui::Response {
+    let response = ui.add_enabled(enabled, egui::Button::new(glyph).selected(selected).min_size(vec2(26.0, 22.0)));
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
+    response.on_hover_text(label)
 }
 
 /// Shapes gallery popup body: every preset by category. Returns the chosen preset.
