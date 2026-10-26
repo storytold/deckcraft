@@ -605,6 +605,8 @@ pub struct SlideApp {
     capture: capture::Capture,
     styled: bool,
     restyle: bool,
+    /// The desktop appearance the last restyle followed, to restyle again when it changes.
+    last_system_theme: Option<egui::Theme>,
     fonts_ready: bool,
     last_time: f64,
     /// When AutoRecover data was last written (monotonic seconds, not wall time).
@@ -848,6 +850,7 @@ impl SlideApp {
             capture: capture::Capture::default(),
             styled: false,
             restyle: true,
+            last_system_theme: None,
             fonts_ready: false,
             last_time: 0.0,
             last_recovery: 0.0,
@@ -1308,7 +1311,7 @@ impl SlideApp {
             }
             "view.collapseRibbon" => self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed,
             "view.dark" => {
-                let on = self.flag(p, self.ui.brightness == theme::Brightness::Dark);
+                let on = self.flag(p, self.ui.brightness != theme::Brightness::Dark);
                 self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
                 self.restyle = true;
             }
@@ -2078,6 +2081,12 @@ impl SlideApp {
     /// Style, fonts and zoom setup. Runs in a real UI pass, not from `run_logic`, because
     /// `set_fonts`/`set_visuals` only take effect for the pass that lays out the UI.
     fn ui_setup(&mut self, ctx: &egui::Context) -> bool {
+        // Following the system appearance: restyle when the desktop switches light or dark.
+        let system_theme = ctx.system_theme();
+        if self.ui.brightness == theme::Brightness::System && system_theme != self.last_system_theme {
+            self.restyle = true;
+        }
+        self.last_system_theme = system_theme;
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -2092,7 +2101,14 @@ impl SlideApp {
             return false;
         }
         if self.restyle {
-            theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
+            let brightness = match self.ui.brightness {
+                theme::Brightness::System => match system_theme {
+                    Some(egui::Theme::Dark) => theme::Brightness::Dark,
+                    Some(egui::Theme::Light) | None => theme::Brightness::Light,
+                },
+                brightness => brightness,
+            };
+            theme::apply(ctx, &theme::Tokens::for_brightness(brightness));
             self.restyle = false;
         }
         self.fonts_ready = true;

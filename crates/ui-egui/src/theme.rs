@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub enum Brightness {
     #[default]
+    System,
     Light,
     Dark,
 }
@@ -119,7 +120,7 @@ impl Tokens {
     }
     pub fn for_brightness(b: Brightness) -> Self {
         match b {
-            Brightness::Light => Self::light(),
+            Brightness::System | Brightness::Light => Self::light(),
             Brightness::Dark => Self::dark(),
         }
     }
