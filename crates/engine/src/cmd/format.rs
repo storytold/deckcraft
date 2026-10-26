@@ -1373,6 +1373,7 @@ fn state(s: &mut Session, _p: &Value) -> Result<Value> {
         "superscript": r.baseline.unwrap_or(0.0) > 0.0,
         "subscript": r.baseline.unwrap_or(0.0) < 0.0,
         "align": pp.align.map(|a| a.xml()),
+        "rtl": pp.rtl.unwrap_or(false),
         "bullets": matches!(pp.bullet, Some(Bullet::Char { .. })),
         "numbering": matches!(pp.bullet, Some(Bullet::AutoNum { .. })),
         "lang": r.lang,
