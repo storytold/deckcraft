@@ -83,25 +83,25 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 t.text_dim,
             );
             resp.context_menu(|ui| {
-                if ui.button("Rename Section…").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Rename Section…").as_ref()).clicked() {
                     let mut d = crate::dialogs::Dialog::new("renameSection");
                     d.params = json!({"index": si, "name": sec.name});
                     app.dialog = Some(d);
                     ui.close();
                 }
-                if ui.button("Remove Section").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Remove Section").as_ref()).clicked() {
                     let _ = app.run("section.remove", json!({"index": si}));
                     ui.close();
                 }
-                if ui.button("Remove Section & Slides").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Remove Section & Slides").as_ref()).clicked() {
                     let _ = app.run("section.remove", json!({"index": si, "slides": true}));
                     ui.close();
                 }
-                if ui.button("Move Section Up").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Move Section Up").as_ref()).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si.saturating_sub(1)}));
                     ui.close();
                 }
-                if ui.button("Move Section Down").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Move Section Down").as_ref()).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si + 1}));
                     ui.close();
                 }
@@ -235,20 +235,20 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         }
     }
     ui.separator();
-    if ui.button("New Slide").clicked() {
+    if ui.button(crate::locale::text(ui.ctx(), "New Slide").as_ref()).clicked() {
         let _ = app.run("slide.new", json!({}));
         ui.close();
     }
-    if ui.button("Duplicate Slide").clicked() {
+    if ui.button(crate::locale::text(ui.ctx(), "Duplicate Slide").as_ref()).clicked() {
         let _ = app.run("slide.duplicate", json!({}));
         ui.close();
     }
-    if ui.button("Delete Slide").clicked() {
+    if ui.button(crate::locale::text(ui.ctx(), "Delete Slide").as_ref()).clicked() {
         let _ = app.run("slide.delete", json!({}));
         ui.close();
     }
     ui.separator();
-    if ui.button("Add Section").clicked() {
+    if ui.button(crate::locale::text(ui.ctx(), "Add Section").as_ref()).clicked() {
         let _ = app.run("section.add", json!({"at": i}));
         ui.close();
     }
@@ -265,16 +265,23 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
             }
         }
     });
-    if ui.button("Reset Slide").clicked() {
+    if ui.button(crate::locale::text(ui.ctx(), "Reset Slide").as_ref()).clicked() {
         let _ = app.run("slide.reset", json!({}));
         ui.close();
     }
-    if ui.button("Format Background…").clicked() {
+    if ui.button(crate::locale::text(ui.ctx(), "Format Background…").as_ref()).clicked() {
         let _ = app.run("view.pane", json!({"pane": "background"}));
         ui.close();
     }
     let hidden = app.session.active().and_then(|d| d.doc.slides.get(i).map(|s| s.hidden)).unwrap_or(false);
-    if ui.button(if hidden { "Show Slide" } else { "Hide Slide" }).clicked() {
+    if ui
+        .button(if hidden {
+            crate::locale::text(ui.ctx(), "Show Slide").into_owned()
+        } else {
+            crate::locale::text(ui.ctx(), "Hide Slide").into_owned()
+        })
+        .clicked()
+    {
         let _ = app.run("slide.hide", json!({"index": i}));
         ui.close();
     }

@@ -17,6 +17,7 @@ pub mod doc_window;
 pub mod eyedropper;
 pub mod fillui;
 pub mod icons;
+pub mod locale;
 pub mod media;
 pub mod menus;
 pub mod notes;
@@ -281,6 +282,7 @@ pub enum ViewMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    pub language: locale::Language,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -327,6 +329,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            language: locale::Language::default(),
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -2095,6 +2098,15 @@ impl SlideApp {
             theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
             self.restyle = false;
         }
+        let language_changed = locale::prepare_fonts(ctx, self.ui.language, &mut self.ui_fonts);
+        if language_changed {
+            self.restyle = true;
+            if !self.ui_fonts.apply(ctx) {
+                theme::install_fonts_with(ctx, &self.ui_fonts.faces);
+            }
+            ctx.request_discard("install interface translation fonts before layout");
+            return false;
+        }
         self.fonts_ready = true;
         true
     }
@@ -3285,6 +3297,7 @@ impl SlideApp {
     /// route may publish or inspect IME output on its own.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
+        locale::set_context_language(&ctx, self.ui.language);
         if !Self::root_viewport_admitted(&ctx) {
             log::debug!("ignoring SlideApp::ui for render-only viewport {:?}", ctx.viewport_id());
             return;

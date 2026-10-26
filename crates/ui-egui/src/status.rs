@@ -156,16 +156,17 @@ fn shown_text(ui: &Ui, rect: Rect, id: &str, text: &str) {
 /// accessible selected state.
 fn labeled(ui: &mut Ui, icon: Icon, label: &str, on: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
-    let w = 22.0 + ui.fonts_mut(|f| f.layout_no_wrap(label.into(), theme::font(12.0), t.text).size().x) + 8.0;
+    let label = crate::locale::text(ui.ctx(), label);
+    let w = 22.0 + ui.fonts_mut(|f| f.layout_no_wrap(label.as_ref().into(), theme::font(12.0), t.text).size().x) + 8.0;
     let (r, resp) = ui.allocate_exact_size(vec2(w, 20.0), Sense::click());
     if on || resp.hovered() {
         ui.painter().rect_filled(r, CornerRadius::same(4), if on { t.selected } else { t.hover });
     }
     icons::paint(ui.painter(), Rect::from_center_size(pos2(r.min.x + 11.0, r.center().y), vec2(15.0, 15.0)), icon, t.text_dim, false);
-    ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, label, theme::font(12.0), t.text_dim);
+    ui.painter().text(pos2(r.min.x + 22.0, r.center().y), Align2::LEFT_CENTER, label.as_ref(), theme::font(12.0), t.text_dim);
     // The visible label is painted directly, so name the interactive control explicitly and
     // expose the toggle state as selected: a screen reader hears "Notes, pressed" not "Notes".
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label));
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, ui.is_enabled(), on, label.as_ref()));
     resp
 }
 
@@ -214,8 +215,9 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 .max_height(ui.available_height())
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    let hint = crate::locale::text(ui.ctx(), "Click to add notes");
                     crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text("Click to add notes").frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+                        e.id(id).hint_text(hint.as_ref()).frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
                     })
                 })
                 .inner;
@@ -279,11 +281,11 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                             ui.close();
                         }
                     }
-                    if ui.button("Ignore All").clicked() {
+                    if ui.button(crate::locale::text(ui.ctx(), "Ignore All").as_ref()).clicked() {
                         app.squiggles.ignore(&w.word);
                         ui.close();
                     }
-                    if w.delete_from.is_none() && ui.button("Add to Dictionary").clicked() {
+                    if w.delete_from.is_none() && ui.button(crate::locale::text(ui.ctx(), "Add to Dictionary").as_ref()).clicked() {
                         if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
                             app.set_status(e.to_string());
                         }

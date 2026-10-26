@@ -1,5 +1,22 @@
 # Localization parity with PowerPoint
 
+## Taiwan Traditional Chinese draft (2026-10-26)
+
+Preferences ▸ Interface language offers English and 繁體中文. `zh-TW` is persisted with UI state;
+`zh-tw` and `zh-Hant` are loading aliases. Old UI state stays English. Cancel restores the
+language with the other preferences. This is separate from slide spelling/proofing language.
+
+`crates/ui-egui/locales/zh-TW.json` is embedded in desktop and web builds. No external language
+pack download is needed. Ribbon labels, common menus, dialogs, command labels, panes and status
+templates are translated; missing dynamic strings keep English. Slide content, filenames, command
+IDs and protocol values are unchanged. Command search accepts English and translated labels.
+Existing bounded font discovery finds catalog glyphs before painting; no new fonts are bundled.
+
+Machine-assisted draft translated from the project's English strings with Taiwan terminology
+corrections; native review is pending. See [translating.md](translating.md). Older measurements
+below predate this addition.
+
+
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-21 · **Change:** minor (one proofing language for the whole presentation; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 

@@ -147,31 +147,31 @@ fn section_header(app: &mut SlideApp, ui: &mut Ui, h: &Header<'_>) -> Rect {
     let index = h.index;
     let name = h.name.to_string();
     resp.context_menu(|ui| {
-        if ui.button("Rename Section…").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Rename Section…").as_ref()).clicked() {
             let mut d = crate::dialogs::Dialog::new("renameSection");
             d.params = json!({"index": index, "name": name});
             app.dialog = Some(d);
             ui.close();
         }
-        if ui.button("Add Section").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Add Section").as_ref()).clicked() {
             if let Some(at) = app.session.active().map(|st| st.selection.slide) {
                 let _ = app.run("section.add", json!({"at": at}));
             }
             ui.close();
         }
-        if ui.button("Remove Section").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Remove Section").as_ref()).clicked() {
             let _ = app.run("section.remove", json!({"index": index}));
             ui.close();
         }
-        if ui.button("Remove Section & Slides").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Remove Section & Slides").as_ref()).clicked() {
             let _ = app.run("section.remove", json!({"index": index, "slides": true}));
             ui.close();
         }
-        if ui.button("Move Section Up").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Move Section Up").as_ref()).clicked() {
             let _ = app.run("section.move", json!({"index": index, "to": index.saturating_sub(1)}));
             ui.close();
         }
-        if ui.button("Move Section Down").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Move Section Down").as_ref()).clicked() {
             let _ = app.run("section.move", json!({"index": index, "to": index + 1}));
             ui.close();
         }
@@ -421,8 +421,9 @@ pub fn notes_page(app: &mut SlideApp, ui: &mut Ui) {
     let mut draft = draft.filter(|d| focused || d.body == notes).unwrap_or_else(|| crate::notes::Draft::new(&notes));
     let look = crate::notes::Look { size: 14.0, color: Some(Color32::from_gray(30)) };
     let width = notes_rect.width();
+    let hint = crate::locale::text(child.ctx(), "Click to add text");
     let r = crate::notes::editor(&mut child, &mut draft, &look, |e| {
-        e.id(edit_id).hint_text("Click to add text").desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
+        e.id(edit_id).hint_text(hint.as_ref()).desired_width(width).desired_rows(12).frame(egui::Frame::NONE)
     })
     .response
     .response;

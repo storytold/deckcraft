@@ -75,6 +75,27 @@ pub fn faces_for_text(
 }
 
 impl UiFonts {
+    /// Reuse a bounded installed sans face for Taiwan chrome, even if a calligraphic
+    /// or Japanese fallback already happens to cover the same Unicode characters.
+    pub fn prefer_taiwan(&mut self) {
+        for family in ["Microsoft JhengHei UI", "Microsoft JhengHei", "PingFang TC", "Noto Sans CJK TC", "Noto Sans TC"] {
+            let face = FontDb::global().face(family, "Regular");
+            if !face.family.eq_ignore_ascii_case(family) || !face.covers('體') {
+                continue;
+            }
+            if self.faces.iter().any(|present| present.id() == face.id()) {
+                return;
+            }
+            let bytes = face.data().len();
+            let total = self.faces.iter().map(|present| present.data().len()).sum();
+            if accepts_face(bytes, face.is_color()) && aggregate_accepts(total, bytes) {
+                self.faces.insert(0, face);
+                self.changed = true;
+                return;
+            }
+        }
+    }
+
     /// Look at `text` the interface is about to draw; borrow faces for what it can't draw.
     pub fn note(&mut self, ctx: &egui::Context, text: &str) {
         if !text.chars().any(|c| wanted(c) && !self.seen.contains(&c)) {

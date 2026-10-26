@@ -129,10 +129,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let has_sel = !selected.is_empty();
 
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(crate::locale::text(ui.ctx(), "Show All").as_ref()).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.showAll", json!({}));
         }
-        if ui.add(egui::Button::new("Hide All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(crate::locale::text(ui.ctx(), "Hide All").as_ref()).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.hideAll", json!({}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -385,16 +385,26 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
             }
         }
         ui.separator();
-        if ui.button("Rename").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Rename").as_ref()).clicked() {
             app.selpane.renaming = Some((row.id, row.name.clone()));
             app.selpane.rename_started = false;
             ui.close();
         }
-        if ui.button(if row.hidden { "Show" } else { "Hide" }).clicked() {
+        if ui
+            .button(if row.hidden { crate::locale::text(ui.ctx(), "Show").into_owned() } else { crate::locale::text(ui.ctx(), "Hide").into_owned() })
+            .clicked()
+        {
             run(app, "shape.visible", json!({"id": row.id, "visible": row.hidden}));
             ui.close();
         }
-        if ui.button(if row.locked { "Unlock" } else { "Lock" }).clicked() {
+        if ui
+            .button(if row.locked {
+                crate::locale::text(ui.ctx(), "Unlock").into_owned()
+            } else {
+                crate::locale::text(ui.ctx(), "Lock").into_owned()
+            })
+            .clicked()
+        {
             run(app, "shape.lock", json!({"id": row.id}));
             ui.close();
         }

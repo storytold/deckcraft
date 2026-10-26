@@ -215,14 +215,14 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     let id = egui::Id::unique("credits_view");
     let mut v = ui.data_mut(|d| d.get_temp::<View>(id)).unwrap_or_default();
     ui.horizontal_wrapped(|ui| {
-        ui.label("Show");
+        ui.label(crate::locale::text(ui.ctx(), "Show").as_ref());
         for m in NameMode::ALL {
             if ui.selectable_label(v.names == m, m.label()).clicked() {
                 v.names = m;
             }
         }
         ui.separator();
-        let field = ui.label("Sort");
+        let field = ui.label(crate::locale::text(ui.ctx(), "Sort").as_ref());
         let combo = egui::ComboBox::from_id_salt("credits_sort").selected_text(v.key.label().0).show_ui(ui, |ui| {
             for k in SortKey::ALL {
                 if ui.selectable_label(v.key == k, k.label().0).clicked() {
@@ -232,14 +232,18 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
             }
         });
         let _ = combo.response.labelled_by(field.id);
-        if ui.button(if v.ascending { "▲" } else { "▼" }).on_hover_text("Reverse the order").clicked() {
+        if ui
+            .button(if v.ascending { crate::locale::text(ui.ctx(), "▲").into_owned() } else { crate::locale::text(ui.ctx(), "▼").into_owned() })
+            .on_hover_text(crate::locale::text(ui.ctx(), "Reverse the order").into_owned())
+            .clicked()
+        {
             v.ascending = !v.ascending;
         }
         ui.separator();
-        if ui.selectable_label(!v.table, "Grab bag").clicked() {
+        if ui.selectable_label(!v.table, crate::locale::text(ui.ctx(), "Grab bag").as_ref()).clicked() {
             v.table = false;
         }
-        if ui.selectable_label(v.table, "Table").clicked() {
+        if ui.selectable_label(v.table, crate::locale::text(ui.ctx(), "Table").as_ref()).clicked() {
             v.table = true;
         }
     });
@@ -248,14 +252,14 @@ pub fn contributors_ui(ui: &mut egui::Ui) {
     ui.separator();
     egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
         if list.is_empty() {
-            ui.label("No contributor data was built into this copy.");
+            ui.label(crate::locale::text(ui.ctx(), "No contributor data was built into this copy.").as_ref());
         } else if v.table {
             table(ui, &list, &mut v);
         } else {
             ui.horizontal_wrapped(|ui| {
                 for (i, c) in list.iter().enumerate() {
                     if i > 0 {
-                        ui.label(RichText::new("·").weak());
+                        ui.label(RichText::new(crate::locale::text(ui.ctx(), "·").as_ref()).weak());
                     }
                     ui.hyperlink_to(c.name(v.names), format!("https://github.com/{}", c.login)).on_hover_text(c.summary());
                 }
@@ -298,7 +302,7 @@ fn table(ui: &mut egui::Ui, list: &[&Contributor], v: &mut View) {
 /// About ▸ Models: AI models credited in Co-Authored-By trailers.
 pub fn models_ui(ui: &mut egui::Ui) {
     if MODELS.is_empty() {
-        ui.label("No model credits were built into this copy.");
+        ui.label(crate::locale::text(ui.ctx(), "No model credits were built into this copy.").as_ref());
         return;
     }
     let assisted: u64 = MODELS.iter().map(|m| m.commits).max().unwrap_or(0).max(1);

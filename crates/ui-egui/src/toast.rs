@@ -16,16 +16,25 @@ pub struct Toast {
 }
 
 /// The notice for fonts a presentation uses that aren't installed, or `None` when all are.
-pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
+pub fn missing_fonts_message(fonts: &[String], language: crate::locale::Language) -> Option<String> {
     let names = match fonts {
         [] => return None,
         [a] => a.clone(),
+        [a, b] if language == crate::locale::Language::TraditionalChinese => format!("{a}、{b}"),
         [a, b] => format!("{a} and {b}"),
+        [a, b, c] if language == crate::locale::Language::TraditionalChinese => format!("{a}、{b}、{c}"),
         [a, b, c] => format!("{a}, {b} and {c}"),
+        [a, b, c, rest @ ..] if language == crate::locale::Language::TraditionalChinese => {
+            format!("{a}、{b}、{c}，以及其他 {} 種字型", rest.len())
+        }
         [a, b, c, rest @ ..] => format!("{a}, {b}, {c} and {} more", rest.len()),
     };
-    let (it, them) = if fonts.len() == 1 { ("isn't", "it") } else { ("aren't", "them") };
-    Some(format!("{names} {it} installed on this computer. Text that uses {them} is shown in a similar font."))
+
+    Some(crate::locale::format_text(
+        language,
+        "These fonts are not installed on this computer: {names}. Text using them is shown in a similar font.",
+        &[("names", names)],
+    ))
 }
 
 /// Toast the active presentation's missing fonts, once per opened document.
@@ -34,7 +43,7 @@ pub fn note_missing_fonts(app: &mut SlideApp) {
     if !app.fonts_noted.insert(d.uid) {
         return;
     }
-    if let Some(text) = missing_fonts_message(&d.missing_fonts) {
+    if let Some(text) = missing_fonts_message(&d.missing_fonts, app.ui.language) {
         app.toast = Some(Toast { text, at: crate::now_ms() });
     }
 }
@@ -66,7 +75,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                         ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
                     }
                     icons::paint(ui.painter(), r.shrink(3.0), Icon::Close, t.text_dim, false);
-                    if resp.on_hover_text("Close").clicked() {
+                    if resp.on_hover_text(crate::locale::text(ui.ctx(), "Close").into_owned()).clicked() {
                         close = true;
                     }
                 });
@@ -85,11 +94,18 @@ mod tests {
 
     #[test]
     fn the_message_names_the_fonts() {
-        let f = |v: &[&str]| missing_fonts_message(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let f = |v: &[&str]| missing_fonts_message(&v.iter().map(|s| s.to_string()).collect::<Vec<_>>(), crate::locale::Language::English);
         assert_eq!(f(&[]), None);
-        assert_eq!(f(&["Aptos"]).unwrap(), "Aptos isn't installed on this computer. Text that uses it is shown in a similar font.");
-        assert!(f(&["Aptos", "Sora"]).unwrap().starts_with("Aptos and Sora aren't installed"));
-        assert!(f(&["A", "B", "C"]).unwrap().starts_with("A, B and C aren't"));
-        assert!(f(&["A", "B", "C", "D", "E"]).unwrap().starts_with("A, B, C and 2 more aren't"));
+        assert_eq!(f(&["Aptos"]).unwrap(), "These fonts are not installed on this computer: Aptos. Text using them is shown in a similar font.");
+        assert!(f(&["Aptos", "Sora"]).unwrap().contains("Aptos and Sora"));
+        assert!(f(&["A", "B", "C"]).unwrap().contains("A, B and C"));
+        assert!(f(&["A", "B", "C", "D", "E"]).unwrap().contains("A, B, C and 2 more"));
+    }
+
+    #[test]
+    fn missing_fonts_message_is_localized() {
+        let msg = missing_fonts_message(&["Aptos".into(), "Sora".into()], crate::locale::Language::TraditionalChinese).unwrap();
+        assert!(msg.contains("Aptos、Sora"));
+        assert!(msg.contains("未安裝"));
     }
 }

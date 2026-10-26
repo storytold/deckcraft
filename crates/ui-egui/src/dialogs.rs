@@ -83,7 +83,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let mut window = egui::Window::new(crate::locale::text(ctx, title(&d.id)).as_ref())
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
@@ -144,6 +144,8 @@ fn credits_block(ui: &mut Ui, models: bool) -> Rect {
 fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
+    let ok_label = crate::locale::text(ui.ctx(), ok_label);
+    let cancel_label = crate::locale::text(ui.ctx(), "Cancel");
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let t = Tokens::get(ui.ctx());
@@ -152,7 +154,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(cancel_label.as_ref()).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });
@@ -163,6 +165,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
 fn preferences_snapshot(app: &SlideApp) -> Value {
     json!({
         "dark": app.ui.brightness == theme::Brightness::Dark,
+        "language": app.ui.language,
         "uiScale": app.ui.ui_scale,
         "prefs": serde_json::to_value(&app.session.prefs).unwrap_or(Value::Null),
     })
@@ -171,6 +174,9 @@ fn preferences_snapshot(app: &SlideApp) -> Value {
 /// Puts back the settings the Preferences dialog opened with (Cancel, Esc, the close button).
 fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     let Some(before) = d.params.get("before") else { return };
+    if let Some(language) = before.get("language").and_then(|value| serde_json::from_value(value.clone()).ok()) {
+        app.ui.language = language;
+    }
     if let Some(dark) = before.get("dark").and_then(Value::as_bool)
         && dark != (app.ui.brightness == theme::Brightness::Dark)
     {
@@ -189,7 +195,7 @@ fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
 fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
     let mut v = d.get(key, default);
     ui.horizontal(|ui| {
-        let l = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(label));
+        let l = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(crate::locale::text(ui.ctx(), label).as_ref()));
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(180.0)).labelled_by(l.id);
     });
     d.fields.insert(key.into(), v);
@@ -400,7 +406,7 @@ fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.set_min_width(440.0);
     egui::ScrollArea::vertical().max_height(520.0).id_salt("album_body").show(ui, |ui| {
         ui.set_min_width(420.0);
-        ui.label("Pictures in album");
+        ui.label(crate::locale::text(ui.ctx(), "Pictures in album").as_ref());
         let items = album_items(d).unwrap_or_default();
         let mut sel = d.get("sel", "0").parse::<usize>().unwrap_or(0);
         // Fixed height so adding pictures does not push Create past the window.
@@ -416,7 +422,7 @@ fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         });
         d.fields.insert("sel".into(), sel.to_string());
         ui.horizontal(|ui| {
-            if ui.button("Add Pictures…").clicked()
+            if ui.button(crate::locale::text(ui.ctx(), "Add Pictures…").as_ref()).clicked()
                 && let Some(item) = pick_album_picture(app)
             {
                 match album_items(d) {
@@ -430,7 +436,7 @@ fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     None => app.set_status("The picture list is invalid"),
                 }
             }
-            if ui.button("New Text Box").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "New Text Box").as_ref()).clicked() {
                 let text = d.get("boxText", "Text Box");
                 let text = text.trim();
                 if text.is_empty() {
@@ -448,7 +454,7 @@ fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     }
                 }
             }
-            if ui.button("Remove").clicked()
+            if ui.button(crate::locale::text(ui.ctx(), "Remove").as_ref()).clicked()
                 && let Some(mut list) = album_items(d)
                 && let Some(i) = d.get("sel", "0").parse::<usize>().ok()
                 && i < list.len()
@@ -464,36 +470,36 @@ fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ui.label(album_picture_status(&items, sel));
         ui.horizontal_wrapped(|ui| {
             ui.add_enabled_ui(picture, |ui| {
-                if ui.button("Rotate Left").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Rotate Left").as_ref()).clicked() {
                     with_selected_picture(d, |obj| {
                         let cur = obj.get("rot").and_then(Value::as_f64).unwrap_or(0.0);
                         let next = ((cur - 90.0) % 360.0 + 360.0) % 360.0;
                         obj.insert("rot".into(), json!(next));
                     });
                 }
-                if ui.button("Rotate Right").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Rotate Right").as_ref()).clicked() {
                     with_selected_picture(d, |obj| {
                         let cur = obj.get("rot").and_then(Value::as_f64).unwrap_or(0.0);
                         let next = ((cur + 90.0) % 360.0 + 360.0) % 360.0;
                         obj.insert("rot".into(), json!(next));
                     });
                 }
-                if ui.button("More Brightness").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "More Brightness").as_ref()).clicked() {
                     nudge_picture(d, "brightness", 0.1);
                 }
-                if ui.button("Less Brightness").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Less Brightness").as_ref()).clicked() {
                     nudge_picture(d, "brightness", -0.1);
                 }
-                if ui.button("More Contrast").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "More Contrast").as_ref()).clicked() {
                     nudge_picture(d, "contrast", 0.1);
                 }
-                if ui.button("Less Contrast").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Less Contrast").as_ref()).clicked() {
                     nudge_picture(d, "contrast", -0.1);
                 }
             });
         });
         ui.add_space(4.0);
-        ui.label("Picture layout");
+        ui.label(crate::locale::text(ui.ctx(), "Picture layout").as_ref());
         album_choice(
             ui,
             d,
@@ -511,7 +517,7 @@ fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ("4title", "4 pictures with title"),
             ],
         );
-        ui.label("Frame shape");
+        ui.label(crate::locale::text(ui.ctx(), "Frame shape").as_ref());
         album_choice(
             ui,
             d,
@@ -523,7 +529,7 @@ fn photo_album_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         );
         check(ui, d, "Captions under pictures", "captions", false);
         check(ui, d, "ALL pictures black and white", "grayscale", false);
-        ui.label("Album theme");
+        ui.label(crate::locale::text(ui.ctx(), "Album theme").as_ref());
         album_choice(ui, d, "album_theme", "Album theme", "theme", "DeckCraft", &ALBUM_THEMES.iter().map(|n| (*n, *n)).collect::<Vec<_>>());
     });
     let captions = d.fields.get("captions").is_some_and(|v| v == "1");
@@ -654,7 +660,7 @@ fn theme_colors_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool 
     ui.add_space(6.0);
     let mut name = d.get("schemeName", "");
     ui.horizontal(|ui| {
-        ui.label("Name:");
+        ui.label(crate::locale::text(ui.ctx(), "Name:").as_ref());
         let resp = ui.add(egui::TextEdit::singleline(&mut name).desired_width(280.0).id_salt("schemeName"));
         let shown = name.clone();
         resp.widget_info(move || {
@@ -994,8 +1000,8 @@ fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     let mut mode = d.get("mode", "percent");
     let mut percent = d.get("percent", "100");
-    ui.label("Zoom to");
-    if ui.radio(mode == "fit", "Fit").clicked() {
+    ui.label(crate::locale::text(ui.ctx(), "Zoom to").as_ref());
+    if ui.radio(mode == "fit", crate::locale::text(ui.ctx(), "Fit").as_ref()).clicked() {
         mode = "fit".into();
     }
     for pct in ZOOM_PRESETS {
@@ -1006,7 +1012,7 @@ fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     }
     ui.horizontal(|ui| {
-        let l = ui.label("Percent:");
+        let l = ui.label(crate::locale::text(ui.ctx(), "Percent:").as_ref());
         let edit = ui.add(egui::TextEdit::singleline(&mut percent).desired_width(72.0)).labelled_by(l.id);
         if edit.changed() {
             mode = "percent".into();
@@ -1110,7 +1116,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 put_slide_dim(d, "w", cur.width, ppu);
                 put_slide_dim(d, "h", cur.height, ppu);
             }
-            let label = ui.label("Slides sized for:");
+            let label = ui.label(crate::locale::text(ui.ctx(), "Slides sized for:").as_ref());
             let preset = d.get("preset", "");
             let combo = egui::ComboBox::from_id_salt("sizes").selected_text(if preset.is_empty() { "Custom" } else { &preset }).show_ui(ui, |ui| {
                 for (label, w, h) in deckcraft_model::defaults::SLIDE_SIZES {
@@ -1128,9 +1134,9 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             field(ui, d, &format!("Height ({abbr}):"), "h", &h_seed);
             let (w, h) = (slide_dim_points(d, "w", ppu, cur.width), slide_dim_points(d, "h", ppu, cur.height));
             ui.horizontal(|ui| {
-                ui.label("Orientation:");
-                let portrait = ui.radio(h > w, "Portrait").clicked();
-                let landscape = ui.radio(w >= h, "Landscape").clicked();
+                ui.label(crate::locale::text(ui.ctx(), "Orientation:").as_ref());
+                let portrait = ui.radio(h > w, crate::locale::text(ui.ctx(), "Portrait").as_ref()).clicked();
+                let landscape = ui.radio(w >= h, crate::locale::text(ui.ctx(), "Landscape").as_ref()).clicked();
                 // Picking the other orientation swaps the width and height fields.
                 if portrait && w > h || landscape && h > w {
                     put_slide_dim(d, "w", h, ppu);
@@ -1159,7 +1165,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let label = rows.iter().find(|(k, _)| *k == fmt).map(|(_, s)| s.clone()).unwrap_or_else(|| fmt.clone());
             ui.add_enabled_ui(date && automatic, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label("  Format:");
+                    ui.label(crate::locale::text(ui.ctx(), "  Format:").as_ref());
                     egui::ComboBox::from_id_salt("hf-date-format").selected_text(label).width(200.0).show_ui(ui, |ui| {
                         for (kind, sample) in &rows {
                             if ui.selectable_label(fmt == *kind, sample).clicked() {
@@ -1177,9 +1183,9 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let mut apply_all = false;
             let mut apply = false;
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                apply_all = ui.button("Apply to All").clicked();
-                apply = ui.button("Apply").clicked();
-                if ui.button("Cancel").clicked() {
+                apply_all = ui.button(crate::locale::text(ui.ctx(), "Apply to All").as_ref()).clicked();
+                apply = ui.button(crate::locale::text(ui.ctx(), "Apply").as_ref()).clicked();
+                if ui.button(crate::locale::text(ui.ctx(), "Cancel").as_ref()).clicked() {
                     d.fields.insert("cancel".into(), "1".into());
                 }
             });
@@ -1208,13 +1214,13 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let slide_default = seed.slide.to_string();
             let mode = d.get("mode", seed.mode);
             ui.horizontal(|ui| {
-                if ui.selectable_label(mode == "url", "Web Page or File").clicked() {
+                if ui.selectable_label(mode == "url", crate::locale::text(ui.ctx(), "Web Page or File").as_ref()).clicked() {
                     d.fields.insert("mode".into(), "url".into());
                 }
-                if ui.selectable_label(mode == "slide", "This Document").clicked() {
+                if ui.selectable_label(mode == "slide", crate::locale::text(ui.ctx(), "This Document").as_ref()).clicked() {
                     d.fields.insert("mode".into(), "slide".into());
                 }
-                if ui.selectable_label(mode == "email", "Email Address").clicked() {
+                if ui.selectable_label(mode == "email", crate::locale::text(ui.ctx(), "Email Address").as_ref()).clicked() {
                     d.fields.insert("mode".into(), "email".into());
                 }
             });
@@ -1254,7 +1260,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "setupShow" => {
             let sh = app.session.active().map(|s| s.doc.show.clone()).unwrap_or_default();
             let ty = d.get("type", &sh.show_type);
-            ui.label("Show type");
+            ui.label(crate::locale::text(ui.ctx(), "Show type").as_ref());
             for (l, v) in [
                 ("Presented by a speaker (full screen)", "speaker"),
                 ("Browsed by an individual (window)", "browsed"),
@@ -1270,10 +1276,10 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let ut = check(ui, d, "Use timings, if present", "ut", sh.use_timings);
             let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
             let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
-            let field = ui.label("Slides");
+            let field = ui.label(crate::locale::text(ui.ctx(), "Slides").as_ref());
             let label = if chosen.is_empty() { "All slides".to_string() } else { chosen.clone() };
             let combo = egui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
-                if ui.selectable_label(chosen.is_empty(), "All slides").clicked() {
+                if ui.selectable_label(chosen.is_empty(), crate::locale::text(ui.ctx(), "All slides").as_ref()).clicked() {
                     d.fields.insert("custom".into(), String::new());
                 }
                 for n in &names {
@@ -1300,7 +1306,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
             let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
             ui.label(egui::RichText::new(format!("Do you want to save the changes you made to {what}?")).strong());
-            ui.label("Your changes will be lost if you don't save them.");
+            ui.label(crate::locale::text(ui.ctx(), "Your changes will be lost if you don't save them.").as_ref());
             ui.add_space(8.0);
             let mut done = false;
             ui.horizontal(|ui| {
@@ -1331,7 +1337,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             // File › Close and Ctrl+W on a presentation with unsaved changes.
             let Some(name) = app.session.active().map(|d| d.title()) else { return true };
             ui.label(egui::RichText::new(format!("Do you want to save the changes you made to “{name}”?")).strong());
-            ui.label("Your changes will be lost if you don't save them.");
+            ui.label(crate::locale::text(ui.ctx(), "Your changes will be lost if you don't save them.").as_ref());
             ui.add_space(8.0);
             let mut done = false;
             ui.horizontal(|ui| {
@@ -1443,7 +1449,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 let _ = combo.response.labelled_by(field.id);
             });
             ui.horizontal(|ui| {
-                if ui.button("None").on_hover_text("Remove bullets and numbering").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "None").as_ref()).on_hover_text("Remove bullets and numbering").clicked() {
                     d.fields.insert("none".into(), "1".into());
                 }
             });
@@ -1520,7 +1526,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             };
             pick(d, ui, "none", "None");
             ui.horizontal(|ui| {
-                let field = ui.radio(hyperlink, "Hyperlink to:");
+                let field = ui.radio(hyperlink, crate::locale::text(ui.ctx(), "Hyperlink to:").as_ref());
                 if field.clicked() && !hyperlink {
                     d.fields.insert("kind".into(), "next".into());
                 }
@@ -1562,7 +1568,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
                 "customShow" => {
                     if shows.is_empty() {
-                        ui.label("This presentation has no custom shows (Slide Show ▸ Custom Slide Show).");
+                        ui.label(crate::locale::text(ui.ctx(), "This presentation has no custom shows (Slide Show ▸ Custom Slide Show).").as_ref());
                     }
                     let sel = d.get("arg", if cur_kind == "customShow" { &cur_arg } else { shows.first().map_or("", String::as_str) });
                     for n in &shows {
@@ -1606,7 +1612,10 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     (cur, deco)
                 })
                 .unwrap_or_default();
-            ui.label("How would you describe this object and its context to someone who is blind or has low vision?");
+            ui.label(
+                crate::locale::text(ui.ctx(), "How would you describe this object and its context to someone who is blind or has low vision?")
+                    .as_ref(),
+            );
             let mut v = d.get("text", &cur);
             ui.add(egui::TextEdit::multiline(&mut v).hint_text("Alt text").desired_rows(4).desired_width(340.0));
             d.fields.insert("text".into(), v.clone());
@@ -1618,7 +1627,10 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ok || cancel
         }
         "outline" => {
-            ui.label("Paste or type an outline. Unindented lines become slide titles; tab-indented lines become bullets.");
+            ui.label(
+                crate::locale::text(ui.ctx(), "Paste or type an outline. Unindented lines become slide titles; tab-indented lines become bullets.")
+                    .as_ref(),
+            );
             let mut v = d.get("text", "");
             ui.add(egui::TextEdit::multiline(&mut v).hint_text("Outline").desired_rows(10).desired_width(380.0).code_editor());
             d.fields.insert("text".into(), v.clone());
@@ -1672,7 +1684,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
             });
             let mut keep = d.params.get("keep").and_then(Value::as_bool).unwrap_or(false);
-            if ui.checkbox(&mut keep, "Keep source formatting").changed()
+            if ui.checkbox(&mut keep, crate::locale::text(ui.ctx(), "Keep source formatting").as_ref()).changed()
                 && let Some(o) = d.params.as_object_mut()
             {
                 o.insert("keep".into(), json!(keep));
@@ -1708,7 +1720,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "paragraph" => paragraph_dialog(app, ui, d),
         "tabs" => tabs_dialog(app, ui, d),
         "export" => {
-            ui.label("Export the presentation as:");
+            ui.label(crate::locale::text(ui.ctx(), "Export the presentation as:").as_ref());
             let fmt = d.get("fmt", "pdf");
             for (l, f) in [
                 ("PDF document (.pdf)", "pdf"),
@@ -1728,7 +1740,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             if fmt == "pdf" {
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    let field = ui.label("Print layout:");
+                    let field = ui.label(crate::locale::text(ui.ctx(), "Print layout:").as_ref());
                     let combo = egui::ComboBox::from_id_salt("pdf_layout")
                         .selected_text(match pdf_layout.as_str() {
                             "notes" => "Notes Pages",
@@ -1759,7 +1771,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     let _ = combo.response.labelled_by(field.id);
                 });
                 let mut hidden = d.get("pdfHidden", "false") == "true";
-                if ui.checkbox(&mut hidden, "Include hidden slides").changed() {
+                if ui.checkbox(&mut hidden, crate::locale::text(ui.ctx(), "Include hidden slides").as_ref()).changed() {
                     d.fields.insert("pdfHidden".into(), hidden.to_string());
                 }
             }
@@ -1813,7 +1825,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let mut from = d.get("from", used.first().map(String::as_str).unwrap_or(""));
             let mut to = d.get("to", "");
             egui::Grid::new("replace_fonts").num_columns(2).spacing(vec2(10.0, 8.0)).show(ui, |ui| {
-                let field = ui.label("Replace:");
+                let field = ui.label(crate::locale::text(ui.ctx(), "Replace:").as_ref());
                 let combo = egui::ComboBox::from_id_salt("rf_from").width(240.0).selected_text(from.clone()).show_ui(ui, |ui| {
                     for f in &used {
                         ui.selectable_value(&mut from, f.clone(), f);
@@ -1821,7 +1833,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 });
                 let _ = combo.response.labelled_by(field.id);
                 ui.end_row();
-                ui.label("With:");
+                ui.label(crate::locale::text(ui.ctx(), "With:").as_ref());
                 ui.vertical(|ui| {
                     ui.add(egui::TextEdit::singleline(&mut to).desired_width(240.0).hint_text("Font name"));
                     let needle = to.trim().to_lowercase();
@@ -1855,7 +1867,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             cancel
         }
         "symbol" => {
-            ui.label("Click a symbol to insert it at the insertion point.");
+            ui.label(crate::locale::text(ui.ctx(), "Click a symbol to insert it at the insertion point.").as_ref());
             let groups: [(&str, &str); 6] = [
                 ("Punctuation", "–—‘’“”…•·§¶†‡‰′″‹›«»¡¿"),
                 ("Currency", "$€£¥¢₹₩₽₺₿"),
@@ -1881,7 +1893,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ok || cancel
         }
         "equation" => {
-            ui.label("Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).");
+            ui.label(crate::locale::text(ui.ctx(), "Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).").as_ref());
             let mut v = d.get("eq", "");
             ui.add(egui::TextEdit::singleline(&mut v).hint_text("Equation").desired_width(340.0).font(theme::font(15.0)));
             d.fields.insert("eq".into(), v.clone());
@@ -1906,7 +1918,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ];
             let has_shapes = !app.session.clipboard.shapes.is_empty();
             let mut cur = d.get("as", "destinationTheme");
-            ui.label("As:");
+            ui.label(crate::locale::text(ui.ctx(), "As:").as_ref());
             for (id, label) in OPTS {
                 let ok = has_shapes || matches!(id, "destinationTheme" | "text");
                 ui.add_enabled_ui(ok, |ui| ui.radio_value(&mut cur, id.to_string(), label));
@@ -1949,7 +1961,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ),
             };
             if list.is_empty() {
-                ui.label("The spelling check is complete. No issues found.");
+                ui.label(crate::locale::text(ui.ctx(), "The spelling check is complete. No issues found.").as_ref());
             }
             let mut add_ignore = None;
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
@@ -2069,7 +2081,13 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let v = app.session.execute("review.accessibility", &json!({})).unwrap_or_default();
             let list = v.as_array().cloned().unwrap_or_default();
             if list.is_empty() {
-                ui.label("No accessibility issues found. People with disabilities should not have difficulty reading this document.");
+                ui.label(
+                    crate::locale::text(
+                        ui.ctx(),
+                        "No accessibility issues found. People with disabilities should not have difficulty reading this document.",
+                    )
+                    .as_ref(),
+                );
             }
             egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                 for item in &list {
@@ -2101,12 +2119,12 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let has_sel = deckcraft_engine::cmd::has_text_or_shapes(&app.session).is_ok();
             let mut all = !has_sel || d.get("scope", "") == "all";
             ui.horizontal(|ui| {
-                ui.label("Apply to:");
+                ui.label(crate::locale::text(ui.ctx(), "Apply to:").as_ref());
                 if ui.add_enabled(has_sel, egui::RadioButton::new(!all, "Selected text")).clicked() {
                     d.fields.insert("scope".into(), "sel".into());
                     all = false;
                 }
-                if ui.radio(all, "Whole presentation").clicked() {
+                if ui.radio(all, crate::locale::text(ui.ctx(), "Whole presentation").as_ref()).clicked() {
                     d.fields.insert("scope".into(), "all".into());
                     all = true;
                 }
@@ -2129,7 +2147,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             });
             ui.add_space(4.0);
             ui.label(egui::RichText::new("Spelling is checked for languages marked (dictionary).").small().weak());
-            if ui.checkbox(&mut no_proof, "Do not check spelling or grammar").changed() {
+            if ui.checkbox(&mut no_proof, crate::locale::text(ui.ctx(), "Do not check spelling or grammar").as_ref()).changed() {
                 d.fields.insert("noProof".into(), if no_proof { "1".into() } else { String::new() });
             }
             let (ok, cancel) = buttons(ui, "OK");
@@ -2174,11 +2192,11 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     .find_map(|x| if let deckcraft_model::ShapeKind::Chart(c) = &x.kind { Some(((**c).clone(), x.id)) } else { None })
             });
             let Some((c, id)) = ch else {
-                ui.label("Select a chart first.");
+                ui.label(crate::locale::text(ui.ctx(), "Select a chart first.").as_ref());
                 let (ok, cancel) = buttons(ui, "Close");
                 return ok || cancel;
             };
-            ui.label("Edit the data: first row = series names, first column = categories.");
+            ui.label(crate::locale::text(ui.ctx(), "Edit the data: first row = series names, first column = categories.").as_ref());
             let mut grid: Vec<Vec<String>> = d.params.get("grid").and_then(|g| serde_json::from_value(g.clone()).ok()).unwrap_or_else(|| {
                 let mut g = vec![std::iter::once(String::new()).chain(c.series.iter().map(|s| s.name.clone())).collect::<Vec<_>>()];
                 for (i, cat) in c.categories.iter().enumerate() {
@@ -2199,11 +2217,11 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 }
             });
             ui.horizontal(|ui| {
-                if ui.button("+ Row").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "+ Row").as_ref()).clicked() {
                     let n = grid.first().map(Vec::len).unwrap_or(2);
                     grid.push(vec![String::new(); n]);
                 }
-                if ui.button("+ Series").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "+ Series").as_ref()).clicked() {
                     for r in grid.iter_mut() {
                         r.push(String::new());
                     }
@@ -2241,7 +2259,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             ok || cancel
         }
         "smartart" => {
-            ui.label("Pick a graphic; type one item per line.");
+            ui.label(crate::locale::text(ui.ctx(), "Pick a graphic; type one item per line.").as_ref());
             let kind = d.get("kind", "process");
             ui.horizontal_wrapped(|ui| {
                 for (k, l) in [
@@ -2288,21 +2306,21 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
         "autocorrect" => {
             let pr = &mut app.session.prefs;
-            ui.checkbox(&mut pr.ac_two_initials, "Correct TWo INitial CApitals");
-            ui.checkbox(&mut pr.ac_sentence_caps, "Capitalize first letter of sentences");
-            ui.checkbox(&mut pr.ac_days, "Capitalize names of days");
-            ui.checkbox(&mut pr.ac_caps_lock, "Correct accidental use of cAPS LOCK key");
-            ui.checkbox(&mut pr.ac_fractions, "Replace fractions (1/2) with fraction characters (½)");
-            ui.checkbox(&mut pr.ac_ordinals, "Ordinals (1st) with superscript");
-            ui.checkbox(&mut pr.ac_lists, "Automatic bulleted and numbered lists");
-            ui.checkbox(&mut pr.autocorrect, "Replace text as you type");
+            ui.checkbox(&mut pr.ac_two_initials, crate::locale::text(ui.ctx(), "Correct TWo INitial CApitals").as_ref());
+            ui.checkbox(&mut pr.ac_sentence_caps, crate::locale::text(ui.ctx(), "Capitalize first letter of sentences").as_ref());
+            ui.checkbox(&mut pr.ac_days, crate::locale::text(ui.ctx(), "Capitalize names of days").as_ref());
+            ui.checkbox(&mut pr.ac_caps_lock, crate::locale::text(ui.ctx(), "Correct accidental use of cAPS LOCK key").as_ref());
+            ui.checkbox(&mut pr.ac_fractions, crate::locale::text(ui.ctx(), "Replace fractions (1/2) with fraction characters (½)").as_ref());
+            ui.checkbox(&mut pr.ac_ordinals, crate::locale::text(ui.ctx(), "Ordinals (1st) with superscript").as_ref());
+            ui.checkbox(&mut pr.ac_lists, crate::locale::text(ui.ctx(), "Automatic bulleted and numbered lists").as_ref());
+            ui.checkbox(&mut pr.autocorrect, crate::locale::text(ui.ctx(), "Replace text as you type").as_ref());
             ui.add_space(4.0);
             let mut from = d.get("from", "");
             let mut to = d.get("to", "");
             ui.horizontal(|ui| {
-                let l = ui.label("Replace");
+                let l = ui.label(crate::locale::text(ui.ctx(), "Replace").as_ref());
                 ui.add(egui::TextEdit::singleline(&mut from).desired_width(90.0)).labelled_by(l.id);
-                let l = ui.label("With");
+                let l = ui.label(crate::locale::text(ui.ctx(), "With").as_ref());
                 ui.add(egui::TextEdit::singleline(&mut to).desired_width(130.0)).labelled_by(l.id);
                 if ui.add_enabled(!from.trim().is_empty(), egui::Button::new("Add")).clicked() {
                     run(app, "text.autocorrect", json!({"add": [from.trim(), to]}));
@@ -2338,9 +2356,20 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             if d.params.get("before").is_none() {
                 d.params = json!({ "before": preferences_snapshot(app) });
             }
+            ui.horizontal(|ui| {
+                let name = crate::locale::text(ui.ctx(), "Interface language").into_owned();
+                let interface = app.ui.language;
+                ui.label(&name);
+                let combo = egui::ComboBox::from_id_salt("interface-language").selected_text(app.ui.language.label_in(interface)).show_ui(ui, |ui| {
+                    for language in [crate::locale::Language::English, crate::locale::Language::TraditionalChinese] {
+                        ui.selectable_value(&mut app.ui.language, language, language.label_in(interface));
+                    }
+                });
+                combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name.clone()));
+            });
             ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
             let mut dark = app.ui.brightness == theme::Brightness::Dark;
-            if ui.checkbox(&mut dark, "Dark appearance").changed() {
+            if ui.checkbox(&mut dark, crate::locale::text(ui.ctx(), "Dark appearance").as_ref()).changed() {
                 let _ = app.run("view.dark", json!({"on": dark}));
             }
             // While the pointer holds the slider its value only waits in the dialog: applying it
@@ -2364,18 +2393,18 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
             // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
             ui.horizontal(|ui| {
-                ui.label("Measurement units:");
+                ui.label(crate::locale::text(ui.ctx(), "Measurement units:").as_ref());
                 let units = &mut app.session.prefs.units;
                 ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
                 ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
             });
             ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-            ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-            ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-            ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+            ui.checkbox(&mut app.session.prefs.smart_guides, crate::locale::text(ui.ctx(), "Show smart guides").as_ref());
+            ui.checkbox(&mut app.session.prefs.snap_to_grid, crate::locale::text(ui.ctx(), "Snap objects to grid").as_ref());
+            ui.checkbox(&mut app.session.prefs.smart_quotes, crate::locale::text(ui.ctx(), "Replace straight quotes with smart quotes").as_ref());
             ui.horizontal(|ui| {
-                ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-                if ui.button("AutoCorrect Options…").clicked() {
+                ui.checkbox(&mut app.session.prefs.autocorrect, crate::locale::text(ui.ctx(), "AutoCorrect as you type").as_ref());
+                if ui.button(crate::locale::text(ui.ctx(), "AutoCorrect Options…").as_ref()).clicked() {
                     *d = Dialog::new("autocorrect");
                 }
             });
@@ -2383,7 +2412,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 return false;
             }
             ui.horizontal(|ui| {
-                let label = ui.label("Your name (comments):");
+                let label = ui.label(crate::locale::text(ui.ctx(), "Your name (comments):").as_ref());
                 // Name the field for assistive technology; a bare text edit next to a label is an
                 // unnamed input in egui 0.37's accessibility tree.
                 let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
@@ -2629,7 +2658,7 @@ fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool
     check(ui, d, "Lock aspect ratio", "lock", false);
     ui.add_space(8.0);
     ui.label(egui::RichText::new("Position").strong());
-    ui.label("From the top-left corner of the slide");
+    ui.label(crate::locale::text(ui.ctx(), "From the top-left corner of the slide").as_ref());
     text_row(ui, d, "Horizontal (in):", "x");
     text_row(ui, d, "Vertical (in):", "y");
     reconcile_size_fields(d);
@@ -2678,7 +2707,7 @@ fn date_rows(lang: &str) -> Vec<(&'static str, String)> {
 /// whether the dialog should close.
 fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.set_min_width(440.0);
-    ui.label("Available formats:");
+    ui.label(crate::locale::text(ui.ctx(), "Available formats:").as_ref());
     let lang = d.get("language", "en-US");
     let rows = date_rows(&lang);
     if !rows.iter().any(|(k, _)| *k == d.get("format", "datetime1"))
@@ -2696,7 +2725,7 @@ fn date_time_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     });
     let lang_label = DATE_LANGS.iter().find(|(k, _)| *k == lang).map(|(_, l)| *l).unwrap_or("English (United States)");
     ui.horizontal(|ui| {
-        ui.label("Language:");
+        ui.label(crate::locale::text(ui.ctx(), "Language:").as_ref());
         let opened = egui::ComboBox::from_id_salt("date-lang").selected_text(lang_label).width(240.0).show_ui(ui, |ui| {
             for (k, l) in DATE_LANGS {
                 if ui.selectable_label(lang == *k, *l).clicked() {
@@ -2869,17 +2898,21 @@ pub fn about(_app: &mut SlideApp, ui: &mut Ui) {
     ui.vertical_centered(|ui| {
         let (r, _) = ui.allocate_exact_size(vec2(64.0, 64.0), Sense::hover());
         paint_logo(ui.painter(), r);
-        ui.label(egui::RichText::new("DeckCraft").font(theme::bold(22.0)));
+        ui.label(egui::RichText::new(crate::locale::text(ui.ctx(), "DeckCraft").as_ref()).font(theme::bold(22.0)));
         ui.label(egui::RichText::new(version_line()).color(t.text_dim));
         ui.add_space(6.0);
-        ui.label("Presentations and slide shows, rebuilt from scratch in pure Rust.");
-        ui.label("An open-source, clean-room project. Not affiliated with Microsoft.");
+        ui.label(crate::locale::text(ui.ctx(), "Presentations and slide shows, rebuilt from scratch in pure Rust.").as_ref());
+        ui.label(crate::locale::text(ui.ctx(), "An open-source, clean-room project. Not affiliated with Microsoft.").as_ref());
         ui.add_space(6.0);
         ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
         ui.hyperlink_to("getartcraft.com/apps/deckcraft", deckcraft_engine::links::APP_PAGE);
         ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
         ui.add_space(6.0);
-        ui.label(egui::RichText::new("MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors").size(11.0).color(t.text_faint));
+        ui.label(
+            egui::RichText::new(crate::locale::text(ui.ctx(), "MIT OR Apache-2.0 · © 2026 ArtCraft Team and the DeckCraft contributors").as_ref())
+                .size(11.0)
+                .color(t.text_faint),
+        );
     });
 }
 
@@ -3057,7 +3090,7 @@ fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Baseline"));
         choice(ui, d, "font_dialog_baseline", "Baseline", "baseline", &[("none", "None"), ("super", "Superscript"), ("sub", "Subscript")]);
         ui.add_space(8.0);
-        ui.label("Caps");
+        ui.label(crate::locale::text(ui.ctx(), "Caps").as_ref());
         choice(ui, d, "font_dialog_caps", "Caps", "caps", &[("none", "None"), ("small", "Small caps"), ("all", "All caps")]);
     });
     ui.horizontal(|ui| {
@@ -3240,25 +3273,25 @@ fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     ui.label(egui::RichText::new("Indentation").strong());
     ui.horizontal(|ui| {
         let _ = labeled_text(ui, d, "Before text", "before", 64.0);
-        ui.label("in");
+        ui.label(crate::locale::text(ui.ctx(), "in").as_ref());
         ui.add_space(12.0);
         let _ = labeled_text(ui, d, "After text", "after", 64.0);
-        ui.label("in");
+        ui.label(crate::locale::text(ui.ctx(), "in").as_ref());
     });
     ui.horizontal(|ui| {
         ui.add_sized(vec2(110.0, 20.0), egui::Label::new("Special"));
         choice(ui, d, "paragraph_special", "Special", "special", &[("none", "None"), ("first", "First line"), ("hanging", "Hanging")]);
         ui.add_space(8.0);
         let _ = labeled_text(ui, d, "By", "by", 64.0);
-        ui.label("in");
+        ui.label(crate::locale::text(ui.ctx(), "in").as_ref());
     });
     ui.label(egui::RichText::new("Spacing").strong());
     ui.horizontal(|ui| {
         let _ = labeled_text(ui, d, "Spacing before", "spaceBefore", 64.0);
-        ui.label("pt");
+        ui.label(crate::locale::text(ui.ctx(), "pt").as_ref());
         ui.add_space(12.0);
         let _ = labeled_text(ui, d, "Spacing after", "spaceAfter", 64.0);
-        ui.label("pt");
+        ui.label(crate::locale::text(ui.ctx(), "pt").as_ref());
     });
     let mut picked: Option<(&'static str, Option<&'static str>)> = None;
     ui.horizontal(|ui| {
@@ -3294,7 +3327,7 @@ fn paragraph_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     let mut open_tabs = false;
     ui.horizontal(|ui| {
-        if ui.button("Tabs…").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Tabs…").as_ref()).clicked() {
             open_tabs = true;
         }
     });
@@ -3384,11 +3417,11 @@ fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         .collect();
     field(ui, d, "Default tab stops (in):", "default", "1");
     ui.add_space(6.0);
-    ui.label("Tab stops:");
+    ui.label(crate::locale::text(ui.ctx(), "Tab stops:").as_ref());
     let mut remove = None;
     egui::Grid::new("tab_stops").num_columns(3).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
         if stops.is_empty() {
-            ui.label("(none)");
+            ui.label(crate::locale::text(ui.ctx(), "(none)").as_ref());
             ui.end_row();
         }
         for (i, (pos, align)) in stops.iter().enumerate() {
@@ -3405,14 +3438,14 @@ fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let l = ui.label("Tab stop position (in):");
+        let l = ui.label(crate::locale::text(ui.ctx(), "Tab stop position (in):").as_ref());
         let mut v = d.get("newpos", "");
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(60.0)).labelled_by(l.id);
         d.fields.insert("newpos".into(), v);
     });
     let cur = d.get("newalign", "l");
     ui.horizontal(|ui| {
-        ui.label("Alignment:");
+        ui.label(crate::locale::text(ui.ctx(), "Alignment:").as_ref());
         for (k, label) in TAB_KINDS {
             if ui.radio(cur == k, label).clicked() {
                 d.fields.insert("newalign".into(), k.into());
@@ -3420,7 +3453,7 @@ fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     ui.horizontal(|ui| {
-        if ui.button("Set").clicked()
+        if ui.button(crate::locale::text(ui.ctx(), "Set").as_ref()).clicked()
             && let Some(p) = Some(num(d, "newpos", f64::NAN)).filter(|v| v.is_finite() && *v >= 0.0 && *v <= 56.0)
         {
             stops.retain(|(q, _)| (q - p).abs() > 0.005);
@@ -3428,7 +3461,7 @@ fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             stops.sort_by(|a, b| a.0.total_cmp(&b.0));
             d.fields.insert("newpos".into(), String::new());
         }
-        if ui.button("Clear All").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Clear All").as_ref()).clicked() {
             stops.clear();
         }
     });
@@ -3502,10 +3535,10 @@ fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 d.fields.insert("status".into(), msg);
                 d.fields.remove("cur");
             }
-        } else if ui.button("Replace…").clicked() {
+        } else if ui.button(crate::locale::text(ui.ctx(), "Replace…").as_ref()).clicked() {
             d.fields.insert("replace".into(), "1".into());
         }
-        if ui.button("Close").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Close").as_ref()).clicked() {
             close = true;
         }
     });
@@ -4048,7 +4081,7 @@ mod about_credits_tests {
             let mut block = egui::Rect::NOTHING;
             let mut whole = egui::Rect::NOTHING;
             let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
-                tabs = ui.label("About").rect;
+                tabs = ui.label(crate::locale::text(ui.ctx(), "About").as_ref()).rect;
                 block = credits_block(ui, models);
                 whole = ui.min_rect();
             });

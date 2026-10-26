@@ -50,8 +50,9 @@ fn big_button_width(text_w: f32, split: bool) -> f32 {
 /// the chevron at the end of the label row opens the menu.
 pub fn big_button_ex(ui: &mut Ui, icon: Icon, label: &str, enabled: bool, split: bool, selected: bool) -> (Response, Option<Response>) {
     let t = Tokens::get(ui.ctx());
+    let label = crate::locale::text(ui.ctx(), label);
     let font = theme::font(11.0);
-    let lines: Vec<&str> = wrap_label(label);
+    let lines: Vec<&str> = wrap_label(&label);
     let text_w = lines.iter().map(|l| ui.fonts_mut(|f| f.layout_no_wrap(l.to_string(), font.clone(), t.text).size().x)).fold(0.0f32, f32::max);
     let w = big_button_width(text_w, split);
     // The whole button runs the main command; the narrow strip at the end of the label row is the
@@ -149,6 +150,7 @@ pub fn small_button_named(
     split: bool,
 ) -> (Response, Option<Response>) {
     let t = Tokens::get(ui.ctx());
+    let label = crate::locale::text(ui.ctx(), label);
     let font = theme::font(12.0);
     let tw = if label.is_empty() { 0.0 } else { ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0 };
     let arrow_w = if split { 12.0 } else { 0.0 };
@@ -185,7 +187,13 @@ pub fn small_button_named(
     }
     icons::paint(&painter, Rect::from_center_size(pos2(rect.min.x + 12.0, rect.center().y), vec2(17.0, 17.0)), icon, t.text, !enabled);
     if !label.is_empty() {
-        painter.text(pos2(rect.min.x + 24.0, rect.center().y), Align2::LEFT_CENTER, label, font, if enabled { t.text } else { t.text_faint });
+        painter.text(
+            pos2(rect.min.x + 24.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            label.as_ref(),
+            font,
+            if enabled { t.text } else { t.text_faint },
+        );
     }
     if split {
         chevron(&painter, pos2(rect.max.x - 6.0, rect.center().y), 2.8, t.text_dim);
@@ -244,6 +252,8 @@ fn split_popup_id(main: &Response) -> egui::Id {
 /// A menu choice ticked in the icon column (Align to Slide…), its text lined up with the
 /// [`small_button`] items around it.
 pub fn check_item(ui: &mut Ui, label: &str, enabled: bool, on: bool) -> Response {
+    let translated = crate::locale::text(ui.ctx(), label);
+    let label = translated.as_ref();
     let t = Tokens::get(ui.ctx());
     let font = theme::font(12.0);
     let tw = ui.fonts_mut(|f| f.layout_no_wrap(label.to_string(), font.clone(), t.text).size().x) + 5.0;
@@ -271,7 +281,7 @@ pub fn icon_toggle(ui: &mut Ui, icon: Icon, tip: &str, enabled: bool, on: bool) 
     icons::paint(&painter, rect.shrink(3.0), icon, t.text, !enabled);
     // Named for screen readers (and tests) by its tooltip.
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, tip));
-    resp.on_hover_text(tip)
+    resp.on_hover_text(crate::locale::text(ui.ctx(), tip).into_owned())
 }
 
 /// Icon with a colour bar under it and a dropdown arrow (Font Color, Highlight, Shape Fill…).
@@ -300,7 +310,7 @@ pub fn color_split(ui: &mut Ui, icon: Icon, tip: &str, color: Color32, enabled: 
         if enabled { color } else { t.text_faint },
     );
     chevron(&painter, pos2(rect.max.x - 5.5, rect.center().y), 2.6, t.text_dim);
-    (main.on_hover_text(tip), arrow)
+    (main.on_hover_text(crate::locale::text(ui.ctx(), tip).into_owned()), arrow)
 }
 
 /// A ribbon group: contents, then a thin vertical separator.
@@ -331,6 +341,8 @@ pub fn rows<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
 
 /// A text dropdown field (font name, size): shows `current`, opens a popup with `add_items`.
 pub fn dropdown(ui: &mut Ui, id: &str, current: &str, width: f32, enabled: bool, add_items: impl FnOnce(&mut Ui)) -> Response {
+    let translated = crate::locale::text(ui.ctx(), current);
+    let current = translated.as_ref();
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     let painter = ui.painter_at(rect);
@@ -384,7 +396,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     let t = Tokens::get(ui.ctx());
     let mut out = None;
     ui.set_min_width(220.0);
-    ui.label(egui::RichText::new("Theme Colors").font(theme::bold(12.0)));
+    ui.label(egui::RichText::new(crate::locale::text(ui.ctx(), "Theme Colors").as_ref()).font(theme::bold(12.0)));
     let slots = [
         SchemeSlot::Lt1,
         SchemeSlot::Dk1,
@@ -446,7 +458,7 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         }
     });
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("Standard Colors").font(theme::bold(12.0)));
+    ui.label(egui::RichText::new(crate::locale::text(ui.ctx(), "Standard Colors").as_ref()).font(theme::bold(12.0)));
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         for (c, name) in deckcraft_color::STANDARD_COLORS {
@@ -465,8 +477,8 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
     let id = ui.scope_id().with("hex");
     let mut hex: String = ui.data_mut(|d| d.get_temp::<String>(id).unwrap_or_default());
     ui.horizontal(|ui| {
-        ui.label("More Colors… #");
-        let r = ui.add(egui::TextEdit::singleline(&mut hex).desired_width(70.0).hint_text("RRGGBB"));
+        ui.label(crate::locale::text(ui.ctx(), "More Colors… #").as_ref());
+        let r = ui.add(egui::TextEdit::singleline(&mut hex).desired_width(70.0).hint_text(crate::locale::text(ui.ctx(), "RRGGBB").as_ref()));
         if r.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter))
             && let Some(c) = Rgba::from_hex(&hex)
@@ -475,7 +487,8 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
         }
     });
     ui.data_mut(|d| d.insert_temp(id, hex));
-    if ui.button("Eyedropper").on_hover_text("Click the slide to take the colour under the pointer").clicked() {
+    if ui.button(crate::locale::text(ui.ctx(), "Eyedropper").as_ref()).on_hover_text("Click the slide to take the colour under the pointer").clicked()
+    {
         crate::eyedropper::request(ui.ctx());
         ui.close();
     }
@@ -573,6 +586,8 @@ pub fn text_draft(stored: Option<(String, String)>, current: &str) -> String {
 
 /// Section header inside panes.
 pub fn section(ui: &mut Ui, title: &str, open: bool) -> bool {
+    let translated = crate::locale::text(ui.ctx(), title);
+    let title = translated.as_ref();
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 26.0), Sense::click());
     let p = ui.painter();
@@ -589,6 +604,8 @@ pub fn section(ui: &mut Ui, title: &str, open: bool) -> bool {
 
 /// A button with an optional label and a painted dropdown chevron (the UI font has no ▾).
 pub fn drop_button(ui: &mut Ui, label: &str, size: egui::Vec2, enabled: bool) -> egui::Response {
+    let translated = crate::locale::text(ui.ctx(), label);
+    let label = translated.as_ref();
     let t = Tokens::get(ui.ctx());
     let r = ui
         .add_enabled(enabled, egui::Button::new(if label.is_empty() { String::new() } else { format!("{label}   ") }).min_size(size))
@@ -748,8 +765,8 @@ mod tests {
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 200.0)).build_ui(|ui| {
             theme::install_fonts(ui.ctx());
             dropdown(ui, "font-size", "18 pt", 120.0, true, |ui| {
-                ui.label("12 pt");
-                ui.label("18 pt");
+                ui.label(crate::locale::text(ui.ctx(), "12 pt").as_ref());
+                ui.label(crate::locale::text(ui.ctx(), "18 pt").as_ref());
             });
         });
         harness.run();
@@ -765,7 +782,7 @@ mod tests {
         let scheme = deckcraft_model::Theme::default().colors;
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 500.0)).build_ui(|ui| {
             theme::install_fonts(ui.ctx());
-            let r = ui.button("Pick");
+            let r = ui.button(crate::locale::text(ui.ctx(), "Pick").as_ref());
             color_popup(&r).show(|ui| {
                 if let Some(c) = color_grid(ui, &scheme, None) {
                     *picked.borrow_mut() = Some(c);
@@ -793,7 +810,7 @@ mod tests {
         let scheme = deckcraft_model::Theme::default().colors;
         let mut harness = egui_kittest::Harness::builder().with_size(vec2(400.0, 500.0)).build_ui(|ui| {
             theme::install_fonts(ui.ctx());
-            let r = ui.button("Pick");
+            let r = ui.button(crate::locale::text(ui.ctx(), "Pick").as_ref());
             color_popup(&r).show(|ui| {
                 if let Some(c) = color_grid(ui, &scheme, None) {
                     *picked.borrow_mut() = Some(c);

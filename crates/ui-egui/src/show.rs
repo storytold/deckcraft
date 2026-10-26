@@ -1368,7 +1368,11 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         painter.text(
             pos2(bar.min.x + 14.0, bar.center().y),
             Align2::LEFT_CENTER,
-            format!("Slide {} of {}", show.state.slide + 1, doc.slides.len()),
+            crate::locale::format_text(
+                app.ui.language,
+                "Slide {number} of {total}",
+                &[("number", (show.state.slide + 1).to_string()), ("total", doc.slides.len().to_string())],
+            ),
             theme::font(12.0),
             Color32::from_gray(200),
         );
@@ -1377,16 +1381,16 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(crate::locale::text(child.ctx(), "Close").as_ref()).clicked() {
             keep = false;
         }
-        if child.button("▶").clicked() {
+        if child.button(crate::locale::text(child.ctx(), "▶").as_ref()).clicked() {
             let a = show.state.next(&doc);
             if !show.apply(a, &doc, now) {
                 keep = false;
             }
         }
-        if child.button("◀").clicked() {
+        if child.button(crate::locale::text(child.ctx(), "◀").as_ref()).clicked() {
             let a = show.state.prev(&doc);
             show.apply(a, &doc, now);
         }
