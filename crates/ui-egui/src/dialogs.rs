@@ -2365,7 +2365,7 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                         ui.selectable_value(&mut app.ui.language, language, language.label_in(interface));
                     }
                 });
-                combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name));
+                combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name.clone()));
             });
             ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
             let mut dark = app.ui.brightness == theme::Brightness::Dark;
