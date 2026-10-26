@@ -7,6 +7,7 @@ use crate::cabac::{Cabac, Contexts, init_contexts};
 use crate::error::{Result, ensure, invalid};
 use crate::inter;
 use crate::intra::{self, Refs};
+use crate::mvpred::PbGeom;
 use crate::params::{Layout, Pps, Sps};
 use crate::picture::{FrameRef, RefPic};
 use crate::slice::{SliceHeader, SliceType};
@@ -678,7 +679,7 @@ impl<'a> SliceDecoder<'a> {
         self.mark_edges(x0, y0, n, n, E_TU_V | E_PU_V, E_TU_H | E_PU_H);
         if skip {
             self.cu_intra = false;
-            self.prediction_unit(x0, y0, n, x0, y0, n, n, 0, PartMode::P2Nx2N, true)?;
+            self.prediction_unit(PbGeom { xc: x0, yc: y0, ncb: n, xp: x0, yp: y0, w: n, h: n, part_idx: 0 }, PartMode::P2Nx2N, true)?;
             self.finish_cu(x0, y0, n);
             return Ok(());
         }
@@ -707,7 +708,7 @@ impl<'a> SliceDecoder<'a> {
             }
             self.parse_intra_modes(x0, y0, n, part)?;
             self.max_trafo_depth = self.sps.max_th_depth_intra + self.intra_split as u32;
-            self.transform_tree(x0, y0, x0, y0, log2, 0, 0, [true, true])?;
+            self.transform_tree((x0, y0), (x0, y0), log2, 0, 0, [true, true])?;
         } else {
             self.intra_split = false;
             let mut merge2nx2n = false;
@@ -724,7 +725,8 @@ impl<'a> SliceDecoder<'a> {
                 PartMode::PNxN => &[(0, 0, h, h), (h, 0, h, h), (0, h, h, h), (h, h, h, h)],
             };
             for (i, &(px, py, pw, ph)) in parts.iter().enumerate() {
-                let merge = self.prediction_unit(x0, y0, n, x0 + px, y0 + py, pw, ph, i, part, false)?;
+                let merge =
+                    self.prediction_unit(PbGeom { xc: x0, yc: y0, ncb: n, xp: x0 + px, yp: y0 + py, w: pw, h: ph, part_idx: i }, part, false)?;
                 if part == PartMode::P2Nx2N {
                     merge2nx2n = merge;
                 }
@@ -738,7 +740,7 @@ impl<'a> SliceDecoder<'a> {
             let root_cbf = if !merge2nx2n { self.dd(RQT_ROOT_CBF) == 1 } else { true };
             if root_cbf {
                 self.max_trafo_depth = self.sps.max_th_depth_inter;
-                self.transform_tree(x0, y0, x0, y0, log2, 0, 0, [true, true])?;
+                self.transform_tree((x0, y0), (x0, y0), log2, 0, 0, [true, true])?;
             }
         }
         self.finish_cu(x0, y0, n);
@@ -912,7 +914,7 @@ impl<'a> SliceDecoder<'a> {
         Ok(())
     }
 
-    fn transform_tree(&mut self, x0: i32, y0: i32, xb: i32, yb: i32, log2: u32, depth: u32, blk_idx: u32, parent_cbf_c: [bool; 2]) -> Result<()> {
+    fn transform_tree(&mut self, (x0, y0): (i32, i32), base: (i32, i32), log2: u32, depth: u32, blk_idx: u32, parent_cbf_c: [bool; 2]) -> Result<()> {
         let split =
             if log2 <= self.sps.log2_max_tb && log2 > self.sps.log2_min_tb && depth < self.max_trafo_depth && !(self.intra_split && depth == 0) {
                 self.dd(SPLIT_TRANSFORM + (5 - log2 as usize)) == 1
@@ -937,10 +939,10 @@ impl<'a> SliceDecoder<'a> {
         }
         if split {
             let h = 1 << (log2 - 1);
-            self.transform_tree(x0, y0, x0, y0, log2 - 1, depth + 1, 0, cbf_c)?;
-            self.transform_tree(x0 + h, y0, x0, y0, log2 - 1, depth + 1, 1, cbf_c)?;
-            self.transform_tree(x0, y0 + h, x0, y0, log2 - 1, depth + 1, 2, cbf_c)?;
-            self.transform_tree(x0 + h, y0 + h, x0, y0, log2 - 1, depth + 1, 3, cbf_c)?;
+            self.transform_tree((x0, y0), (x0, y0), log2 - 1, depth + 1, 0, cbf_c)?;
+            self.transform_tree((x0 + h, y0), (x0, y0), log2 - 1, depth + 1, 1, cbf_c)?;
+            self.transform_tree((x0, y0 + h), (x0, y0), log2 - 1, depth + 1, 2, cbf_c)?;
+            self.transform_tree((x0 + h, y0 + h), (x0, y0), log2 - 1, depth + 1, 3, cbf_c)?;
             return Ok(());
         }
         let cbf_luma =
@@ -949,7 +951,7 @@ impl<'a> SliceDecoder<'a> {
         if depth > 0 {
             self.mark_edges(x0, y0, n, n, E_TU_V, E_TU_H);
         }
-        self.transform_unit(x0, y0, xb, yb, log2, blk_idx, cbf_luma, cbf_c)
+        self.transform_unit((x0, y0), base, log2, blk_idx, cbf_luma, cbf_c)
     }
 
     /// cu_qp_delta_abs / sign and QP update (7.3.8.14).
@@ -979,7 +981,15 @@ impl<'a> SliceDecoder<'a> {
         Ok(())
     }
 
-    fn transform_unit(&mut self, x0: i32, y0: i32, xb: i32, yb: i32, log2: u32, blk_idx: u32, cbf_luma: bool, cbf_c: [bool; 2]) -> Result<()> {
+    fn transform_unit(
+        &mut self,
+        (x0, y0): (i32, i32),
+        (xb, yb): (i32, i32),
+        log2: u32,
+        blk_idx: u32,
+        cbf_luma: bool,
+        cbf_c: [bool; 2],
+    ) -> Result<()> {
         let n = 1i32 << log2;
         let chroma_here = log2 > 2 || blk_idx == 3;
         let cbf_chroma = cbf_c[0] || cbf_c[1];
@@ -1284,7 +1294,7 @@ impl<'a> SliceDecoder<'a> {
                 max_y = max_y.max(yc);
             }
         }
-        self.reconstruct(x0, y0, log2, c, qp, ts, max_x, max_y)
+        self.reconstruct((x0, y0), log2, c, qp, ts, (max_x, max_y))
     }
 
     fn coeff_abs_level_remaining(&mut self, rice: u32) -> Result<i32> {
@@ -1303,7 +1313,7 @@ impl<'a> SliceDecoder<'a> {
     }
 
     /// Scaling, transform and addition to the prediction.
-    fn reconstruct(&mut self, x0: i32, y0: i32, log2: u32, c: usize, qp: i32, ts: bool, max_x: usize, max_y: usize) -> Result<()> {
+    fn reconstruct(&mut self, (x0, y0): (i32, i32), log2: u32, c: usize, qp: i32, ts: bool, (max_x, max_y): (usize, usize)) -> Result<()> {
         let n = 1usize << log2;
         let bd = if c == 0 { self.pic.bd_y } else { self.pic.bd_c };
         let coeffs = &mut self.coeffs[..n * n];
@@ -1355,96 +1365,107 @@ impl<'a> SliceDecoder<'a> {
     }
 
     /// prediction_unit(): parse, derive motion, store it and predict. Returns merge_flag.
-    fn prediction_unit(
-        &mut self,
-        xc: i32,
-        yc: i32,
-        ncb: i32,
-        xp: i32,
-        yp: i32,
-        w: i32,
-        h: i32,
-        part_idx: usize,
-        part: PartMode,
-        skip: bool,
-    ) -> Result<bool> {
+    fn prediction_unit(&mut self, g: PbGeom, part: PartMode, skip: bool) -> Result<bool> {
         let merge = if skip { true } else { self.dd(MERGE_FLAG) == 1 };
         let mvf = if merge {
-            let idx = if self.sh.max_num_merge_cand > 1 {
-                let mut i = 0;
-                if self.dd(MERGE_IDX) == 1 {
-                    i = 1;
-                    while i < self.sh.max_num_merge_cand - 1 && self.bypass() == 1 {
-                        i += 1;
-                    }
-                }
-                i
-            } else {
-                0
-            };
-            self.derive_merge(xc, yc, ncb, xp, yp, w, h, part_idx, part, idx as usize)
+            let idx = self.merge_idx();
+            self.derive_merge(g, part, idx as usize)
         } else {
-            let pred_idc = if self.sh.is_b() {
-                if w + h != 12 {
-                    let depth = self.pic.blk_at(xc, yc).depth as usize;
-                    if self.dd(INTER_PRED_IDC + depth) == 1 { 2 } else { self.dd(INTER_PRED_IDC + 4) }
-                } else {
-                    self.dd(INTER_PRED_IDC + 4)
-                }
-            } else {
-                0
-            };
-            let mut ref_idx = [-1i8; 2];
-            let mut mvd = [[0i32; 2]; 2];
-            let mut mvp_flag = [0u32; 2];
-            for l in 0..2 {
-                let used = if l == 0 { pred_idc != 1 } else { pred_idc != 0 };
-                if !used {
-                    continue;
-                }
-                let nref = self.sh.num_ref_idx[l];
-                let mut ri = 0;
-                if nref > 1 {
-                    while ri < nref - 1 {
-                        let bin = if ri < 2 { self.dd(REF_IDX + ri as usize) } else { self.bypass() };
-                        if bin == 0 {
-                            break;
-                        }
-                        ri += 1;
-                    }
-                }
-                ref_idx[l] = ri as i8;
-                if l == 1 && self.sh.mvd_l1_zero && pred_idc == 2 {
-                    mvd[1] = [0, 0];
-                } else {
-                    mvd[l] = self.mvd_coding()?;
-                }
-                mvp_flag[l] = self.dd(MVP_FLAG);
-            }
-            let mut f = MvField { mv: [[0; 2]; 2], ref_idx };
-            for l in 0..2 {
-                if ref_idx[l] < 0 {
-                    continue;
-                }
-                let mvp = self.derive_amvp(xc, yc, ncb, xp, yp, w, h, part_idx, l, ref_idx[l] as usize, mvp_flag[l] as usize);
-                // mvLX = (mvp + mvd) wrapped to 16 bits (8-94)
-                f.mv[l] = [(mvp[0] as i32 + mvd[l][0]) as i16, (mvp[1] as i32 + mvd[l][1]) as i16];
-            }
-            f
+            self.amvp_motion(g)?
         };
         for l in 0..2 {
             if mvf.ref_idx[l] >= 0 {
                 ensure!((mvf.ref_idx[l] as usize) < self.refs[l].len(), "reference index out of range");
             }
         }
-        // store motion
+        self.store_motion(g.xp, g.yp, g.w, g.h, mvf);
+        self.motion_compensate(g.xp, g.yp, g.w as usize, g.h as usize, &mvf);
+        Ok(merge)
+    }
+
+    /// merge_idx(): the merge candidate index, truncated unary (0 when there is one candidate).
+    fn merge_idx(&mut self) -> u32 {
+        if self.sh.max_num_merge_cand <= 1 {
+            return 0;
+        }
+        let mut i = 0;
+        if self.dd(MERGE_IDX) == 1 {
+            i = 1;
+            while i < self.sh.max_num_merge_cand - 1 && self.bypass() == 1 {
+                i += 1;
+            }
+        }
+        i
+    }
+
+    /// inter_pred_idc: 0 = list 0, 1 = list 1, 2 = both.
+    fn inter_pred_idc(&mut self, xc: i32, yc: i32, w: i32, h: i32) -> u32 {
+        if !self.sh.is_b() {
+            return 0;
+        }
+        if w + h != 12 {
+            let depth = self.pic.blk_at(xc, yc).depth as usize;
+            if self.dd(INTER_PRED_IDC + depth) == 1 { 2 } else { self.dd(INTER_PRED_IDC + 4) }
+        } else {
+            self.dd(INTER_PRED_IDC + 4)
+        }
+    }
+
+    /// ref_idx_lX: truncated unary, the first two bins context-coded.
+    fn ref_idx(&mut self, l: usize) -> u32 {
+        let nref = self.sh.num_ref_idx[l];
+        let mut ri = 0;
+        if nref > 1 {
+            while ri < nref - 1 {
+                let bin = if ri < 2 { self.dd(REF_IDX + ri as usize) } else { self.bypass() };
+                if bin == 0 {
+                    break;
+                }
+                ri += 1;
+            }
+        }
+        ri
+    }
+
+    /// The AMVP branch: parse each used list's reference index, mvd and predictor flag, then add
+    /// every mvd to its predictor.
+    fn amvp_motion(&mut self, g: PbGeom) -> Result<MvField> {
+        let pred_idc = self.inter_pred_idc(g.xc, g.yc, g.w, g.h);
+        let mut ref_idx = [-1i8; 2];
+        let mut mvd = [[0i32; 2]; 2];
+        let mut mvp_flag = [0u32; 2];
+        for l in 0..2 {
+            let used = if l == 0 { pred_idc != 1 } else { pred_idc != 0 };
+            if !used {
+                continue;
+            }
+            ref_idx[l] = self.ref_idx(l) as i8;
+            if l == 1 && self.sh.mvd_l1_zero && pred_idc == 2 {
+                mvd[1] = [0, 0];
+            } else {
+                mvd[l] = self.mvd_coding()?;
+            }
+            mvp_flag[l] = self.dd(MVP_FLAG);
+        }
+        let mut f = MvField { mv: [[0; 2]; 2], ref_idx };
+        for l in 0..2 {
+            if ref_idx[l] < 0 {
+                continue;
+            }
+            let mvp = self.derive_amvp(g, l, ref_idx[l] as usize, mvp_flag[l] as usize);
+            // mvLX = (mvp + mvd) wrapped to 16 bits (8-94)
+            f.mv[l] = [(mvp[0] as i32 + mvd[l][0]) as i16, (mvp[1] as i32 + mvd[l][1]) as i16];
+        }
+        Ok(f)
+    }
+
+    /// Writes a prediction block's motion into the picture's 4x4 motion field.
+    fn store_motion(&mut self, xp: i32, yp: i32, w: i32, h: i32, mvf: MvField) {
         let w4 = self.pic.w4;
         for by in (yp >> 2)..((yp + h) >> 2) {
             let o = by as usize * w4;
             self.pic.mvf[o + (xp >> 2) as usize..o + ((xp + w) >> 2) as usize].fill(mvf);
         }
-        self.motion_compensate(xp, yp, w as usize, h as usize, &mvf);
-        Ok(merge)
     }
 
     fn mvd_coding(&mut self) -> Result<[i32; 2]> {
@@ -1524,11 +1545,11 @@ impl<'a> SliceDecoder<'a> {
             if bi {
                 let (w0, o0) = get(0);
                 let (w1, o1) = get(1);
-                inter::put_weighted_bi(&self.pred0, &self.pred1, bw, bh, bd, log2wd, w0, w1, o0, o1, dst, stride);
+                inter::put_weighted_bi(&self.pred0, &self.pred1, (bw, bh), bd, (log2wd, w0, w1, o0, o1), dst, stride);
             } else {
                 let l = if lists[0] { 0 } else { 1 };
                 let (wt, o) = get(l);
-                inter::put_weighted_uni(&self.pred0, bw, bh, bd, log2wd, wt, o, dst, stride);
+                inter::put_weighted_uni(&self.pred0, (bw, bh), bd, (log2wd, wt, o), dst, stride);
             }
         }
     }

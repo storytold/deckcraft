@@ -58,9 +58,15 @@
       <Component Id="DeckcraftApp" Guid="D87EA444-41A4-4C19-922E-66D1A29461FF">
         <File Id="DeckcraftNotice" Source="$(var.BinDir)\NOTICE" KeyPath="no" />
         <File Id="DeckcraftExe" Source="$(var.BinDir)\deckcraft.exe" KeyPath="yes">
+          <!-- No Icon here, so the shortcut shows the icon embedded in deckcraft.exe (build.rs). An
+               MSI Icon is cached under %APPDATA%\Microsoft\Installer\{ProductCode}\, and every
+               update is a major upgrade with a new ProductCode that deletes the old folder. A
+               taskbar pin is a copy of this shortcut that the update never touches, so it kept
+               pointing at the deleted file and lost its icon (#1114). The exe's path survives
+               updates; the shortcut is not advertised, so it targets that path and its icon is the
+               exe's own. The Icon above stays for ARPPRODUCTICON (Apps and features). -->
           <Shortcut Id="StartMenuShortcut" Directory="ProgramMenuFolder" Name="DeckCraft"
-              Description="DeckCraft presentations and slide shows" WorkingDirectory="INSTALLFOLDER" Advertise="yes"
-              Icon="DeckcraftIcon.ico" IconIndex="0" />
+              Description="DeckCraft presentations and slide shows" WorkingDirectory="INSTALLFOLDER" Advertise="no" />
         </File>
 
         <!-- .deckcraft: DeckCraft's own format. -->

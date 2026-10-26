@@ -137,6 +137,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-25 | Windows installer: the Start menu shortcut takes the icon embedded in `deckcraft.exe` instead of an MSI `<Icon>`, so a taskbar pin keeps its icon after an update (#1114); a pin that already lost it has to be unpinned and pinned again once |
 | 2026-10-24 | AutoFormat as you type: a paragraph that starts with `*`, `-`, `--`, `>`, `<>`, `1.`, `1)`, `I.`, `i.`, `A.`, `a.` or `a)` and a space or tab becomes a bulleted or numbered list in that style; Backspace right after puts the typed text back, and Tools ▸ AutoCorrect and `text.autocorrect {lists}` turn it off |
 | 2026-10-24 | Tables: while the caret is in a cell, dragging into another cell selects that range of cells (shaded, merged cells taken in whole), and Shift+arrow grows or shrinks it; formatting applies to the selected cells only, and Delete clears their text and keeps the table |
 | 2026-10-24 | Preferences ▸ Measurement units: inches or centimetres. The Format pane's Size and Position fields, Shape Format ▸ Size on the ribbon, the Slide Size dialog and the ruler show and take the chosen unit; the deck still stores points (#1326) |
@@ -294,6 +295,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | trivial | Progress log: Windows shortcut icon survives updates (#1114). Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: selecting a range of table cells by dragging. Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: measurement units in centimetres (#1326). Scores unchanged |
 | 2026-10-22 | trivial | Progress log: Animation Pane ▸ Play From. Scores unchanged |

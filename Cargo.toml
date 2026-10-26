@@ -61,7 +61,7 @@ vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "f0ad6c1e1d297908915f4be315b0fcfc9be7b5d4", version = "=0.1.0", default-features = false }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "9f75d3dc19b4b514c4f3d4847ed1ec1b0e86b4ef", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
-craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "db19c373c8d59a545972ca340987aecfb3611a4b", features = ["egui"] }
+craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "495e5971bc024aa96e6ed318cb6e7cd3a0103184", features = ["egui"] }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
