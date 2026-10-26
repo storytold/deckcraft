@@ -130,6 +130,7 @@ impl Tokens {
 
 /// Apply tokens to egui's style.
 pub fn apply(ctx: &egui::Context, t: &Tokens) {
+    let small = if crate::locale::context_language(ctx) == crate::locale::Language::TraditionalChinese { 12.0 } else { 11.0 };
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.chrome;
     v.window_fill = t.card;
@@ -165,7 +166,6 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
         s.spacing.interact_size.y = 22.0;
         s.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
         s.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(13.0));
-        let small = if crate::locale::context_language(ctx) == crate::locale::Language::TraditionalChinese { 12.0 } else { 11.0 };
         s.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(small));
         s.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(18.0));
     });
