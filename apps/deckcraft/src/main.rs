@@ -135,6 +135,21 @@ fn services() -> Services {
     }
 }
 
+/// The screens `window` can show on, in winit's order (the one `SetMonitor` takes). A screen
+/// winit lists twice (Wayland does) counts once, by its first number.
+fn screens(window: &winit::window::Window) -> Option<deckcraft_ui_egui::Screens> {
+    let all: Vec<_> = window.available_monitors().collect();
+    let id = |m: &winit::monitor::MonitorHandle| (m.name(), m.position(), m.size());
+    // Each listed screen's number, mapped to the first listing of the same screen.
+    let first = |i: usize| all.get(i).and_then(|m| all.iter().position(|x| id(x) == id(m)));
+    let list: Vec<usize> = (0..all.len()).filter(|i| first(*i) == Some(*i)).collect();
+    if list.is_empty() {
+        return None;
+    }
+    let find = |m: Option<winit::monitor::MonitorHandle>| m.and_then(|m| all.iter().position(|x| *x == m)).and_then(first);
+    Some(deckcraft_ui_egui::Screens { list, current: find(window.current_monitor()), primary: find(window.primary_monitor()) })
+}
+
 const APP_ID: &str = "ai.storyteller.deckcraft";
 
 const USAGE: &str = "\
@@ -266,7 +281,11 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
-            let mut app = SlideApp::new(Session::new(), services());
+            let mut services = services();
+            if let Some(window) = cc.winit_window().cloned() {
+                services.screens = Some(Box::new(move || screens(&window)));
+            }
+            let mut app = SlideApp::new(Session::new(), services);
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.

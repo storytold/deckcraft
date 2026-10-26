@@ -263,6 +263,36 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// The screens the computer shows to, read when a slide show starts. Without it (the web,
+    /// tests) the show stays where the window is.
+    pub screens: Option<Box<dyn FnMut() -> Option<Screens>>>,
+}
+
+/// The screens connected, numbered as the windowing system lists them (the numbers a window is
+/// sent to with `ViewportCommand::SetMonitor`). Wayland can list a screen more than once: `list`
+/// holds one number per screen.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Screens {
+    pub list: Vec<usize>,
+    /// The screen DeckCraft's window is on, when known.
+    pub current: Option<usize>,
+    /// The system's main screen, when known (Wayland doesn't say).
+    pub primary: Option<usize>,
+}
+
+impl Screens {
+    /// Where a slide show with Presenter View goes, as in PowerPoint: the slides full screen on
+    /// another screen and Presenter View on the presenter's (the one DeckCraft is on). `None`
+    /// with one screen: there, PowerPoint shows only the slides. Returns (slides, presenter).
+    pub fn for_presenter_view(&self) -> Option<(usize, usize)> {
+        if self.list.len() < 2 {
+            return None;
+        }
+        let listed = |i: &usize| self.list.contains(i);
+        let presenter = self.current.filter(listed).or(self.primary.filter(listed)).or_else(|| self.list.first().copied())?;
+        let slides = self.list.iter().copied().find(|i| *i != presenter)?;
+        Some((slides, presenter))
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1465,9 +1495,20 @@ impl SlideApp {
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
+        let wanted = self.ui.presenter_view && !reading;
+        // Presenter View needs a screen of its own: on one screen, PowerPoint shows only the
+        // slides (two windows on one screen also hid one, and a hidden window stalled the show).
+        let (presenter, screens) = match wanted.then(|| self.services.screens.as_mut().and_then(|f| f())).flatten() {
+            Some(s) => match s.for_presenter_view().inspect(|p| log::info!("slide show on screen {} and Presenter View on {} of {s:?}", p.0, p.1)) {
+                Some(placed) => (true, Some(placed)),
+                None => (false, None),
+            },
+            None => (wanted, None),
+        };
         if let Some(d) = self.session.active() {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
-            let mut show = show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading);
+            let mut show = show::Show::new(&d.doc, from, reading, presenter);
+            show.screens = screens;
             show.instance = self.show_instance;
             self.show = Some(show);
         }
