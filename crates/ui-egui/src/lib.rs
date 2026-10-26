@@ -5241,8 +5241,7 @@ mod tests {
         assert!(harness.state().dialog.is_some(), "Preferences stays open");
     }
     /// The status bar's zoom slider has no room for a visible label; it still needs an accessible
-    /// name, and adding that name must not change the slider's shared control geometry at either
-    /// size.
+    /// name, and having one must not change the slider's geometry at either size.
     #[test]
     fn status_zoom_slider_is_named_without_growing_the_status_bar() {
         for size in [egui::vec2(900.0, 560.0), egui::vec2(1440.0, 900.0)] {
@@ -5257,15 +5256,12 @@ mod tests {
             let mut zoom = harness.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Zoom");
             let rect = zoom.next().unwrap_or_else(|| panic!("a named Zoom slider at {size:?}")).rect();
             assert!(zoom.next().is_none(), "exactly one Zoom slider");
-            // egui 0.37's slider uses its own `slider_width` and the theme's control height
-            // (22 px), not the old hard-coded 110x18. Assert that real, shared geometry so the
-            // status row stays consistent with every other control instead of loosening a bound.
+            // The shared craft-ui ZoomBar (storytold/craft-libs#33) draws its slider at a fixed size,
+            // no taller than a control row, so naming it never grows the status bar; its block keeps
+            // that size from 9% to 400%, so it is the same at both window sizes.
             let style = harness.ctx.global_style();
-            let (expected_w, expected_h) = (style.spacing.slider_width, style.spacing.interact_size.y);
-            assert!(
-                (rect.width() - expected_w).abs() <= 0.5 && (rect.height() - expected_h).abs() <= 0.5,
-                "the status-bar slider uses the shared {expected_w}x{expected_h} control size at {size:?}: {rect:?}"
-            );
+            assert!(rect.height() <= style.spacing.interact_size.y + 0.5, "the slider fits the status row at {size:?}: {rect:?}");
+            assert!((rect.width() - 110.0).abs() <= 0.5, "the ZoomBar's fixed slider width at {size:?}: {rect:?}");
         }
     }
 

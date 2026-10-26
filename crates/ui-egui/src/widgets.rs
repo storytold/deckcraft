@@ -27,6 +27,41 @@ fn bg(ui: &Ui, r: &Response, selected: bool, t: &Tokens) -> Option<Color32> {
 }
 
 /// A large ribbon button: 32 px icon over a one- or two-line label.
+/// The colours of the shared slider (`craft_ui::slider`): track, accent fill and thumb from the
+/// DeckCraft tokens.
+pub fn slider_style(t: &Tokens) -> craft_ui::slider::SliderStyle {
+    craft_ui::slider::SliderStyle {
+        track: t.border,
+        fill: t.accent,
+        thumb: t.card,
+        thumb_stroke: Stroke::new(1.0, t.border),
+        dot: t.accent,
+        mark: t.text_dim,
+        focus_stroke: Stroke::new(1.0, t.accent),
+    }
+}
+
+/// The shared zoom bar's colours (`craft_ui::slider::ZoomBar`) from the DeckCraft tokens.
+pub fn zoom_bar_style(t: &Tokens) -> craft_ui::slider::ZoomBarStyle {
+    craft_ui::slider::ZoomBarStyle { slider: slider_style(t), icon: t.text_dim, hover: t.hover, text: t.text_dim, font: 12.0 }
+}
+
+/// A shared slider with an editable value field, applied (`true`) when a drag ends or the field
+/// or keyboard changes it — not on every frame of a drag.
+pub fn value_slider(
+    ui: &mut Ui,
+    value: &mut f64,
+    range: std::ops::RangeInclusive<f64>,
+    label: &str,
+    decimals: usize,
+    suffix: &str,
+    mark: f64,
+) -> bool {
+    let style = slider_style(&Tokens::get(ui.ctx()));
+    let r = craft_ui::slider::Slider::new(value, range, label, &style).mark(mark).editable(decimals, suffix).show(ui);
+    r.drag_stopped() || (r.changed() && !r.dragged())
+}
+
 pub fn big_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> Response {
     big_button_ex(ui, icon, label, enabled, false, false).0
 }

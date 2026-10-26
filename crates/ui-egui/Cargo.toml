@@ -19,6 +19,9 @@ deckcraft-anim = { workspace = true }
 deckcraft-engine = { workspace = true }
 deckcraft-media = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
+# Shared controls: the Slider and ZoomBar from https://github.com/storytold/craft-libs/pull/33,
+# pinned to its branch in a fork until it merges (egui 0.37, like the app).
+craft-ui = { git = "https://github.com/brzuchal/craft-libs", rev = "61f7ab83b8bab760a431e921a845c7011c6dfbf8" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
