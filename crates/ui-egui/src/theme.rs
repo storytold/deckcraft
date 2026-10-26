@@ -165,7 +165,8 @@ pub fn apply(ctx: &egui::Context, t: &Tokens) {
         s.spacing.interact_size.y = 22.0;
         s.text_styles.insert(egui::TextStyle::Body, egui::FontId::proportional(13.0));
         s.text_styles.insert(egui::TextStyle::Button, egui::FontId::proportional(13.0));
-        s.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(11.0));
+        let small = if crate::locale::context_language(ctx) == crate::locale::Language::TraditionalChinese { 12.0 } else { 11.0 };
+        s.text_styles.insert(egui::TextStyle::Small, egui::FontId::proportional(small));
         s.text_styles.insert(egui::TextStyle::Heading, egui::FontId::proportional(18.0));
     });
 }
@@ -179,7 +180,29 @@ pub fn install_fonts(ctx: &egui::Context) {
 /// installed or embedded faces that draw text the interface faces lack (Hangul, Simplified
 /// Chinese, Devanagari…, #101). See [`crate::uifonts`].
 pub fn install_fonts_with(ctx: &egui::Context, extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) {
-    ctx.set_fonts(font_definitions(extra));
+    let mut definitions = font_definitions(extra);
+    if crate::locale::context_language(ctx) == crate::locale::Language::TraditionalChinese {
+        let preferred: Vec<String> = definitions
+            .font_data
+            .keys()
+            .filter(|name| {
+                name.starts_with("fallback ")
+                    && ["Microsoft JhengHei", "PingFang TC", "Noto Sans CJK TC", "Noto Sans TC"].iter().any(|family| name.contains(family))
+            })
+            .cloned()
+            .collect();
+        for chain in definitions.families.values_mut() {
+            chain.retain(|name| !preferred.contains(name));
+            let index = chain
+                .iter()
+                .position(|name| name.contains("BIZ UDPGothic") || name.contains("LXGW WenKai") || name.starts_with("fallback "))
+                .unwrap_or(chain.len());
+            for name in preferred.iter().rev() {
+                chain.insert(index, name.clone());
+            }
+        }
+    }
+    ctx.set_fonts(definitions);
 }
 
 /// The interface font definitions; see [`install_fonts_with`].

@@ -125,7 +125,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             run(app, q);
         }
         r.context_menu(|ui| {
-            if ui.button("Remove from Quick Access Toolbar").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Remove from Quick Access Toolbar").as_ref()).clicked() {
                 let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 ui.close();
             }
@@ -153,7 +153,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         }
         ui.separator();
         ui.label(egui::RichText::new("Right-click any ribbon button to add it.").weak());
-        if ui.button("Reset to Defaults").clicked() {
+        if ui.button(crate::locale::text(ui.ctx(), "Reset to Defaults").as_ref()).clicked() {
             let _ = command(app, &json!({"reset": true}));
             ui.close();
         }

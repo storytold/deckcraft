@@ -80,7 +80,7 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
 
 /// The palette's entries for the lowercase query `q`. An engine command is hidden when a UI command has the same label: Open…, Save As…,
 /// Export… and Audio/Video from File… need a `path` the palette can't give, so the one entry left opens the dialog instead of failing.
-fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, String, Option<&'static str>)> {
+fn palette_items(session: &deckcraft_engine::Session, q: &str, language: crate::locale::Language) -> Vec<(String, String, Option<&'static str>)> {
     let mut items: Vec<(String, String, Option<&'static str>)> = session
         .commands()
         .into_iter()
@@ -88,7 +88,12 @@ fn palette_items(session: &deckcraft_engine::Session, q: &str) -> Vec<(String, S
         .filter(|c| c.enabled && !crate::UI_COMMANDS.iter().any(|u| u.1 == c.label) && !deckcraft_engine::cmd::needs_arguments(c.params))
         .map(|c| (c.id.to_string(), c.label.to_string(), c.shortcut))
         .chain(crate::UI_COMMANDS.iter().filter(|c| !deckcraft_engine::cmd::needs_arguments(c.3)).map(|c| (c.0.to_string(), c.1.to_string(), c.2)))
-        .filter(|(id, label, _)| q.is_empty() || label.to_lowercase().contains(q) || id.to_lowercase().contains(q))
+        .filter(|(id, label, _)| {
+            q.is_empty()
+                || label.to_lowercase().contains(q)
+                || id.to_lowercase().contains(q)
+                || crate::locale::translate(language, label).to_lowercase().contains(q)
+        })
         .collect();
     items.sort_by_key(|(_, l, _)| !l.to_lowercase().starts_with(q));
     items.truncate(60);
@@ -109,7 +114,7 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
             let r = ui.add(egui::TextEdit::singleline(&mut query).hint_text("Search commands…").desired_width(f32::INFINITY).font(theme::font(15.0)));
             r.request_focus();
             let q = query.to_lowercase();
-            let items = palette_items(&app.session, &q);
+            let items = palette_items(&app.session, &q, app.ui.language);
             let (down, up, enter, esc) = ui.input(|i| {
                 (
                     i.key_pressed(egui::Key::ArrowDown),
@@ -133,7 +138,7 @@ pub fn palette(app: &mut SlideApp, ctx: &egui::Context) {
             egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
                 for (k, (id, label, sc)) in items.iter().enumerate() {
                     let r = ui.horizontal(|ui| {
-                        let resp = ui.selectable_label(k == sel, label);
+                        let resp = ui.selectable_label(k == sel, crate::locale::text(ui.ctx(), label).as_ref());
                         if let Some(s) = sc {
                             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                                 ui.label(egui::RichText::new(crate::ribbon::pretty_shortcut(s)).color(t.text_faint));
@@ -302,7 +307,8 @@ mod tests {
     fn palette_has_one_export_entry_that_opens_the_dialog() {
         let session = deckcraft_engine::Session::with_new();
         for query in ["exp", "export"] {
-            let exports: Vec<_> = palette_items(&session, query).into_iter().filter(|(_, label, _)| label == "Export…").collect();
+            let exports: Vec<_> =
+                palette_items(&session, query, crate::locale::Language::English).into_iter().filter(|(_, label, _)| label == "Export…").collect();
             assert_eq!(exports.len(), 1, "query {query}");
             assert_eq!(exports[0].0, "app.exportDialog");
         }
@@ -312,7 +318,8 @@ mod tests {
             if deckcraft_engine::cmd::needs_arguments(params) {
                 continue;
             }
-            let same: Vec<_> = palette_items(&session, &label.to_lowercase()).into_iter().filter(|(_, l, _)| l == label).collect();
+            let same: Vec<_> =
+                palette_items(&session, &label.to_lowercase(), crate::locale::Language::English).into_iter().filter(|(_, l, _)| l == label).collect();
             assert_eq!(same.len(), 1, "{label}");
             assert_eq!(same[0].0, *id, "{label}");
         }

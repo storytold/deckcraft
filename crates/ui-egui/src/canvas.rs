@@ -1261,7 +1261,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     }
                 }
                 // Each of these renumbers the points, so the picked segment is dropped.
-                if ui.button("Add Point").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Add Point").as_ref()).clicked() {
                     let t = app.session.tool.edit_segment_t.unwrap_or(0.5);
                     let _ = app.run("shape.addPoint", json!({"path": path, "segment": index, "t": t}));
                     app.session.tool.edit_segment = None;
@@ -1292,7 +1292,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                         ui.close();
                     }
                 }
-                if ui.button("Delete Point").clicked() {
+                if ui.button(crate::locale::text(ui.ctx(), "Delete Point").as_ref()).clicked() {
                     let _ = app.run("shape.deletePoint", json!({"path": path, "index": index}));
                     app.session.tool.edit_vertex = None;
                     ui.close();
@@ -1309,7 +1309,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 }
                 ui.separator();
             }
-            if ui.button("Exit Edit Points").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Exit Edit Points").as_ref()).clicked() {
                 let _ = app.run("shape.editPoints", json!({"on": false}));
                 ui.close();
             }
@@ -1371,12 +1371,12 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     ui.close();
                 }
             }
-            if ui.button("Ignore All").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Ignore All").as_ref()).clicked() {
                 app.squiggles.ignore(&w.word);
                 app.squiggles.menu_word = None;
                 ui.close();
             }
-            if ui.button("Add to Dictionary").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Add to Dictionary").as_ref()).clicked() {
                 if let Err(e) = app.session.execute("review.addToDictionary", &json!({"word": w.word})) {
                     app.set_status(e.to_string());
                 }
@@ -1396,7 +1396,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
         // Right-clicking the text being edited keeps it (`PointerKind::ContextClick`): text items.
         let editing = app.session.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| !t.notes));
         if editing {
-            if ui.button("Paragraph…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Paragraph…").as_ref()).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("paragraph"));
                 ui.close();
             }
@@ -1406,32 +1406,32 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     ui.close();
                 }
             }
-            if ui.button("Link…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Link…").as_ref()).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
                 ui.close();
             }
             ui.separator();
-            if ui.button("Format Shape…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Format Shape…").as_ref()).clicked() {
                 let _ = app.run("view.pane", json!({"pane": "format"}));
                 ui.close();
             }
         } else if has_sel {
-            if ui.button("Edit Text").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Edit Text").as_ref()).clicked() {
                 let _ = app.run("text.edit", json!({}));
                 ui.close();
             }
             if crate::ribbon::enabled(app, "shape.editPoints")
                 && app.session.active().is_some_and(|d| d.selection.shapes.len() == 1 && d.selected_shapes().iter().all(|s| !s.is_line()))
-                && ui.button("Edit Points").clicked()
+                && ui.button(crate::locale::text(ui.ctx(), "Edit Points").as_ref()).clicked()
             {
                 let _ = app.run("shape.editPoints", json!({"on": true}));
                 ui.close();
             }
-            if ui.button("Font…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Font…").as_ref()).clicked() {
                 let _ = app.run("format.fontDialog", json!({}));
                 ui.close();
             }
-            if ui.button("Paragraph…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Paragraph…").as_ref()).clicked() {
                 let _ = app.run("format.paragraphDialog", json!({}));
                 ui.close();
             }
@@ -1448,7 +1448,14 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 crate::ribbon::menu_item(app, ui, crate::icons::Icon::Ungroup, "Ungroup", "arrange.ungroup", json!({}));
             });
             let locked = app.session.active().is_some_and(|d| d.selected_shapes().iter().all(|s| s.locked));
-            if ui.button(if locked { "Unlock" } else { "Lock" }).clicked() {
+            if ui
+                .button(if locked {
+                    crate::locale::text(ui.ctx(), "Unlock").into_owned()
+                } else {
+                    crate::locale::text(ui.ctx(), "Lock").into_owned()
+                })
+                .clicked()
+            {
                 let _ = app.run("shape.lock", json!({"locked": !locked}));
                 ui.close();
             }
@@ -1456,27 +1463,27 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                 .session
                 .active()
                 .is_some_and(|d| d.selected_shapes().iter().any(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })));
-            if picture && ui.button("Change Picture…").clicked() {
+            if picture && ui.button(crate::locale::text(ui.ctx(), "Change Picture…").as_ref()).clicked() {
                 let _ = app.run("app.changePictureDialog", json!({}));
                 ui.close();
             }
-            if ui.button("Link…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Link…").as_ref()).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("hyperlink"));
                 ui.close();
             }
-            if ui.button("Edit Alt Text…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Edit Alt Text…").as_ref()).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("altText"));
                 ui.close();
             }
-            if ui.button("Set as Default Shape").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Set as Default Shape").as_ref()).clicked() {
                 let _ = app.run("shape.setDefault", json!({}));
                 ui.close();
             }
-            if ui.button("Size and Position…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Size and Position…").as_ref()).clicked() {
                 let _ = app.run("shape.sizePosition", json!({}));
                 ui.close();
             }
-            if ui.button("Format Shape…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Format Shape…").as_ref()).clicked() {
                 let _ = app.run("view.pane", json!({"pane": "format"}));
                 ui.close();
             }
@@ -1496,7 +1503,7 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
             });
             ui.menu_button("Grid and Guides", |ui| {
                 let mut on = app.ui.guides;
-                if ui.checkbox(&mut on, "Guides").clicked() {
+                if ui.checkbox(&mut on, crate::locale::text(ui.ctx(), "Guides").as_ref()).clicked() {
                     let _ = app.run("view.guides", json!({"on": on}));
                 }
                 for (label, vertical) in [("Add Vertical Guide", true), ("Add Horizontal Guide", false)] {
@@ -1507,15 +1514,15 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response) {
                     }
                 }
             });
-            if ui.button("Reset Slide").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Reset Slide").as_ref()).clicked() {
                 let _ = app.run("slide.reset", json!({}));
                 ui.close();
             }
-            if ui.button("Format Background…").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "Format Background…").as_ref()).clicked() {
                 let _ = app.run("view.pane", json!({"pane": "background"}));
                 ui.close();
             }
-            if ui.button("New Comment").clicked() {
+            if ui.button(crate::locale::text(ui.ctx(), "New Comment").as_ref()).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("comment"));
                 ui.close();
             }
