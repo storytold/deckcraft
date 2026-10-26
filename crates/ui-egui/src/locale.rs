@@ -14,6 +14,9 @@ pub enum Language {
 }
 
 impl Language {
+    pub fn label_in(self, interface: Self) -> &'static str {
+        if interface == Self::English && self == Self::TraditionalChinese { "Traditional Chinese (Taiwan)" } else { self.label() }
+    }
     pub fn label(self) -> &'static str {
         match self {
             Self::English => "English",
@@ -69,15 +72,18 @@ pub fn context_language(ctx: &egui::Context) -> Language {
 /// Discover glyphs before painting translated chrome, through the existing system-font policy.
 pub fn prepare_fonts(ctx: &egui::Context, language: Language, fonts: &mut crate::uifonts::UiFonts) -> bool {
     let id = egui::Id::unique("deckcraft.ui.language.fonts");
-    if ctx.data(|data| data.get_temp::<Language>(id)) == Some(language) {
+    let previous = ctx.data(|data| data.get_temp::<Language>(id));
+    if previous == Some(language) {
         return false;
+    }
+    ctx.data_mut(|data| data.insert_temp(id, language));
+    if language == Language::English {
+        return previous.is_some();
     }
     if language == Language::TraditionalChinese {
         fonts.prefer_taiwan();
     }
-    let text = if language == Language::TraditionalChinese { include_str!("../locales/zh-TW.json") } else { "繁體中文" };
-    fonts.note(ctx, text);
-    ctx.data_mut(|data| data.insert_temp(id, language));
+    fonts.note(ctx, include_str!("../locales/zh-TW.json"));
     true
 }
 

@@ -2099,10 +2099,9 @@ impl SlideApp {
             self.restyle = false;
         }
         let language_changed = locale::prepare_fonts(ctx, self.ui.language, &mut self.ui_fonts);
-        let fonts_changed = self.ui_fonts.apply(ctx);
-        if language_changed || fonts_changed {
+        if language_changed {
             self.restyle = true;
-            if language_changed && !fonts_changed {
+            if !self.ui_fonts.apply(ctx) {
                 theme::install_fonts_with(ctx, &self.ui_fonts.faces);
             }
             ctx.request_discard("install interface translation fonts before layout");

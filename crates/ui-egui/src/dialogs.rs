@@ -2357,14 +2357,15 @@ fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 d.params = json!({ "before": preferences_snapshot(app) });
             }
             ui.horizontal(|ui| {
-                ui.label(crate::locale::text(ui.ctx(), "Interface language").as_ref());
-                egui::ComboBox::from_id_salt("interface-language").selected_text(app.ui.language.label()).show_ui(ui, |ui| {
+                let name = crate::locale::text(ui.ctx(), "Interface language").into_owned();
+                let interface = app.ui.language;
+                ui.label(&name);
+                let combo = egui::ComboBox::from_id_salt("interface-language").selected_text(app.ui.language.label_in(interface)).show_ui(ui, |ui| {
                     for language in [crate::locale::Language::English, crate::locale::Language::TraditionalChinese] {
-                        if ui.selectable_value(&mut app.ui.language, language, language.label()).changed() {
-                            crate::locale::set_context_language(ui.ctx(), language);
-                        }
+                        ui.selectable_value(&mut app.ui.language, language, language.label_in(interface));
                     }
                 });
+                combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name));
             });
             ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
             let mut dark = app.ui.brightness == theme::Brightness::Dark;
