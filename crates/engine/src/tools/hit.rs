@@ -1,7 +1,22 @@
 use super::*;
 
+/// Whether shape `id` is a placeholder or text box: a click on it takes the caret straight away.
 pub(super) fn is_text_first(st: &crate::DocState, id: ShapeId) -> bool {
     st.shape(id).is_some_and(|s| s.ph.is_some() || s.text_box)
+}
+
+/// Whether a press at `p` with Format Painter armed selects text in shape `id`, so that a drag,
+/// double-click or triple-click paints just that text, instead of painting the shape whole: a
+/// shape (not a line or group) with text, pressed inside its frame band, or a cell of a table.
+pub(super) fn painter_selects_text_at(st: &crate::DocState, id: ShapeId, p: Point, tol: f64) -> bool {
+    let Some(sh) = st.shape(id) else { return false };
+    match sh.kind {
+        ShapeKind::Table(_) => in_table_cell(st, id, p),
+        ShapeKind::Shape if !sh.is_line() => {
+            sh.text.as_ref().is_some_and(|t| !t.is_empty()) && edit_zone(&xfrm_of(&st.doc, &st.selection, sh), p, tol) == EditZone::Inside
+        }
+        _ => false,
+    }
 }
 
 /// The topmost text-holding shape under `p` inside group `sh`, recursing into nested groups.

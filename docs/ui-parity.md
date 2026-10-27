@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** trivial (Format Painter paints text in another box: drag across it, double-click a word or triple-click a paragraph, #1216; previous: trivial, Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
@@ -101,6 +101,7 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | WordArt transform | Transform gallery | Shape Format ▸ Text Effects ▸ Transform (`format.textWarp`): No Transform, Follow Path and the other 36 presets. Adjust handles: see WordArt adjust handles |
 | Rulers with indent markers and tab stops | yes | yes: indent markers and tab stops drag on the ruler (a click adds a tab, the corner selector picks its kind); Tabs dialog from Home › Paragraph and the Paragraph dialog |
 | Drag and drop of files and between thumbnails | yes | yes |
+| Format Painter onto text in another box: drag across it, double-click a word, triple-click a paragraph | yes | yes, also in a table cell; a plain click on that text puts the caret there and the painter waits, and the box's frame (or a shape without text) takes the formatting whole (#1216) |
 | Slide Sorter sections: a bar per section, add, rename in place, collapse, drag the whole section (its slides move with it) | yes | yes |
 | Image paste from the clipboard | yes | macOS pastes a picture when the paste carries no text (TIFF), and rich text copies and pastes as HTML (bold, italic, underline). Windows and Linux image paste stays #53 |
 | Font menu: every installed family with its faces | yes | families yes; only Regular/Bold/Italic faces (#69) |
@@ -169,6 +170,7 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-27 | trivial | Format Painter: a drag, double-click or triple-click on the text of another box paints just that text; the frame paints the box whole (#1216) |
 | 2026-10-24 | trivial | Table cells: dragging across cells selects a range of cells |
 | 2026-10-24 | trivial | Edit Points: Shift, Ctrl/Cmd or Alt/Option held while dragging a handle makes the point smooth, straight or corner |
 | 2026-10-24 | trivial | Columns dialog: the number of text columns and the spacing between them. Dialog count 41 → 42 |

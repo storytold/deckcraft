@@ -1,4 +1,4 @@
-use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
+use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, painter_selects_text_at, shape_in_front};
 use super::*;
 
 impl Session {
@@ -333,6 +333,11 @@ impl Session {
                     sel.cells = None;
                 })?;
                 self.tool.drag = Some(Drag::Move { ids: vec![id], start: p, origs, moved: false, duplicate: mods.alt, enter_text: None });
+                // Format Painter on the frame paints the box whole, as on the frame of a box not
+                // being edited.
+                if self.painter.is_some() {
+                    let _ = self.execute("format.painterApply", &json!({"ids": [id]}));
+                }
             }
             Some(Hit::Warp { id, index }) => {
                 let orig = st.shape(id).map(|s| xfrm_of(&st.doc, &st.selection, s)).unwrap_or_default();
@@ -357,6 +362,22 @@ impl Session {
                 let before = self.text_selection();
                 if self.edit_text_at(id, p)? {
                     self.select(|_, sel| sel.cells = None)?;
+                    let press = self.doc()?.selection.text.clone();
+                    self.tool.drag = Some(Drag::TextSelect { shape: id, before, press });
+                }
+            }
+            Some(Hit::Shape { id, .. })
+                if self.painter.is_some()
+                    && self.anim_painter.is_none()
+                    && !(mods.shift || mods.cmd || mods.alt)
+                    && painter_selects_text_at(st, id, p, tol) =>
+            {
+                // Format Painter over the text of a box not being edited: the press starts a text
+                // selection there, as in the box being edited, so a drag, double-click or
+                // triple-click paints only that text (#1216). A plain click leaves the caret and
+                // the painter armed; the frame band still paints the box whole.
+                let before = self.text_selection();
+                if self.edit_text_at(id, p)? {
                     let press = self.doc()?.selection.text.clone();
                     self.tool.drag = Some(Drag::TextSelect { shape: id, before, press });
                 }

@@ -562,6 +562,167 @@ fn format_painter_ignores_a_double_click_that_selects_nothing() {
     assert!(bulleted(&mut s, 0));
 }
 
+/// Box A ("Hello\nworld", from y 60, lines at y 70 and 90) with "Hello" bold and the painter
+/// armed from it, and box B ("alpha beta\ngamma", plain, from y 230, lines at y 240 and 260)
+/// not being edited. Returns the session and the ids of A and B.
+fn painter_and_box_b(sticky: bool) -> (Session, u32, u32) {
+    let (mut s, a) = editing_in("Hello\nworld", (0, 0), [60.0, 60.0, 600.0, 150.0]);
+    s.execute("insert.textBox", &json!({"rect": [60.0, 230.0, 600.0, 80.0], "text": "x"})).unwrap();
+    let b = s.doc().unwrap().selection.shapes[0].0;
+    s.execute("text.set", &json!({"id": b, "text": "alpha beta\ngamma"})).unwrap();
+    s.execute("text.edit", &json!({"id": a, "at": [0, 0]})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 5]})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("format.painter", &json!({"sticky": sticky})).unwrap();
+    (s, a, b)
+}
+
+/// Each paragraph of shape `id`, one character per character of text: `B` bold, `.` not.
+fn bold_map(s: &Session, id: u32) -> Vec<String> {
+    let st = s.doc().unwrap();
+    let body = st.shape(deckcraft_model::ShapeId(id)).and_then(|sh| sh.text.as_ref()).unwrap();
+    body.paragraphs
+        .iter()
+        .map(|p| p.runs.iter().flat_map(|r| r.text.chars().map(move |_| if r.props.bold == Some(true) { 'B' } else { '.' })).collect())
+        .collect()
+}
+
+/// A drag across the text of another box, one not being edited, paints only the dragged text,
+/// in one undo step, and uses up a one-shot painter (#1216).
+#[test]
+fn format_painter_drag_paints_text_in_another_box() {
+    use crate::tools::PointerKind::{Down, Drag, Up};
+    let (mut s, _, b) = painter_and_box_b(false);
+    let steps = s.doc().unwrap().history.undo.len();
+    pointer(&mut s, Down, 68.0, 240.0);
+    pointer(&mut s, Drag, 90.0, 240.0);
+    pointer(&mut s, Up, 90.0, 240.0);
+    let map = bold_map(&s, b);
+    assert!(map[0].starts_with('B') && map[0].ends_with('.'), "only the dragged text is bold: {map:?}");
+    assert_eq!(map[1], ".....", "the next line is untouched");
+    assert!(s.painter.is_none(), "the one-shot painter is used up");
+    assert_eq!(s.doc().unwrap().history.undo.len(), steps + 1, "one undo step");
+    assert!(s.doc().unwrap().shape(deckcraft_model::ShapeId(b)).unwrap().fill.is_none(), "the box's fill is left alone");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(bold_map(&s, b), ["..........", "....."]);
+}
+
+/// A sticky painter paints text in one box after another and stays armed.
+#[test]
+fn format_painter_sticky_paints_text_in_box_after_box() {
+    use crate::tools::PointerKind::{Down, Drag, Up};
+    let (mut s, a, b) = painter_and_box_b(true);
+    for (x, y) in [(68.0, 240.0), (68.0, 90.0)] {
+        pointer(&mut s, Down, x, y);
+        pointer(&mut s, Drag, x + 22.0, y);
+        pointer(&mut s, Up, x + 22.0, y);
+    }
+    assert!(bold_map(&s, b)[0].starts_with('B'), "box B was painted");
+    assert!(bold_map(&s, a)[1].starts_with('B'), "then box A's second line");
+    assert!(s.painter.is_some(), "a sticky painter stays armed");
+}
+
+/// A plain click on another box's text puts the caret there and leaves the painter armed; a
+/// double-click then paints just the word (#1216).
+#[test]
+fn format_painter_click_waits_then_double_click_paints_the_word_in_another_box() {
+    use crate::tools::PointerKind::{DoubleClick, Down, Up};
+    let (mut s, _, b) = painter_and_box_b(false);
+    pointer(&mut s, Down, 75.0, 240.0);
+    pointer(&mut s, Up, 75.0, 240.0);
+    let t = s.doc().unwrap().selection.text.clone().unwrap();
+    assert_eq!(t.shape.0, b, "the caret is in box B");
+    assert!(!t.is_range());
+    assert!(s.painter.is_some(), "the painter waits");
+    assert_eq!(bold_map(&s, b), ["..........", "....."], "nothing painted yet");
+    pointer(&mut s, DoubleClick, 75.0, 240.0);
+    assert_eq!(bold_map(&s, b), ["BBBBB.....", "....."], "only the word");
+    assert!(s.painter.is_none());
+}
+
+/// A triple-click in another box paints its whole paragraph.
+#[test]
+fn format_painter_triple_click_paints_a_paragraph_in_another_box() {
+    use crate::tools::PointerKind::{Down, TripleClick, Up};
+    let (mut s, _, b) = painter_and_box_b(false);
+    pointer(&mut s, Down, 75.0, 240.0);
+    pointer(&mut s, Up, 75.0, 240.0);
+    pointer(&mut s, TripleClick, 75.0, 240.0);
+    assert_eq!(bold_map(&s, b), ["BBBBBBBBBB", "....."]);
+}
+
+/// The frame band of a box, edited or not, still paints the box whole.
+#[test]
+fn format_painter_on_a_frame_paints_the_box_whole() {
+    use crate::tools::PointerKind::{Down, Up};
+    // Box B is not being edited: the press is on its left edge.
+    let (mut s, _, b) = painter_and_box_b(false);
+    pointer(&mut s, Down, 61.0, 270.0);
+    pointer(&mut s, Up, 61.0, 270.0);
+    assert_eq!(bold_map(&s, b), ["BBBBBBBBBB", "BBBBB"]);
+    assert!(s.painter.is_none());
+    // Box A is being edited: its frame paints it whole too.
+    let (mut s, a, _) = painter_and_box_b(false);
+    // Text boxes shrink to their text, so A is about 50 tall: y 72 is on its left edge, clear of
+    // the corner and middle resize handles.
+    pointer(&mut s, Down, 61.0, 72.0);
+    pointer(&mut s, Up, 61.0, 72.0);
+    assert_eq!(bold_map(&s, a), ["BBBBB", "BBBBB"]);
+    assert!(s.painter.is_none());
+}
+
+/// A shape without text has no text to select: a press paints the shape, as before.
+#[test]
+fn format_painter_on_a_shape_without_text_paints_it() {
+    use crate::tools::PointerKind::{Down, Up};
+    let (mut s, a, _) = painter_and_box_b(false);
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [700.0, 60.0, 150.0, 100.0]})).unwrap();
+    s.execute("text.edit", &json!({"id": a, "at": [0, 0]})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 5]})).unwrap();
+    s.execute("format.painter", &json!({})).unwrap();
+    pointer(&mut s, Down, 775.0, 110.0);
+    pointer(&mut s, Up, 775.0, 110.0);
+    assert!(s.painter.is_none(), "the press painted the shape");
+}
+
+/// In a table, a drag inside one cell paints only that text.
+#[test]
+fn format_painter_drag_in_a_table_cell_paints_that_text() {
+    use crate::tools::PointerKind::{Down, Drag, Up};
+    let (mut s, a, _) = painter_and_box_b(false);
+    let data = json!([["hello world", "other"]]);
+    let r = s.execute("insert.table", &json!({"rows": 1, "cols": 2, "rect": [60.0, 330.0, 600.0, 60.0], "data": data})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    s.execute("text.edit", &json!({"id": a, "at": [0, 0]})).unwrap();
+    s.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 5]})).unwrap();
+    s.execute("format.painter", &json!({})).unwrap();
+    pointer(&mut s, Down, 72.0, 345.0);
+    pointer(&mut s, Drag, 95.0, 345.0);
+    pointer(&mut s, Up, 95.0, 345.0);
+    assert!(s.painter.is_none());
+    let st = s.doc().unwrap();
+    let Some(deckcraft_model::ShapeKind::Table(t)) = st.shape(id).map(|sh| &sh.kind) else { panic!("not a table") };
+    let bold = |c| t.cell(0, c).unwrap().text.paragraphs[0].runs.iter().map(|r| r.props.bold == Some(true)).collect::<Vec<_>>();
+    assert!(bold(0).first() == Some(&true) && bold(0).last() == Some(&false), "part of the first cell: {:?}", bold(0));
+    assert!(!bold(1).contains(&true), "the other cell is untouched");
+}
+
+/// Shift- or Ctrl-clicking another box's text with the painter armed extends the shape selection
+/// and paints nothing.
+#[test]
+fn format_painter_shift_click_on_another_box_only_selects_it() {
+    use crate::tools::PointerKind::{Down, Up};
+    for mods in [SHIFT, CTRL] {
+        let (mut s, _, b) = painter_and_box_b(false);
+        for kind in [Down, Up] {
+            s.pointer(crate::tools::PointerEvent { kind, x: 75.0, y: 240.0, mods, tol: 4.0, ..Default::default() }).unwrap();
+        }
+        assert!(s.doc().unwrap().selection.shapes.iter().any(|x| x.0 == b));
+        assert_eq!(bold_map(&s, b), ["..........", "....."]);
+        assert!(s.painter.is_some());
+    }
+}
+
 #[test]
 fn format_painter_ignores_a_shift_press_that_leaves_the_selection() {
     use crate::tools::PointerKind::{Down, Up};
