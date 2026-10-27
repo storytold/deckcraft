@@ -40,6 +40,12 @@ pub struct Imp<'a> {
     pub kept_sidecar_bytes: usize,
     /// Cached kept sidecars by normalized chart part name.
     pub kept_charts: HashMap<String, deckcraft_model::chart::ChartKept>,
+    /// Add-in tags parts, parsed once each, by normalized part name.
+    pub tags_by_part: HashMap<String, Arc<[(String, String)]>>,
+    /// Bytes of tags copied into the model so far (see [`MAX_TAG_BYTES`]).
+    pub tag_bytes: usize,
+    /// The tag budget ran out and the warning was given.
+    pub tags_capped: bool,
 }
 
 impl Imp<'_> {
@@ -196,16 +202,54 @@ fn choice_has_model3d(el: &El, rels: &Rels) -> bool {
     rec(el, rels, 0)
 }
 
+/// Bytes of tags one import copies into the model, every tags part and reference together: a
+/// small compressed tags part listed by many shapes, or many times by one, must not grow without
+/// bound (#1164). The package budgets (`opc::MAX_XML_PART`, `MAX_TOTAL`, #1283) bound what is
+/// parsed; this bounds what is copied from it.
+pub const MAX_TAG_BYTES: usize = 64 << 20;
+/// What each copied pair costs besides its text, so empty pairs count too.
+const TAG_PAIR_COST: usize = std::mem::size_of::<(String, String)>();
+
 /// Add-in tags named by `holder`'s `p:custDataLst`: the name/value pairs of each tags part.
-pub fn tags(imp: &Imp, part: &Part, holder: &El) -> Vec<(String, String)> {
+/// Each part is parsed once per import and counted once per holder.
+pub fn tags(imp: &mut Imp, part: &Part, holder: &El) -> Vec<(String, String)> {
     let Some(list) = holder.child("custDataLst") else { return vec![] };
     let mut out = Vec::new();
+    let mut seen = HashSet::new();
     for t in list.children_named("tags").take(100) {
-        let Some(doc) = t.attr("r:id").and_then(|id| part.rels.get(id)).and_then(|r| imp.pkg.xml(&r.target)) else { continue };
-        for tag in doc.root.children_named("tag").take(10_000) {
-            if let Some(name) = tag.attr("name") {
-                out.push((name.to_string(), tag.attr("val").unwrap_or("").to_string()));
+        let Some(target) = t.attr("r:id").and_then(|id| part.rels.get(id)).map(|r| opc::norm(&r.target)) else { continue };
+        if !seen.insert(target.clone()) {
+            continue;
+        }
+        let parsed = match imp.tags_by_part.get(&target) {
+            Some(p) => p.clone(),
+            None => {
+                let p: Arc<[(String, String)]> = imp
+                    .pkg
+                    .xml(&target)
+                    .map(|doc| {
+                        doc.root
+                            .children_named("tag")
+                            .take(10_000)
+                            .filter_map(|tag| Some((tag.attr("name")?.to_string(), tag.attr("val").unwrap_or("").to_string())))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                imp.tags_by_part.insert(target, p.clone());
+                p
             }
+        };
+        for (name, val) in parsed.iter() {
+            let n = imp.tag_bytes.saturating_add(TAG_PAIR_COST + name.len() + val.len());
+            if n > MAX_TAG_BYTES {
+                if !imp.tags_capped {
+                    log::warn!("pptx: add-in tags over {MAX_TAG_BYTES} bytes; the rest are dropped");
+                    imp.tags_capped = true;
+                }
+                return out;
+            }
+            imp.tag_bytes = n;
+            out.push((name.clone(), val.clone()));
         }
     }
     out
@@ -389,6 +433,9 @@ pub fn import_theme(bytes: &[u8]) -> Result<(deckcraft_model::theme::Theme, Vec<
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
         kept_charts: HashMap::new(),
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
     };
     let part = Part::new(&pkg, &theme_path, &doc);
     let theme = theme::read_theme(&mut imp, &part, &doc.root);
@@ -470,6 +517,9 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
         vml_previews: HashMap::new(),
         kept_sidecar_bytes: 0,
         kept_charts: HashMap::new(),
+        tags_by_part: HashMap::new(),
+        tag_bytes: 0,
+        tags_capped: false,
     };
     // Slide ids first so hyperlinks anywhere can point at slides.
     let mut slide_ids: Vec<(u32, String, SlideId)> = vec![];
@@ -598,7 +648,7 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
             p.raw_ext = Some(kept);
         }
     }
-    p.tags = tags(&imp, &pres_part, pres_el);
+    p.tags = tags(&mut imp, &pres_part, pres_el);
     // Custom shows.
     if let Some(l) = pres_el.child("custShowLst") {
         for cs in l.children_named("custShow") {
