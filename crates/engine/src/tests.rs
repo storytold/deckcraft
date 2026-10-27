@@ -4760,8 +4760,12 @@ fn language_all_marks_every_text_in_the_deck_with_nothing_selected() {
     // The defaults new text inherits.
     assert_eq!(st.doc.default_text_style.level(0).unwrap().run.lang.as_deref(), Some("xx-AL"));
     assert!(st.doc.masters.iter().all(|m| m.body_style.level(0).is_some_and(|l| l.run.lang.as_deref() == Some("xx-AL"))));
-    let words: Vec<String> =
-        s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().iter().map(|w| w["word"].as_str().unwrap().to_string()).collect();
+    let words: Vec<String> = s.execute("review.spelling", &json!({})).unwrap()["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["word"].as_str().unwrap().to_string())
+        .collect();
     assert_eq!(words, vec!["wurld", "hellow"]);
     // One undo step puts the per-box language back.
     s.execute("edit.undo", &json!({})).unwrap();

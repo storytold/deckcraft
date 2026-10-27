@@ -3,7 +3,7 @@ use super::{ColorRef, Fill, Geom, Line, NO_ID_SPACE, Result, Session, Value, bad
 pub(super) fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;
     let st = s.doc()?;
-    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.sites"))?;
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, "shape.sites"))?;
     Ok(json!(crate::connect::sites(&st.doc, &ctx, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
 }
 
@@ -12,7 +12,7 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    let shape = |id| st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "shape.connect"));
+    let shape = |id| st.shape(id).ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, "shape.connect"));
     let (sa, sb) = (shape(from)?, shape(to)?);
     let (a, b) = (crate::connect::sites(&st.doc, &st.selection, sa), crate::connect::sites(&st.doc, &st.selection, sb));
     if a.is_empty() || b.is_empty() {

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::text::{format_body, format_para, format_run, format_run_levels};
 use super::{
     CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, color_param, edit_shapes, f64_or, f64_param, has_doc, has_text,
-    has_text_or_shapes, ids_param, ok, str_param,
+    has_text_or_shapes, ok, str_param,
 };
 use crate::{Result, Session};
 use deckcraft_model::ShapeId;
