@@ -2,7 +2,7 @@
 <!--
   DeckCraft MSI (WiX Toolset v5: `dotnet tool install -g wix`). Built by package.ps1:
 
-    wix build deckcraft.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
+    wix build deckcraft.wxs installer-ui.wxs -arch x64 -d Version=1.2.3 -d BinDir=... -d IconPath=... -o out.msi
 
   Per-machine install into Program Files, a Start Menu shortcut, `.deckcraft` owned by
   DeckCraft, and DeckCraft offered under "Open with" for .pptx/.potx/.ppsx (without taking over
@@ -35,6 +35,8 @@
     <Property Id="ARPURLUPDATEINFO" Value="https://getartcraft.com/apps/deckcraft" />
     <Property Id="ARPHELPLINK" Value="https://discord.gg/artcraft" />
 
+    <!-- Shared native setup UI, including install/uninstall completion. -->
+
     <StandardDirectory Id="ProgramFiles6432Folder">
       <Directory Id="INSTALLFOLDER" Name="DeckCraft" />
     </StandardDirectory>
@@ -45,7 +47,10 @@
       <ComponentGroupRef Id="CraftFontLicences" />
       <?endif ?>
       <ComponentGroupRef Id="DeckcraftFiles" />
+      <ComponentGroupRef Id="CraftInstallerSettings" />
     </Feature>
+    <!-- Shared full UI; app installation policy remains below. -->
+    <UIRef Id="CraftInstallerUI" />
   </Package>
 
   <Fragment>

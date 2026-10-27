@@ -386,3 +386,27 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-10 | minor | Stage checked against the new core-workflow gate: passes, stays alpha |
 | 2026-10-10 | major | Restructured to craftrules `standards/progress-docs.md`: stage, two numbers, dimensions, features, languages; parity estimate moved to docs/target-app-parity.md, "Working today" to its evidence section, the alpha checklist to docs/roadmap.md |
 | 2026-10-07 | major | Alpha checklist (~80% to a self-defined alpha), breadth ~80%, overall ~62%, ~190 h to full parity |
+
+## Packaging update — 2026-10-10
+
+Windows setup now uses the shared `craft-installer` native UI source, with install/repair/remove
+completion, cancellation and failure screens. Existing MSI ownership and upgrade identities are
+preserved; unattended modes remain unattended. Source/generator checks pass; native Windows
+installer acceptance with real release payloads is still pending. See [setup validation](packaging/windows/README.md).
+
+## Packaging update (2026-10-11)
+
+Windows setup now uses the suite's shared `craft-installer` UI, preserving existing folder,
+shortcut and launch options and app-owned installation policy. Install, uninstall and repair
+have explicit completion screens; cancellation and failure have separate endings. Source/profile
+checks, WiX UI library compilation for x64/x86/ARM64, PowerShell parsing and package identity
+comparisons pass. Native fixture MSI linking/UI tables pass on all three architectures, and
+Windows full UI install/repair/uninstall, x86 install/remove, folder upgrades, desktop choices
+and launch checks pass with fixtures. Native evidence and real-release acceptance limits
+are linked from
+[Windows packaging](packaging/windows/README.md).
+
+Windows Settings removal now opens the shared completion screen. Quiet install/removal
+remains unattended; Settings labels preserve compatibility with existing Launchers, and
+previous Modify policy is retained. Windows 11 fixture verification covers both installation
+scopes and x64/x86 removal, with full MSI validation on x64/x86/ARM64.
