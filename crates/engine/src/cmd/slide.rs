@@ -690,7 +690,7 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
     let at = opt_usize_param(p, "at", "section.add")?.unwrap_or(s.doc()?.selection.slide);
     let n = s.doc()?.doc.slides.len();
     if at >= n {
-        return Err(no_slide("section.add", at, n));
+        return Err(super::no_slide("section.add", at, n));
     }
     let name = str_param(p, "name").unwrap_or("Untitled Section").to_string();
     let wanted = name.clone();

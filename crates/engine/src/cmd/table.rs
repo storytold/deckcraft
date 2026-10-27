@@ -1,41 +1,53 @@
 //! Table Design and Table Layout tabs.
 
 use deckcraft_geom::{Affine, Point, Rect};
-use deckcraft_model::{Shape, ShapeKind, Table};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, Table};
 use serde_json::{Value, json};
 
 use super::{
     CommandSpec, bad, bool_or, bool_param, cmd, color_param, edit_shapes, f64_param, has_selection, has_slide, id_param, ok, opt_usize_param,
-    str_param, table_drawn_heights, xfrm_of,
+    rect_json, str_param, table_drawn_heights, xfrm_of,
 };
 use crate::{DocState, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("table.insertRowAbove", "Insert Above", ["Table Layout", "Rows & Columns"], None, "{row?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "rowAbove",
-            "table.insertRowAbove"
-        )),
-        cmd!("table.insertRowBelow", "Insert Below", ["Table Layout", "Rows & Columns"], None, "{row?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "rowBelow",
-            "table.insertRowBelow"
-        )),
-        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colLeft",
-            "table.insertColumnLeft"
-        )),
-        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?} → {changed, rect, rows, cols, overflows: bool}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colRight",
-            "table.insertColumnRight"
-        )),
+        cmd!(
+            "table.insertRowAbove",
+            "Insert Above",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{row?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "rowAbove", "table.insertRowAbove")
+        ),
+        cmd!(
+            "table.insertRowBelow",
+            "Insert Below",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{row?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "rowBelow", "table.insertRowBelow")
+        ),
+        cmd!(
+            "table.insertColumnLeft",
+            "Insert Left",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "colLeft", "table.insertColumnLeft")
+        ),
+        cmd!(
+            "table.insertColumnRight",
+            "Insert Right",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "colRight", "table.insertColumnRight")
+        ),
         cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
             s,
             p,
