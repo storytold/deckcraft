@@ -209,7 +209,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 Animations ▸ Preview and the pane's Play All play the current slide's animations on the editor
 canvas (Escape or a click stops them); with an effect selected the pane's button reads Play From
 and starts at that effect. The pane has an advanced timeline with draggable bars
-(`crates/ui-egui/src/animtimeline.rs`). Still open: most of the effect gallery. Detail in
+(`crates/ui-egui/src/panels/animtimeline.rs`). Still open: most of the effect gallery. Detail in
 [animation-parity.md](animation-parity.md). 7–13 h; the pane is a
 **beta blocker**.
 

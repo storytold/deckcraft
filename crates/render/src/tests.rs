@@ -1439,6 +1439,43 @@ fn table_body_text_is_dark_on_the_tinted_cells_of_a_dark_theme() {
     }
 }
 
+#[test]
+fn table_light_and_dark_presets_give_their_own_header_and_body_looks() {
+    // light1, light2 and dark1 each style the header and banded body cells their own way.
+    use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
+    use deckcraft_model::style::ColorRef;
+    let p = Presentation::default();
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let a = ctx.color(&ColorRef::scheme(SchemeSlot::Accent1), None);
+    let look = |style: &str, r: usize| {
+        let mut t = Table::new(3, 1, 100.0, 90.0);
+        t.style = style.to_string();
+        t.first_row = true;
+        t.band_row = true;
+        crate::table::look_with_def(&ctx, None, &t, r, 0)
+    };
+
+    // light1: header has no fill, bold text and an accent border; banded body rows get a light tint.
+    let h = look("light1", 0);
+    assert_eq!((h.fill, h.bold, h.border), (None, true, Some((a, 1.0))));
+    let b = look("light1", 1);
+    assert_eq!(b.fill, Some(deckcraft_color::apply(a, &[ColorTransform::Tint(20000)])));
+    assert!(b.text.is_some() && !b.bold);
+
+    // light2: accent-filled header with white bold text; body has no fill.
+    let h = look("light2", 0);
+    assert_eq!((h.fill, h.text, h.bold, h.border), (Some(a), Some(Rgba::WHITE), true, Some((a, 1.0))));
+    let b = look("light2", 1);
+    assert_eq!((b.fill, b.text, b.bold), (None, None, false));
+
+    // dark1: black header, shaded accent body (darker when banded), white text and white borders.
+    let h = look("dark1", 0);
+    assert_eq!((h.fill, h.text, h.bold, h.border), (Some(Rgba::BLACK), Some(Rgba::WHITE), true, Some((Rgba::WHITE, 1.0))));
+    let b = look("dark1", 1);
+    assert_eq!(b.fill, Some(deckcraft_color::apply(a, &[ColorTransform::Shade(60000)])));
+    assert_eq!(b.text, Some(Rgba::WHITE));
+}
+
 /// A white 280x200 pt rectangle at (20, 20) with `effects`, rendered at 1 px/pt.
 fn effect_box(effects: deckcraft_model::Effects) -> Image {
     use deckcraft_model::style::{Fill, Line};

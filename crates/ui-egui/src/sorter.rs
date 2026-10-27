@@ -475,7 +475,6 @@ pub fn outline_pane(app: &mut SlideApp, ui: &mut Ui) {
 }
 
 #[cfg(test)]
-#[path = "sorter_tests.rs"]
 mod ui_tests;
 
 /// A slide's outline block height before it has been laid out: title row plus its text lines.

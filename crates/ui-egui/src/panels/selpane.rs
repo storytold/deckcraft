@@ -439,5 +439,4 @@ mod tests {
 }
 
 #[cfg(test)]
-#[path = "selpane_tests.rs"]
 mod ui_tests;

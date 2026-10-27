@@ -468,8 +468,20 @@ mod tests {
                 continue;
             }
             let text = std::fs::read_to_string(&path).unwrap();
-            // Test modules (which build their own fixtures) come last in each file.
-            let code = text.split("#[cfg(test)]").next().unwrap_or("");
+            // Test modules (which build their own fixtures) come last in each file; a
+            // `#[cfg(test)]` import near the top doesn't start them.
+            let mut code = text.as_str();
+            let mut from = 0;
+            while let Some(i) = text[from..].find("#[cfg(test)]") {
+                let at = from + i;
+                let next = text[at + "#[cfg(test)]".len()..].trim_start();
+                if ["use ", "pub use ", "pub(crate) use ", "pub(super) use "].iter().any(|p| next.starts_with(p)) {
+                    from = at + 1;
+                    continue;
+                }
+                code = &text[..at];
+                break;
+            }
             for (n, line) in code.lines().enumerate() {
                 let line = line.trim_start();
                 let touches = ["std::fs", "File::open", "File::create", "OpenOptions"].iter().any(|w| line.contains(w));

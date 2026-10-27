@@ -6,7 +6,7 @@
 #   ROOT                    workspace root
 #   VERSION                 [workspace.package] version from Cargo.toml (override: DECKCRAFT_VERSION)
 #   DIST                    output directory for release artifacts (default: $ROOT/dist/release)
-#   DECKCRAFT_BUILD_SHA    git commit shown in the About dialog (crates/ui-egui/src/dialogs.rs version_line)
+#   DECKCRAFT_BUILD_SHA    git commit shown in the About dialog (crates/ui-egui/src/dialogs/about.rs version_line)
 #   DECKCRAFT_BUILD_DATE    UTC build date, YYYY-MM-DD
 #   CARGO_TARGET_DIR        cargo's target dir (default: $ROOT/target)
 
