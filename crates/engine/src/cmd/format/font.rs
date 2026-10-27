@@ -74,9 +74,9 @@ pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
     let v = f64_param(p, "size").ok_or_else(|| bad("format.size", "missing `size`"))?.clamp(1.0, 4000.0);
     // A selected SmartArt graphic: one size for all its nodes (like smartArt.fontSize).
     if s.doc()?.selection.text.is_none() {
-        let graphics = super::smartart::selected_graphics(s);
+        let graphics = crate::cmd::smartart::selected_graphics(s);
         let selected = s.doc()?.selection.shapes.len();
-        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| super::smartart::set_font_size(s, *gid, Some(v), "format.size")))?;
+        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| crate::cmd::smartart::set_font_size(s, *gid, Some(v), "format.size")))?;
         if !graphics.is_empty() {
             if graphics.len() == selected {
                 return ok();
@@ -156,10 +156,10 @@ fn color_selected(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         // A selected SmartArt graphic: the colour of all its nodes' text.
-        let graphics = super::smartart::selected_graphics(s);
+        let graphics = crate::cmd::smartart::selected_graphics(s);
         let selected = s.doc()?.selection.shapes.len();
         let tc = c.clone();
-        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| super::smartart::set_text_color(s, *gid, tc.clone(), "format.color")))?;
+        keeping_selection(s, |s| graphics.iter().try_for_each(|gid| crate::cmd::smartart::set_text_color(s, *gid, tc.clone(), "format.color")))?;
         if !graphics.is_empty() {
             if graphics.len() == selected {
                 return ok();

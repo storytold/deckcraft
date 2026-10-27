@@ -365,7 +365,7 @@ pub(crate) fn set_text_color(s: &mut Session, gid: ShapeId, color: ColorRef, cmd
     })
 }
 
-fn font_size(s: &mut Session, p: &Value) -> Result<Value> {
+pub(super) fn font_size(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "smartArt.fontSize";
     let size = match p.get("size") {
         Some(Value::Null) => None,

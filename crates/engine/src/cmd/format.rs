@@ -383,7 +383,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Columns",
             ["Home", "Paragraph"],
             None,
-            "{count, spacing?: pt, ids?: [shape ids] (default: the selection)}",
+            "{count?: 1-16, spacing?: pt between columns, ids?: [shape ids] (default: the selection)}; a key left out keeps the shape's value, and with neither the Columns dialog opens",
             has_text_or_shapes,
             |s, p| on_named(s, p, |s| columns(s, p))
         ),
@@ -405,17 +405,6 @@ pub fn specs() -> Vec<CommandSpec> {
             has_text_or_shapes,
             |s, p| on_named(s, p, |s| wrap(s, p))
         ),
-        cmd!(
-            "format.columns",
-            "Columns",
-            ["Home", "Paragraph"],
-            None,
-            "{count?: 1-16, spacing?: pt between columns}; a key left out keeps the shape's value, and with neither the Columns dialog opens",
-            has_text_or_shapes,
-            columns
-        ),
-        cmd!("format.autofit", "Autofit", ["Format Shape", "Text Box"], None, "{mode: none|shrink|resize}", has_text_or_shapes, autofit),
-        cmd!("format.wrap", "Wrap Text in Shape", ["Format Shape", "Text Box"], None, "{on: bool}", has_text_or_shapes, wrap),
         cmd!(
             "format.margins",
             "Text Box Margins",
