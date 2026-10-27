@@ -1,12 +1,12 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (opt-in native LXGW WenKai Lite fallback and interface CJK tests; local implementation only, managed validation pending; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-21 · **Change:** minor (one proofing language for the whole presentation; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** minor (Turkish partial UI and language switch in Preferences; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-DeckCraft's interface is English only today: strings are literals in the UI and engine code, with
-no catalog and no language switch. Requests: #15 (follow the system language), #30 and PR #34
-(Ukrainian, open). Dimension score: **~8% ready** (estimated: English complete, slide-text script
-support partly there), **55–90 h** to parity plus native-speaker review.
+DeckCraft's interface is English by default, with an interface language switch in Preferences
+offering partial Turkish support (`tr` / Türkçe). Most other strings remain literals in the UI
+and engine code awaiting a full string catalog. Requests: #15 (follow the system language), #30 and PR #34
+(Ukrainian, open). Dimension score: **~9% ready** (estimated: English complete, partial Turkish UI,
+slide-text script support partly there), **55–90 h** to parity plus native-speaker review.
 
 ## How the numbers are measured
 
@@ -21,7 +21,7 @@ support partly there), **55–90 h** to parity plus native-speaker review.
   ru, sk, sv, th, tr, zh_CN, zh_TW (26 languages). PowerPoint for **Mac** has no Hindi or Vietnamese
   UI; PowerPoint for Windows has both.
 
-## The twelve key languages
+## The thirteen key languages
 
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support (slide text) | Native review | Status | PowerPoint for Mac UI | Hours to full |
 |---|---|---|---|---|---|---|---|---|
