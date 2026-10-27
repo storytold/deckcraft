@@ -21,13 +21,14 @@ mod master_view;
 mod slide_background;
 mod slide_setup;
 
-use colors::{colors, effects, fonts, variant, variants};
+use colors::{colors, effects, fonts, palette, variant, variants};
 use master_view::{
     close_master, delete_layout, handout_placeholders, handout_view, in_handout, in_notes_master, insert_layout, insert_placeholder, master_view,
     notes_placeholders, notes_view, placeholders, preserve, rename_layout,
 };
 pub use master_view::{handout_placeholder, notes_placeholder};
 use slide_background::{background, hide_bg_graphics};
+pub(crate) use slide_setup::apply_header_footer;
 pub use slide_setup::{civil, date_field_text, today};
 use slide_setup::{header_footer, scale_shapes, slide_size};
 

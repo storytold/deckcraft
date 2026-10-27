@@ -370,10 +370,10 @@ pub(super) fn get(s: &mut Session, p: &Value) -> Result<Value> {
             None => st.selection.shapes.first().copied().ok_or_else(|| bad("text.get", "missing `id`"))?,
         },
     };
-    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, "text.get"))?;
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, "text.get"))?;
     let t = sh.text.clone().unwrap_or_default();
     let mut v = json!({"text": t.text(), "paragraphs": t.paragraphs.iter().map(|p| json!({"level": p.level, "text": p.text()})).collect::<Vec<_>>()});
-    if let Some(i) = super::inspect::slide_of(&ctx) {
+    if let Some(i) = crate::cmd::inspect::slide_of(&ctx) {
         v["slide"] = json!(i);
     }
     Ok(v)

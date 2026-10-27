@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use deckcraft_model::ShapeId;
 use deckcraft_model::anim::{ANIMATIONS, AnimClass, AnimStart, Animation, TextBuild, animation_info};
 use serde_json::{Value, json};
 

@@ -65,7 +65,7 @@ pub(super) fn variants(s: &mut Session, _p: &Value) -> Result<Value> {
 /// The active theme's twelve colours and fonts, plus `text`/`background`: `tx1`/`bg1` resolved
 /// through the colour map in force on the current slide (a dark layout maps `bg1` to `dk1`), so
 /// agents can pick scheme names or hex values that match the theme instead of hard-coding them.
-fn palette(s: &mut Session, _p: &Value) -> Result<Value> {
+pub(super) fn palette(s: &mut Session, _p: &Value) -> Result<Value> {
     let st = s.doc()?;
     let mi = master_index(&st.doc, &st.selection);
     let master = st.doc.masters.get(mi).ok_or_else(|| bad("design.palette", "no master"))?;

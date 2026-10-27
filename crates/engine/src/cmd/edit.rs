@@ -59,10 +59,11 @@ fn restore(s: &mut Session, redo: bool) -> Result<Value> {
     // A later shape can get an undone copy's id: Duplicate starts over with the usual offset.
     st.last_duplicate = None;
     st.revision += 1;
+    // The slide the restored state is on: where the change was made.
+    let slide = st.selection.slide;
     // The point type Edit Points remembered with the restored document: handle drags follow it.
     s.tool.vertex_kind = e.vertex_kind;
-    // The slide the restored state is on: where the change was made.
-    Ok(json!({"label": e.label, "slide": st.selection.slide}))
+    Ok(json!({"label": e.label, "slide": slide}))
 }
 
 fn undo(s: &mut Session, _p: &Value) -> Result<Value> {

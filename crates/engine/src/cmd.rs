@@ -487,13 +487,13 @@ pub(crate) fn rect_json(x: &Xfrm) -> Value {
 /// ["$sl.placeholders.title"]}` is refused instead of selecting nothing and answering ok.
 pub(crate) fn ids_param(p: &Value, key: &str) -> Result<Option<Vec<ShapeId>>> {
     let Some(a) = p.get(key).filter(|v| !v.is_null()) else { return Ok(None) };
-    let a = a.as_array().ok_or_else(|| EngineError::Other(format!("`{key}` must be a list of shape ids, not {a}")))?;
+    let a = a.as_array().ok_or_else(|| bad("shape", format!("`{key}` must be a list of shape ids, not {a}")))?;
     a.iter()
         .map(|v| {
             v.as_u64()
                 .and_then(|v| u32::try_from(v).ok())
                 .map(ShapeId)
-                .ok_or_else(|| EngineError::Other(format!("`{key}` entry {v} is not a shape id (an integer, as slide.inspect lists them)")))
+                .ok_or_else(|| bad("shape", format!("`{key}` entry {v} is not a shape id (an integer, as slide.inspect lists them)")))
         })
         .collect::<Result<Vec<_>>>()
         .map(Some)
@@ -512,11 +512,7 @@ pub(crate) fn with_param(p: &Value, key: &str, v: Value) -> Value {
 
 /// Targets: `ids` / `id` params, else the selection.
 pub(crate) fn targets(s: &Session, p: &Value) -> Result<Vec<ShapeId>> {
-    if let Some(a) = p.get("ids").and_then(Value::as_array)
-        && let Some(v) = a.iter().find(|v| v.as_u64().and_then(|v| u32::try_from(v).ok()).is_none())
-    {
-        return Err(bad("shape", format!("`ids` has an invalid shape id: {v}")));
-    }
+    // `ids_param` refuses an entry that is no shape id, naming it.
     if let Some(ids) = ids_param(p, "ids")? {
         // An explicit empty list is a caller's mistake, not "the selection": acting on the
         // selection instead was a trap an agent fell into (#298).

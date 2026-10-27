@@ -9,8 +9,8 @@ use deckcraft_model::{Chart, ColorRef, Fill, Geom, Line, MediaClip, Shape, Shape
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, NO_ID_SPACE, always, bad, base64_decode, base64_encode, bool_or, bool_param, cmd, color_value, edit_shapes, has_doc, has_selection,
-    has_slide, has_text_or_shapes, ok, rect_param, str_param, usize_param, xfrm_of,
+    CommandSpec, NO_ID_SPACE, always, bad, base64_decode, base64_encode, bool_or, bool_param, cmd, color_value, edit_shapes, f64_param, has_doc,
+    has_selection, has_slide, has_text_or_shapes, ok, rect_json, rect_param, str_param, usize_param, xfrm_of,
 };
 use crate::{EngineError, Result, Session};
 

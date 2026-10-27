@@ -5,7 +5,7 @@ use deckcraft_model::text::Hyperlink;
 use deckcraft_model::{Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param, xfrm_of};
+use super::{CommandSpec, always, bad, bool_param, cmd, has_doc, id_param, opt_usize_param, str_param, usize_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

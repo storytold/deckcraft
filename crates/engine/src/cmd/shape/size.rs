@@ -131,7 +131,7 @@ pub(super) fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
         let (x, y, w, h, rot) = {
             let st = s.doc()?;
             let id = targets(s, p)?.first().copied().ok_or_else(|| bad(SIZE_POS, "nothing selected"))?;
-            let sh = st.shape(id).ok_or_else(|| super::no_such_shape(&st.doc, &st.selection, id, SIZE_POS))?;
+            let sh = st.shape(id).ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, SIZE_POS))?;
             let x = xfrm_of(&st.doc, &st.selection, sh);
             (x.x, x.y, x.w, x.h, x.rot)
         };
