@@ -404,7 +404,12 @@ fn which(s: &mut Session, p: &Value) -> Result<Which> {
     if bool_param(p, "all").unwrap_or(false) {
         return Ok(Which::All);
     }
-    if let Some(a) = p.get("indices").and_then(Value::as_array) {
+    let indices = match p.get("indices") {
+        None | Some(Value::Null) => None,
+        Some(Value::Array(a)) => Some(a),
+        Some(v) => return Err(bad("animation", format!("`indices` is a list of animation positions (as animation.get numbers them), not {v}"))),
+    };
+    if let Some(a) = indices {
         // An entry that is no position is refused naming it, not dropped (#298).
         let v: Vec<usize> = a
             .iter()

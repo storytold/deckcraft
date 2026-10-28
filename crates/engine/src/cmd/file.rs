@@ -588,6 +588,9 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
     match format.as_str() {
         "png" | "jpeg" | "jpg" => {
+            if bool_or(p, "all", false) && p.get("slide").is_some_and(|v| !v.is_null()) {
+                return Err(bad("file.export", "give `all: true` or one `slide`, not both"));
+            }
             let slides: Vec<usize> = match opt_usize_param(p, "slide", "file.export")? {
                 Some(i) => vec![i],
                 None if bool_or(p, "all", false) => (0..st.doc.slides.len()).collect(),
