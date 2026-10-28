@@ -232,6 +232,9 @@ const CHART_PALETTES: &str = "colorful1, colorful2, colorful3, colorful4, monoch
 
 /// `colorful1`…`colorful4` or `monochrome1`…`monochrome13` (PowerPoint's chart colour sets).
 fn is_palette_name(n: &str) -> bool {
-    let num = |rest: &str, max: u32| rest.parse::<u32>().is_ok_and(|k| (1..=max).contains(&k));
+    // The canonical spelling only: digits with no sign or leading zero.
+    let num = |rest: &str, max: u32| {
+        rest.bytes().all(|b| b.is_ascii_digit()) && !rest.starts_with('0') && rest.parse::<u32>().is_ok_and(|k| (1..=max).contains(&k))
+    };
     n.strip_prefix("colorful").is_some_and(|r| num(r, 4)) || n.strip_prefix("monochrome").is_some_and(|r| num(r, 13))
 }
