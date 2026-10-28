@@ -451,7 +451,7 @@ pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &Body
         }
         // Group visually consecutive cells by (style, face).
         let mut cur: Option<GlyphRun> = None;
-        let mut cur_key = (usize::MAX, usize::MAX, false, false);
+        let mut cur_key = (usize::MAX, usize::MAX, false, false, false);
         for &k in &place.order {
             let ci = line.start + k;
             let Some(cell) = p.cells.get(ci) else { continue };
@@ -461,7 +461,7 @@ pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &Body
             let size = if st.baseline != 0.0 { st.size * SUB_SUPER } else { st.size };
             let size = if st.caps == Caps::Small && cell.ch.is_lowercase() { size * 0.8 } else { size };
             // Small capitals are drawn smaller than the capitals beside them: a run of their own.
-            let key = (cell.style, cell.face, st.caps == Caps::Small && cell.ch.is_lowercase(), cell.upright);
+            let key = (cell.style, cell.face, st.caps == Caps::Small && cell.ch.is_lowercase(), cell.upright, cell.fallback);
             if key != cur_key {
                 if let Some(r) = cur.take() {
                     out.runs.push(r);
@@ -473,7 +473,9 @@ pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &Body
                     color: st.color,
                     glyphs: vec![],
                     cells: vec![],
-                    fake_bold: st.fake_bold,
+                    // A bold run's fallback face without a bold weight (a CJK font) is made bolder;
+                    // the run's own fonts keep the run's setting.
+                    fake_bold: if cell.fallback { st.style_name.starts_with("Bold") && face.weight < 550.0 } else { st.fake_bold },
                     fake_italic: st.fake_italic,
                     outline: st.outline,
                     para: line.para,

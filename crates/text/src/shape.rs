@@ -172,8 +172,9 @@ fn shape_cells(
     };
     // A face per grapheme cluster (never split between faces).
     let mut char_face = vec![0usize; n];
+    let mut char_fallback = vec![false; n];
     let mut chains: HashMap<(usize, FontSlot, Option<ScriptTag>), Vec<Arc<FontFace>>> = HashMap::new();
-    let mut prev: Option<Arc<FontFace>> = None;
+    let mut prev: Option<(Arc<FontFace>, bool)> = None;
     for &(a, b) in &graphemes {
         let Some(cluster) = chars.get(a..b) else { continue };
         let si = char_style.get(a).copied().unwrap_or(0);
@@ -194,23 +195,28 @@ fn shape_cells(
             .filter(|f| db.has_family(f))
             .map(|f| db.face(f, st.style_name))
             .filter(|f| covers_symbol(f, cluster.first().copied().unwrap_or(' ')));
-        let face = match (sym_face, prev.as_ref()) {
-            (Some(f), _) => f,
-            (None, Some(p))
+        let (face, fallback) = match (sym_face, prev.as_ref()) {
+            (Some(f), _) => (f, false),
+            (None, Some((p, fallback)))
                 if neutral && !p.is_color() && deckcraft_fonts::covers_cluster(p, cluster) && char_style.get(a.wrapping_sub(1)) == Some(&si) =>
             {
-                p.clone()
+                (p.clone(), *fallback)
             }
             (None, _) => {
                 let chain = chains.entry((si, slot, sc)).or_insert_with(|| face_chain(ctx, st, slot, sc));
-                db.cascade(cluster, chain, st.style_name)
+                let f = db.cascade(cluster, chain, st.style_name);
+                let fallback = !chain.iter().any(|c| Arc::ptr_eq(c, &f));
+                (f, fallback)
             }
         };
         let fi = face_index(faces, &face);
         for f in char_face.get_mut(a..b).into_iter().flatten() {
             *f = fi;
         }
-        prev = Some(face);
+        for f in char_fallback.get_mut(a..b).into_iter().flatten() {
+            *f = fallback;
+        }
+        prev = Some((face, fallback));
     }
     let mut cells: Vec<Cell> = (0..n)
         .map(|i| Cell {
@@ -223,6 +229,7 @@ fn shape_cells(
             head: i,
             boundary: boundary.get(i).copied().unwrap_or(true),
             upright: false,
+            fallback: char_fallback.get(i).copied().unwrap_or(false),
         })
         .collect();
     // In East Asian vertical text, ideographs, kana, Hangul, full-width forms and the like stand

@@ -178,7 +178,7 @@ impl FontDb {
             }
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(f) = self.system_face_for(key, cluster, &bundled) {
-                return f;
+                return self.styled(f, style, cluster);
             }
         }
         let exclude = chain.first().map(|f| f.id()).unwrap_or(u32::MAX);
@@ -201,9 +201,37 @@ impl FontDb {
             && !is_emoji_cluster(cluster)
             && let Some(plain) = self.plain_face_for(key, cluster)
         {
-            return plain;
+            return self.styled(plain, style, cluster);
         }
-        f
+        if chain.iter().any(|c| Arc::ptr_eq(c, &f)) {
+            return f;
+        }
+        self.styled(f, style, cluster)
+    }
+
+    /// The face of `f`'s family that matches the run's bold and italic (`style`), so bold text in
+    /// a font without CJK glyphs stays bold in the fallback face: the closest named style, else,
+    /// for a variable font, its `wght` axis set to the run's weight. `f` itself when the family
+    /// has nothing closer that draws the cluster (the text is then made bolder when drawn).
+    fn styled(&self, f: Arc<FontFace>, style: &str, cluster: &[char]) -> Arc<FontFace> {
+        let base = crate::fontdb::base_style(style);
+        let (weight, italic) = (crate::fontdb::style_weight(base), crate::fontdb::style_italic(base));
+        if f.is_color() || ((f.weight - weight).abs() < 1.0 && f.italic == italic) {
+            return f;
+        }
+        let family = f.family.clone();
+        let ok = |s: &Arc<FontFace>| s.family.eq_ignore_ascii_case(&family) && covers_cluster(s, cluster);
+        let score = |s: &FontFace| (s.weight - weight).abs() + if s.italic != italic { 1000.0 } else { 0.0 };
+        let named = self.face(&family, base);
+        let best = if ok(&named) && score(&named) < score(&f) { named } else { f };
+        let has_wght = best.skrifa().is_some_and(|font| skrifa::MetadataProvider::axes(&font).iter().any(|a| a.tag() == skrifa::Tag::new(b"wght")));
+        if (best.weight - weight).abs() >= 1.0 && has_wght {
+            let inst = self.face(&best.family, &format!("{} {{wght:{weight}}}", crate::fontdb::base_style(&best.style)));
+            if ok(&inst) {
+                return inst;
+            }
+        }
+        best
     }
 
     /// An installed (non-bundled) face covering the cluster, loading one from the system catalog
@@ -296,6 +324,34 @@ mod tests {
         });
         let family = rx.recv_timeout(std::time::Duration::from_secs(30)).expect("cascade did not return");
         assert!(!family.is_empty());
+    }
+
+    #[test]
+    fn bold_cjk_fallback_keeps_weight() {
+        // An ideograph in a run whose font has no CJK: the fallback family is picked by coverage,
+        // then its face for the run's bold and italic. The fixtures are the only faces with it.
+        let font = |name: &str| std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)).unwrap();
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        for name in ["han-regular.ttf", "han-bold.ttf", "han-italic.ttf"] {
+            assert_eq!(db.add_font(font(name)), 1, "{name}");
+        }
+        for style in ["Regular", "Bold", "Italic"] {
+            let chain = [db.face(crate::DEFAULT_FAMILY, style)];
+            assert!(!chain[0].covers('\u{31350}'));
+            let f = db.cascade(&['\u{31350}'], &chain, style);
+            assert_eq!((f.family.as_str(), f.style.as_str()), ("DeckCraft Han", style), "{style} run");
+        }
+        // A variable font without a bold face: its `wght` axis at the run's weight.
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        assert_eq!(db.add_font(font("han-vf.ttf")), 1);
+        let chain = [db.face(crate::DEFAULT_FAMILY, "Bold")];
+        let f = db.cascade(&['\u{31350}'], &chain, "Bold");
+        assert_eq!((f.family.as_str(), f.weight), ("DeckCraft Han VF", 700.0));
+        assert!(f.coords.contains(&(*b"wght", 700.0)), "{:?}", f.coords);
+        let f = db.cascade(&['\u{31350}'], &chain, "Regular");
+        assert_eq!((f.family.as_str(), f.weight), ("DeckCraft Han VF", 400.0));
     }
 
     #[test]
