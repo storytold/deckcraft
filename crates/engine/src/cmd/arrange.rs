@@ -4,7 +4,10 @@ use deckcraft_geom::{Point, Rect, Xfrm};
 use deckcraft_model::{Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, edit_geometry, has_doc, has_selection, has_slide, has_two, id_param, ok, str_param, targets,
+    usize_param, with_param, xfrm_of,
+};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

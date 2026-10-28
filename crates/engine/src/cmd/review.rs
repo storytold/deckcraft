@@ -5,7 +5,9 @@ use std::sync::Arc;
 use deckcraft_model::Comment;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param, usize_param,
+};
 use crate::{Result, Session, Target, UiRequest};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -430,7 +432,7 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
     // One exact occurrence (a squiggled word): paragraph `para`, from character `start`.
     if let (Some(id), Some(para), Some(start)) = (shape, usize_param(p, "para"), usize_param(p, "start")) {
         let id = deckcraft_model::ShapeId(u32::try_from(id).map_err(|_| bad("review.spellingChange", "bad `shape`"))?);
-        let end = start + word.chars().count();
+        let end = start.checked_add(word.chars().count()).ok_or_else(|| bad("review.spellingChange", "bad `start`"))?;
         let cell = usize_param(p, "row").zip(usize_param(p, "col"));
         let slide = {
             let st = s.doc()?;
@@ -841,5 +843,20 @@ mod tests {
         }
         s.execute("comment.delete", &json!({})).unwrap();
         assert!(s.active().unwrap().doc.slides[0].comments.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod spelling_change_range_tests {
+    use crate::{EngineError, Session};
+    use serde_json::json;
+
+    #[test]
+    fn spelling_change_huge_start_is_bad_params() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.textBox", &json!({"text": "Hello"})).unwrap();
+        let id = r["id"].clone();
+        let err = s.execute("review.spellingChange", &json!({"shape": id, "para": 0, "start": u64::MAX, "word": "Hello", "to": "x"})).unwrap_err();
+        assert!(matches!(err, EngineError::BadParams { .. }), "{err:?}");
     }
 }

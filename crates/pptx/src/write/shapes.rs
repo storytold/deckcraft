@@ -909,8 +909,12 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
         w.empty0("p:nvPr");
         w.close("p:nvPicPr");
         dml::blip_fill(w, x, o, "p:blipFill", fill);
+        // As for any picture, a colour or pattern fill shows behind the image (an object's preview
+        // keeps its fallback picture's fill).
         let mut s2 = s.clone();
-        s2.fill = None;
+        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+            s2.fill = None;
+        }
         sp_pr(w, x, o, &s2, true);
         w.close("p:pic");
     } else {

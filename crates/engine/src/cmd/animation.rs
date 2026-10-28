@@ -5,7 +5,9 @@ use std::sync::Arc;
 use deckcraft_model::anim::{ANIMATIONS, AnimClass, AnimStart, Animation, TextBuild, animation_info};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, always, bad, bool_or, bool_param, cmd, has_selection, has_slide, id_param, ok, opt_usize_param, str_param, targets, usize_param,
+};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -230,7 +232,7 @@ fn add(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn remove(s: &mut Session, p: &Value) -> Result<Value> {
-    let index = usize_param(p, "index");
+    let index = opt_usize_param(p, "index", "animation.remove")?;
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.remove", "no slide"))?);
@@ -247,7 +249,7 @@ fn remove(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("animation.move", "missing `index`"))?;
+    let i = opt_usize_param(p, "index", "animation.move")?.ok_or_else(|| bad("animation.move", "missing `index`"))?;
     let to = usize_param(p, "to").ok_or_else(|| bad("animation.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation.move", "no slide"))?);
@@ -263,7 +265,7 @@ fn move_anim(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn each_target(s: &mut Session, p: &Value, f: impl Fn(&mut Animation)) -> Result<Value> {
-    let index = usize_param(p, "index");
+    let index = opt_usize_param(p, "index", "animation")?;
     let ids = if index.is_none() { targets(s, p)? } else { vec![] };
     s.edit(|doc, sel| {
         let sl = Arc::make_mut(doc.slides.get_mut(sel.slide).ok_or_else(|| bad("animation", "no slide"))?);
@@ -566,5 +568,26 @@ mod tests {
         s.execute("edit.delete", &json!({"ids": [g]})).unwrap();
         assert_eq!(triggers(&s), vec![None], "the trigger was inside the deleted group");
         assert_eq!(s.doc().unwrap().current_slide().unwrap().animations.len(), 1);
+    }
+
+    #[test]
+    fn invalid_index_is_an_error_not_the_selection() {
+        let mut s = Session::with_new();
+        let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 100.0, 100.0]})).unwrap();
+        let id = r.get("id").unwrap().as_u64().unwrap();
+        s.execute("animation.add", &json!({"effect": "fade", "class": "entrance", "ids": [id]})).unwrap();
+        s.select(|_, sel| {
+            sel.shapes = vec![deckcraft_model::ShapeId(id as u32)];
+        })
+        .unwrap();
+        for bad_index in [json!(-1), json!(1.5), json!("x")] {
+            for cmd in ["animation.remove", "animation.timing", "animation.options"] {
+                let r = s.execute(cmd, &json!({"index": bad_index, "duration": 100}));
+                assert!(r.is_err(), "{cmd} accepted index {bad_index}: {r:?}");
+            }
+            let r = s.execute("animation.move", &json!({"index": bad_index, "to": 0}));
+            assert!(r.is_err(), "animation.move accepted index {bad_index}: {r:?}");
+            assert_eq!(s.execute("animation.get", &json!({})).unwrap().as_array().unwrap().len(), 1);
+        }
     }
 }

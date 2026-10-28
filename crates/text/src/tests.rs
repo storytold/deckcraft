@@ -1,4 +1,9 @@
-use super::*;
+use super::{
+    Affinity, Align, Anchor, Arc, AutoFit, BodyProps, Bullet, Caps, Cell, Ctx, Dash, Deco, DecoLine, FontDb, FontFace, GlyphRun, LINE_PITCH,
+    MoveMode, NoFields, Opts, ParaProps, Point, Pos, Rect, Rgba, SUB_SUPER, Shape, Spacing, Strike, TextBody, TextLayout, autonum,
+    break_opportunities, caps_char, chinese_num, covers_symbol, is_symbol_font, is_upright, layout, layout_scaled, map_symbol_bullet, measure_str,
+    resolve, shaping_features, symbol_char, symbol_font_char, symbol_font_draw, symbol_unicode, symbol_unicode_alts,
+};
 use deckcraft_model::Fill;
 use deckcraft_model::defaults;
 use deckcraft_model::text::{Paragraph, Run};

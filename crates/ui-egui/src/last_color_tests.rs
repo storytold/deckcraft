@@ -44,8 +44,8 @@ fn select(h: &mut Harness<'static, SlideApp>, id: ShapeId) {
 
 /// Open the drop-down arrow of a split button, type a hex colour into "More Colors…" and press Enter.
 fn pick_hex(h: &mut Harness<'static, SlideApp>, button: &str, hex: &str) {
-    let r = h.get_by_label(button).rect();
-    let arrow = egui::pos2(r.max.x - 5.0, r.center().y);
+    // The split button exposes its main and arrow targets separately, named for this command.
+    let arrow = h.get_by_role_and_label(egui::accesskit::Role::Button, &format!("{button} options")).rect().center();
     h.input_mut().events.push(Event::PointerMoved(arrow));
     h.run_steps(2);
     for pressed in [true, false] {

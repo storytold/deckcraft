@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use deckcraft_model::{Fill, MediaId, Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
+use deckcraft_model::{MediaId, Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
 use serde::Serialize;
 
 /// The revised presentation a document is being compared with.
@@ -281,14 +281,16 @@ fn max_shape_id(shapes: &[Shape], m: &mut u32) {
 pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacing: Option<SlideId>) -> crate::Result<Slide> {
     let mut sl = slide.clone();
     // Media.
-    let mut mids = vec![];
-    crate::cmd::edit::media_of_shapes(&sl.shapes, &mut mids);
     let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
-    for id in mids {
+    for id in crate::media_refs::slide_media(&sl) {
         let Some(m) = rev.media(id) else { continue };
         match doc.media(id) {
             Some(x) if x.data == m.data => {}
-            None => doc.media.push(m.clone()),
+            None => {
+                // Keeps the revision's id, so later ids must start past it.
+                doc.media.push(m.clone());
+                doc.next_id = doc.next_id.max(id.0);
+            }
             Some(_) => {
                 let new = doc
                     .add_media(&m.name, &m.content_type, m.data.as_ref().clone())
@@ -310,7 +312,6 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
         shapes: &mut [Shape],
         taken: &HashSet<u32>,
         ids: &mut HashMap<ShapeId, ShapeId>,
-        media: &HashMap<MediaId, MediaId>,
         depth: usize,
     ) -> crate::Result<()> {
         if depth > 64 {
@@ -322,31 +323,18 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
                 ids.insert(s.id, new);
                 s.id = new;
             }
-            let remap = |m: &mut MediaId| {
-                if let Some(n) = media.get(m) {
-                    *m = *n;
-                }
-            };
-            match &mut s.kind {
-                ShapeKind::Picture { fill } => remap(&mut fill.media),
-                ShapeKind::Media(m) => {
-                    remap(&mut m.media);
-                    if let Some(p) = m.poster.as_mut() {
-                        remap(p);
-                    }
-                }
-                _ => {}
-            }
-            if let Some(Fill::Picture(pf)) = &mut s.fill {
-                remap(&mut pf.media);
-            }
             if let Some(ch) = s.children_mut() {
-                rec(doc, ch, taken, ids, media, depth + 1)?;
+                rec(doc, ch, taken, ids, depth + 1)?;
             }
         }
         Ok(())
     }
-    rec(doc, &mut sl.shapes, &taken, &mut id_map, &media_map, 0)?;
+    rec(doc, &mut sl.shapes, &taken, &mut id_map, 0)?;
+    crate::media_refs::visit_mut::slide(&mut sl, &mut |m: &mut MediaId| {
+        if let Some(n) = media_map.get(m) {
+            *m = *n;
+        }
+    });
     for a in &mut sl.animations {
         if let Some(n) = id_map.get(&a.shape) {
             a.shape = *n;
@@ -458,6 +446,52 @@ mod tests {
         let at = ins["slide"].as_u64().unwrap() as usize;
         assert_eq!(at, n, "after the open slide matching the revised one before it");
         assert_eq!(s.doc().unwrap().doc.slides.len(), n, "comparing alone changes nothing");
+    }
+
+    /// A deck with one slide: a table whose cell has a picture fill, a picture background and a
+    /// transition sound. `tag` starts the bytes of each.
+    fn media_deck(tag: &str) -> deckcraft_model::Presentation {
+        use std::sync::Arc;
+
+        use deckcraft_model::style::PictureFill;
+        use deckcraft_model::{Background, Fill, Shape, ShapeId, ShapeKind, Table, Transition, defaults};
+
+        let mut p = defaults::new_presentation(None);
+        let cell = p.add_media("cell.png", "image/png", format!("{tag} cell").into_bytes()).expect("media");
+        let back = p.add_media("back.png", "image/png", format!("{tag} background").into_bytes()).expect("media");
+        let sound = p.add_media("sound.wav", "audio/wav", format!("{tag} sound").into_bytes()).expect("media");
+        let mut t = Table::new(1, 1, 100.0, 40.0);
+        t.rows[0].cells[0].fill = Some(Fill::Picture(PictureFill { media: cell, ..Default::default() }));
+        let id = ShapeId(p.alloc_id().expect("id"));
+        let mut s = (*p.slides.first().cloned().unwrap_or_default()).clone();
+        s.shapes.push(Shape { id, kind: ShapeKind::Table(t), ..Default::default() });
+        s.background = Some(Background::Fill { fill: Fill::Picture(PictureFill { media: back, ..Default::default() }) });
+        s.transition = Some(Transition { kind: "fade".into(), sound: Some(sound), ..Default::default() });
+        p.slides = vec![Arc::new(s)];
+        p
+    }
+
+    #[test]
+    fn an_accepted_slide_keeps_its_cell_picture_background_and_sound() {
+        use deckcraft_model::{Background, Fill, MediaId, ShapeKind};
+
+        // Both decks hold the same media ids with different bytes.
+        let mut doc = media_deck("open");
+        let rev = media_deck("revised");
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let bytes = |id: MediaId| doc.media(id).unwrap().data.as_ref().clone();
+        let table = sl.shapes.iter().find_map(|x| if let ShapeKind::Table(t) = &x.kind { Some(t) } else { None }).unwrap();
+        let Some(Fill::Picture(cell)) = &table.rows[0].cells[0].fill else { panic!("no cell picture") };
+        let Some(Background::Fill { fill: Fill::Picture(back) }) = &sl.background else { panic!("no background picture") };
+        let sound = sl.transition.as_ref().and_then(|t| t.sound).unwrap();
+        assert_eq!(
+            [bytes(cell.media), bytes(back.media), bytes(sound)],
+            ["revised cell", "revised background", "revised sound"].map(|x| x.as_bytes().to_vec())
+        );
+        // The open deck's own slide is untouched.
+        let own = &doc.slides[0];
+        let Some(Background::Fill { fill: Fill::Picture(back) }) = &own.background else { panic!("no background picture") };
+        assert_eq!(bytes(back.media), b"open background");
     }
 
     #[test]

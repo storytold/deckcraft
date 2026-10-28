@@ -608,62 +608,71 @@ impl Chart {
         if ser.is_empty() {
             return (!secondary && self.kind != ChartType::Combo).then_some((0.0, 0.0));
         }
-        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut ext = (f64::INFINITY, f64::NEG_INFINITY);
         let has_stacked_or_percent = ser.iter().any(|s| {
             let k = self.series_kind(s);
             k.stacked() || k.percent()
         });
-
-        let mut percent = false;
-        if has_stacked_or_percent {
-            let n = ser.iter().map(|s| s.values.len()).max().unwrap_or(0);
-            let budget = (ser.len() * n).min(10_000_000);
-            let n_clamped = if ser.is_empty() { 0 } else { n.min(budget / ser.len()) };
-
-            for i in 0..n_clamped {
-                let (mut p, mut m, mut stacked) = (0.0, 0.0, false);
-                for s in &ser {
-                    let k = self.series_kind(s);
-                    let Some(v) = s.values.get(i).copied().flatten().filter(|v| v.is_finite()) else { continue };
-                    if k.percent() {
-                        percent = true;
-                    } else if k.stacked() {
-                        stacked = true;
-                        if v >= 0.0 { p += v } else { m += v }
-                    } else {
-                        hi = hi.max(v);
-                        lo = lo.min(v);
-                    }
-                }
-                if stacked {
-                    hi = hi.max(p);
-                    lo = lo.min(m);
-                }
-            }
+        let percent = if has_stacked_or_percent {
+            self.fold_stacked(&ser, &mut ext)
         } else {
             for s in &ser {
                 for v in s.values.iter().flatten().copied().filter(|v| v.is_finite()) {
-                    hi = hi.max(v);
-                    lo = lo.min(v);
+                    widen(&mut ext, v);
                 }
             }
-        }
+            false
+        };
         if !percent {
-            for s in &ser {
-                if self.series_kind(s).stacked() {
-                    continue;
-                }
-                for y in s.trendline_ys(crate::trendline::series_is_scatter(self.series_kind(s))) {
-                    hi = hi.max(y);
-                    lo = lo.min(y);
-                }
-            }
+            self.fold_trendlines(&ser, &mut ext);
         }
         if percent {
-            lo = lo.min(0.0);
-            hi = hi.max(1.0);
+            ext.0 = ext.0.min(0.0);
+            ext.1 = ext.1.max(1.0);
         }
+        let (lo, hi) = ext;
         Some(if lo <= hi { (lo, hi) } else { (0.0, 0.0) })
+    }
+
+    /// Widens `ext` by the points of the stacked and 100 % series in `ser`; returns whether a
+    /// 100 % series is among them.
+    fn fold_stacked(&self, ser: &[&Series], ext: &mut (f64, f64)) -> bool {
+        let mut percent = false;
+        let n = ser.iter().map(|s| s.values.len()).max().unwrap_or(0);
+        let budget = (ser.len() * n).min(10_000_000);
+        let n_clamped = if ser.is_empty() { 0 } else { n.min(budget / ser.len()) };
+        for i in 0..n_clamped {
+            let (mut p, mut m, mut stacked) = (0.0, 0.0, false);
+            for s in ser {
+                let k = self.series_kind(s);
+                let Some(v) = s.values.get(i).copied().flatten().filter(|v| v.is_finite()) else { continue };
+                if k.percent() {
+                    percent = true;
+                } else if k.stacked() {
+                    stacked = true;
+                    if v >= 0.0 { p += v } else { m += v }
+                } else {
+                    widen(ext, v);
+                }
+            }
+            if stacked {
+                ext.1 = ext.1.max(p);
+                ext.0 = ext.0.min(m);
+            }
+        }
+        percent
+    }
+
+    /// Widens `ext` by the trendlines of the series in `ser` that are not stacked.
+    fn fold_trendlines(&self, ser: &[&Series], ext: &mut (f64, f64)) {
+        for s in ser {
+            if self.series_kind(s).stacked() {
+                continue;
+            }
+            for y in s.trendline_ys(crate::trendline::series_is_scatter(self.series_kind(s))) {
+                widen(ext, y);
+            }
+        }
     }
 
     /// A waterfall's bars as (from, to) on the value axis: each point floats from the running
@@ -802,6 +811,7 @@ impl Chart {
 /// The (min, max, major unit) of an axis over the data range [lo, hi]: `fmin`/`fmax`/`major`
 /// where the chart fixes them; otherwise Office's automatic limits, rounded out to the smallest
 /// 1-2-5 unit giving at most `max_intervals` intervals:
+/// The data range [lo, hi] an axis covers, clamped to ±1e100; (0, 1) without finite values.
 ///
 /// - **Maximum:** `hi + (hi − lo)/20` (with `headroom`), rounded up to the unit.
 /// - **Minimum:** zero when every value is ≥ 0 and `lo` is below 5/6 of `hi`; otherwise
@@ -809,22 +819,14 @@ impl Chart {
 ///   near them.
 /// - All-negative values mirror this: the axis ends at zero when `hi` is above 5/6 of `lo`.
 ///   Mixed signs get headroom at both ends.
-pub fn axis_scale(
-    lo: f64,
-    hi: f64,
-    fmin: Option<f64>,
-    fmax: Option<f64>,
-    major: Option<f64>,
-    max_intervals: usize,
-    headroom: bool,
-) -> (f64, f64, f64) {
-    // Values past ±1e100 aren't axis values; clamping keeps the arithmetic finite.
-    let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
-    let (fmin, fmax) = (fin(fmin), fin(fmax));
-    let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) };
-    // Office's automatic limits ("How chart axis limits are determined", as Jon Peltier
-    // summarises it): 5 % of the data range past the data, and zero when the values don't
-    // sit within the top sixth of their largest magnitude. A single value is measured from zero.
+fn axis_data_range(lo: f64, hi: f64) -> (f64, f64) {
+    if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) }
+}
+
+/// Office's automatic (min, max) of the data range [lo, hi]. "How chart axis limits are determined",
+/// as Jon Peltier summarises it: 5 % of the data range past the data, and zero when the values don't
+/// sit within the top sixth of their largest magnitude. A single value is measured from zero.
+fn auto_limits(lo: f64, hi: f64, headroom: bool) -> (f64, f64) {
     let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
     let pad = if !headroom {
         0.0
@@ -835,21 +837,23 @@ pub fn axis_scale(
     };
     let auto_lo = if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) { 0.0 } else { lo - pad };
     let auto_hi = if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) { 0.0 } else { hi + pad };
-    let mut lo = fmin.unwrap_or(auto_lo);
-    let mut hi = fmax.unwrap_or(auto_hi);
-    let mag = lo.abs().max(hi.abs());
-    // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
-    let unit = if mag == 0.0 { 1.0 } else { mag };
-    if hi - lo <= 1e-12 * mag {
-        // A fixed limit on the far side of the data: the automatic end gives way.
-        match (fmin, fmax) {
-            (None, Some(_)) => lo = if hi > 0.0 { 0.0 } else { hi - hi.abs().max(unit) },
-            (Some(_), None) if lo < 0.0 => hi = 0.0,
-            _ => hi = lo + unit,
-        }
+    (auto_lo, auto_hi)
+}
+
+/// The ends of a span too small to show: with one fixed limit on the far side of the data, the
+/// automatic end gives way; otherwise the span is one `unit` wide.
+fn flat_span_ends(fmin: Option<f64>, fmax: Option<f64>, lo: f64, hi: f64, unit: f64) -> (f64, f64) {
+    match (fmin, fmax) {
+        (None, Some(_)) => (if hi > 0.0 { 0.0 } else { hi - hi.abs().max(unit) }, hi),
+        (Some(_), None) if lo < 0.0 => (lo, 0.0),
+        _ => (lo, lo + unit),
     }
-    let n = max_intervals.clamp(1, 50) as f64;
-    let step = match fin(major).filter(|m| *m > 0.0 && (hi - lo) / m <= 1000.0) {
+}
+
+/// The major step: `major` when it gives at most 1000 intervals, else the smallest 1-2-5 step
+/// that fits `n` intervals over [lo, hi].
+fn axis_step(major: Option<f64>, lo: f64, hi: f64, n: f64, unit: f64) -> f64 {
+    match major.filter(|m| *m > 0.0 && (hi - lo) / m <= 1000.0) {
         Some(m) => m,
         None => {
             let mut step = 10f64.powf(((hi - lo) / n).log10().floor());
@@ -865,7 +869,32 @@ pub fn axis_scale(
             }
             step
         }
-    };
+    }
+}
+
+pub fn axis_scale(
+    lo: f64,
+    hi: f64,
+    fmin: Option<f64>,
+    fmax: Option<f64>,
+    major: Option<f64>,
+    max_intervals: usize,
+    headroom: bool,
+) -> (f64, f64, f64) {
+    // Values past ±1e100 aren't axis values; clamping keeps the arithmetic finite.
+    let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
+    let (fmin, fmax) = (fin(fmin), fin(fmax));
+    let (lo, hi) = axis_data_range(lo, hi);
+    let (auto_lo, auto_hi) = auto_limits(lo, hi, headroom);
+    let (mut lo, mut hi) = (fmin.unwrap_or(auto_lo), fmax.unwrap_or(auto_hi));
+    let mag = lo.abs().max(hi.abs());
+    // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
+    let unit = if mag == 0.0 { 1.0 } else { mag };
+    if hi - lo <= 1e-12 * mag {
+        (lo, hi) = flat_span_ends(fmin, fmax, lo, hi, unit);
+    }
+    let n = max_intervals.clamp(1, 50) as f64;
+    let step = axis_step(fin(major), lo, hi, n, unit);
     let min = fmin.unwrap_or((lo / step + 1e-9).floor() * step);
     let max = fmax.unwrap_or((hi / step - 1e-9).ceil() * step).max(min + step);
     (min, max, step)
@@ -1344,6 +1373,12 @@ impl Chart {
             .collect();
         (groups, stats)
     }
+}
+
+/// Widens the (min, max) extent `ext` to include `v`.
+fn widen(ext: &mut (f64, f64), v: f64) {
+    ext.0 = ext.0.min(v);
+    ext.1 = ext.1.max(v);
 }
 
 /// Excel's QUARTILE.EXC position `p·(n+1)` (1-based) on sorted data, clamped to the ends.

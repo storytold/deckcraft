@@ -1,6 +1,10 @@
 use serde_json::json;
 
-use crate::*;
+use crate::tools::{Mods, PointerEvent, PointerKind};
+use crate::{
+    DocState, History, Presentation, Session, Target, TextSel, ToolKind, Value, cmd, command_specs, connect, find_command, model, sample, tools,
+};
+use deckcraft_model::ShapeId;
 
 fn session() -> Session {
     Session::with_new()
@@ -208,6 +212,77 @@ fn clipboard_copy_paste_shapes_and_slides() {
     s.execute("edit.paste", &json!({"scope": "slides"})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), 2);
     assert!(s.doc().unwrap().doc.validate().is_empty());
+}
+
+#[test]
+fn pasted_shapes_get_the_next_automatic_name() {
+    let mut s = session();
+    let names = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+    let before = names(&s).len();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+    let auto = names(&s)[before].clone();
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("edit.paste", &json!({})).unwrap();
+    s.execute("edit.paste", &json!({})).unwrap();
+    let all = names(&s);
+    let base = auto.rsplit_once(' ').unwrap().0;
+    assert_eq!(all[before + 1], format!("{base} {}", before + 2));
+    assert_eq!(all[before + 2], format!("{base} {}", before + 3));
+
+    // A name the user chose is not an automatic one and stays on the copy.
+    let id = s.doc().unwrap().selection.shapes[0].0;
+    s.execute("shape.rename", &json!({"id": id, "name": "Hero"})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("edit.paste", &json!({})).unwrap();
+    assert_eq!(names(&s).last().unwrap(), "Hero");
+}
+
+#[test]
+fn pasting_after_a_deleted_shape_does_not_repeat_a_name() {
+    let mut s = session();
+    let names = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
+    let mut ids = vec![];
+    for _ in 0..3 {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+        ids.push(s.doc().unwrap().selection.shapes[0].0);
+    }
+    s.execute("edit.delete", &json!({"ids": [ids[1]]})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    s.doc_mut().unwrap().selection.shapes = vec![deckcraft_model::ShapeId(ids[2])];
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("edit.paste", &json!({})).unwrap();
+    let all = names(&s);
+    let mut unique = all.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), all.len(), "{all:?}");
+}
+
+#[test]
+fn pasting_on_another_slide_keeps_names_so_morph_still_pairs_them() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 20, 20]})).unwrap();
+    let first = s.doc().unwrap().selection.shapes[0].0;
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 200, 80, 80]})).unwrap();
+    s.execute("edit.delete", &json!({"ids": [first]})).unwrap();
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("edit.paste", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    let (a, b) = (&st.doc.slides[1], &st.doc.slides[2]);
+    let an: Vec<_> = a.shapes.iter().map(|x| x.name.clone()).collect();
+    let bn: Vec<_> = b.shapes.iter().map(|x| x.name.clone()).collect();
+    assert_eq!(an, bn);
+    let pairs = deckcraft_anim::morph_pairs(a, b);
+    assert_eq!(pairs.len(), 2);
+    for (ia, ib) in pairs {
+        let na = &a.shapes.iter().find(|x| x.id == ia).unwrap().name;
+        let nb = &b.shapes.iter().find(|x| x.id == ib).unwrap().name;
+        assert_eq!(na, nb);
+    }
 }
 
 #[test]
@@ -840,6 +915,139 @@ fn clicks_while_editing_a_cell_move_the_caret_between_cells() {
     s.pointer(tev(PointerKind::Down, 50.0, 400.0)).unwrap();
     s.pointer(tev(PointerKind::Up, 50.0, 400.0)).unwrap();
     assert!(text_sel(&s).is_none());
+}
+
+/// Editing text in a cell ends a selected cell range, so Delete after leaving the text deletes the
+/// table rather than clearing the cells of the old range.
+#[test]
+fn editing_a_cell_ends_the_selected_cell_range() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("text.edit", &json!({"id": id, "cell": [1, 1]})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.cells, None);
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("text.edit", &json!({"notes": true})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.cells, None);
+    s.execute("text.edit", &json!({"id": id, "cell": [1, 1]})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    s.execute("edit.delete", &json!({})).unwrap();
+    assert!(s.doc().unwrap().shape(id).is_none(), "the table is deleted");
+}
+
+#[test]
+fn dragging_across_cells_selects_a_range_of_cells() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0, 100.0], json!([["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]]));
+    // The middle of cell (r, c): the table's top-left is (100, 100), rows are 40 pt high.
+    let mid = |r: usize, c: usize| (150.0 + 100.0 * c as f64, 120.0 + 40.0 * r as f64);
+    let cells = |s: &Session| s.doc().unwrap().selection.cells;
+    let drag = |s: &mut Session, kind, (x, y): (f64, f64)| s.pointer(tev(kind, x, y)).unwrap();
+    s.execute("text.edit", &json!({"id": id, "cell": [0, 0]})).unwrap();
+    drag(&mut s, PointerKind::Down, mid(0, 0));
+    drag(&mut s, PointerKind::Drag, mid(1, 1));
+    assert_eq!(cells(&s), Some((id, (0, 0), (1, 1))), "leaving the cell selects whole cells");
+    assert!(text_sel(&s).is_none());
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![id]);
+    // Back in the cell the drag started in, it selects text there again.
+    drag(&mut s, PointerKind::Drag, mid(0, 0));
+    assert_eq!((cells(&s), text_sel(&s).and_then(|t| t.cell)), (None, Some((0, 0))));
+    drag(&mut s, PointerKind::Drag, mid(2, 1));
+    drag(&mut s, PointerKind::Up, mid(2, 1));
+    assert_eq!(cells(&s), Some((id, (0, 0), (2, 1))));
+    // Shift+arrow moves the range's far corner.
+    let shift = Mods { shift: true, ..Default::default() };
+    s.key("ArrowRight", shift).unwrap();
+    assert_eq!(cells(&s), Some((id, (0, 0), (2, 2))));
+    s.key("ArrowUp", shift).unwrap();
+    assert_eq!(cells(&s), Some((id, (0, 0), (1, 2))));
+    let x = s.doc().unwrap().shape(id).unwrap().xfrm.unwrap();
+    assert_eq!((x.x, x.y), (100.0, 100.0), "Shift+arrow doesn't move the table");
+    // Formatting applies to the selected cells only.
+    s.execute("format.bold", &json!({})).unwrap();
+    s.execute("format.alignCenter", &json!({})).unwrap();
+    let t = table_of(&s, id);
+    let bold = |r: usize, c: usize| t.cell(r, c).unwrap().text.paragraphs[0].runs[0].props.bold == Some(true);
+    assert!(bold(0, 0) && bold(1, 2) && !bold(2, 0) && !bold(2, 2), "{t:?}");
+    let centered = |r: usize, c: usize| t.cell(r, c).unwrap().text.paragraphs[0].props.align.is_some();
+    assert!(centered(1, 1) && !centered(2, 1));
+    // Delete clears their text and keeps the table and the other cells.
+    s.key("Delete", Mods::default()).unwrap();
+    let t = table_of(&s, id);
+    let texts: Vec<String> = (0..3).flat_map(|r| (0..3).map(move |c| (r, c))).map(|(r, c)| t.cell(r, c).unwrap().text.text()).collect();
+    assert_eq!(texts, ["", "", "", "", "", "", "g", "h", "i"]);
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(table_of(&s, id).cell(0, 0).unwrap().text.text(), "a");
+    // Cut puts the cells' text on the clipboard, a tab between cells and a line per row, and
+    // clears them.
+    let r = s.execute("edit.cut", &json!({})).unwrap();
+    assert_eq!(r["text"], "a\tb\tc\nd\te\tf");
+    assert!(s.clipboard.shapes.is_empty());
+    assert_eq!(s.clipboard.text.as_ref().map(|b| b.paragraphs.len()), Some(2));
+    assert_eq!(table_of(&s, id).cell(1, 1).unwrap().text.text(), "");
+    assert_eq!(table_of(&s, id).cell(2, 1).unwrap().text.text(), "h");
+    s.execute("edit.undo", &json!({})).unwrap();
+    // A click in the table puts the caret in the clicked cell and ends the range.
+    drag(&mut s, PointerKind::Down, mid(2, 2));
+    drag(&mut s, PointerKind::Up, mid(2, 2));
+    assert_eq!((cells(&s), text_sel(&s).and_then(|t| t.cell)), (None, Some((2, 2))));
+    // A range that reaches into a merged cell takes all of it.
+    s.execute("table.merge", &json!({"id": id, "from": [0, 1], "to": [0, 2]})).unwrap();
+    s.execute("text.edit", &json!({"id": id, "cell": [1, 0]})).unwrap();
+    drag(&mut s, PointerKind::Down, mid(1, 0));
+    drag(&mut s, PointerKind::Drag, mid(0, 1));
+    drag(&mut s, PointerKind::Up, mid(0, 1));
+    assert_eq!(cells(&s), Some((id, (1, 0), (0, 1))));
+    let range = |s: &Session| cmd::table::selected_range(cells(s), id, &table_of(s, id));
+    assert_eq!(range(&s), Some(((0, 0), (1, 2))));
+    // Shift+arrow keeps the cell the range started from: Shift+Down moves the end to row 1, so the
+    // range no longer includes the merged cell in row 0.
+    s.key("ArrowDown", shift).unwrap();
+    assert_eq!(range(&s), Some(((1, 0), (1, 1))));
+    // Cut of a cell a merge covers takes the whole merged cell, and clears what it copied.
+    let merged = table_of(&s, id).cell(0, 1).unwrap().text.text();
+    assert!(!merged.is_empty());
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 2], "to": [0, 2]})).unwrap();
+    let r = s.execute("edit.cut", &json!({})).unwrap();
+    assert_eq!(r["text"].as_str(), Some(merged.as_str()));
+    assert_eq!(table_of(&s, id).cell(0, 1).unwrap().text.text(), "");
+    // Delete naming a shape deletes that shape, cells selected or not.
+    s.execute("table.selectCells", &json!({"id": id, "from": [1, 1], "to": [2, 2]})).unwrap();
+    s.execute("edit.delete", &json!({"id": id})).unwrap();
+    assert!(s.doc().unwrap().shape(id).is_none());
+    // A span past the table's edge (from a file) stops at the edge.
+    let mut t = deckcraft_model::Table::new(3, 3, 300.0, 40.0);
+    (t.rows[0].cells[0].row_span, t.rows[0].cells[0].grid_span) = (u32::MAX, u32::MAX);
+    assert_eq!(cmd::table::cell_block(&t, (1, 1), (2, 2)), ((0, 0), (2, 2)));
+}
+
+#[test]
+fn pressing_a_table_outside_its_cells_with_a_range_selected_moves_the_table() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    let drag = |s: &mut Session, kind, x: f64, y: f64| s.pointer(tev(kind, x, y)).unwrap();
+    s.execute("text.edit", &json!({"id": id, "cell": [0, 0]})).unwrap();
+    drag(&mut s, PointerKind::Down, 150.0, 120.0);
+    drag(&mut s, PointerKind::Drag, 250.0, 160.0);
+    drag(&mut s, PointerKind::Up, 250.0, 160.0);
+    assert_eq!(s.doc().unwrap().selection.cells, Some((id, (0, 0), (1, 1))));
+    // Just left of the table's edge, where a press still hits the table but no cell.
+    drag(&mut s, PointerKind::Down, 98.0, 120.0);
+    assert_eq!(s.doc().unwrap().selection.cells, None, "the range ends");
+    drag(&mut s, PointerKind::Drag, 148.0, 170.0);
+    drag(&mut s, PointerKind::Up, 148.0, 170.0);
+    let st = s.doc().unwrap();
+    assert!(st.selection.text.is_none());
+    assert_eq!(st.selection.shapes, vec![id]);
+    let x = st.shape(id).unwrap().xfrm.unwrap();
+    assert!((x.x - 150.0).abs() < 10.0 && (x.y - 150.0).abs() < 10.0, "the table moves: {x:?}");
+    // A click (no drag) there keeps the table selected and puts no caret in the nearest cell.
+    let (x0, y0) = (x.x - 2.0, x.y + 20.0);
+    drag(&mut s, PointerKind::Down, x0, y0);
+    drag(&mut s, PointerKind::Up, x0, y0);
+    let st = s.doc().unwrap();
+    assert_eq!((st.selection.shapes.clone(), st.selection.text.is_none()), (vec![id], true));
 }
 
 #[test]
@@ -1783,7 +1991,8 @@ mod copy_remap {
     use std::sync::Arc;
 
     use deckcraft_model::style::PictureFill;
-    use deckcraft_model::{Animation, Shape, ShapeId, ShapeKind, Xfrm};
+    use deckcraft_model::text::Bullet;
+    use deckcraft_model::{Animation, Fill, MediaId, Shape, ShapeId, ShapeKind, Table, TextBody, Transition, Xfrm};
     use serde_json::json;
 
     use crate::*;
@@ -1840,6 +2049,140 @@ mod copy_remap {
         assert_eq!(picture_bytes(&b, &shape(&b, 0, new)), b"deck a picture");
         // Deck b's own picture is untouched.
         assert_eq!(picture_bytes(&b, &shape(&b, 0, pb)), b"deck b picture");
+    }
+
+    /// A 4 by 4 PNG of one color.
+    fn solid_png(rgb: [u8; 3]) -> Vec<u8> {
+        deckcraft_render::Image { width: 4, height: 4, pixels: [rgb[0], rgb[1], rgb[2], 255].repeat(16) }.to_png()
+    }
+
+    #[test]
+    fn paste_as_picture_into_a_deck_with_a_colliding_media_id_draws_the_copied_picture() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (pa, ..) = populate(&mut a, &solid_png([255, 0, 0]));
+        populate(&mut b, &solid_png([0, 0, 255]));
+        select(&mut a, &[pa]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.pasteSpecial", &json!({"as": "picture"})).unwrap();
+        let id = ShapeId(r["id"].as_u64().or_else(|| r["ids"][0].as_u64()).unwrap() as u32);
+        let img = deckcraft_render::decode_image(&picture_bytes(&b, &shape(&b, 0, id))).unwrap();
+        // The middle of the drawing is the middle of the copied picture.
+        assert_eq!(img.get_pixel(img.width() / 2, img.height() / 2).0, [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn pictures_inserted_after_a_paste_from_another_deck_get_media_ids_of_their_own() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let (pa, ..) = populate(&mut a, b"deck a picture");
+        // Deck a's picture uses a media id above its shape ids that deck b has not handed out yet.
+        {
+            let doc = Arc::make_mut(&mut a.doc_mut().unwrap().doc);
+            let high = MediaId(doc.next_id + 20);
+            doc.next_id = high.0;
+            doc.media[0].id = high;
+            let slide = Arc::make_mut(&mut doc.slides[0]);
+            let Some(ShapeKind::Picture { fill }) = slide.shapes.iter_mut().find(|x| x.id == pa).map(|x| &mut x.kind) else { panic!() };
+            fill.media = high;
+        }
+        assert_eq!(picture_bytes(&a, &shape(&a, 0, pa)), b"deck a picture");
+        select(&mut a, &[pa]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let pasted = ShapeId(r["ids"][0].as_u64().unwrap() as u32);
+        let mut inserted = vec![];
+        for i in 0..12u8 {
+            let png = solid_png([i, 0, 0]);
+            let r = b.execute("insert.picture", &json!({"data": cmd::base64_encode(&png), "name": "a.png"})).unwrap();
+            inserted.push((ShapeId(r["id"].as_u64().unwrap() as u32), png));
+        }
+        assert_eq!(picture_bytes(&b, &shape(&b, 0, pasted)), b"deck a picture");
+        for (id, png) in inserted {
+            assert_eq!(picture_bytes(&b, &shape(&b, 0, id)), png);
+        }
+        let d = b.doc().unwrap();
+        let mut ids: Vec<_> = d.doc.media.iter().map(|m| m.id).collect();
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), d.doc.media.len(), "media ids are unique");
+    }
+
+    /// Slide 0 of `s` gets a table whose first cell, background and second cell's picture bullet
+    /// each use a picture of their own, and a transition sound. `tag` starts the bytes of each.
+    /// Returns the table.
+    fn picture_table(s: &mut Session, tag: &str) -> ShapeId {
+        let st = s.doc_mut().unwrap();
+        let doc = Arc::make_mut(&mut st.doc);
+        let cell = doc.add_media("cell.png", "image/png", format!("{tag} cell").into_bytes()).expect("media");
+        let back = doc.add_media("back.png", "image/png", format!("{tag} background").into_bytes()).expect("media");
+        let bullet = doc.add_media("bullet.png", "image/png", format!("{tag} bullet").into_bytes()).expect("media");
+        let sound = doc.add_media("sound.wav", "audio/wav", format!("{tag} sound").into_bytes()).expect("media");
+        let mut t = Table::new(1, 2, 200.0, 40.0);
+        t.background = Some(Fill::Picture(PictureFill { media: back, ..Default::default() }));
+        t.rows[0].cells[0].fill = Some(Fill::Picture(PictureFill { media: cell, ..Default::default() }));
+        t.rows[0].cells[1].text = TextBody::from_text("item");
+        t.rows[0].cells[1].text.paragraphs[0].props.bullet = Some(Bullet::Picture { media: bullet });
+        let id = ShapeId(doc.alloc_id().expect("id"));
+        let slide = Arc::make_mut(&mut doc.slides[0]);
+        slide.shapes.push(Shape { id, kind: ShapeKind::Table(t), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), ..Default::default() });
+        slide.transition = Some(Transition { kind: "fade".into(), sound: Some(sound), ..Default::default() });
+        id
+    }
+
+    /// The bytes behind a table's first cell fill, background and second cell's bullet.
+    fn table_pictures(s: &Session, sh: &Shape) -> [Vec<u8>; 3] {
+        let ShapeKind::Table(t) = &sh.kind else { panic!("not a table") };
+        let doc = &s.doc().unwrap().doc;
+        let bytes = |id: MediaId| doc.media(id).unwrap().data.as_ref().clone();
+        let Some(Fill::Picture(cell)) = &t.rows[0].cells[0].fill else { panic!("no cell picture") };
+        let Some(Fill::Picture(back)) = &t.background else { panic!("no table picture") };
+        let Some(Bullet::Picture { media }) = &t.rows[0].cells[1].text.paragraphs[0].props.bullet else { panic!("no picture bullet") };
+        [bytes(cell.media), bytes(back.media), bytes(*media)]
+    }
+
+    fn deck_pictures(tag: &str) -> [Vec<u8>; 3] {
+        ["cell", "background", "bullet"].map(|w| format!("{tag} {w}").into_bytes())
+    }
+
+    #[test]
+    fn a_table_pasted_into_another_deck_keeps_its_cell_background_and_bullet_pictures() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        let ta = picture_table(&mut a, "a");
+        let tb = picture_table(&mut b, "b");
+        select(&mut a, &[ta]);
+        a.execute("edit.copy", &json!({})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.doc_mut().unwrap().selection.shapes.clear();
+        let r = b.execute("edit.paste", &json!({})).unwrap();
+        let new = ShapeId(r["ids"][0].as_u64().unwrap() as u32);
+        assert_eq!(table_pictures(&b, &shape(&b, 0, new)), deck_pictures("a"));
+        // Deck b's own table is untouched.
+        assert_eq!(table_pictures(&b, &shape(&b, 0, tb)), deck_pictures("b"));
+    }
+
+    #[test]
+    fn a_slide_pasted_into_another_deck_keeps_its_table_pictures_and_transition_sound() {
+        let mut a = Session::with_new();
+        let mut b = Session::with_new();
+        picture_table(&mut a, "a");
+        let tb = picture_table(&mut b, "b");
+        a.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        b.clipboard = a.clipboard.clone();
+        b.execute("edit.paste", &json!({"scope": "slides"})).unwrap();
+        let d = b.doc().unwrap();
+        let pasted = &d.doc.slides[1];
+        let table = pasted.shapes.iter().find(|x| matches!(x.kind, ShapeKind::Table(_))).cloned().unwrap();
+        assert_eq!(table_pictures(&b, &table), deck_pictures("a"));
+        let sound = pasted.transition.as_ref().and_then(|t| t.sound).unwrap();
+        assert_eq!(d.doc.media(sound).unwrap().data.as_ref(), b"a sound");
+        // Deck b's own slide is untouched.
+        assert_eq!(table_pictures(&b, &shape(&b, 0, tb)), deck_pictures("b"));
     }
 
     #[test]
@@ -2111,6 +2454,51 @@ fn edit_points_with_the_pointer_and_curves() {
     assert!(s.tool.edit_points.is_none());
 }
 
+/// Esc before the button is released cancels a point or handle drag in Edit Points: the shape
+/// is as it was at the press, no undo step is added, and Edit Points stays on.
+#[test]
+fn edit_points_escape_cancels_a_point_or_handle_drag() {
+    use crate::tools::{Mods, PointerEvent, PointerKind};
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    let path = |s: &Session| s.doc().unwrap().shape(id).map(|sh| format!("{:?}", sh.geom)).unwrap_or_default();
+    let undo_len = |s: &Session| s.doc().unwrap().history.undo.len();
+    let ev = |kind, x: f64, y: f64| PointerEvent { kind, x, y, mods: Mods::default(), ..Default::default() };
+    let (before, steps) = (path(&s), undo_len(&s));
+    // A vertex: drag it, press Esc, keep dragging, release.
+    let v: Vec<[f64; 2]> = serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][0].clone()).unwrap();
+    let [x0, y0] = v[0];
+    s.pointer(ev(PointerKind::Down, x0, y0)).unwrap();
+    s.pointer(ev(PointerKind::Drag, x0 - 30.0, y0)).unwrap();
+    assert_ne!(path(&s), before, "the drag moves the point");
+    assert_eq!(s.key("Escape", Mods::default()).unwrap()["handled"], true);
+    assert_eq!(path(&s), before, "Esc puts the point back");
+    assert!(!s.tool.dragging());
+    s.pointer(ev(PointerKind::Drag, x0 - 50.0, y0)).unwrap();
+    s.pointer(ev(PointerKind::Up, x0 - 50.0, y0)).unwrap();
+    assert_eq!(path(&s), before, "the rest of the drag does nothing");
+    assert_eq!(undo_len(&s), steps, "no undo step");
+    assert_eq!(s.tool.editing_points(s.doc().unwrap()), Some(id), "Edit Points stays on");
+    // A handle of the same point, which the press on the point shows.
+    let st = s.doc().unwrap();
+    let (_, ho, _) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(id).unwrap(), 0, 0).unwrap();
+    let ho = ho.unwrap();
+    s.pointer(ev(PointerKind::Down, ho.x, ho.y)).unwrap();
+    s.pointer(ev(PointerKind::Drag, ho.x + 20.0, ho.y + 20.0)).unwrap();
+    assert_ne!(path(&s), before, "the drag moves the handle");
+    s.key("Escape", Mods::default()).unwrap();
+    s.pointer(ev(PointerKind::Up, ho.x + 20.0, ho.y + 20.0)).unwrap();
+    assert_eq!(path(&s), before, "Esc puts the handle back");
+    assert_eq!(undo_len(&s), steps, "no undo step");
+    assert_eq!(s.tool.editing_points(s.doc().unwrap()), Some(id), "Edit Points stays on");
+    // Without a drag, Esc still leaves Edit Points.
+    s.key("Escape", Mods::default()).unwrap();
+    assert!(s.tool.edit_points.is_none());
+}
+
 #[test]
 fn edit_points_path_parse_and_write() {
     use crate::cmd::points::{Seg, parse, vertices, write};
@@ -2189,6 +2577,195 @@ fn edit_points_types_and_handles() {
     assert!((ho3.unwrap() - ho).hypot() < 1e-3);
 }
 
+/// Alt, Shift or Ctrl held while dragging a handle makes the point a corner, smooth or straight
+/// point, and the point keeps that type for the next drag.
+#[test]
+fn edit_points_handle_drag_modifiers_set_the_point_type() {
+    use crate::tools::{Mods, PointerEvent, PointerKind};
+    use deckcraft_geom::Vec2;
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    let handles = |s: &Session| {
+        let st = s.doc().unwrap();
+        let (hi, ho, v) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(id).unwrap(), 0, 0).unwrap();
+        (hi.unwrap(), ho.unwrap(), v)
+    };
+    let ev = |kind, p: deckcraft_geom::Point, mods: Mods| PointerEvent { kind, x: p.x, y: p.y, mods, ..Default::default() };
+    let drag = |s: &mut Session, from: deckcraft_geom::Point, to: deckcraft_geom::Point, mods: Mods| {
+        s.pointer(ev(PointerKind::Down, from, Mods::default())).unwrap();
+        s.pointer(ev(PointerKind::Drag, to, mods)).unwrap();
+        s.pointer(ev(PointerKind::Up, to, mods)).unwrap();
+    };
+    // Click the point to show its handles.
+    let (hi, ho, v) = handles(&s);
+    drag(&mut s, v, v, Mods::default());
+    assert_eq!(s.tool.edit_vertex, Some((0, 0)));
+    // Alt: only the dragged handle moves.
+    let to = ho + Vec2::new(10.0, -25.0);
+    drag(&mut s, ho, to, Mods { alt: true, ..Default::default() });
+    let (hi1, ho1, _) = handles(&s);
+    assert!((ho1 - to).hypot() < 1e-3, "{ho1:?}");
+    assert!((hi1 - hi).hypot() < 1e-3, "the other handle stays: {hi1:?} {hi:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "corner");
+    // A plain drag afterwards keeps it a corner point.
+    let to2 = ho1 + Vec2::new(5.0, 5.0);
+    drag(&mut s, ho1, to2, Mods::default());
+    assert!((handles(&s).0 - hi).hypot() < 1e-3);
+    // Shift: the other handle mirrors the dragged one at the same length.
+    let to3 = v + Vec2::new(0.0, 40.0);
+    drag(&mut s, to2, to3, Mods { shift: true, ..Default::default() });
+    let (hi3, ho3, _) = handles(&s);
+    assert!((ho3 - to3).hypot() < 1e-3, "{ho3:?}");
+    assert!((hi3 - (v - Vec2::new(0.0, 40.0))).hypot() < 1e-3, "{hi3:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    // Ctrl: the other handle turns in line and keeps its length.
+    let to4 = v + Vec2::new(30.0, 0.0);
+    drag(&mut s, ho3, to4, Mods { cmd: true, ..Default::default() });
+    let (hi4, ho4, _) = handles(&s);
+    assert!((ho4 - to4).hypot() < 1e-3, "{ho4:?}");
+    assert!((hi4 - (v - Vec2::new(40.0, 0.0))).hypot() < 1e-3, "{hi4:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "straight");
+}
+
+/// Esc during a handle drag with Shift also takes back the point type the modifier chose, so the
+/// next plain drag still treats the point as a corner.
+#[test]
+fn edit_points_escape_takes_back_the_point_type_of_a_modifier_drag() {
+    use crate::tools::{Mods, PointerEvent, PointerKind};
+    use deckcraft_geom::Vec2;
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    let handles = |s: &Session| {
+        let st = s.doc().unwrap();
+        let (hi, ho, v) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(id).unwrap(), 0, 0).unwrap();
+        (hi.unwrap(), ho.unwrap(), v)
+    };
+    let ev = |kind, p: deckcraft_geom::Point, mods: Mods| PointerEvent { kind, x: p.x, y: p.y, mods, ..Default::default() };
+    let alt = Mods { alt: true, ..Default::default() };
+    let (_, ho, v) = handles(&s);
+    s.pointer(ev(PointerKind::Down, v, Mods::default())).unwrap();
+    s.pointer(ev(PointerKind::Up, v, Mods::default())).unwrap();
+    // Alt makes it a corner point.
+    let to = ho + Vec2::new(10.0, -25.0);
+    s.pointer(ev(PointerKind::Down, ho, Mods::default())).unwrap();
+    s.pointer(ev(PointerKind::Drag, to, alt)).unwrap();
+    s.pointer(ev(PointerKind::Up, to, alt)).unwrap();
+    let (hi1, ho1, _) = handles(&s);
+    let kind = s.tool.vertex_kind.clone();
+    // Shift would make it smooth; Esc cancels that drag.
+    s.pointer(ev(PointerKind::Down, ho1, Mods::default())).unwrap();
+    s.pointer(ev(PointerKind::Drag, v + Vec2::new(0.0, 40.0), Mods { shift: true, ..Default::default() })).unwrap();
+    s.key("Escape", Mods::default()).unwrap();
+    s.pointer(ev(PointerKind::Up, v + Vec2::new(0.0, 40.0), Mods::default())).unwrap();
+    assert_eq!(s.tool.vertex_kind, kind);
+    // A plain drag leaves the other handle where it is.
+    s.pointer(ev(PointerKind::Down, ho1, Mods::default())).unwrap();
+    s.pointer(ev(PointerKind::Drag, ho1 + Vec2::new(5.0, 5.0), Mods::default())).unwrap();
+    s.pointer(ev(PointerKind::Up, ho1 + Vec2::new(5.0, 5.0), Mods::default())).unwrap();
+    assert!((handles(&s).0 - hi1).hypot() < 1e-3, "the other handle stays: {:?} {hi1:?}", handles(&s).0);
+}
+
+/// A handle drag without a modifier follows the point type remembered with the document that
+/// Undo or Redo restores, and only on the shape the type was chosen on.
+#[test]
+fn edit_points_remembered_point_type_follows_undo_redo_and_its_shape() {
+    use crate::tools::{Mods, PointerEvent, PointerKind};
+    use deckcraft_geom::Vec2;
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let id = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    let handles = |s: &Session| {
+        let st = s.doc().unwrap();
+        let (hi, ho, v) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(id).unwrap(), 0, 0).unwrap();
+        (hi.unwrap(), ho.unwrap(), v)
+    };
+    let ev = |kind, p: deckcraft_geom::Point, mods: Mods| PointerEvent { kind, x: p.x, y: p.y, mods, ..Default::default() };
+    let drag = |s: &mut Session, from: deckcraft_geom::Point, to: deckcraft_geom::Point, mods: Mods| {
+        s.pointer(ev(PointerKind::Down, from, Mods::default())).unwrap();
+        s.pointer(ev(PointerKind::Drag, to, mods)).unwrap();
+        s.pointer(ev(PointerKind::Up, to, mods)).unwrap();
+    };
+    let (_, ho, v) = handles(&s);
+    drag(&mut s, v, v, Mods::default());
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    drag(&mut s, ho, ho + Vec2::new(10.0, -25.0), Mods { alt: true, ..Default::default() });
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "corner");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    // A plain drag moves the other handle with the dragged one, as for a smooth point.
+    let (_, ho1, _) = handles(&s);
+    let to = v + Vec2::new(0.0, 40.0);
+    drag(&mut s, ho1, to, Mods::default());
+    let (hi2, ho2, _) = handles(&s);
+    assert!((ho2 - to).hypot() < 1e-3, "{ho2:?}");
+    assert!((hi2 - (v - Vec2::new(0.0, 40.0))).hypot() < 1e-3, "the other handle mirrors the dragged one: {hi2:?}");
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["types"][0][0], "smooth");
+    // Undo of a Corner Point choice that left the outline as it was: the point is smooth again.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "corner"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    let to = v + Vec2::new(0.0, 50.0);
+    drag(&mut s, v + Vec2::new(0.0, 40.0), to, Mods::default());
+    let (hi3, ho3, _) = handles(&s);
+    assert!((ho3 - to).hypot() < 1e-3, "{ho3:?}");
+    assert!((hi3 - (v - Vec2::new(0.0, 50.0))).hypot() < 1e-3, "the other handle mirrors the dragged one: {hi3:?}");
+    // Undo of a step that leaves the outline alone keeps a Straight choice, which equal handles
+    // cannot show: a plain drag keeps the other handle's length.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "straight"})).unwrap();
+    s.execute("shape.fill", &json!({"color": "#ff0000"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    let to2 = v + Vec2::new(0.0, 70.0);
+    drag(&mut s, to, to2, Mods::default());
+    let (hi4, ho4, _) = handles(&s);
+    assert!((ho4 - to2).hypot() < 1e-3, "{ho4:?}");
+    assert!((hi4 - (v - Vec2::new(0.0, 50.0))).hypot() < 1e-3, "the other handle keeps its length: {hi4:?}");
+    // Redo brings a Corner Point choice back with the step: a plain drag moves one handle.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "corner"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("edit.redo", &json!({})).unwrap();
+    drag(&mut s, to2, to2 + Vec2::new(10.0, 0.0), Mods::default());
+    let (hi5, ho5, _) = handles(&s);
+    assert!((ho5 - (to2 + Vec2::new(10.0, 0.0))).hypot() < 1e-3, "{ho5:?}");
+    assert!((hi5 - hi4).hypot() < 1e-3, "the other handle stays: {hi5:?}");
+    // A Point Type choice that fails leaves the remembered type as it was.
+    assert!(s.execute("shape.pointType", &json!({"index": 99, "type": "smooth"})).is_err());
+    assert_eq!(s.tool.vertex_kind, Some((id, 0, 0, "corner".to_string())));
+    // The remembered type belongs to its shape: the same point of another ellipse stays smooth.
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 300, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let other = deckcraft_model::ShapeId(s.execute("shape.points", &json!({})).unwrap()["id"].as_u64().unwrap() as u32);
+    assert_ne!(other, id);
+    let handles_of = |s: &Session| {
+        let st = s.doc().unwrap();
+        let (hi, ho, v) = crate::cmd::points::slide_handles(&st.doc, &st.selection, st.shape(other).unwrap(), 0, 0).unwrap();
+        (hi.unwrap(), ho.unwrap(), v)
+    };
+    let (_, ho6, v6) = handles_of(&s);
+    drag(&mut s, v6, v6, Mods::default());
+    let to6 = v6 + Vec2::new(0.0, 40.0);
+    drag(&mut s, ho6, to6, Mods::default());
+    let (hi6, _, _) = handles_of(&s);
+    assert!((hi6 - (v6 - Vec2::new(0.0, 40.0))).hypot() < 1e-3, "the other handle mirrors the dragged one: {hi6:?}");
+    // Another document can have a shape with the same id: a change of active document forgets the
+    // remembered type, and choosing the active document again keeps it.
+    s.execute("shape.pointType", &json!({"index": 0, "type": "corner"})).unwrap();
+    s.execute("file.new", &json!({})).unwrap();
+    assert_eq!(s.tool.vertex_kind, None);
+    s.tool.vertex_kind = Some((other, 0, 0, "corner".to_string()));
+    let new_doc = s.active_index().unwrap();
+    s.set_active(new_doc);
+    assert!(s.tool.vertex_kind.is_some());
+    s.set_active(0);
+    assert_eq!(s.tool.vertex_kind, None);
+}
+
 #[test]
 fn edit_points_straight_and_curved_segments() {
     let mut s = Session::with_new();
@@ -2247,8 +2824,7 @@ fn edit_points_open_and_close_path() {
     };
     assert!(s.execute("shape.closePath", &json!({"index": 0})).is_err(), "the outline is closed already");
     // A point type remembered for handle drags belongs to the old numbering: opening forgets it.
-    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
-    s.execute("edit.undo", &json!({})).unwrap();
+    s.tool.vertex_kind = s.tool.edit_points.map(|id| (id, 0, 2, "straight".to_string()));
     assert!(s.tool.vertex_kind.is_some());
     // Open Path at the bottom-right corner: the outline now starts and ends there, as two points.
     s.execute("shape.openPath", &json!({"index": 2})).unwrap();
@@ -2272,6 +2848,115 @@ fn edit_points_open_and_close_path() {
     s.execute("shape.openPath", &json!({"index": 0})).unwrap();
     assert_eq!(pts(&mut s), vec![[300.0, 200.0], [100.0, 200.0], [100.0, 100.0], [300.0, 100.0], [300.0, 200.0]]);
     assert!(s.execute("shape.openPath", &json!({"index": 9})).is_err());
+}
+
+#[test]
+fn edit_points_delete_segment_opens_the_outline() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let pts =
+        |s: &mut Session| -> Vec<[f64; 2]> { serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][0].clone()).unwrap() };
+    let d = |s: &Session| match &s.doc().unwrap().selected_shapes()[0].geom {
+        deckcraft_model::Geom::Custom { paths } => paths[0].d.clone(),
+        g => panic!("{g:?}"),
+    };
+    // A point type remembered for handle drags belongs to the old numbering: deleting forgets it.
+    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
+    s.execute("edit.undo", &json!({})).unwrap();
+    // The right edge ends at point 2: the outline now starts at its end and ends at its start.
+    s.execute("shape.deleteSegment", &json!({"segment": 2})).unwrap();
+    assert!(!d(&s).contains('Z'), "{}", d(&s));
+    assert_eq!(s.tool.vertex_kind, None);
+    assert_eq!(pts(&mut s), vec![[300.0, 200.0], [100.0, 200.0], [100.0, 100.0], [300.0, 100.0]]);
+    assert_eq!(s.execute("shape.points", &json!({})).unwrap()["segments"][0], json!([null, "straight", "straight", "straight"]));
+    // A segment of an open outline cannot be deleted, as in PowerPoint, where the item is grayed out.
+    assert!(s.execute("shape.deleteSegment", &json!({"segment": 1})).is_err());
+    // One undo step brings the closed outline back.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(d(&s).ends_with('Z'), "{}", d(&s));
+    assert_eq!(pts(&mut s), vec![[100.0, 100.0], [300.0, 100.0], [300.0, 200.0], [100.0, 200.0]]);
+    // The closing edge ends at point 0.
+    s.execute("shape.deleteSegment", &json!({"segment": 0})).unwrap();
+    assert!(!d(&s).contains('Z'), "{}", d(&s));
+    assert_eq!(pts(&mut s), vec![[100.0, 100.0], [300.0, 100.0], [300.0, 200.0], [100.0, 200.0]]);
+    assert!(s.execute("shape.deleteSegment", &json!({"segment": 0})).is_err(), "the first point of an open outline ends no segment");
+    assert!(s.execute("shape.deleteSegment", &json!({"segment": 9})).is_err());
+}
+
+/// Adding or deleting a point renumbers the points: a point type remembered for handle drags is
+/// forgotten, as it is when the outline opens or closes.
+#[test]
+fn edit_points_add_and_delete_point_forget_the_point_type() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
+    assert!(s.tool.vertex_kind.is_some());
+    s.execute("shape.addPoint", &json!({"segment": 1})).unwrap();
+    assert_eq!(s.tool.vertex_kind, None);
+    s.execute("shape.pointType", &json!({"index": 2, "type": "straight"})).unwrap();
+    s.execute("shape.deletePoint", &json!({"index": 1})).unwrap();
+    assert_eq!(s.tool.vertex_kind, None);
+}
+
+/// A right click on a segment records where on it the click was, for Add Point.
+#[test]
+fn edit_points_right_click_records_the_place_on_the_segment() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    // A quarter of the way along the top edge, which ends at point 1.
+    right_click(&mut s, 150.0, 100.0);
+    assert_eq!(s.tool.edit_segment, Some((0, 1)));
+    let t = s.tool.edit_segment_t.expect("the place on the segment");
+    assert!((t - 0.25).abs() < 1e-9, "{t}");
+    s.execute("shape.addPoint", &json!({"segment": 1, "t": t})).unwrap();
+    let v = s.execute("shape.points", &json!({})).unwrap()["paths"][0].clone();
+    assert_eq!(v, json!([[100.0, 100.0], [150.0, 100.0], [300.0, 100.0], [300.0, 200.0], [100.0, 200.0]]));
+    // Between the places the hit test samples (40% of the way along the edge that now ends at
+    // point 2) and on a curve, the new point goes where the click was.
+    let added = |s: &mut Session, x: f64, y: f64| {
+        right_click(s, x, y);
+        let (path, seg) = s.tool.edit_segment.expect("a segment is picked");
+        let t = s.tool.edit_segment_t.expect("the place on the segment");
+        let before: Vec<[f64; 2]> = serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][path].clone()).unwrap();
+        s.execute("shape.addPoint", &json!({"path": path, "segment": seg, "t": t})).unwrap();
+        let after: Vec<[f64; 2]> = serde_json::from_value(s.execute("shape.points", &json!({})).unwrap()["paths"][path].clone()).unwrap();
+        let new = after.iter().find(|q| !before.contains(q)).copied().expect("a new point");
+        ((new[0] - x).hypot(new[1] - y), new)
+    };
+    let (miss, new) = added(&mut s, 210.0, 100.0);
+    assert!(miss < 1e-3, "{new:?}");
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [100, 300, 200, 100]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    // 30° up from the right-most point; the outline is a Bézier copy of the ellipse.
+    let (x, y) = (200.0 + 100.0 * 30f64.to_radians().cos(), 350.0 - 50.0 * 30f64.to_radians().sin());
+    let (miss, new) = added(&mut s, x, y);
+    assert!(miss < 0.1, "{new:?}");
+}
+
+/// No segment ends at the first point of an open outline, also when a closed outline follows it
+/// in the same path: Add Point there returns an error and leaves the path unchanged.
+#[test]
+fn edit_points_add_point_at_the_start_of_an_open_outline() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    // The donut's two rings are one path.
+    s.execute("shape.insert", &json!({"preset": "donut", "rect": [100, 100, 200, 200]})).unwrap();
+    s.execute("shape.editPoints", &json!({"on": true})).unwrap();
+    let d = |s: &Session| match &s.doc().unwrap().selected_shapes()[0].geom {
+        deckcraft_model::Geom::Custom { paths } => paths[0].d.clone(),
+        g => panic!("{g:?}"),
+    };
+    s.execute("shape.openPath", &json!({"index": 0})).unwrap();
+    let before = d(&s);
+    assert_eq!(before.matches('Z').count(), 1, "{before}");
+    assert!(s.execute("shape.addPoint", &json!({"segment": 0})).is_err());
+    assert_eq!(d(&s), before);
 }
 
 #[test]
@@ -3478,6 +4163,37 @@ fn tables_with_a_file_defined_style_edit_and_resize() {
     use deckcraft_model::table::{TablePart, TablePartStyle, TableStyleDef};
     let mut s = session();
     let id = table_at(&mut s, &[200.0, 200.0], json!([["Hello world", "b"], ["c", "d"]]));
+    // A file-defined weight needs a real regular/bold pair, independent of missing Inter
+    // or whichever system face happened to load first. Leave bold unset for the table style.
+    let fonts = deckcraft_fonts::FontDb::global();
+    let regular = fonts.face("BIZ UDPGothic", "Regular");
+    let bold = fonts.face("BIZ UDPGothic", "Bold");
+    let metric_pair = regular.family == "BIZ UDPGothic"
+        && bold.family == "BIZ UDPGothic"
+        && regular.style == "Regular"
+        && bold.style == "Bold"
+        && regular.weight < bold.weight;
+    // Required native builds validate and embed both BIZ faces (crates/fonts/build.rs);
+    // optional local builds may only have Regular, so the weight assertion is skipped there.
+    assert!(
+        metric_pair || option_env!("CRAFT_FONTS_REQUIRED").is_none(),
+        "required native build is missing the BIZ UDPGothic Regular/Bold metric pair"
+    );
+    if metric_pair {
+        let doc = std::sync::Arc::make_mut(&mut s.doc_mut().unwrap().doc);
+        let slide = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        let deckcraft_model::ShapeKind::Table(table) = &mut slide.shape_mut(id).unwrap().kind else { panic!("not a table") };
+        for cell in &mut table.rows[0].cells {
+            for paragraph in &mut cell.text.paragraphs {
+                for run in &mut paragraph.runs {
+                    run.props.font = Some("BIZ UDPGothic".into());
+                    run.props.bold = None;
+                }
+            }
+        }
+    } else {
+        eprintln!("optional BIZ pair absent: skipping weight-metric assertion; edit/resize checks still run");
+    }
     s.execute("text.edit", &json!({"id": id, "cell": [0, 0]})).unwrap();
     let built_in = caret_point(&s, 0, 8);
     s.execute("text.exit", &json!({})).unwrap();
@@ -3502,7 +4218,9 @@ fn tables_with_a_file_defined_style_edit_and_resize() {
     s.execute("edit.deselect", &json!({})).unwrap();
     s.execute("text.edit", &json!({"id": id, "cell": [0, 0]})).unwrap();
     let p = caret_point(&s, 0, 8);
-    assert!((p.x - built_in.x).abs() > 0.5, "the header is laid out in the file style's (regular) weight: {p:?} vs {built_in:?}");
+    if metric_pair {
+        assert!((p.x - built_in.x).abs() > 0.5, "the header is laid out in the file style's (regular) weight: {p:?} vs {built_in:?}");
+    }
     s.execute("text.exit", &json!({})).unwrap();
     s.execute("edit.deselect", &json!({})).unwrap();
     // A double-click selects the word drawn there.
@@ -3580,6 +4298,10 @@ fn autocorrect_options_as_you_type() {
     };
     assert_eq!(typed(&mut s, "hello world. see you monday, i think. "), "Hello world. See you Monday, I think. ");
     assert_eq!(typed(&mut s, "THe tHIS 1/2 recieved... "), "The This ½ received… ");
+    // `text.insert` reports the caret after the correction.
+    assert_eq!(typed(&mut s, "(c)"), "(c)");
+    assert_eq!(s.execute("text.insert", &json!({"text": " "})).unwrap()["caret"], json!([0, 2]));
+    assert_eq!(s.execute("text.get", &json!({"id": title})).unwrap()["text"], "© ");
     // Options turn rules off.
     s.execute("text.autocorrect", &json!({"sentenceCaps": false, "days": false})).unwrap();
     assert_eq!(typed(&mut s, "hello monday "), "hello monday ");
@@ -3631,6 +4353,74 @@ fn autocorrect_superscripts_ordinals_as_you_type() {
     // AutoCorrect off turns it off too.
     s.execute("text.autocorrect", &json!({"ordinals": true, "on": false})).unwrap();
     assert_eq!(typed(&mut s, "2nd "), "2nd ");
+}
+
+#[test]
+fn autoformat_starts_bulleted_and_numbered_lists_as_you_type() {
+    use deckcraft_model::text::Bullet;
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    let para = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.current_slide().unwrap().shapes.iter().find(|sh| sh.id.0 == title).unwrap();
+        let p = sh.text.as_ref().unwrap().paragraphs[0].clone();
+        (p.text(), p.props.bullet)
+    };
+    // Clear the title (and its paragraph formatting) and type `text` one character at a time.
+    let typed = |s: &mut Session, text: &str| {
+        s.execute("text.edit", &json!({"id": title})).unwrap();
+        s.execute("text.selectAll", &json!({})).ok();
+        s.execute("text.delete", &json!({"dir": "backward"})).ok();
+        s.execute("format.bullets", &json!({"on": false})).unwrap();
+        for c in text.chars() {
+            s.execute("text.insert", &json!({"text": c.to_string()})).unwrap();
+        }
+        para(s)
+    };
+    let ch = |c: &str| Some(Bullet::Char { char: c.into() });
+    let num = |scheme: &str| Some(Bullet::AutoNum { scheme: scheme.into(), start_at: 1 });
+    for (text, bullet) in [
+        ("* x", ch("•")),
+        ("- x", ch("–")),
+        ("– x", ch("–")),
+        ("-- x", ch("■")),
+        ("— x", ch("■")),
+        ("> x", ch("➢")),
+        ("<> x", ch("◆")),
+        ("*\tx", ch("•")),
+        ("1. x", num("arabicPeriod")),
+        ("1) x", num("arabicParenR")),
+        ("I. x", num("romanUcPeriod")),
+        ("i. x", num("romanLcPeriod")),
+        ("A. x", num("alphaUcPeriod")),
+        ("a. x", num("alphaLcPeriod")),
+        ("a) x", num("alphaLcParenR")),
+    ] {
+        assert_eq!(typed(&mut s, text), ("x".to_string(), bullet), "{text:?}");
+    }
+    // Only a lead at the start of the paragraph, and only before a space or tab.
+    let none = Some(Bullet::None);
+    assert_eq!(typed(&mut s, "9 * x"), ("9 * x".to_string(), none.clone()));
+    assert_eq!(typed(&mut s, "*, x"), ("*, x".to_string(), none.clone()));
+    assert_eq!(typed(&mut s, "2. x"), ("2. x".to_string(), none.clone()));
+    assert_eq!(typed(&mut s, "b) x"), ("b) x".to_string(), none.clone()));
+    // The space that starts the list reports the caret at the start of the emptied paragraph.
+    assert_eq!(typed(&mut s, "*"), ("*".to_string(), none.clone()));
+    assert_eq!(s.execute("text.insert", &json!({"text": " "})).unwrap()["caret"], json!([0, 0]));
+    assert_eq!(para(&s), (String::new(), ch("•")));
+    // Backspace right after puts the lead and the space back, with the paragraph as it was.
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(para(&s), ("* ".to_string(), none.clone()));
+    s.execute("text.insert", &json!({"text": "x"})).unwrap();
+    assert_eq!(para(&s), ("* x".to_string(), none.clone()));
+    // After anything else Backspace deletes as usual.
+    assert_eq!(typed(&mut s, "1. xy"), ("xy".to_string(), num("arabicPeriod")));
+    s.execute("text.delete", &json!({"dir": "backward"})).unwrap();
+    assert_eq!(para(&s), ("x".to_string(), num("arabicPeriod")));
+    // The AutoCorrect option turns it off.
+    assert_eq!(s.execute("text.autocorrect", &json!({})).unwrap()["lists"], true);
+    s.execute("text.autocorrect", &json!({"lists": false})).unwrap();
+    assert_eq!(typed(&mut s, "* x"), ("* x".to_string(), none));
 }
 
 #[test]
@@ -3754,6 +4544,64 @@ fn language_marks_text_and_no_proof_and_repeats_are_reported() {
     s.execute("format.language", &json!({"noProof": true})).unwrap();
     assert!(s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().is_empty());
     assert!(s.execute("format.language", &json!({"lang": "en US!"})).is_err());
+}
+
+/// Review › Language › Whole presentation: every run, placeholder list style and default text style
+/// takes the language, with nothing selected, in one undo step.
+#[test]
+fn language_all_marks_every_text_in_the_deck_with_nothing_selected() {
+    crate::spell::install("xx-AL", crate::spell::Dictionary::parse(b"", b"2\nhello\nworld\n"));
+    let mut s = session();
+    let a =
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "hello wurld"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    s.execute("format.language", &json!({"lang": "de-DE"})).unwrap();
+    s.execute("slide.new", &json!({"title": "world hellow"})).unwrap();
+    s.execute("insert.table", &json!({"rows": 1, "cols": 1})).unwrap();
+    s.execute("edit.select", &json!({"ids": []})).unwrap();
+    // A layout placeholder with its own list style (a:lstStyle) in another language.
+    let placeholder = s
+        .edit(|doc, _| {
+            let m = std::sync::Arc::make_mut(doc.masters.first_mut().unwrap());
+            let sh = m.layouts[0].shapes.iter_mut().find(|sh| sh.text.is_some()).unwrap();
+            let lv = deckcraft_model::text::LevelStyle {
+                run: deckcraft_model::RunProps { lang: Some("de-DE".into()), ..Default::default() },
+                ..Default::default()
+            };
+            sh.text.as_mut().unwrap().list_style.set(0, lv);
+            Ok(sh.id)
+        })
+        .unwrap();
+    s.execute("format.languageAll", &json!({"lang": "xx-AL"})).unwrap();
+    let st = s.doc().unwrap();
+    let ph = deckcraft_model::find_shape(&st.doc.masters[0].layouts[0].shapes, placeholder).unwrap();
+    assert_eq!(ph.text.as_ref().unwrap().list_style.level(0).unwrap().run.lang.as_deref(), Some("xx-AL"));
+    // A body without a list style doesn't get one.
+    let boxed = st.doc.slides.iter().find_map(|sl| deckcraft_model::find_shape(&sl.shapes, deckcraft_model::ShapeId(a as u32))).unwrap();
+    assert!(boxed.text.as_ref().unwrap().list_style.is_empty());
+    let mut langs = vec![];
+    for sl in &st.doc.slides {
+        deckcraft_model::walk(&sl.shapes, &mut |sh, _| {
+            langs.extend(sh.text.iter().flat_map(|t| &t.paragraphs).flat_map(|p| &p.runs).map(|r| r.props.lang.clone()));
+            if let deckcraft_model::ShapeKind::Table(t) = &sh.kind {
+                langs.extend(t.rows.iter().flat_map(|r| &r.cells).flat_map(|c| &c.text.paragraphs).map(|p| p.end_props.lang.clone()));
+            }
+        });
+    }
+    assert!(!langs.is_empty() && langs.iter().all(|l| l.as_deref() == Some("xx-AL")), "{langs:?}");
+    // The defaults new text inherits.
+    assert_eq!(st.doc.default_text_style.level(0).unwrap().run.lang.as_deref(), Some("xx-AL"));
+    assert!(st.doc.masters.iter().all(|m| m.body_style.level(0).is_some_and(|l| l.run.lang.as_deref() == Some("xx-AL"))));
+    let words: Vec<String> =
+        s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().iter().map(|w| w["word"].as_str().unwrap().to_string()).collect();
+    assert_eq!(words, vec!["wurld", "hellow"]);
+    // One undo step puts the per-box language back.
+    s.execute("edit.undo", &json!({})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.doc.slides.iter().find_map(|sl| deckcraft_model::find_shape(&sl.shapes, deckcraft_model::ShapeId(a as u32))).unwrap();
+    assert_eq!(sh.text.as_ref().unwrap().paragraphs[0].runs[0].props.lang.as_deref(), Some("de-DE"));
+    assert!(s.execute("format.languageAll", &json!({})).is_err());
+    assert!(s.execute("format.languageAll", &json!({"lang": "en US!"})).is_err());
 }
 
 #[test]
@@ -4162,6 +5010,55 @@ fn paragraph_commands_clamp_a_direct_hostile_text_selection() {
     s.execute("format.case", &json!({"mode": "upper"})).unwrap();
     let body = s.doc().unwrap().shape(deckcraft_model::ShapeId(title)).unwrap().text.as_ref().unwrap();
     assert_eq!(body.paragraphs[0].props.align, Some(deckcraft_model::text::Align::Center));
+}
+
+#[test]
+fn table_row_col_commands_reject_an_invalid_index() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"], ["e", "f"]]));
+    for (cmd, key) in [
+        ("table.deleteRow", "row"),
+        ("table.deleteColumn", "col"),
+        ("table.insertRowAbove", "row"),
+        ("table.insertColumnLeft", "col"),
+        ("table.split", "row"),
+    ] {
+        for bad in [json!(-1), json!(1.5), json!("1")] {
+            let r = s.execute(cmd, &json!({"id": id.0, key: bad}));
+            assert!(r.is_err(), "{cmd} {key}={bad} should be rejected, got {r:?}");
+            let t = table_of(&s, id);
+            assert_eq!((t.n_rows(), t.n_cols()), (3, 2), "{cmd} {key}={bad} must leave the table unchanged");
+        }
+    }
+}
+
+#[test]
+fn table_cell_commands_reject_an_invalid_cell_and_name_the_registered_command() {
+    let mut s = session();
+    let id = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"], ["e", "f"]]));
+    s.execute("table.selectCells", &json!({"id": id.0, "from": [0, 0], "to": [1, 1]})).unwrap();
+    for (cmd, params) in [
+        ("table.split", json!({"id": id.0, "cell": [-1, 0]})),
+        ("table.merge", json!({"id": id.0, "from": [-1, 0], "to": [1, 1]})),
+        ("table.merge", json!({"id": id.0, "from": [0, 0], "to": "x"})),
+        ("table.rowHeight", json!({"id": id.0, "row": -1, "height": 50.0})),
+        ("table.rowHeight", json!({"id": id.0, "row": 1.5, "height": 50.0})),
+        ("table.columnWidth", json!({"id": id.0, "col": -1, "width": 50.0})),
+        ("table.columnWidth", json!({"id": id.0, "col": "1", "width": 50.0, "keepTotal": true})),
+    ] {
+        let before = table_of(&s, id);
+        let (rows, cols) = (before.rows.iter().map(|r| r.height).collect::<Vec<_>>(), before.cols.clone());
+        let r = s.execute(cmd, &params);
+        assert!(r.is_err(), "{cmd} {params} should be rejected, got {r:?}");
+        let t = table_of(&s, id);
+        assert_eq!((t.n_rows(), t.n_cols()), (3, 2), "{cmd} {params} must leave the table unchanged");
+        assert_eq!(t.rows.iter().map(|r| r.height).collect::<Vec<_>>(), rows, "{cmd} {params} must not change row heights");
+        assert_eq!(t.cols, cols, "{cmd} {params} must not change column widths");
+    }
+    let e = s.execute("table.deleteRow", &json!({"id": id.0, "row": -1})).unwrap_err().to_string();
+    assert!(e.contains("table.deleteRow"), "error should name the registered command: {e}");
+    let e = s.execute("table.insertColumnLeft", &json!({"id": id.0, "col": -1})).unwrap_err().to_string();
+    assert!(e.contains("table.insertColumnLeft"), "error should name the registered command: {e}");
 }
 
 #[test]
@@ -4723,4 +5620,29 @@ fn slide_hide_and_layout_reject_invalid_index() {
         assert!(e.contains("not a valid index"), "{e}");
     }
     assert!(s.doc().unwrap().doc.slides.iter().all(|x| !x.hidden));
+}
+
+#[test]
+fn transition_timing_invalid_after_keeps_value() {
+    let mut s = session();
+    let after = |s: &Session| s.doc().unwrap().doc.slides[0].transition.as_ref().and_then(|t| t.advance_after_ms);
+    s.execute("transition.timing", &json!({"after": 5000})).unwrap();
+    assert_eq!(after(&s), Some(5000));
+    for bad in [json!(-5), json!(1.5), json!("abc")] {
+        let _ = s.execute("transition.timing", &json!({"after": bad}));
+        assert_eq!(after(&s), Some(5000), "after:{bad} must not clear the auto-advance");
+    }
+    s.execute("transition.timing", &json!({"after": null})).unwrap();
+    assert_eq!(after(&s), None);
+}
+
+#[test]
+fn invalid_ids_array_never_falls_back_to_the_selection() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    for ids in [json!([-1]), json!([1.5]), json!([4294967296u64]), json!([-1, a])] {
+        let r = s.execute("edit.delete", &json!({ "ids": ids }));
+        assert!(matches!(r, Err(crate::EngineError::BadParams { .. })), "invalid ids {ids} gave {r:?}");
+        assert!(s.doc().unwrap().shape(deckcraft_model::ShapeId(a as u32)).is_some(), "shape deleted for {ids}");
+    }
 }

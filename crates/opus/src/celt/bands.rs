@@ -269,8 +269,34 @@ struct Split {
     qalloc: i32,
 }
 
+/// Block geometry for one theta decode: `n` samples, `bb` blocks per band, `b0` initial block count.
+#[derive(Clone, Copy)]
+struct ThetaShape {
+    n: i32,
+    bb: usize,
+    b0: usize,
+    lm: i32,
+    stereo: bool,
+}
+
+/// Mid/side gains and delta for a decoded angle; also narrows `fill` to the blocks that stay coded.
+fn split_gains(itheta: i32, n: i32, bb: usize, fill: &mut u32) -> (i32, i32, i32) {
+    if itheta == 0 {
+        *fill &= (1 << bb) - 1;
+        (32767, 0, -16384)
+    } else if itheta == 16384 {
+        *fill &= ((1 << bb) - 1) << bb;
+        (0, 32767, 16384)
+    } else {
+        let imid = bitexact_cos(itheta);
+        let iside = bitexact_cos(16384 - itheta);
+        (imid, iside, frac_mul16((n - 1) << 7, bitexact_log2tan(iside, imid)))
+    }
+}
+
 impl BandCtx<'_, '_, '_> {
-    fn compute_theta(&mut self, n: i32, b: &mut i32, bb: usize, b0: usize, lm: i32, stereo: bool, fill: &mut u32) -> Split {
+    fn compute_theta(&mut self, shape: ThetaShape, b: &mut i32, fill: &mut u32) -> Split {
+        let ThetaShape { n, bb, b0, lm, stereo } = shape;
         let i = self.i;
         let pulse_cap = self.m.log_n[i] + lm * (1 << BITRES);
         let offset = (pulse_cap >> 1) - if stereo && n == 2 { QTHETA_OFFSET_TWOPHASE } else { QTHETA_OFFSET };
@@ -282,65 +308,64 @@ impl BandCtx<'_, '_, '_> {
         let mut itheta = 0i32;
         let mut inv = false;
         if qn != 1 {
-            if stereo && n > 2 {
-                let p0 = 3u32;
-                let x0 = (qn / 2) as u32;
-                let ft = p0 * (x0 + 1) + x0;
-                let fs = self.dec.decode(ft);
-                let x = if fs < (x0 + 1) * p0 { fs / p0 } else { x0 + 1 + (fs - (x0 + 1) * p0) };
-                let (fl, fh) = if x <= x0 { (p0 * x, p0 * (x + 1)) } else { ((x - 1 - x0) + (x0 + 1) * p0, (x - x0) + (x0 + 1) * p0) };
-                self.dec.update(fl, fh, ft);
-                itheta = x as i32;
-            } else if b0 > 1 || stereo {
-                itheta = self.dec.uint(qn as u32 + 1) as i32;
-            } else {
-                let half = (qn >> 1) as u32;
-                let ft = (half + 1) * (half + 1);
-                let fm = self.dec.decode(ft);
-                let (fl, fs);
-                if fm < (half * (half + 1)) >> 1 {
-                    let it = (isqrt32(8 * fm + 1) - 1) >> 1;
-                    fs = it + 1;
-                    fl = it * (it + 1) >> 1;
-                    itheta = it as i32;
-                } else {
-                    let q = qn as u32;
-                    let it = (2 * (q + 1) - isqrt32(8 * (ft - fm - 1) + 1)) >> 1;
-                    fs = q + 1 - it;
-                    fl = ft - ((q + 1 - it) * (q + 2 - it) >> 1);
-                    itheta = it as i32;
-                }
-                self.dec.update(fl, fl + fs, ft);
-            }
-            itheta = ((itheta as u32 * 16384) / qn as u32) as i32;
+            itheta = self.decode_itheta(qn, n, b0, stereo);
         } else if stereo {
-            if *b > 2 << BITRES && self.remaining_bits > 2 << BITRES {
-                inv = self.dec.bit_logp(2);
-            }
-            if self.disable_inv {
-                inv = false;
-            }
-            itheta = 0;
+            inv = self.decode_inversion(*b);
         }
         let qalloc = self.dec.tell_frac() as i32 - tell;
         *b -= qalloc;
-        let (imid, iside, delta);
-        if itheta == 0 {
-            imid = 32767;
-            iside = 0;
-            *fill &= (1 << bb) - 1;
-            delta = -16384;
-        } else if itheta == 16384 {
-            imid = 0;
-            iside = 32767;
-            *fill &= ((1 << bb) - 1) << bb;
-            delta = 16384;
-        } else {
-            imid = bitexact_cos(itheta);
-            iside = bitexact_cos(16384 - itheta);
-            delta = frac_mul16((n - 1) << 7, bitexact_log2tan(iside, imid));
-        }
+        let (imid, iside, delta) = split_gains(itheta, n, bb, fill);
         Split { inv, imid, iside, delta, itheta, qalloc }
+    }
+
+    /// Decodes the quantised stereo/band angle for `qn > 1` and scales it to the 0..=16384 range.
+    fn decode_itheta(&mut self, qn: i32, n: i32, b0: usize, stereo: bool) -> i32 {
+        let itheta = if stereo && n > 2 {
+            self.decode_itheta_stereo_triangle(qn)
+        } else if b0 > 1 || stereo {
+            self.dec.uint(qn as u32 + 1) as i32
+        } else {
+            self.decode_itheta_triangle(qn)
+        };
+        ((itheta as u32 * 16384) / qn as u32) as i32
+    }
+
+    fn decode_itheta_stereo_triangle(&mut self, qn: i32) -> i32 {
+        let p0 = 3u32;
+        let x0 = (qn / 2) as u32;
+        let ft = p0 * (x0 + 1) + x0;
+        let fs = self.dec.decode(ft);
+        let x = if fs < (x0 + 1) * p0 { fs / p0 } else { x0 + 1 + (fs - (x0 + 1) * p0) };
+        let (fl, fh) = if x <= x0 { (p0 * x, p0 * (x + 1)) } else { ((x - 1 - x0) + (x0 + 1) * p0, (x - x0) + (x0 + 1) * p0) };
+        self.dec.update(fl, fh, ft);
+        x as i32
+    }
+
+    fn decode_itheta_triangle(&mut self, qn: i32) -> i32 {
+        let half = (qn >> 1) as u32;
+        let ft = (half + 1) * (half + 1);
+        let fm = self.dec.decode(ft);
+        let (fl, fs, itheta);
+        if fm < (half * (half + 1)) >> 1 {
+            let it = (isqrt32(8 * fm + 1) - 1) >> 1;
+            fs = it + 1;
+            fl = it * (it + 1) >> 1;
+            itheta = it as i32;
+        } else {
+            let q = qn as u32;
+            let it = (2 * (q + 1) - isqrt32(8 * (ft - fm - 1) + 1)) >> 1;
+            fs = q + 1 - it;
+            fl = ft - ((q + 1 - it) * (q + 2 - it) >> 1);
+            itheta = it as i32;
+        }
+        self.dec.update(fl, fl + fs, ft);
+        itheta
+    }
+
+    /// Reads the stereo inversion flag when there are enough bits left (never when inversion is disabled).
+    fn decode_inversion(&mut self, b: i32) -> bool {
+        let inv = b > 2 << BITRES && self.remaining_bits > 2 << BITRES && self.dec.bit_logp(2);
+        inv && !self.disable_inv
     }
 
     fn quant_band_n1(&mut self, x: &mut [f32], y: Option<&mut [f32]>, lowband_out: Option<&mut [f32]>) -> u32 {
@@ -386,7 +411,7 @@ impl BandCtx<'_, '_, '_> {
                 fill = (fill & 1) | (fill << 1);
             }
             bb = (bb + 1) >> 1;
-            let sp = self.compute_theta(n as i32, &mut b, bb, b0, lm, false, &mut fill);
+            let sp = self.compute_theta(ThetaShape { n: n as i32, bb, b0, lm, stereo: false }, &mut b, &mut fill);
             let mid = sp.imid as f32 / 32768.0;
             let side = sp.iside as f32 / 32768.0;
             let mut delta = sp.delta;
@@ -574,7 +599,7 @@ impl BandCtx<'_, '_, '_> {
         if n == 1 {
             return self.quant_band_n1(x, Some(y), lowband_out);
         }
-        let sp = self.compute_theta(n as i32, &mut b, bb, bb, lm, true, &mut fill);
+        let sp = self.compute_theta(ThetaShape { n: n as i32, bb, b0: bb, lm, stereo: true }, &mut b, &mut fill);
         let mid = sp.imid as f32 / 32768.0;
         let side = sp.iside as f32 / 32768.0;
         let mut cm;

@@ -232,7 +232,7 @@ fn predict_block(f: &Frame, mv: [i16; 2], px: usize, py: usize, bw: usize, bh: u
     let (fx, fy) = ((mv[0] & 7) as u32, (mv[1] & 7) as u32);
     for (comp, out) in c.into_iter().enumerate() {
         let mut w = [0u8; 16 * 9];
-        f.chroma_window(comp, cx, cy, cw + 1, ch + 1, &mut w, 16);
+        f.chroma_window(comp, (cx, cy), (cw + 1, ch + 1), &mut w, 16);
         inter::mc_chroma_win(&w, 16, fx, fy, cw, ch, out, cs);
     }
 }
@@ -665,33 +665,38 @@ impl<'a> SliceDecoder<'a> {
             return Ok(());
         }
         for p in 0..4 {
-            let sub = self.cur.sub[p];
-            let (x8, y8) = ((p & 1) * 2, (p >> 1) * 2);
-            if sub.direct {
-                self.derive_direct(1 << p)?;
-                continue;
+            self.derive_sub_mb_motion(p, n)?;
+        }
+        Ok(())
+    }
+
+    /// Motion of one 8x8 sub-macroblock `p` of a P8x8/B8x8 MB.
+    fn derive_sub_mb_motion(&mut self, p: usize, n: [usize; 2]) -> Result<()> {
+        let sub = self.cur.sub[p];
+        let (x8, y8) = ((p & 1) * 2, (p >> 1) * 2);
+        if sub.direct {
+            return self.derive_direct(1 << p);
+        }
+        let mut refs = [-1i8; 2];
+        for (l, r) in refs.iter_mut().enumerate() {
+            if sub.pred & (1 << l) != 0 {
+                let v = self.cur.ref_idx[l][p];
+                ensure!((v as usize) < n[l], "ref_idx {v} out of range (list {l}, size {})", n[l]);
+                *r = v;
             }
-            let mut refs = [-1i8; 2];
-            for (l, r) in refs.iter_mut().enumerate() {
-                if sub.pred & (1 << l) != 0 {
-                    let v = self.cur.ref_idx[l][p];
-                    ensure!((v as usize) < n[l], "ref_idx {v} out of range (list {l}, size {})", n[l]);
-                    *r = v;
+        }
+        for j in 0..sub.shape.num_parts() {
+            let (sx, sy, w, h) = sub.shape.rect(j);
+            let (x, y) = (x8 + sx, y8 + sy);
+            let mut mvs = [[0i16; 2]; 2];
+            for l in 0..2 {
+                if refs[l] >= 0 {
+                    let mvp = self.mvp(l, x, y, w, refs[l], 0, 0);
+                    let d = self.cur.mvd[l][p * 4 + j];
+                    mvs[l] = [mvp[0].wrapping_add(d[0]), mvp[1].wrapping_add(d[1])];
                 }
             }
-            for j in 0..sub.shape.num_parts() {
-                let (sx, sy, w, h) = sub.shape.rect(j);
-                let (x, y) = (x8 + sx, y8 + sy);
-                let mut mvs = [[0i16; 2]; 2];
-                for l in 0..2 {
-                    if refs[l] >= 0 {
-                        let mvp = self.mvp(l, x, y, w, refs[l], 0, 0);
-                        let d = self.cur.mvd[l][p * 4 + j];
-                        mvs[l] = [mvp[0].wrapping_add(d[0]), mvp[1].wrapping_add(d[1])];
-                    }
-                }
-                self.set_motion(x, y, w, h, refs, mvs);
-            }
+            self.set_motion(x, y, w, h, refs, mvs);
         }
         Ok(())
     }
@@ -1380,6 +1385,11 @@ impl<'a> SliceDecoder<'a> {
             cavlc::residual_block(r, &mut lv, 0, 15, 16, nc)?;
             self.put_luma_dc(&lv);
         }
+        self.residual_cavlc_luma(r, cbp, kind, t8)?;
+        self.residual_cavlc_chroma(r, cbp)
+    }
+
+    fn residual_cavlc_luma(&mut self, r: &mut BitReader, cbp: u8, kind: MbKind, t8: bool) -> Result<()> {
         for b8 in 0..4 {
             let (bx8, by8) = ((b8 & 1) * 2, (b8 >> 1) * 2);
             if cbp & (1 << b8) == 0 {
@@ -1413,6 +1423,10 @@ impl<'a> SliceDecoder<'a> {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn residual_cavlc_chroma(&mut self, r: &mut BitReader, cbp: u8) -> Result<()> {
         let cbp_c = cbp >> 4;
         if cbp_c & 3 != 0 {
             for c in 0..2 {

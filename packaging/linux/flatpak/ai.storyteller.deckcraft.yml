@@ -32,9 +32,9 @@ finish-args:
   # document portal, so picked files work anywhere without broad filesystem access. Documents is
   # granted so decks passed by path (the command line, Open Recent) work in the usual place.
   - --filesystem=xdg-documents
-  # Deliberately not granted: network (the optional --control server listens on 127.0.0.1 in
-  # the sandbox; `flatpak override --user --share=network ai.storyteller.deckcraft` exposes it to
-  # host agents) and home/host filesystem access.
+  # Network: update checks reach GitHub. The optional --control server still listens on 127.0.0.1
+  # only. Home/host filesystem access is deliberately not granted.
+  - --share=network
 build-options:
   append-path: /usr/lib/sdk/rust-stable/bin
 modules:
@@ -47,6 +47,7 @@ modules:
     build-commands:
       - cargo --offline build --release --locked -p deckcraft
       - install -Dm755 target/release/deckcraft /app/bin/deckcraft
+      - install -Dm644 NOTICE /app/share/doc/deckcraft/NOTICE
       - install -Dm644 packaging/linux/ai.storyteller.deckcraft.desktop /app/share/applications/ai.storyteller.deckcraft.desktop
       - install -Dm644 packaging/linux/ai.storyteller.deckcraft.mime.xml /app/share/mime/packages/ai.storyteller.deckcraft.xml
       - mkdir -p /app/share/icons && cp -R assets/app-icon/hicolor /app/share/icons/

@@ -1682,6 +1682,87 @@ impl<'a, 'f> TileDecoder<'a, 'f> {
         }
     }
 
+    /// eob_pt, eob_extra and the remaining eob bits.
+    fn read_eob(&mut self, tx_sz: usize, tx_sz_ctx: usize, ptype: usize, tx_class: usize) -> usize {
+        let eob_multisize = (TX_WIDTH_LOG2[tx_sz] as usize).min(5) + (TX_HEIGHT_LOG2[tx_sz] as usize).min(5) - 4;
+        let ectx = (tx_class != TX_CLASS_2D) as usize;
+        let eob_pt = 1 + match eob_multisize {
+            0 => self.sd.read_symbol(&mut self.cdf.eob_pt_16[ptype][ectx]),
+            1 => self.sd.read_symbol(&mut self.cdf.eob_pt_32[ptype][ectx]),
+            2 => self.sd.read_symbol(&mut self.cdf.eob_pt_64[ptype][ectx]),
+            3 => self.sd.read_symbol(&mut self.cdf.eob_pt_128[ptype][ectx]),
+            4 => self.sd.read_symbol(&mut self.cdf.eob_pt_256[ptype][ectx]),
+            5 => self.sd.read_symbol(&mut self.cdf.eob_pt_512[ptype]),
+            _ => self.sd.read_symbol(&mut self.cdf.eob_pt_1024[ptype]),
+        };
+        let mut eob = if eob_pt < 2 { eob_pt } else { (1 << (eob_pt - 2)) + 1 };
+        let eob_shift = eob_pt as i32 - 3;
+        if eob_shift >= 0 {
+            let extra = self.sd.read_symbol(&mut self.cdf.eob_extra[tx_sz_ctx][ptype][eob_pt - 3]);
+            if extra == 1 {
+                eob += 1 << eob_shift;
+            }
+            for i in 1..(eob_pt as i32 - 2).max(0) {
+                let sh = (eob_pt as i32 - 2).max(0) - 1 - i;
+                if self.sd.read_literal(1) == 1 {
+                    eob += 1 << sh;
+                }
+            }
+        }
+        eob
+    }
+
+    /// Exp-Golomb coded remainder of a coefficient above the base range (read_golomb).
+    fn read_golomb(&mut self) -> u32 {
+        let mut length = 0;
+        loop {
+            length += 1;
+            if self.sd.read_literal(1) == 1 || length > 32 {
+                break;
+            }
+        }
+        let mut x: u32 = 1;
+        for _ in (0..length - 1).rev() {
+            x = (x << 1) | self.sd.read_literal(1);
+        }
+        x
+    }
+
+    /// Reads the signs and Golomb remainders of the first `scan.len()` (= eob) coefficients, applies
+    /// them to `self.quant`, and returns the culLevel and dcCategory contexts. `blk4` is (x4, y4, w4, h4).
+    fn read_signs_and_golomb(&mut self, plane: usize, blk4: (usize, usize, usize, usize), scan: &[u16]) -> (u32, u8) {
+        let (x4, y4, w4, h4) = blk4;
+        let ptype = (plane > 0) as usize;
+        let mut cul_level = 0u32;
+        let mut dc_category = 0u8;
+        for (c, &p) in scan.iter().enumerate() {
+            let pos = p as usize;
+            let sign = if self.quant[pos] != 0 {
+                if c == 0 {
+                    let ctx = self.dc_sign_ctx(plane, x4, y4, w4, h4);
+                    self.sd.read_symbol(&mut self.cdf.dc_sign[ptype][ctx]) == 1
+                } else {
+                    self.sd.read_literal(1) == 1
+                }
+            } else {
+                false
+            };
+            if self.quant[pos] > (NUM_BASE_LEVELS + COEFF_BASE_RANGE) as i32 {
+                let x = self.read_golomb();
+                self.quant[pos] = (x as i64 + COEFF_BASE_RANGE as i64 + NUM_BASE_LEVELS as i64).min(i32::MAX as i64) as i32;
+            }
+            if pos == 0 && self.quant[pos] > 0 {
+                dc_category = if sign { 1 } else { 2 };
+            }
+            self.quant[pos] &= 0xFFFFF;
+            cul_level += self.quant[pos] as u32;
+            if sign {
+                self.quant[pos] = -self.quant[pos];
+            }
+        }
+        (cul_level.min(63), dc_category)
+    }
+
     /// coeffs( ): returns eob.
     fn coeffs(&mut self, plane: usize, start_x: usize, start_y: usize, tx_sz: usize) -> usize {
         let x4 = start_x >> 2;
@@ -1707,32 +1788,8 @@ impl<'a, 'f> TileDecoder<'a, 'f> {
             }
             self.plane_tx_type = self.compute_tx_type(plane, tx_sz, x4, y4);
             let scan = self.get_scan(tx_sz);
-            let eob_multisize = (TX_WIDTH_LOG2[tx_sz] as usize).min(5) + (TX_HEIGHT_LOG2[tx_sz] as usize).min(5) - 4;
             let tx_class = get_tx_class(self.plane_tx_type);
-            let ectx = (tx_class != TX_CLASS_2D) as usize;
-            let eob_pt = 1 + match eob_multisize {
-                0 => self.sd.read_symbol(&mut self.cdf.eob_pt_16[ptype][ectx]),
-                1 => self.sd.read_symbol(&mut self.cdf.eob_pt_32[ptype][ectx]),
-                2 => self.sd.read_symbol(&mut self.cdf.eob_pt_64[ptype][ectx]),
-                3 => self.sd.read_symbol(&mut self.cdf.eob_pt_128[ptype][ectx]),
-                4 => self.sd.read_symbol(&mut self.cdf.eob_pt_256[ptype][ectx]),
-                5 => self.sd.read_symbol(&mut self.cdf.eob_pt_512[ptype]),
-                _ => self.sd.read_symbol(&mut self.cdf.eob_pt_1024[ptype]),
-            };
-            eob = if eob_pt < 2 { eob_pt } else { (1 << (eob_pt - 2)) + 1 };
-            let eob_shift = eob_pt as i32 - 3;
-            if eob_shift >= 0 {
-                let extra = self.sd.read_symbol(&mut self.cdf.eob_extra[tx_sz_ctx][ptype][eob_pt - 3]);
-                if extra == 1 {
-                    eob += 1 << eob_shift;
-                }
-                for i in 1..(eob_pt as i32 - 2).max(0) {
-                    let sh = (eob_pt as i32 - 2).max(0) - 1 - i;
-                    if self.sd.read_literal(1) == 1 {
-                        eob += 1 << sh;
-                    }
-                }
-            }
+            eob = self.read_eob(tx_sz, tx_sz_ctx, ptype, tx_class);
             let adj = ADJUSTED_TX_SIZE[tx_sz] as usize;
             let bwl = TX_WIDTH_LOG2[adj] as usize;
             let height = TX_HEIGHT[adj] as usize;
@@ -1780,45 +1837,7 @@ impl<'a, 'f> TileDecoder<'a, 'f> {
                 lev[li] = level as u8;
             }
             self.levels = lev;
-            for c in 0..eob {
-                let pos = scan[c] as usize;
-                let sign = if self.quant[pos] != 0 {
-                    if c == 0 {
-                        let ctx = self.dc_sign_ctx(plane, x4, y4, w4, h4);
-                        self.sd.read_symbol(&mut self.cdf.dc_sign[ptype][ctx]) == 1
-                    } else {
-                        self.sd.read_literal(1) == 1
-                    }
-                } else {
-                    false
-                };
-                if self.quant[pos] > (NUM_BASE_LEVELS + COEFF_BASE_RANGE) as i32 {
-                    let mut length = 0;
-                    loop {
-                        length += 1;
-                        if self.sd.read_literal(1) == 1 {
-                            break;
-                        }
-                        if length > 32 {
-                            break;
-                        }
-                    }
-                    let mut x: u32 = 1;
-                    for _ in (0..length - 1).rev() {
-                        x = (x << 1) | self.sd.read_literal(1);
-                    }
-                    self.quant[pos] = (x as i64 + COEFF_BASE_RANGE as i64 + NUM_BASE_LEVELS as i64).min(i32::MAX as i64) as i32;
-                }
-                if pos == 0 && self.quant[pos] > 0 {
-                    dc_category = if sign { 1 } else { 2 };
-                }
-                self.quant[pos] &= 0xFFFFF;
-                cul_level += self.quant[pos] as u32;
-                if sign {
-                    self.quant[pos] = -self.quant[pos];
-                }
-            }
-            cul_level = cul_level.min(63);
+            (cul_level, dc_category) = self.read_signs_and_golomb(plane, (x4, y4, w4, h4), &scan[..eob]);
         }
         for i in 0..w4 {
             if x4 + i < self.t.above_level[plane].len() {

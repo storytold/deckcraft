@@ -4,7 +4,7 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::{Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, always, bad, cmd, has_doc, id_param, str_param, usize_param, xfrm_of};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {

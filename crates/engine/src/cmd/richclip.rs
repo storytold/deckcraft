@@ -231,7 +231,11 @@ fn weight_bold(style: &str) -> Option<bool> {
 
 fn attr<'a>(tag: &'a str, key: &str) -> Option<&'a str> {
     let lower = tag.to_ascii_lowercase();
-    let at = lower.find(key)?;
+    let at = lower.match_indices(key).find_map(|(at, _)| {
+        let named = lower[..at].ends_with(|c: char| c.is_ascii_whitespace());
+        let eq = tag.get(at + key.len()..)?.trim_start().starts_with('=');
+        (named && eq).then_some(at)
+    })?;
     let after = tag.get(at + key.len()..)?.trim_start();
     let after = after.strip_prefix('=')?.trim_start();
     let quote = after.chars().next()?;
@@ -304,7 +308,10 @@ fn decode_text(raw: &str) -> String {
     while let Some(at) = rest.find('&') {
         out.push_str(&collapse_space(&rest[..at]));
         rest = &rest[at..];
-        let search_window = rest.len().min(32);
+        let mut search_window = rest.len().min(32);
+        while !rest.is_char_boundary(search_window) {
+            search_window -= 1;
+        }
         let Some(end) = rest[..search_window].find(';') else {
             out.push('&');
             rest = &rest[1..];
@@ -343,7 +350,7 @@ fn numeric_char(digits: &str) -> Option<char> {
         return None;
     }
     let n = u32::from_str_radix(body, radix).ok()?;
-    char::from_u32(n).filter(|c| !c.is_control() || *c == '\n')
+    char::from_u32(n).filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
 }
 
 /// Do the HTML's words and the paste's plain text say the same thing?
@@ -362,10 +369,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn multibyte_after_ampersand_is_kept() {
+        let text = "é".repeat(20);
+        assert_eq!(decode_text(&format!("R&D {text}")), format!("R&D {text}"));
+        let cjk = "漢".repeat(20);
+        assert_eq!(decode_text(&format!("&{cjk}")), format!("&{cjk}"));
+    }
+
+    #[test]
     fn signed_numeric_entities_are_kept_as_typed() {
         assert_eq!(decode_text("a&#+65;b"), "a&#+65;b");
         assert_eq!(decode_text("a&#x+41;b"), "a&#x+41;b");
         assert_eq!(decode_text("a&#65;b&#x41;"), "aAbA");
+    }
+
+    #[test]
+    fn numeric_tab_entity_decodes_to_tab() {
+        assert_eq!(decode_text("a&#9;b"), "a\tb");
+        assert_eq!(decode_text("a&#x9;b"), "a\tb");
     }
 
     #[test]
@@ -380,6 +401,20 @@ mod tests {
         assert_eq!(plain.paragraphs[0].runs[0].props.bold, Some(true));
         let heavy = html_to_body("<span style=\"font-weight:700\">heavy</span>").unwrap();
         assert_eq!(heavy.paragraphs[0].runs[0].props.bold, Some(true));
+    }
+
+    #[test]
+    fn style_attribute_is_found_after_attributes_containing_style() {
+        for tag in [
+            "<span class=\"style1\" style=\"font-weight:bold\">x</span>",
+            "<span data-style=\"x\" style=\"font-weight:bold\">x</span>",
+            "<span class=\"mystyle\" style=\"font-weight:bold\">x</span>",
+        ] {
+            let body = html_to_body(tag).unwrap();
+            assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true), "{tag}");
+        }
+        let none = html_to_body("<span class=\"style\">x</span>").unwrap();
+        assert_eq!(none.paragraphs[0].runs[0].props.bold, None);
     }
 
     #[test]

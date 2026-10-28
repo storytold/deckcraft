@@ -61,6 +61,12 @@ revision history.
 - **Impact:** long-session crash rate is sampled in CI; RSS is not measured directly.
 - **Estimate:** 1–2 h (RSS sampling per platform).
 
+### A control-server timing test may fail under load
+- **Evidence:** `silent_refused_peers_do_not_delay_the_next_refusal` in
+  `apps/deckcraft/src/control_server.rs` asserts that a refusal arrives in under 1 s, so it can
+  fail on a busy machine although the server behaves correctly.
+- **Estimate:** under 1 h (a looser bound or a logical clock).
+
 ## File formats
 
 Detail in [file-format-parity.md](file-format-parity.md).
@@ -108,12 +114,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** SVG icons show only their raster fallback, and SVG files can't be inserted.
 - **Estimate:** 4–8 h (an SVG renderer through `resvg`-style crates).
 
-### Template, slide-show and macro variants are saved as plain `.pptx`
-- **Evidence:** `crates/pptx/src/write/mod.rs` always writes the
-  `presentationml.presentation.main+xml` content type; `.potx`/`.ppsx` open, `.pptm`/`.potm`/`.ppsm`
-  aren't recognised.
-- **Impact:** a template saved as `.potx` isn't a template to PowerPoint; macro decks can't be
-  opened even to view.
+### Macro-enabled variants aren't recognized
+- **Evidence:** `.pptx`, `.potx` and `.ppsx` open and save with their own main content types
+  (`crates/pptx/src/lib.rs` `export_as`); `.pptm`/`.potm`/`.ppsm` aren't recognized.
+- **Impact:** macro decks can't be opened even to view.
 - **Estimate:** 2–4 h (content types; keep `vbaProject.bin` untouched without running it).
 
 ### No legacy `.ppt`/`.pot`/`.pps` import
@@ -205,7 +209,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 Animations ▸ Preview and the pane's Play All play the current slide's animations on the editor
 canvas (Escape or a click stops them); with an effect selected the pane's button reads Play From
 and starts at that effect. The pane has an advanced timeline with draggable bars
-(`crates/ui-egui/src/animtimeline.rs`). Still open: most of the effect gallery. Detail in
+(`crates/ui-egui/src/panels/animtimeline.rs`). Still open: most of the effect gallery. Detail in
 [animation-parity.md](animation-parity.md). 7–13 h; the pane is a
 **beta blocker**.
 
@@ -235,8 +239,8 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 ### Edit points, text warp, 3-D
 - **Evidence:** checklist rows "Edit points" (P1 partial: Edit Points converts a shape to a
   freeform, vertices drag, Ctrl/Cmd-click adds or deletes, smooth/straight/corner points and Bézier
-  handles, Straight/Curved Segment on a segment and Open/Close Path on a point; the menu has no
-  Delete Segment or Add Point), "Text warp transforms" (partial: all 40
+  handles, Add Point, Delete Segment (closed outlines), Straight/Curved Segment and Open/Close Path
+  on a segment, and Open/Close Path on a point), "Text warp transforms" (partial: all 40
   `prstTxWarp` presets render, their adjusts round-trip, Shape Format ▸ Text Effects ▸ Transform
   applies one with `format.textWarp`, and a selected warp shows a yellow handle per adjust that
   dragging sets; arc/circle placement can differ from PowerPoint by 1–3 % of the path length),
@@ -246,8 +250,7 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   shade bevels and sides approximately (fitted to PowerPoint for three-point/matte only); contours
   draw as a band round the face outline (not round the extruded silhouette); Format Shape ▸
   Effects has 3-D Format and 3-D Rotation).
-- **Estimate:** 1 h (edit points: Delete Segment and Add Point in the menu), 1–2 h (fitting the
-  other rigs and materials to PowerPoint renders).
+- **Estimate:** 1–2 h (fitting the other rigs and materials to PowerPoint renders).
 
 ### Proofing: spelling, thesaurus, AutoCorrect
 - **Evidence:** `review.spelling` checks with Hunspell-format dictionaries the system already has
@@ -256,15 +259,25 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   for Add to Dictionary. Red squiggles on the current slide come from a worker thread, with a
   context menu to correct, ignore or add; table cells and speaker notes are squiggled too, each
   with a right-click menu; repeated words (`the the`) are flagged with Delete Repeated Word;
-  Review › Language marks the selection's proofing language or Do Not Check Spelling
-  (`lang`/`noProof` round-trip in PPTX). No grammar checking. The web build checks on the UI
+  Review › Language marks the selection's proofing language or Do Not Check Spelling, or the
+  whole presentation's (`format.languageAll`: every run, notes, masters, layouts and the default
+  text style) (`lang`/`noProof` round-trip in PPTX). No grammar checking. The web build checks on the UI
   thread a few milliseconds per frame. No dictionaries ship with DeckCraft, so without one
   installed (always on Windows and the web) only a short list of common misspellings is found.
   `review.thesaurus` looks up the selected word (checklist row partial). AutoCorrect has
   PowerPoint's options (two initial capitals, sentence and day capitals, caps lock, fractions, an
-  editable replace list), and AutoFormat superscripts ordinals (1st) as you type; no automatic
-  bulleted lists, no undo of a single correction.
-- **Estimate:** 1–2 h (bundle openly licensed dictionaries); 2–4 h (AutoFormat as you type).
+  editable replace list), and AutoFormat superscripts ordinals (1st) and starts bulleted and
+  numbered lists (`* `, `1. `) as you type; no undo of a single correction. Automatic lists start
+  only while Replace text as you type is on, where PowerPoint has a separate AutoFormat option,
+  and Backspace right after one puts the typed lead back, which PowerPoint does not.
+- **Estimate:** 1–2 h (bundle openly licensed dictionaries; under 1 h for the AutoFormat option).
+
+### Copying text and cell ranges
+- **Evidence:** a copied text range carries no media, so a picture bullet in it is lost when
+  pasted into another deck; the writer saves a bullet whose picture is missing as `•`. A copied
+  range of table cells is tab-separated text, not a table, so pasting it makes text rather than
+  cells.
+- **Estimate:** 2–4 h.
 
 ### Equations
 - **Evidence:** checklist row missing; PR #55 (OMML editor, +10.5k lines) is open.
@@ -294,8 +307,8 @@ Detail in [ui-parity.md](ui-parity.md).
 - **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar, #41 system light/dark).
   2–4 h.
 - **Icon consistency across Craft apps** (#73, #56). 2–4 h; coordinate in craftrules.
-- **Dialogs**: 41 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
-  and Tabs, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
+- **Dialogs**: 42 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
+  and Tabs, Columns, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
   Position, Date and Time, Photo Album (Edit Photo Album reopens it), Create New Theme Colors and
   Create New Theme Fonts (each edits the open master's scheme, not a saved library; theme fonts
   are latin only), Grid Options, AutoCorrect and Paste Special. Format Background picture options
@@ -359,7 +372,10 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
+| 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |
+| 2026-10-24 | trivial | Columns dialog (number and spacing of text columns); dialog count 41 → 42 |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native saves retain chart package parts and relationships, including charts in groups; edited chart data still does not export a stale source workbook. Chart editing gaps and scores remain unchanged |

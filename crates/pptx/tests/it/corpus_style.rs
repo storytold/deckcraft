@@ -189,9 +189,14 @@ fn style_kinds_round_trip() {
             .as_slice()
         )
     );
+    text_run_effects_survive(&p, &once, &twice);
+    theme_and_bevel_survive(&once, &twice);
+    connector_glue_survives(&p, &once, &twice);
+}
 
-    let got = run_of(&once);
-    let expect = run_of(&p);
+fn text_run_effects_survive(p: &Presentation, once: &Presentation, twice: &Presentation) {
+    let got = run_of(once);
+    let expect = run_of(p);
     assert_eq!(got.fill, expect.fill, "text gradient");
     assert_eq!(got.outline, expect.outline, "text outline");
     assert_eq!(got.shadow, expect.shadow, "text shadow");
@@ -199,17 +204,19 @@ fn style_kinds_round_trip() {
     assert_eq!(got.inner_shadow, expect.inner_shadow, "text inner shadow");
     assert_eq!(got.reflection, expect.reflection, "text reflection");
     assert_eq!(got.soft_edge, expect.soft_edge, "text soft edge");
-    assert_eq!(run_of(&twice), run_of(&once));
+    assert_eq!(run_of(twice), run_of(once));
     assert_eq!(
-        by_name(&twice, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props)),
-        by_name(&once, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props))
+        by_name(twice, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props)),
+        by_name(once, "Styled text").text.as_ref().map(|t| (&t.body, &t.paragraphs[0].props))
     );
 
-    assert_eq!(by_name(&once, "Path gradient").fill, by_name(&p, "Path gradient").fill);
-    assert_eq!(by_name(&once, "Pattern").fill, by_name(&p, "Pattern").fill);
-    assert_eq!(by_name(&twice, "Path gradient").fill, by_name(&once, "Path gradient").fill);
-    assert_eq!(by_name(&twice, "Pattern").fill, by_name(&once, "Pattern").fill);
+    assert_eq!(by_name(once, "Path gradient").fill, by_name(p, "Path gradient").fill);
+    assert_eq!(by_name(once, "Pattern").fill, by_name(p, "Pattern").fill);
+    assert_eq!(by_name(twice, "Path gradient").fill, by_name(once, "Path gradient").fill);
+    assert_eq!(by_name(twice, "Pattern").fill, by_name(once, "Pattern").fill);
+}
 
+fn theme_and_bevel_survive(once: &Presentation, twice: &Presentation) {
     let theme = &once.masters[0].theme.format.effects[0];
     assert_eq!(theme.glow, Some(glow()));
     assert_eq!(theme.reflection, Some(reflection()));
@@ -220,26 +227,24 @@ fn style_kinds_round_trip() {
     assert_eq!(theme2.bevel, theme.bevel);
     assert_eq!(theme2.raw3d, theme.raw3d);
 
-    let named = by_name(&once, "Bevel preset").effects.as_ref().expect("effects");
+    let named = by_name(once, "Bevel preset").effects.as_ref().expect("effects");
     assert_eq!(named.bevel.as_deref(), Some("relaxedInset"));
     assert!(named.raw3d.as_deref().unwrap_or("").contains("relaxedInset"));
-    assert_eq!(by_name(&twice, "Bevel preset").effects.as_ref().and_then(|e| e.bevel.as_deref()), Some("relaxedInset"));
+    assert_eq!(by_name(twice, "Bevel preset").effects.as_ref().and_then(|e| e.bevel.as_deref()), Some("relaxedInset"));
 
-    let bevel = by_name(&once, "Bevel").effects.as_ref().expect("effects");
+    let bevel = by_name(once, "Bevel").effects.as_ref().expect("effects");
     assert_eq!(bevel.bevel.as_deref(), Some("angle"));
     let raw = bevel.raw3d.as_deref().unwrap_or("");
     assert!(raw.contains("bevelT") && raw.contains("angle") && raw.contains("scene3d"), "{raw}");
-    assert_eq!(by_name(&twice, "Bevel").effects.as_ref().and_then(|e| e.raw3d.as_deref()), Some(raw));
+    assert_eq!(by_name(twice, "Bevel").effects.as_ref().and_then(|e| e.raw3d.as_deref()), Some(raw));
+}
 
-    let c = by_name(&once, "Connector");
-    assert!(
-        matches!(c.kind, ShapeKind::Connector { start: Some((s, 3)), end: Some((e, 1)) } if s == left_of(&p) && e == right_of(&p)),
-        "{:?}",
-        c.kind
-    );
-    assert_eq!(c.line, by_name(&p, "Connector").line);
-    assert_eq!(c.geom, by_name(&p, "Connector").geom);
-    assert_eq!(by_name(&twice, "Connector").kind, c.kind);
+fn connector_glue_survives(p: &Presentation, once: &Presentation, twice: &Presentation) {
+    let c = by_name(once, "Connector");
+    assert!(matches!(c.kind, ShapeKind::Connector { start: Some((s, 3)), end: Some((e, 1)) } if s == left_of(p) && e == right_of(p)), "{:?}", c.kind);
+    assert_eq!(c.line, by_name(p, "Connector").line);
+    assert_eq!(c.geom, by_name(p, "Connector").geom);
+    assert_eq!(by_name(twice, "Connector").kind, c.kind);
 }
 
 fn left_of(p: &Presentation) -> ShapeId {

@@ -279,7 +279,11 @@ fn percent_decode(s: &str) -> String {
     while i < b.len() {
         let c = b.get(i).copied().unwrap_or(0);
         if c == b'%'
-            && let Some(h) = b.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok()).and_then(|h| u8::from_str_radix(h, 16).ok())
+            && let Some(h) = b
+                .get(i + 1..i + 3)
+                .filter(|h| h.iter().all(u8::is_ascii_hexdigit))
+                .and_then(|h| std::str::from_utf8(h).ok())
+                .and_then(|h| u8::from_str_radix(h, 16).ok())
         {
             out.push(h);
             i += 3;
@@ -293,7 +297,7 @@ fn percent_decode(s: &str) -> String {
 
 /// Resolve a relative target against a base directory into a part name.
 pub fn resolve(base: &str, target: &str) -> String {
-    let target = percent_decode(target.split('#').next().unwrap_or(""));
+    let target = percent_decode(target.split('#').next().unwrap_or("")).replace('\\', "/");
     let target = target.as_str();
     let mut segs: Vec<&str> = if target.starts_with('/') { vec![] } else { base.split('/').filter(|s| !s.is_empty()).collect() };
     for s in target.split('/') {
@@ -464,6 +468,12 @@ mod tests {
         assert_eq!(resolve("ppt/slides", "../media/a.png#frag"), "ppt/media/a.png");
     }
 
+    #[test]
+    fn resolve_percent_decode_requires_two_hex_digits() {
+        assert_eq!(resolve("ppt/slides", "../media/a%+5b.png"), "ppt/media/a%+5b.png");
+        assert_eq!(resolve("ppt/slides", "../media/a%20b.png"), "ppt/media/a b.png");
+    }
+
     fn zip_of(entries: &[(&str, usize)]) -> Vec<u8> {
         let mut zw = zip::ZipWriter::new(Cursor::new(Vec::new()));
         let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
@@ -495,6 +505,12 @@ mod tests {
         let p = Package::open(&z).unwrap();
         assert_eq!(p.xml_bytes("small.xml").map(<[u8]>::len), Some(10));
         assert!(p.xml_bytes("missing.xml").is_none());
+    }
+
+    #[test]
+    fn resolve_backslash_target() {
+        assert_eq!(resolve("ppt/slides", "..\\media\\image1.png"), "ppt/media/image1.png");
+        assert_eq!(resolve("ppt/slides", "\\ppt\\media\\a.png"), "ppt/media/a.png");
     }
 
     #[test]

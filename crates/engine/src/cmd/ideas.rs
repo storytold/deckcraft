@@ -8,7 +8,7 @@ use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::{Fill, Presentation, Rgba, Shape, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, bad, cmd, has_slide, str_param, usize_param, xfrm_of};
 use crate::{Result, Selection, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
