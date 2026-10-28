@@ -7192,6 +7192,36 @@ fn edit_delete_with_an_id_deletes_that_shape_not_the_text_or_the_slide() {
     assert_eq!(table.cell(1, 0).map(|c| c.text.text()), Some("c".to_string()), "the others keep their text");
 }
 
+/// Review of the rebased answers: a non-list `indices`, a palette spelled with a sign or leading
+/// zero, and `all` with a `slide` are refused; section.add answers the index of the section it made
+/// even when another has the same name.
+#[test]
+fn review_refusals_and_the_new_sections_index() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [id], "effect": "fade"})).unwrap();
+    for bad in [json!("0"), json!(2), json!({"0": 1})] {
+        let e = s.execute("animation.timing", &json!({"indices": bad, "delay": 50})).unwrap_err().to_string();
+        assert!(e.contains("`indices` is a list"), "{bad}: {e}");
+    }
+    let chart = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    for bad in ["colorful01", "colorful+1", "monochrome+13", "colorful0"] {
+        assert!(s.execute("chart.options", &json!({"id": chart, "palette": bad})).is_err(), "{bad}");
+    }
+    s.execute("chart.options", &json!({"id": chart, "palette": "monochrome13"})).unwrap();
+    let e = s.execute("file.export", &json!({"path": "unused.png", "all": true, "slide": 0})).unwrap_err().to_string();
+    assert!(e.contains("not both"), "{e}");
+    for _ in 0..3 {
+        s.execute("slide.new", &json!({})).unwrap();
+    }
+    s.execute("section.add", &json!({"at": 2})).unwrap();
+    let r = s.execute("section.add", &json!({"at": 1})).unwrap();
+    let k = r["index"].as_u64().unwrap() as usize;
+    let st = s.doc().unwrap();
+    let first = st.doc.sections[k].slides.first().copied();
+    assert_eq!(first, Some(st.doc.slides[1].id), "{r}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
@@ -7286,4 +7316,3 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
-

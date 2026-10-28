@@ -711,7 +711,12 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
             doc.sections.insert(si + 1, Section { name, slides: tail });
             doc.sections.retain(|x| !x.slides.is_empty() || x.name != "Default Section");
         }
-        let index = doc.sections.iter().rposition(|x| x.name == wanted).unwrap_or(0);
+        // The new section is the one that starts at the slide it was added at (the last one when
+        // added after the last slide); names repeat, so they cannot tell it.
+        let index = ids
+            .get(at)
+            .and_then(|start| doc.sections.iter().position(|x| x.slides.first() == Some(start)))
+            .unwrap_or(doc.sections.len().saturating_sub(1));
         Ok(json!({"sections": sections_json(doc), "count": doc.sections.len(), "index": index, "name": wanted}))
     })
 }

@@ -167,7 +167,7 @@ pub fn handle(app: &mut SlideApp, ctx: &egui::Context, req: &ControlRequest) -> 
             ok(json!({
                 "result": last,
                 "selection": st.map(|d| serde_json::to_value(&d.selection).unwrap_or_default()),
-                "selected": st.map(deckcraft_engine::DocState::selected_boxes).unwrap_or_default(),
+                "selected": st.map(deckcraft_engine::DocState::selected_boxes).unwrap_or_else(|| json!([])),
             }))
         }
         "ui.key" => {
