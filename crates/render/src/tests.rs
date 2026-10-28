@@ -616,14 +616,14 @@ fn blend_ends_match_the_slides_and_mixes_backdrops() {
     let o = RenderOpts { scale: 0.5, ..Default::default() };
     let shapes = vec![(sh, false)];
     // At the ends the frame is the slide itself; the shape stays opaque throughout.
-    assert_eq!(render_blend(&p, 0, 1, 1.0, &shapes, &[], &[], &o).pixels, render_slide(&p, 1, &o).pixels);
-    let mid = render_blend(&p, 0, 1, 0.5, &shapes, &[], &[], &o);
+    assert_eq!(render_blend(&p, (0, 1), 1.0, &shapes, &[], &[], &o).pixels, render_slide(&p, 1, &o).pixels);
+    let mid = render_blend(&p, (0, 1), 0.5, &shapes, &[], &[], &o);
     let px = mid.pixel(5, 5);
     assert!((px[0] as i32 - 128).abs() <= 3, "{px:?}");
     assert_eq!(mid.pixel(100, 75), render_slide(&p, 1, &o).pixel(100, 75));
     // Hostile input: bad indices and NaN never panic.
-    assert_eq!(render_blend(&p, 0, 9, 0.5, &shapes, &[], &[], &o).width, 0);
-    let _ = render_blend(&p, 0, 1, f64::NAN, &shapes, &[], &[], &o);
+    assert_eq!(render_blend(&p, (0, 9), 0.5, &shapes, &[], &[], &o).width, 0);
+    let _ = render_blend(&p, (0, 1), f64::NAN, &shapes, &[], &[], &o);
 }
 
 fn text_shape(id: u32, text: &str, x: f64, y: f64) -> Shape {
@@ -668,7 +668,7 @@ fn morph_text_ends_match_the_slides() {
         sb.xfrm = Some(x);
         sa.xfrm = Some(x);
         let tm = TextMorph { old: ShapeId(11), new: ShapeId(10), from, to, chars: false, t };
-        render_blend(&p, 0, 1, t, &[(sb, false), (sa, true)], &[tm], &[], &o)
+        render_blend(&p, (0, 1), t, &[(sb, false), (sa, true)], &[tm], &[], &o)
     };
     // Warm up: faces load lazily (a background scan runs), so the first render may still fall back.
     let _ = (render_slide(&p, 0, &o), render_slide(&p, 1, &o), frame(0.5));
@@ -781,7 +781,7 @@ fn morph_path_ends_match_the_slides() {
         let lerp = |a: f64, b: f64| a + (b - a) * t;
         let x = Xfrm::new(lerp(from.x, to.x), lerp(from.y, to.y), lerp(from.w, to.w), lerp(from.h, to.h));
         let pm = PathMorph { id: ShapeId(10), from: Geom::preset("ellipse"), from_box: from, to_box: to, t };
-        render_blend(&p, 0, 1, t, &[(form(10, "star5", x), false)], &[], &[pm], &o)
+        render_blend(&p, (0, 1), t, &[(form(10, "star5", x), false)], &[], &[pm], &o)
     };
     // The morph splits the outlines into more curves, which flatten slightly differently: edge pixels
     // may differ a little, a different shape differs a lot.
@@ -792,7 +792,7 @@ fn morph_path_ends_match_the_slides() {
     let d1 = differ(&frame(1.0), &render_slide(&p, 1, &o));
     assert!(d1 < 40, "end differs {d1}");
     // Without the morph the start would show the star.
-    let star = render_blend(&p, 0, 1, 0.0, &[(form(10, "star5", from), false)], &[], &[], &o);
+    let star = render_blend(&p, (0, 1), 0.0, &[(form(10, "star5", from), false)], &[], &[], &o);
     assert!(differ(&star, &render_slide(&p, 0, &o)) > 400);
     // Halfway the shape is filled around the middle of its box.
     let mid = frame(0.5);
@@ -818,7 +818,7 @@ fn morph_path_fades_a_fill_only_one_side_has() {
     let at = |t: f64| {
         let pm = PathMorph { id: ShapeId(10), from: Geom::preset("rect"), from_box: bx, to_box: bx, t };
         // A point near the line but not on it: inside the shape all the way.
-        render_blend(&p, 0, 1, t, &[(form(10, "line"), false)], &[], &[pm], &o).pixel(110, 90)
+        render_blend(&p, (0, 1), t, &[(form(10, "line"), false)], &[], &[pm], &o).pixel(110, 90)
     };
     let (full, half, none) = (at(0.0), at(0.5), at(1.0));
     assert_eq!(none, [255, 255, 255, 255]);

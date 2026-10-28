@@ -348,7 +348,7 @@ impl MediaHost {
 
     /// Carry out a `media.*` request from the engine for presentation `doc_uid`.
     /// `slide` is the slide the request comes from: shape ids are only unique per slide.
-    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, slide: usize, action: &str, id: ShapeId, ms: Option<u64>, owner: Owner) {
+    pub fn request(&mut self, doc_uid: u64, doc: &Presentation, slide: usize, action: &str, (id, ms): (ShapeId, Option<u64>), owner: Owner) {
         self.ensure_doc(doc_uid);
         let Some(clip) = find_clip(doc, id, Some(slide)) else { return };
         let t = ms.map(|v| v as f64 / 1000.0);

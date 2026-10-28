@@ -1,4 +1,4 @@
-use super::*;
+use super::{Fill, SlideApp, Ui, Value, cref_param, json, run, scheme, theme, vec2, widgets};
 
 pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     let sc = scheme(app);
@@ -156,7 +156,7 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
     };
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(72.0, 20.0), egui::Label::new("Alignment"));
-        let combo = egui::ComboBox::from_id_salt("bg-align").selected_text(align_name).width(140.0).show_ui(ui, |ui| {
+        let combo = craft_ui::ComboBox::from_id_salt("bg-align").selected_text(align_name).width(140.0).show_ui(ui, |ui| {
             for (k, l) in [
                 ("tl", "Top Left"),
                 ("t", "Top"),
@@ -183,7 +183,7 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
     };
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(72.0, 20.0), egui::Label::new("Mirror"));
-        let combo = egui::ComboBox::from_id_salt("bg-mirror").selected_text(mirror_name).width(140.0).show_ui(ui, |ui| {
+        let combo = craft_ui::ComboBox::from_id_salt("bg-mirror").selected_text(mirror_name).width(140.0).show_ui(ui, |ui| {
             for (k, l) in [("none", "None"), ("x", "Horizontal"), ("y", "Vertical"), ("xy", "Both")] {
                 if ui.selectable_label(flip == k, l).clicked() {
                     run(app, "design.background", json!({"pictureProps": {"mirror": k}}));

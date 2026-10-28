@@ -24,8 +24,6 @@ mod layout;
 
 use autocorrect::autocorrect_options;
 pub use autocorrect::{AUTOCORRECT, AutoList, correct_word};
-#[cfg(test)]
-use caret::count_param;
 pub(crate) use caret::{apply_leading_tabs, delete_dir};
 use caret::{delete, delete_surrounding, get, insert, move_caret, select, select_all, select_para, select_word, set};
 use editing::{edit, exit};

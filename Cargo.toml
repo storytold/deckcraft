@@ -59,9 +59,10 @@ harfrust = "0.13"
 vello_cpu = "0.2"
 vello_common = { version = "0.2", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
-craft-media = { git = "https://github.com/storytold/craft-libs", rev = "f0ad6c1e1d297908915f4be315b0fcfc9be7b5d4", version = "=0.1.0", default-features = false }
-craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "9f75d3dc19b4b514c4f3d4847ed1ec1b0e86b4ef", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
-craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "495e5971bc024aa96e6ed318cb6e7cd3a0103184", features = ["egui"] }
+craft-media = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0", default-features = false }
+craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
+craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
+craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0" }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
@@ -79,9 +80,11 @@ arboard = { version = "3.6", default-features = false }
 unsafe_code = "forbid"
 
 [workspace.lints.clippy]
+cognitive_complexity = "deny"
+too_many_arguments = "deny"
+wildcard_imports = "deny"
 dbg_macro = "warn"
 todo = "warn"
-too_many_arguments = "allow"
 type_complexity = "allow"
 self_named_constructors = "allow"
 large_enum_variant = "allow"
@@ -105,7 +108,7 @@ codegen-units = 16
 debug = 0
 
 [patch.crates-io]
-krilla = { git = "https://github.com/storytold/craft-libs", rev = "9f75d3dc19b4b514c4f3d4847ed1ec1b0e86b4ef", version = "=0.8.2" }
+krilla = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.8.2" }
 ecolor = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 emath = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }
 epaint = { git = "https://github.com/storytold/egui.git", rev = "6d518fc799681571963842f95b55a6b68431b15a" }

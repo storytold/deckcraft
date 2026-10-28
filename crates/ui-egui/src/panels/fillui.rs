@@ -169,7 +169,7 @@ pub fn gradient_editor(ui: &mut Ui, id: &str, g: &Gradient, sc: &ColorScheme) ->
     };
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(70.0, 20.0), egui::Label::new("Type"));
-        let combo = egui::ComboBox::from_id_salt((id, "kind")).selected_text(kind).width(120.0).show_ui(ui, |ui| {
+        let combo = craft_ui::ComboBox::from_id_salt((id, "kind")).selected_text(kind).width(120.0).show_ui(ui, |ui| {
             for k in ["Linear", "Radial", "Rectangular", "Path"] {
                 if ui.selectable_label(kind == k, k).clicked() && kind != k {
                     let focus = match &g.shape {

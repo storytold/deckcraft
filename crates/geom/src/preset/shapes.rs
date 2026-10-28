@@ -1,6 +1,6 @@
 use super::builder::{Corner, Pb, corner_rect, fill, mid_sites, shade, simple, stroke_only, tip_handle};
 use super::catalog::{FillMode, Geometry};
-use super::*;
+use super::{Point, Rect};
 
 pub(super) fn wedge_rect(w: f64, h: f64, a0: f64, a1: f64, r: f64) -> Geometry {
     let tip = Point::new(w / 2.0 + w * a0 / 1e5, h / 2.0 + h * a1 / 1e5);

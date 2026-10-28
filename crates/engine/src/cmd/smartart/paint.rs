@@ -1,6 +1,9 @@
 use super::layout::layout_raw;
 use super::nodes::Item;
-use super::*;
+use super::{
+    Align, AutoFit, ColorRef, ColorTransform, Diagram, DiagramNode, Effects, Fill, Geom, Gradient, GradientShape, GradientStop, Line, MAX_LEVEL,
+    Paragraph, SchemeSlot, Shadow, Shape, ShapeStyle, TextBody, Xfrm,
+};
 
 fn slot(i: usize) -> SchemeSlot {
     [SchemeSlot::Accent1, SchemeSlot::Accent2, SchemeSlot::Accent3, SchemeSlot::Accent4, SchemeSlot::Accent5, SchemeSlot::Accent6][i % 6]

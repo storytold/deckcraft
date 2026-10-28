@@ -1,5 +1,5 @@
 use super::hit::table_rows;
-use super::*;
+use super::{Drag, Guide, HistoryEntry, Point, Rect, Result, Session, Shape, ShapeId, ShapeKind, ToolKind, Value, Vec2, Xfrm, cmd, json, xfrm_of};
 
 impl Session {
     /// End the freeform being drawn: create the shape (if it has at least two points).

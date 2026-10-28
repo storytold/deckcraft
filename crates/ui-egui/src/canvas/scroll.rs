@@ -1,4 +1,4 @@
-use super::*;
+use super::{Rect, pos2};
 
 /// Thickness of the canvas scroll bars, in points.
 const SCROLL_BAR: f32 = 10.0;

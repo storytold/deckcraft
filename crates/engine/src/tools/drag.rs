@@ -1,5 +1,16 @@
 use super::hit::{constrain_45, line_xfrm, resize_box};
-use super::*;
+use super::{
+    Affine, DRAW_TABLE, Drag, Mods, Point, Rect, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, Vec2, Xfrm, cmd, json, set_warp_adj,
+};
+
+struct MoveDrag {
+    ids: Vec<ShapeId>,
+    start: Point,
+    origs: Vec<(ShapeId, Xfrm)>,
+    moved: bool,
+    duplicate: bool,
+    enter_text: Option<(ShapeId, Point)>,
+}
 
 impl Session {
     pub(super) fn drag(&mut self, p: Point, mods: Mods, tol: f64) -> Result<Value> {
@@ -13,55 +24,7 @@ impl Session {
                 self.tool.guide_drag = Some((index, pos));
             }
             Drag::Move { ids, start, origs, moved, duplicate, enter_text } => {
-                let mut d = p - start;
-                if !moved && (d.hypot() < tol.max(1.0) || origs.is_empty()) {
-                    return Ok(Value::Null);
-                }
-                if !moved {
-                    self.begin(if duplicate { "Duplicate" } else { "Move" });
-                    if duplicate {
-                        // Alt-drag: drag a copy, leave the original.
-                        self.execute_dup_in_place(&ids)?;
-                    }
-                }
-                let ids_now = if duplicate { self.doc()?.selection.shapes.clone() } else { ids.clone() };
-                if mods.shift {
-                    if d.x.abs() > d.y.abs() {
-                        d.y = 0.0;
-                    } else {
-                        d.x = 0.0;
-                    }
-                }
-                // Smart guides on the moved group's bounds.
-                let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
-                let moved_b = bounds + d;
-                let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
-                d += snap;
-                self.tool.guides = guides;
-                let origs2: Vec<(ShapeId, Xfrm)> =
-                    if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
-                self.edit(|doc, sel| {
-                    let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
-                    for (id, o) in &origs2 {
-                        if let Some(sh) = deckcraft_model::find_shape_mut(list, *id) {
-                            sh.xfrm = Some(Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o });
-                        }
-                    }
-                    // A connector dragged away from shapes that stay put comes unglued at those ends.
-                    let moved: Vec<ShapeId> = origs2.iter().map(|o| o.0).collect();
-                    for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
-                        if let ShapeKind::Connector { start, end } = &mut sh.kind {
-                            for c in [start, end] {
-                                if c.is_some_and(|(to, _)| !moved.contains(&to)) {
-                                    *c = None;
-                                }
-                            }
-                        }
-                    }
-                    Ok(())
-                })?;
-                self.tool.drag =
-                    Some(Drag::Move { ids: ids_now, start, origs: origs2, moved: true, duplicate: false, enter_text: enter_text.filter(|_| false) });
+                return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
             }
             Drag::Resize { id, handle, orig, start } => {
                 let nx = resize_box(&orig, handle, p - start, mods.shift || self.is_picture(id), mods.alt);
@@ -110,39 +73,7 @@ impl Session {
                     self.set_xfrm(*id, nx)?;
                 }
             }
-            Drag::Adjust { id, index, orig } => {
-                let st = self.doc()?;
-                let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
-                let local = orig.affine().inverse() * p;
-                let geo = deckcraft_render::shape_geometry(&sh, orig.w, orig.h);
-                let Some(h) = geo.handles.iter().find(|h| h.index == index) else { return Ok(Value::Null) };
-                let free2d = matches!(sh.geom.preset_name(), Some(n) if n.contains("Callout") && !n.contains("Arrow"));
-                let vals: Vec<(usize, f64)> = if free2d {
-                    let dx = (local.x - orig.w / 2.0) / orig.w.max(1e-6) * 1e5;
-                    let dy = (local.y - orig.h / 2.0) / orig.h.max(1e-6) * 1e5;
-                    vec![(0, dx.round()), (1, dy.round())]
-                } else {
-                    vec![(index, h.value_at(local))]
-                };
-                self.edit(|doc, sel| {
-                    let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("adjust", "no slide"))?;
-                    if let Some(sh) = deckcraft_model::find_shape_mut(list, id)
-                        && let deckcraft_model::Geom::Preset { name, adj } = &mut sh.geom
-                    {
-                        let defaults = deckcraft_geom::preset::info(name).map(|x| x.defaults).unwrap_or(&[]);
-                        for (i, v) in &vals {
-                            while adj.len() <= *i {
-                                let k = adj.len();
-                                adj.push(defaults.get(k).copied().unwrap_or(0.0));
-                            }
-                            if let Some(slot) = adj.get_mut(*i) {
-                                *slot = *v;
-                            }
-                        }
-                    }
-                    Ok(())
-                })?;
-            }
+            Drag::Adjust { id, index, orig } => return self.drag_adjust(id, index, orig, p),
             Drag::Vertex { id, path, index } => {
                 self.tool.drag = Some(Drag::Vertex { id, path, index });
                 self.edit_vertex(id, path, index, p)?;
@@ -187,71 +118,8 @@ impl Session {
             Drag::Marquee { start, .. } => {
                 self.tool.marquee = Some(Rect::from_points(start, p));
             }
-            Drag::Create { start } => {
-                let line = matches!(&self.tool.kind, ToolKind::Shape { preset } if deckcraft_geom::preset::is_line_like(preset));
-                let x = if line {
-                    let mut q = if mods.shift { constrain_45(start, p) } else { p };
-                    if let Some((_, _, at)) = self.update_sites(q, tol, None) {
-                        q = at;
-                    }
-                    let s0 = self.glue_at(start, tol).map(|g| g.2).unwrap_or(start);
-                    line_xfrm(s0, q, 0.0)
-                } else if matches!(&self.tool.kind, ToolKind::Shape { preset } if preset == DRAW_TABLE)
-                    && crate::cmd::table::table_at(self, &Value::Null, (start.x, start.y)).is_some()
-                {
-                    // The pencil inside a table draws a straight border, across or down.
-                    let q = if (p.x - start.x).abs() >= (p.y - start.y).abs() { Point::new(p.x, start.y) } else { Point::new(start.x, p.y) };
-                    let r = Rect::from_points(start, q);
-                    Xfrm::new(r.x0, r.y0, r.width(), r.height())
-                } else {
-                    let mut r = Rect::from_points(start, p);
-                    if mods.shift {
-                        let s = r.width().max(r.height());
-                        let sx = if p.x < start.x { -s } else { s };
-                        let sy = if p.y < start.y { -s } else { s };
-                        r = Rect::from_points(start, start + Vec2::new(sx, sy));
-                    }
-                    if mods.alt {
-                        let d = p - start;
-                        r = Rect::new(start.x - d.x.abs(), start.y - d.y.abs(), start.x + d.x.abs(), start.y + d.y.abs());
-                    }
-                    Xfrm::new(r.x0, r.y0, r.width(), r.height())
-                };
-                self.tool.preview = Some(x);
-            }
-            Drag::TextSelect { shape, press, .. } => {
-                // In a table, leaving the cell the drag started in selects whole cells, as in
-                // PowerPoint; coming back to that cell selects text in it again.
-                let st = self.doc()?;
-                if let Some(start) = press.as_ref().and_then(|t| t.cell)
-                    && let Some(f) = st.shape(shape).and_then(|sh| cmd::table::table_frame(st, sh))
-                    && let Some(cell) = f.cell_at(f.local(p))
-                {
-                    if cell != start {
-                        self.select(|_, sel| {
-                            sel.text = None;
-                            sel.shapes = vec![shape];
-                            sel.cells = Some((shape, start, cell));
-                        })?;
-                        return Ok(Value::Null);
-                    }
-                    if st.selection.text.is_none() {
-                        self.select(|_, sel| {
-                            sel.cells = None;
-                            sel.text = press;
-                        })?;
-                    }
-                }
-                let st = self.doc()?;
-                if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
-                    let pos = cmd::text::text_pos_at(st, t, p);
-                    self.select(|_, sel| {
-                        if let Some(t) = sel.text.as_mut() {
-                            t.caret = pos;
-                        }
-                    })?;
-                }
-            }
+            Drag::Create { start } => self.drag_create(start, p, mods, tol),
+            Drag::TextSelect { shape, press, .. } => return self.drag_text_select(shape, press, p),
             Drag::TableBorder { id, column, index, start, size, frame, moved } => {
                 let local = frame.inverse() * p;
                 let d = if column { local.x - start.x } else { local.y - start.y };
@@ -289,6 +157,162 @@ impl Session {
                 self.tool.ink_preview = points.clone();
                 self.tool.drag = Some(Drag::Ink { points });
             }
+        }
+        Ok(Value::Null)
+    }
+
+    fn drag_move(&mut self, drag: MoveDrag, p: Point, mods: Mods, tol: f64) -> Result<Value> {
+        let MoveDrag { ids, start, origs, moved, duplicate, enter_text } = drag;
+        let mut d = p - start;
+        if !moved && (d.hypot() < tol.max(1.0) || origs.is_empty()) {
+            return Ok(Value::Null);
+        }
+        if !moved {
+            self.begin(if duplicate { "Duplicate" } else { "Move" });
+            if duplicate {
+                // Alt-drag: drag a copy, leave the original.
+                self.execute_dup_in_place(&ids)?;
+            }
+        }
+        let ids_now = if duplicate { self.doc()?.selection.shapes.clone() } else { ids.clone() };
+        if mods.shift {
+            if d.x.abs() > d.y.abs() {
+                d.y = 0.0;
+            } else {
+                d.x = 0.0;
+            }
+        }
+        // Smart guides on the moved group's bounds.
+        let bounds = origs.iter().map(|(_, x)| x.bounds()).reduce(|a, b| a.union(b)).unwrap_or_default();
+        let moved_b = bounds + d;
+        let (snap, guides) = self.snap_rect(moved_b, &ids_now, tol * 1.5, !mods.cmd);
+        d += snap;
+        self.tool.guides = guides;
+        let origs2: Vec<(ShapeId, Xfrm)> = if duplicate { ids_now.iter().copied().zip(origs.iter().map(|o| o.1)).collect() } else { origs.clone() };
+        self.edit(|doc, sel| {
+            let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("move", "no slide"))?;
+            for (id, o) in &origs2 {
+                if let Some(sh) = deckcraft_model::find_shape_mut(list, *id) {
+                    sh.xfrm = Some(Xfrm { x: o.x + d.x, y: o.y + d.y, ..*o });
+                }
+            }
+            // A connector dragged away from shapes that stay put comes unglued at those ends.
+            let moved: Vec<ShapeId> = origs2.iter().map(|o| o.0).collect();
+            for sh in list.iter_mut().filter(|s| moved.contains(&s.id)) {
+                if let ShapeKind::Connector { start, end } = &mut sh.kind {
+                    for c in [start, end] {
+                        if c.is_some_and(|(to, _)| !moved.contains(&to)) {
+                            *c = None;
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        self.tool.drag =
+            Some(Drag::Move { ids: ids_now, start, origs: origs2, moved: true, duplicate: false, enter_text: enter_text.filter(|_| false) });
+        Ok(Value::Null)
+    }
+
+    fn drag_adjust(&mut self, id: ShapeId, index: usize, orig: Xfrm, p: Point) -> Result<Value> {
+        let st = self.doc()?;
+        let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
+        let local = orig.affine().inverse() * p;
+        let geo = deckcraft_render::shape_geometry(&sh, orig.w, orig.h);
+        let Some(h) = geo.handles.iter().find(|h| h.index == index) else { return Ok(Value::Null) };
+        let free2d = matches!(sh.geom.preset_name(), Some(n) if n.contains("Callout") && !n.contains("Arrow"));
+        let vals: Vec<(usize, f64)> = if free2d {
+            let dx = (local.x - orig.w / 2.0) / orig.w.max(1e-6) * 1e5;
+            let dy = (local.y - orig.h / 2.0) / orig.h.max(1e-6) * 1e5;
+            vec![(0, dx.round()), (1, dy.round())]
+        } else {
+            vec![(index, h.value_at(local))]
+        };
+        self.edit(|doc, sel| {
+            let list = crate::shapes_mut(doc, sel).ok_or_else(|| cmd::bad("adjust", "no slide"))?;
+            if let Some(sh) = deckcraft_model::find_shape_mut(list, id)
+                && let deckcraft_model::Geom::Preset { name, adj } = &mut sh.geom
+            {
+                let defaults = deckcraft_geom::preset::info(name).map(|x| x.defaults).unwrap_or(&[]);
+                for (i, v) in &vals {
+                    while adj.len() <= *i {
+                        let k = adj.len();
+                        adj.push(defaults.get(k).copied().unwrap_or(0.0));
+                    }
+                    if let Some(slot) = adj.get_mut(*i) {
+                        *slot = *v;
+                    }
+                }
+            }
+            Ok(())
+        })?;
+        Ok(Value::Null)
+    }
+
+    fn drag_create(&mut self, start: Point, p: Point, mods: Mods, tol: f64) {
+        let line = matches!(&self.tool.kind, ToolKind::Shape { preset } if deckcraft_geom::preset::is_line_like(preset));
+        let x = if line {
+            let mut q = if mods.shift { constrain_45(start, p) } else { p };
+            if let Some((_, _, at)) = self.update_sites(q, tol, None) {
+                q = at;
+            }
+            let s0 = self.glue_at(start, tol).map(|g| g.2).unwrap_or(start);
+            line_xfrm(s0, q, 0.0)
+        } else if matches!(&self.tool.kind, ToolKind::Shape { preset } if preset == DRAW_TABLE)
+            && crate::cmd::table::table_at(self, &Value::Null, (start.x, start.y)).is_some()
+        {
+            // The pencil inside a table draws a straight border, across or down.
+            let q = if (p.x - start.x).abs() >= (p.y - start.y).abs() { Point::new(p.x, start.y) } else { Point::new(start.x, p.y) };
+            let r = Rect::from_points(start, q);
+            Xfrm::new(r.x0, r.y0, r.width(), r.height())
+        } else {
+            let mut r = Rect::from_points(start, p);
+            if mods.shift {
+                let s = r.width().max(r.height());
+                let sx = if p.x < start.x { -s } else { s };
+                let sy = if p.y < start.y { -s } else { s };
+                r = Rect::from_points(start, start + Vec2::new(sx, sy));
+            }
+            if mods.alt {
+                let d = p - start;
+                r = Rect::new(start.x - d.x.abs(), start.y - d.y.abs(), start.x + d.x.abs(), start.y + d.y.abs());
+            }
+            Xfrm::new(r.x0, r.y0, r.width(), r.height())
+        };
+        self.tool.preview = Some(x);
+    }
+
+    fn drag_text_select(&mut self, shape: ShapeId, press: Option<TextSel>, p: Point) -> Result<Value> {
+        // In a table, leaving the cell the drag started in selects whole cells, as in
+        // PowerPoint; coming back to that cell selects text in it again.
+        let st = self.doc()?;
+        if let Some(start) = press.as_ref().and_then(|t| t.cell)
+            && let Some(f) = st.shape(shape).and_then(|sh| cmd::table::table_frame(st, sh))
+            && let Some(cell) = f.cell_at(f.local(p))
+        {
+            if cell != start {
+                self.select(|_, sel| {
+                    sel.text = None;
+                    sel.shapes = vec![shape];
+                    sel.cells = Some((shape, start, cell));
+                })?;
+                return Ok(Value::Null);
+            }
+            if st.selection.text.is_none() {
+                self.select(|_, sel| {
+                    sel.cells = None;
+                    sel.text = press;
+                })?;
+            }
+        }
+        let st = self.doc()?;
+        if let Some(t) = st.selection.text.as_ref().filter(|t| t.shape == shape) {
+            let pos = cmd::text::text_pos_at(st, t, p);
+            self.select(|_, sel| {
+                if let Some(t) = sel.text.as_mut() {
+                    t.caret = pos;
+                }
+            })?;
         }
         Ok(Value::Null)
     }

@@ -146,16 +146,8 @@ impl<'a> TileDecoder<'a> {
         let max_y4 = (2 * self.mi_rows) >> sy;
         let n = 1usize << tx_sz;
         let (x4, y4) = (start_x >> 2, start_y >> 2);
-        let mut above = 0u8;
-        let mut left = 0u8;
-        for i in 0..n {
-            if x4 + i < max_x4 {
-                above |= self.above_nonzero[plane][x4 + i];
-            }
-            if y4 + i < max_y4 {
-                left |= self.left_nonzero[plane][y4 + i];
-            }
-        }
+        let above = nonzero_span(&self.above_nonzero[plane], x4, n, max_x4);
+        let left = nonzero_span(&self.left_nonzero[plane], y4, n, max_y4);
         let ctx0 = (above + left) as usize;
         let q = self.s.seg_q[b.seg_id as usize][ptype];
         let dq_shift = (tx_sz == TX_32X32) as u32;
@@ -211,40 +203,8 @@ impl<'a> TileDecoder<'a> {
                     counts.token[tx_sz as usize][ptype][rtype][band][ctx][2] += 1;
                 }
                 let pp = &pareto[p[2].max(1) as usize - 1];
-                token = if !bd.read_bool(pp[0]) {
-                    if !bd.read_bool(pp[1]) {
-                        2
-                    } else if !bd.read_bool(pp[2]) {
-                        3
-                    } else {
-                        4
-                    }
-                } else if !bd.read_bool(pp[3]) {
-                    if !bd.read_bool(pp[4]) { 5 } else { 6 }
-                } else if !bd.read_bool(pp[5]) {
-                    if !bd.read_bool(pp[6]) { 7 } else { 8 }
-                } else if !bd.read_bool(pp[7]) {
-                    9
-                } else {
-                    10
-                };
-                // read_coef (6.4.26)
-                let (cat, num_extra, base) = EXTRA_BITS[token];
-                let mut v = base as i64;
-                if token == 10 {
-                    for e in 0..(bit_depth as u32 - 8) {
-                        if bd.read_bool(255) {
-                            v += 1 << (5 + bit_depth as u32 - e);
-                        }
-                    }
-                }
-                let cp = CAT_PROBS[cat as usize];
-                for e in 0..num_extra as usize {
-                    if bd.read_bool(cp[e]) {
-                        v += 1 << (num_extra as usize - 1 - e);
-                    }
-                }
-                coef = v;
+                token = read_large_token(bd, pp);
+                coef = read_coef(bd, token, bit_depth);
             }
             tc[pos] = ENERGY_CLASS[token];
             let sign = bd.read_bool(128);
@@ -345,4 +305,50 @@ impl<'a> TileDecoder<'a> {
             }
         }
     }
+}
+
+/// OR of the non-zero flags of `n` entries starting at `start`, ignoring entries at or past `limit`.
+fn nonzero_span(flags: &[u8], start: usize, n: usize, limit: usize) -> u8 {
+    (start..start + n).filter(|&i| i < limit).fold(0, |acc, i| acc | flags[i])
+}
+
+/// Reads the token tree below the "more than one" node (tokens 2 to 10).
+fn read_large_token(bd: &mut BoolDecoder, pp: &[u8; 8]) -> usize {
+    if !bd.read_bool(pp[0]) {
+        if !bd.read_bool(pp[1]) {
+            2
+        } else if !bd.read_bool(pp[2]) {
+            3
+        } else {
+            4
+        }
+    } else if !bd.read_bool(pp[3]) {
+        if !bd.read_bool(pp[4]) { 5 } else { 6 }
+    } else if !bd.read_bool(pp[5]) {
+        if !bd.read_bool(pp[6]) { 7 } else { 8 }
+    } else if !bd.read_bool(pp[7]) {
+        9
+    } else {
+        10
+    }
+}
+
+/// read_coef (6.4.26): the coefficient magnitude for `token`, including its extra bits.
+fn read_coef(bd: &mut BoolDecoder, token: usize, bit_depth: u8) -> i64 {
+    let (cat, num_extra, base) = EXTRA_BITS[token];
+    let mut v = base as i64;
+    if token == 10 {
+        for e in 0..(bit_depth as u32 - 8) {
+            if bd.read_bool(255) {
+                v += 1 << (5 + bit_depth as u32 - e);
+            }
+        }
+    }
+    let cp = CAT_PROBS[cat as usize];
+    for e in 0..num_extra as usize {
+        if bd.read_bool(cp[e]) {
+            v += 1 << (num_extra as usize - 1 - e);
+        }
+    }
+    v
 }

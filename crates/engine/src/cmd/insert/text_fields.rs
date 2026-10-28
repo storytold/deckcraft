@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    ColorRef, Fill, Result, RunKind, SchemeSlot, Session, TextBody, Value, Xfrm, add_shape, bad, bool_or, bool_param, json, new_text_box, ok,
+    str_param, usize_param,
+};
 
 pub(super) fn word_art(s: &mut Session, p: &Value) -> Result<Value> {
     let text = str_param(p, "text").unwrap_or("Your text here");

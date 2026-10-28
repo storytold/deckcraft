@@ -1,4 +1,4 @@
-use super::*;
+use super::{Arc, Result, Session, TextSel, Value, bad, body_mut, body_of, ed, edit_text, json, str_param};
 
 /// Built-in AutoCorrect replacements (common slips and symbols).
 pub const AUTOCORRECT: &[(&str, &str)] = &[

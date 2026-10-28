@@ -1,4 +1,4 @@
-use super::*;
+use super::{Dialog, SlideApp, Value, json, theme};
 
 /// What the Preferences dialog can change, as it was when the dialog opened.
 pub(super) fn preferences_snapshot(app: &SlideApp) -> Value {

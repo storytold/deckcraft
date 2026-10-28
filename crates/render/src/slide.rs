@@ -1,7 +1,7 @@
 use super::opts::{RenderOpts, SlideFields};
 use super::raster::{Image, MAX_SIDE};
 use super::renderer::{Frame, RENDERER, Renderer};
-use super::*;
+use super::{Affine, Ctx, PathMorph, Presentation, Rect, RenderContext, Shape, ShapeId, Slide, TextMorph, resolve};
 
 static PANICS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -125,8 +125,7 @@ pub fn render_slide_part(pres: &Presentation, index: usize, part: SlidePart, opt
 /// to `shapes` only.
 pub fn render_blend(
     pres: &Presentation,
-    old: usize,
-    new: usize,
+    (old, new): (usize, usize),
     mix: f64,
     shapes: &[(Shape, bool)],
     text: &[TextMorph],

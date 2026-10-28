@@ -1,5 +1,5 @@
 use super::builder::vis;
-use super::*;
+use super::{BezPath, Deserialize, Point, Rect, Serialize, Vec2};
 
 /// How a sub-path is filled. `Lighten`/`Darken` variants shade the shape's fill (3-D looking faces).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,5 +1,5 @@
 use super::style::{Cell, ParaShaped};
-use super::*;
+use super::{FontFace, ParaProps};
 
 pub(crate) fn measure_str(face: &FontFace, size: f64, s: &str) -> (f64, Vec<(u32, f64)>) {
     let g = deckcraft_fonts::shape(face, s, &[], |c| c);
@@ -132,16 +132,19 @@ pub(crate) struct RawLine {
     next: usize,
 }
 
-pub(crate) fn break_lines(
-    p: &ParaShaped,
-    first_w: f64,
-    rest_w: f64,
-    wrap: bool,
-    tab_stops: &[Tab],
-    default_tab: f64,
-    x0_first: f64,
-    x0_rest: f64,
-) -> Vec<RawLine> {
+/// Wrapping geometry of one paragraph: line widths, start offsets, wrap flag and tab settings.
+pub(crate) struct BreakParams<'a> {
+    pub(crate) first_w: f64,
+    pub(crate) rest_w: f64,
+    pub(crate) wrap: bool,
+    pub(crate) tab_stops: &'a [Tab],
+    pub(crate) default_tab: f64,
+    pub(crate) x0_first: f64,
+    pub(crate) x0_rest: f64,
+}
+
+pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> {
+    let BreakParams { first_w, rest_w, wrap, tab_stops, default_tab, x0_first, x0_rest } = *params;
     let text: String = p.cells.iter().map(|c| c.ch).collect();
     let (allowed, _) = break_opportunities(&text, p.props.latin_line_break.unwrap_or(false));
     let hang = p.props.hanging_punct.unwrap_or(false);

@@ -214,6 +214,10 @@ fn preserve_and_placeholders_edit_the_open_master_or_layout() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(has_footers(&s));
 
+    master_view_closed_rejects(&mut s, blank);
+}
+
+fn master_view_closed_rejects(s: &mut Session, blank: usize) {
     s.execute("view.closeMaster", &json!({})).unwrap();
     let n = s.doc().unwrap().history.undo.len();
     let err = s.execute("master.preserve", &json!({})).unwrap_err();
@@ -224,11 +228,15 @@ fn preserve_and_placeholders_edit_the_open_master_or_layout() {
     assert!(err.to_string().contains("give title or footers"), "{err}");
     assert_eq!(s.doc().unwrap().history.undo.len(), n);
 
+    layout_placeholders_edit_one_undo_step(s, blank);
+}
+
+fn layout_placeholders_edit_one_undo_step(s: &mut Session, blank: usize) {
     s.execute("view.slideMaster", &json!({"master": 0, "layout": blank})).unwrap();
     assert_eq!(s.doc().unwrap().selection.target, Target::Layout { master: 0, layout: blank });
     assert!(s.doc().unwrap().doc.masters[0].layouts[blank].preserve);
-    assert!(!has_title(&s));
-    assert!(has_footers(&s));
+    assert!(!has_title(s));
+    assert!(has_footers(s));
 
     let n = s.doc().unwrap().history.undo.len();
     s.execute("master.placeholders", &json!({"title": false, "footers": true})).unwrap();
@@ -237,19 +245,19 @@ fn preserve_and_placeholders_edit_the_open_master_or_layout() {
     s.execute("master.placeholders", &json!({"title": true, "footers": false})).unwrap();
     assert_eq!(s.doc().unwrap().history.undo.len(), n + 1, "both keys are one undo step");
     assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Layout Placeholders");
-    assert!(has_title(&s));
-    assert!(!has_footers(&s));
-    let title = shapes(&s).into_iter().find(|sh| sh.ph_type().is_some_and(PhType::is_title)).unwrap();
+    assert!(has_title(s));
+    assert!(!has_footers(s));
+    let title = shapes(s).into_iter().find(|sh| sh.ph_type().is_some_and(PhType::is_title)).unwrap();
     assert_eq!(title.name, "Title 1");
     assert_eq!(title.ph.unwrap().idx, 0);
     assert!(title.text.unwrap().paragraphs.iter().all(|para| para.runs.is_empty()));
     s.execute("edit.undo", &json!({})).unwrap();
-    assert!(!has_title(&s));
-    assert!(has_footers(&s));
+    assert!(!has_title(s));
+    assert!(has_footers(s));
 
     s.execute("master.placeholders", &json!({"footers": false})).unwrap();
     s.execute("master.placeholders", &json!({"footers": true})).unwrap();
-    let restored = shapes(&s);
+    let restored = shapes(s);
     assert!(restored.iter().any(|sh| sh.ph_type() == Some(PhType::Date)));
     assert!(restored.iter().any(|sh| sh.ph_type() == Some(PhType::Footer)));
     let num = restored.iter().find(|sh| sh.ph_type() == Some(PhType::SlideNum)).unwrap();
@@ -264,6 +272,10 @@ fn preserve_and_placeholders_edit_the_open_master_or_layout() {
     s.execute("edit.undo", &json!({})).unwrap();
     assert!(s.doc().unwrap().doc.masters[0].layouts[blank].preserve);
 
+    missing_title_placeholder_is_recreated(s);
+}
+
+fn missing_title_placeholder_is_recreated(s: &mut Session) {
     s.edit(|doc, _| {
         let m = std::sync::Arc::make_mut(doc.masters.get_mut(0).unwrap());
         m.shapes.retain(|sh| !sh.ph_type().is_some_and(PhType::is_title));
@@ -271,7 +283,7 @@ fn preserve_and_placeholders_edit_the_open_master_or_layout() {
     })
     .unwrap();
     s.execute("master.placeholders", &json!({"title": true})).unwrap();
-    let title = shapes(&s).into_iter().find(|sh| sh.ph_type() == Some(PhType::Title)).unwrap();
+    let title = shapes(s).into_iter().find(|sh| sh.ph_type() == Some(PhType::Title)).unwrap();
     assert_eq!(title.name, "Title");
     let box_ = title.xfrm.unwrap();
     assert!((box_.x - 60.0).abs() < 0.01 && (box_.y - 29.0).abs() < 0.01);

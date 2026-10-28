@@ -1,4 +1,4 @@
-use super::*;
+use super::{InputTarget, SlideApp, show};
 
 impl SlideApp {
     /// What a queued synthetic event is meant for. The control protocol hands out window

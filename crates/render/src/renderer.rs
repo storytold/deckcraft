@@ -60,6 +60,50 @@ pub(crate) struct Frame<'a> {
     pub(crate) fields: SlideFields,
 }
 
+/// A shape being drawn: its resolved geometry, fill, line and effects, in shape space `m` at size
+/// `w` x `h`, shared by the stages of `Renderer::geometry_shape`.
+struct ShapeDraw<'a, 'ctx> {
+    f: &'a Frame<'a>,
+    rctx: &'a Ctx<'ctx>,
+    s: &'a Shape,
+    st: &'a ShapeState,
+    m: Affine,
+    w: f64,
+    h: f64,
+    depth: usize,
+    geo: Geometry,
+    fades: Vec<deckcraft_geom::morph::Fade>,
+    fill: Option<Fill>,
+    fill_ph: Option<Rgba>,
+    line: Line,
+    line_ph: Option<Rgba>,
+    effects: Option<Effects>,
+    fx_ph: Option<Rgba>,
+    outline: BezPath,
+    is_pic: bool,
+    empty_ph: bool,
+}
+
+impl ShapeDraw<'_, '_> {
+    /// How much of the fill and stroke of path `i` shows (morphing outlines fade).
+    fn fade(&self, i: usize) -> deckcraft_geom::morph::Fade {
+        self.fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 })
+    }
+}
+
+/// What casts a shape's shadow, glow and reflection: its geometry, fill and outline, in shape
+/// space `m` at size `w` x `h`.
+struct FxSource<'a> {
+    geo: &'a Geometry,
+    fill: &'a Option<Fill>,
+    fill_alpha: Option<f64>,
+    outline: Option<Caster<'a>>,
+    content: Option<&'a deckcraft_model::style::PictureFill>,
+    m: Affine,
+    w: f64,
+    h: f64,
+}
+
 impl Renderer {
     fn canvas(pres: &Presentation, opts: &RenderOpts, filters: bool) -> (RenderContext, u16, u16, Affine) {
         let (w, h) = output_size(pres, opts);
@@ -541,7 +585,6 @@ impl Renderer {
             Some(pm) => self.morphs.geometry(pm, s, w, h),
             None => (self.scaled_geometry(s, m, depth, w, h), Vec::new()),
         };
-        let fade = |i: usize| fades.get(i).copied().unwrap_or(deckcraft_geom::morph::Fade { fill: 1.0, stroke: 1.0 });
         let (fill, fill_ph) = resolve::fill(rctx, s);
         let (line, line_ph) = resolve::line(rctx, s);
         let (effects, fx_ph) = resolve::effects(rctx, s);
@@ -552,6 +595,56 @@ impl Renderer {
         // Placeholders in the editor: dashed outline and prompt, nothing else when empty.
         let empty_ph = s.ph.is_some() && s.text.as_ref().is_none_or(TextBody::is_empty) && !is_pic && !matches!(s.kind, ShapeKind::Media(_));
         let fill = if let Some(t) = st.tint { Some(Fill::solid(deckcraft_model::ColorRef::rgb(t))) } else { fill };
+        let d = ShapeDraw { f, rctx, s, st, m, w, h, depth, geo, fades, fill, fill_ph, line, line_ph, effects, fx_ph, outline, is_pic, empty_ph };
+        self.cast_effects(ctx, &d);
+        let soft = d.effects.as_ref().and_then(|e| e.soft_edge).filter(|r| *r > 0.0);
+        if let Some(r) = soft {
+            ctx.set_transform(Affine::IDENTITY);
+            ctx.push_layer(None, None, None, None, None);
+            let _ = r;
+        }
+        let pt = self.point_scale(&d);
+        self.draw_extrusion(ctx, &d, pt);
+        self.draw_contour(ctx, &d, pt);
+        self.draw_fill(ctx, &d);
+        self.draw_fill_overlay(ctx, &d);
+        self.draw_bevel(ctx, &d, pt);
+        self.draw_outline(ctx, &d);
+        if let Some(r) = soft {
+            self.draw_feather(ctx, &d, r);
+        }
+        self.draw_inner_shadow(ctx, &d);
+        self.draw_text_body(ctx, &d);
+    }
+
+    /// Shape-space units per point for the 3-D sizes, measured without the camera's turn (which
+    /// `shape_at` puts in `m`): its foreshortening is not a child-coordinate scale.
+    fn point_scale(&self, d: &ShapeDraw) -> f64 {
+        let turn = d
+            .effects
+            .as_ref()
+            .and_then(|e| e.raw3d.as_deref())
+            .and_then(camera::from_raw)
+            .and_then(|c| camera::affine(&c, d.w, d.h))
+            .filter(|t| t.determinant().abs() > 1e-9);
+        self.per_point(turn.map_or(d.m, |t| d.m * t.inverse()), d.depth)
+    }
+
+    fn cast_effects(&mut self, ctx: &mut RenderContext, d: &ShapeDraw) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let depth = d.depth;
+        let fill_ph = d.fill_ph;
+        let line_ph = d.line_ph;
+        let fx_ph = d.fx_ph;
+        let is_pic = d.is_pic;
+        let s = d.s;
+        let rctx = d.rctx;
+        let geo = &d.geo;
+        let fill = &d.fill;
+        let effects = &d.effects;
+        let line = &d.line;
         // Effects below the shape.
         if let Some(e) = &effects {
             // A picture (or picture fill) casts its shadow from its pixels, not its frame.
@@ -560,7 +653,7 @@ impl Renderer {
                 _ => None,
             };
             // What casts the shadow: the fill as see-through as it is, and the outline.
-            let fill_alpha = fill_opacity(rctx, &fill, fill_ph);
+            let fill_alpha = fill_opacity(rctx, fill, fill_ph);
             let outline = line.fill.as_ref().filter(|f| !f.is_none()).map(|lf| {
                 let a = match lf {
                     Fill::Solid { color: c } => rctx.color(c, line_ph).a as f64 / 255.0,
@@ -568,28 +661,22 @@ impl Renderer {
                 };
                 let (base, rel) = self.line_space(m, depth);
                 let lw = line.width.unwrap_or(0.75).max(0.0);
-                let outside = if border_outside(is_pic, effects.as_ref()) { outside_line(&line, lw) } else { None };
-                Caster { line: outside.map_or(std::borrow::Cow::Borrowed(&line), std::borrow::Cow::Owned), ph: line_ph, alpha: a, base, rel }
+                let outside = if border_outside(is_pic, effects.as_ref()) { outside_line(line, lw) } else { None };
+                Caster { line: outside.map_or(std::borrow::Cow::Borrowed(line), std::borrow::Cow::Owned), ph: line_ph, alpha: a, base, rel }
             });
-            self.effects_below(ctx, rctx, e, fx_ph, &geo, &fill, fill_alpha, outline, content.as_ref(), m, w, h);
+            self.effects_below(ctx, rctx, e, fx_ph, FxSource { geo, fill, fill_alpha, outline, content: content.as_ref(), m, w, h });
         }
-        let soft = effects.as_ref().and_then(|e| e.soft_edge).filter(|r| *r > 0.0);
-        if let Some(r) = soft {
-            ctx.set_transform(Affine::IDENTITY);
-            ctx.push_layer(None, None, None, None, None);
-            let _ = r;
-        }
-        // Shape-space units per point for the 3-D sizes, measured without the camera's turn (which
-        // `shape_at` puts in `m`): its foreshortening is not a child-coordinate scale.
-        let pt = {
-            let turn = effects
-                .as_ref()
-                .and_then(|e| e.raw3d.as_deref())
-                .and_then(camera::from_raw)
-                .and_then(|c| camera::affine(&c, w, h))
-                .filter(|t| t.determinant().abs() > 1e-9);
-            self.per_point(turn.map_or(m, |t| m * t.inverse()), depth)
-        };
+    }
+
+    fn draw_extrusion(&mut self, ctx: &mut RenderContext, d: &ShapeDraw, pt: f64) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let fill_ph = d.fill_ph;
+        let rctx = d.rctx;
+        let fill = &d.fill;
+        let effects = &d.effects;
+        let outline = &d.outline;
         // A 3-D extrusion under a turned camera: the sides, swept behind the face.
         if let Some(raw) = effects.as_ref().and_then(|e| e.raw3d.as_deref())
             && let Some(ex) = extrude::from_raw(raw)
@@ -604,8 +691,17 @@ impl Renderer {
             let pre = m * turn.inverse();
             let lit = light::Lighting::from_raw(raw);
             let d = ex.depth * pt;
-            extrude::draw(ctx, &outline, w, h, &cam, d, pre, turn, extrude::side_color(rctx, &ex, face), &lit);
+            extrude::draw(ctx, outline, w, h, &cam, d, pre, turn, extrude::side_color(rctx, &ex, face), &lit);
         }
+    }
+
+    fn draw_contour(&mut self, ctx: &mut RenderContext, d: &ShapeDraw, pt: f64) {
+        let m = d.m;
+        let fill_ph = d.fill_ph;
+        let rctx = d.rctx;
+        let fill = &d.fill;
+        let effects = &d.effects;
+        let outline = &d.outline;
         // A 3-D contour: a band around the outline, behind the face (and in front of any sides).
         if let Some(raw) = effects.as_ref().and_then(|e| e.raw3d.as_deref())
             && let Some(c) = extrude::contour_from_raw(raw)
@@ -615,8 +711,23 @@ impl Renderer {
                 _ => None,
             };
             let col = c.color.as_ref().map(|k| rctx.color(k, face)).or(face).unwrap_or(Rgba::rgb(0xff, 0xff, 0xff));
-            extrude::draw_contour(ctx, &outline, m, c.width * pt, col, &light::Lighting::from_raw(raw));
+            extrude::draw_contour(ctx, outline, m, c.width * pt, col, &light::Lighting::from_raw(raw));
         }
+    }
+
+    fn draw_fill(&mut self, ctx: &mut RenderContext, d: &ShapeDraw) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let fill_ph = d.fill_ph;
+        let empty_ph = d.empty_ph;
+        let s = d.s;
+        let f = d.f;
+        let rctx = d.rctx;
+        let geo = &d.geo;
+        let fill = &d.fill;
+        let outline = &d.outline;
+        let fade = |i: usize| d.fade(i);
         // Fill.
         match &s.kind {
             ShapeKind::Picture { fill: pf } => {
@@ -625,11 +736,11 @@ impl Renderer {
                 if s.fill.as_ref().is_some_and(|f| !f.is_none())
                     && let Some(fl) = &fill
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, &geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
                 }
                 ctx.set_transform(m);
                 let bounds = Rect::new(0.0, 0.0, w, h);
-                ctx.push_clip_layer(&outline);
+                ctx.push_clip_layer(outline);
                 let t = f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1);
                 paint::picture(ctx, f.pres, &paint::resolved(rctx, pf, None), bounds, m, t);
                 ctx.pop_layer();
@@ -642,7 +753,7 @@ impl Renderer {
                 if s.fill.as_ref().is_some_and(|f| !f.is_none())
                     && let Some(fl) = &fill
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, &geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
                 }
                 ctx.set_transform(m);
                 let pf = deckcraft_model::style::PictureFill { media: *media, ..Default::default() };
@@ -653,7 +764,7 @@ impl Renderer {
                 let bounds = Rect::new(0.0, 0.0, w, h);
                 if let Some(p) = mc.poster {
                     let pf = deckcraft_model::style::PictureFill { media: p, crop: mc.crop, ..Default::default() };
-                    ctx.push_clip_layer(&outline);
+                    ctx.push_clip_layer(outline);
                     paint::picture(ctx, f.pres, &pf, bounds, m, None);
                     ctx.pop_layer();
                 } else if mc.video {
@@ -668,10 +779,23 @@ impl Renderer {
                 if let Some(fl) = &fill
                     && !(empty_ph && f.opts.edit && s.fill.is_none() && s.line.is_none() && s.style.is_none())
                 {
-                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, &geo, (w, h), m, &fade);
+                    self.fill_geometry(ctx, f, rctx, fl, fill_ph, geo, (w, h), m, &fade);
                 }
             }
         }
+    }
+
+    fn draw_fill_overlay(&mut self, ctx: &mut RenderContext, d: &ShapeDraw) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let fx_ph = d.fx_ph;
+        let f = d.f;
+        let rctx = d.rctx;
+        let geo = &d.geo;
+        let fill = &d.fill;
+        let effects = &d.effects;
+        let fade = |i: usize| d.fade(i);
         // `a:fillOverlay`: a fill blended over the shape's fill (PowerPoint's "Flow" themes multiply
         // a gradient over a tiled picture), inside the filled outline, under the line.
         if let Some(ov) = effects.as_ref().and_then(|e| e.fill_overlay.as_ref())
@@ -691,13 +815,19 @@ impl Renderer {
                 ctx.pop_layer();
             }
         }
-        // Some presets' outlines default to sharp corners (PowerPoint's own per-shape default).
-        let line = match (&s.geom, line.join) {
-            (Geom::Preset { name, .. }, None) if preset::mitred_by_default(name) => {
-                Line { join: Some(deckcraft_model::style::LineJoin::Miter), ..line }
-            }
-            _ => line,
-        };
+    }
+
+    fn draw_bevel(&mut self, ctx: &mut RenderContext, d: &ShapeDraw, pt: f64) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let fill_ph = d.fill_ph;
+        let is_pic = d.is_pic;
+        let rctx = d.rctx;
+        let geo = &d.geo;
+        let fill = &d.fill;
+        let effects = &d.effects;
+        let outline = &d.outline;
         // A 3-D bevel: the face and a band inside the outline lit as surfaces.
         if let Some(bv) = effects.as_ref().and_then(|e| e.raw3d.as_deref()).and_then(bevel::from_raw) {
             let bv = bevel::Bevel { w: bv.w * pt, h: bv.h * pt, ..bv };
@@ -717,6 +847,29 @@ impl Renderer {
                 bevel::draw(ctx, &bv, if is_pic { None } else { solid }, &area, Rect::new(0.0, 0.0, w, h), m, 1.0);
             }
         }
+    }
+
+    fn draw_outline(&mut self, ctx: &mut RenderContext, d: &ShapeDraw) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let depth = d.depth;
+        let line_ph = d.line_ph;
+        let is_pic = d.is_pic;
+        let s = d.s;
+        let rctx = d.rctx;
+        let geo = &d.geo;
+        let effects = &d.effects;
+        let outline = &d.outline;
+        let line = d.line.clone();
+        let fade = |i: usize| d.fade(i);
+        // Some presets' outlines default to sharp corners (PowerPoint's own per-shape default).
+        let line = match (&s.geom, line.join) {
+            (Geom::Preset { name, .. }, None) if preset::mitred_by_default(name) => {
+                Line { join: Some(deckcraft_model::style::LineJoin::Miter), ..line }
+            }
+            _ => line,
+        };
         // Outline.
         if line.fill.as_ref().is_some_and(|f| !f.is_none()) {
             let lw = line.width.unwrap_or(0.75).max(0.0);
@@ -779,7 +932,7 @@ impl Renderer {
                 stroke(ctx, rctx, &line, line_ph, &path, Some(&whole), base, lw, fade(i).stroke);
             }
             if ends {
-                arrowheads(ctx, rctx, &line, line_ph, &geo, rel, base, lw);
+                arrowheads(ctx, rctx, &line, line_ph, geo, rel, base, lw);
             }
             if clipped {
                 ctx.pop_layer();
@@ -788,33 +941,46 @@ impl Renderer {
                 ctx.pop_layer();
             }
         }
-        if let Some(r) = soft {
-            // Feather: the shape (fill and line) fades to nothing at its outline. Measured on
-            // PowerPoint's export: the mask is the outline shrunk by 0.85 r, blurred by a third of
-            // r, so it's half opaque 0.85 r inside the edge and transparent at the edge itself.
-            ctx.set_transform(m);
-            ctx.push_layer(
-                None,
-                Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestIn)),
-                None,
-                None,
-                Some(blur(r / 3.0 * scale_of(m))),
-            );
-            ctx.set_paint(peniko::Color::from_rgba8(0, 0, 0, 255));
-            ctx.fill_path(&outline);
-            ctx.push_blend_layer(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestOut));
-            ctx.set_stroke(kurbo::Stroke::new(r * 1.7).with_join(kurbo::Join::Round));
-            ctx.stroke_path(&outline);
-            ctx.pop_layer();
-            ctx.pop_layer();
-            ctx.pop_layer();
-        }
+    }
+
+    fn draw_feather(&mut self, ctx: &mut RenderContext, d: &ShapeDraw, r: f64) {
+        let m = d.m;
+        let outline = &d.outline;
+        // Feather: the shape (fill and line) fades to nothing at its outline. Measured on
+        // PowerPoint's export: the mask is the outline shrunk by 0.85 r, blurred by a third of
+        // r, so it's half opaque 0.85 r inside the edge and transparent at the edge itself.
+        ctx.set_transform(m);
+        ctx.push_layer(
+            None,
+            Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestIn)),
+            None,
+            None,
+            Some(blur(r / 3.0 * scale_of(m))),
+        );
+        ctx.set_paint(peniko::Color::from_rgba8(0, 0, 0, 255));
+        ctx.fill_path(outline);
+        ctx.push_blend_layer(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestOut));
+        ctx.set_stroke(kurbo::Stroke::new(r * 1.7).with_join(kurbo::Join::Round));
+        ctx.stroke_path(outline);
+        ctx.pop_layer();
+        ctx.pop_layer();
+        ctx.pop_layer();
+    }
+
+    fn draw_inner_shadow(&mut self, ctx: &mut RenderContext, d: &ShapeDraw) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let fx_ph = d.fx_ph;
+        let rctx = d.rctx;
+        let effects = &d.effects;
+        let outline = &d.outline;
         // Inner shadow.
         if let Some(e) = &effects
             && let Some(sh) = &e.inner_shadow
         {
             ctx.set_transform(m);
-            ctx.push_clip_layer(&outline);
+            ctx.push_clip_layer(outline);
             let c = rctx.color(&sh.color, fx_ph);
             let d = Vec2::new(sh.dir.to_radians().cos(), sh.dir.to_radians().sin()) * sh.dist;
             // As PowerPoint draws it (measured on its export): the shadow falls inside along the
@@ -832,6 +998,19 @@ impl Renderer {
             ctx.pop_layer();
             ctx.pop_layer();
         }
+    }
+
+    fn draw_text_body(&mut self, ctx: &mut RenderContext, d: &ShapeDraw) {
+        let m = d.m;
+        let w = d.w;
+        let h = d.h;
+        let depth = d.depth;
+        let empty_ph = d.empty_ph;
+        let s = d.s;
+        let f = d.f;
+        let rctx = d.rctx;
+        let st = d.st;
+        let geo = &d.geo;
         // Text (or the placeholder prompt in the editor).
         let skip_text = f.opts.skip_text == Some(s.id);
         if let Some(body) = &s.text
@@ -842,7 +1021,7 @@ impl Renderer {
             let (tw, th, m) = self.text_space(m, depth, w, h);
             let text_geo;
             let geo = if (tw, th) == (w, h) {
-                &geo
+                geo
             } else {
                 text_geo = shape_geometry(s, tw, th);
                 &text_geo
@@ -878,7 +1057,7 @@ impl Renderer {
                 let prompt_body = prompt_body(rctx, s, kind);
                 if !prompt_body.is_empty() {
                     let grey = Rgba::rgb(0x59, 0x59, 0x59);
-                    draw_text(ctx, rctx, s, &prompt_body, tr, m, &f.fields, Some(grey));
+                    draw_text(ctx, rctx, s, &prompt_body, m, &Opts { rect: tr, fields: &f.fields, prompt_color: Some(grey), no_shrink: false });
                 }
             }
         }
@@ -895,21 +1074,8 @@ impl Renderer {
         }
     }
 
-    fn effects_below(
-        &mut self,
-        ctx: &mut RenderContext,
-        rctx: &Ctx,
-        e: &Effects,
-        ph: Option<Rgba>,
-        geo: &Geometry,
-        fill: &Option<Fill>,
-        fill_alpha: Option<f64>,
-        outline: Option<Caster>,
-        content: Option<&deckcraft_model::style::PictureFill>,
-        m: Affine,
-        w: f64,
-        h: f64,
-    ) {
+    fn effects_below(&mut self, ctx: &mut RenderContext, rctx: &Ctx, e: &Effects, ph: Option<Rgba>, src: FxSource) {
+        let FxSource { geo, fill, fill_alpha, outline, content, m, w, h } = src;
         let silhouette = {
             let mut p = BezPath::new();
             for sp in &geo.paths {

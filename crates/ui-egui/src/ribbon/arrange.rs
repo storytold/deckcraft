@@ -1,4 +1,6 @@
-use super::*;
+use super::{
+    Icon, ShapeId, SlideApp, Ui, big, big_button, big_button_ex, enabled, group, json, menu_item, rows, run, small_button_ex, theme, widgets,
+};
 
 pub fn arrange_menu(app: &mut SlideApp, ui: &mut Ui) {
     ui.label(egui::RichText::new("Order Objects").font(theme::bold(12.0)));

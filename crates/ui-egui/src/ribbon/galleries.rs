@@ -1,4 +1,4 @@
-use super::*;
+use super::{Align2, Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, json, pos2, run, scheme, theme, vec2, widgets};
 
 /// A ColorRef as a command colour parameter.
 pub fn cref_param(c: &deckcraft_model::ColorRef) -> Value {
@@ -60,8 +60,7 @@ pub(super) fn smartart_gallery(
     cmd: &str,
     extra: Value,
     current: &str,
-    style: &str,
-    colors: &str,
+    (style, colors): (&str, &str),
     nodes: Option<&[deckcraft_model::DiagramNode]>,
 ) {
     use deckcraft_engine::cmd::smartart::{LAYOUTS, category};
@@ -86,7 +85,7 @@ pub(super) fn smartart_gallery(
             egui::Grid::new(("smartart_gallery", cat)).num_columns(4).spacing([6.0, 6.0]).show(ui, |ui| {
                 for (i, (k, label)) in kinds.iter().enumerate() {
                     let ctx = ui.ctx().clone();
-                    let thumb = app.session.active().and_then(|d| app.textures.smartart(&ctx, &d.doc, slide, k, style, colors, None, 192));
+                    let thumb = app.session.active().and_then(|d| app.textures.smartart(&ctx, &d.doc, slide, (k, style, colors), None, 192));
                     let r = ui
                         .vertical_centered(|ui| {
                             ui.set_width(100.0);
@@ -102,7 +101,7 @@ pub(super) fn smartart_gallery(
                         })
                         .inner;
                     if r.hovered() {
-                        let preview = app.session.active().and_then(|d| app.textures.smartart(&ctx, &d.doc, slide, k, style, colors, nodes, 480));
+                        let preview = app.session.active().and_then(|d| app.textures.smartart(&ctx, &d.doc, slide, (k, style, colors), nodes, 480));
                         if let Some(t) = preview {
                             r.show_tooltip_ui(|ui| {
                                 ui.add(egui::Image::new(&t).fit_to_exact_size(egui::vec2(320.0, 200.0)));

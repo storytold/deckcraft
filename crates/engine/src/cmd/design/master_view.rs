@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Fill, NO_ID_SPACE, PhType, Result, Run, RunKind, Session, Shape, ShapeId, Size, Target, TextBody, Value, bad, bool_param, json,
+    master_index, ok, opt_usize_param, rect_param, str_param, usize_param,
+};
 
 pub(super) fn master_view(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;

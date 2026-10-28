@@ -1,4 +1,4 @@
-use super::*;
+use super::{Affine, Hit, Point, Rect, Shape, ShapeId, ShapeKind, TextSel, Vec2, Xfrm, cmd, xfrm_of};
 
 pub(super) fn is_text_first(st: &crate::DocState, id: ShapeId) -> bool {
     st.shape(id).is_some_and(|s| s.ph.is_some() || s.text_box)

@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, BTreeSet, Background, Fill, NO_ID_SPACE, Presentation, Result, Session, Target, Value, bad, bool_or, bool_param, color_param, color_value,
+    f64_param, ok, usize_param, with_param,
+};
 
 pub(super) fn background(s: &mut Session, p: &Value) -> Result<Value> {
     if bool_or(p, "copy", false) {

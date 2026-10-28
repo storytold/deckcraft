@@ -1,4 +1,4 @@
-use super::*;
+use super::{FontFace, UnicodeSegmentation};
 
 /// Is `family` a symbol font (characters at U+F000 + code)?
 pub(crate) fn is_symbol_font(family: &str) -> bool {

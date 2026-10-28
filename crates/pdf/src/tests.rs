@@ -8,7 +8,7 @@ use kurbo::Rect;
 
 use super::{
     MAX_RASTER_PIXELS, PAPERS, PageLayout, PdfError, PdfOptions, Presentation, export, glyph_text_ranges, handout_boxes, master_text_pieces,
-    master_texts, notes_frames, notes_slide_box, paper_size, raster_scale,
+    master_texts, notes_frames, notes_slide_box, opaque, paper_size, raster_scale, straight,
 };
 use deckcraft_model::text::TextBody;
 
@@ -587,6 +587,51 @@ fn slides_share_one_backdrop_raster_and_keep_their_pixels() {
     let want_alpha: Vec<u8> = straight.as_chunks::<4>().0.iter().map(|px| px[3]).collect();
     assert_eq!(rgb, want_rgb, "content colors are straight, not premultiplied");
     assert_eq!(alpha, Some(want_alpha), "content alpha keeps the shape's coverage");
+
+    // A backdrop that comes back after another one is still stored once, and every page draws its
+    // own slide's backdrop.
+    let mut p = deck(4);
+    for (i, slide) in p.slides.iter_mut().enumerate() {
+        let s = Arc::make_mut(slide);
+        s.shapes.clear();
+        let c = if i % 2 == 0 { deckcraft_model::Rgba::rgb(20, 90, 160) } else { deckcraft_model::Rgba::rgb(230, 230, 210) };
+        s.background = Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::solid(deckcraft_model::ColorRef::rgb(c)) });
+    }
+    let stored = images(&p);
+    assert_eq!(stored.iter().map(|(pages, ..)| pages.clone()).collect::<Vec<_>>(), [vec![0, 2], vec![1, 3]]);
+    for (pages, _, rgb, alpha, _) in &stored {
+        let expect = deckcraft_render::render_slide(&p, pages[0], &RenderOpts { scale: scale(&p), threads: 4, ..Default::default() });
+        let want: Vec<u8> = expect.pixels.as_chunks::<4>().0.iter().flat_map(|px| px[..3].iter().copied()).collect();
+        assert_eq!(rgb, &want, "pages {pages:?} draw their own backdrop");
+        assert!(alpha.is_none());
+    }
+}
+
+/// The block-skipping pixel conversions give exactly the per-pixel formulas, in blocks that skip
+/// and blocks that don't, and in a tail shorter than a block.
+#[test]
+fn backdrop_and_content_pixels_convert_per_pixel() {
+    let mut px: Vec<u8> = Vec::new();
+    for a in 0..=255u8 {
+        for c in 0..=255u8 {
+            px.extend([c, c / 2, 255 - c, a]);
+        }
+    }
+    px.extend([0, 0, 0, 0].repeat(32));
+    px.extend([9, 8, 7, 255].repeat(32));
+    px.extend([1, 2, 3, 128, 4, 5, 6, 0]);
+    let (mut o, mut s) = (px.clone(), px.clone());
+    opaque(&mut o);
+    straight(&mut s);
+    for ((p, o), s) in px.chunks(4).zip(o.chunks(4)).zip(s.chunks(4)) {
+        let a = p[3] as u32;
+        for k in 0..3 {
+            assert_eq!(o[k] as u32, (p[k] as u32 + 255 - a).min(255), "{p:?}");
+            let want = if a == 0 || a == 255 { p[k] as u32 } else { ((p[k] as u32 * 255 + a / 2) / a).min(255) };
+            assert_eq!(s[k] as u32, want, "{p:?}");
+        }
+        assert_eq!((o[3], s[3]), (255, p[3]));
+    }
 }
 
 #[test]

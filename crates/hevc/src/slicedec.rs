@@ -1105,7 +1105,52 @@ impl<'a> SliceDecoder<'a> {
         let n = 1usize << log2;
         let bypass = self.cu_transquant_bypass;
         let ts = if self.pps.transform_skip && !bypass && log2 == 2 { self.dd(TRANSFORM_SKIP + (c > 0) as usize) == 1 } else { false };
-        // last significant coefficient
+        let scan_idx = self.scan_idx(x0, y0, log2, c);
+        let (mut lx, mut ly) = self.last_sig_coeff_pos(log2, c);
+        if scan_idx == 2 {
+            std::mem::swap(&mut lx, &mut ly);
+        }
+        ensure!((lx as usize) < n && (ly as usize) < n, "last significant coefficient outside the block");
+        let t = TbCtx { c, log2, scan_idx, sdh: self.pps.sign_data_hiding && !bypass };
+        let log2sb = log2 - 2;
+        let sb_scan = scan_order(log2sb, scan_idx);
+        let pos_scan = &SCAN_4[scan_idx];
+        let sb_w = 1usize << log2sb;
+        let last_sb = sb_scan.iter().position(|&(x, y)| x as u32 == lx >> 2 && y as u32 == ly >> 2).unwrap_or(0);
+        let last_pos = pos_scan.iter().position(|&(x, y)| x as u32 == lx & 3 && y as u32 == ly & 3).unwrap_or(0);
+        self.coeffs[..n * n].fill(0);
+        let mut csbf = [0u8; 64];
+        let mut prev_g1: Option<u32> = None;
+        let (mut max_x, mut max_y) = (0usize, 0usize);
+        for i in (0..=last_sb).rev() {
+            let sb = SubBlock { xs: sb_scan[i].0 as usize, ys: sb_scan[i].1 as usize };
+            let right = if sb.xs + 1 < sb_w { csbf[sb.ys * 8 + sb.xs + 1] } else { 0 };
+            let below = if sb.ys + 1 < sb_w { csbf[(sb.ys + 1) * 8 + sb.xs] } else { 0 };
+            let mut infer_dc = false;
+            if i < last_sb && i > 0 {
+                let inc = (right | below).min(1) as usize + if c > 0 { 2 } else { 0 };
+                csbf[sb.ys * 8 + sb.xs] = self.c.decode_decision(CODED_SUB_BLOCK + inc) as u8;
+                infer_dc = true;
+            } else {
+                csbf[sb.ys * 8 + sb.xs] = 1;
+            }
+            if csbf[sb.ys * 8 + sb.xs] == 0 {
+                continue;
+            }
+            let (sig, nsig) = self.sig_coeff_flags(&t, &sb, right + (below << 1), infer_dc, (i == last_sb).then_some(last_pos));
+            if nsig == 0 {
+                continue;
+            }
+            let g = self.greater_flags(&t, i, nsig, &mut prev_g1);
+            let (mx, my) = self.store_levels(&t, &sb, &sig[..nsig], &g)?;
+            max_x = max_x.max(mx);
+            max_y = max_y.max(my);
+        }
+        self.reconstruct((x0, y0), log2, c, qp, ts, (max_x, max_y))
+    }
+
+    /// Decodes last_sig_coeff_{x,y}_prefix / suffix (before any scan-order swap).
+    fn last_sig_coeff_pos(&mut self, log2: u32, c: usize) -> (u32, u32) {
         let cmax = (log2 << 1) - 1;
         let (off, shift) = if c == 0 { (3 * (log2 - 2) + ((log2 - 1) >> 2), (log2 + 1) >> 2) } else { (15, log2 - 2) };
         let mut px = 0;
@@ -1116,209 +1161,144 @@ impl<'a> SliceDecoder<'a> {
         while py < cmax && self.dd(LAST_Y_PREFIX + (off + (py >> shift)) as usize) == 1 {
             py += 1;
         }
-        let mut lx = px;
-        if px > 3 {
-            let nb = (px >> 1) - 1;
-            lx = (1 << nb) * (2 + (px & 1)) + self.bypass_bits(nb);
+        let lx = self.last_pos_with_suffix(px);
+        let ly = self.last_pos_with_suffix(py);
+        (lx, ly)
+    }
+
+    fn last_pos_with_suffix(&mut self, prefix: u32) -> u32 {
+        if prefix > 3 {
+            let nb = (prefix >> 1) - 1;
+            (1 << nb) * (2 + (prefix & 1)) + self.bypass_bits(nb)
+        } else {
+            prefix
         }
-        let mut ly = py;
-        if py > 3 {
-            let nb = (py >> 1) - 1;
-            ly = (1 << nb) * (2 + (py & 1)) + self.bypass_bits(nb);
+    }
+
+    /// scanIdx (7.4.9.11): 0 diagonal, 1 horizontal, 2 vertical.
+    fn scan_idx(&self, x0: i32, y0: i32, log2: u32, c: usize) -> usize {
+        if !(self.cu_intra && (log2 == 2 || (log2 == 3 && c == 0))) {
+            return 0;
         }
-        // scanIdx (7.4.9.11)
-        let scan_idx = if self.cu_intra && (log2 == 2 || (log2 == 3 && c == 0)) {
-            let m = if c == 0 { self.pic.blk_at(x0, y0).ipm as u32 } else { self.intra_chroma_mode };
-            if (6..=14).contains(&m) {
-                2
-            } else if (22..=30).contains(&m) {
-                1
-            } else {
-                0
-            }
+        let m = if c == 0 { self.pic.blk_at(x0, y0).ipm as u32 } else { self.intra_chroma_mode };
+        if (6..=14).contains(&m) {
+            2
+        } else if (22..=30).contains(&m) {
+            1
         } else {
             0
-        };
-        if scan_idx == 2 {
-            std::mem::swap(&mut lx, &mut ly);
         }
-        ensure!((lx as usize) < n && (ly as usize) < n, "last significant coefficient outside the block");
-        let log2sb = log2 - 2;
-        let sb_scan = scan_order(log2sb, scan_idx);
-        let pos_scan = &SCAN_4[scan_idx];
-        let sb_w = 1usize << log2sb;
-        let last_sb = sb_scan.iter().position(|&(x, y)| x as u32 == lx >> 2 && y as u32 == ly >> 2).unwrap_or(0);
-        let last_pos = pos_scan.iter().position(|&(x, y)| x as u32 == lx & 3 && y as u32 == ly & 3).unwrap_or(0);
-        self.coeffs[..n * n].fill(0);
-        let mut csbf = [0u8; 64];
-        let mut prev_g1: Option<u32> = None;
-        let sdh = self.pps.sign_data_hiding && !bypass;
-        let (mut max_x, mut max_y) = (0usize, 0usize);
-        let c_off_sig = if c == 0 { 0 } else { 27 };
-        for i in (0..=last_sb).rev() {
-            let (xs, ys) = (sb_scan[i].0 as usize, sb_scan[i].1 as usize);
-            let mut infer_dc = false;
-            let right = if xs + 1 < sb_w { csbf[ys * 8 + xs + 1] } else { 0 };
-            let below = if ys + 1 < sb_w { csbf[(ys + 1) * 8 + xs] } else { 0 };
-            if i < last_sb && i > 0 {
-                let inc = (right | below).min(1) as usize + if c > 0 { 2 } else { 0 };
-                csbf[ys * 8 + xs] = self.c.decode_decision(CODED_SUB_BLOCK + inc) as u8;
-                infer_dc = true;
-            } else {
-                csbf[ys * 8 + xs] = 1;
-            }
-            // significance map
-            let mut sig = [0u8; 16]; // scan positions n of significant coefficients, descending
-            let mut nsig = 0;
-            let start: i32 = if i == last_sb {
-                sig[0] = last_pos as u8;
+    }
+
+    /// Significance map of one coded sub-block: scan positions of the significant coefficients, in
+    /// descending order, and their count.
+    fn sig_coeff_flags(&mut self, t: &TbCtx, sb: &SubBlock, prev_csbf: u8, infer_dc: bool, last_pos: Option<usize>) -> ([u8; 16], usize) {
+        let pos_scan = &SCAN_4[t.scan_idx];
+        let c_off_sig = if t.c == 0 { 0 } else { 27 };
+        let mut infer_dc = infer_dc;
+        let mut sig = [0u8; 16];
+        let mut nsig = 0;
+        let start: i32 = match last_pos {
+            Some(lp) => {
+                sig[0] = lp as u8;
                 nsig = 1;
-                last_pos as i32 - 1
+                lp as i32 - 1
+            }
+            None => 15,
+        };
+        for np in (0..=start).rev() {
+            let (xp, yp) = (pos_scan[np as usize].0 as usize, pos_scan[np as usize].1 as usize);
+            if np > 0 || !infer_dc {
+                let ctx = sig_coeff_ctx(t, sb, prev_csbf, (xp, yp));
+                if self.c.decode_decision(SIG_COEFF + c_off_sig + ctx) == 1 {
+                    sig[nsig] = np as u8;
+                    nsig += 1;
+                    infer_dc = false;
+                }
             } else {
-                15
-            };
-            if csbf[ys * 8 + xs] != 0 {
-                let prev_csbf = right + (below << 1);
-                let mut np = start;
-                while np >= 0 {
-                    let (xp, yp) = (pos_scan[np as usize].0 as usize, pos_scan[np as usize].1 as usize);
-                    let (xc, yc) = (xs * 4 + xp, ys * 4 + yp);
-                    if np > 0 || !infer_dc {
-                        let sig_ctx = if log2 == 2 {
-                            CTX_IDX_MAP[(yc << 2) + xc] as usize
-                        } else if xc + yc == 0 {
-                            0
-                        } else {
-                            let mut s = match prev_csbf {
-                                0 => {
-                                    if xp + yp == 0 {
-                                        2
-                                    } else if xp + yp < 3 {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
-                                1 => {
-                                    if yp == 0 {
-                                        2
-                                    } else if yp == 1 {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
-                                2 => {
-                                    if xp == 0 {
-                                        2
-                                    } else if xp == 1 {
-                                        1
-                                    } else {
-                                        0
-                                    }
-                                }
-                                _ => 2,
-                            };
-                            if c == 0 {
-                                if xs + ys > 0 {
-                                    s += 3;
-                                }
-                                s += if log2 == 3 { if scan_idx == 0 { 9 } else { 15 } } else { 21 };
-                            } else {
-                                s += if log2 == 3 { 9 } else { 12 };
-                            }
-                            s
-                        };
-                        if self.c.decode_decision(SIG_COEFF + c_off_sig + sig_ctx) == 1 {
-                            sig[nsig] = np as u8;
-                            nsig += 1;
-                            infer_dc = false;
-                        }
-                    } else {
-                        // np == 0 with inferSbDcSigCoeffFlag
-                        sig[nsig] = 0;
-                        nsig += 1;
-                    }
-                    np -= 1;
-                }
-            }
-            if nsig == 0 {
-                continue;
-            }
-            // greater1 / greater2 flags
-            let mut ctx_set = if i == 0 || c > 0 { 0 } else { 2 };
-            if let Some(g) = prev_g1
-                && g == 0
-            {
-                ctx_set += 1;
-            }
-            let mut g1ctx = 1u32;
-            let mut gt1 = [0u8; 16];
-            let mut first_g1: Option<usize> = None;
-            let c_off_g1 = if c > 0 { 16 } else { 0 };
-            for k in 0..nsig.min(8) {
-                let inc = ctx_set * 4 + g1ctx.min(3) as usize + c_off_g1;
-                let f = self.c.decode_decision(GT1 + inc);
-                gt1[k] = f as u8;
-                if f == 1 {
-                    g1ctx = 0;
-                    if first_g1.is_none() {
-                        first_g1 = Some(k);
-                    }
-                } else if g1ctx > 0 {
-                    g1ctx += 1;
-                }
-            }
-            prev_g1 = Some(g1ctx);
-            let mut gt2 = 0u8;
-            if let Some(k) = first_g1 {
-                gt2 = self.c.decode_decision(GT2 + ctx_set + if c > 0 { 4 } else { 0 }) as u8;
-                let _ = k;
-            }
-            // signs
-            let last_sig_pos = sig[0] as i32;
-            let first_sig_pos = sig[nsig - 1] as i32;
-            let sign_hidden = sdh && last_sig_pos - first_sig_pos > 3;
-            let nsigns = if sign_hidden { nsig - 1 } else { nsig };
-            let mut signs = if nsigns > 0 { self.bypass_bits(nsigns as u32) << (32 - nsigns) } else { 0 };
-            // remaining levels
-            let mut rice = 0u32;
-            let mut sum_abs = 0i32;
-            for k in 0..nsig {
-                let mut base = 1 + gt1[k] as i32;
-                if Some(k) == first_g1 {
-                    base += gt2 as i32;
-                }
-                let thresh = if k < 8 { if Some(k) == first_g1 { 3 } else { 2 } } else { 1 };
-                let mut level = base;
-                if base == thresh {
-                    let rem = self.coeff_abs_level_remaining(rice)?;
-                    level = base + rem;
-                    if level > 3 * (1 << rice) {
-                        rice = (rice + 1).min(4);
-                    }
-                }
-                let np = sig[k] as usize;
-                let (xc, yc) = (xs * 4 + pos_scan[np].0 as usize, ys * 4 + pos_scan[np].1 as usize);
-                let mut v = level;
-                if !(sign_hidden && k == nsig - 1) {
-                    if signs & 0x8000_0000 != 0 {
-                        v = -v;
-                    }
-                    signs <<= 1;
-                }
-                if sign_hidden {
-                    sum_abs += level;
-                    if k == nsig - 1 && sum_abs & 1 == 1 {
-                        v = -v;
-                    }
-                }
-                self.coeffs[yc * n + xc] = v;
-                max_x = max_x.max(xc);
-                max_y = max_y.max(yc);
+                // np == 0 with inferSbDcSigCoeffFlag
+                sig[nsig] = 0;
+                nsig += 1;
             }
         }
-        self.reconstruct((x0, y0), log2, c, qp, ts, (max_x, max_y))
+        (sig, nsig)
+    }
+
+    /// coeff_abs_level_greater1_flag / greater2_flag of one sub-block with `nsig` significant coefficients.
+    fn greater_flags(&mut self, t: &TbCtx, sb_index: usize, nsig: usize, prev_g1: &mut Option<u32>) -> GreaterFlags {
+        let mut ctx_set = if sb_index == 0 || t.c > 0 { 0 } else { 2 };
+        if *prev_g1 == Some(0) {
+            ctx_set += 1;
+        }
+        let mut g1ctx = 1u32;
+        let mut g = GreaterFlags { gt1: [0u8; 16], first_g1: None, gt2: 0 };
+        let c_off_g1 = if t.c > 0 { 16 } else { 0 };
+        for k in 0..nsig.min(8) {
+            let inc = ctx_set * 4 + g1ctx.min(3) as usize + c_off_g1;
+            let f = self.c.decode_decision(GT1 + inc);
+            g.gt1[k] = f as u8;
+            if f == 1 {
+                g1ctx = 0;
+                if g.first_g1.is_none() {
+                    g.first_g1 = Some(k);
+                }
+            } else if g1ctx > 0 {
+                g1ctx += 1;
+            }
+        }
+        *prev_g1 = Some(g1ctx);
+        if g.first_g1.is_some() {
+            g.gt2 = self.c.decode_decision(GT2 + ctx_set + if t.c > 0 { 4 } else { 0 }) as u8;
+        }
+        g
+    }
+
+    /// Reads signs and remaining levels of one sub-block and stores the coefficients. Returns the
+    /// largest x and y coefficient position written.
+    fn store_levels(&mut self, t: &TbCtx, sb: &SubBlock, sig: &[u8], g: &GreaterFlags) -> Result<(usize, usize)> {
+        let nsig = sig.len();
+        let n = 1usize << t.log2;
+        let pos_scan = &SCAN_4[t.scan_idx];
+        let sign_hidden = t.sdh && sig[0] as i32 - sig[nsig - 1] as i32 > 3;
+        let nsigns = if sign_hidden { nsig - 1 } else { nsig };
+        let mut signs = if nsigns > 0 { self.bypass_bits(nsigns as u32) << (32 - nsigns) } else { 0 };
+        let mut rice = 0u32;
+        let mut sum_abs = 0i32;
+        let (mut max_x, mut max_y) = (0usize, 0usize);
+        for k in 0..nsig {
+            let mut base = 1 + g.gt1[k] as i32;
+            if Some(k) == g.first_g1 {
+                base += g.gt2 as i32;
+            }
+            let thresh = if k < 8 { if Some(k) == g.first_g1 { 3 } else { 2 } } else { 1 };
+            let mut level = base;
+            if base == thresh {
+                let rem = self.coeff_abs_level_remaining(rice)?;
+                level = base + rem;
+                if level > 3 * (1 << rice) {
+                    rice = (rice + 1).min(4);
+                }
+            }
+            let np = sig[k] as usize;
+            let (xc, yc) = (sb.xs * 4 + pos_scan[np].0 as usize, sb.ys * 4 + pos_scan[np].1 as usize);
+            let mut v = level;
+            if !(sign_hidden && k == nsig - 1) {
+                if signs & 0x8000_0000 != 0 {
+                    v = -v;
+                }
+                signs <<= 1;
+            }
+            if sign_hidden {
+                sum_abs += level;
+                if k == nsig - 1 && sum_abs & 1 == 1 {
+                    v = -v;
+                }
+            }
+            self.coeffs[yc * n + xc] = v;
+            max_x = max_x.max(xc);
+            max_y = max_y.max(yc);
+        }
+        Ok((max_x, max_y))
     }
 
     fn coeff_abs_level_remaining(&mut self, rice: u32) -> Result<i32> {
@@ -1563,5 +1543,73 @@ impl<'a> SliceDecoder<'a> {
                 inter::put_weighted_uni(&self.pred0, (bw, bh), bd, (log2wd, wt, o), dst, stride);
             }
         }
+    }
+}
+
+/// Per-transform-block parameters of residual coding.
+struct TbCtx {
+    c: usize,
+    log2: u32,
+    scan_idx: usize,
+    sdh: bool,
+}
+
+/// Position of a 4x4 sub-block in the sub-block grid.
+struct SubBlock {
+    xs: usize,
+    ys: usize,
+}
+
+/// Greater-than-1 / greater-than-2 flags of one sub-block.
+struct GreaterFlags {
+    gt1: [u8; 16],
+    first_g1: Option<usize>,
+    gt2: u8,
+}
+
+/// sigCtx (9.3.4.2.5) for the coefficient at (`xp`, `yp`) inside the sub-block.
+fn sig_coeff_ctx(t: &TbCtx, sb: &SubBlock, prev_csbf: u8, (xp, yp): (usize, usize)) -> usize {
+    let (xc, yc) = (sb.xs * 4 + xp, sb.ys * 4 + yp);
+    if t.log2 == 2 {
+        CTX_IDX_MAP[(yc << 2) + xc] as usize
+    } else if xc + yc == 0 {
+        0
+    } else {
+        sig_ctx_neighbourhood(prev_csbf, xp, yp) + sig_ctx_offset(t, sb.xs + sb.ys > 0)
+    }
+}
+
+/// Base sigCtx from the coded-sub-block flags of the right and below neighbours.
+fn sig_ctx_neighbourhood(prev_csbf: u8, xp: usize, yp: usize) -> usize {
+    let near = |v: usize| match v {
+        0 => 2,
+        1 => 1,
+        _ => 0,
+    };
+    match prev_csbf {
+        0 => {
+            if xp + yp == 0 {
+                2
+            } else if xp + yp < 3 {
+                1
+            } else {
+                0
+            }
+        }
+        1 => near(yp),
+        2 => near(xp),
+        _ => 2,
+    }
+}
+
+/// Offset added to sigCtx for the block size, colour component and sub-block position.
+fn sig_ctx_offset(t: &TbCtx, not_first_sb: bool) -> usize {
+    if t.c == 0 {
+        let size_off = if t.log2 == 3 { if t.scan_idx == 0 { 9 } else { 15 } } else { 21 };
+        size_off + if not_first_sb { 3 } else { 0 }
+    } else if t.log2 == 3 {
+        9
+    } else {
+        12
     }
 }

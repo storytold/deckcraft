@@ -1,4 +1,4 @@
-use super::*;
+use super::{Result, Session, Value, bad, edit_geometry, f64_param, json, str_param, targets, xfrm_of};
 
 /// Keeps a side length in `0..=MAX_PT` so a huge value cannot exhaust memory when rendering.
 /// An overflow to infinity lands on the limit; NaN becomes 0.

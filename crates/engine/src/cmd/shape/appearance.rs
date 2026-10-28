@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PictureFill, PictureMode,
+    Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value, edit_geometry,
+    edit_shapes, f64_param, inherited_fills, json, requested_fill, str_param, usize_param,
+};
 
 pub(super) fn adjust(s: &mut Session, p: &Value) -> Result<Value> {
     let i = usize_param(p, "index").unwrap_or(0).min(16);

@@ -1,5 +1,8 @@
 use super::zoom::GRID_CAP;
-use super::*;
+use super::{
+    BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
+    TriggerPlay, pos2, state_for, vec2,
+};
 
 pub(super) fn render_threads() -> u16 {
     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) }

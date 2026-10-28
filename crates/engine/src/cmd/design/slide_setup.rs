@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, NO_ID_SPACE, PhType, Result, Run, RunKind, Session, Shape, ShapeId, Size, TextBody, Value, bad, bool_or, bool_param, defaults, f64_param,
+    json, ok, str_param,
+};
 
 pub(super) fn scale_shapes(shapes: &mut [Shape], sx: f64, sy: f64, k: f64, ox: f64, oy: f64) {
     for sh in shapes {

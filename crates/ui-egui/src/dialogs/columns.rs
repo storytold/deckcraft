@@ -1,4 +1,4 @@
-use super::*;
+use super::{Color32, Dialog, SlideApp, Ui, Value, buttons, field, field_of, json, num_text};
 
 /// The Columns dialog's changed fields as `format.columns` params: Number and Spacing (inches,
 /// sent in points). A field left as the dialog showed it is left out, so each selected text box

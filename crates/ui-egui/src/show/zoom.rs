@@ -1,6 +1,6 @@
 use super::presenter::{NOTES_MAX, NOTES_MIN};
 use super::render::render_thumb;
-use super::*;
+use super::{Align2, Color32, CornerRadius, Pos2, Presentation, Rect, Show, Stroke, json, pos2, theme, vec2};
 
 impl Show {
     pub(super) fn zoom_uv(&self) -> Rect {
@@ -344,7 +344,7 @@ pub(super) fn slide_to_screen(srect: Rect, uv: Rect, nx: f32, ny: f32) -> Pos2 {
     pos2(srect.min.x + u * srect.width(), srect.min.y + v * srect.height())
 }
 
-pub(super) fn slide_box(srect: Rect, uv: Rect, slide_w: f32, slide_h: f32, x: f32, y: f32, w: f32, h: f32) -> Rect {
+pub(super) fn slide_box(srect: Rect, uv: Rect, (slide_w, slide_h): (f32, f32), (x, y, w, h): (f32, f32, f32, f32)) -> Rect {
     let a = slide_to_screen(srect, uv, x / slide_w.max(1.0), y / slide_h.max(1.0));
     let b = slide_to_screen(srect, uv, (x + w) / slide_w.max(1.0), (y + h) / slide_h.max(1.0));
     Rect::from_min_max(a, b)

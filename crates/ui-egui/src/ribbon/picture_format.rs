@@ -1,6 +1,9 @@
 use super::arrange::{arrange_group, size_group};
 use super::galleries::{cref_param, shapes_gallery};
-use super::*;
+use super::{
+    Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, Value, big, big_button, color_split, enabled, group, json, pos2, rows, run, scheme,
+    small, small_button_ex, theme, vec2, widgets,
+};
 
 /// Render the Picture Format tab's corrections, colour, artistic effects, transparency, styles,
 /// border, and picture actions.

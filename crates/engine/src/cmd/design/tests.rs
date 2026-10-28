@@ -95,7 +95,10 @@ fn colors_dialog_apply_and_reject() {
     assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Colors");
     s.execute("design.colors", &json!({"name": "Harbor"})).unwrap();
     assert_eq!(undo_len(&s), n + 1, "the same scheme is not an undo step");
+    colors_dialog_rejects(&mut s, n, &harbor);
+}
 
+fn colors_dialog_rejects(s: &mut Session, n: usize, harbor: &deckcraft_color::ColorScheme) {
     let err = s.execute("design.colors", &json!({"name": "Nope"})).unwrap_err().to_string();
     assert!(err.contains("no colour scheme `Nope`"), "{err}");
     assert!(s.execute("design.colors", &json!({"name": "  "})).is_err());
@@ -108,32 +111,35 @@ fn colors_dialog_apply_and_reject() {
     assert!(s.execute("design.colors", &json!({"colors": {"nope": "#112233"}})).is_err());
     assert!(s.execute("design.colors", &json!({"colors": {"accent1": "zz"}})).is_err());
     assert!(s.execute("design.colors", &json!({"name": "Harbor", "colors": {}})).is_err());
-    assert_eq!(scheme(&s).name, "Harbor");
-    assert_eq!(scheme(&s).get(SchemeSlot::Accent1), harbor.get(SchemeSlot::Accent1));
-    assert_eq!(undo_len(&s), n + 1);
+    assert_eq!(scheme(s).name, "Harbor");
+    assert_eq!(scheme(s).get(SchemeSlot::Accent1), harbor.get(SchemeSlot::Accent1));
+    assert_eq!(undo_len(s), n + 1);
+    colors_dialog_custom_overrides(s, n, harbor);
+}
 
+fn colors_dialog_custom_overrides(s: &mut Session, n: usize, harbor: &deckcraft_color::ColorScheme) {
     s.execute("design.colors", &json!({"colors": {"accent1": "112233"}})).unwrap();
-    assert_eq!(scheme(&s).name, "Custom");
-    assert_eq!(scheme(&s).get(SchemeSlot::Accent1).hex(), "112233");
-    assert_eq!(scheme(&s).get(SchemeSlot::Accent2), harbor.get(SchemeSlot::Accent2));
-    assert_eq!(undo_len(&s), n + 2);
+    assert_eq!(scheme(s).name, "Custom");
+    assert_eq!(scheme(s).get(SchemeSlot::Accent1).hex(), "112233");
+    assert_eq!(scheme(s).get(SchemeSlot::Accent2), harbor.get(SchemeSlot::Accent2));
+    assert_eq!(undo_len(s), n + 2);
 
     let meadow = builtin_color_schemes().into_iter().find(|c| c.name == "Meadow").unwrap();
     s.execute("design.colors", &json!({"name": "Meadow", "colors": {"lt1": "#010203"}})).unwrap();
-    assert_eq!(scheme(&s).name, "Meadow");
-    assert_eq!(scheme(&s).get(SchemeSlot::Lt1).hex(), "010203");
-    assert_eq!(scheme(&s).get(SchemeSlot::Accent1), meadow.get(SchemeSlot::Accent1));
-    assert_eq!(undo_len(&s), n + 3);
+    assert_eq!(scheme(s).name, "Meadow");
+    assert_eq!(scheme(s).get(SchemeSlot::Lt1).hex(), "010203");
+    assert_eq!(scheme(s).get(SchemeSlot::Accent1), meadow.get(SchemeSlot::Accent1));
+    assert_eq!(undo_len(s), n + 3);
 
     s.execute("design.colors", &json!({"name": "Talk", "colors": {"dk1": "#ABCDEF"}})).unwrap();
-    assert_eq!(scheme(&s).name, "Talk");
-    assert_eq!(scheme(&s).get(SchemeSlot::Dk1).hex(), "ABCDEF");
-    assert_eq!(scheme(&s).get(SchemeSlot::Lt1).hex(), "010203");
-    assert_eq!(scheme(&s).get(SchemeSlot::Accent1), meadow.get(SchemeSlot::Accent1));
+    assert_eq!(scheme(s).name, "Talk");
+    assert_eq!(scheme(s).get(SchemeSlot::Dk1).hex(), "ABCDEF");
+    assert_eq!(scheme(s).get(SchemeSlot::Lt1).hex(), "010203");
+    assert_eq!(scheme(s).get(SchemeSlot::Accent1), meadow.get(SchemeSlot::Accent1));
 
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(scheme(&s).name, "Meadow");
-    assert_eq!(scheme(&s).get(SchemeSlot::Dk1), meadow.get(SchemeSlot::Dk1));
+    assert_eq!(scheme(s).name, "Meadow");
+    assert_eq!(scheme(s).get(SchemeSlot::Dk1), meadow.get(SchemeSlot::Dk1));
 }
 
 #[test]
@@ -175,7 +181,10 @@ fn fonts_dialog_apply_and_reject() {
     assert!(s.execute("design.fonts", &json!({"name": "Classic", "major": ""})).is_err());
     assert_eq!(font_scheme(&s), classic);
     assert_eq!(undo_len(&s), n + 1);
+    fonts_dialog_custom_overrides(&mut s);
+}
 
+fn fonts_dialog_custom_overrides(s: &mut Session) {
     s.edit(|doc, _| {
         let fonts = &mut std::sync::Arc::make_mut(&mut doc.masters[0]).theme.fonts;
         fonts.major.ea = "EA Major".into();
@@ -184,33 +193,33 @@ fn fonts_dialog_apply_and_reject() {
         Ok(())
     })
     .unwrap();
-    let marked = font_scheme(&s);
-    let n = undo_len(&s);
+    let marked = font_scheme(s);
+    let n = undo_len(s);
 
     s.execute("design.fonts", &json!({"major": " Lato "})).unwrap();
-    let custom = font_scheme(&s);
+    let custom = font_scheme(s);
     assert_eq!(custom.name, "Custom");
     assert_eq!(custom.major.latin, "Lato");
     assert_eq!(custom.minor.latin, "Lato", "an omitted minor copies major");
     assert_eq!(custom.major.ea, "EA Major");
     assert_eq!(custom.minor.cs, "CS Minor");
     assert_eq!(custom.major.scripts, marked.major.scripts);
-    assert_eq!(undo_len(&s), n + 1);
+    assert_eq!(undo_len(s), n + 1);
 
     s.execute("design.fonts", &json!({"minor": "Roboto"})).unwrap();
-    assert_eq!(font_scheme(&s).name, "Custom");
-    assert_eq!(font_scheme(&s).major.latin, "Lato");
-    assert_eq!(font_scheme(&s).minor.latin, "Roboto");
-    assert_eq!(font_scheme(&s).major.ea, "EA Major");
-    assert_eq!(undo_len(&s), n + 2);
+    assert_eq!(font_scheme(s).name, "Custom");
+    assert_eq!(font_scheme(s).major.latin, "Lato");
+    assert_eq!(font_scheme(s).minor.latin, "Roboto");
+    assert_eq!(font_scheme(s).major.ea, "EA Major");
+    assert_eq!(undo_len(s), n + 2);
 
     s.execute("design.fonts", &json!({"name": "Classic", "major": "Inter"})).unwrap();
-    assert_eq!(font_scheme(&s).name, "Classic");
-    assert_eq!(font_scheme(&s).major.latin, "Inter");
-    assert_eq!(font_scheme(&s).minor.latin, "Open Sans");
-    assert_eq!(font_scheme(&s).major.ea, "");
-    assert!(font_scheme(&s).major.scripts.is_empty(), "a builtin is applied before the latin overlay");
-    assert_eq!(undo_len(&s), n + 3);
+    assert_eq!(font_scheme(s).name, "Classic");
+    assert_eq!(font_scheme(s).major.latin, "Inter");
+    assert_eq!(font_scheme(s).minor.latin, "Open Sans");
+    assert_eq!(font_scheme(s).major.ea, "");
+    assert!(font_scheme(s).major.scripts.is_empty(), "a builtin is applied before the latin overlay");
+    assert_eq!(undo_len(s), n + 3);
 
     s.edit(|doc, _| {
         std::sync::Arc::make_mut(&mut doc.masters[0]).theme.fonts.major.ea = "Kept".into();
@@ -218,16 +227,16 @@ fn fonts_dialog_apply_and_reject() {
     })
     .unwrap();
     s.execute("design.fonts", &json!({"name": "Talk", "minor": "Nunito Sans"})).unwrap();
-    assert_eq!(font_scheme(&s).name, "Talk");
-    assert_eq!(font_scheme(&s).major.latin, "Inter");
-    assert_eq!(font_scheme(&s).minor.latin, "Nunito Sans");
-    assert_eq!(font_scheme(&s).major.ea, "Kept");
+    assert_eq!(font_scheme(s).name, "Talk");
+    assert_eq!(font_scheme(s).major.latin, "Inter");
+    assert_eq!(font_scheme(s).minor.latin, "Nunito Sans");
+    assert_eq!(font_scheme(s).major.ea, "Kept");
     assert_eq!(s.doc().unwrap().history.undo.last().unwrap().label, "Fonts");
 
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(font_scheme(&s).name, "Classic");
-    assert_eq!(font_scheme(&s).major.ea, "Kept");
-    assert_eq!(font_scheme(&s).minor.latin, "Open Sans");
+    assert_eq!(font_scheme(s).name, "Classic");
+    assert_eq!(font_scheme(s).major.ea, "Kept");
+    assert_eq!(font_scheme(s).minor.latin, "Open Sans");
 }
 
 #[test]

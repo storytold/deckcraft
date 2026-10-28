@@ -1,5 +1,5 @@
 use super::render::fit;
-use super::*;
+use super::{Click, HitShape, Hyperlink, Presentation, Rect, ShapeId, Show, SlideApp, Ui, pos2, vec2};
 
 /// The media-host voice for slide transition sounds (no shape has this id).
 pub(crate) const TRANSITION_SOUND: ShapeId = ShapeId(u32::MAX);

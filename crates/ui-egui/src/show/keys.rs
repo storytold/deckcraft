@@ -1,6 +1,6 @@
 use super::presenter::NOTES_STEP;
 use super::zoom::{plain, toggle_blank};
-use super::*;
+use super::{Color32, Presentation, Show, ShowAction};
 
 /// Read the current viewport's show keys before its widgets can consume them. Both the
 /// audience window and Presenter View use this path, including animation steps and end-of-show.

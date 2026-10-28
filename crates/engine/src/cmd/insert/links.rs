@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Geom, Result, SchemeSlot, Session, Shape, ShapeStyle, Value, add_shape, bad, bool_or, bool_param, default_rect, edit_shapes, json, rect_param,
+    str_param, usize_param,
+};
 
 pub(super) fn hyperlink(s: &mut Session, p: &Value) -> Result<Value> {
     use deckcraft_model::text::{Action, Hyperlink};

@@ -1,4 +1,4 @@
-use super::*;
+use super::{SlideApp, json, media, monotonic_secs, theme};
 
 impl SlideApp {
     /// Style, fonts and zoom setup. Runs in a real UI pass, not from `run_logic`, because

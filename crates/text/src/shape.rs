@@ -2,7 +2,10 @@ use super::autonum::autonum;
 use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
 use super::symbol::{covers_symbol, map_symbol_bullet, symbol_font_char, symbol_map_char};
-use super::*;
+use super::{
+    Arc, Bullet, Caps, Ctx, Fill, FontDb, FontFace, FontSlot, HashMap, ParaProps, RunKind, RunProps, ScriptTag, Shape, ShapeParams, TextBody,
+    UnicodeSegmentation, bidi, resolve, script,
+};
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn shape_para(

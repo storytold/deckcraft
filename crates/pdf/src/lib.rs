@@ -178,7 +178,7 @@ fn export_inner(pres: &Presentation, opts: &PdfOptions) -> Result<Vec<u8>> {
     let pdf = writer.document_mut();
 
     let (sw, sh) = (pres.slide_size.width.max(1.0), pres.slide_size.height.max(1.0));
-    let mut ex = Exporter { pres, opts, fonts: HashMap::new() };
+    let mut ex = Exporter { pres, opts, fonts: HashMap::new(), backdrops: Backdrops::default() };
     // Page plan: per page, the slides on it with their boxes (page points).
     let pages = plan_pages(pres, opts, &slides, sw, sh);
     // Bookmarks and slide → page lookup for internal links.
@@ -391,6 +391,7 @@ struct Exporter<'a> {
     pres: &'a Presentation,
     opts: &'a PdfOptions,
     fonts: HashMap<u32, Font>,
+    backdrops: Backdrops,
 }
 
 fn tf(a: Affine) -> Transform {
@@ -406,8 +407,19 @@ fn grey(v: u8, opacity: f32) -> Fill {
     }
 }
 
-/// Premultiplied RGBA (the renderer's pixels) to the straight RGBA the writer stores.
+/// Premultiplied RGBA (the renderer's pixels) to the straight RGBA the writer stores. Runs of
+/// pixels that are all fully transparent or fully opaque, most of a slide, are skipped in blocks.
 fn straight(rgba: &mut [u8]) {
+    let (blocks, rest) = rgba.as_chunks_mut::<64>();
+    for block in blocks {
+        if block.as_chunks::<4>().0.iter().fold(false, |m, px| m | (px[3].wrapping_sub(1) < 254)) {
+            straight_px(block);
+        }
+    }
+    straight_px(rest);
+}
+
+fn straight_px(rgba: &mut [u8]) {
     for px in rgba.as_chunks_mut::<4>().0 {
         let a = px[3] as u32;
         if a != 0 && a != 255 {
@@ -418,17 +430,58 @@ fn straight(rgba: &mut [u8]) {
     }
 }
 
-/// A backdrop raster as one PDF image, composited onto white (slides are normally opaque). Equal
-/// backdrops become equal images, which the writer stores once.
-fn backdrop(mut img: deckcraft_render::Image) -> Image {
-    for px in img.pixels.as_chunks_mut::<4>().0 {
-        let a = px[3] as u32;
-        for c in &mut px[..3] {
-            *c = (*c as u32 + (255 - a)).min(255) as u8;
+/// A backdrop raster composited onto white (slides are normally opaque, and opaque blocks are skipped).
+fn opaque(rgba: &mut [u8]) {
+    let (blocks, rest) = rgba.as_chunks_mut::<64>();
+    for block in blocks {
+        if !block.as_chunks::<4>().0.iter().fold(true, |m, px| m & (px[3] == 255)) {
+            opaque_px(block);
         }
+    }
+    opaque_px(rest);
+}
+
+fn opaque_px(rgba: &mut [u8]) {
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let k = 255 - px[3];
+        px[0] = px[0].saturating_add(k);
+        px[1] = px[1].saturating_add(k);
+        px[2] = px[2].saturating_add(k);
         px[3] = 255;
     }
-    Image::from_rgba8(img.pixels, img.width, img.height)
+}
+
+/// Most bytes of opaque backdrop rasters kept to recognise a backdrop seen before.
+const BACKDROP_CACHE_BYTES: usize = 32 << 20;
+
+/// Backdrops already handed to the writer, most recent first, with their pixels. Slides that
+/// share a layout render the same backdrop; reusing its image skips hashing and compressing the
+/// raster again, and the writer stores it once either way (#845).
+#[derive(Default)]
+struct Backdrops(Vec<(Vec<u8>, u32, u32, Image)>);
+
+impl Backdrops {
+    fn image(&mut self, mut img: deckcraft_render::Image) -> Image {
+        opaque(&mut img.pixels);
+        let (w, h) = (img.width, img.height);
+        if let Some(i) = self.0.iter().position(|(px, pw, ph, _)| (*pw, *ph) == (w, h) && *px == img.pixels) {
+            let hit = self.0.remove(i);
+            let image = hit.3.clone();
+            self.0.insert(0, hit);
+            return image;
+        }
+        if img.pixels.len() > BACKDROP_CACHE_BYTES {
+            return Image::from_rgba8(img.pixels, w, h);
+        }
+        let image = Image::from_rgba8(img.pixels.clone(), w, h);
+        self.0.insert(0, (img.pixels, w, h, image.clone()));
+        let mut total = 0;
+        self.0.retain(|(px, ..)| {
+            total += px.len();
+            total <= BACKDROP_CACHE_BYTES
+        });
+        image
+    }
 }
 
 /// Most pixels one slide raster may have; it is RGBA, and the backdrop and the content are two rasters.
@@ -470,7 +523,7 @@ impl Exporter<'_> {
             && let Some(size) = Size::from_wh(b.width() as f32, b.height() as f32)
         {
             s.push_transform(&Transform::from_translate(b.x0 as f32, b.y0 as f32));
-            s.draw_image(backdrop(back), size);
+            s.draw_image(self.backdrops.image(back), size);
             // Taken, not copied: a print-resolution slide is ~16 MB.
             let mut rgba = front.pixels;
             if rgba.as_chunks::<4>().0.iter().any(|px| px[3] != 0) {

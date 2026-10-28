@@ -1,5 +1,8 @@
 use super::layout::fit_text_box;
-use super::*;
+use super::{
+    DocState, Hyperlink, Pos, Result, RunProps, SELECT_TEXT_OR_SHAPE, Session, ShapeId, ShapeKind, TextBody, TextSel, Value, bad, body_of, ed,
+    edit_shapes, edit_text, json, ok, str_param,
+};
 
 /// Apply run formatting to the text selection (or, when not editing, to all text of the
 /// selected shapes). A caret without a range formats the word it's in (PowerPoint behaviour),

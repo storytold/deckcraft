@@ -1,4 +1,4 @@
-use super::*;
+use super::{DateTime, Fields, Rgba, ShapeId, Vec2, datetime};
 
 /// Animation state of one shape during a slide show or preview.
 #[derive(Clone, Debug)]

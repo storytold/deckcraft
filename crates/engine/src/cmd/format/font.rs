@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    Arc, Caps, ColorRef, ColorTransform, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or,
+    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, json, ok, on_param, resolve, str_param,
+};
 
 pub(super) fn bold(s: &mut Session, p: &Value) -> Result<Value> {
     let v = on_param(p, current_run(s).bold);

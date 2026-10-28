@@ -1,5 +1,5 @@
 use super::files::task;
-use super::*;
+use super::{Backstage, Icon, Outcome, Page, RichText, Sense, SlideApp, Tokens, Ui, Value, dim, heading, json, theme, vec2};
 
 /// Save As and Change File Type: (id for [`SlideApp::export_as`], label, detail).
 pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
@@ -154,7 +154,7 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     ui.add_space(14.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt("backstage_save_type")
+        craft_ui::ComboBox::from_id_salt("backstage_save_type")
             .width(340.0)
             .selected_text(current)
             .show_ui(ui, |ui| {
@@ -198,7 +198,7 @@ pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
             ui.set_width(340.0);
             heading(ui, "Appearance");
             let dark = app.ui.brightness == theme::Brightness::Dark;
-            egui::ComboBox::from_id_salt("backstage_appearance")
+            craft_ui::ComboBox::from_id_salt("backstage_appearance")
                 .width(260.0)
                 .selected_text(if dark { "Dark" } else { "Light" })
                 .show_ui(ui, |ui| {

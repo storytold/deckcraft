@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    FilePlace, FilePurpose, FileTarget, InboxEvent, LocatedPlace, PendingFile, RECENT_MAX, SlideApp, Target, UiRequest, Value, ViewMode, dialogs,
+    json, media,
+};
 
 fn purpose_of(purpose: &str) -> FilePurpose {
     match purpose {
@@ -446,7 +449,7 @@ impl SlideApp {
                     let owner = if self.show.is_some() { media::Owner::Show } else { media::Owner::Editor };
                     // The command resolved `shape` on the editor's slide, also while a show runs.
                     if let Some((uid, doc, slide)) = self.session.active().map(|d| (d.uid, d.doc.clone(), d.selection.slide)) {
-                        self.media.request(uid, &doc, slide, &action, shape, ms, owner);
+                        self.media.request(uid, &doc, slide, &action, (shape, ms), owner);
                     }
                 }
             }

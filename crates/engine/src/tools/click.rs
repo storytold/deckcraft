@@ -1,5 +1,5 @@
 use super::hit::{EditZone, edit_zone, edited_box, shape_in_front, text_member_at, text_pos};
-use super::*;
+use super::{Drag, Hit, Point, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, cmd, json, xfrm_of};
 
 impl Session {
     pub(super) fn double_click(&mut self, p: Point, tol: f64) -> Result<Value> {

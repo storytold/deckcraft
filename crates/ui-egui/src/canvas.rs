@@ -83,6 +83,69 @@ pub fn layout(app: &SlideApp, avail: Rect) -> (Rect, f32) {
     (r, scale)
 }
 
+/// The mouse wheel or a trackpad flick turns slides when the canvas has nothing to scroll.
+fn wheel_navigation(app: &mut SlideApp, ui: &mut Ui, carry_id: egui::Id, doc_uid: u64) {
+    if app.anim_preview_active() || app.session.tool.marquee.is_some() || app.session.tool.dragging() {
+        return;
+    }
+    let (_, mut carry): (u64, f32) = ui.data_mut(|d| d.get_temp(carry_id).unwrap_or_default());
+    let wheel_step = app.session.active().and_then(|d| {
+        let current = d.selection.slide;
+        ui.input(|i| wheel_slide_target(&i.events, current, d.doc.slides.len(), &mut carry)).map(|target| (current, target))
+    });
+    ui.data_mut(|d| d.insert_temp(carry_id, (doc_uid, carry)));
+    if let Some((current, index)) = wheel_step {
+        if index != current {
+            let _ = app.run("slide.go", json!({"index": index}));
+        }
+    } else if let Some(next) = page_flick(ui.input(|i| trackpad_scroll(&i.events))) {
+        // Point-based trackpad gestures keep their cooldown. Raw input avoids reading
+        // the smoothed tail of a discrete mouse notch as another page turn.
+        let gate = ui.scope_id().with("wheel_gate");
+        let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(f64::NEG_INFINITY));
+        let now = ui.input(|i| i.time);
+        if now - last > 0.35 {
+            ui.data_mut(|d| d.insert_temp(gate, now));
+            let _ = app.run(if next { "slide.next" } else { "slide.previous" }, json!({}));
+        }
+    }
+}
+
+fn empty_deck_prompt(app: &mut SlideApp, ui: &mut Ui, avail: Rect, t: &Tokens) {
+    let resp = ui.allocate_rect(avail, Sense::click());
+    ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
+    if resp.clicked() {
+        let _ = app.run("slide.new", json!({"layout": "title"}));
+    }
+}
+
+fn reset_wheel_carry(ui: &Ui, carry_id: egui::Id, doc_uid: u64) {
+    ui.data_mut(|d| {
+        if d.get_temp::<(u64, f32)>(carry_id).is_none_or(|(uid, _)| uid != doc_uid) {
+            d.insert_temp(carry_id, (doc_uid, 0.0_f32));
+        }
+    });
+}
+
+/// The scroll offset that keeps the slide point under `pointer` (or the canvas middle) fixed
+/// when the scale changed since the last frame.
+fn anchored_offset(last: Option<(Rect, f32)>, content_rect: Rect, scale: f32, pointer: Option<Pos2>, avail: Rect) -> Option<egui::Vec2> {
+    let (last_rect, last_scale) = last?;
+    if (scale - last_scale).abs() <= 1e-6 {
+        return None;
+    }
+    let anchor = pointer.unwrap_or(avail.center());
+    let at = (anchor - last_rect.min) / last_scale;
+    Some(content_rect.min + at * scale - anchor)
+}
+
+fn slide_gifs(app: &mut SlideApp, now: f64) -> Vec<crate::media::Gif> {
+    match app.session.active() {
+        Some(d) if d.selection.target == Target::Slides => app.media.gifs(d.uid, &d.doc, d.selection.slide, now, &app.session.gif_paused),
+        _ => vec![],
+    }
+}
+
 /// Paint the editing canvas, including rulers, selection handles, overlays, and current
 /// zoom/scroll state.
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
@@ -94,17 +157,9 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     // one is drawn here, hovered or not, so switching away and back starts from zero.
     let carry_id = ui.scope_id().with("wheel_carry");
     let doc_uid = st.uid;
-    ui.data_mut(|d| {
-        if d.get_temp::<(u64, f32)>(carry_id).is_none_or(|(uid, _)| uid != doc_uid) {
-            d.insert_temp(carry_id, (doc_uid, 0.0_f32));
-        }
-    });
+    reset_wheel_carry(ui, carry_id, doc_uid);
     if st.doc.slides.is_empty() && st.selection.target == Target::Slides {
-        let resp = ui.allocate_rect(avail, Sense::click());
-        ui.painter().text(avail.center(), Align2::CENTER_CENTER, "Click to add first slide", theme::font(22.0), t.text_dim);
-        if resp.clicked() {
-            let _ = app.run("slide.new", json!({"layout": "title"}));
-        }
+        empty_deck_prompt(app, ui, avail, &t);
         return;
     }
     // Scroll when zoomed beyond the window.
@@ -122,12 +177,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let (content_rect, scale) = layout(app, avail);
     // A new zoom keeps the slide point under the pointer (wheel, pinch) or under the middle of the
     // canvas (Zoom In/Out, the slider) where it was, instead of growing from the corner (#106).
-    if let Some((last_rect, last_scale)) = last
-        && (scale - last_scale).abs() > 1e-6
-    {
-        let anchor = if zooming { hover.unwrap_or(avail.center()) } else { avail.center() };
-        let at = (anchor - last_rect.min) / last_scale;
-        offset = content_rect.min + at * scale - anchor;
+    if let Some(o) = anchored_offset(last, content_rect, scale, zooming.then_some(hover).flatten(), avail) {
+        offset = o;
     }
     let overflow = vec2((content_rect.width() + 56.0 - avail.width()).max(0.0), (content_rect.height() + 56.0 - avail.height()).max(0.0));
     // Scroll bars on the axes that overflow (#1157). They sit over the canvas edge and take their
@@ -175,28 +226,8 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     if (resp.hovered() || on_bar) && !zooming {
         if overflow != egui::Vec2::ZERO {
             offset -= wheel;
-        } else if !app.anim_preview_active() && app.session.tool.marquee.is_none() && !app.session.tool.dragging() {
-            let (_, mut carry): (u64, f32) = ui.data_mut(|d| d.get_temp(carry_id).unwrap_or_default());
-            let wheel_step = app.session.active().and_then(|d| {
-                let current = d.selection.slide;
-                ui.input(|i| wheel_slide_target(&i.events, current, d.doc.slides.len(), &mut carry)).map(|target| (current, target))
-            });
-            ui.data_mut(|d| d.insert_temp(carry_id, (doc_uid, carry)));
-            if let Some((current, index)) = wheel_step {
-                if index != current {
-                    let _ = app.run("slide.go", json!({"index": index}));
-                }
-            } else if let Some(next) = page_flick(ui.input(|i| trackpad_scroll(&i.events))) {
-                // Point-based trackpad gestures keep their cooldown. Raw input avoids reading
-                // the smoothed tail of a discrete mouse notch as another page turn.
-                let gate = ui.scope_id().with("wheel_gate");
-                let last: f64 = ui.data_mut(|d| d.get_temp(gate).unwrap_or(f64::NEG_INFINITY));
-                let now = ui.input(|i| i.time);
-                if now - last > 0.35 {
-                    ui.data_mut(|d| d.insert_temp(gate, now));
-                    let _ = app.run(if next { "slide.next" } else { "slide.previous" }, json!({}));
-                }
-            }
+        } else {
+            wheel_navigation(app, ui, carry_id, doc_uid);
         }
     }
     offset.x = offset.x.clamp(0.0, overflow.x);
@@ -218,10 +249,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     painter.rect_filled(slide_rect.translate(vec2(0.0, 1.5)).expand(1.0), CornerRadius::same(2), t.shadow);
     let px = ((slide_rect.width() * ppp).round().max(1.0) as u32, (slide_rect.height() * ppp).round().max(1.0) as u32);
     let now = ui.input(|i| i.time);
-    let gifs = match app.session.active() {
-        Some(d) if d.selection.target == Target::Slides => app.media.gifs(d.uid, &d.doc, d.selection.slide, now, &app.session.gif_paused),
-        _ => vec![],
-    };
+    let gifs = slide_gifs(app, now);
     crate::media::gif_repaint(ui.ctx(), &gifs);
     let times: Vec<_> = gifs.iter().map(|g| (g.id, g.t)).collect();
     let anim = app.anim_preview_draw();

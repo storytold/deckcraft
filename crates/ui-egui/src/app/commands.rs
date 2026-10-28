@@ -1,4 +1,6 @@
-use super::*;
+#[cfg(not(target_arch = "wasm32"))]
+use super::updates_ui;
+use super::{SlideApp, UI_COMMANDS, Value, ViewMode, backstage, dialogs, doc_window, json, media, qat, theme};
 
 fn grid_options_touched(p: &Value) -> bool {
     ["spacing", "snap", "smartGuides", "gridlines", "guides"].iter().any(|k| p.get(*k).is_some())
@@ -266,7 +268,7 @@ impl SlideApp {
                 self.dialog = Some(dialogs::Dialog::new(d));
             }
             "app.links" => {
-                use deckcraft_engine::links::*;
+                use deckcraft_engine::links::{APP_PAGE, APPS, DISCORD, GITHUB, WEBSITE};
                 return Ok(json!({"discord": DISCORD, "website": WEBSITE, "apps": APPS, "appPage": APP_PAGE, "github": GITHUB}));
             }
             _ => return Err(format!("unknown UI command `{id}`")),
