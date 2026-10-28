@@ -33,6 +33,7 @@ skrifa = { workspace = true }
 # kittest's own dev-dependencies do not propagate; tests need both font features explicitly.
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+memory-stats = "1.2.0"
 
 [build-dependencies]
 serde_json = { workspace = true }

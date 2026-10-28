@@ -49,7 +49,7 @@ revision history.
 - **Estimate:** 4–8 h (backend probing outside the process or a safe-mode fallback, a software
   renderer path). Needs a tester with the hardware. **Beta blocker.**
 
-### Soak testing has no memory or timing budgets
+### Soak memory budgets run in CI on Linux only
 - **Evidence:** `crates/engine/src/soak_tests.rs` runs seeded random command sequences over a
   ~100-slide deck (validity, selection, undo/redo exactness, bounded undo, save/reopen in both
   formats every 100 steps); `DECKCRAFT_SOAK_STEPS` runs it long. It found a chart `clamp` panic
@@ -57,9 +57,13 @@ revision history.
   seeded random clicks, drags, keys (plain, Ctrl, Shift), typing and scrolling over the sample
   deck, checking document validity, bounded undo/journal/thumbnail/texture caches, zero caught
   command and render panics (`Session::panics_caught`, `deckcraft_render::panics_caught`) and a
-  mean frame under 250 ms; 4 × 3000-action runs are clean.
-- **Impact:** long-session crash rate is sampled in CI; RSS is not measured directly.
-- **Estimate:** 1–2 h (RSS sampling per platform).
+  mean frame under 250 ms; 4 × 3000-action runs are clean. Both soaks also sample resident memory
+  (the `memory-stats` dev-dependency: `/proc` on Linux, `GetProcessMemoryInfo` on Windows, Mach
+  task info on macOS) after a quarter of the run and fail if it then grows by more than 256 MiB.
+- **Impact:** long-session crash rate is sampled in CI; the RSS budget is only exercised on Linux
+  (`ci.yml`), and the Windows and macOS code paths have never run in CI. The engine soak has no
+  wall-time budget.
+- **Estimate:** 1 h (a Windows and macOS test job; a timing budget).
 
 ### A control-server timing test may fail under load
 - **Evidence:** `silent_refused_peers_do_not_delay_the_next_refusal` in
@@ -372,6 +376,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-26 | trivial | The engine and UI soaks fail if resident memory grows by more than 256 MiB after warm-up (through `memory-stats`: Linux, Windows and macOS; only Linux runs in CI) |
 | 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
 | 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |

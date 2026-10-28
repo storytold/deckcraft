@@ -29,6 +29,7 @@ chrono = { workspace = true }
 
 [dev-dependencies]
 deckcraft-anim = { workspace = true }
+memory-stats = "1.2.0"
 zip = { workspace = true }
 
 # The browser clock for comment timestamps (wasm has no std::time::SystemTime).
