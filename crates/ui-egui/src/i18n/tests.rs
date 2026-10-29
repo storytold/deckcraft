@@ -71,7 +71,11 @@ fn app_language_reports_and_changes_the_setting() {
     let v = app.run("app.language", json!({})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some(AUTO), Some("en")));
     let codes: Vec<&str> = v["available"].as_array().unwrap().iter().filter_map(|l| l["code"].as_str()).collect();
-    assert_eq!(codes, ["en", "de"]);
+    let mut expected = vec!["en", "de"];
+    if CRAFT_I18N.iter().any(|(code, ..)| *code == "tr") {
+        expected.push("tr");
+    }
+    assert_eq!(codes, expected);
     let v = app.run("app.language", json!({"language": "DE"})).unwrap();
     assert_eq!((v["language"].as_str(), v["current"].as_str()), (Some("de"), Some("de")));
     assert_eq!(app.ui.language, "de");
@@ -145,4 +149,20 @@ fn embedded_catalogs_parse_cleanly() {
     for (code, ..) in CRAFT_I18N {
         assert!(LANGUAGES.contains(code), "{code} is embedded but not offered");
     }
+}
+
+/// The Turkish catalogs reached the strings the UI draws, including the shared `common.tsv`
+/// rows and a named-placeholder status line. Skipped without `CRAFT_I18N_DIR`.
+#[test]
+fn the_turkish_catalog_translates_core_labels() {
+    let Some(turkish) = Lang::from_code("tr") else {
+        eprintln!("skipped: the tr catalogs are not embedded");
+        return;
+    };
+    assert_eq!(tr(turkish, "File"), "Dosya");
+    assert_eq!(tr(turkish, "Insert"), "Ekle");
+    assert_eq!(tr(turkish, "Cancel"), "İptal");
+    assert_eq!(tr(turkish, "Design"), "Tasarım");
+    assert_eq!(tr(turkish, "Slide Show"), "Slayt Gösterisi");
+    assert_eq!(fmt(tr(turkish, "Slide {n} of {total}"), &[("n", "1"), ("total", "8")]), "Slayt 1 / 8");
 }
