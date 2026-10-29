@@ -1,6 +1,9 @@
 //! Inverse transforms (spec 7.13), implemented step by step as specified.
 
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ADST_ADST, ADST_DCT, ADST_FLIPADST, COS128_LOOKUP, DCT_ADST, DCT_DCT, DCT_FLIPADST, FLIPADST_ADST, FLIPADST_DCT, FLIPADST_FLIPADST, H_ADST,
+    H_DCT, H_FLIPADST, TRANSFORM_ROW_SHIFT, TX_HEIGHT_LOG2, TX_WIDTH_LOG2, V_ADST, V_DCT, V_FLIPADST,
+};
 
 #[inline(always)]
 fn round2_64(x: i64, n: u32) -> i32 {
@@ -101,7 +104,7 @@ impl<const L: usize> Lane for [i32; L] {
     }
     #[inline(always)]
     fn neg(self) -> Self {
-        self.map(|v| v.wrapping_neg())
+        self.map(i32::wrapping_neg)
     }
     #[inline(always)]
     fn mul_round12(self, m: i32) -> Self {
@@ -162,6 +165,15 @@ pub(crate) fn inverse_dct<T: Lane>(t: &mut [T], n: u32, r: u32) {
     for i in 0..len {
         t[i] = copy[brev(n, i)];
     }
+    inverse_dct_stage1(t, n, r);
+    inverse_dct_stage2(t, n, r);
+    inverse_dct_stage3(t, n, r);
+    inverse_dct_stage4(t, n, r);
+    inverse_dct_stage5(t, n, r);
+    inverse_dct_stage6(t, n, r);
+}
+
+fn inverse_dct_stage1<T: Lane>(t: &mut [T], n: u32, r: u32) {
     if n == 6 {
         for i in 0..16 {
             bf(t, 32 + i, 63 - i, 63 - 4 * brev(4, i) as i32, false);
@@ -187,6 +199,9 @@ pub(crate) fn inverse_dct<T: Lane>(t: &mut [T], n: u32, r: u32) {
             hd(t, 16 + 2 * i, 17 + 2 * i, i & 1 == 1, r);
         }
     }
+}
+
+fn inverse_dct_stage2<T: Lane>(t: &mut [T], n: u32, r: u32) {
     if n == 6 {
         for i in 0..4 {
             for j in 0..2 {
@@ -218,6 +233,9 @@ pub(crate) fn inverse_dct<T: Lane>(t: &mut [T], n: u32, r: u32) {
             }
         }
     }
+}
+
+fn inverse_dct_stage3<T: Lane>(t: &mut [T], n: u32, r: u32) {
     for i in 0..2 {
         bf(t, 2 * i, 2 * i + 1, 32 + 16 * i as i32, i == 0);
     }
@@ -245,6 +263,9 @@ pub(crate) fn inverse_dct<T: Lane>(t: &mut [T], n: u32, r: u32) {
             }
         }
     }
+}
+
+fn inverse_dct_stage4<T: Lane>(t: &mut [T], n: u32, r: u32) {
     for i in 0..2 {
         hd(t, i, 3 - i, false, r);
     }
@@ -270,6 +291,9 @@ pub(crate) fn inverse_dct<T: Lane>(t: &mut [T], n: u32, r: u32) {
             }
         }
     }
+}
+
+fn inverse_dct_stage5<T: Lane>(t: &mut [T], n: u32, r: u32) {
     if n >= 3 {
         for i in 0..4 {
             hd(t, i, 7 - i, false, r);
@@ -297,6 +321,9 @@ pub(crate) fn inverse_dct<T: Lane>(t: &mut [T], n: u32, r: u32) {
             hd(t, i, 15 - i, false, r);
         }
     }
+}
+
+fn inverse_dct_stage6<T: Lane>(t: &mut [T], n: u32, r: u32) {
     if n >= 5 {
         for i in 0..4 {
             bf(t, 27 - i, 20 + i, 32, true);
@@ -528,10 +555,9 @@ pub(crate) fn inverse_transform_2d(dequant: &[i32], residual: &mut [i32], tx_sz:
     let col_clamp = (bit_depth + 6).max(16);
     let rk = row_kind(tx_type);
     let ck = col_kind(tx_type);
-    let mut t = [0i32; 64];
     let rect2 = log2w.abs_diff(log2h) == 1;
+    let p = Tx2d { w, h, log2w, log2h, row_shift, col_shift, row_clamp, col_clamp, rk, ck, rect2 };
     if !lossless && bit_depth <= 10 {
-        let p = Tx2d { w, h, log2w, log2h, row_shift, col_shift, row_clamp, col_clamp, rk, ck, rect2 };
         if w >= 8 && h >= 8 {
             transform_lanes::<8>(dequant, residual, &p);
         } else {
@@ -539,6 +565,13 @@ pub(crate) fn inverse_transform_2d(dequant: &[i32], residual: &mut [i32], tx_sz:
         }
         return;
     }
+    scalar_row_pass(dequant, residual, &p, lossless);
+    scalar_col_pass(residual, &p, lossless);
+}
+
+fn scalar_row_pass(dequant: &[i32], residual: &mut [i32], p: &Tx2d, lossless: bool) {
+    let (w, h, log2w, row_shift, row_clamp, col_clamp, rk, rect2) = (p.w, p.h, p.log2w, p.row_shift, p.row_clamp, p.col_clamp, p.rk, p.rect2);
+    let mut t = [0i32; 64];
     let in_w = w.min(32);
     for i in 0..h {
         // Every 1D transform maps an all-zero row to zeros (each step is linear with
@@ -569,6 +602,11 @@ pub(crate) fn inverse_transform_2d(dequant: &[i32], residual: &mut [i32], tx_sz:
             residual[i * w + j] = round2(t[j], row_shift).clamp(lo, hi);
         }
     }
+}
+
+fn scalar_col_pass(residual: &mut [i32], p: &Tx2d, lossless: bool) {
+    let (w, h, log2h, col_shift, col_clamp, ck) = (p.w, p.h, p.log2h, p.col_shift, p.col_clamp, p.ck);
+    let mut t = [0i32; 64];
     for j in 0..w {
         for i in 0..h {
             t[i] = residual[i * w + j];
@@ -614,11 +652,16 @@ fn transform_1d<T: Lane>(t: &mut [T], kind: Kind1d, n: u32, r: u32) {
 /// The 2D inverse transform with `L` rows (row pass) or columns (column pass) at a time;
 /// bit-identical to the one-at-a-time process for bit depths up to 10.
 fn transform_lanes<const L: usize>(dequant: &[i32], residual: &mut [i32], p: &Tx2d) {
+    let mut t = [[0i32; L]; 64];
+    lanes_row_pass(dequant, residual, p, &mut t);
+    lanes_col_pass(residual, p, &mut t);
+}
+
+fn lanes_row_pass<const L: usize>(dequant: &[i32], residual: &mut [i32], p: &Tx2d, t: &mut [[i32; L]; 64]) {
     let (w, h) = (p.w, p.h);
     let in_w = w.min(32);
     let lo = -(1i32 << (p.col_clamp - 1));
     let hi = (1i32 << (p.col_clamp - 1)) - 1;
-    let mut t = [[0i32; L]; 64];
     let mut i0 = 0;
     while i0 < h {
         // Rows without coefficients (and rows 32..63) transform to zeros.
@@ -646,6 +689,10 @@ fn transform_lanes<const L: usize>(dequant: &[i32], residual: &mut [i32], p: &Tx
         }
         i0 += L;
     }
+}
+
+fn lanes_col_pass<const L: usize>(residual: &mut [i32], p: &Tx2d, t: &mut [[i32; L]; 64]) {
+    let (w, h) = (p.w, p.h);
     let mut j0 = 0;
     while j0 < w {
         for i in 0..h {

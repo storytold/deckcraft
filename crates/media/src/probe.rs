@@ -48,6 +48,19 @@ fn ms(secs: f64) -> u64 {
 
 /// Probe `bytes`.
 pub fn probe(bytes: &Bytes) -> Result<MediaInfo> {
+    let mut info = probe_headers(bytes)?;
+    if info.duration_ms == 0 && info.audio.as_ref().is_some_and(|a| a.decodable) && info.video.is_none() {
+        // No length in the header (raw MP3 / ADTS without an index): decode to measure.
+        if let Ok(pcm) = crate::audio::decode(bytes) {
+            info.duration_ms = ms(pcm.duration());
+        }
+    }
+    Ok(info)
+}
+
+/// [`probe`] from the headers alone, without decoding: a raw MP3 or ADTS stream without an
+/// index reports a `duration_ms` of 0.
+pub fn probe_headers(bytes: &Bytes) -> Result<MediaInfo> {
     let c = Container::sniff(bytes);
     let mut info = match c {
         Container::Mp4 => probe_mp4(bytes)?,
@@ -71,12 +84,6 @@ pub fn probe(bytes: &Bytes) -> Result<MediaInfo> {
             && rate > 0
         {
             info.duration_ms = ms(n as f64 / rate as f64);
-        }
-    }
-    if info.duration_ms == 0 && info.audio.as_ref().is_some_and(|a| a.decodable) && info.video.is_none() {
-        // No length in the header (raw MP3 / ADTS without an index): decode to measure.
-        if let Ok(pcm) = crate::audio::decode(bytes) {
-            info.duration_ms = ms(pcm.duration());
         }
     }
     Ok(info)

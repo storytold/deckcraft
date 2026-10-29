@@ -828,7 +828,7 @@ fn media(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, m: &deckcraft_
     }
     w.close("p:nvPr");
     w.close("p:nvPicPr");
-    let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), ..Default::default() };
+    let poster = deckcraft_model::style::PictureFill { media: m.poster.unwrap_or_default(), crop: m.crop, ..Default::default() };
     dml::blip_fill(w, x, o, "p:blipFill", &poster);
     let mut s3 = s.clone();
     s3.fill = None;
@@ -852,21 +852,27 @@ fn opaque(
     // parts re-added under this slide's relationship ids.
     if let Ok(doc) = crate::xml::parse(xml.as_bytes())
         && matches!(doc.root.local(), "graphicFrame" | "sp" | "grpSp" | "cxnSp")
-        && let Some(ids) = crate::read::rel_refs(&doc.root)
+    {
+        let mut part_map: std::collections::HashMap<&str, (&str, deckcraft_model::MediaId)> = std::collections::HashMap::new();
+        for (id, kind, m) in parts {
+            part_map.entry(id.as_str()).or_insert((kind.as_str(), *m));
+        }
+        if let Some(ids) = crate::read::rel_refs(&doc.root)
             .iter()
             .map(|r| {
-                let (_, kind, m) = parts.iter().find(|(id, ..)| id == r)?;
+                let (kind, m) = part_map.get(r.as_str())?;
                 Some((r.clone(), x.media_rel(o, *m, kind)?))
             })
             .collect::<Option<std::collections::HashMap<_, _>>>()
-    {
-        let mut root = doc.root;
-        set_rel_ids(&mut root, &ids, 0);
-        ole_fallback(&mut root, x, o, preview);
-        let id = cx.id_for(s);
-        set_cnvpr_id(&mut root, id);
-        w.raw(&root.to_xml());
-        return;
+        {
+            let mut root = doc.root;
+            set_rel_ids(&mut root, &ids, 0);
+            ole_fallback(&mut root, x, o, preview);
+            let id = cx.id_for(s);
+            set_cnvpr_id(&mut root, id);
+            w.raw(&root.to_xml());
+            return;
+        }
     }
     log::warn!("pptx: object '{label}' written as its preview picture");
     let id = cx.id_for(s);
@@ -903,8 +909,12 @@ fn shape_with_id(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, i
         w.empty0("p:nvPr");
         w.close("p:nvPicPr");
         dml::blip_fill(w, x, o, "p:blipFill", fill);
+        // As for any picture, a colour or pattern fill shows behind the image (an object's preview
+        // keeps its fallback picture's fill).
         let mut s2 = s.clone();
-        s2.fill = None;
+        if matches!(s2.fill, Some(Fill::Picture(_) | Fill::Background | Fill::Group)) {
+            s2.fill = None;
+        }
         sp_pr(w, x, o, &s2, true);
         w.close("p:pic");
     } else {

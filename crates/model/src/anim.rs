@@ -248,6 +248,46 @@ pub enum TextBuild {
     ByLetter,
 }
 
+/// Most paragraphs a by-paragraph build animates separately; later ones follow the last of them.
+pub const MAX_BUILD_PARAGRAPHS: usize = 1_000;
+
+/// What a paragraph does in a by-paragraph build.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuildRole {
+    /// Animated on its own: a filled paragraph at the shallowest filled level.
+    Top,
+    /// Follows the top paragraph with this index (deeper, empty or blank paragraphs after it).
+    Member(usize),
+    /// Before the first top paragraph: not animated.
+    Unowned,
+}
+
+/// Does the paragraph show any text? A by-paragraph build doesn't animate blank ones on their own.
+pub fn build_filled(p: &crate::text::Paragraph) -> bool {
+    p.runs.iter().any(|r| !r.text.trim().is_empty())
+}
+
+/// The role of every paragraph of `text` in a by-paragraph build, by paragraph index: what the
+/// timeline plays, and what the PPTX reader and writer map to one file effect per paragraph.
+pub fn paragraph_build_roles(text: &crate::text::TextBody) -> Vec<BuildRole> {
+    let top = text.paragraphs.iter().filter(|p| build_filled(p)).map(|p| p.level).min().unwrap_or(0);
+    let mut tops = 0;
+    let mut owner: Option<usize> = None;
+    text.paragraphs
+        .iter()
+        .enumerate()
+        .map(|(i, p)| {
+            if p.level <= top && build_filled(p) && tops < MAX_BUILD_PARAGRAPHS {
+                tops += 1;
+                owner = Some(i);
+                BuildRole::Top
+            } else {
+                owner.map_or(BuildRole::Unowned, BuildRole::Member)
+            }
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Animation {
@@ -604,5 +644,21 @@ mod option_label_tests {
                 assert!(!transition_option_label(id, o).is_empty(), "{id}/{o}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod build_role_tests {
+    use super::*;
+    use crate::text::TextBody;
+
+    #[test]
+    fn blank_and_deeper_paragraphs_follow_the_top_one_before_them() {
+        let mut t = TextBody::from_text("Before\nLead\n \nSub\nNext");
+        for (p, lvl) in t.paragraphs.iter_mut().zip([1, 0, 0, 1, 0]) {
+            p.level = lvl;
+        }
+        use BuildRole::*;
+        assert_eq!(paragraph_build_roles(&t), vec![Unowned, Top, Member(1), Member(1), Top]);
     }
 }

@@ -5,7 +5,9 @@ use std::sync::Arc;
 use deckcraft_model::Comment;
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, f64_or, has_doc, has_slide, has_text, id_param, ok, str_param, usize_param,
+};
 use crate::{Result, Session, Target, UiRequest};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -59,6 +61,15 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "review.compare", "Compare", ["Review", "Compare"], None, "{path} | {name, data: base64} — compare with a revised copy → {name, changes}", has_doc, compare),
         cmd!(query "review.revisions", "Revisions", [], None, "{} → {name, changes: [{kind: inserted|deleted|changed, slide, revised, details}]}", has_doc, revisions),
         cmd!("review.accept", "Accept Revision", ["Review", "Compare"], None, "{index} | {all: true}", comparing, accept),
+        cmd!(
+            noundo "review.reject",
+            "Reject Revision",
+            ["Review", "Compare"],
+            None,
+            "{index} | {all: true} → {rejected} (drop revisions without applying them: the open deck stays as it is; not an undo step)",
+            comparing,
+            reject
+        ),
         cmd!(noundo "review.endCompare", "End Review", ["Review", "Compare"], None, "{}", comparing, end_compare),
         cmd!(noundo "show.fromStart", "Play from Start", ["Slide Show", "Start Slide Show"], Some("Cmd+Shift+Enter"), "{}", has_slide, |s, _| start(s, 0)),
         cmd!(noundo "show.fromCurrent", "Play from Current Slide", ["Slide Show", "Start Slide Show"], Some("Cmd+Enter"), "{}", has_slide, |s, _| {
@@ -421,7 +432,7 @@ fn spelling_change(s: &mut Session, p: &Value) -> Result<Value> {
     // One exact occurrence (a squiggled word): paragraph `para`, from character `start`.
     if let (Some(id), Some(para), Some(start)) = (shape, usize_param(p, "para"), usize_param(p, "start")) {
         let id = deckcraft_model::ShapeId(u32::try_from(id).map_err(|_| bad("review.spellingChange", "bad `shape`"))?);
-        let end = start + word.chars().count();
+        let end = start.checked_add(word.chars().count()).ok_or_else(|| bad("review.spellingChange", "bad `start`"))?;
         let cell = usize_param(p, "row").zip(usize_param(p, "col"));
         let slide = {
             let st = s.doc()?;
@@ -655,7 +666,7 @@ fn revised_bytes(p: &Value) -> Result<(String, Vec<u8>)> {
 fn revisions_json(st: &crate::DocState) -> Result<Value> {
     let c = st.compare.as_ref().ok_or_else(|| bad("review.revisions", "not comparing"))?;
     let name = std::path::Path::new(&c.name).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| c.name.clone());
-    Ok(json!({"name": name, "changes": crate::compare::diff(&st.doc, &c.revised, c.by_position), "byPosition": c.by_position}))
+    Ok(json!({"name": name, "changes": crate::compare::pending(&st.doc, c), "byPosition": c.by_position}))
 }
 
 fn compare(s: &mut Session, p: &Value) -> Result<Value> {
@@ -663,7 +674,7 @@ fn compare(s: &mut Session, p: &Value) -> Result<Value> {
     let revised = super::file::open_presentation(&name, &bytes)?;
     let st = s.doc_mut()?;
     let by_position = crate::compare::unrelated(&st.doc, &revised);
-    st.compare = Some(crate::compare::Compare { name, revised: Arc::new(revised), by_position });
+    st.compare = Some(crate::compare::Compare { name, revised: Arc::new(revised), by_position, rejected: Default::default() });
     s.ui_requests.push(UiRequest::Pane { id: "revisions".into() });
     revisions_json(s.doc()?)
 }
@@ -673,7 +684,8 @@ fn revisions(s: &mut Session, _: &Value) -> Result<Value> {
 }
 
 fn accept(s: &mut Session, p: &Value) -> Result<Value> {
-    let (rev, by_pos) = s.doc()?.compare.as_ref().map(|c| (c.revised.clone(), c.by_position)).ok_or_else(|| bad("review.accept", "not comparing"))?;
+    let cmp = s.doc()?.compare.clone().ok_or_else(|| bad("review.accept", "not comparing"))?;
+    let rev = cmp.revised.clone();
     let all = bool_param(p, "all").unwrap_or(false);
     let index = usize_param(p, "index");
     if !all && index.is_none() {
@@ -684,7 +696,7 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
         // Each accept shifts indices, so the list is recomputed; bounded by the slide counts.
         let limit = doc.slides.len().saturating_add(rev.slides.len()).saturating_add(1);
         for _ in 0..limit {
-            let changes = crate::compare::diff(doc, &rev, by_pos);
+            let changes = crate::compare::pending(doc, &cmp);
             let c = if all {
                 changes.into_iter().find(|c| !(c.kind == crate::compare::ChangeKind::Deleted && doc.slides.len() <= 1))
             } else {
@@ -705,6 +717,24 @@ fn accept(s: &mut Session, p: &Value) -> Result<Value> {
         }
         Ok(json!({"accepted": accepted}))
     })
+}
+
+fn reject(s: &mut Session, p: &Value) -> Result<Value> {
+    let all = bool_param(p, "all").unwrap_or(false);
+    let index = usize_param(p, "index");
+    if !all && index.is_none() {
+        return Err(bad("review.reject", "give `index` or `all`"));
+    }
+    let st = s.doc_mut()?;
+    let doc = st.doc.clone();
+    let c = st.compare.as_mut().ok_or_else(|| bad("review.reject", "not comparing"))?;
+    let pending = crate::compare::pending(&doc, c);
+    let picked: Vec<_> = if all { pending } else { pending.into_iter().nth(index.unwrap_or(0)).into_iter().collect() };
+    if picked.is_empty() {
+        return Err(bad("review.reject", "no such revision"));
+    }
+    c.rejected.extend(picked.iter().map(|ch| crate::compare::ChangeKey::of(&doc, ch)));
+    Ok(json!({"rejected": picked.len()}))
 }
 
 fn end_compare(s: &mut Session, _: &Value) -> Result<Value> {
@@ -813,5 +843,20 @@ mod tests {
         }
         s.execute("comment.delete", &json!({})).unwrap();
         assert!(s.active().unwrap().doc.slides[0].comments.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod spelling_change_range_tests {
+    use crate::{EngineError, Session};
+    use serde_json::json;
+
+    #[test]
+    fn spelling_change_huge_start_is_bad_params() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.textBox", &json!({"text": "Hello"})).unwrap();
+        let id = r["id"].clone();
+        let err = s.execute("review.spellingChange", &json!({"shape": id, "para": 0, "start": u64::MAX, "word": "Hello", "to": "x"})).unwrap_err();
+        assert!(matches!(err, EngineError::BadParams { .. }), "{err:?}");
     }
 }

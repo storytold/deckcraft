@@ -4,28 +4,49 @@ use deckcraft_geom::{Affine, Point, Rect};
 use deckcraft_model::{Shape, ShapeKind, Table};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{
+    CommandSpec, bad, bool_or, bool_param, cmd, color_param, edit_shapes, f64_param, has_selection, has_slide, id_param, ok, opt_usize_param,
+    str_param, table_drawn_heights, xfrm_of,
+};
 use crate::{DocState, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
         cmd!("table.insertRowAbove", "Insert Above", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "rowAbove"
+            s,
+            p,
+            "rowAbove",
+            "table.insertRowAbove"
         )),
         cmd!("table.insertRowBelow", "Insert Below", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "rowBelow"
+            s,
+            p,
+            "rowBelow",
+            "table.insertRowBelow"
         )),
         cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "colLeft"
+            s,
+            p,
+            "colLeft",
+            "table.insertColumnLeft"
         )),
         cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "colRight"
+            s,
+            p,
+            "colRight",
+            "table.insertColumnRight"
         )),
         cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "delRow"
+            s,
+            p,
+            "delRow",
+            "table.deleteRow"
         )),
         cmd!("table.deleteColumn", "Delete Columns", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s, p, "delCol"
+            s,
+            p,
+            "delCol",
+            "table.deleteColumn"
         )),
         cmd!("table.merge", "Merge Cells", ["Table Layout", "Merge"], None, "{from: [r, c], to: [r, c], id?}", has_selection, merge),
         cmd!(
@@ -225,16 +246,26 @@ impl TableFrame {
     }
 }
 
-fn cell_param(p: &Value, key: &str) -> Option<(usize, usize)> {
-    let a = p.get(key)?.as_array()?;
-    Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize))
+/// A `[r, c]` cell param: `Ok(None)` when absent (callers may fall back to the selection), `Err` when
+/// present but not a valid cell, so a bad cell never acts on the selection.
+fn cell_param(p: &Value, key: &str, cmd: &str) -> Result<Option<(usize, usize)>> {
+    let v = match p.get(key) {
+        None | Some(Value::Null) => return Ok(None),
+        Some(v) => v,
+    };
+    let idx = |i: usize| v.as_array().and_then(|a| a.get(i)).and_then(Value::as_u64).and_then(|x| usize::try_from(x).ok());
+    match (idx(0), idx(1)) {
+        (Some(r), Some(c)) => Ok(Some((r, c))),
+        _ => Err(bad(cmd, format!("`{key}` is not a valid cell: {v}"))),
+    }
 }
 
 /// The table's row/col to act on: params, the edited cell, or the selected cells.
-fn at(s: &Session, p: &Value) -> (usize, usize) {
+/// A present but invalid `row`/`col` is an error; only an absent one falls back.
+fn at(s: &Session, p: &Value, cmd: &str) -> Result<(usize, usize)> {
     let st = s.active();
     let cell = st.and_then(|d| d.selection.text.as_ref().and_then(|t| t.cell)).or_else(|| st.and_then(|d| d.selection.cells.map(|c| c.1)));
-    (usize_param(p, "row").or(cell.map(|c| c.0)).unwrap_or(0), usize_param(p, "col").or(cell.map(|c| c.1)).unwrap_or(0))
+    Ok((opt_usize_param(p, "row", cmd)?.or(cell.map(|c| c.0)).unwrap_or(0), opt_usize_param(p, "col", cmd)?.or(cell.map(|c| c.1)).unwrap_or(0)))
 }
 
 fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> Result<()>) -> Result<Value> {
@@ -282,10 +313,10 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
     Ok(r)
 }
 
-fn rows_cols(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
-    let (r, c) = at(s, p);
+fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result<Value> {
+    let (r, c) = at(s, p, name)?;
     let op = op.to_string();
-    with_table(s, p, "table", move |t| {
+    with_table(s, p, name, move |t| {
         match op.as_str() {
             "rowAbove" => t.insert_row(r),
             "rowBelow" => t.insert_row(r.saturating_add(1)),
@@ -293,12 +324,12 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
             "colRight" => t.insert_col(c.saturating_add(1)),
             "delRow" => {
                 if !t.delete_row(r) {
-                    return Err(bad("table.deleteRow", "can't delete the last row"));
+                    return Err(bad(name, "can't delete the last row"));
                 }
             }
             _ => {
                 if !t.delete_col(c) {
-                    return Err(bad("table.deleteColumn", "can't delete the last column"));
+                    return Err(bad(name, "can't delete the last column"));
                 }
             }
         }
@@ -308,8 +339,8 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str) -> Result<Value> {
 
 fn merge(s: &mut Session, p: &Value) -> Result<Value> {
     let sel = s.doc()?.selection.cells;
-    let from = cell_param(p, "from").or(sel.map(|c| c.1)).ok_or_else(|| bad("table.merge", "missing `from`"))?;
-    let to = cell_param(p, "to").or(sel.map(|c| c.2)).ok_or_else(|| bad("table.merge", "missing `to`"))?;
+    let from = cell_param(p, "from", "table.merge")?.or(sel.map(|c| c.1)).ok_or_else(|| bad("table.merge", "missing `from`"))?;
+    let to = cell_param(p, "to", "table.merge")?.or(sel.map(|c| c.2)).ok_or_else(|| bad("table.merge", "missing `to`"))?;
     with_table(
         s,
         p,
@@ -319,7 +350,10 @@ fn merge(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn split(s: &mut Session, p: &Value) -> Result<Value> {
-    let cell = cell_param(p, "cell").unwrap_or_else(|| at(s, p));
+    let cell = match cell_param(p, "cell", "table.split")? {
+        Some(c) => c,
+        None => at(s, p, "table.split")?,
+    };
     with_table(s, p, "table.split", move |t| if t.split(cell.0, cell.1) { Ok(()) } else { Err(bad("table.split", "that cell isn't merged")) })
 }
 
@@ -363,10 +397,12 @@ fn target_cells(s: &Session, p: &Value) -> Result<impl Fn(&Table) -> Vec<(usize,
         .and_then(Value::as_array)
         .map(|a| a.iter().take(100_000).filter_map(|c| Some((c.get(0)?.as_u64()? as usize, c.get(1)?.as_u64()? as usize))).collect());
     let st = s.doc()?;
-    let sel = st.selection.cells.map(|(_, a, b)| (a, b)).or_else(|| st.selection.text.as_ref().and_then(|t| t.cell).map(|c| (c, c)));
+    // A selected range grows over the merged cells it touches; with only a caret, the caret's cell is used.
+    let sel = st.selection.cells.map(|(_, a, b)| (a, b, true)).or_else(|| st.selection.text.as_ref().and_then(|t| t.cell).map(|c| (c, c, false)));
     Ok(move |t: &Table| match (&cells, sel) {
         (Some(c), _) => c.clone(),
-        (None, Some((a, b))) => {
+        (None, Some((a, b, range))) => {
+            let (a, b) = if range { cell_block(t, a, b) } else { (a, b) };
             // The selection can name cells outside the table; only walk the ones that exist.
             let (r1, c1) = (a.0.max(b.0).min(t.n_rows().saturating_sub(1)), a.1.max(b.1).min(t.n_cols().saturating_sub(1)));
             (a.0.min(b.0)..=r1).flat_map(|r| (a.1.min(b.1)..=c1).map(move |c| (r, c))).collect()
@@ -531,7 +567,7 @@ fn distribute(s: &mut Session, p: &Value, rows: bool) -> Result<Value> {
 }
 
 fn column_width(s: &mut Session, p: &Value) -> Result<Value> {
-    let (_, c) = at(s, p);
+    let (_, c) = at(s, p, "table.columnWidth")?;
     let w = f64_param(p, "width").ok_or_else(|| bad("table.columnWidth", "missing `width`"))?.clamp(4.0, 4000.0);
     let keep_total = bool_or(p, "keepTotal", false);
     with_table(s, p, "table.columnWidth", move |t| {
@@ -560,7 +596,7 @@ fn column_width(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn row_height(s: &mut Session, p: &Value) -> Result<Value> {
-    let (r, _) = at(s, p);
+    let (r, _) = at(s, p, "table.rowHeight")?;
     let h = f64_param(p, "height").ok_or_else(|| bad("table.rowHeight", "missing `height`"))?.clamp(4.0, 4000.0);
     with_table(s, p, "table.rowHeight", move |t| {
         if let Some(x) = t.rows.get_mut(r) {
@@ -575,14 +611,118 @@ fn select_cells(s: &mut Session, p: &Value) -> Result<Value> {
         Some(i) => i,
         None => s.doc()?.selection.shapes.first().copied().ok_or_else(|| bad("table.selectCells", "select a table"))?,
     };
-    let from = cell_param(p, "from").unwrap_or((0, 0));
-    let to = cell_param(p, "to").unwrap_or(from);
+    let from = cell_param(p, "from", "table.selectCells")?.unwrap_or((0, 0));
+    let to = cell_param(p, "to", "table.selectCells")?.unwrap_or(from);
     s.select(|_, sel| {
         sel.cells = Some((id, from, to));
         sel.shapes = vec![id];
         sel.text = None;
     })?;
     ok()
+}
+
+/// The cell range from `a` to `b` in `t`, grown until every merged cell it touches lies inside
+/// it, as (the corner on `a`'s side, the corner on `b`'s side). Cells past the table's edge are
+/// clamped to it.
+pub fn cell_block(t: &Table, a: (usize, usize), b: (usize, usize)) -> ((usize, usize), (usize, usize)) {
+    let (nr, nc) = (t.n_rows().max(1), t.n_cols().max(1));
+    let (a, b) = ((a.0.min(nr - 1), a.1.min(nc - 1)), (b.0.min(nr - 1), b.1.min(nc - 1)));
+    let (mut r0, mut r1, mut c0, mut c1) = (a.0.min(b.0), a.0.max(b.0), a.1.min(b.1), a.1.max(b.1));
+    // Each pass takes in the merged cells that overlap the block; stop when one adds nothing.
+    for _ in 0..nr + nc {
+        let mut grown = false;
+        for (r, row) in t.rows.iter().enumerate() {
+            for (c, cell) in row.cells.iter().enumerate() {
+                if cell.is_covered() {
+                    continue;
+                }
+                // Spans come from the file; the additions saturate so that they cannot overflow on 32-bit targets.
+                let end = |at: usize, span: u32, n: usize| at.saturating_add((span.max(1) - 1) as usize).min(n - 1);
+                let (er, ec) = (end(r, cell.row_span, nr), end(c, cell.grid_span, nc));
+                let overlaps = r <= r1 && er >= r0 && c <= c1 && ec >= c0;
+                if overlaps && (r < r0 || er > r1 || c < c0 || ec > c1) {
+                    (r0, r1, c0, c1) = (r0.min(r), r1.max(er), c0.min(c), c1.max(ec));
+                    grown = true;
+                }
+            }
+        }
+        if !grown {
+            break;
+        }
+    }
+    let pick = |lo: usize, hi: usize, first: bool| if first { lo } else { hi };
+    let from = (pick(r0, r1, a.0 <= b.0), pick(c0, c1, a.1 <= b.1));
+    let to = (pick(r0, r1, a.0 > b.0), pick(c0, c1, a.1 > b.1));
+    (from, to)
+}
+
+/// The selected cell range of table `id` (`t`), grown over merged cells, as its top-left and
+/// bottom-right cells. `None` when no range of that table is selected.
+pub fn selected_range(
+    cells: Option<(deckcraft_model::ShapeId, (usize, usize), (usize, usize))>,
+    id: deckcraft_model::ShapeId,
+    t: &Table,
+) -> Option<((usize, usize), (usize, usize))> {
+    let (_, a, b) = cells.filter(|c| c.0 == id)?;
+    let (x, y) = cell_block(t, a, b);
+    Some(((x.0.min(y.0), x.1.min(y.1)), (x.0.max(y.0), x.1.max(y.1))))
+}
+
+/// Whether cell (`r`, `c`) lies in `range` (from [`selected_range`]); without a range every cell does.
+pub fn in_range(range: Option<((usize, usize), (usize, usize))>, r: usize, c: usize) -> bool {
+    range.is_none_or(|((r0, c0), (r1, c1))| (r0..=r1).contains(&r) && (c0..=c1).contains(&c))
+}
+
+/// Shift+arrow with a cell range selected: the cell the range was extended to moves by (`dr`,
+/// `dc`), on past a merged cell until the range changes. The cell it started from stays. Returns
+/// false when no cell range of the selected table is selected.
+pub(crate) fn extend_selected_cells(s: &mut Session, dr: isize, dc: isize) -> Result<bool> {
+    let st = s.doc()?;
+    let Some((id, from, to)) = st.selection.cells.filter(|c| st.selection.shapes == [c.0]) else { return Ok(false) };
+    let Some(ShapeKind::Table(t)) = st.shape(id).map(|sh| &sh.kind) else { return Ok(false) };
+    let (nr, nc) = (t.n_rows(), t.n_cols());
+    let old = cell_block(t, from, to);
+    let mut end = to;
+    while cell_block(t, from, end) == old {
+        let r = end.0.checked_add_signed(dr).filter(|r| *r < nr);
+        let c = end.1.checked_add_signed(dc).filter(|c| *c < nc);
+        let (Some(r), Some(c)) = (r, c) else { break };
+        end = (r, c);
+    }
+    s.select(|_, sel| sel.cells = Some((id, from, end)))?;
+    Ok(true)
+}
+
+/// The text of the selected range of cells, for Copy and Cut: a tab between the cells of a row
+/// and a line per row (a merged cell once, where it starts). `None` without a cell range of the
+/// selected table.
+pub(crate) fn selected_cells_text(st: &DocState) -> Option<String> {
+    let id = st.selection.cells.filter(|c| st.selection.shapes == [c.0])?.0;
+    let ShapeKind::Table(t) = &st.shape(id)?.kind else { return None };
+    let ((r0, c0), (r1, c1)) = selected_range(st.selection.cells, id, t)?;
+    let rows = (r0..=r1).map(|r| {
+        let cells = (c0..=c1).filter_map(|c| t.cell(r, c).filter(|x| !x.is_covered()).map(|x| x.text.text()));
+        cells.collect::<Vec<_>>().join("\t")
+    });
+    Some(rows.collect::<Vec<_>>().join("\n"))
+}
+
+/// Delete with a cell range selected: the text in those cells goes and the cells stay, each
+/// keeping its first paragraph's formatting.
+pub(crate) fn clear_selected_cells(s: &mut Session) -> Result<Value> {
+    let Some((id, ..)) = s.doc()?.selection.cells else { return ok() };
+    let cells = s.doc()?.selection.cells;
+    with_table(s, &json!({"id": id}), "edit.delete", move |t| {
+        let range = selected_range(cells, id, t);
+        for (r, row) in t.rows.iter_mut().enumerate() {
+            for (c, cell) in row.cells.iter_mut().enumerate() {
+                if in_range(range, r, c) {
+                    deckcraft_model::edit::delete(&mut cell.text, (0, 0), (usize::MAX, usize::MAX));
+                }
+            }
+        }
+        Ok(())
+    })
 }
 
 fn point_param(p: &Value, key: &str) -> Option<(f64, f64)> {

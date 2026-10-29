@@ -6,7 +6,7 @@ use deckcraft_model::text::TextBody;
 use deckcraft_model::{LayoutId, LayoutType, Presentation, Section, SlideId, defaults};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, has_doc, has_slide, ok, opt_usize_param, str_param, usize_param};
 use crate::{Result, Session, Target};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -28,6 +28,7 @@ pub fn specs() -> Vec<CommandSpec> {
         cmd!(noundo "slide.previous", "Previous Slide", [], Some("PageUp"), "{}", has_slide, prev),
         cmd!(noundo "slide.first", "First Slide", [], Some("Home"), "{}", has_slide, first),
         cmd!(noundo "slide.last", "Last Slide", [], Some("End"), "{}", has_slide, last),
+        cmd!(noundo "slide.selectRange", "Select Slide Range", [], None, "{to: index, from?: index (default the current slide), add?: bool (keep the slides already selected)}", has_slide, select_range),
         cmd!(noundo "slide.selectSlides", "Select Slides", [], None, "{ids?: [slide id], indices?: [index], add?: bool}", has_slide, select_slides),
         cmd!("slide.hide", "Hide Slide", ["Slide Show", "Set Up"], None, "{index?, hidden?: bool}", has_slide, hide),
         cmd!("slide.layout", "Layout", ["Home", "Slides"], None, "{layout: name or kind, index?}", has_slide, set_layout),
@@ -179,7 +180,7 @@ fn body_placeholder(shapes: &mut [deckcraft_model::Shape]) -> Option<&mut deckcr
 
 fn index_of(s: &Session, p: &Value) -> Result<usize> {
     let st = s.doc()?;
-    let i = usize_param(p, "index").unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "index", "slide")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
         return Err(bad("slide", format!("no slide {i}")));
     }
@@ -187,7 +188,7 @@ fn index_of(s: &Session, p: &Value) -> Result<usize> {
 }
 
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
-    let indices: Vec<usize> = match usize_param(p, "index") {
+    let indices: Vec<usize> = match opt_usize_param(p, "index", "slide.duplicate")? {
         Some(i) => vec![i],
         None => {
             let st = s.doc()?;
@@ -240,7 +241,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         let st = s.doc()?;
         if let Some(a) = p.get("ids").and_then(Value::as_array) {
             a.iter().filter_map(Value::as_u64).filter_map(|v| u32::try_from(v).ok()).map(SlideId).collect()
-        } else if let Some(i) = usize_param(p, "index") {
+        } else if let Some(i) = opt_usize_param(p, "index", "slide.delete")? {
             st.doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default()
         } else if !st.selection.slides.is_empty() {
             st.selection.slides.clone()
@@ -266,7 +267,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
-    let from = usize_param(p, "from").unwrap_or(s.doc()?.selection.slide);
+    let from = opt_usize_param(p, "from", "slide.move")?.unwrap_or(s.doc()?.selection.slide);
     let to = usize_param(p, "to").ok_or_else(|| bad("slide.move", "missing `to`"))?;
     s.edit(|doc, sel| {
         if from >= doc.slides.len() {
@@ -303,6 +304,7 @@ fn go_to(s: &mut Session, i: usize) -> Result<Value> {
         sel.shapes.clear();
         sel.text = None;
         sel.cells = None;
+        sel.range_anchor = None;
         sel.target = Target::Slides;
     })?;
     Ok(json!({"index": s.doc()?.selection.slide}))
@@ -368,12 +370,53 @@ fn select_slides(s: &mut Session, p: &Value) -> Result<Value> {
         }
         sel.shapes.clear();
         sel.text = None;
+        sel.range_anchor = None;
+    })?;
+    Ok(json!({"selected": s.doc()?.selection.slides}))
+}
+
+/// Shift-click in the slide list: select every slide from `from` to `to`. Without `from` the range
+/// starts at the anchor of the previous Shift-click (so a second Shift-click extends from the same
+/// slide, as in PowerPoint), else at the current slide.
+/// With `add` the slides already selected stay selected (Ctrl+Shift-click).
+fn select_range(s: &mut Session, p: &Value) -> Result<Value> {
+    let to = usize_param(p, "to").ok_or_else(|| bad("slide.selectRange", "missing `to`"))?;
+    let given = opt_usize_param(p, "from", "slide.selectRange")?;
+    let add = bool_or(p, "add", false);
+    let (from, count) = {
+        let st = s.doc()?;
+        let sel = &st.selection;
+        let current = st.doc.slides.get(sel.slide).map(|x| x.id);
+        let anchor = sel.range_anchor.filter(|(_, end)| Some(*end) == current).and_then(|(a, _)| st.doc.slide_index(a));
+        (given.or(anchor).unwrap_or(sel.slide), st.doc.slides.len())
+    };
+    if to >= count || from >= count {
+        return Err(bad("slide.selectRange", "no such slide"));
+    }
+    let (a, b) = (from.min(to), from.max(to));
+    s.select(|doc, sel| {
+        let range: Vec<SlideId> = doc.slides.iter().skip(a).take(b - a + 1).map(|x| x.id).collect();
+        if add {
+            for id in range {
+                if !sel.slides.contains(&id) {
+                    sel.slides.push(id);
+                }
+            }
+        } else {
+            sel.slides = range;
+        }
+        sel.slide = to;
+        sel.range_anchor = doc.slides.get(from).zip(doc.slides.get(to)).map(|(a, b)| (a.id, b.id));
+        sel.shapes.clear();
+        sel.text = None;
+        sel.cells = None;
+        sel.target = Target::Slides;
     })?;
     Ok(json!({"selected": s.doc()?.selection.slides}))
 }
 
 fn hide(s: &mut Session, p: &Value) -> Result<Value> {
-    let targets: Vec<usize> = match usize_param(p, "index") {
+    let targets: Vec<usize> = match opt_usize_param(p, "index", "slide.hide")? {
         Some(i) => vec![i],
         None => {
             let st = s.doc()?;
@@ -442,7 +485,7 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
 
 fn set_layout(s: &mut Session, p: &Value) -> Result<Value> {
     let key = p.get("layout").cloned().ok_or_else(|| bad("slide.layout", "missing `layout`"))?;
-    let targets: Vec<usize> = match usize_param(p, "index") {
+    let targets: Vec<usize> = match opt_usize_param(p, "index", "slide.layout")? {
         Some(i) => vec![i],
         None => {
             let st = s.doc()?;
@@ -531,7 +574,7 @@ fn rename(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
-    let at = usize_param(p, "at").unwrap_or(s.doc()?.selection.slide);
+    let at = opt_usize_param(p, "at", "section.add")?.unwrap_or(s.doc()?.selection.slide);
     let name = str_param(p, "name").unwrap_or("Untitled Section").to_string();
     s.edit(|doc, _| {
         let at = at.min(doc.slides.len().saturating_sub(1));
@@ -539,9 +582,9 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
         if doc.sections.is_empty() {
             // The slides before `at` go into a "Default Section".
             if at > 0 {
-                doc.sections.push(Section { name: "Default Section".into(), slides: ids.get(..at).map(|x| x.to_vec()).unwrap_or_default() });
+                doc.sections.push(Section { name: "Default Section".into(), slides: ids.get(..at).map(<[_]>::to_vec).unwrap_or_default() });
             }
-            doc.sections.push(Section { name, slides: ids.get(at..).map(|x| x.to_vec()).unwrap_or_default() });
+            doc.sections.push(Section { name, slides: ids.get(at..).map(<[_]>::to_vec).unwrap_or_default() });
         } else {
             let Some(start) = ids.get(at).copied() else { return Err(bad("section.add", "no slide")) };
             let si = doc.section_of(start).unwrap_or(0);
@@ -649,6 +692,25 @@ mod tests {
     use crate::Session;
 
     #[test]
+    fn invalid_index_params_are_rejected_not_defaulted_to_selection() {
+        let mut s = Session::with_new();
+        while s.doc().expect("doc").doc.slides.len() < 3 {
+            s.execute("slide.new", &json!({})).expect("new slide");
+        }
+        for bad in [json!(-1), json!(1.5)] {
+            for (cmd, p) in [
+                ("slide.delete", json!({"index": bad})),
+                ("slide.duplicate", json!({"index": bad})),
+                ("slide.move", json!({"from": bad, "to": 0})),
+                ("section.add", json!({"at": bad})),
+            ] {
+                assert!(s.execute(cmd, &p).is_err(), "{cmd} must reject {p}");
+                assert_eq!(s.doc().expect("doc").doc.slides.len(), 3, "{cmd} {p}");
+            }
+        }
+    }
+
+    #[test]
     fn duplicate_keeps_section_order_in_step_with_slides() {
         let mut s = Session::with_new();
         while s.doc().expect("doc").doc.slides.len() < 3 {
@@ -677,5 +739,107 @@ mod tests {
         let got: Vec<(u8, String)> = paras.iter().map(|p| (p.level, p.text())).collect();
         let want = [(0, "Level one"), (1, "Level two"), (2, "Level three"), (0, "Level one again")];
         assert_eq!(got, want.iter().map(|(l, t)| (*l, t.to_string())).collect::<Vec<_>>());
+    }
+
+    fn deck_of(n: usize) -> Session {
+        let mut s = Session::with_new();
+        while s.doc().expect("doc").doc.slides.len() < n {
+            s.execute("slide.new", &json!({})).expect("new slide");
+        }
+        s
+    }
+
+    fn selected_indices(s: &Session) -> Vec<usize> {
+        let st = s.doc().expect("doc");
+        let mut v: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
+        v.sort_unstable();
+        v
+    }
+
+    #[test]
+    fn select_range_covers_every_slide_between() {
+        let mut s = deck_of(6);
+        s.execute("slide.go", &json!({"index": 1})).expect("go");
+        s.execute("slide.selectRange", &json!({"to": 4})).expect("range");
+        assert_eq!(selected_indices(&s), vec![1, 2, 3, 4]);
+        assert_eq!(s.doc().expect("doc").selection.slide, 4);
+        // Backwards works too, and replaces the earlier selection.
+        s.execute("slide.selectRange", &json!({"from": 5, "to": 3})).expect("range");
+        assert_eq!(selected_indices(&s), vec![3, 4, 5]);
+    }
+
+    #[test]
+    fn select_range_add_keeps_the_existing_selection() {
+        let mut s = deck_of(8);
+        s.execute("slide.selectSlides", &json!({"indices": [0, 1]})).expect("select");
+        s.execute("slide.go", &json!({"index": 4})).expect("go");
+        s.execute("slide.selectSlides", &json!({"indices": [4]})).expect("select");
+        s.execute("slide.selectRange", &json!({"to": 6, "add": true})).expect("range");
+        assert_eq!(selected_indices(&s), vec![4, 5, 6]);
+        s.execute("slide.selectSlides", &json!({"indices": [0]})).expect("select");
+        s.execute("slide.selectRange", &json!({"from": 3, "to": 5, "add": true})).expect("range");
+        assert_eq!(selected_indices(&s), vec![0, 3, 4, 5]);
+    }
+
+    #[test]
+    fn select_range_rejects_out_of_range_slides() {
+        let mut s = deck_of(3);
+        assert!(s.execute("slide.selectRange", &json!({"to": 3})).is_err());
+        assert!(s.execute("slide.selectRange", &json!({"from": 9, "to": 1})).is_err());
+        assert!(s.execute("slide.selectRange", &json!({})).is_err());
+    }
+
+    #[test]
+    fn select_range_rejects_an_invalid_from_instead_of_using_the_current_slide() {
+        let mut s = deck_of(4);
+        s.execute("slide.go", &json!({"index": 2})).expect("go");
+        assert!(s.execute("slide.selectRange", &json!({"from": -1, "to": 3})).is_err());
+        assert!(s.execute("slide.selectRange", &json!({"from": "x", "to": 3})).is_err());
+        assert_eq!(selected_indices(&s), vec![2]);
+    }
+
+    #[test]
+    fn a_second_range_extends_from_the_original_anchor() {
+        let mut s = deck_of(8);
+        s.execute("slide.go", &json!({"index": 2})).expect("go");
+        s.execute("slide.selectRange", &json!({"to": 5})).expect("range");
+        assert_eq!(selected_indices(&s), vec![2, 3, 4, 5]);
+        // Shift-click further on: still anchored at 2, not at 5.
+        s.execute("slide.selectRange", &json!({"to": 7})).expect("range");
+        assert_eq!(selected_indices(&s), vec![2, 3, 4, 5, 6, 7]);
+        // Shift-click back across the anchor.
+        s.execute("slide.selectRange", &json!({"to": 0})).expect("range");
+        assert_eq!(selected_indices(&s), vec![0, 1, 2]);
+        // A plain click on another slide starts a new anchor.
+        s.execute("slide.go", &json!({"index": 4})).expect("go");
+        s.execute("slide.selectRange", &json!({"to": 6})).expect("range");
+        assert_eq!(selected_indices(&s), vec![4, 5, 6]);
+    }
+
+    #[test]
+    fn moving_a_slide_drops_the_range_anchor() {
+        let mut s = deck_of(6);
+        s.execute("slide.go", &json!({"index": 0})).expect("go");
+        s.execute("slide.selectRange", &json!({"to": 2})).expect("range");
+        // Slide 0 moves to index 2 and stays current; index 0 now holds another slide, so the
+        // next Shift-click starts at the moved slide instead of at index 0.
+        s.execute("slide.move", &json!({"from": 0, "to": 2})).expect("move");
+        assert_eq!(s.doc().expect("doc").selection.slide, 2);
+        s.execute("slide.selectRange", &json!({"to": 4})).expect("range");
+        assert_eq!(selected_indices(&s), vec![2, 3, 4]);
+    }
+
+    #[test]
+    fn select_range_clears_a_table_cell_selection_and_returns_to_the_slides() {
+        let mut s = deck_of(3);
+        s.select(|_, sel| {
+            sel.cells = Some((deckcraft_model::ShapeId(1), (0, 0), (1, 1)));
+            sel.target = crate::Target::Master { master: 0 };
+        })
+        .expect("cells");
+        s.execute("slide.selectRange", &json!({"to": 2})).expect("range");
+        let sel = &s.doc().expect("doc").selection;
+        assert!(sel.cells.is_none());
+        assert_eq!(sel.target, crate::Target::Slides);
     }
 }

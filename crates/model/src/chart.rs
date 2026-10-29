@@ -491,50 +491,66 @@ impl Default for Chart {
 }
 
 impl Chart {
+    fn sample_treemap_sunburst(kind: ChartType) -> Self {
+        let mut c = Chart {
+            kind,
+            categories: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"].iter().map(ToString::to_string).collect(),
+            category_levels: vec![["Q1", "Q1", "Q1", "Q2", "Q2", "Q2", "Q3", "Q3"].iter().map(ToString::to_string).collect()],
+            vary_colors: true,
+            ..Default::default()
+        };
+        let v = [4.2, 2.8, 3.6, 4.7, 2.6, 4.1, 1.9, 3.0];
+        c.series.push(Series { name: "Series 1".into(), values: v.iter().map(|x| Some(*x)).collect(), ..Default::default() });
+        c
+    }
+
+    fn sample_observation_chart(kind: ChartType) -> Self {
+        let obs = [12.0, 15.0, 17.0, 18.0, 21.0, 22.0, 22.0, 24.0, 25.0, 27.0, 28.0, 31.0, 33.0, 36.0, 41.0, 48.0];
+        let n_series = if kind == ChartType::BoxWhisker { 2 } else { 1 };
+        let categories = if kind == ChartType::BoxWhisker {
+            (0..obs.len()).map(|i| if i % 2 == 0 { "Group A" } else { "Group B" }.to_string()).collect()
+        } else {
+            vec![]
+        };
+        let mut c =
+            Chart { kind, categories, gridlines: true, legend: (kind == ChartType::BoxWhisker).then(|| "b".to_string()), ..Default::default() };
+        for s in 0..n_series {
+            c.series.push(Series {
+                name: format!("Series {}", s + 1),
+                values: obs.iter().map(|v| Some(v + s as f64 * 6.0)).collect(),
+                ..Default::default()
+            });
+        }
+        c
+    }
+
+    fn sample_stock() -> Self {
+        let mut c = Chart {
+            kind: ChartType::Stock,
+            categories: ["Mon", "Tue", "Wed", "Thu", "Fri"].iter().map(ToString::to_string).collect(),
+            ..Default::default()
+        };
+        let hlc = [("High", [55.0, 57.0, 57.0, 58.0, 58.0]), ("Low", [11.0, 12.0, 13.0, 11.0, 25.0]), ("Close", [25.0, 38.0, 50.0, 35.0, 43.0])];
+        for (name, v) in hlc {
+            c.series.push(Series { name: name.into(), values: v.iter().map(|x| Some(*x)).collect(), ..Default::default() });
+        }
+        c
+    }
+
     /// The sample data a new chart starts with (our own numbers).
     pub fn sample(kind: ChartType) -> Self {
-        let cats = ["Q1", "Q2", "Q3", "Q4"];
-        let data = [[4.2, 2.6, 2.1], [2.8, 4.1, 2.4], [3.6, 1.9, 3.3], [4.7, 3.0, 5.1]];
-        let mut c = Chart { kind, categories: cats.iter().map(|s| s.to_string()).collect(), ..Default::default() };
         if matches!(kind, ChartType::Treemap | ChartType::Sunburst) {
-            // A two-level hierarchy: months inside quarters.
-            c.categories = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug"].iter().map(|s| s.to_string()).collect();
-            c.category_levels = vec![["Q1", "Q1", "Q1", "Q2", "Q2", "Q2", "Q3", "Q3"].iter().map(|s| s.to_string()).collect()];
-            let v = [4.2, 2.8, 3.6, 4.7, 2.6, 4.1, 1.9, 3.0];
-            c.series.push(Series { name: "Series 1".into(), values: v.iter().map(|x| Some(*x)).collect(), ..Default::default() });
-            c.vary_colors = true;
-            return c;
+            return Self::sample_treemap_sunburst(kind);
         }
         if matches!(kind, ChartType::Histogram | ChartType::Pareto | ChartType::BoxWhisker) {
-            // These plot raw observations: a histogram bins one series, a box chart summarises
-            // each category's points.
-            let obs = [12.0, 15.0, 17.0, 18.0, 21.0, 22.0, 22.0, 24.0, 25.0, 27.0, 28.0, 31.0, 33.0, 36.0, 41.0, 48.0];
-            let n_series = if kind == ChartType::BoxWhisker { 2 } else { 1 };
-            c.categories = if kind == ChartType::BoxWhisker {
-                (0..obs.len()).map(|i| if i % 2 == 0 { "Group A" } else { "Group B" }.to_string()).collect()
-            } else {
-                vec![]
-            };
-            for s in 0..n_series {
-                c.series.push(Series {
-                    name: format!("Series {}", s + 1),
-                    values: obs.iter().map(|v| Some(v + s as f64 * 6.0)).collect(),
-                    ..Default::default()
-                });
-            }
-            c.gridlines = true;
-            c.legend = (kind == ChartType::BoxWhisker).then(|| "b".to_string());
-            return c;
+            return Self::sample_observation_chart(kind);
         }
         if kind == ChartType::Stock {
-            // High-low-close over five days, the series in the order PowerPoint expects.
-            c.categories = ["Mon", "Tue", "Wed", "Thu", "Fri"].iter().map(|s| s.to_string()).collect();
-            let hlc = [("High", [55.0, 57.0, 57.0, 58.0, 58.0]), ("Low", [11.0, 12.0, 13.0, 11.0, 25.0]), ("Close", [25.0, 38.0, 50.0, 35.0, 43.0])];
-            for (name, v) in hlc {
-                c.series.push(Series { name: name.into(), values: v.iter().map(|x| Some(*x)).collect(), ..Default::default() });
-            }
-            return c;
+            return Self::sample_stock();
         }
+        let cats = ["Q1", "Q2", "Q3", "Q4"];
+        let data = [[4.2, 2.6, 2.1], [2.8, 4.1, 2.4], [3.6, 1.9, 3.3], [4.7, 3.0, 5.1]];
+        let mut c = Chart { kind, categories: cats.iter().map(ToString::to_string).collect(), ..Default::default() };
         let n_series =
             if matches!(kind, ChartType::Pie | ChartType::Doughnut | ChartType::Funnel | ChartType::Waterfall | ChartType::Treemap) { 1 } else { 3 };
         for s in 0..n_series {
@@ -592,12 +608,42 @@ impl Chart {
         if ser.is_empty() {
             return (!secondary && self.kind != ChartType::Combo).then_some((0.0, 0.0));
         }
-        let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
-        let n = ser.iter().map(|s| s.values.len()).max().unwrap_or(0);
-        let mut percent = false;
-        for i in 0..n {
-            let (mut p, mut m, mut stacked) = (0.0, 0.0, false);
+        let mut ext = (f64::INFINITY, f64::NEG_INFINITY);
+        let has_stacked_or_percent = ser.iter().any(|s| {
+            let k = self.series_kind(s);
+            k.stacked() || k.percent()
+        });
+        let percent = if has_stacked_or_percent {
+            self.fold_stacked(&ser, &mut ext)
+        } else {
             for s in &ser {
+                for v in s.values.iter().flatten().copied().filter(|v| v.is_finite()) {
+                    widen(&mut ext, v);
+                }
+            }
+            false
+        };
+        if !percent {
+            self.fold_trendlines(&ser, &mut ext);
+        }
+        if percent {
+            ext.0 = ext.0.min(0.0);
+            ext.1 = ext.1.max(1.0);
+        }
+        let (lo, hi) = ext;
+        Some(if lo <= hi { (lo, hi) } else { (0.0, 0.0) })
+    }
+
+    /// Widens `ext` by the points of the stacked and 100 % series in `ser`; returns whether a
+    /// 100 % series is among them.
+    fn fold_stacked(&self, ser: &[&Series], ext: &mut (f64, f64)) -> bool {
+        let mut percent = false;
+        let n = ser.iter().map(|s| s.values.len()).max().unwrap_or(0);
+        let budget = (ser.len() * n).min(10_000_000);
+        let n_clamped = if ser.is_empty() { 0 } else { n.min(budget / ser.len()) };
+        for i in 0..n_clamped {
+            let (mut p, mut m, mut stacked) = (0.0, 0.0, false);
+            for s in ser {
                 let k = self.series_kind(s);
                 let Some(v) = s.values.get(i).copied().flatten().filter(|v| v.is_finite()) else { continue };
                 if k.percent() {
@@ -606,31 +652,27 @@ impl Chart {
                     stacked = true;
                     if v >= 0.0 { p += v } else { m += v }
                 } else {
-                    hi = hi.max(v);
-                    lo = lo.min(v);
+                    widen(ext, v);
                 }
             }
             if stacked {
-                hi = hi.max(p);
-                lo = lo.min(m);
+                ext.1 = ext.1.max(p);
+                ext.0 = ext.0.min(m);
             }
         }
-        if !percent {
-            for s in &ser {
-                if self.series_kind(s).stacked() {
-                    continue;
-                }
-                for y in s.trendline_ys(crate::trendline::series_is_scatter(self.series_kind(s))) {
-                    hi = hi.max(y);
-                    lo = lo.min(y);
-                }
+        percent
+    }
+
+    /// Widens `ext` by the trendlines of the series in `ser` that are not stacked.
+    fn fold_trendlines(&self, ser: &[&Series], ext: &mut (f64, f64)) {
+        for s in ser {
+            if self.series_kind(s).stacked() {
+                continue;
+            }
+            for y in s.trendline_ys(crate::trendline::series_is_scatter(self.series_kind(s))) {
+                widen(ext, y);
             }
         }
-        if percent {
-            lo = lo.min(0.0);
-            hi = hi.max(1.0);
-        }
-        Some(if lo <= hi { (lo, hi) } else { (0.0, 0.0) })
     }
 
     /// A waterfall's bars as (from, to) on the value axis: each point floats from the running
@@ -699,38 +741,58 @@ impl Chart {
         crate::numfmt::format(code.map_or("General", String::as_str), v, self.lang.as_deref())
     }
 
-    /// Value range across series (stacked sums for stacked types).
-    pub fn value_range(&self) -> (f64, f64) {
+    /// Does series `s` show its data labels? The series' own `c:dLbls/c:showVal` wins — an
+    /// explicit `false` hides them even when the chart-wide setting is on (#868).
+    pub fn series_data_labels(&self, s: &Series) -> bool {
+        s.data_labels.unwrap_or(self.data_labels)
+    }
+
+    fn waterfall_value_range(&self) -> (f64, f64) {
         let mut lo: f64 = 0.0;
         let mut hi: f64 = 0.0;
-        if self.kind == ChartType::Waterfall {
-            for (a, b) in self.waterfall_bars() {
-                lo = lo.min(a.min(b));
-                hi = hi.max(a.max(b));
+        for (a, b) in self.waterfall_bars() {
+            lo = lo.min(a.min(b));
+            hi = hi.max(a.max(b));
+        }
+        (lo, hi)
+    }
+
+    fn stacked_value_range(&self, n: usize) -> (f64, f64) {
+        let mut lo: f64 = 0.0;
+        let mut hi: f64 = 0.0;
+        for i in 0..n {
+            let (mut p, mut m) = (0.0, 0.0);
+            for s in &self.series {
+                let v = s.values.get(i).copied().flatten().unwrap_or(0.0);
+                if v >= 0.0 { p += v } else { m += v }
             }
-            return (lo, hi);
+            hi = hi.max(p);
+            lo = lo.min(m);
+        }
+        (lo, hi)
+    }
+
+    /// Value range across series (stacked sums for stacked types).
+    pub fn value_range(&self) -> (f64, f64) {
+        if self.kind == ChartType::Waterfall {
+            return self.waterfall_value_range();
         }
         let n = self.categories.len().max(self.series.iter().map(|s| s.values.len()).max().unwrap_or(0));
-        if self.kind.stacked() {
-            for i in 0..n {
-                let (mut p, mut m) = (0.0, 0.0);
-                for s in &self.series {
-                    let v = s.values.get(i).copied().flatten().unwrap_or(0.0);
-                    if v >= 0.0 { p += v } else { m += v }
-                }
-                hi = hi.max(p);
-                lo = lo.min(m);
-            }
+        let (mut lo, mut hi) = if self.kind.stacked() {
+            self.stacked_value_range(n)
         } else {
+            let mut l: f64 = 0.0;
+            let mut h: f64 = 0.0;
             for s in &self.series {
                 for v in s.values.iter().flatten() {
                     if v.is_finite() {
-                        hi = hi.max(*v);
-                        lo = lo.min(*v);
+                        h = h.max(*v);
+                        l = l.min(*v);
                     }
                 }
             }
-        }
+            (l, h)
+        };
         if self.kind.percent() {
             return (0.0, 1.0);
         }
@@ -749,6 +811,7 @@ impl Chart {
 /// The (min, max, major unit) of an axis over the data range [lo, hi]: `fmin`/`fmax`/`major`
 /// where the chart fixes them; otherwise Office's automatic limits, rounded out to the smallest
 /// 1-2-5 unit giving at most `max_intervals` intervals:
+/// The data range [lo, hi] an axis covers, clamped to ±1e100; (0, 1) without finite values.
 ///
 /// - **Maximum:** `hi + (hi − lo)/20` (with `headroom`), rounded up to the unit.
 /// - **Minimum:** zero when every value is ≥ 0 and `lo` is below 5/6 of `hi`; otherwise
@@ -756,6 +819,59 @@ impl Chart {
 ///   near them.
 /// - All-negative values mirror this: the axis ends at zero when `hi` is above 5/6 of `lo`.
 ///   Mixed signs get headroom at both ends.
+fn axis_data_range(lo: f64, hi: f64) -> (f64, f64) {
+    if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) }
+}
+
+/// Office's automatic (min, max) of the data range [lo, hi]. "How chart axis limits are determined",
+/// as Jon Peltier summarises it: 5 % of the data range past the data, and zero when the values don't
+/// sit within the top sixth of their largest magnitude. A single value is measured from zero.
+fn auto_limits(lo: f64, hi: f64, headroom: bool) -> (f64, f64) {
+    let flat = hi - lo <= 1e-12 * lo.abs().max(hi.abs());
+    let pad = if !headroom {
+        0.0
+    } else if flat {
+        hi.abs() / 20.0
+    } else {
+        (hi - lo) / 20.0
+    };
+    let auto_lo = if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) { 0.0 } else { lo - pad };
+    let auto_hi = if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) { 0.0 } else { hi + pad };
+    (auto_lo, auto_hi)
+}
+
+/// The ends of a span too small to show: with one fixed limit on the far side of the data, the
+/// automatic end gives way; otherwise the span is one `unit` wide.
+fn flat_span_ends(fmin: Option<f64>, fmax: Option<f64>, lo: f64, hi: f64, unit: f64) -> (f64, f64) {
+    match (fmin, fmax) {
+        (None, Some(_)) => (if hi > 0.0 { 0.0 } else { hi - hi.abs().max(unit) }, hi),
+        (Some(_), None) if lo < 0.0 => (lo, 0.0),
+        _ => (lo, lo + unit),
+    }
+}
+
+/// The major step: `major` when it gives at most 1000 intervals, else the smallest 1-2-5 step
+/// that fits `n` intervals over [lo, hi].
+fn axis_step(major: Option<f64>, lo: f64, hi: f64, n: f64, unit: f64) -> f64 {
+    match major.filter(|m| *m > 0.0 && (hi - lo) / m <= 1000.0) {
+        Some(m) => m,
+        None => {
+            let mut step = 10f64.powf(((hi - lo) / n).log10().floor());
+            // Subnormal spans underflow to a zero (or non-finite) step: fall back to the unit.
+            if !(step > 0.0 && step.is_finite()) {
+                step = unit;
+            }
+            let mut k = 0;
+            // 1, 2, 5, 10, 20… × the magnitude until the intervals fit.
+            while ((hi / step).ceil() - (lo / step).floor()) > n && k < 30 {
+                step *= if matches!(k % 3, 1) { 2.5 } else { 2.0 };
+                k += 1;
+            }
+            step
+        }
+    }
+}
+
 pub fn axis_scale(
     lo: f64,
     hi: f64,
@@ -768,44 +884,17 @@ pub fn axis_scale(
     // Values past ±1e100 aren't axis values; clamping keeps the arithmetic finite.
     let fin = |v: Option<f64>| v.filter(|v| v.is_finite()).map(|v| v.clamp(-1e100, 1e100));
     let (fmin, fmax) = (fin(fmin), fin(fmax));
-    let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo.min(hi).clamp(-1e100, 1e100), lo.max(hi).clamp(-1e100, 1e100)) } else { (0.0, 1.0) };
-    // Office's automatic limits ("How chart axis limits are determined", as Jon Peltier
-    // summarises it): 5 % of the data range past the data, and zero when the values don't
-    // sit within the top sixth of their largest magnitude. A single value is measured from zero.
-    let flat = hi - lo < 1e-12;
-    let pad = if !headroom {
-        0.0
-    } else if flat {
-        hi.abs() / 20.0
-    } else {
-        (hi - lo) / 20.0
-    };
-    let auto_lo = if lo >= 0.0 && (flat || lo < hi * 5.0 / 6.0) { 0.0 } else { lo - pad };
-    let auto_hi = if hi <= 0.0 && (flat || hi > lo * 5.0 / 6.0) { 0.0 } else { hi + pad };
-    let mut lo = fmin.unwrap_or(auto_lo);
-    let mut hi = fmax.unwrap_or(auto_hi);
-    if hi - lo < 1e-12 {
-        // A fixed limit on the far side of the data: the automatic end gives way.
-        match (fmin, fmax) {
-            (None, Some(_)) => lo = if hi > 0.0 { 0.0 } else { hi - hi.abs().max(1.0) },
-            (Some(_), None) if lo < 0.0 => hi = 0.0,
-            _ => hi = lo + lo.abs().max(1.0),
-        }
+    let (lo, hi) = axis_data_range(lo, hi);
+    let (auto_lo, auto_hi) = auto_limits(lo, hi, headroom);
+    let (mut lo, mut hi) = (fmin.unwrap_or(auto_lo), fmax.unwrap_or(auto_hi));
+    let mag = lo.abs().max(hi.abs());
+    // Relative to the data's magnitude, so tiny values don't count as flat; all-zero falls back to 1.
+    let unit = if mag == 0.0 { 1.0 } else { mag };
+    if hi - lo <= 1e-12 * mag {
+        (lo, hi) = flat_span_ends(fmin, fmax, lo, hi, unit);
     }
     let n = max_intervals.clamp(1, 50) as f64;
-    let step = match fin(major).filter(|m| *m > 0.0 && (hi - lo) / m <= 1000.0) {
-        Some(m) => m,
-        None => {
-            let mut step = 10f64.powf(((hi - lo) / n).log10().floor());
-            let mut k = 0;
-            // 1, 2, 5, 10, 20… × the magnitude until the intervals fit.
-            while ((hi / step).ceil() - (lo / step).floor()) > n && k < 30 {
-                step *= if matches!(k % 3, 1) { 2.5 } else { 2.0 };
-                k += 1;
-            }
-            step
-        }
-    };
+    let step = axis_step(fin(major), lo, hi, n, unit);
     let min = fmin.unwrap_or((lo / step + 1e-9).floor() * step);
     let max = fmax.unwrap_or((hi / step - 1e-9).ceil() * step).max(min + step);
     (min, max, step)
@@ -814,7 +903,9 @@ pub fn axis_scale(
 /// "Nice" axis scale: (min, max, major step) covering [lo, hi].
 pub fn nice_scale(lo: f64, hi: f64) -> (f64, f64, f64) {
     let (lo, hi) = if lo.is_finite() && hi.is_finite() { (lo.min(hi), lo.max(hi)) } else { (0.0, 1.0) };
-    let span = if hi - lo < 1e-12 { hi.abs().max(1.0) } else { hi - lo };
+    let data_mag = lo.abs().max(hi.abs());
+    let span = if hi - lo <= 1e-12 * data_mag { data_mag } else { hi - lo };
+    let span = if span == 0.0 { 1.0 } else { span };
     let raw = span / 5.0;
     let mag = 10f64.powf(raw.log10().floor());
     let norm = raw / mag;
@@ -829,15 +920,36 @@ pub fn nice_scale(lo: f64, hi: f64) -> (f64, f64, f64) {
     } else {
         10.0
     } * mag;
+    // Subnormal spans underflow to a zero or NaN step: use the span itself.
+    let step = if step > 0.0 && step.is_finite() { step } else { span };
     let min = (lo / step).floor() * step;
     let max = (hi / step).ceil() * step;
-    let max = if (max - min).abs() < 1e-12 { min + step } else { max };
+    let max = if (max - min).abs() <= 1e-12 * data_mag { min + step } else { max };
     (min, max, step)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tiny_data_keeps_its_own_scale() {
+        let (min, max, step) = axis_scale(1e-13, 5e-13, None, None, None, 8, true);
+        assert!(min == 0.0 && (5e-13..1e-11).contains(&max), "{min} {max} {step}");
+        assert!(step > 0.0 && step < 1e-11);
+        let (min, max, step) = nice_scale(1e-13, 5e-13);
+        assert!(min <= 1e-13 && (5e-13..1e-11).contains(&max) && step < 1e-11, "{min} {max} {step}");
+        assert_eq!(axis_scale(0.0, 0.0, None, None, None, 8, true).1, 1.0);
+    }
+
+    #[test]
+    fn subnormal_data_gives_a_finite_scale() {
+        let (min, max, step) = axis_scale(0.0, 5e-324, None, None, None, 8, true);
+        assert!(min.is_finite() && max.is_finite() && step.is_finite(), "{min} {max} {step}");
+        assert!(step > 0.0 && max >= min, "{min} {max} {step}");
+        let (min, max, step) = nice_scale(0.0, f64::from_bits(1));
+        assert!(min.is_finite() && max.is_finite() && step > 0.0 && step.is_finite() && max > min, "{min} {max} {step}");
+    }
 
     #[test]
     fn log_axes_run_over_whole_powers() {
@@ -848,6 +960,20 @@ mod tests {
         c.y_log_base = Some(10.0);
         assert_eq!(c.log_axis_scale(8), Some((0.0, 5.0, 1.0)));
         assert_eq!(c.log_axis_scale(2), Some((0.0, 6.0, 3.0)));
+    }
+
+    /// #868: a series' own label setting wins; an unset series takes the chart-wide one.
+    #[test]
+    fn series_data_labels_override_the_chart_wide_setting() {
+        let mut c = Chart::sample(ChartType::Column);
+        c.data_labels = false;
+        let mut s = c.series[0].clone();
+        assert!(!c.series_data_labels(&s), "unset series follows the chart");
+        s.data_labels = Some(true);
+        assert!(c.series_data_labels(&s), "a series that asks for labels gets them");
+        c.data_labels = true;
+        s.data_labels = Some(false);
+        assert!(!c.series_data_labels(&s), "an explicit series false hides them anyway");
     }
 
     #[test]
@@ -1132,7 +1258,14 @@ impl Chart {
             let sd = (v.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0).max(1.0)).sqrt();
             3.49 * sd / n.cbrt()
         };
-        let count = if span <= 0.0 || !width.is_finite() || width <= 0.0 { 1 } else { ((span / width).ceil() as usize).clamp(1, MAX_BINS) };
+        let fixed = self.bin_count.filter(|k| *k > 0).filter(|_| self.bin_size.filter(|w| w.is_finite() && *w > 0.0).is_none());
+        let count = if span <= 0.0 || !width.is_finite() || width <= 0.0 {
+            1
+        } else if let Some(k) = fixed {
+            (k as usize).clamp(1, MAX_BINS)
+        } else {
+            ((span / width).ceil() as usize).clamp(1, MAX_BINS)
+        };
         let width = if count == 1 && (span <= 0.0 || !width.is_finite() || width <= 0.0) { span.max(1.0) } else { width.max(span / MAX_BINS as f64) };
         let mut bins: Vec<Bin> = (0..count).map(|i| Bin { lo: lo + width * i as f64, hi: lo + width * (i + 1) as f64, count: 0 }).collect();
         for x in v {
@@ -1240,6 +1373,12 @@ impl Chart {
             .collect();
         (groups, stats)
     }
+}
+
+/// Widens the (min, max) extent `ext` to include `v`.
+fn widen(ext: &mut (f64, f64), v: f64) {
+    ext.0 = ext.0.min(v);
+    ext.1 = ext.1.max(v);
 }
 
 /// Excel's QUARTILE.EXC position `p·(n+1)` (1-based) on sorted data, clamped to the ends.
@@ -1387,6 +1526,13 @@ mod chartex_tests {
         assert!(c.histogram_bins().len() <= MAX_BINS);
         assert_eq!(obs(&[3.0]).histogram_bins(), vec![Bin { lo: 3.0, hi: 4.0, count: 1 }]);
         assert!(obs(&[]).histogram_bins().is_empty());
+    }
+
+    #[test]
+    fn histogram_fixed_bin_count_is_exact_despite_float_rounding() {
+        let mut c = obs(&[0.0, 1.0, 2.1]);
+        c.bin_count = Some(7);
+        assert_eq!(c.histogram_bins().len(), 7);
     }
 
     #[test]

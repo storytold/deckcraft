@@ -8,7 +8,7 @@ use crate::frame::{BAND_PAD, Band, Frame, FrameInfo, MiGrid, MiInfo, Pools};
 use crate::header::{FrameHeader, HeaderState, KEY_FRAME, RefInfo, parse_compressed, parse_uncompressed, split_superframe};
 use crate::loopfilter::{LfFrame, PlaneView, filter_superblock};
 use crate::probs::{Counts, adapt_coef_probs, adapt_noncoef_probs};
-use crate::tables::*;
+use crate::tables::{AC_QLOOKUP, DC_QLOOKUP, SEG_LVL_ALT_Q, SWITCHABLE, TX_MODE_SELECT};
 use crate::tile::{FrameShared, RefUse, Strip, TileDecoder};
 use crate::{ColorInfo, Picture, Plane};
 use std::collections::VecDeque;
@@ -347,7 +347,7 @@ impl Decoder {
                 let sz = if last {
                     data.len() - pos
                 } else {
-                    let Some(&b) = data.get(pos..).and_then(|d| d.first_chunk::<4>()) else {
+                    let Some(&b) = data.get(pos..).and_then(<[_]>::first_chunk::<4>) else {
                         return Err(Error::Invalid("tile size beyond frame data".into()));
                     };
                     let s = u32::from_be_bytes(b) as usize;

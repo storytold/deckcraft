@@ -275,7 +275,7 @@ pub enum Dash {
 }
 
 impl Dash {
-    pub const PRESETS: [&'static str; 11] =
+    pub const PRESETS: [&str; 11] =
         ["solid", "sysDot", "sysDash", "dash", "dashDot", "lgDash", "lgDashDot", "lgDashDotDot", "dot", "sysDashDot", "sysDashDotDot"];
     /// Dash/space lengths in multiples of the line width.
     pub fn pattern(&self) -> Vec<f64> {
