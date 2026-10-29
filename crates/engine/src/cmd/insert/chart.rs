@@ -1,5 +1,5 @@
 use super::{
-    Chart, ChartType, Result, RunKind, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
+    Chart, ChartType, Result, RunKind, Session, Shape, ShapeId, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
     rect_param, str_param,
 };
 
