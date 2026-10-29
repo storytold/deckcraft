@@ -328,7 +328,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Back"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Back")));
             let hovered = resp.hovered();
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
@@ -340,7 +340,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text,
                 false,
             );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            if resp.on_hover_text(tl!("Back (Esc)")).clicked() {
                 out.close = true;
             }
         } else {
@@ -391,7 +391,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
                 ui.set_max_width(CONTENT_W);
                 if bs.page != Page::Home {
-                    ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
+                    ui.label(RichText::new(tl!(bs.page.label())).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);
                 }
                 // Errors raised on a backstage page (a missing recent file, a failed open) would
@@ -432,7 +432,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
     let selected = nav == Nav::Page(bs.page);
-    let label = nav.label();
+    let label = tl!(nav.label());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));
@@ -460,31 +460,32 @@ fn separator(ui: &mut Ui, t: &Tokens) {
 
 fn heading(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(text).font(theme::bold(16.0)).color(t.text));
+    ui.label(RichText::new(tl!(text)).font(theme::bold(16.0)).color(t.text));
     ui.add_space(8.0);
 }
 
 fn dim(ui: &mut Ui, text: &str) {
     let t = Tokens::get(ui.ctx());
-    ui.label(RichText::new(text).font(theme::font(12.5)).color(t.text_dim));
+    ui.label(RichText::new(tl!(text)).font(theme::font(12.5)).color(t.text_dim));
 }
 
 /// A link with an arrow (More themes →): true when clicked.
 fn arrow_link(ui: &mut Ui, text: &str) -> bool {
     let t = Tokens::get(ui.ctx());
-    ui.add(egui::Label::new(RichText::new(format!("{text}  →")).font(theme::font(12.5)).color(t.accent)).sense(Sense::click()))
+    ui.add(egui::Label::new(RichText::new(format!("{}  →", tl!(text))).font(theme::font(12.5)).color(t.accent)).sense(Sense::click()))
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }
 
 /// A search box; true when its text changed.
 fn search(ui: &mut Ui, query: &mut String, hint: &str, width: f32) -> bool {
-    ui.add(egui::TextEdit::singleline(query).hint_text(hint).desired_width(width)).changed()
+    ui.add(egui::TextEdit::singleline(query).hint_text(tl!(hint)).desired_width(width)).changed()
 }
 
 /// Draw a labelled icon button and return whether it was clicked while enabled.
 fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> bool {
     let t = Tokens::get(ui.ctx());
+    let label = tl!(label);
     let (r, resp) = ui.allocate_exact_size(vec2(22.0, 22.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
     if resp.hovered() && enabled {
@@ -499,7 +500,7 @@ fn bullets(ui: &mut Ui, items: &[&str]) {
     for b in items {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
-            ui.label(RichText::new(format!("•  {b}")).font(theme::font(12.5)));
+            ui.label(RichText::new(format!("•  {}", tl!(b))).font(theme::font(12.5)));
         });
     }
     ui.add_space(10.0);

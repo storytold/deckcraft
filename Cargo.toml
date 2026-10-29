@@ -63,6 +63,12 @@ craft-media = { git = "https://github.com/storytold/craft-libs", rev = "92d392cf
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", features = ["egui"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0" }
+# Interface translations: lookup, fallback, plurals and system-locale matching over the craft-i18n
+# catalogs that `crates/ui-egui/build.rs` embeds from `CRAFT_I18N_DIR` (storytold/craft-i18n,
+# pinned in `craft-i18n.rev`). Same craft-libs rev as craft-ui.
+craft-i18n = { git = "https://github.com/storytold/craft-libs", rev = "92d392cff132eaf53e13afff77f38b5c11b73aa0", version = "=0.1.0" }
+# The system's preferred interface languages (#15). Native: OS APIs; wasm: the browser's (`js`).
+sys-locale = { version = "0.3", features = ["js"] }
 i_overlay = "9"
 quick-xml = "0.41"
 zip = { version = "3", default-features = false, features = ["deflate"] }
