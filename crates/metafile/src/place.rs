@@ -1,6 +1,8 @@
 //! Placing a picture on a target (a page or a device): the fitted transform, paths as kurbo paths in
 //! target units and bitmaps as target rectangles. The rasteriser and the PDF writer only paint the result.
 
+use std::sync::Arc;
+
 use kurbo::{Affine, BezPath, Rect, Shape};
 
 use crate::{Item, Picture, Seg};
@@ -11,20 +13,22 @@ pub const MAX_BITMAP_SIDE: u32 = 30_000;
 const MAX_COORD: f64 = 1e6;
 /// Smallest placed bitmap side (target units), so the stretch onto it is never singular.
 const MIN_BITMAP_SIDE: f64 = 1e-6;
+/// Maximum aggregate path elements retained in placed output.
+const MAX_PLACED_ELEMENTS: usize = 500_000;
 
 /// One item of a placed picture, in target units.
 pub enum PlacedItem {
     /// A filled and/or stroked path. The stroke width is in target units; 0 is a cosmetic hairline that
     /// the renderer draws at its minimum width.
-    Path { path: BezPath, fill: Option<[u8; 4]>, stroke: Option<([u8; 4], f64)>, even_odd: bool, region: Option<BezPath> },
+    Path { path: BezPath, fill: Option<[u8; 4]>, stroke: Option<([u8; 4], f64)>, even_odd: bool, region: Option<Arc<BezPath>> },
     /// `Picture::items[index]`, a bitmap, stretched into `rect`.
-    Bitmap { index: usize, rect: Rect, region: Option<BezPath> },
+    Bitmap { index: usize, rect: Rect, region: Option<Arc<BezPath>> },
     /// `Picture::items[index]`, a pattern fill: `path` (target units) filled with the item's tile
     /// repeated; `tile` maps tile pixels to target units.
-    Pattern { index: usize, path: BezPath, even_odd: bool, tile: Affine, region: Option<BezPath> },
+    Pattern { index: usize, path: BezPath, even_odd: bool, tile: Affine, region: Option<Arc<BezPath>> },
     /// `Picture::items[index]`, a text string: `transform` maps its text space to target units;
     /// `clip` (target units) bounds what it draws. `region` is the device-context clip.
-    Text { index: usize, transform: Affine, clip: Option<Rect>, region: Option<BezPath> },
+    Text { index: usize, transform: Affine, clip: Option<Rect>, region: Option<Arc<BezPath>> },
 }
 
 impl Picture {
@@ -53,42 +57,65 @@ impl Picture {
         let c = tf.as_coeffs();
         let k = (c[0].abs() + c[3].abs()) / 2.0;
         let mut out = Vec::with_capacity(self.items.len());
+        let mut total_elements = 0usize;
+        let mut cached_region: Option<(*const [f32; 4], usize, Option<Option<Arc<BezPath>>>)> = None;
+        let mut get_region = |reg: &Option<Vec<[f32; 4]>>| -> Option<Option<Arc<BezPath>>> {
+            let (ptr, len) = match reg {
+                None => (std::ptr::null(), 0),
+                Some(v) => (v.as_ptr(), v.len()),
+            };
+            if let Some((c_ptr, c_len, ref res)) = cached_region
+                && c_ptr == ptr
+                && c_len == len
+            {
+                return res.clone();
+            }
+            let res = placed_region(&tf, reg);
+            cached_region = Some((ptr, len, res.clone()));
+            res
+        };
+
         for (index, item) in self.items.iter().enumerate() {
+            if total_elements >= MAX_PLACED_ELEMENTS {
+                break;
+            }
             match item {
                 Item::Path { segs, fill, stroke, even_odd, region } => {
                     let path = tf * bez(segs);
-                    let Some(region) = placed_region(&tf, region) else { continue };
+                    let Some(region) = get_region(region) else { continue };
                     if in_range(path.bounding_box()) {
+                        total_elements = total_elements.saturating_add(path.elements().len());
                         let stroke = stroke.map(|(c, w)| (c, f64::from(w) * k));
                         out.push(PlacedItem::Path { path, fill: *fill, stroke, even_odd: *even_odd, region });
                     }
                 }
                 Item::Pattern { segs, even_odd, tile: t, region } => {
                     let path = tf * bez(segs);
-                    let Some(region) = placed_region(&tf, region) else { continue };
+                    let Some(region) = get_region(region) else { continue };
                     let tile = tf
                         * Affine::translate((f64::from(t.origin[0]), f64::from(t.origin[1])))
                         * Affine::scale_non_uniform(f64::from(t.cell[0]), f64::from(t.cell[1]));
                     let det = tile.determinant();
                     if in_range(path.bounding_box()) && det.is_finite() && det.abs() > 1e-12 {
+                        total_elements = total_elements.saturating_add(path.elements().len());
                         out.push(PlacedItem::Pattern { index, path, even_odd: *even_odd, tile, region });
                     }
                 }
                 Item::Text(t) => {
                     let transform = tf * Affine::new(t.transform);
-                    let Some(region) = placed_region(&tf, &t.region) else { continue };
+                    let Some(region) = get_region(&t.region) else { continue };
                     let clip =
                         t.clip.map(|[x0, y0, x1, y1]| tf.transform_rect_bbox(Rect::new(f64::from(x0), f64::from(y0), f64::from(x1), f64::from(y1))));
                     let c = transform.as_coeffs();
                     let origin = Rect::new(c[4], c[5], c[4], c[5]);
-                    if in_range(origin) && c.iter().all(|v| v.is_finite()) && clip.is_none_or(in_range) {
+                    if in_range(origin) && c.iter().all(|v| v.is_finite() && v.abs() <= MAX_COORD) && clip.is_none_or(in_range) {
                         out.push(PlacedItem::Text { index, transform, clip, region });
                     }
                 }
                 Item::Bitmap { rect: [x, y, w, h], region, .. } => {
                     let (x0, y0) = (f64::from(*x), f64::from(*y));
                     let rect = tf.transform_rect_bbox(Rect::new(x0, y0, x0 + f64::from(*w), y0 + f64::from(*h)));
-                    let Some(region) = placed_region(&tf, region) else { continue };
+                    let Some(region) = get_region(region) else { continue };
                     if in_range(rect) && rect.width() > MIN_BITMAP_SIDE && rect.height() > MIN_BITMAP_SIDE {
                         out.push(PlacedItem::Bitmap { index, rect, region });
                     }
@@ -113,7 +140,7 @@ impl Item {
 
 /// The device-context clip in target units. `Some(None)` is the default clip. `None` means the
 /// region does not meet the page, so the item draws nothing.
-fn placed_region(tf: &Affine, region: &Option<Vec<[f32; 4]>>) -> Option<Option<BezPath>> {
+fn placed_region(tf: &Affine, region: &Option<Vec<[f32; 4]>>) -> Option<Option<Arc<BezPath>>> {
     let Some(rects) = region else { return Some(None) };
     let mut path = BezPath::new();
     for [x0, y0, x1, y1] in rects {
@@ -122,7 +149,7 @@ fn placed_region(tf: &Affine, region: &Option<Vec<[f32; 4]>>) -> Option<Option<B
             path.extend(r.to_path(0.1));
         }
     }
-    (!path.is_empty()).then_some(Some(path))
+    (!path.is_empty()).then_some(Some(Arc::new(path)))
 }
 
 /// Segments as a kurbo path. A segment after a close opens a new subpath at the last start point.

@@ -13,7 +13,7 @@ use crate::{EngineError, Result, Session};
 pub fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .or_else(|| payload.downcast_ref::<String>().cloned())
         .unwrap_or_else(|| "unknown panic".into())
 }
@@ -36,11 +36,15 @@ impl Session {
     /// Run command `id` (`f`) inside the guard.
     pub(crate) fn guarded(&mut self, id: &str, f: impl FnOnce(&mut Session) -> Result<Value>) -> Result<Value> {
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone(), d.revision));
+        let vertex_kind = self.tool.vertex_kind.clone();
         let depth = self.depth;
         match catch_unwind(AssertUnwindSafe(|| f(self))) {
             Ok(r) => r,
             Err(payload) => {
                 self.depth = depth;
+                // The remembered point type names a shape of the document it was chosen in.
+                let same = before.as_ref().is_some_and(|b| self.active().is_some_and(|st| st.uid == b.0));
+                self.tool.vertex_kind = if same { vertex_kind } else { None };
                 let msg = panic_message(payload.as_ref());
                 // Keep the document as it was before the command.
                 if let (Some((uid, doc, selection, revision)), Some(st)) = (before, self.active_mut())
@@ -89,6 +93,29 @@ mod tests {
         assert_eq!(s.panics_caught, 1, "the guard counts what it caught");
         // The session keeps working.
         s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [36, 236, 200, 400]})).unwrap();
+    }
+
+    #[test]
+    fn a_panicking_command_keeps_the_remembered_point_type() {
+        let mut s = Session::new();
+        s.execute("file.new", &json!({})).unwrap();
+        let kept = Some((deckcraft_model::ShapeId(1), 0, 0, "straight".to_string()));
+        s.tool.vertex_kind = kept.clone();
+        let r = s.guarded("test.panic", |s| {
+            s.tool.vertex_kind = Some((deckcraft_model::ShapeId(1), 0, 0, "corner".to_string()));
+            panic!("boom");
+        });
+        assert!(r.is_err());
+        assert_eq!(s.tool.vertex_kind, kept);
+        // A command that opens another document and then panics leaves no point type behind: the
+        // one from before names a shape of the other document.
+        let r = s.guarded("test.panic", |s| {
+            s.execute("file.new", &json!({}))?;
+            s.tool.vertex_kind = Some((deckcraft_model::ShapeId(1), 0, 0, "corner".to_string()));
+            panic!("boom");
+        });
+        assert!(r.is_err());
+        assert_eq!(s.tool.vertex_kind, None);
     }
 
     #[test]

@@ -7,7 +7,10 @@ use deckcraft_model::{
     AnimClass, AnimStart, Animation, ColorRef, CustomShow, Presentation, Rgba, Shape, ShapeId, Slide, SlideId, TextBody, Transition, Xfrm,
 };
 
-use crate::*;
+use crate::{
+    AnimState, Layer, LinkJump, MotionPath, ShowAction, ShowState, Source, Timeline, TriggerPlay, default_path, ease, morph_crop, morph_frame,
+    morph_pairs, morph_xfrm, show_order, transition_frame, transition_layers,
+};
 
 const W: f64 = 960.0;
 const H: f64 = 540.0;
@@ -342,6 +345,36 @@ fn empty_slide() {
     assert!(tl.is_empty());
     assert!(tl.state(ShapeId(1), None, 0, 1.0).is_identity());
     assert_eq!(tl.locate(5.0), (0, 0.0));
+}
+
+#[test]
+fn start_of_seeks_the_play_all_clock_to_an_effect() {
+    let mut late = anim(4, AnimClass::Entrance, "fade", AnimStart::WithPrevious);
+    late.delay_ms = 250;
+    let mut triggered = anim(4, AnimClass::Emphasis, "pulse", AnimStart::OnClick);
+    triggered.trigger = Some(ShapeId(1));
+    let tl = Timeline::new(
+        &slide_with(vec![
+            anim(1, AnimClass::Entrance, "fade", AnimStart::OnClick),
+            anim(2, AnimClass::Exit, "fadeOut", AnimStart::OnClick),
+            anim(3, AnimClass::Entrance, "fade", AnimStart::OnClick),
+            late,
+            triggered,
+        ]),
+        W,
+        H,
+    );
+    assert_eq!(tl.start_of(0), Some(0.0));
+    assert_eq!(tl.start_of(2), Some(2.0));
+    assert_eq!(tl.start_of(3), Some(2.25));
+    assert_eq!(tl.start_of(4), None, "a triggered effect is not on the play-all clock");
+    assert_eq!(tl.start_of(9), None);
+    // Playing from the third effect: what came before has played, the rest has not.
+    let at = tl.start_of(2).unwrap();
+    assert!(tl.state_at(ShapeId(1), None, at).visible, "entered before");
+    assert!(!tl.state_at(ShapeId(2), None, at).visible, "exited before");
+    assert!(!tl.state_at(ShapeId(3), None, at).visible, "not entered yet");
+    assert!(!tl.state_at(ShapeId(4), None, at).visible, "not entered yet");
 }
 
 #[test]
@@ -1051,4 +1084,54 @@ fn show_returns_to_the_zoom_slide() {
     s.follow_link(&p, &link(2, Some(2)), None);
     s.goto(&p, 4);
     assert_eq!(s.next(&p), ShowAction::Slide(5));
+}
+
+#[test]
+fn custom_show_resolves_duplicate_ids_to_the_first_slide() {
+    let mut p = pres(3);
+    Arc::make_mut(&mut p.slides[2]).id = p.slides[0].id;
+    p.custom_shows = vec![CustomShow { name: "Dup".into(), slides: vec![p.slides[0].id, SlideId(1001), SlideId(424_242)] }];
+    p.show.custom_show = Some("Dup".into());
+    assert_eq!(show_order(&p), vec![0, 1]);
+}
+
+#[test]
+fn custom_show_with_many_entries_resolves_quickly() {
+    let mut p = pres(20_000);
+    let ids: Vec<SlideId> = p.slides.iter().map(|s| s.id).collect();
+    p.custom_shows = vec![CustomShow { name: "All".into(), slides: ids.iter().rev().copied().collect() }];
+    p.show.custom_show = Some("All".into());
+    let t = std::time::Instant::now();
+    let order = show_order(&p);
+    assert_eq!(order.len(), 20_000);
+    assert_eq!(order[0], 19_999);
+    assert!(t.elapsed().as_secs() < 5);
+}
+
+#[test]
+fn timeline_targets_the_first_shape_with_a_duplicate_id() {
+    let mut s = slide_with(vec![anim(7, AnimClass::Entrance, "fade", AnimStart::OnClick)]);
+    s.shapes[0] = shape(7, "first");
+    s.shapes[1] = shape(7, "second");
+    s.shapes[0].xfrm = Some(Xfrm::new(10.0, 10.0, 20.0, 20.0));
+    let tl = Timeline::new(&s, W, H);
+    assert_eq!(tl.effects().len(), 1);
+    assert_eq!(tl.steps(), 1);
+}
+
+#[test]
+fn many_by_paragraph_animations_on_one_shape_share_paragraph_targets() {
+    let mut s = slide_with(vec![]);
+    s.shapes[0].text = Some(TextBody::from_text("one\ntwo\nthree"));
+    s.animations = (0..2_000)
+        .map(|_| {
+            let mut a = anim(1, AnimClass::Path, "customPath", AnimStart::OnClick);
+            a.text_build = TextBuild::ByParagraph;
+            a.path = Some("M 0 0 L 0.5 0.5 E".into());
+            a
+        })
+        .collect();
+    let tl = Timeline::new(&s, W, H);
+    assert_eq!(tl.effects().len(), 6_000);
+    assert_eq!(tl.paragraph_targets(ShapeId(1)), vec![0, 1, 2]);
 }

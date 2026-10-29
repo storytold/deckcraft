@@ -59,3 +59,12 @@ real_name = "Ryan C. Shoemaker"
 real_name = "Marco Arnulfo"
 display_name = "Marco Arnulfo"
 sync_github_name = false
+
+[people.GhostMitra]
+sync_github_name = true
+
+[people.Katacc]
+sync_github_name = true
+
+[people.SofiaAFigueredo]
+real_name = "Sofia Alves Figueredo"

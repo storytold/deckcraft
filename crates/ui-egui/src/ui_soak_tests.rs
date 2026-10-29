@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use deckcraft_engine::Session;
-use egui::{Event, Key, Modifiers, MouseWheelUnit, Pos2, vec2};
+use egui::{Event, Key, Modifiers, MouseWheelSource, MouseWheelUnit, Pos2, vec2};
 use egui_kittest::Harness;
 
 use crate::{Services, SlideApp};
@@ -83,6 +83,8 @@ fn harness() -> Harness<'static, SlideApp> {
     h
 }
 
+/// Apply one deterministic random UI/document action and return a label describing it for the
+/// soak log, which is used as context when a later assertion fails.
 fn act(h: &mut Harness<'_, SlideApp>, r: &mut Rng) -> String {
     match r.below(9) {
         0..=2 => {
@@ -128,6 +130,7 @@ fn act(h: &mut Harness<'_, SlideApp>, r: &mut Rng) -> String {
                 delta: vec2(0.0, if r.below(2) == 0 { 3.0 } else { -3.0 }),
                 modifiers: Modifiers::NONE,
                 phase: egui::TouchPhase::Move,
+                source: MouseWheelSource::Wheel,
             });
             format!("scroll {p:?}")
         }

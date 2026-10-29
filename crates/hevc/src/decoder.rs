@@ -440,11 +440,22 @@ impl Decoder {
         let template = Frame::new(0, 0, w, h, sps.log2_ctb, sps.bit_depth_luma, sps.bit_depth_chroma);
         let next_id = &mut self.next_id;
         let mut missing = 0u64;
+        let max_missing = (sps.max_dec_pic_buffering as u64).clamp(1, 16);
+        let mut shared_gray: Option<FrameRef> = None;
         let mut make_missing = |p: i32| -> FrameRef {
             missing += 1;
+            if missing > max_missing
+                && let Some(ref g) = shared_gray
+            {
+                return g.clone();
+            }
             let id = *next_id;
             *next_id += 1;
-            Arc::new(Frame::gray(id, p, &template))
+            let f = Arc::new(Frame::gray(id, p, &template));
+            if shared_gray.is_none() {
+                shared_gray = Some(f.clone());
+            }
+            f
         };
         let rps = self.dpb.apply_rps(sh, poc, max_lsb, irap_no_rasl, &mut make_missing)?;
         if missing > 0 {

@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -66,14 +66,14 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 | Start On Click / With Previous / After Previous, duration, delay | yes | yes |
 | Effect Options (direction, sequence by paragraph) | yes | yes |
 | Effect dialog: sound, after-animation dim/hide, animate text by word/letter, smooth start/end, bounce end, repeat, rewind | yes | partly; repeat and bounce end round-trip; rewind lost on PPTX save (#77) |
-| By-paragraph text builds, sub-bullets follow parents | yes | yes |
+| By-paragraph text builds, sub-bullets follow parents | yes | yes; builds edited in PowerPoint (own start per paragraph, other effects in between, by 2nd-level paragraphs) import as one effect per paragraph and keep their clicks (#844) |
 | Triggers (on click of a shape) | yes | yes; played in the show: a step per click, the sequence starts over after its last step, a click completes a playing step. Separate click steps, mixed starts and paragraph builds survive PPTX save (`trigger_steps.rs`) |
 | Triggers on a media bookmark | yes | no |
 | Animation Painter | yes | yes (#54) |
 | Animation Pane: list, reorder, remove | yes | yes |
 | Animation Pane: advanced timeline (bars you drag) | yes | yes: bars from the show schedule, drag the body for delay, the right edge for duration, seconds ruler (`animpane_tests`) |
 | Preview on the editor canvas (the current slide) | yes | yes |
-| Preview from the selected effect | yes | no |
+| Preview from the selected effect | yes | yes: with an effect selected the pane's button reads Play From and starts at that effect, earlier effects already played (`animpane_tests`) |
 | Motion path editing (edit points, reverse, lock) | yes | partly (no edit points) |
 | Multiple animations on one object | yes | yes |
 | Round trip of the timing tree | yes | flattened to the pane list on read, rebuilt on write (`every_animation_effect_survives`) |
@@ -82,19 +82,21 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Work | Hours |
 |---|---|
-| Preview from selected, effect dialog depth | 4–6 |
+| Effect dialog depth | 3–5 |
 | The remaining ~126 effects (most are parameter variations of existing ones) | 3–6 |
 | Rewind and other effect options on round trip (#77) | 1–2 |
 | Transition sounds: the rest of PowerPoint's built-in list (Applause, Arrow, Bomb…) | 1 |
 | Morph across pictures, `!!` names, align once per transition (#67) | 2–4 |
 | Cloth, paper and particle transitions as real meshes (Curtains, Peel Off, Page Curl, Airplane, Origami, Vortex, Shred, Honeycomb) | 4–8 |
-| **Total** | **~15–27** (the Transitions and Animations rows of the feature table; part of the Features dimension's 140–240 h) |
+| **Total** | **~14–26** (the Transitions and Animations rows of the feature table; part of the Features dimension's 140–240 h) |
 
 ## Revision history
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |
 | 2026-10-15 | trivial | PPTX interactive sequences preserve later On Click effects and one click per paragraph; no change to playback or feature scores |
+| 2026-10-16 | trivial | PPTX paragraph builds edited in PowerPoint keep their clicks; sub-points save With Previous of their parent (#844) |
 | 2026-10-14 | trivial | Community PR wave folded: the Animation Pane timeline row says yes (it landed), preview split into canvas (yes) and from the selected effect (no); estimates drop the timeline and transition sounds (~15–27 h) |
 | 2026-10-14 | trivial | Repeat and bounce end round-trip through PPTX; rewind is still lost (#77) |
 | 2026-10-13 | minor | Animations ▸ Preview and Animation Pane ▸ Play All play the current slide's animations on the editor canvas; preview from the selected effect is still open |

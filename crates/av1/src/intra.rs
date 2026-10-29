@@ -1,7 +1,11 @@
 //! Intra prediction (spec 7.11.2), palette prediction (7.11.4) and chroma from luma (7.11.5).
 
 use crate::frame::Plane;
-use crate::spec_tables::*;
+use crate::spec_tables::{
+    ANGLE_STEP, D67_PRED, DC_PRED, DR_INTRA_DERIVATIVE, INTRA_EDGE_KERNEL, INTRA_EDGE_TAPS, INTRA_FILTER_SCALE_BITS, INTRA_FILTER_TAPS,
+    MODE_TO_ANGLE, SM_WEIGHTS_TX_4X4, SM_WEIGHTS_TX_8X8, SM_WEIGHTS_TX_16X16, SM_WEIGHTS_TX_32X32, SM_WEIGHTS_TX_64X64, SMOOTH_H_PRED, SMOOTH_PRED,
+    SMOOTH_V_PRED, V_PRED,
+};
 use crate::transform::round2;
 
 /// Inputs of the intra prediction process that come from the block.

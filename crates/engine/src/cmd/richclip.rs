@@ -107,14 +107,16 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
             }
             if closing {
                 let kind = tag_kind(&name);
-                if !kind.is_empty()
-                    && let Some(pos) = stack.iter().rposition(|e| e.0 == kind)
-                {
-                    let (_, db, di, du) = stack[pos];
-                    bold -= db;
-                    italic -= di;
-                    underline -= du;
-                    stack.truncate(pos);
+                if !kind.is_empty() {
+                    let search_start = stack.len().saturating_sub(64);
+                    if let Some(offset) = stack[search_start..].iter().rposition(|e| e.0 == kind) {
+                        let pos = search_start + offset;
+                        let (_, db, di, du) = stack[pos];
+                        bold -= db;
+                        italic -= di;
+                        underline -= du;
+                        stack.truncate(pos);
+                    }
                 }
                 if is_block(&name) {
                     new_para(&mut paragraphs);
@@ -130,7 +132,7 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
                 bold += db;
                 italic += di;
                 underline += du;
-                if !token.ends_with('/') {
+                if !token.ends_with('/') && stack.len() < 128 {
                     stack.push((tag_kind(&name), db, di, du));
                 } else {
                     bold -= db;
@@ -145,8 +147,13 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
             continue;
         }
         let end = bytes[i..].iter().position(|c| *c == b'<').map(|n| i + n).unwrap_or(bytes.len());
-        let text = decode_text(&html[i..end]);
+        let mut text = decode_text(&html[i..end]);
         i = end;
+        // A space at the start of a paragraph, or after a space, does not render in HTML.
+        let after_space = paragraphs.last().and_then(|p| p.runs.last()).is_none_or(|r| r.text.ends_with(' '));
+        if after_space {
+            text = text.trim_start_matches(' ').to_string();
+        }
         if text.is_empty() {
             continue;
         }
@@ -155,6 +162,7 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
     while paragraphs.last().is_some_and(Paragraph::is_empty) && paragraphs.len() > 1 {
         paragraphs.pop();
     }
+    trim_end_space(&mut paragraphs);
     if paragraphs.iter().all(Paragraph::is_empty) {
         return None;
     }
@@ -223,7 +231,11 @@ fn weight_bold(style: &str) -> Option<bool> {
 
 fn attr<'a>(tag: &'a str, key: &str) -> Option<&'a str> {
     let lower = tag.to_ascii_lowercase();
-    let at = lower.find(key)?;
+    let at = lower.match_indices(key).find_map(|(at, _)| {
+        let named = lower[..at].ends_with(|c: char| c.is_ascii_whitespace());
+        let eq = tag.get(at + key.len()..)?.trim_start().starts_with('=');
+        (named && eq).then_some(at)
+    })?;
     let after = tag.get(at + key.len()..)?.trim_start();
     let after = after.strip_prefix('=')?.trim_start();
     let quote = after.chars().next()?;
@@ -240,7 +252,16 @@ fn new_para(paragraphs: &mut Vec<Paragraph>) {
         return;
     }
     if paragraphs.last().is_some_and(|p| !p.is_empty()) {
+        trim_end_space(paragraphs);
         paragraphs.push(Paragraph::default());
+    }
+}
+
+/// Whitespace at the end of a paragraph does not render in HTML.
+fn trim_end_space(paragraphs: &mut [Paragraph]) {
+    if let Some(run) = paragraphs.last_mut().and_then(|p| p.runs.last_mut()) {
+        let len = run.text.trim_end_matches(' ').len();
+        run.text.truncate(len);
     }
 }
 
@@ -263,15 +284,38 @@ fn push_run(paragraphs: &mut [Paragraph], runs: &mut usize, text: String, bold: 
     *runs += 1;
 }
 
+/// Text with each run of HTML whitespace (spaces, tabs, line breaks) collapsed to one space.
+fn collapse_space(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut space = false;
+    for c in s.chars() {
+        if matches!(c, ' ' | '\t' | '\n' | '\r') {
+            if !space {
+                out.push(' ');
+            }
+            space = true;
+        } else {
+            out.push(c);
+            space = false;
+        }
+    }
+    out
+}
+
 fn decode_text(raw: &str) -> String {
     let mut out = String::new();
     let mut rest = raw;
     while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at].replace(['\n', '\r'], ""));
+        out.push_str(&collapse_space(&rest[..at]));
         rest = &rest[at..];
-        let Some(end) = rest.find(';') else {
-            out.push_str(&rest.replace(['\n', '\r'], ""));
-            break;
+        let mut search_window = rest.len().min(32);
+        while !rest.is_char_boundary(search_window) {
+            search_window -= 1;
+        }
+        let Some(end) = rest[..search_window].find(';') else {
+            out.push('&');
+            rest = &rest[1..];
+            continue;
         };
         let entity = &rest[1..end];
         let decoded = match entity {
@@ -280,7 +324,7 @@ fn decode_text(raw: &str) -> String {
             "gt" => Some('>'),
             "quot" => Some('"'),
             "apos" => Some('\''),
-            "nbsp" => Some(' '),
+            "nbsp" => Some('\u{a0}'),
             _ => entity.strip_prefix('#').and_then(numeric_char),
         };
         if let Some(c) = decoded {
@@ -293,15 +337,20 @@ fn decode_text(raw: &str) -> String {
         }
     }
     if !rest.is_empty() && !rest.starts_with('&') {
-        out.push_str(&rest.replace(['\n', '\r'], ""));
+        out.push_str(&collapse_space(rest));
     }
     out
 }
 
 fn numeric_char(digits: &str) -> Option<char> {
     let hex = digits.strip_prefix('x').or_else(|| digits.strip_prefix('X'));
-    let n = if let Some(hex) = hex { u32::from_str_radix(hex, 16).ok()? } else { digits.parse().ok()? };
-    char::from_u32(n).filter(|c| !c.is_control() || *c == '\n')
+    // `parse` and `from_str_radix` accept a leading '+', which is not a valid reference.
+    let (body, radix) = hex.map_or((digits, 10), |h| (h, 16));
+    if body.is_empty() || !body.chars().all(|c| c.is_digit(radix)) {
+        return None;
+    }
+    let n = u32::from_str_radix(body, radix).ok()?;
+    char::from_u32(n).filter(|c| !c.is_control() || matches!(*c, '\n' | '\t'))
 }
 
 /// Do the HTML's words and the paste's plain text say the same thing?
@@ -320,6 +369,27 @@ mod tests {
     use super::*;
 
     #[test]
+    fn multibyte_after_ampersand_is_kept() {
+        let text = "é".repeat(20);
+        assert_eq!(decode_text(&format!("R&D {text}")), format!("R&D {text}"));
+        let cjk = "漢".repeat(20);
+        assert_eq!(decode_text(&format!("&{cjk}")), format!("&{cjk}"));
+    }
+
+    #[test]
+    fn signed_numeric_entities_are_kept_as_typed() {
+        assert_eq!(decode_text("a&#+65;b"), "a&#+65;b");
+        assert_eq!(decode_text("a&#x+41;b"), "a&#x+41;b");
+        assert_eq!(decode_text("a&#65;b&#x41;"), "aAbA");
+    }
+
+    #[test]
+    fn numeric_tab_entity_decodes_to_tab() {
+        assert_eq!(decode_text("a&#9;b"), "a\tb");
+        assert_eq!(decode_text("a&#x9;b"), "a\tb");
+    }
+
+    #[test]
     fn google_docs_normal_weight_wrapper_is_not_bold() {
         let html = "<meta charset=\"utf-8\"><b style=\"font-weight:normal;\" id=\"docs-internal-guid-1\"><span style=\"font-weight:400\">plain words</span></b>";
         let body = html_to_body(html).unwrap();
@@ -331,6 +401,20 @@ mod tests {
         assert_eq!(plain.paragraphs[0].runs[0].props.bold, Some(true));
         let heavy = html_to_body("<span style=\"font-weight:700\">heavy</span>").unwrap();
         assert_eq!(heavy.paragraphs[0].runs[0].props.bold, Some(true));
+    }
+
+    #[test]
+    fn style_attribute_is_found_after_attributes_containing_style() {
+        for tag in [
+            "<span class=\"style1\" style=\"font-weight:bold\">x</span>",
+            "<span data-style=\"x\" style=\"font-weight:bold\">x</span>",
+            "<span class=\"mystyle\" style=\"font-weight:bold\">x</span>",
+        ] {
+            let body = html_to_body(tag).unwrap();
+            assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true), "{tag}");
+        }
+        let none = html_to_body("<span class=\"style\">x</span>").unwrap();
+        assert_eq!(none.paragraphs[0].runs[0].props.bold, None);
     }
 
     #[test]
@@ -358,6 +442,10 @@ mod tests {
         assert_eq!(text("<p>R&D costs; up</p>"), "R&D costs; up");
         assert_eq!(text("<p>AT&T; Q&A</p>"), "AT&T; Q&A");
         assert_eq!(text("<p>A &amp; B &#38; C &#x26; D</p>"), "A & B & C & D");
+
+        // Verify many bare ampersands do not cause quadratic scan freeze
+        let hostile = format!("<p>{}</p>", "&".repeat(2000));
+        assert_eq!(text(&hostile), "&".repeat(2000));
     }
 
     #[test]
@@ -369,6 +457,18 @@ mod tests {
         assert_eq!(body.paragraphs[1].runs[0].props.italic, Some(true));
         assert!(same_words(&body.text(), "A & B\nC"));
         assert!(!same_words(&body.text(), "other"));
+    }
+
+    #[test]
+    fn a_newline_in_html_text_is_a_space() {
+        assert_eq!(decode_text("Hello\nworld"), "Hello world");
+        let body = html_to_body("<p>Hello\r\n  world</p>").unwrap();
+        assert_eq!(body.text(), "Hello world");
+        let body = html_to_body("<p>\n<b>Hello</b>\n<i>world</i>\n</p>\n<p>next</p>").unwrap();
+        assert_eq!(body.text(), "Hello world\nnext");
+        assert!(same_words(&body.text(), "Hello world\nnext"));
+        assert_eq!(body.paragraphs[0].runs[0].props.bold, Some(true));
+        assert_eq!(body.paragraphs[0].runs.last().unwrap().props.italic, Some(true));
     }
 
     #[test]

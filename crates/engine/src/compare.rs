@@ -1,5 +1,5 @@
 //! Review › Compare: the differences between the open presentation and a revised copy of it, slide
-//! by slide, and accepting a revised slide into the open one.
+//! by slide, and accepting a revised slide into the open one or rejecting it.
 //!
 //! Slides match by id (a revised copy of the same deck keeps them); when the two decks share no
 //! slide id at all, by position. Shapes match by id, then by name.
@@ -7,7 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use deckcraft_model::{Fill, MediaId, Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
+use deckcraft_model::{MediaId, Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
 use serde::Serialize;
 
 /// The revised presentation a document is being compared with.
@@ -18,6 +18,54 @@ pub struct Compare {
     /// Slides match by position (the decks shared no slide id when the compare started); fixed
     /// for the session so accepting slides doesn't switch the matching half way.
     pub by_position: bool,
+    /// Revisions rejected: no longer listed and never accepted, the open deck left as it is.
+    pub rejected: HashSet<ChangeKey>,
+}
+
+/// What a revision is about, stable while slides move: the open slide (for changed and deleted)
+/// and the revised slide (for changed and inserted).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ChangeKey {
+    kind: ChangeKind,
+    open: Option<SlideId>,
+    revised: Option<usize>,
+}
+
+impl ChangeKey {
+    pub fn of(doc: &Presentation, change: &Change) -> ChangeKey {
+        let open = match change.kind {
+            ChangeKind::Inserted => None,
+            ChangeKind::Changed | ChangeKind::Deleted => doc.slides.get(change.slide).map(|s| s.id),
+        };
+        ChangeKey { kind: change.kind, open, revised: change.revised }
+    }
+}
+
+/// The revisions still to review: [`diff`] without the rejected ones.
+pub fn pending(doc: &Presentation, c: &Compare) -> Vec<Change> {
+    let mut out = diff(doc, &c.revised, c.by_position);
+    out.retain(|ch| !is_rejected(doc, c, ch));
+    out
+}
+
+/// Whether `ch` was rejected. Positional matching re-pairs slides by index when the open deck gains
+/// or loses a slide, which changes the open half of the key; the revised index stays put, so any
+/// rejected key for the same revised slide counts. An open slide pushed past the end of the revised
+/// deck turns into a deletion; it stays kept when a rejected key names it.
+fn is_rejected(doc: &Presentation, c: &Compare, ch: &Change) -> bool {
+    if c.rejected.contains(&ChangeKey::of(doc, ch)) {
+        return true;
+    }
+    if !c.by_position {
+        return false;
+    }
+    match ch.kind {
+        ChangeKind::Deleted => {
+            let open = doc.slides.get(ch.slide).map(|s| s.id);
+            open.is_some() && c.rejected.iter().any(|k| k.open == open)
+        }
+        _ => ch.revised.is_some() && c.rejected.iter().any(|k| k.revised == ch.revised),
+    }
 }
 
 /// Whether `cur` and `rev` share no slide id (then slides match by position).
@@ -26,7 +74,7 @@ pub fn unrelated(cur: &Presentation, rev: &Presentation) -> bool {
     !cur.slides.iter().any(|s| ids.contains(&s.id))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ChangeKind {
     /// Only in the revised deck.
@@ -233,14 +281,16 @@ fn max_shape_id(shapes: &[Shape], m: &mut u32) {
 pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacing: Option<SlideId>) -> crate::Result<Slide> {
     let mut sl = slide.clone();
     // Media.
-    let mut mids = vec![];
-    crate::cmd::edit::media_of_shapes(&sl.shapes, &mut mids);
     let mut media_map: HashMap<MediaId, MediaId> = HashMap::new();
-    for id in mids {
+    for id in crate::media_refs::slide_media(&sl) {
         let Some(m) = rev.media(id) else { continue };
         match doc.media(id) {
             Some(x) if x.data == m.data => {}
-            None => doc.media.push(m.clone()),
+            None => {
+                // Keeps the revision's id, so later ids must start past it.
+                doc.media.push(m.clone());
+                doc.next_id = doc.next_id.max(id.0);
+            }
             Some(_) => {
                 let new = doc
                     .add_media(&m.name, &m.content_type, m.data.as_ref().clone())
@@ -262,7 +312,6 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
         shapes: &mut [Shape],
         taken: &HashSet<u32>,
         ids: &mut HashMap<ShapeId, ShapeId>,
-        media: &HashMap<MediaId, MediaId>,
         depth: usize,
     ) -> crate::Result<()> {
         if depth > 64 {
@@ -274,31 +323,18 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
                 ids.insert(s.id, new);
                 s.id = new;
             }
-            let remap = |m: &mut MediaId| {
-                if let Some(n) = media.get(m) {
-                    *m = *n;
-                }
-            };
-            match &mut s.kind {
-                ShapeKind::Picture { fill } => remap(&mut fill.media),
-                ShapeKind::Media(m) => {
-                    remap(&mut m.media);
-                    if let Some(p) = m.poster.as_mut() {
-                        remap(p);
-                    }
-                }
-                _ => {}
-            }
-            if let Some(Fill::Picture(pf)) = &mut s.fill {
-                remap(&mut pf.media);
-            }
             if let Some(ch) = s.children_mut() {
-                rec(doc, ch, taken, ids, media, depth + 1)?;
+                rec(doc, ch, taken, ids, depth + 1)?;
             }
         }
         Ok(())
     }
-    rec(doc, &mut sl.shapes, &taken, &mut id_map, &media_map, 0)?;
+    rec(doc, &mut sl.shapes, &taken, &mut id_map, 0)?;
+    crate::media_refs::visit_mut::slide(&mut sl, &mut |m: &mut MediaId| {
+        if let Some(n) = media_map.get(m) {
+            *m = *n;
+        }
+    });
     for a in &mut sl.animations {
         if let Some(n) = id_map.get(&a.shape) {
             a.shape = *n;
@@ -412,6 +448,52 @@ mod tests {
         assert_eq!(s.doc().unwrap().doc.slides.len(), n, "comparing alone changes nothing");
     }
 
+    /// A deck with one slide: a table whose cell has a picture fill, a picture background and a
+    /// transition sound. `tag` starts the bytes of each.
+    fn media_deck(tag: &str) -> deckcraft_model::Presentation {
+        use std::sync::Arc;
+
+        use deckcraft_model::style::PictureFill;
+        use deckcraft_model::{Background, Fill, Shape, ShapeId, ShapeKind, Table, Transition, defaults};
+
+        let mut p = defaults::new_presentation(None);
+        let cell = p.add_media("cell.png", "image/png", format!("{tag} cell").into_bytes()).expect("media");
+        let back = p.add_media("back.png", "image/png", format!("{tag} background").into_bytes()).expect("media");
+        let sound = p.add_media("sound.wav", "audio/wav", format!("{tag} sound").into_bytes()).expect("media");
+        let mut t = Table::new(1, 1, 100.0, 40.0);
+        t.rows[0].cells[0].fill = Some(Fill::Picture(PictureFill { media: cell, ..Default::default() }));
+        let id = ShapeId(p.alloc_id().expect("id"));
+        let mut s = (*p.slides.first().cloned().unwrap_or_default()).clone();
+        s.shapes.push(Shape { id, kind: ShapeKind::Table(t), ..Default::default() });
+        s.background = Some(Background::Fill { fill: Fill::Picture(PictureFill { media: back, ..Default::default() }) });
+        s.transition = Some(Transition { kind: "fade".into(), sound: Some(sound), ..Default::default() });
+        p.slides = vec![Arc::new(s)];
+        p
+    }
+
+    #[test]
+    fn an_accepted_slide_keeps_its_cell_picture_background_and_sound() {
+        use deckcraft_model::{Background, Fill, MediaId, ShapeKind};
+
+        // Both decks hold the same media ids with different bytes.
+        let mut doc = media_deck("open");
+        let rev = media_deck("revised");
+        let sl = super::adopt(&mut doc, &rev, &rev.slides[0], None).unwrap();
+        let bytes = |id: MediaId| doc.media(id).unwrap().data.as_ref().clone();
+        let table = sl.shapes.iter().find_map(|x| if let ShapeKind::Table(t) = &x.kind { Some(t) } else { None }).unwrap();
+        let Some(Fill::Picture(cell)) = &table.rows[0].cells[0].fill else { panic!("no cell picture") };
+        let Some(Background::Fill { fill: Fill::Picture(back) }) = &sl.background else { panic!("no background picture") };
+        let sound = sl.transition.as_ref().and_then(|t| t.sound).unwrap();
+        assert_eq!(
+            [bytes(cell.media), bytes(back.media), bytes(sound)],
+            ["revised cell", "revised background", "revised sound"].map(|x| x.as_bytes().to_vec())
+        );
+        // The open deck's own slide is untouched.
+        let own = &doc.slides[0];
+        let Some(Background::Fill { fill: Fill::Picture(back) }) = &own.background else { panic!("no background picture") };
+        assert_eq!(bytes(back.media), b"open background");
+    }
+
     #[test]
     fn accept_one_then_all_makes_the_decks_equal_and_undoes() {
         let (mut s, rev, n) = decks();
@@ -435,6 +517,50 @@ mod tests {
     }
 
     #[test]
+    fn reject_keeps_the_open_deck_and_accept_all_skips_rejected_revisions() {
+        let (mut s, rev, n) = decks();
+        s.execute("review.compare", &json!({"name": "rev.deckcraft", "data": rev})).unwrap();
+        let before = s.execute("review.revisions", &json!({})).unwrap()["changes"].as_array().unwrap().clone();
+        let ins = before.iter().position(|c| c["kind"] == "inserted").unwrap();
+        let doc = s.doc().unwrap().doc.clone();
+        let undo = s.doc().unwrap().history.undo.len();
+        assert_eq!(s.execute("review.reject", &json!({"index": ins})).unwrap()["rejected"], 1);
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc().unwrap().doc), "rejecting leaves the open deck as it is");
+        let left = s.execute("review.revisions", &json!({})).unwrap();
+        assert_eq!(kinds(&left).len(), before.len() - 1);
+        assert!(!kinds(&left).contains(&"inserted".into()), "{left}");
+        // Accept All takes the rest, never the rejected slide.
+        s.execute("review.accept", &json!({"all": true})).unwrap();
+        let st = s.doc().unwrap();
+        assert_eq!(st.doc.slides.len(), n - 1, "the deleted slide goes, the rejected insertion never comes");
+        assert!(!st.doc.slides.iter().any(|x| super::slide_title(x) == "Brand new"));
+        assert!(s.execute("review.revisions", &json!({})).unwrap()["changes"].as_array().unwrap().is_empty());
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc().unwrap().doc));
+        assert_eq!(s.doc().unwrap().history.undo.len(), undo, "rejecting is not an undo step");
+        // Reject All: nothing left to review, the deck as it was; Accept All then has nothing to take.
+        assert_eq!(s.execute("review.reject", &json!({"all": true})).unwrap()["rejected"], before.len() - 1);
+        assert!(s.execute("review.revisions", &json!({})).unwrap()["changes"].as_array().unwrap().is_empty());
+        assert!(s.execute("review.accept", &json!({"all": true})).is_err());
+        assert!(std::sync::Arc::ptr_eq(&doc, &s.doc().unwrap().doc));
+        assert!(s.execute("review.reject", &json!({"all": true})).is_err(), "nothing left to reject");
+        assert!(s.execute("review.reject", &json!({})).is_err());
+        s.execute("review.endCompare", &json!({})).unwrap();
+        assert!(s.execute("review.reject", &json!({"index": 0})).is_err());
+    }
+
+    #[test]
+    fn rejecting_one_revision_keeps_the_others_in_order() {
+        let (mut s, rev, _) = decks();
+        s.execute("review.compare", &json!({"name": "rev.deckcraft", "data": rev})).unwrap();
+        let before = s.execute("review.revisions", &json!({})).unwrap()["changes"].as_array().unwrap().clone();
+        assert!(s.execute("review.reject", &json!({"index": before.len()})).is_err());
+        s.execute("review.reject", &json!({"index": 0})).unwrap();
+        let left = s.execute("review.revisions", &json!({})).unwrap()["changes"].as_array().unwrap().clone();
+        assert_eq!(left.as_slice(), &before[1..], "the rejected one goes, the others stay in order");
+    }
+
+    #[test]
     fn unrelated_decks_match_by_position_and_bad_input_fails() {
         let mut s = Session::with_new();
         s.execute("slide.new", &json!({"layout": "title", "title": "A"})).unwrap();
@@ -451,5 +577,66 @@ mod tests {
         assert!(s.execute("review.compare", &json!({"name": "x.bin", "data": "AAAA"})).is_err());
         assert!(s.execute("review.compare", &json!({})).is_err());
         assert!(s.execute("review.accept", &json!({"index": 999})).is_err());
+    }
+
+    fn slide_texts(s: &Session) -> Vec<String> {
+        s.doc().unwrap().doc.slides.iter().map(|sl| sl.shapes.iter().filter_map(|x| x.text.as_ref()).map(|t| t.text()).collect::<String>()).collect()
+    }
+
+    /// By position, a rejected revision stays rejected when a slide is inserted into the open deck
+    /// and the same revised slide now pairs with a different open slide.
+    #[test]
+    fn a_rejected_positional_revision_stays_rejected_after_a_slide_is_inserted() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "title", "title": "A"})).unwrap();
+        let mut other = Session::with_new();
+        other.execute("slide.new", &json!({"layout": "title", "title": "B"})).unwrap();
+        let data = other.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["data"].as_str().unwrap().to_string();
+        let v = s.execute("review.compare", &json!({"name": "o.pptx", "data": data})).unwrap();
+        assert_eq!(v["byPosition"], true, "{v}");
+        let changed = |v: &Value| -> Vec<u64> {
+            v["changes"].as_array().unwrap().iter().filter(|c| c["kind"] == "changed").map(|c| c["revised"].as_u64().unwrap()).collect()
+        };
+        let revised = changed(&v);
+        let last = *revised.last().expect("a changed slide");
+        let at = v["changes"].as_array().unwrap().iter().position(|c| c["revised"] == last).unwrap();
+        s.execute("review.reject", &json!({"index": at})).unwrap();
+        // A new slide at the front shifts every open slide down by one.
+        s.execute("slide.new", &json!({"layout": "title", "title": "N"})).unwrap();
+        let n_at = slide_texts(&s).iter().position(|t| t.contains('N')).unwrap();
+        s.execute("slide.move", &json!({"from": n_at, "to": 0})).unwrap();
+        assert_eq!(slide_texts(&s).iter().position(|t| t.contains('N')), Some(0));
+        let now = s.execute("review.revisions", &json!({})).unwrap();
+        assert!(!changed(&now).contains(&last), "{now}");
+        s.execute("review.accept", &json!({"all": true})).unwrap();
+        let texts = slide_texts(&s);
+        assert!(!texts.iter().any(|t| t.contains('B')), "{texts:?}");
+    }
+
+    /// By position, inserting a slide before a rejected pair pushes the pair's open slide past the
+    /// end of the revised deck; it must not turn into a deletion that Accept All carries out.
+    #[test]
+    fn a_rejected_positional_revision_does_not_become_a_deletion_when_a_slide_is_inserted() {
+        let mut s = Session::with_new();
+        let mut other = Session::with_new();
+        for t in ["A", "X"] {
+            s.execute("slide.new", &json!({"layout": "title", "title": t})).unwrap();
+        }
+        for t in ["B", "Y"] {
+            other.execute("slide.new", &json!({"layout": "title", "title": t})).unwrap();
+        }
+        let data = other.execute("file.saveBytes", &json!({"format": "pptx"})).unwrap()["data"].as_str().unwrap().to_string();
+        let v = s.execute("review.compare", &json!({"name": "o.pptx", "data": data})).unwrap();
+        assert_eq!(v["byPosition"], true, "{v}");
+        let changes = v["changes"].as_array().unwrap();
+        let last = changes.iter().filter(|c| c["kind"] == "changed").map(|c| c["revised"].as_u64().unwrap()).max().expect("a changed slide");
+        let at = changes.iter().position(|c| c["kind"] == "changed" && c["revised"] == last).unwrap();
+        let open_id = s.doc().unwrap().doc.slides[last as usize].id;
+        s.execute("review.reject", &json!({"index": at})).unwrap();
+        s.execute("slide.new", &json!({"layout": "title", "title": "N"})).unwrap();
+        let n_at = slide_texts(&s).iter().position(|t| t.contains('N')).unwrap();
+        s.execute("slide.move", &json!({"from": n_at, "to": 0})).unwrap();
+        s.execute("review.accept", &json!({"all": true})).unwrap();
+        assert!(s.doc().unwrap().doc.slides.iter().any(|sl| sl.id == open_id), "the open slide whose revision was rejected was deleted");
     }
 }

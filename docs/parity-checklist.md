@@ -9,12 +9,12 @@ The summary between `<!-- SUMMARY -->
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
 | P1 | 65 | 45 | 16 | 4 | 82% |
-| P2 | 54 | 17 | 25 | 12 | 55% |
+| P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
 |---|---|
 | Application shell | 81% |
-| Files | 75% |
+| Files | 76% |
 | Slides | 92% |
 | Views | 98% |
 | Masters & themes | 92% |
@@ -54,17 +54,17 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Application shell | Multiple open presentations | P1 | P |
 | Application shell | Preferences (autosave, units, defaults) | P2 | P |
 | Files | New blank presentation | P0 | D |
-| Files | Native file format (open/save; chart package parts retained, `crates/engine/tests/chart_native.rs`) | P0 | D |
+| Files | Native file format (open/save; chart package parts retained, `crates/engine/tests/it/chart_native.rs`) | P0 | D |
 | Files | Open PowerPoint .pptx | P0 | D |
 | Files | Save as PowerPoint .pptx | P0 | D |
-| Files | Open/save .potx/.ppsx/.pptm variants (.potx/.ppsx open; saved with the .pptx content type; no .pptm) | P2 | P |
+| Files | Open/save .potx/.ppsx/.pptm variants (.potx/.ppsx open and save with their own content types; no .pptm) | P2 | P |
 | Files | Legacy .ppt (binary) import | P2 | M |
 | Files | Save as template | P1 | D |
 | Files | Autosave and crash recovery | P0 | D |
 | Files | Document properties | P2 | D |
 | Files | Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending) | P0 | P |
 | Files | Export slides as PNG/JPEG | P0 | D |
-| Files | Export outline / RTF | P2 | P |
+| Files | Export outline / RTF | P2 | D |
 | Files | Export video (MP4) / animated GIF (GIF: one frame per slide, no transitions; no video) | P2 | P |
 | Files | Print (slides, handouts, notes, outline) | P1 | M |
 | Files | Password protection | P2 | M |
@@ -206,7 +206,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Animations | Effect options, start (on click/with/after), duration, delay | P0 | D |
 | Animations | Animation pane (reorder, timing) | P0 | P |
 | Animations | By-paragraph text builds | P1 | D |
-| Animations | Triggers (separate click steps and paragraph builds round-trip; `crates/pptx/tests/trigger_steps.rs`) | P2 | D |
+| Animations | Triggers (separate click steps and paragraph builds round-trip; `crates/pptx/tests/it/trigger_steps.rs`) | P2 | D |
 | Animations | Animation Painter | P2 | D |
 | Animations | Preview in editor | P1 | D |
 | Slide show | Full-screen show from start / current | P0 | D |

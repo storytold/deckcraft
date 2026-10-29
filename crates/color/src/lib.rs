@@ -34,8 +34,9 @@ impl Rgba {
     }
     /// `RRGGBB` or `#RRGGBB` (also `RRGGBBAA`).
     pub fn from_hex(s: &str) -> Option<Self> {
-        let s = s.trim().trim_start_matches('#');
-        if !s.is_ascii() {
+        let s = s.trim();
+        let s = s.strip_prefix('#').unwrap_or(s);
+        if !s.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         let byte = |i: usize| s.get(i..i + 2).and_then(|h| u8::from_str_radix(h, 16).ok());
@@ -515,9 +516,264 @@ pub fn preset(name: &str) -> Option<Rgba> {
     Some(Rgba::rgb(c.0, c.1, c.2))
 }
 
+/// Every preset colour name a file may write (`ST_PresetColorVal`, with the later editions' aliases).
+pub const PRESET_NAMES: [&str; 190] = [
+    "aliceBlue",
+    "antiqueWhite",
+    "aqua",
+    "aquamarine",
+    "azure",
+    "beige",
+    "bisque",
+    "black",
+    "blanchedAlmond",
+    "blue",
+    "blueViolet",
+    "brown",
+    "burlyWood",
+    "cadetBlue",
+    "chartreuse",
+    "chocolate",
+    "coral",
+    "cornflowerBlue",
+    "cornsilk",
+    "crimson",
+    "cyan",
+    "darkBlue",
+    "darkCyan",
+    "darkGoldenrod",
+    "darkGray",
+    "darkGrey",
+    "darkGreen",
+    "darkKhaki",
+    "darkMagenta",
+    "darkOliveGreen",
+    "darkOrange",
+    "darkOrchid",
+    "darkRed",
+    "darkSalmon",
+    "darkSeaGreen",
+    "darkSlateBlue",
+    "darkSlateGray",
+    "darkSlateGrey",
+    "darkTurquoise",
+    "darkViolet",
+    "dkBlue",
+    "dkCyan",
+    "dkGoldenrod",
+    "dkGray",
+    "dkGrey",
+    "dkGreen",
+    "dkKhaki",
+    "dkMagenta",
+    "dkOliveGreen",
+    "dkOrange",
+    "dkOrchid",
+    "dkRed",
+    "dkSalmon",
+    "dkSeaGreen",
+    "dkSlateBlue",
+    "dkSlateGray",
+    "dkSlateGrey",
+    "dkTurquoise",
+    "dkViolet",
+    "deepPink",
+    "deepSkyBlue",
+    "dimGray",
+    "dimGrey",
+    "dodgerBlue",
+    "firebrick",
+    "floralWhite",
+    "forestGreen",
+    "fuchsia",
+    "gainsboro",
+    "ghostWhite",
+    "gold",
+    "goldenrod",
+    "gray",
+    "grey",
+    "green",
+    "greenYellow",
+    "honeydew",
+    "hotPink",
+    "indianRed",
+    "indigo",
+    "ivory",
+    "khaki",
+    "lavender",
+    "lavenderBlush",
+    "lawnGreen",
+    "lemonChiffon",
+    "lightBlue",
+    "lightCoral",
+    "lightCyan",
+    "lightGoldenrodYellow",
+    "lightGray",
+    "lightGrey",
+    "lightGreen",
+    "lightPink",
+    "lightSalmon",
+    "lightSeaGreen",
+    "lightSkyBlue",
+    "lightSlateGray",
+    "lightSlateGrey",
+    "lightSteelBlue",
+    "lightYellow",
+    "ltBlue",
+    "ltCoral",
+    "ltCyan",
+    "ltGoldenrodYellow",
+    "ltGray",
+    "ltGrey",
+    "ltGreen",
+    "ltPink",
+    "ltSalmon",
+    "ltSeaGreen",
+    "ltSkyBlue",
+    "ltSlateGray",
+    "ltSlateGrey",
+    "ltSteelBlue",
+    "ltYellow",
+    "lime",
+    "limeGreen",
+    "linen",
+    "magenta",
+    "maroon",
+    "medAquamarine",
+    "medBlue",
+    "medOrchid",
+    "medPurple",
+    "medSeaGreen",
+    "medSlateBlue",
+    "medSpringGreen",
+    "medTurquoise",
+    "medVioletRed",
+    "mediumAquamarine",
+    "mediumBlue",
+    "mediumOrchid",
+    "mediumPurple",
+    "mediumSeaGreen",
+    "mediumSlateBlue",
+    "mediumSpringGreen",
+    "mediumTurquoise",
+    "mediumVioletRed",
+    "midnightBlue",
+    "mintCream",
+    "mistyRose",
+    "moccasin",
+    "navajoWhite",
+    "navy",
+    "oldLace",
+    "olive",
+    "oliveDrab",
+    "orange",
+    "orangeRed",
+    "orchid",
+    "paleGoldenrod",
+    "paleGreen",
+    "paleTurquoise",
+    "paleVioletRed",
+    "papayaWhip",
+    "peachPuff",
+    "peru",
+    "pink",
+    "plum",
+    "powderBlue",
+    "purple",
+    "red",
+    "rosyBrown",
+    "royalBlue",
+    "saddleBrown",
+    "salmon",
+    "sandyBrown",
+    "seaGreen",
+    "seaShell",
+    "sienna",
+    "silver",
+    "skyBlue",
+    "slateBlue",
+    "slateGray",
+    "slateGrey",
+    "snow",
+    "springGreen",
+    "steelBlue",
+    "tan",
+    "teal",
+    "thistle",
+    "tomato",
+    "turquoise",
+    "violet",
+    "wheat",
+    "white",
+    "whiteSmoke",
+    "yellow",
+    "yellowGreen",
+];
+
+/// Every system colour name a file may write (`ST_SystemColorVal`).
+pub const SYSTEM_NAMES: [&str; 30] = [
+    "scrollBar",
+    "background",
+    "activeCaption",
+    "inactiveCaption",
+    "menu",
+    "window",
+    "windowFrame",
+    "menuText",
+    "windowText",
+    "captionText",
+    "activeBorder",
+    "inactiveBorder",
+    "appWorkspace",
+    "highlight",
+    "highlightText",
+    "btnFace",
+    "btnShadow",
+    "grayText",
+    "btnText",
+    "inactiveCaptionText",
+    "btnHighlight",
+    "3dDkShadow",
+    "3dLight",
+    "infoText",
+    "infoBk",
+    "hotLight",
+    "gradientActiveCaption",
+    "gradientInactiveCaption",
+    "menuHighlight",
+    "menuBar",
+];
+
+/// Whether `name` is a preset colour name a file may write.
+pub fn is_preset_name(name: &str) -> bool {
+    PRESET_NAMES.contains(&name)
+}
+
+/// Whether `name` is a system colour name a file may write.
+pub fn is_system_name(name: &str) -> bool {
+    SYSTEM_NAMES.contains(&name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn from_hex_rejects_multiple_hashes() {
+        assert_eq!(Rgba::from_hex("##FF0000"), None);
+        assert_eq!(Rgba::from_hex("####FF0000"), None);
+        assert_eq!(Rgba::from_hex("#FF0000"), Some(Rgba::rgb(255, 0, 0)));
+        assert_eq!(Rgba::from_hex("FF0000"), Some(Rgba::rgb(255, 0, 0)));
+        assert_eq!(Rgba::from_hex("#FF000080"), Some(Rgba::rgba(255, 0, 0, 128)));
+    }
+
+    #[test]
+    fn from_hex_rejects_signs() {
+        assert_eq!(Rgba::from_hex("+12345"), None);
+        assert_eq!(Rgba::from_hex("#+1+2+3"), None);
+        assert_eq!(Rgba::from_hex("+1+2+3+4"), None);
+        assert_eq!(Rgba::from_hex("+12"), None);
+    }
 
     #[test]
     fn hex_roundtrip() {
