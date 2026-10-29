@@ -1,4 +1,5 @@
 use super::autonum::autonum;
+use super::math;
 use super::run::{RunEffects, TextShadow};
 use super::style::{Cell, Opts, ParaShaped, Style, face_chain, make_style};
 use super::symbol::{covers_symbol, map_symbol_bullet, symbol_font_char, symbol_map_char};
@@ -23,6 +24,7 @@ pub(crate) fn shape_para(
         let face = db.face("Inter", "Regular");
         return ParaShaped {
             cells: vec![],
+            atoms: vec![],
             styles: vec![],
             faces: vec![],
             props: ParaProps::default(),
@@ -42,21 +44,50 @@ pub(crate) fn shape_para(
     // The logical paragraph: its text and each character's style.
     let mut text = String::new();
     let mut char_style: Vec<usize> = vec![];
+    // Characters standing for an equation, and (first character, atom index) of each equation.
+    let mut atom_chars: Vec<bool> = vec![];
+    let mut atom_first: Vec<(usize, usize)> = vec![];
+    let mut atoms: Vec<Arc<math::MathBox>> = vec![];
+    // An equation alone in its paragraph is set in display style, like a displayed formula.
+    let solo = para.runs.iter().filter(|r| !r.text.is_empty() || matches!(r.kind, RunKind::Math { .. })).count() == 1;
     for run in &para.runs {
         let rp = resolve::run(ctx, shape, para, &run.props);
         let st = make_style(ctx, &rp, scale, opts.prompt_color);
+        if let RunKind::Math { omml } = &run.kind {
+            // One object character for the equation and a word joiner per further character of
+            // the run: bidi sees a neutral object, line breaking cannot split it, and character
+            // counts match the run's text.
+            let n = run.char_len().max(1);
+            let mbox = math::layout_math_cached(omml, st.size, rp.bold.unwrap_or(false), solo);
+            let si = styles.len();
+            styles.push(st);
+            atom_first.push((char_style.len(), atoms.len()));
+            atoms.push(mbox);
+            text.push('\u{FFFC}');
+            text.extend(std::iter::repeat_n('\u{2060}', n - 1));
+            char_style.extend(std::iter::repeat_n(si, n));
+            atom_chars.extend(std::iter::repeat_n(true, n));
+            continue;
+        }
         let t: String = match &run.kind {
             RunKind::Text => run.text.clone(),
             RunKind::Break => "\u{b}".into(),
             RunKind::Field { field } => opts.fields.field_in(field, rp.lang.as_deref()).unwrap_or_else(|| run.text.clone()),
-            RunKind::Math { .. } => run.text.clone(),
+            RunKind::Math { .. } => String::new(),
         };
         let si = styles.len();
         styles.push(st);
         char_style.extend(std::iter::repeat_n(si, t.chars().count()));
+        atom_chars.extend(std::iter::repeat_n(false, t.chars().count()));
         text.push_str(&t);
     }
-    let cells = shape_cells(ctx, &text, &char_style, &styles, &mut faces, rtl, vertical);
+    let mut cells = shape_cells(ctx, &text, &char_style, &atom_chars, &styles, &mut faces, rtl, vertical);
+    for (ci, ai) in atom_first {
+        if let (Some(c), Some(m)) = (cells.get_mut(ci), atoms.get(ai)) {
+            c.atom = Some(ai);
+            c.adv = m.w;
+        }
+    }
     let lead = para.runs.first().map(|r| resolve::run(ctx, shape, para, &r.props)).unwrap_or_else(|| resolve::run(ctx, shape, para, &para.end_props));
     let lead_style = make_style(ctx, &lead, scale, opts.prompt_color);
     let lead_size = lead_style.size;
@@ -112,7 +143,7 @@ pub(crate) fn shape_para(
         }
         _ => None,
     };
-    ParaShaped { cells, styles, faces, props, lead_size, lead_face, end_size, end_face, bullet, level: para.level, rtl }
+    ParaShaped { cells, atoms, styles, faces, props, lead_size, lead_face, end_size, end_face, bullet, level: para.level, rtl }
 }
 
 /// A face that draws the bullet `label` when the bullet's own can't (circled numbers ①, arrows
@@ -136,11 +167,16 @@ pub(crate) fn run_effects(ctx: &Ctx, r: &RunProps, scale: f64) -> Option<RunEffe
     (shadow.is_some() || glow.is_some()).then_some(RunEffects { shadow, glow })
 }
 
+/// Shape a logical paragraph into cells: bidi levels, per-grapheme faces, items of one level,
+/// script, face and shaping style, each shaped with the whole paragraph as context. Characters
+/// flagged in `atom_chars` stand for an equation: they take part in bidi (as neutrals) and line
+/// breaking but are never shaped, and only the first is a place to put the caret or break.
 #[allow(clippy::too_many_arguments)]
 fn shape_cells(
     ctx: &Ctx,
     text: &str,
     char_style: &[usize],
+    atom_chars: &[bool],
     styles: &[Style],
     faces: &mut Vec<Arc<FontFace>>,
     rtl: bool,
@@ -154,9 +190,19 @@ fn shape_cells(
     byte_of.push(text.len());
     let char_at_byte: HashMap<usize, usize> = byte_of.iter().enumerate().map(|(i, b)| (*b, i)).collect();
     let style_rtl: Vec<bool> = styles.iter().map(|st| st.lang.as_deref().is_some_and(bidi::is_rtl_lang)).collect();
-    let rtl_lang: Vec<bool> = char_style.iter().map(|&si| style_rtl.get(si).copied().unwrap_or(false)).collect();
+    // An equation in right-to-left text goes with the text around it (it takes the reading
+    // direction between right-to-left words, and is a right-to-left neutral at their edges), as
+    // text in a right-to-left language would; a left-to-right paragraph keeps it left to right.
+    let rtl_lang: Vec<bool> = char_style
+        .iter()
+        .enumerate()
+        .map(|(i, &si)| style_rtl.get(si).copied().unwrap_or(false) || (rtl && atom_chars.get(i).copied().unwrap_or(false)))
+        .collect();
     let levels = bidi::levels_lang(text, &chars, rtl, &rtl_lang);
     let scripts = script::resolve(&chars);
+    let is_atom = |i: usize| atom_chars.get(i).copied().unwrap_or(false);
+    // An equation's first character starts it; its word joiners continue it.
+    let atom_start = |i: usize| is_atom(i) && (i == 0 || !is_atom(i - 1) || chars.get(i) == Some(&'\u{FFFC}'));
     let mut boundary = vec![false; n];
     let mut graphemes: Vec<(usize, usize)> = Vec::new();
     for (b, g) in text.grapheme_indices(true) {
@@ -181,6 +227,15 @@ fn shape_cells(
         let Some(cluster) = chars.get(a..b) else { continue };
         let si = char_style.get(a).copied().unwrap_or(0);
         let Some(st) = styles.get(si) else { continue };
+        if is_atom(a) {
+            // Never shaped: only the face index must be valid.
+            let fi = face_index(faces, &st.face);
+            for f in char_face.get_mut(a..b).into_iter().flatten() {
+                *f = fi;
+            }
+            prev = None;
+            continue;
+        }
         let (sc, slot) = scripts.get(a).copied().unwrap_or((None, FontSlot::Latin));
         // Spaces, digits and punctuation stay in the face of the text before them when it can
         // draw them, so a phrase isn't cut into items at every space.
@@ -224,8 +279,9 @@ fn shape_cells(
             glyphs: vec![],
             adv: 0.0,
             head: i,
-            boundary: boundary.get(i).copied().unwrap_or(true),
+            boundary: if is_atom(i) { atom_start(i) } else { boundary.get(i).copied().unwrap_or(true) },
             upright: false,
+            atom: None,
         })
         .collect();
     // In East Asian vertical text, ideographs, kana, Hangul, full-width forms and the like stand
@@ -248,7 +304,15 @@ fn shape_cells(
     let mut a = 0;
     while a < n {
         let mut b = a + 1;
-        while b < n && key(b) == key(a) {
+        if is_atom(a) {
+            // An equation is its own item and is not shaped (the layout draws its box).
+            while b < n && is_atom(b) && !atom_start(b) {
+                b += 1;
+            }
+            a = b;
+            continue;
+        }
+        while b < n && !is_atom(b) && key(b) == key(a) {
             b += 1;
         }
         items.push((a, b));

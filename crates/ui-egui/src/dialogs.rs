@@ -80,9 +80,23 @@ fn title(id: &str) -> &'static str {
 /// Render the active dialog, clearing it when dismissed and preserving or restoring application
 /// state as its close path requires.
 pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
+    // The equation editor lives as long as its dialog, however that closes.
+    if app.dialog.as_ref().is_none_or(|d| d.id != "equation") {
+        app.equation.open = None;
+    }
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
+    // The equation is edited where it sits on the slide, not in a window.
+    if d.id == "equation" {
+        let close = crate::equation_editor::in_place(app, ctx, &mut d);
+        if close {
+            app.equation.open = None;
+        } else {
+            app.dialog = Some(d);
+        }
+        return;
+    }
     let mut window = egui::Window::new(title(&d.id))
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
@@ -126,7 +140,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     }
 }
 
-fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
+pub(crate) fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     let mut ok = false;
     let mut cancel = false;
     ui.add_space(8.0);
@@ -207,7 +221,6 @@ mod alt_text;
 mod body;
 mod columns;
 mod date_time;
-mod equation;
 mod export;
 mod find;
 mod font;

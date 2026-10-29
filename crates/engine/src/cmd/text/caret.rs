@@ -3,8 +3,8 @@ use super::editing::{inherited_aligns, insert_text, promote_rtl_if_needed};
 use super::ime::{composition_range, model_pos, walk_backward, walk_forward};
 use super::layout::{ctx_for, fit_text_box, layout_for, pos_param};
 use super::{
-    DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text, id_param,
-    json, ok, push_undo, str_param, xfrm_of,
+    DocState, HistoryEntry, Pos, Result, Session, ShapeId, ShapeKind, TextBody, TextSel, Value, bad, body_of, bool_or, ed, edit_shapes, edit_text,
+    id_param, json, ok, push_undo, str_param, xfrm_of,
 };
 
 /// A table cell's text laid out the way it is drawn, mapped into slide coordinates.
@@ -176,6 +176,13 @@ fn para_rtl(layout: Option<&deckcraft_text::TextLayout>, body: &TextBody, para: 
         Some(line) => line.rtl,
         None => body.paragraphs.get(para).and_then(|x| x.props.rtl).unwrap_or(false),
     }
+}
+
+/// Is paragraph `para` of the text `t` addresses right-to-left on screen (the rule the arrow keys
+/// use: Left goes forward in the text there)?
+pub fn paragraph_is_rtl(st: &DocState, t: &TextSel, para: usize) -> bool {
+    let body = body_of(st, t).cloned().unwrap_or_default();
+    para_rtl(layout_for(st, t).as_ref(), &body, para)
 }
 
 pub(super) fn move_caret(s: &mut Session, p: &Value) -> Result<Value> {

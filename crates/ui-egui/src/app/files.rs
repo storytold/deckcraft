@@ -428,6 +428,11 @@ impl SlideApp {
         }
     }
 
+    /// [`Self::drain_requests`] for the equation editor's arrow-key entry.
+    pub(crate) fn drain_requests_pub(&mut self) {
+        self.drain_requests();
+    }
+
     /// Act on requests commands left for the UI.
     pub(super) fn drain_requests(&mut self) {
         for r in std::mem::take(&mut self.session.ui_requests) {

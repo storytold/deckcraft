@@ -92,11 +92,6 @@ impl Part {
     pub fn keep(&self, el: &El) -> String {
         keep_xml(el, &self.ns)
     }
-    /// Like [`Part::keep`], also declaring prefixes that only an enclosing wrapper binds.
-    pub fn keep_inner(&self, el: &El) -> String {
-        let ns: Vec<(String, String)> = self.ns.iter().chain(&self.inner_ns).cloned().collect();
-        keep_xml(el, &ns)
-    }
 }
 
 /// Prefixes declared below the root but not on it, skipping any bound to different namespaces.

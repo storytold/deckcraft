@@ -394,4 +394,71 @@ mod tests {
         let anchor2 = n.affine() * Point::new(0.0, 0.0);
         assert!((anchor - anchor2).hypot() < 1e-6, "{anchor:?} {anchor2:?}");
     }
+
+    fn dbl(s: &mut Session, x: f64, y: f64) {
+        let ev = PointerEvent { kind: PointerKind::DoubleClick, x, y, ..Default::default() };
+        s.pointer(ev).unwrap();
+    }
+
+    fn ptr(s: &mut Session, kind: PointerKind, x: f64, y: f64) {
+        s.pointer(PointerEvent { kind, x, y, ..Default::default() }).unwrap();
+    }
+
+    /// A single click on an equation edits it (as in WordCraft); a drag still moves the box.
+    #[test]
+    fn a_single_click_on_an_equation_edits_it_and_a_drag_moves_it() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        // Nothing selected: one click both selects the box and opens the editor.
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        s.ui_requests.clear();
+        ptr(&mut s, PointerKind::Down, 150.0, 125.0);
+        ptr(&mut s, PointerKind::Up, 150.0, 125.0);
+        assert_eq!(
+            s.ui_requests,
+            vec![crate::UiRequest::Dialog { id: "equation".into(), params: json!({"edit": true, "id": id, "paragraph": 0, "run": 0}) }]
+        );
+        // A drag from the same place moves the box and opens nothing.
+        s.ui_requests.clear();
+        s.execute("edit.select", &json!({"ids": []})).unwrap();
+        let before = s.doc().unwrap().shape(ShapeId(id as u32)).map(|sh| xfrm_of(&s.doc().unwrap().doc, &s.doc().unwrap().selection, sh).x).unwrap();
+        ptr(&mut s, PointerKind::Down, 150.0, 125.0);
+        ptr(&mut s, PointerKind::Drag, 230.0, 125.0);
+        ptr(&mut s, PointerKind::Up, 230.0, 125.0);
+        assert!(s.ui_requests.is_empty(), "{:?}", s.ui_requests);
+        let after = s.doc().unwrap().shape(ShapeId(id as u32)).map(|sh| xfrm_of(&s.doc().unwrap().doc, &s.doc().unwrap().selection, sh).x).unwrap();
+        assert!(after > before + 50.0, "{before} -> {after}");
+    }
+
+    #[test]
+    fn double_click_on_equation_opens_the_dialog_and_elsewhere_does_not() {
+        let mut s = Session::with_new();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        s.ui_requests.clear();
+        // Find the equation's extent from the layout, then click on it.
+        let st = s.doc().unwrap();
+        let sh = st.shape(ShapeId(id as u32)).unwrap().clone();
+        let t = TextSel { shape: sh.id, ..Default::default() };
+        let l = cmd::text::layout_for(st, &t).unwrap();
+        let n = sh.text.as_ref().unwrap().paragraphs[0].runs[0].char_len();
+        let (x0, top, bottom) = l.caret(deckcraft_text::Pos { para: 0, ch: 0 }).unwrap();
+        let (x1, _, _) = l.caret(deckcraft_text::Pos { para: 0, ch: n }).unwrap();
+        let x = xfrm_of(&st.doc, &st.selection, &sh);
+        let hit = x.affine() * Point::new((x0 + x1) / 2.0, (top + bottom) / 2.0);
+        dbl(&mut s, hit.x, hit.y);
+        assert_eq!(
+            s.ui_requests,
+            vec![crate::UiRequest::Dialog { id: "equation".into(), params: json!({"edit": true, "id": id, "paragraph": 0, "run": 0}) }]
+        );
+        // Blank padding of a box that holds only the equation opens it too.
+        s.ui_requests.clear();
+        s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+        let far = x.affine() * Point::new(x1 + 120.0, (top + bottom) / 2.0);
+        dbl(&mut s, far.x, far.y);
+        assert_eq!(s.ui_requests.len(), 1);
+        assert!(matches!(s.ui_requests[0], crate::UiRequest::Dialog { .. }));
+    }
 }

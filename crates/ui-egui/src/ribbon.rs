@@ -114,6 +114,9 @@ fn contextual(app: &SlideApp) -> Vec<&'static str> {
     if shapes.iter().any(|s| matches!(s.kind, ShapeKind::Media(_))) {
         v.push("Playback");
     }
+    if app.equation.is_open() {
+        v.push("Equation");
+    }
     v
 }
 
@@ -123,6 +126,13 @@ const TABS: [&str; 10] = ["Home", "Insert", "Draw", "Design", "Transitions", "An
 pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let ctx_tabs = contextual(app);
+    // Editing an equation brings up the Equation tab once; leaving it goes back (below).
+    let editing = ctx_tabs.contains(&"Equation");
+    if editing && !app.equation.tab_shown {
+        app.ui.tab = "Equation".into();
+        app.ui.ribbon_collapsed = false;
+    }
+    app.equation.tab_shown = editing;
     if !TABS.contains(&app.ui.tab.as_str()) && !ctx_tabs.contains(&app.ui.tab.as_str()) {
         app.ui.tab = "Home".into();
     }
@@ -212,6 +222,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 ui.horizontal_top(|ui| {
                     ui.spacing_mut().item_spacing.x = 1.0;
                     match tab.as_str() {
+                        "Equation" => crate::equation_tab::show(app, ui),
                         "Home" => home(app, ui),
                         "Insert" => insert(app, ui),
                         "Draw" => draw(app, ui),

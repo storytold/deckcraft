@@ -1,5 +1,6 @@
-use super::hit::{EditZone, edit_zone, edited_box, shape_in_front, text_member_at, text_pos};
-use super::{Drag, Hit, Point, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, cmd, json, xfrm_of};
+use super::hit::{EditZone, deckcraft_render_cell, edit_zone, edited_box, equation_dialog, math_run_at, shape_in_front, text_member_at, text_pos};
+use super::{Drag, Hit, Point, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, cmd, json, table_rows, xfrm_of};
+use deckcraft_model::text::RunKind;
 
 impl Session {
     pub(super) fn double_click(&mut self, p: Point, tol: f64) -> Result<Value> {
@@ -20,6 +21,18 @@ impl Session {
         if matches!(self.tool.drag, Some(Drag::Move { moved: false, .. })) {
             self.tool.drag = None;
         }
+        {
+            let st = self.doc()?;
+            if let Some(t) = st.selection.text.clone()
+                && !t.notes
+                && t.cell.is_none()
+                && let Some(sh) = st.shape(t.shape).cloned()
+                && let Some((pi, ri)) = math_run_at(st, &sh, p)
+            {
+                self.ui_requests.push(equation_dialog(sh.id, None, pi, ri));
+                return Ok(Value::Null);
+            }
+        }
         // In the text being edited: select the word double-clicked.
         if self.place_caret(p, tol, false)?.is_some() {
             return self.execute("text.selectWord", &json!({}));
@@ -30,6 +43,24 @@ impl Session {
                 let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
                 match &sh.kind {
                     ShapeKind::Table(_) | ShapeKind::Shape | ShapeKind::Connector { .. } if !sh.is_line() => {
+                        // A cell holding nothing but one equation, or an equation under the
+                        // pointer, opens the equation editor.
+                        if let ShapeKind::Table(t) = &sh.kind {
+                            let x = xfrm_of(&st.doc, &st.selection, &sh);
+                            let local = x.affine().inverse() * p;
+                            let cell = deckcraft_render_cell(t, &table_rows(st, t), local);
+                            if let Some(body) = t.cell(cell.0, cell.1).map(|c| &c.text)
+                                && let [para] = body.paragraphs.as_slice()
+                                && let [run] = para.runs.as_slice()
+                                && matches!(run.kind, RunKind::Math { .. })
+                            {
+                                self.ui_requests.push(equation_dialog(id, Some(cell), 0, 0));
+                                return Ok(Value::Null);
+                            }
+                        } else if let Some((pi, ri)) = math_run_at(st, &sh, p) {
+                            self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                            return Ok(Value::Null);
+                        }
                         // Caret at the double-click (in a table, in the clicked cell), then select
                         // the word there.
                         if !self.edit_text_at(id, p)? {

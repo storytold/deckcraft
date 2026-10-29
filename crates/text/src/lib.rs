@@ -21,6 +21,7 @@
 
 mod bidi;
 pub mod datetime;
+mod math;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -92,6 +93,22 @@ pub struct LineInfo {
     pub start_offset: f64,
 }
 
+/// Where one equation was drawn: its first character, its left edge and baseline, the size it
+/// was laid out at (autofit applied), and its extent around the baseline. Shape-local points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EquationPlace {
+    pub para: usize,
+    pub ch: usize,
+    pub x: f64,
+    pub baseline: f64,
+    pub size: f64,
+    pub width: f64,
+    pub ascent: f64,
+    pub descent: f64,
+    /// Laid out in display style.
+    pub display: bool,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct TextLayout {
     pub runs: Vec<GlyphRun>,
@@ -99,6 +116,8 @@ pub struct TextLayout {
     /// Their space is still reserved so the caret starts where the first character will.
     pub empty_bullets: Vec<GlyphRun>,
     pub decos: Vec<Deco>,
+    /// Where each equation sits, shape-local (for an editor that goes over it).
+    pub equations: Vec<EquationPlace>,
     pub lines: Vec<LineInfo>,
     /// Inner text box (insets applied), shape-local.
     pub inner: Rect,

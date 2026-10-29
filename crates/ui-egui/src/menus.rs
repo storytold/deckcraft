@@ -60,6 +60,11 @@ pub fn ui_shortcut(app: &mut SlideApp, key: egui::Key, m: Mods) -> bool {
         }
         (P, true, true, false) => "app.palette",
         (Comma, true, false, false) => "app.preferences",
+        // Alt+= opens the equation editor, as in WordCraft.
+        (Equals | Plus, false, false, true) => {
+            let _ = app.run("app.dialog", json!({"id": "equation"}));
+            return true;
+        }
         (Equals | Plus, true, false, false) => "view.zoomIn",
         (Minus, true, false, false) => "view.zoomOut",
         (Num0, true, false, false) => "view.fit",

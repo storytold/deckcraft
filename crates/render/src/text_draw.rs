@@ -112,7 +112,11 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
         }
         ctx.set_transform(m * Affine::translate(ps.offset));
         ctx.set_paint(color(d.color, ps.opacity));
-        fill_deco(ctx, d);
+        // Equation radicals, brackets and big operators are shapes, not boxes.
+        match &d.path {
+            Some(p) => ctx.fill_path(p),
+            None => fill_deco(ctx, d),
+        }
     };
     for d in l.decos.iter().filter(|d| d.behind) {
         deco(ctx, d);

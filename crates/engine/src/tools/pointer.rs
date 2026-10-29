@@ -1,4 +1,6 @@
-use super::hit::{EditZone, contains_rect, edit_zone, edited_box, hit_shape, in_table_cell, is_text_first, shape_in_front};
+use super::hit::{
+    EditZone, contains_rect, edit_zone, edited_box, equation_dialog, hit_shape, in_table_cell, is_text_first, math_run_at, shape_in_front,
+};
 use super::{
     Arc, DRAW_TABLE, Drag, HistoryEntry, Hit, Mods, Point, PointerEvent, PointerKind, Rect, Result, Session, ShapeId, ShapeKind, TABLE_ERASER,
     TextTarget, ToolKind, Value, Xfrm, box_handles, cmd, is_freeform_tool, json, wordart_handles, xfrm_of,
@@ -261,6 +263,20 @@ impl Session {
             ToolKind::Select => {}
         }
         // Clicking inside the text being edited moves the caret / starts a text selection.
+        {
+            let st = self.doc()?;
+            if let Some(t) = st.selection.text.clone()
+                && !t.notes
+                && t.cell.is_none()
+                && let Some(sh) = st.shape(t.shape)
+                && let Some((pi, ri)) = math_run_at(st, sh, p)
+            {
+                // A click on an equation edits it, where it sits.
+                let id = sh.id;
+                self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                return Ok(Value::Null);
+            }
+        }
         let before = self.text_selection();
         if let Some((shape, pos)) = self.place_caret(p, tol, mods.shift)? {
             let press = self.doc()?.selection.text.clone();
@@ -392,9 +408,12 @@ impl Session {
                 let on_frame = text
                     && is_text_first(st, id)
                     && st.shape(id).is_some_and(|s| edit_zone(&xfrm_of(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
-                let enter_text =
-                    (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected && in_table_cell(st, id, p))))
-                        .then_some((id, p));
+                // An equation under the click edits in place on a plain click, selected or not.
+                let on_equation = text && !toggle && st.shape(id).is_some_and(|sh| math_run_at(st, sh, p).is_some());
+                let enter_text = (!toggle
+                    && !on_frame
+                    && ((text && (selected || is_text_first(st, id) || on_equation)) || (table && selected && in_table_cell(st, id, p))))
+                .then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;
@@ -457,7 +476,15 @@ impl Session {
             }
             Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. }) => {
                 // Plain click on text: caret at the click (in a table, in the clicked cell).
-                if self.edit_text_at(id, at)? {
+                let eq = {
+                    let st = self.doc()?;
+                    st.shape(id).and_then(|sh| math_run_at(st, sh, at))
+                };
+                if let Some((pi, ri)) = eq {
+                    // A click on an equation edits it in place (the editor opens over it).
+                    self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                    out = json!({"editing": id, "equation": [pi, ri]});
+                } else if self.edit_text_at(id, at)? {
                     out = json!({"editing": id});
                 }
             }

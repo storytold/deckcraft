@@ -2,7 +2,6 @@ use super::about::{about, credits_block};
 use super::alt_text::alt_text_starts_decorative;
 use super::columns::columns_dialog;
 use super::date_time::{date_rows, date_time_dialog};
-use super::equation::pretty_equation;
 use super::export::gif_options;
 use super::find::find_dialog;
 use super::font::font_dialog;
@@ -46,7 +45,6 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "export" => dlg_export(app, ui, d),
         "replaceFonts" => dlg_replace_fonts(app, ui, d),
         "symbol" => dlg_symbol(app, ui, d),
-        "equation" => dlg_equation(app, ui, d),
         "pasteSpecial" => dlg_paste_special(app, ui, d),
         "find" => find_dialog(app, ui, d),
         "spelling" => dlg_spelling(app, ui, d),
@@ -873,24 +871,6 @@ fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         });
     }
     let (ok, cancel) = buttons(ui, "Close");
-    ok || cancel
-}
-
-fn dlg_equation(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).");
-    let mut v = d.get("eq", "");
-    ui.add(egui::TextEdit::singleline(&mut v).hint_text("Equation").desired_width(340.0).font(theme::font(15.0)));
-    d.fields.insert("eq".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
-    if ok && !v.is_empty() {
-        let pretty = pretty_equation(&v);
-        let size = app.session.active().map(|s| s.doc.slide_size).unwrap_or(deckcraft_model::defaults::WIDE);
-        run(app, "insert.textBox", json!({"rect": [size.width / 2.0 - 150.0, size.height / 2.0 - 25.0, 300, 50], "text": pretty}));
-        run(app, "text.exit", json!({}));
-        run(app, "format.font", json!({"family": "Liberation Serif"}));
-        run(app, "format.italic", json!({"on": true}));
-        run(app, "format.size", json!({"size": 28}));
-    }
     ok || cancel
 }
 
