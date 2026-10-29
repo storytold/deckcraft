@@ -162,10 +162,8 @@ Bottom bevel	아래쪽 입체
 Bottom Border	아래쪽 테두리
 Bottom Left	왼쪽 아래
 Bottom left	왼쪽 아래
-bottom left	왼쪽 아래
 Bottom Right	오른쪽 아래
 Bottom right	오른쪽 아래
-bottom right	오른쪽 아래
 Bounce	바운드
 Bounce Left	왼쪽으로 바운드
 Bounce Right	오른쪽으로 바운드
@@ -938,7 +936,6 @@ Picture Style Gallery	그림 스타일 갤러리
 Picture Styles	그림 스타일
 Pictures	그림
 Pictures in album	앨범의 그림
-Pixels of this colour become transparent:	이 색의 픽셀이 투명해집니다:
 Play	재생
 Play Across Slides	여러 슬라이드에서 재생
 Play from Current Slide	현재 슬라이드부터 재생
@@ -1290,7 +1287,6 @@ Stacked	스택형
 Stairs Down	계단식 내려가기
 Standard (4:3)	표준 (4:3)
 Standard Colors	표준 색
-Start a conversation	대화 시작
 Start After Previous	이전 효과 다음에 시작
 Start at:	시작 번호:
 Start Automatically	자동 실행
@@ -1388,10 +1384,8 @@ Top bevel	위쪽 입체
 Top Border	위쪽 테두리
 Top Left	왼쪽 위
 Top left	왼쪽 위
-top left	왼쪽 위
 Top Right	오른쪽 위
 Top right	오른쪽 위
-top right	오른쪽 위
 Total Row	요약 행
 Transform	변환
 Transition	전환

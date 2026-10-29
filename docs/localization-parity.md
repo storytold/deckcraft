@@ -68,7 +68,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 |---|---|---|
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |
 | 2026-10-21 | minor | Review › Language can set the proofing language of the whole presentation |
-| 2026-10-29 | trivial | Korean catalog follows the reorganised interface modules and the strings added since (~1,590 rows); custom show names and AutoCorrect entries stay as written |
+| 2026-10-29 | trivial | Korean catalog follows the reorganised interface modules and the strings added since (~1,580 rows); strings `main` no longer has are dropped; custom show names and AutoCorrect entries stay as written |
 | 2026-10-15 | major | String catalog keyed by English text, system language (#15) and Preferences › Language, Korean interface (~1,480 strings) |
 | 2026-10-14 | minor | IME composition in a table cell is underlined in place; the candidate window sits on that cell's caret |
 | 2026-10-12 | minor | IME composition for Chinese, Japanese and Korean, and interface text in any installed script (#101) |
