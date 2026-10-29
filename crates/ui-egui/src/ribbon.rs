@@ -189,14 +189,26 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                             ui.data_mut(|d| d.insert_temp(pending, (name.to_string(), active)));
                         } else if resp.double_clicked() {
                             // A double-click already ran the single-click action on its first
-                            // release. An inactive tab was selected there, so this second release
-                            // adds the collapse that double-clicking a tab used to do.
+                            // release. Only a same-tab double-click uses that pending state: an
+                            // inactive tab was selected there, so this second release adds the
+                            // collapse that double-clicking a tab used to do.
                             let previous = ui.data_mut(|d| d.remove_temp::<(String, bool)>(pending));
-                            if let Some((clicked_name, was_active)) = previous
-                                && clicked_name == name
-                                && !was_active
-                            {
-                                app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
+                            match previous {
+                                Some((clicked_name, was_active)) if clicked_name == name => {
+                                    if !was_active {
+                                        app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
+                                    }
+                                }
+                                // The first release was on another tab (or outside the row): this
+                                // is an ordinary click on this tab, so apply its action here.
+                                _ => {
+                                    if active {
+                                        app.ui.ribbon_collapsed = !app.ui.ribbon_collapsed;
+                                    } else {
+                                        app.ui.tab = name.to_string();
+                                        app.ui.ribbon_collapsed = false;
+                                    }
+                                }
                             }
                         }
                     }
