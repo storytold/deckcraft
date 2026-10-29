@@ -1,8 +1,8 @@
 use super::nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove, sync_text};
 use super::paint::layout;
 use super::{
-    AutoFit, COLORS, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session, Shape,
-    ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
+    AutoFit, COLORS, ColorRef, Diagram, DiagramNode, EngineError, Geom, MAX_LEVEL, NO_ID_SPACE, Paragraph, Presentation, Result, STYLES, Session,
+    Shape, ShapeId, ShapeKind, TextBody, Value, Xfrm, bad, bool_or, current_shapes, is_kind, json, shape_of, str_param, targets, xfrm_of,
 };
 
 /// The SmartArt group that `id` is, or is inside.
