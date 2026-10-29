@@ -159,3 +159,26 @@ fn the_write_root_itself_is_not_a_destination() {
     assert!(root.join("deck.pptx").is_file());
     let _ = std::fs::remove_dir_all(&base);
 }
+
+/// Drawing a slide only reads the deck, but writing the picture to a file is an export: without
+/// `file.export` on the list a `path` given through `call_app` is refused and nothing is written
+/// (`render_slide` itself takes no `path`). With it, the file is written as before.
+#[test]
+fn rendering_to_a_file_needs_file_export() {
+    let dir: PathBuf = std::env::temp_dir().join(format!("dc-mcp-render-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let png = dir.join("slide.png");
+
+    let mut srv = allowed(EDITING);
+    ok(&mut srv, "render_slide", json!({"slide": 0}));
+    refused(&mut srv, "render_slide", json!({"slide": 0, "path": s(&png)}), "unknown argument");
+    refused(&mut srv, "call_app", json!({"method": "ui.render", "params": {"path": s(&png)}}), "file.export");
+    refused(&mut srv, "call_app", json!({"method": "app.renderSlide", "params": {"path": s(&png)}}), "file.export");
+    assert!(!png.exists(), "nothing written without file.export");
+
+    let mut srv = allowed(&format!("{EDITING}, file.export"));
+    ok(&mut srv, "call_app", json!({"method": "ui.render", "params": {"path": s(&png)}}));
+    assert!(png.is_file());
+    let _ = std::fs::remove_dir_all(&dir);
+}
