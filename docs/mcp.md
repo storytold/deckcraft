@@ -96,14 +96,15 @@ folders. Use both together.
   `file.open`, `save_presentation` `file.save`, `export` `file.export`, `inspect_document`
   `document.inspect`, `add_slide` `slide.new`, `add_shape` `shape.insert`, `add_text_box`
   `insert.textBox`…). A command off the list is an ordinary tool error:
-  `command `slide.delete` is not allowed: it is not on this session's --allow-commands list`.
+  ``command `slide.delete` is not allowed: it is not on this session's --allow-commands list``.
 - Gestures (`pointer`, `key`, `type_text`, `select_tool`) are refused while a list is in force:
   they change the deck without naming a command (a drag moves a shape, a shortcut runs whatever it
   is bound to), so the list could not hold them. Use the commands behind them by name
   (`text.insert`, `shape.insert`, `edit.select`…).
 - Commands a command runs itself (typing `* ` turning a paragraph into a list) are part of the
   command that was allowed and aren't checked again. `render_slide` draws the deck without a
-  command and stays available.
+  command and stays available when it returns the picture; writing it to a `path` (`call_app`
+  with `ui.render` or `app.renderSlide`) is an export and needs `file.export` on the list.
 - `list_commands` shows only the commands the client may run.
 - A list names ids (`format.bold`) and groups (`format.*`: every command whose id starts with
   `format.`), separated by commas, spaces or new lines. An unknown id, a group that matches no
