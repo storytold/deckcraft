@@ -68,3 +68,7 @@ sync_github_name = true
 
 [people.SofiaAFigueredo]
 real_name = "Sofia Alves Figueredo"
+
+[people.mission-deny-the-mission]
+display_name = "Harry Hall"
+sync_github_name = false

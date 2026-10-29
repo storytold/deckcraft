@@ -149,6 +149,69 @@ median and slowest of N runs (5 by default, 1 to 1000) as a table, or as JSON wi
   deckcraft-cli bench deck.pptx --runs 10",
     },
     Subcommand {
+        name: "store-write",
+        usage: "store-write PATH FILE [STORE] [--etag TAG] [--atomic]",
+        summary: "upload a local file to a storage folder or WebDAV server",
+        details: "Uploads local FILE to PATH in a storage backend and prints its size and ETag as JSON. With --etag,
+the write happens only if the stored file still carries TAG, so a newer save by someone else is never
+overwritten. --atomic stages the upload beside PATH and moves it into place.
+
+STORE picks the backend, the same for every store-* subcommand:
+
+  --store local --store-root DIR            a local, NAS or synced folder (the default backend)
+  --store webdav --store-url URL            a WebDAV collection, e.g. http://nas.lan/remote.php/dav/files/alice/Decks/
+                                            (a --store-url alone picks webdav)
+      [--store-user U --store-password P]   Basic auth, or
+      [--store-token T]                     a Bearer token (also read from $CRAFT_DAV_TOKEN); not both
+      [--store-insecure-http]               send the credentials to a host that is not loopback
+
+WebDAV is plain http only (LAN, VPN or SSH tunnel); https URLs are refused. Credentials are sent only
+to a loopback host unless --store-insecure-http says the network is trusted.
+
+  deckcraft-cli store-write Decks/q3.pptx q3.pptx --store local --store-root ~/Sync",
+    },
+    Subcommand {
+        name: "store-read",
+        usage: "store-read PATH OUT [STORE]",
+        summary: "download a file from storage",
+        details: "Downloads PATH from the storage backend to local file OUT. `deckcraft-cli help store-write` explains STORE.",
+    },
+    Subcommand {
+        name: "store-stat",
+        usage: "store-stat PATH [STORE]",
+        summary: "print a stored file's size, ETag and modification time as JSON",
+        details: "Prints PATH's size, ETag, modification time and whether it is a folder, as JSON.
+`deckcraft-cli help store-write` explains STORE.",
+    },
+    Subcommand {
+        name: "store-list",
+        usage: "store-list [PREFIX] [STORE]",
+        summary: "list a storage folder as JSON",
+        details: "Lists the direct children of PREFIX (the root by default) as JSON. Temporary and lock files the
+backend keeps for itself are left out. `deckcraft-cli help store-write` explains STORE.",
+    },
+    Subcommand {
+        name: "store-remove",
+        usage: "store-remove PATH [STORE]",
+        summary: "delete a stored file",
+        details: "Deletes PATH from the storage backend. A missing file is not an error.
+`deckcraft-cli help store-write` explains STORE.",
+    },
+    Subcommand {
+        name: "store-probe",
+        usage: "store-probe [STORE]",
+        summary: "print what a storage backend supports as JSON",
+        details: "Prints the backend's capabilities (atomic and conditional writes, listing, ETags) and, for WebDAV,
+the DAV classes the server reports, as JSON. `deckcraft-cli help store-write` explains STORE.",
+    },
+    Subcommand {
+        name: "store-recover",
+        usage: "store-recover [STORE]",
+        summary: "finish or drop writes a crash interrupted",
+        details: "Finishes the atomic writes a crash left half done, drops the ones that cannot be finished and removes
+their temporary files, then prints what it did as JSON. `deckcraft-cli help store-write` explains STORE.",
+    },
+    Subcommand {
         name: "links",
         usage: "links",
         summary: "print the DeckCraft community and project links",

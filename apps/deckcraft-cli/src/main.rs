@@ -72,6 +72,7 @@ fn main() -> ExitCode {
         Some("describe") => report(describe(rest.first().map(String::as_str))),
         Some("app") => report(app(rest)),
         Some("mcp") => report(mcp(rest)),
+        Some(c) if c.starts_with("store-") => report(store_command(c, rest)),
         Some("links") => {
             use deckcraft_engine::links::{APP_PAGE, DISCORD, GITHUB, WEBSITE};
             outln!("Discord   {DISCORD}\nWebsite   {WEBSITE}\nApp page  {APP_PAGE}\nGitHub    {GITHUB}");
@@ -653,6 +654,143 @@ so drop --connect (or use --connect without the roots)"
     server.serve(stdin.lock(), std::io::stdout()).map_err(|e| e.to_string())
 }
 
+fn arg_value(args: &[String], name: &str) -> Option<String> {
+    args.iter().position(|a| a == name).and_then(|i| args.get(i + 1)).cloned()
+}
+
+/// Open the storage backend named by the `--store*` flags: `local` (a folder at `--store-root`)
+/// or `webdav` (a collection at `--store-url`, Basic auth via `--store-user`/`--store-password`
+/// or an OIDC/Bearer token via `--store-token`; the two schemes are mutually exclusive).
+/// The token may also arrive via `$CRAFT_DAV_TOKEN` instead of argv, where other processes can read it.
+fn open_store(command: &str, args: &[String]) -> Result<Box<dyn deckcraft_storage::StorageBackend>, String> {
+    // Without --store, a --store-url names a WebDAV collection; otherwise it's a local folder.
+    let default_kind = if arg_value(args, "--store-url").is_some() { "webdav" } else { "local" };
+    match arg_value(args, "--store").as_deref().unwrap_or(default_kind) {
+        "local" => {
+            let root = arg_value(args, "--store-root").ok_or_else(|| format!("{command}: --store local needs --store-root DIR"))?;
+            if arg_value(args, "--store-url").is_some() {
+                return Err(format!("{command}: --store-url is for --store webdav, not local"));
+            }
+            deckcraft_storage::local::LocalBackend::open(std::path::Path::new(&root))
+                .map(|b| Box::new(b) as Box<dyn deckcraft_storage::StorageBackend>)
+                .map_err(|e| format!("{command}: {e}"))
+        }
+        "webdav" => {
+            let url = arg_value(args, "--store-url").ok_or_else(|| format!("{command}: --store webdav needs --store-url URL"))?;
+            if arg_value(args, "--store-root").is_some() {
+                return Err(format!("{command}: --store-root is for --store local, not webdav"));
+            }
+            let (user, password, token) = (arg_value(args, "--store-user"), arg_value(args, "--store-password"), arg_value(args, "--store-token"));
+            let token = token.or_else(|| std::env::var("CRAFT_DAV_TOKEN").ok().filter(|t| !t.is_empty()));
+            let backend = if let Some(t) = token {
+                if user.is_some() || password.is_some() {
+                    return Err(format!("{command}: --store-token cannot be combined with --store-user/--store-password (pick one auth scheme)"));
+                }
+                deckcraft_storage::webdav::WebDavBackend::with_bearer(&url, &t)
+            } else {
+                deckcraft_storage::webdav::WebDavBackend::new(&url, user.as_deref(), password.as_deref())
+            };
+            // Credentials go only to a loopback host over plain HTTP unless the network is trusted.
+            let insecure = args.iter().any(|a| a == "--store-insecure-http");
+            backend
+                .map(|b| if insecure { b.allow_cleartext_credentials() } else { b })
+                .map(|b| Box::new(b) as Box<dyn deckcraft_storage::StorageBackend>)
+                .map_err(|e| format!("{command}: {e}"))
+        }
+        other => Err(format!("{command}: unknown --store `{other}` (local or webdav)")),
+    }
+}
+
+/// The positional arguments of a `store-*` command: option values (`--store local`, …) are not
+/// positionals, wherever they appear.
+fn store_positionals(args: &[String]) -> Vec<String> {
+    const TAKES_VALUE: &[&str] = &["--store", "--store-root", "--store-url", "--store-user", "--store-password", "--store-token", "--etag"];
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg.starts_with("--") {
+            i += if TAKES_VALUE.contains(&arg.as_str()) { 2 } else { 1 };
+        } else {
+            out.push(arg.clone());
+            i += 1;
+        }
+    }
+    out
+}
+
+fn store_command(command: &str, rest: &[String]) -> Result<(), String> {
+    let positional = store_positionals(rest);
+    let pos = |i: usize| positional.get(i).cloned().ok_or_else(|| format!("{command}: missing argument\n\n{}", help_page(command)));
+    let store = open_store(command, rest)?;
+    match command {
+        "store-write" => {
+            let (path, file) = (pos(0)?, pos(1)?);
+            let bytes = std::fs::read(&file).map_err(|e| format!("{file}: {e}"))?;
+            let opts = deckcraft_storage::WriteOptions { if_match: arg_value(rest, "--etag"), atomic: rest.iter().any(|a| a == "--atomic") };
+            let meta = store.write(&path, &bytes, &opts).map_err(|e| format!("{path}: {e}"))?;
+            let summary = serde_json::to_string_pretty(&json!({"path": path, "size": meta.size, "etag": meta.etag})).unwrap_or_default();
+            outln!("{summary}");
+            eprintln!("wrote {path} ({} bytes)", bytes.len());
+            Ok(())
+        }
+        "store-read" => {
+            let (path, out) = (pos(0)?, pos(1)?);
+            let bytes = store.read(&path).map_err(|e| format!("{path}: {e}"))?;
+            std::fs::write(&out, &bytes).map_err(|e| format!("{out}: {e}"))?;
+            eprintln!("wrote {out} ({} bytes)", bytes.len());
+            Ok(())
+        }
+        "store-stat" => {
+            let path = pos(0)?;
+            let meta = store.stat(&path).map_err(|e| format!("{path}: {e}"))?;
+            let summary = serde_json::to_string_pretty(
+                &json!({"path": path, "size": meta.size, "etag": meta.etag, "modified": meta.modified, "isDir": meta.is_dir}),
+            )
+            .unwrap_or_default();
+            outln!("{summary}");
+            Ok(())
+        }
+        "store-list" => {
+            let prefix = positional.first().cloned().unwrap_or_default();
+            let entries = store.list(&prefix).map_err(|e| format!("{}: {e}", if prefix.is_empty() { "(root)" } else { &prefix }))?;
+            let list: Vec<Value> =
+                entries.iter().map(|e| json!({"path": e.path, "size": e.meta.size, "etag": e.meta.etag, "isDir": e.meta.is_dir})).collect();
+            let summary = serde_json::to_string_pretty(&list).unwrap_or_default();
+            outln!("{summary}");
+            Ok(())
+        }
+        "store-remove" => {
+            let path = pos(0)?;
+            store.remove(&path).map_err(|e| format!("{path}: {e}"))?;
+            eprintln!("removed {path}");
+            Ok(())
+        }
+        "store-probe" => {
+            let probe = store.probe().map_err(|e| e.to_string())?;
+            // What the server said, not what the backend assumed before asking.
+            let caps = &probe.capabilities;
+            let summary = serde_json::to_string_pretty(&json!({
+                "atomicWrite": caps.atomic_write, "conditionalWrite": caps.conditional_write, "list": caps.list,
+                "etag": caps.etag, "persistent": caps.persistent,
+                "davClasses": probe.dav_classes, "notes": probe.notes,
+            }))
+            .unwrap_or_default();
+            outln!("{summary}");
+            Ok(())
+        }
+        "store-recover" => {
+            let report = store.recover().map_err(|e| e.to_string())?;
+            let summary =
+                serde_json::to_string_pretty(&json!({"completed": report.completed, "dropped": report.dropped, "removedTemp": report.removed_temp}))
+                    .unwrap_or_default();
+            outln!("{summary}");
+            Ok(())
+        }
+        _ => Err(format!("unknown store command `{command}`\n\n{}", help::overview())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -781,5 +919,40 @@ mod frame_path_tests {
     fn values_rounding_to_one_name_are_rejected() {
         assert!(frame_paths("f.png", &[0.1001, 0.1002]).is_err());
         assert!(frame_paths("f.png", &[0.5, 0.5]).is_err());
+    }
+}
+
+#[cfg(test)]
+mod store_tests {
+    use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).into()).collect()
+    }
+
+    #[test]
+    fn store_flags_open_the_right_backend_or_explain() {
+        assert!(open_store("store-write", &args(&["--store", "local"])).is_err());
+        assert!(open_store("store-write", &args(&["--store", "webdav"])).is_err());
+        assert!(open_store("store-write", &args(&["--store", "tape", "--store-root", "x"])).is_err());
+        assert!(open_store("store-write", &args(&["--store", "local", "--store-root", "x", "--store-url", "http://h/d/"])).is_err());
+        assert!(open_store("store-write", &args(&["--store", "local", "--store-url", "http://h/d/"])).is_err());
+        // A --store-url alone picks WebDAV (opening does not touch the network).
+        assert!(open_store("store-write", &args(&["--store-url", "http://127.0.0.1:9/d/"])).is_ok());
+        assert!(
+            open_store("store-write", &args(&["--store", "webdav", "--store-url", "http://h/d/", "--store-token", "t", "--store-user", "u"]))
+                .is_err()
+        );
+        assert!(open_store("store-write", &args(&["--store", "webdav", "--store-url", "https://h/d/"])).is_err());
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-store-test-{}", std::process::id()));
+        let root = dir.to_string_lossy().into_owned();
+        assert!(open_store("store-list", &args(&["--store", "local", "--store-root", &root])).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn store_positionals_skip_option_values_anywhere() {
+        let got = store_positionals(&args(&["--store", "local", "a/b.pptx", "--store-root", "x", "--atomic"]));
+        assert_eq!(got, args(&["a/b.pptx"]));
     }
 }

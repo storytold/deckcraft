@@ -51,6 +51,8 @@ pub const TABLE: &[(&str, Class)] = &[
     ("metafile", Class::Layer(0)),
     ("model", Class::Layer(1)),
     ("fonts", Class::Layer(1)),
+    // Storage backends (local folder, WebDAV) for open/save; storytold/wordcraft#518.
+    ("storage", Class::Layer(1)),
     ("text", Class::Layer(2)),
     ("anim", Class::Layer(2)),
     ("format", Class::Layer(2)),

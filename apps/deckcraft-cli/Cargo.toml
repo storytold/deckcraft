@@ -16,7 +16,10 @@ path = "src/main.rs"
 [dependencies]
 deckcraft-engine = { workspace = true }
 deckcraft-mcp = { workspace = true }
+deckcraft-storage = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
+deckcraft-model = { workspace = true }
+deckcraft-pptx = { workspace = true }
 zip = { workspace = true }
