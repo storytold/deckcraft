@@ -47,7 +47,9 @@ folders:
   inserted, so playing them later reads nothing from disk.
 - Every file a command writes must lie inside the **write root**: `save_presentation`, `export`
   (every format, and every slide of an image export), `file.save`, `file.saveAs`, `file.export`,
-  and `render_slide` with a `path`, plus the `.saving` temporary file a save goes through.
+  and a slide rendered to a `path` (`call_app` with `ui.render` or `app.renderSlide`; `render_slide`
+  itself returns the picture and takes no `path`), plus the `.saving` temporary file a save goes
+  through.
 - A write root itself, and a folder, are not files to write: a save's `.saving` temporary file
   sits next to its destination, and next to the root it would be outside it.
 - Read and write access are separate. Give the same folder to both flags for both. With only one
