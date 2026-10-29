@@ -68,3 +68,7 @@ sync_github_name = true
 
 [people.SofiaAFigueredo]
 real_name = "Sofia Alves Figueredo"
+
+[people.pratiman-de]
+real_name = "Pratiman De"
+sync_github_name = true

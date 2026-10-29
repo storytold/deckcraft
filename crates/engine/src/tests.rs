@@ -115,6 +115,29 @@ fn text_set_crlf_makes_clean_paragraphs() {
     assert_eq!(t["text"], "a\nb");
 }
 
+/// A click in a shape's text leaves only a caret. Copy then takes the whole shape and Paste adds a
+/// copy of it, as Esc, Copy, Paste would; Ctrl+C after a click used to copy nothing.
+#[test]
+fn copy_with_only_a_caret_copies_and_pastes_the_whole_shape() {
+    let mut s = session();
+    let r = s.execute("insert.textBox", &json!({"text": "Hello"})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let before = s.doc().unwrap().current_slide().unwrap().shapes.len();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    s.execute("text.move", &json!({"to": "start"})).unwrap();
+    let out = s.execute("edit.copy", &json!({})).unwrap();
+    assert_eq!(out["text"], "Hello");
+    assert!(out["html"].as_str().unwrap().contains("Hello"), "{out}");
+    assert_eq!(s.clipboard.shapes.len(), 1);
+    // Ctrl+V straight away, with our own words on the system clipboard as the UI sends them.
+    s.execute("edit.paste", &json!({"text": "Hello"})).unwrap();
+    let d = s.doc().unwrap();
+    assert_eq!(d.current_slide().unwrap().shapes.len(), before + 1, "a copy of the text box");
+    assert!(d.selection.text.is_none(), "the copy is selected, the caret is gone");
+    let t = s.execute("text.get", &json!({"id": id})).unwrap();
+    assert_eq!(t["text"], "Hello", "the original's text is unchanged");
+}
+
 /// Cut with only a caret copies nothing, so it must not delete the character after the caret.
 #[test]
 fn cut_with_only_a_caret_changes_nothing() {
@@ -303,10 +326,12 @@ fn bold_copy_is_html_and_pages_html_pastes_bold() {
     let body = s.doc().unwrap().shape(deckcraft_model::ShapeId(title)).unwrap().text.clone().unwrap();
     assert_eq!(body.text(), "HelloHello");
     assert!(body.paragraphs.iter().flat_map(|p| p.runs.iter()).all(|r| r.props.bold == Some(true)), "{body:?}");
+    // Only a caret copies the whole shape, never the previous clipboard.
     s.execute("text.select", &json!({"anchor": [0, 10], "caret": [0, 10]})).unwrap();
     let caret = s.execute("edit.copy", &json!({})).unwrap();
-    assert_eq!(caret["text"], "");
-    assert_eq!(caret["html"], "");
+    assert_eq!(caret["text"], "HelloHello");
+    assert!(caret["html"].as_str().unwrap().contains("HelloHello"), "{caret}");
+    assert_eq!(s.clipboard.shapes.len(), 1);
 
     let mut ext = session();
     ext.execute("edit.paste", &json!({"text": "Hello", "html": "<p style=\"font-weight: bold\">Hello</p>"})).unwrap();

@@ -75,7 +75,10 @@ fn slides_scope(s: &Session, p: &Value) -> bool {
         || s.active().is_some_and(|d| d.selection.shapes.is_empty() && d.selection.text.is_none() && !d.selection.slides.is_empty())
 }
 
-fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
+/// Copy the selection (a text range, slides, or shapes) onto the session clipboard and return its
+/// plain text. With only a caret, `whole_shape_at_caret` decides whether the caret's shape is copied
+/// (Copy) or nothing is (Cut); an empty answer leaves the clipboard untouched.
+fn copy_inner(s: &mut Session, p: &Value, whole_shape_at_caret: bool) -> Result<String> {
     let st = s.doc()?;
     // Text selection.
     if let Some(t) = &st.selection.text {
@@ -87,7 +90,11 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             s.clipboard = crate::Clipboard { text: Some(sliced), plain: plain.clone(), ..Default::default() };
             return Ok(plain);
         }
-        return Ok(String::new());
+        // Only a caret: a click in a shape's text puts the caret there, so Copy then means the
+        // whole shape, as Esc then Copy would. Cut, the notes and table cells copy nothing.
+        if !(whole_shape_at_caret && caret_copies_shape(&st.selection, t)) {
+            return Ok(String::new());
+        }
     }
     if slides_scope(s, p) {
         let ids: Vec<SlideId> =
@@ -128,15 +135,25 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     Ok(plain)
 }
 
+/// Whether the text selection is only a caret (no range) in the active document.
 fn copying_caret(s: &Session) -> bool {
     s.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| !t.is_range()))
 }
 
+/// Only a caret, in the text of a selected shape (not the notes, not a table cell): Copy takes the
+/// whole shape.
+fn caret_copies_shape(sel: &crate::Selection, t: &crate::TextSel) -> bool {
+    !t.is_range() && !t.notes && t.cell.is_none() && sel.shapes.contains(&t.shape)
+}
+
+/// `edit.copy`: the plain text and HTML to offer on the system clipboard. A caret that copies
+/// nothing (the notes, a table cell) answers with empty strings so the previous clipboard never leaks.
 fn copy(s: &mut Session, p: &Value) -> Result<Value> {
-    // A caret copies nothing; the previous clipboard must not leak into this answer.
-    let caret = copying_caret(s);
-    let t = copy_inner(s, p)?;
-    let html = if caret { String::new() } else { copied_html(s) };
+    // A caret copies its whole shape; where it copies nothing (the notes, a table cell) the
+    // previous clipboard must not leak into this answer.
+    let nothing = copying_caret(s) && !s.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| caret_copies_shape(&d.selection, t)));
+    let t = copy_inner(s, p, true)?;
+    let html = if nothing { String::new() } else { copied_html(s) };
     Ok(json!({"text": t, "html": html}))
 }
 
@@ -157,9 +174,11 @@ fn copied_html(s: &Session) -> String {
     richclip::body_to_html(&TextBody { paragraphs, ..Default::default() })
 }
 
+/// `edit.cut`: copy, then delete what was copied. With only a caret nothing was copied, so
+/// nothing is deleted.
 fn cut(s: &mut Session, p: &Value) -> Result<Value> {
     let caret = copying_caret(s);
-    let t = copy_inner(s, p)?;
+    let t = copy_inner(s, p, false)?;
     if caret {
         // Nothing is selected, so there is nothing to cut; `delete` would remove the next character.
         return Ok(json!({"text": t, "html": ""}));
@@ -263,6 +282,9 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
     Ok(map)
 }
 
+/// `edit.paste`: external text or HTML (`text`, `html` params) into the text being edited, else
+/// the session clipboard: text into an edit, slides after the current one, or shapes onto the slide.
+/// The shape a caret-only Copy took is pasted as a copy, not as words into its own text.
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
@@ -278,7 +300,12 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         return paste_plain(s, t);
     }
     let editing = s.doc()?.selection.text.is_some();
-    if editing {
+    // The shape with the caret was copied whole (Copy with only a caret): paste a copy of the
+    // shape, not its words back into its own text.
+    let copied_here = s.doc()?.selection.text.as_ref().is_some_and(|t| {
+        !t.is_range() && !t.notes && t.cell.is_none() && s.clipboard.text.is_none() && s.clipboard.shapes.iter().any(|c| c.id == t.shape)
+    });
+    if editing && !copied_here {
         if let Some(body) = s.clipboard.text.clone() {
             return super::text::paste_body(s, &body);
         }

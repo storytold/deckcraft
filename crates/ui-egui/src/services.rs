@@ -52,6 +52,8 @@ pub struct Services {
     pub clipboard_image: Option<Box<dyn FnMut() -> Option<Vec<u8>>>>,
     /// HTML on the system clipboard (Pages, Keynote, and other apps that write `public.html`).
     pub clipboard_html: Option<Box<dyn FnMut() -> Option<String>>>,
+    /// SVG markup (a vector app's copy) rendered to PNG bytes, with its size in points.
+    pub clipboard_svg: Option<Box<dyn FnMut(&str) -> Option<(Vec<u8>, f64, f64)>>>,
     /// Put HTML and its plain-text alternative on the system clipboard. `true` when it landed.
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.

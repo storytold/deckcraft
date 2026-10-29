@@ -148,6 +148,11 @@ impl SlideApp {
                 egui::Event::Paste(text) => {
                     // Our own marker for objects without text: paste what the session copied.
                     let text = if text == OBJECTS_MARKER { String::new() } else { text };
+                    // Vector art copied in another app (VectorCraft, Illustrator, Inkscape…) comes as
+                    // SVG markup in the plain text: it lands as a picture, not as a text box of markup.
+                    if self.paste_svg_text(ctx, &text) {
+                        continue;
+                    }
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
                     // Text keeps its HTML (bold, italic, underline) when the host can read it.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
