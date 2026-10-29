@@ -1,6 +1,7 @@
 use super::arrange::arrange_group;
 use super::galleries::smartart_gallery;
 use super::{Icon, SlideApp, Ui, Value, big_button, group, json, rows, run, small_button, small_button_ex, widgets};
+use crate::i18n::tr;
 
 /// SmartArt Design: Create Graphic (Text Pane, Add Shape, Promote, Demote, Remove) and Layouts.
 pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
@@ -12,11 +13,11 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
     };
     let at = row.min(n.saturating_sub(1));
     group(ui, |ui| {
-        if big_button(ui, Icon::SmartArt, "Text\nPane", gid.is_some()).on_hover_text("Type and organise the diagram's text").clicked() {
+        if big_button(ui, Icon::SmartArt, tr("Text\nPane"), gid.is_some()).on_hover_text(tr("Type and organise the diagram's text")).clicked() {
             run(app, "view.pane", json!({"pane": "smartart", "toggle": true}));
         }
         rows(ui, |ui| {
-            let (main, arrow) = small_button_ex(ui, Icon::Plus, "Add Shape", gid.is_some(), false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::Plus, tr("Add Shape"), gid.is_some(), false, true);
             if let Some(arrow) = arrow {
                 widgets::split_menu(&main, &arrow, |ui| {
                     for (label, pos) in [
@@ -26,50 +27,50 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                         ("Add Shape Below", "below"),
                         ("Add Assistant", "assistant"),
                     ] {
-                        if ui.button(label).clicked() {
+                        if ui.button(tr(label)).clicked() {
                             let index = if n == 0 { Value::Null } else { json!(at) };
                             run(app, "smartArt.addNode", json!({"id": gid, "index": index, "position": pos}));
                         }
                     }
                 });
             }
-            if small_button(ui, Icon::DecreaseIndent, "Promote", n > 0, false).clicked() {
+            if small_button(ui, Icon::DecreaseIndent, tr("Promote"), n > 0, false).clicked() {
                 run(app, "smartArt.promote", json!({"id": gid, "index": at}));
             }
-            if small_button(ui, Icon::IncreaseIndent, "Demote", n > 0, false).clicked() {
+            if small_button(ui, Icon::IncreaseIndent, tr("Demote"), n > 0, false).clicked() {
                 run(app, "smartArt.demote", json!({"id": gid, "index": at}));
             }
         });
         let pictures = kind.starts_with("picture");
-        if small_button(ui, Icon::Picture, "Insert Picture", pictures && n > 0, false)
-            .on_hover_text("Put a picture in the selected node's picture placeholder")
+        if small_button(ui, Icon::Picture, tr("Insert Picture"), pictures && n > 0, false)
+            .on_hover_text(tr("Put a picture in the selected node's picture placeholder"))
             .clicked()
         {
             run(app, "app.smartArtPictureDialog", json!({"id": gid, "index": at}));
         }
     });
     group(ui, |ui| {
-        let (main, arrow) = small_button_ex(ui, Icon::Layout, "Layouts", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::Layout, tr("Layouts"), gid.is_some(), false, true);
         let outline = sel.as_ref().map(|(_, d)| d.nodes.clone());
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
                 smartart_gallery(app, ui, "smartArt.layout", json!({"id": gid}), &kind, (&style, &colors), outline.as_deref());
             });
         }
-        let (main, arrow) = small_button_ex(ui, Icon::Layout, "Convert", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::Layout, tr("Convert"), gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
-                if ui.button("Convert to Text").clicked() {
+                if ui.button(tr("Convert to Text")).clicked() {
                     run(app, "smartArt.toText", json!({"id": gid}));
                 }
-                if ui.button("Convert to Shapes").clicked() {
+                if ui.button(tr("Convert to Shapes")).clicked() {
                     run(app, "smartArt.toShapes", json!({"id": gid}));
                 }
             });
         }
     });
     group(ui, |ui| {
-        let (main, arrow) = small_button_ex(ui, Icon::ChangeChartType, "Change Colors", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::ChangeChartType, tr("Change Colors"), gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
                 for (k, label) in deckcraft_engine::cmd::smartart::COLORS {
@@ -77,13 +78,13 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                         ui.separator();
                     }
                     let on = colors == k || (colors.is_empty() && k == "colorful");
-                    if ui.selectable_label(on, label).clicked() {
+                    if ui.selectable_label(on, tr(label)).clicked() {
                         run(app, "smartArt.colors", json!({"id": gid, "colors": k}));
                     }
                 }
             });
         }
-        let (main, arrow) = small_button_ex(ui, Icon::SmartArt, "SmartArt Styles", gid.is_some(), false, true);
+        let (main, arrow) = small_button_ex(ui, Icon::SmartArt, tr("SmartArt Styles"), gid.is_some(), false, true);
         if let Some(arrow) = arrow {
             widgets::split_menu(&main, &arrow, |ui| {
                 for (k, label) in deckcraft_engine::cmd::smartart::STYLES {
@@ -92,7 +93,7 @@ pub(super) fn smartart_design(app: &mut SlideApp, ui: &mut Ui) {
                         ui.label("3-D");
                     }
                     let on = style == k || (style.is_empty() && k == "flat");
-                    if ui.selectable_label(on, label).clicked() {
+                    if ui.selectable_label(on, tr(label)).clicked() {
                         run(app, "smartArt.style", json!({"id": gid, "style": k}));
                     }
                 }

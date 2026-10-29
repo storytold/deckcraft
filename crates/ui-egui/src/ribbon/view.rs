@@ -1,4 +1,5 @@
 use super::{Icon, SlideApp, Target, Ui, big_button, big_button_ex, group, json, rows, run, theme};
+use crate::i18n::tr;
 
 pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
     use crate::ViewMode;
@@ -11,51 +12,51 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
             (Icon::ViewReading, "Reading\nView", "view.reading", None),
         ] {
             let sel = mode.is_some_and(|m| app.ui.view == m);
-            if big_button_ex(ui, icon, label, true, false, sel).0.clicked() {
+            if big_button_ex(ui, icon, tr(label), true, false, sel).0.clicked() {
                 let _ = app.run(id, json!({}));
             }
         }
     });
     group(ui, |ui| {
         let in_master = app.session.active().is_some_and(|d| d.selection.target != Target::Slides);
-        if big_button_ex(ui, Icon::SlideMaster, "Slide\nMaster", true, false, in_master).0.clicked() {
+        if big_button_ex(ui, Icon::SlideMaster, tr("Slide\nMaster"), true, false, in_master).0.clicked() {
             let _ = app.run(if in_master { "view.closeMaster" } else { "view.slideMaster" }, json!({}));
         }
         let in_handout = app.session.active().is_some_and(|d| d.selection.target == Target::Handout);
-        if big_button_ex(ui, Icon::HandoutMaster, "Handout\nMaster", true, false, in_handout).0.clicked() {
+        if big_button_ex(ui, Icon::HandoutMaster, tr("Handout\nMaster"), true, false, in_handout).0.clicked() {
             let _ = app.run(if in_handout { "view.closeMaster" } else { "view.handoutMaster" }, json!({}));
         }
         let in_notes = app.session.active().is_some_and(|d| d.selection.target == Target::NotesMaster);
-        if big_button_ex(ui, Icon::NotesMaster, "Notes\nMaster", true, false, in_notes).0.clicked() {
+        if big_button_ex(ui, Icon::NotesMaster, tr("Notes\nMaster"), true, false, in_notes).0.clicked() {
             let _ = app.run(if in_notes { "view.closeMaster" } else { "view.notesMaster" }, json!({}));
         }
     });
     group(ui, |ui| {
         rows(ui, |ui| {
             let mut r = app.ui.ruler;
-            if ui.checkbox(&mut r, "Ruler").changed() {
+            if ui.checkbox(&mut r, tr("Ruler")).changed() {
                 app.ui.ruler = r;
             }
             let mut g = app.ui.gridlines;
-            if ui.checkbox(&mut g, "Gridlines").changed() {
+            if ui.checkbox(&mut g, tr("Gridlines")).changed() {
                 app.ui.gridlines = g;
             }
             let mut gd = app.ui.guides;
-            if ui.checkbox(&mut gd, "Guides").changed() {
+            if ui.checkbox(&mut gd, tr("Guides")).changed() {
                 app.ui.guides = gd;
             }
         });
-        if big_button(ui, Icon::Gridlines, "Grid\nOptions", true).clicked() {
+        if big_button(ui, Icon::Gridlines, tr("Grid\nOptions"), true).clicked() {
             let _ = app.run("view.gridOptions", json!({}));
         }
         let n = app.ui.notes;
-        if big_button_ex(ui, Icon::Notes, "Notes", true, false, n).0.clicked() {
+        if big_button_ex(ui, Icon::Notes, tr("Notes"), true, false, n).0.clicked() {
             app.ui.notes = !n;
         }
     });
     group(ui, |ui| {
-        let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, "Zoom", true, true, false);
-        if main.on_hover_text("Zoom").clicked() {
+        let (main, arrow) = big_button_ex(ui, Icon::ZoomGlass, tr("Zoom"), true, true, false);
+        if main.on_hover_text(tr("Zoom")).clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
         if let Some(a) = arrow {
@@ -66,31 +67,31 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
                         ui.close();
                     }
                 }
-                if ui.button("Fit").clicked() {
+                if ui.button(tr("Fit")).clicked() {
                     let _ = app.run("view.fit", json!({}));
                     ui.close();
                 }
             });
         }
-        if big_button(ui, Icon::FitToWindow, "Fit to\nWindow", true).clicked() {
+        if big_button(ui, Icon::FitToWindow, tr("Fit to\nWindow"), true).clicked() {
             app.ui.zoom = None;
         }
     });
     group(ui, |ui| {
         let has = app.session.active().is_some();
         let on = app.doc_window.is_some();
-        let resp = big_button_ex(ui, Icon::NewWindow, "New\nWindow", has, false, on).0;
-        if resp.on_hover_text("Open another window on this presentation").clicked() {
+        let resp = big_button_ex(ui, Icon::NewWindow, tr("New\nWindow"), has, false, on).0;
+        if resp.on_hover_text(tr("Open another window on this presentation")).clicked() {
             let _ = app.run("view.newWindow", json!({}));
         }
     });
     group(ui, |ui| {
         let gs = app.ui.grayscale;
-        if big_button_ex(ui, Icon::Grayscale, "Grayscale", true, false, gs).0.clicked() {
+        if big_button_ex(ui, Icon::Grayscale, tr("Grayscale"), true, false, gs).0.clicked() {
             app.ui.grayscale = !gs;
         }
         let dark = app.ui.brightness == theme::Brightness::Dark;
-        if big_button_ex(ui, Icon::Palette, "Dark\nMode", true, false, dark).0.clicked() {
+        if big_button_ex(ui, Icon::Palette, tr("Dark\nMode"), true, false, dark).0.clicked() {
             let _ = app.run("view.dark", json!({}));
         }
     });
@@ -104,7 +105,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
     let (mut kind, mut picked): (u8, Vec<usize>) = ui.data_mut(|d| d.get_temp(id).unwrap_or((0, vec![])));
     ui.horizontal(|ui| {
         for (k, label) in [(0u8, "Slide Zoom"), (1, "Section Zoom"), (2, "Summary Zoom")] {
-            if ui.selectable_label(kind == k, label).clicked() && kind != k {
+            if ui.selectable_label(kind == k, tr(label)).clicked() && kind != k {
                 kind = k;
                 picked.clear();
             }
@@ -124,12 +125,12 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
             .collect()
     };
     if items.is_empty() {
-        ui.label(if kind == 1 { "The presentation has no sections. Add one with Home › Section." } else { "No slides." });
+        ui.label(tr(if kind == 1 { "The presentation has no sections. Add one with Home › Section." } else { "No slides." }));
     }
     egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
         for (i, label) in items.iter().enumerate() {
             let mut on = picked.contains(&i);
-            if ui.checkbox(&mut on, label).changed() {
+            if ui.checkbox(&mut on, label.as_str()).changed() {
                 if on {
                     picked.push(i);
                 } else {
@@ -140,7 +141,7 @@ pub(super) fn zoom_menu(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.data_mut(|d| d.insert_temp(id, (kind, picked.clone())));
     ui.separator();
-    if ui.add_enabled(!picked.is_empty(), egui::Button::new("Insert")).clicked() {
+    if ui.add_enabled(!picked.is_empty(), egui::Button::new(tr("Insert"))).clicked() {
         let mut v = picked.clone();
         v.sort_unstable();
         let p = match kind {

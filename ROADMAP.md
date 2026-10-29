@@ -103,7 +103,8 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+English and Korean. The interface follows the system language or the choice in Preferences;
+strings are looked up in a catalog keyed by their English (`crates/ui-egui/src/i18n`). Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
@@ -199,6 +200,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-25 | Format Shape ▸ Fill: Slide background fill shows the slide background through the shape (`shape.fill {background: true}`, saved as `useBgFill`). A shape opened from a file with this fill showed it as Automatic, and the pane offered no way to set it |
 | 2026-10-21 | Reuse Slides: pick which slides of the other presentation to insert from a list (`slide.reuseList`, #1103) |
 | 2026-10-21 | Slide list and slide sorter: Shift+click selects a range of slides and Ctrl+Shift+click adds it to the selection (`slide.selectRange`, #1105) |
+| 2026-10-15 | Korean interface: a string catalog keyed by the English text, the language follows the system (#15) or Preferences › Language (`app.language`), ~1,580 Korean strings over the ribbon, menus, palette, dialogs, panes, File tab, slide show and placeholder prompts |
 | 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
 | 2026-10-18 | Slide thumbnails and the Slide Sorter render only the slides in view: on a deck of more than 600 slides they used to evict their own thumbnails, so the pane flashed white and never finished (#969) |
 | 2026-10-18 | Resizing with the mouse snaps the edge being dragged to the slide, guides and other shapes: a fixed edge that already lined up used to take the snap and leave the dragged edge free, and a fixed edge near a line shifted the dragged one (#961) |
@@ -355,6 +357,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-21 | trivial | Progress log: Reuse Slides picker (#1103). Scores and milestone names unchanged |
 | 2026-10-21 | trivial | Progress log: slide range selection (#1105). Scores and milestone names unchanged |
+| 2026-10-15 | minor | Korean interface and the string catalog. Scores and hours not re-estimated (maintainers' call) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-16 | minor | Symbol-font U+F0xx codes remap to the installed Symbol face's real Unicode (Apple Symbol on macOS) |
 | 2026-10-15 | trivial | Progress log: chart package parts survive a native save. Scores and milestone names unchanged |

@@ -1,4 +1,5 @@
 use super::{Dialog, SlideApp, Ui, buttons, check, choice, color_label, finite_pt, json, json_text, labeled_text, seed_once, vec2};
+use crate::i18n::tr;
 
 fn seed_font_fields(d: &mut Dialog) {
     seed_once(d, "family", json_text(d.params.get("family"), ""));
@@ -25,7 +26,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         fams.insert(0, family.clone());
     }
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Font"));
+        let field = ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tr("Font")));
         let combo = craft_ui::ComboBox::from_id_salt("font_dialog_family")
             .selected_text(if family.is_empty() { " " } else { family.as_str() })
             .width(300.0)
@@ -41,13 +42,13 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         let _ = combo.response.labelled_by(field.id);
     });
     ui.horizontal(|ui| {
-        let _ = labeled_text(ui, d, "Size", "size", 64.0);
+        let _ = labeled_text(ui, d, tr("Size"), "size", 64.0);
         ui.add_space(16.0);
-        check(ui, d, "Bold", "bold", false);
-        check(ui, d, "Italic", "italic", false);
+        check(ui, d, tr("Bold"), "bold", false);
+        check(ui, d, tr("Italic"), "italic", false);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Underline"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tr("Underline")));
         choice(
             ui,
             d,
@@ -57,21 +58,21 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             &[("none", "None"), ("sng", "Single"), ("dbl", "Double"), ("heavy", "Heavy"), ("dotted", "Dotted"), ("dash", "Dash"), ("wavy", "Wavy")],
         );
         ui.add_space(8.0);
-        let _ = labeled_text(ui, d, "Color", "color", 110.0);
+        let _ = labeled_text(ui, d, tr("Color"), "color", 110.0);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Strikethrough"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tr("Strikethrough")));
         choice(ui, d, "font_dialog_strike", "Strikethrough", "strike", &[("none", "None"), ("sng", "Single"), ("dbl", "Double")]);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Baseline"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tr("Baseline")));
         choice(ui, d, "font_dialog_baseline", "Baseline", "baseline", &[("none", "None"), ("super", "Superscript"), ("sub", "Subscript")]);
         ui.add_space(8.0);
-        ui.label("Caps");
+        ui.label(tr("Caps"));
         choice(ui, d, "font_dialog_caps", "Caps", "caps", &[("none", "None"), ("small", "Small caps"), ("all", "All caps")]);
     });
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(88.0, 20.0), egui::Label::new("Spacing"));
+        ui.add_sized(vec2(88.0, 20.0), egui::Label::new(tr("Spacing")));
         let mut spacing = d.get("spacing", "0");
         let edited = ui.add(egui::TextEdit::singleline(&mut spacing).desired_width(64.0).hint_text("pt"));
         let mut picked = None;
@@ -87,12 +88,12 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             .width(120.0)
             .show_ui(ui, |ui| {
                 for (v, l) in [("-3", "Very tight"), ("-1.5", "Tight"), ("0", "Normal"), ("3", "Loose"), ("6", "Very loose")] {
-                    if ui.selectable_label(spacing == v, l).clicked() {
+                    if ui.selectable_label(spacing == v, tr(l)).clicked() {
                         picked = Some(v.to_string());
                     }
                 }
             });
-        combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Spacing"));
+        combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr("Spacing")));
         let _ = edited;
         if let Some(v) = picked {
             d.fields.insert("spacing".into(), v);
@@ -105,7 +106,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     let underline = d.get("underline", "none");
     let strike = d.get("strike", "none");
     let shown = finite_pt(&d.get("size", "18")).unwrap_or(18.0).clamp(12.0, 28.0) as f32;
-    let mut sample = egui::RichText::new("AaBbCcDd").size(shown);
+    let mut sample = egui::RichText::new(tr("AaBbCcDd")).size(shown);
     if bold {
         sample = sample.strong();
     }
@@ -120,7 +121,7 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     }
     ui.add_space(6.0);
     ui.label(sample);
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, tr("OK"));
     if ok {
         let family = d.get("family", "");
         let family = family.trim();

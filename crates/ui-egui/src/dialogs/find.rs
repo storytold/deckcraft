@@ -1,4 +1,5 @@
 use super::{Dialog, SlideApp, Ui, Value, check, field, json, vec2};
+use crate::i18n::{tr, trf};
 
 /// Home › Find / Replace: step through matches (slide text, table cells, notes) or replace them.
 pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -6,7 +7,7 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     // "Find what:" has the keyboard when the dialog opens, so Ctrl+F and typing finds (#951).
     let mut what = d.get("text", "");
     ui.horizontal(|ui| {
-        ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Find what:"));
+        ui.add_sized(vec2(120.0, 20.0), egui::Label::new(tr("Find what:")));
         let r = ui.add(egui::TextEdit::singleline(&mut what).desired_width(180.0));
         // Enter finds the next match and leaves the keyboard here, so the search can be changed.
         if !d.fields.contains_key("focused") || (r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
@@ -16,10 +17,10 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     });
     d.fields.insert("text".into(), what);
     if replace_mode {
-        field(ui, d, "Replace with:", "with", "");
+        field(ui, d, tr("Replace with:"), "with", "");
     }
-    let case = check(ui, d, "Match case", "matchCase", false);
-    let whole = check(ui, d, "Find whole words only", "wholeWords", false);
+    let case = check(ui, d, tr("Match case"), "matchCase", false);
+    let whole = check(ui, d, tr("Find whole words only"), "wholeWords", false);
     let text = d.get("text", "");
     let q = json!({"text": text, "matchCase": case, "wholeWords": whole});
     let mut close = false;
@@ -27,11 +28,11 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         let has = !text.is_empty();
-        if ui.add_enabled(has, egui::Button::new("Find Next")).clicked() || (has && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
+        if ui.add_enabled(has, egui::Button::new(tr("Find Next"))).clicked() || (has && ui.input(|i| i.key_pressed(egui::Key::Enter))) {
             find_next = true;
         }
         if replace_mode {
-            if ui.add_enabled(has, egui::Button::new("Replace")).clicked() {
+            if ui.add_enabled(has, egui::Button::new(tr("Replace"))).clicked() {
                 let cur: Option<Value> = serde_json::from_str(&d.get("cur", "")).ok();
                 if let Some(at) = cur {
                     let mut p = q.clone();
@@ -44,27 +45,27 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
                 }
                 find_next = true;
             }
-            if ui.add_enabled(has, egui::Button::new("Replace All")).clicked() {
+            if ui.add_enabled(has, egui::Button::new(tr("Replace All"))).clicked() {
                 let mut p = q.clone();
                 p["with"] = json!(d.get("with", ""));
                 let msg = match app.session.execute("text.replace", &p) {
-                    Ok(v) => format!("Replaced {} occurrence(s).", v.get("replaced").and_then(Value::as_u64).unwrap_or(0)),
-                    Err(_) => format!("DeckCraft can't find “{text}”."),
+                    Ok(v) => trf("Replaced {} occurrence(s).", &[&v.get("replaced").and_then(Value::as_u64).unwrap_or(0)]),
+                    Err(_) => trf("DeckCraft can't find “{}”.", &[&text]),
                 };
                 d.fields.insert("status".into(), msg);
                 d.fields.remove("cur");
             }
-        } else if ui.button("Replace…").clicked() {
+        } else if ui.button(tr("Replace…")).clicked() {
             d.fields.insert("replace".into(), "1".into());
         }
-        if ui.button("Close").clicked() {
+        if ui.button(tr("Close")).clicked() {
             close = true;
         }
     });
     if find_next {
         let list = app.session.execute("text.find", &q).ok().and_then(|v| v.as_array().cloned()).unwrap_or_default();
         if list.is_empty() {
-            d.fields.insert("status".into(), format!("DeckCraft can't find “{text}”."));
+            d.fields.insert("status".into(), trf("DeckCraft can't find “{}”.", &[&text]));
             d.fields.remove("cur");
         } else {
             let n = d.get("next", "0").parse::<usize>().unwrap_or(0) % list.len();
@@ -85,7 +86,7 @@ pub(super) fn find_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     let status = d.get("status", "");
     if !status.is_empty() {
         ui.add_space(4.0);
-        ui.label(status);
+        ui.label(tr(&status));
     }
     close
 }

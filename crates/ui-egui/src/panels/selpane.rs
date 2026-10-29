@@ -3,6 +3,7 @@
 //! siblings, eye to show or hide, padlock to lock, double-click or F2 to rename, arrows to move
 //! through the list. Everything it changes goes through engine commands.
 
+use crate::i18n::tr;
 use std::collections::HashSet;
 
 use deckcraft_model::Shape;
@@ -115,22 +116,22 @@ fn small_icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egu
     }
     ui.painter().rect_stroke(rect, CornerRadius::same(4), Stroke::new(1.0, t.border), egui::StrokeKind::Inside);
     icons::paint(ui.painter(), rect.shrink(4.0), icon, t.text, !enabled);
-    resp.on_hover_text(label)
+    resp.on_hover_text(tr(label))
 }
 
 fn toolbar(app: &mut SlideApp, ui: &mut Ui, t: &Tokens, has_sel: bool) {
     ui.horizontal(|ui| {
-        if ui.add(egui::Button::new("Show All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(tr("Show All")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.showAll", json!({}));
         }
-        if ui.add(egui::Button::new("Hide All").stroke(Stroke::new(1.0, t.border))).clicked() {
+        if ui.add(egui::Button::new(tr("Hide All")).stroke(Stroke::new(1.0, t.border))).clicked() {
             run(app, "selection.hideAll", json!({}));
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if small_icon_button(ui, Icon::ChevronDown, "Send Backward", has_sel).clicked() {
+            if small_icon_button(ui, Icon::ChevronDown, tr("Send Backward"), has_sel).clicked() {
                 run(app, "arrange.sendBackward", json!({}));
             }
-            if small_icon_button(ui, Icon::ChevronUp, "Bring Forward", has_sel).clicked() {
+            if small_icon_button(ui, Icon::ChevronUp, tr("Bring Forward"), has_sel).clicked() {
                 run(app, "arrange.bringForward", json!({}));
             }
         });
@@ -151,7 +152,7 @@ fn group_chevron(app: &mut SlideApp, ui: &mut Ui, row: &Row, painter: &egui::Pai
     let open = !app.selpane.collapsed.contains(&row.id);
     let cr = Rect::from_center_size(pos2(x0 + 6.0, r.center().y), vec2(14.0, 14.0));
     let cresp = ui.interact(cr, ui.scope_id().with(("fold", row.id)), Sense::click());
-    let label = format!("{} {}", if open { "Collapse" } else { "Expand" }, row.name);
+    let label = format!("{} {}", tr(if open { "Collapse" } else { "Expand" }), row.name);
     cresp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &label));
     icons::paint(painter, cr, if open { Icon::ChevronDown } else { Icon::ChevronRight }, t.text_dim, false);
     if cresp.clicked() {
@@ -205,8 +206,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         let renaming = app.selpane.renaming.as_ref().filter(|(id, _)| *id == row.id).map(|(_, s)| s.clone());
         if let Some(mut buf) = renaming {
             let edit_id = ui.scope_id().with(("rename", row.id));
-            let out =
-                ui.put(name_rect, egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text("Name").font(theme::font(12.5)).margin(vec2(2.0, 1.0)));
+            let out = ui.put(
+                name_rect,
+                egui::TextEdit::singleline(&mut buf).id(edit_id).hint_text(tr("Name")).font(theme::font(12.5)).margin(vec2(2.0, 1.0)),
+            );
             if !app.selpane.rename_started {
                 out.request_focus();
                 if let Some(mut s) = egui::TextEdit::load_state(ui.ctx(), edit_id) {
@@ -236,10 +239,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         icons::paint(&painter, eye, if row.hidden { Icon::EyeOff } else { Icon::Eye }, ink, false);
         icons::paint(&painter, lock, if row.locked { Icon::Lock } else { Icon::Unlock }, ink, false);
         let eye_resp = ui.interact(eye.expand(3.0), ui.scope_id().with(("eye", row.id)), Sense::click());
-        let eye_label = format!("{} {}", if row.hidden { "Show" } else { "Hide" }, row.name);
+        let eye_label = format!("{} {}", tr(if row.hidden { "Show" } else { "Hide" }), row.name);
         eye_resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &eye_label));
         let lock_resp = ui.interact(lock.expand(3.0), ui.scope_id().with(("lock", row.id)), Sense::click());
-        let lock_label = format!("{} {}", if row.locked { "Unlock" } else { "Lock" }, row.name);
+        let lock_label = format!("{} {}", tr(if row.locked { "Unlock" } else { "Lock" }), row.name);
         lock_resp.widget_info(|| WidgetInfo::labeled(Role::Button, true, &lock_label));
         if eye_resp.clicked() {
             run(app, "shape.visible", json!({"id": row.id, "visible": row.hidden}));
@@ -392,22 +395,22 @@ fn context_menu(app: &mut SlideApp, resp: &egui::Response, row: &Row) {
             ("Send Backward", "arrange.sendBackward"),
             ("Send to Back", "arrange.sendToBack"),
         ] {
-            if ui.button(label).clicked() {
+            if ui.button(tr(label)).clicked() {
                 run(app, cmd, json!({"ids": [row.id]}));
                 ui.close();
             }
         }
         ui.separator();
-        if ui.button("Rename").clicked() {
+        if ui.button(tr("Rename")).clicked() {
             app.selpane.renaming = Some((row.id, row.name.clone()));
             app.selpane.rename_started = false;
             ui.close();
         }
-        if ui.button(if row.hidden { "Show" } else { "Hide" }).clicked() {
+        if ui.button(tr(if row.hidden { "Show" } else { "Hide" })).clicked() {
             run(app, "shape.visible", json!({"id": row.id, "visible": row.hidden}));
             ui.close();
         }
-        if ui.button(if row.locked { "Unlock" } else { "Lock" }).clicked() {
+        if ui.button(tr(if row.locked { "Unlock" } else { "Lock" })).clicked() {
             run(app, "shape.lock", json!({"id": row.id}));
             ui.close();
         }

@@ -212,7 +212,7 @@ impl SlideApp {
             }
             return match self.run("file.export", params) {
                 Ok(_) => {
-                    self.set_status(format!("Exported {path}"));
+                    self.set_status(crate::i18n::trf("Exported {}", &[&path]));
                     true
                 }
                 Err(_) => false,
@@ -398,7 +398,7 @@ impl SlideApp {
         match result {
             Ok(()) => {
                 self.reuse_target = None;
-                self.set_status(format!("Inserted {} slides", picked.len()));
+                self.set_status(crate::i18n::trf("Inserted {} slides", &[&picked.len()]));
                 true
             }
             Err(e) => {
@@ -455,7 +455,7 @@ impl SlideApp {
             if let Some(path) = pick(&suggested) {
                 match self.session.execute("file.saveAs", &json!({"path": path})) {
                     Ok(_) => {
-                        self.set_status(format!("Saved {path}"));
+                        self.set_status(crate::i18n::trf("Saved {}", &[&path]));
                         self.ui.recent.retain(|p| *p != path);
                         self.ui.recent.insert(0, path);
                     }

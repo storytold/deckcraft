@@ -2,6 +2,7 @@ use super::{
     Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
     pos2, rows, run, theme, vec2, widgets,
 };
+use crate::i18n::tr;
 
 // ---------- Animations ----------
 
@@ -15,8 +16,8 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let playing = app.anim_preview_active();
-        let (resp, _) = big_button_ex(ui, Icon::Preview, "Preview", true, false, playing);
-        if resp.on_hover_text("Play this slide's animations on the canvas").clicked() {
+        let (resp, _) = big_button_ex(ui, Icon::Preview, tr("Preview"), true, false, playing);
+        if resp.on_hover_text(tr("Play this slide's animations on the canvas")).clicked() {
             run(app, "animation.preview", json!({}));
         }
     });
@@ -53,7 +54,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                     paint_anim_tile(p, r, a.1, a.2, has_sel);
                 }
             },
-            |i| quick.get(i).map(|a| a.1.to_string()).unwrap_or_default(),
+            |i| quick.get(i).map(|a| tr(a.1).to_string()).unwrap_or_default(),
         ) && let Some(a) = quick.get(i)
         {
             run(app, "animation.set", json!({"effect": a.0, "class": a.2.xml()}));
@@ -63,7 +64,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             for (cls, label) in
                 [(AnimClass::Entrance, "Entrance"), (AnimClass::Emphasis, "Emphasis"), (AnimClass::Exit, "Exit"), (AnimClass::Path, "Motion Paths")]
             {
-                ui.label(egui::RichText::new(label).font(theme::bold(12.0)));
+                ui.label(egui::RichText::new(tr(label)).font(theme::bold(12.0)));
                 ui.horizontal_wrapped(|ui| {
                     for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 == cls) {
                         let (r, resp) = ui.allocate_exact_size(vec2(56.0, 54.0), Sense::click());
@@ -83,7 +84,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         let effect = cur.as_ref().map(|c| c.effect.as_str()).unwrap_or_default();
         let build = cur.as_ref().map(|c| text_build_id(c.text_build));
         let build_rows = marked_options(&["asOne", "byParagraph"], build);
-        let r = big_button(ui, Icon::EffectOptions, "Effect\nOptions", !effect_rows.is_empty());
+        let r = big_button(ui, Icon::EffectOptions, tr("Effect\nOptions"), !effect_rows.is_empty());
         egui::Popup::menu(&r).show(|ui| {
             for &(o, on) in &effect_rows {
                 if ui.selectable_label(on, animation_option_label(effect, o)).clicked() {
@@ -93,8 +94,8 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             for &(id, on) in &build_rows {
-                let label = if id == "byParagraph" { "By Paragraph" } else { "As One Object" };
-                if ui.selectable_label(on, label).clicked() {
+                let label = tr(if id == "byParagraph" { "By Paragraph" } else { "As One Object" });
+                if ui.selectable_label(on, tr(label)).clicked() {
                     run(app, "animation.options", json!({"textBuild": id}));
                     ui.close();
                 }
@@ -102,7 +103,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::AddAnimation, "Add\nAnimation", has_sel);
+        let r = big_button(ui, Icon::AddAnimation, tr("Add\nAnimation"), has_sel);
         // Every effect in one column is taller than a 1440p screen, so cap the height and scroll (#1370).
         // The menu opens under the title bar and the ribbon; keep that chrome out of the cap.
         let max_h = (r.ctx.viewport_rect().height() - 160.0).max(120.0);
@@ -128,9 +129,9 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             });
         });
         big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
-        let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
+        let r = big_button(ui, Icon::Trigger, tr("Trigger"), cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
-            if ui.button("On Click of… (none)").clicked() {
+            if ui.button(tr("On Click of… (none)")).clicked() {
                 run(app, "animation.timing", json!({"trigger": null}));
             }
             let shapes: Vec<(u32, String)> =
@@ -143,8 +144,8 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         });
         let on = app.session.anim_painter.is_some();
         let en = enabled(app, "animation.painter");
-        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, "Animation\nPainter", en, false, on);
-        let r = r.on_hover_text("Animation Painter (double-click to keep it on)");
+        let (r, _) = big_button_ex(ui, Icon::AnimationPainter, tr("Animation\nPainter"), en, false, on);
+        let r = r.on_hover_text(tr("Animation Painter (double-click to keep it on)"));
         if r.double_clicked() {
             run(app, "animation.painter", json!({"sticky": true}));
         } else if r.clicked() {
@@ -158,7 +159,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Start:");
+                ui.label(tr("Start:"));
                 let s = cur.as_ref().map(|c| match c.start {
                     deckcraft_model::AnimStart::OnClick => "On Click",
                     deckcraft_model::AnimStart::WithPrevious => "With Previous",
@@ -166,7 +167,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 });
                 dropdown(ui, "astart", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
                     for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
-                        if ui.button(l).clicked() {
+                        if ui.button(tr(l)).clicked() {
                             run(app, "animation.timing", json!({"start": v}));
                             ui.close();
                         }
@@ -174,7 +175,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
             ui.horizontal(|ui| {
-                ui.label("Duration:");
+                ui.label(tr("Duration:"));
                 if let Some(v) =
                     widgets::spinner(ui, "adur", "Duration", cur.as_ref().map(|c| c.duration_ms as f64 / 1000.0).unwrap_or(0.5), 0.25, "", 46.0)
                 {
@@ -182,7 +183,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
                 }
             });
             ui.horizontal(|ui| {
-                ui.label("Delay:");
+                ui.label(tr("Delay:"));
                 if let Some(v) =
                     widgets::spinner(ui, "adelay", "Delay", cur.as_ref().map(|c| c.delay_ms as f64 / 1000.0).unwrap_or(0.0), 0.25, "", 46.0)
                 {
@@ -202,7 +203,7 @@ pub fn paint_anim_tile(p: &egui::Painter, r: Rect, label: &str, class: AnimClass
         _ => Icon::AnimPath,
     };
     icons::paint(p, Rect::from_center_size(pos2(r.center().x, r.min.y + 18.0), vec2(28.0, 28.0)), icon, t.text, !enabled);
-    p.text(pos2(r.center().x, r.max.y - 8.0), Align2::CENTER_CENTER, label, theme::font(10.0), if enabled { t.text } else { t.text_faint });
+    p.text(pos2(r.center().x, r.max.y - 8.0), Align2::CENTER_CENTER, tr(label), theme::font(10.0), if enabled { t.text } else { t.text_faint });
 }
 
 /// The stored id is the one marked row. Every other id stays unmarked.

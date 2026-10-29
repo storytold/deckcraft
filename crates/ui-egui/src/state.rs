@@ -94,6 +94,8 @@ pub struct UiState {
     pub comment_focus: Option<(usize, usize)>,
     /// Quick Access Toolbar buttons, left to right.
     pub qat: Vec<qat::QatItem>,
+    /// Interface language: `system` (follow the system's), `en` or `ko`.
+    pub language: String,
 }
 
 impl Default for UiState {
@@ -127,6 +129,7 @@ impl Default for UiState {
             grayscale: false,
             comment_focus: None,
             qat: qat::defaults(),
+            language: "system".into(),
         }
     }
 }
@@ -156,6 +159,9 @@ impl UiState {
             self.format_tab = d.format_tab;
         }
         self.pane = self.pane.filter(short);
+        if !crate::i18n::SETTINGS.contains(&self.language.as_str()) {
+            self.language = d.language;
+        }
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);

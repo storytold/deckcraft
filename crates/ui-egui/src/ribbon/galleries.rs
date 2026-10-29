@@ -1,4 +1,5 @@
 use super::{Align2, Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, json, pos2, run, scheme, theme, vec2, widgets};
+use crate::i18n::tr;
 
 /// A ColorRef as a command colour parameter.
 pub fn cref_param(c: &deckcraft_model::ColorRef) -> Value {
@@ -81,7 +82,7 @@ pub(super) fn smartart_gallery(
             if kinds.is_empty() {
                 continue;
             }
-            ui.label(egui::RichText::new(title).strong());
+            ui.label(egui::RichText::new(tr(title)).strong());
             egui::Grid::new(("smartart_gallery", cat)).num_columns(4).spacing([6.0, 6.0]).show(ui, |ui| {
                 for (i, (k, label)) in kinds.iter().enumerate() {
                     let ctx = ui.ctx().clone();
@@ -151,7 +152,7 @@ pub fn shapes_gallery(ui: &mut Ui) -> Option<&'static str> {
                             ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
                         }
                         paint_freeform_icon(ui.painter(), r.shrink(5.0), name, t.text);
-                        if resp.on_hover_text(label).clicked() {
+                        if resp.on_hover_text(tr(label)).clicked() {
                             out = Some(name);
                         }
                     }
@@ -232,7 +233,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             None => run(app, "shape.line", json!({"none": true})),
         }
     }
-    ui.menu_button("Weight", |ui| {
+    ui.menu_button(tr("Weight"), |ui| {
         for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
             if ui.button(format!("{w} pt")).clicked() {
                 run(app, "shape.line", json!({"width": w}));
@@ -240,7 +241,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             }
         }
     });
-    ui.menu_button("Dashes", |ui| {
+    ui.menu_button(tr("Dashes"), |ui| {
         for (l, d) in [
             ("Solid", "solid"),
             ("Round Dot", "sysDot"),
@@ -250,13 +251,13 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             ("Long Dash", "lgDash"),
             ("Long Dash Dot", "lgDashDot"),
         ] {
-            if ui.button(l).clicked() {
+            if ui.button(tr(l)).clicked() {
                 run(app, "shape.line", json!({"dash": d}));
                 ui.close();
             }
         }
     });
-    ui.menu_button("Arrows", |ui| {
+    ui.menu_button(tr("Arrows"), |ui| {
         for (l, h, tl) in [
             ("None", "none", "none"),
             ("Arrow at end", "none", "triangle"),
@@ -265,7 +266,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
             ("Stealth end", "none", "stealth"),
             ("Oval ends", "oval", "oval"),
         ] {
-            if ui.button(l).clicked() {
+            if ui.button(tr(l)).clicked() {
                 run(app, "shape.line", json!({"head": h, "tail": tl}));
                 ui.close();
             }
@@ -274,7 +275,7 @@ pub fn outline_menu(app: &mut SlideApp, ui: &mut Ui, sc: &deckcraft_color::Color
 }
 
 pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
-    ui.menu_button("Shadow", |ui| {
+    ui.menu_button(tr("Shadow"), |ui| {
         for (l, v) in [
             ("No Shadow", "none"),
             ("Outer", "outer"),
@@ -283,20 +284,20 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             ("Inner", "inner"),
             ("Perspective", "perspective"),
         ] {
-            if ui.button(l).clicked() {
+            if ui.button(tr(l)).clicked() {
                 run(app, "shape.effects", json!({"shadow": v}));
             }
         }
     });
-    ui.menu_button("Reflection", |ui| {
+    ui.menu_button(tr("Reflection"), |ui| {
         for (l, v) in [("No Reflection", "none"), ("Tight", "tight"), ("Half", "half"), ("Full", "full")] {
-            if ui.button(l).clicked() {
+            if ui.button(tr(l)).clicked() {
                 run(app, "shape.effects", json!({"reflection": v}));
             }
         }
     });
-    ui.menu_button("Glow", |ui| {
-        if ui.button("No Glow").clicked() {
+    ui.menu_button(tr("Glow"), |ui| {
+        if ui.button(tr("No Glow")).clicked() {
             run(app, "shape.effects", json!({"glow": null}));
         }
         for r in [5.0, 8.0, 11.0, 18.0] {
@@ -305,14 +306,14 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
     });
-    ui.menu_button("Soft Edges", |ui| {
+    ui.menu_button(tr("Soft Edges"), |ui| {
         for r in [0.0, 1.0, 2.5, 5.0, 10.0, 25.0] {
             if ui.button(if r == 0.0 { "No Soft Edges".to_string() } else { format!("{r} pt") }).clicked() {
                 run(app, "shape.effects", json!({"softEdges": r}));
             }
         }
     });
-    ui.menu_button("Bevel", |ui| {
+    ui.menu_button(tr("Bevel"), |ui| {
         for b in [
             "none",
             "circle",
@@ -328,12 +329,12 @@ pub fn effects_menu(app: &mut SlideApp, ui: &mut Ui) {
             "hardEdge",
             "artDeco",
         ] {
-            if ui.button(b).clicked() {
+            if ui.button(tr(b)).clicked() {
                 run(app, "shape.effects", json!({"bevel": b}));
             }
         }
     });
-    if ui.button("Format Shape…").clicked() {
+    if ui.button(tr("Format Shape…")).clicked() {
         let _ = app.run("view.pane", json!({"pane": "format", "tab": "effects"}));
     }
 }
