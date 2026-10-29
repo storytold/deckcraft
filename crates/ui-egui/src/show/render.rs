@@ -1,4 +1,4 @@
-use super::zoom::GRID_CAP;
+use super::zoom::MAX_THUMBS;
 use super::{
     BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
     TriggerPlay, pos2, state_for, vec2,
@@ -197,7 +197,7 @@ pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Optio
 }
 
 pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize) -> Option<TextureHandle> {
-    if show.thumbs.len() >= GRID_CAP {
+    if show.thumbs.len() >= MAX_THUMBS {
         return None;
     }
     let w = 320.0_f64;

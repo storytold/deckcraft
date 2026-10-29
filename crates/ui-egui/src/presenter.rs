@@ -1,5 +1,8 @@
 //! Bounded presenter-window messages. The audience owns the show; the remote window
 //! receives previews and sends input, never a second independently advancing show.
+/// Maximum previews in one remote presenter message; native grids are not capped.
+pub(crate) const REMOTE_GRID_CAP: usize = 48;
+
 use serde::{Deserialize, Serialize};
 
 pub const MAX_PREVIEW_SIDE: usize = 640;
@@ -307,8 +310,8 @@ impl View {
         }
         ui.heading("All slides");
         ui.label("Choose a slide to show it, or press G to return.");
-        if snapshot.total > crate::show::GRID_CAP {
-            ui.label(format!("First {} slides", crate::show::GRID_CAP));
+        if snapshot.total > REMOTE_GRID_CAP {
+            ui.label(format!("First {} slides", REMOTE_GRID_CAP));
         }
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {

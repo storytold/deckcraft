@@ -8,6 +8,7 @@ use serde_json::json;
 
 use crate::SlideApp;
 use crate::icons::{self, Icon};
+use crate::sections::groups;
 use crate::theme::{self, Tokens};
 
 /// Sorter-only state. Nothing here is part of the document.
@@ -33,33 +34,6 @@ fn drop_slot(centers: &[f32], y: f32) -> usize {
 /// would stay where it is (the gap before it, or the gap just after it).
 fn move_dest(from: usize, slot: usize) -> Option<usize> {
     if slot == from || slot == from + 1 { None } else { Some(if slot > from { slot - 1 } else { slot }) }
-}
-
-/// One section's slides, in the section's order, then any slide that belongs to none.
-fn groups(doc: &Presentation) -> Vec<(Option<usize>, Vec<usize>)> {
-    if doc.sections.is_empty() {
-        return vec![(None, (0..doc.slides.len()).collect())];
-    }
-    let mut seen = vec![false; doc.slides.len()];
-    let mut out = Vec::with_capacity(doc.sections.len() + 1);
-    for (si, sec) in doc.sections.iter().enumerate() {
-        let mut slides = Vec::with_capacity(sec.slides.len());
-        for id in &sec.slides {
-            if let Some(i) = doc.slide_index(*id)
-                && let Some(flag) = seen.get_mut(i)
-                && !*flag
-            {
-                *flag = true;
-                slides.push(i);
-            }
-        }
-        out.push((Some(si), slides));
-    }
-    let rest: Vec<usize> = seen.iter().enumerate().filter(|(_, on)| !**on).map(|(i, _)| i).collect();
-    if !rest.is_empty() {
-        out.push((None, rest));
-    }
-    out
 }
 
 struct Header<'a> {

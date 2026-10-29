@@ -1,5 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-29 · **Change:** trivial (Slide show: See All Slides row added, area 68 → 71%; previous: trivial, Animations shortfall: preview from the selected effect is in; previous: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-11-02 · **Change:** trivial (reused slide contents fit the destination size; thumbnails remain; parity estimates unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
@@ -194,13 +195,13 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
 | Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects | [animation-parity.md](animation-parity.md) |
-| Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
+| Slide show and presenter view | 8 | 71% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
 | Undo and clipboard | 3 | 100% | ~75% | 3–5 | Image paste on Windows (#1414) | [ui-parity.md](ui-parity.md) |
 | Automation ✱ | — | 100% | ahead | 0 | | [mcp.md](mcp.md) |
 | Platforms ✱ | — | 67% | ~80% | see platforms | | [ROADMAP.md](../ROADMAP.md) |
-| **Total (feature areas)** | 110 | **84%** | **~62%** | **~140–240** | | |
+| **Total (feature areas)** | 111 | **84%** | **~62%** | **~140–240** | | |
 
 ## What works today (evidence)
 
@@ -288,6 +289,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-29 | trivial | Slide show: See All Slides gains a P1 done row (every slide, scrollable, section tabs). The area moves 68 → 71% and its feature count 8 → 9; headline breadth stays 84% |
 | 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |
