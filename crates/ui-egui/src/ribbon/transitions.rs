@@ -1,7 +1,7 @@
 use super::animations::marked_options;
 use super::{
-    Align2, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, big, big_button, group, json, pos2, rows, run, theme,
-    vec2, widgets,
+    Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Value, big, big_button, group, json, pos2, rows, run, theme, vec2,
+    widgets,
 };
 
 // ---------- Transitions ----------
@@ -232,7 +232,18 @@ pub fn paint_transition_tile(p: &egui::Painter, r: Rect, (id, label): (&str, &st
         }
     }
     p.rect_stroke(pic, CornerRadius::same(2), Stroke::new(1.0, Color32::from_rgb(0x9B, 0xB4, 0xDB)), egui::StrokeKind::Inside);
-    p.text(pos2(r.center().x, r.max.y - 7.0), Align2::CENTER_CENTER, tl!(label), theme::font(10.0), t.text);
+    tile_label(p, pos2(r.center().x, r.max.y - 7.0), r.width(), tl!(label), t.text);
+}
+
+/// A gallery tile's name, centred on `center`, in the 10 pt UI font, or smaller (down to 7 pt) when
+/// it is wider than the tile: translated names are often longer than the English.
+pub fn tile_label(p: &egui::Painter, center: egui::Pos2, width: f32, label: &str, color: Color32) {
+    let mut galley = p.layout_no_wrap(label.to_string(), theme::font(10.0), color);
+    if galley.size().x > width {
+        let size = (10.0 * width / galley.size().x).max(7.0);
+        galley = p.layout_no_wrap(label.to_string(), theme::font(size), color);
+    }
+    p.galley(center - galley.size() / 2.0, galley, color);
 }
 
 /// One row of Transitions ▸ Effect Options: the stored option and whether it is the current one.

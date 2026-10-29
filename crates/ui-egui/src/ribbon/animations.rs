@@ -1,7 +1,7 @@
-use super::transitions::option_label;
+use super::transitions::{option_label, tile_label};
 use super::{
-    Align2, AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json,
-    pos2, rows, run, theme, vec2, widgets,
+    AnimClass, CornerRadius, Icon, Rect, Sense, SlideApp, Tokens, Ui, big, big_button, big_button_ex, dropdown, enabled, group, icons, json, pos2,
+    rows, run, theme, vec2, widgets,
 };
 
 // ---------- Animations ----------
@@ -197,7 +197,7 @@ pub fn paint_anim_tile(p: &egui::Painter, r: Rect, label: &str, class: AnimClass
         _ => Icon::AnimPath,
     };
     icons::paint(p, Rect::from_center_size(pos2(r.center().x, r.min.y + 18.0), vec2(28.0, 28.0)), icon, t.text, !enabled);
-    p.text(pos2(r.center().x, r.max.y - 8.0), Align2::CENTER_CENTER, tl!(label), theme::font(10.0), if enabled { t.text } else { t.text_faint });
+    tile_label(p, pos2(r.center().x, r.max.y - 8.0), r.width(), tl!(label), if enabled { t.text } else { t.text_faint });
 }
 
 /// The stored id is the one marked row. Every other id stays unmarked.
