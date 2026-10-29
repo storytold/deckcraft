@@ -394,7 +394,7 @@ impl Painter<'_> {
                 .iter()
                 .map(|x| deckcraft_render::PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix })
                 .collect();
-            return Arc::new(deckcraft_render::render_blend(doc, from, to, m.mix, &m.shapes, &text, &paths, &o));
+            return Arc::new(deckcraft_render::render_blend(doc, (from, to), m.mix, &m.shapes, &text, &paths, &o));
         }
         let old = self.build(from, steps_from, 0.0);
         let new = self.build(to, 0, 0.0);
