@@ -141,11 +141,15 @@ impl Headless {
             i,
             &deckcraft_engine::render::RenderOpts { scale, edit: p.get("edit").and_then(Value::as_bool).unwrap_or(false), ..Default::default() },
         );
-        let png = img.to_png_at(deckcraft_engine::render::dpi_for_scale(scale));
         if let Some(path) = s(p, "path") {
+            // Writing the picture to a file is an export: it needs `file.export` on the command
+            // list in force, like `app.export`. Returning it inline only reads the deck.
+            command_access::check("file.export")?;
+            let png = img.to_png_at(deckcraft_engine::render::dpi_for_scale(scale));
             deckcraft_engine::io::write_file(path, &png)?;
             return Ok(json!({"path": path, "width": img.width, "height": img.height}));
         }
+        let png = img.to_png_at(deckcraft_engine::render::dpi_for_scale(scale));
         Ok(json!({"png": deckcraft_engine::cmd::base64_encode(&png), "width": img.width, "height": img.height, "slide": i}))
     }
 }
@@ -170,7 +174,8 @@ impl Headless {
     /// Answer one control-channel `method`. A command the client names (`engine.execute`, the
     /// `document.inspect` method, `app.open`/`app.save`/`app.export`) must be on the command list in
     /// force, `engine.commands` lists only those, and gestures are refused while a list is in force
-    /// ([`command_access::check_gesture`]). Rendering a slide reads it and stays available.
+    /// ([`command_access::check_gesture`]). Rendering a slide reads it and stays available; writing
+    /// the picture to a `path` is an export and needs `file.export`.
     fn answer(&mut self, method: &str, params: Value) -> Result<Value, String> {
         let p = &params;
         match method {
