@@ -1,6 +1,6 @@
 use super::{
     EngineError, MediaClip, NO_ID_SPACE, PictureFill, Result, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, base64_decode, default_rect,
-    json, rect_param, str_param, xfrm_of,
+    json, rect_json, rect_param, str_param, xfrm_of,
 };
 
 /// Read media bytes from `data` (base64) or `path`.

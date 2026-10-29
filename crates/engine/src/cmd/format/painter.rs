@@ -1,6 +1,6 @@
 use super::{
     Bullet, Effects, Fill, Line, ParaProps, Result, RunProps, Session, Shape, Strike, Value, bad, base64_decode, bool_or, current_para, current_run,
-    ed, edit_shapes, format_run, ids_param, json, ok, resolve, str_param,
+    ed, edit_shapes, format_run, json, ok, resolve, str_param,
 };
 
 /// Formatting picked up by the Format Painter.
