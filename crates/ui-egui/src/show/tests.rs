@@ -728,6 +728,24 @@ fn the_grid_reaches_slides_past_the_old_cap() {
     assert_eq!(grid_slide_hit(full, &doc, crate::sections::GridFilter::All, top.max_scroll, last.rect.center()), Some(199));
 }
 
+/// A click above the scrolled grid (in the title or tab strip) must not hit a cell whose
+/// invisible top is still part of the layout.
+#[test]
+fn a_click_outside_the_grid_does_not_pick_a_scrolled_cell() {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 0..29 {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = session.active().unwrap().doc.clone();
+    let full = Rect::from_min_size(Pos2::ZERO, vec2(1000.0, 700.0));
+    let frame = grid_frame(full, &doc);
+    let slides: Vec<usize> = (0..30).collect();
+    let layout = grid_layout(frame.inner, &slides, 16.0 / 9.0, 100.0);
+    let cell = layout.cells.iter().find(|c| c.rect.min.y < frame.inner.min.y).expect("a partly scrolled row");
+    let p = pos2(cell.rect.center().x, frame.inner.min.y - 1.0);
+    assert_eq!(grid_slide_hit(full, &doc, crate::sections::GridFilter::All, 100.0, p), None);
+}
+
 #[test]
 fn grid_scroll_clamps_to_its_content() {
     let mut session = deckcraft_engine::Session::with_new();
@@ -761,6 +779,27 @@ fn section_tabs_survive_the_grid_layout_and_name_the_section() {
     assert_eq!(questions.count, 3);
     assert_eq!(crate::sections::current_filter(&doc, 5), crate::sections::GridFilter::Section(1));
     assert_eq!(crate::sections::grid_slides(&doc, questions.filter), vec![9, 10, 11]);
+}
+
+#[test]
+fn presenter_enter_keeps_the_grid_open_when_asked() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, true);
+    show.presenter_grid = true;
+    show.presenter_grid_stay = true;
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+            let now = ui.input(|i| i.time);
+            presenter_window(ui.ctx(), show, doc, now, keep);
+        },
+        (doc, show, true),
+    );
+    harness.run_steps(2);
+    harness.key_press(egui::Key::Enter);
+    harness.run_steps(2);
+    assert!(harness.state().1.presenter_grid, "Enter keeps the grid when Keep All slides open is on");
 }
 
 #[test]

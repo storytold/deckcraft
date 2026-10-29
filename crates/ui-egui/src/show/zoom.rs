@@ -386,6 +386,9 @@ pub(super) fn grid_tab_hit(full: Rect, doc: &Presentation, p: Pos2) -> Option<Gr
 /// The global slide index a click on a thumbnail goes to.
 pub(super) fn grid_slide_hit(full: Rect, doc: &Presentation, filter: GridFilter, scroll: f32, p: Pos2) -> Option<usize> {
     let frame = grid_frame(full, doc);
+    if !frame.inner.contains(p) {
+        return None;
+    }
     let slides = sections::grid_slides(doc, filter);
     grid_layout(frame.inner, &slides, slide_aspect(doc), scroll).cells.into_iter().find(|c| c.rect.expand(4.0).contains(p)).map(|c| c.slide)
 }

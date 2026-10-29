@@ -1,4 +1,4 @@
-use super::presenter::NOTES_STEP;
+use super::presenter::{NOTES_STEP, pick_presenter_slide};
 use super::zoom::{plain, toggle_blank};
 use super::{Color32, Presentation, Show, ShowAction};
 use crate::sections::{self, GridFilter};
@@ -83,7 +83,11 @@ fn grid_key(show: &mut Show, doc: &Presentation, k: egui::Key, m: egui::Modifier
         ArrowLeft => cycle_tab(show, doc, -1),
         Enter => {
             if let Some(&i) = sections::grid_slides(doc, show.grid_filter).first() {
-                close_grid(show, presenter);
+                if presenter {
+                    pick_presenter_slide(show);
+                } else {
+                    close_grid(show, presenter);
+                }
                 actions.push(show.state.goto(doc, i));
             }
         }

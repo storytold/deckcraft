@@ -201,7 +201,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Undo and clipboard | 3 | 100% | ~75% | 3–5 | Image paste on Windows (#1414) | [ui-parity.md](ui-parity.md) |
 | Automation ✱ | — | 100% | ahead | 0 | | [mcp.md](mcp.md) |
 | Platforms ✱ | — | 67% | ~80% | see platforms | | [ROADMAP.md](../ROADMAP.md) |
-| **Total (feature areas)** | 111 | **84%** | **~62%** | **~140–240** | | |
+| **Total (feature areas)** | 110 | **84%** | **~62%** | **~140–240** | | |
 
 ## What works today (evidence)
 
@@ -289,7 +289,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-29 | trivial | Slide show: See All Slides gains a P1 done row (every slide, scrollable, section tabs). The area moves 68 → 71% and its feature count 8 → 9; headline breadth stays 84% |
+| 2026-10-29 | trivial | Slide show: See All Slides gains a P1 done row (every slide, scrollable, section tabs). The area moves 68 → 71%; its reliance weight stays 8 and headline breadth stays 84% |
 | 2026-11-02 | trivial | Reused slide content scales to the destination; picker thumbnails remain; parity estimates unchanged |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |
