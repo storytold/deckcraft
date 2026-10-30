@@ -6,13 +6,12 @@
 
 use std::io::Cursor;
 
-use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
+use symphonia::core::codecs::audio::{AudioCodecParameters, AudioDecoderOptions, CODEC_ID_NULL_AUDIO};
 use symphonia::core::errors::Error as SymError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, Track};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
-use symphonia::core::probe::Hint;
 
 use crate::{Bytes, Container, MediaError, Result};
 
@@ -180,32 +179,34 @@ fn decode_symphonia(bytes: &Bytes, ext: &str) -> Result<Pcm> {
             hint.with_extension(e);
         }
     }
-    let opts = FormatOptions { enable_gapless: true, ..Default::default() };
-    let probed = symphonia::default::get_probe().format(&hint, mss, &opts, &MetadataOptions::default()).map_err(|e| match e {
-        SymError::Unsupported(_) => MediaError::Unsupported("this audio format".into()),
-        other => sym_err(other),
-    })?;
-    let mut format = probed.format;
+    let mut format =
+        symphonia::default::get_probe().probe(&hint, mss, FormatOptions::default(), MetadataOptions::default()).map_err(|e| match e {
+            SymError::Unsupported(_) => MediaError::Unsupported("this audio format".into()),
+            other => sym_err(other),
+        })?;
     let codecs = symphonia::default::get_codecs();
+    // Gapless trimming (symphonia 0.6 moved it from the format to the decoder).
+    let dec_opts = AudioDecoderOptions::default().gapless(true);
     // The first track we can decode (a video's audio track follows its video track).
     let (track_id, mut decoder) = format
         .tracks()
         .iter()
-        .filter(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .find_map(|t| codecs.make(&t.codec_params, &DecoderOptions::default()).ok().map(|d| (t.id, d)))
+        .filter_map(|t| audio_params(t).map(|p| (t.id, p)))
+        .find_map(|(id, p)| codecs.make_audio_decoder(p, &dec_opts).ok().map(|d| (id, d)))
         .ok_or(MediaError::Missing("audio track we can decode"))?;
     let mut out: Vec<f32> = Vec::new();
     let mut rate = 0;
     let mut channels = 0u16;
-    let mut buf: Option<SampleBuffer<f32>> = None;
+    let mut interleaved: Vec<f32> = Vec::new();
     // A damaged file can make the demuxer report the same error forever without moving on.
     let mut demux_errors = 0u32;
     loop {
         let packet = match format.next_packet() {
-            Ok(p) => {
+            Ok(Some(p)) => {
                 demux_errors = 0;
                 p
             }
+            Ok(None) => break,
             Err(SymError::IoError(_)) | Err(SymError::ResetRequired) => break,
             Err(SymError::DecodeError(e)) => {
                 log::debug!("audio demux: {e}");
@@ -222,27 +223,27 @@ fn decode_symphonia(bytes: &Bytes, ext: &str) -> Result<Pcm> {
                 break;
             }
         };
-        if packet.track_id() != track_id {
+        if packet.track_id != track_id {
             continue;
         }
         match decoder.decode(&packet) {
             Ok(decoded) => {
-                let spec = *decoded.spec();
-                let ch = spec.channels.count() as u16;
+                let spec = decoded.spec();
+                let ch = spec.channels().count() as u16;
                 if rate == 0 {
-                    rate = spec.rate;
+                    rate = spec.rate();
                     channels = ch;
                 }
                 if ch != channels || decoded.frames() == 0 {
                     continue;
                 }
-                let need = decoded.capacity() as u64;
-                if buf.as_ref().is_none_or(|b| (b.capacity() as u64) < need * ch as u64) {
-                    buf = Some(SampleBuffer::<f32>::new(need, spec));
-                }
-                if let Some(b) = buf.as_mut() {
-                    b.copy_interleaved_ref(decoded);
-                    out.extend_from_slice(b.samples());
+                decoded.copy_to_vec_interleaved(&mut interleaved);
+                // At most MAX_PCM_SAMPLES in whole frames, as the other decoders stop.
+                let room = MAX_PCM_SAMPLES.saturating_sub(out.len());
+                let take = interleaved.len().min(room - room % usize::from(channels.max(1)));
+                out.extend_from_slice(&interleaved[..take]);
+                if take < interleaved.len() {
+                    break;
                 }
             }
             Err(SymError::DecodeError(e)) => log::debug!("audio decode: {e}"),
@@ -268,13 +269,17 @@ pub(crate) fn probe_symphonia(bytes: &Bytes, ext: &str) -> Option<(String, u32, 
     if ext != "unknown" {
         hint.with_extension(ext);
     }
-    let opts = FormatOptions { enable_gapless: true, ..Default::default() };
-    let probed = symphonia::default::get_probe().format(&hint, mss, &opts, &MetadataOptions::default()).ok()?;
+    let format = symphonia::default::get_probe().probe(&hint, mss, FormatOptions::default(), MetadataOptions::default()).ok()?;
     let codecs = symphonia::default::get_codecs();
-    let t = probed.format.tracks().iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)?;
-    let p = &t.codec_params;
-    let name = codecs.get_codec(p.codec).map(|d| d.short_name.to_string()).unwrap_or_else(|| "unknown".into());
-    Some((name, p.sample_rate.unwrap_or(0), p.channels.map(|c| c.count() as u16).unwrap_or(0), p.n_frames))
+    let t = format.tracks().iter().find(|t| audio_params(t).is_some())?;
+    let p = audio_params(t)?;
+    let name = codecs.get_audio_decoder(p.codec).map(|d| d.codec.info.short_name.to_string()).unwrap_or_else(|| "unknown".into());
+    Some((name, p.sample_rate.unwrap_or(0), p.channels.as_ref().map(|c| c.count() as u16).unwrap_or(0), t.num_frames))
+}
+
+/// A track's audio codec parameters, unless it isn't audio or its codec is unknown.
+fn audio_params(t: &Track) -> Option<&AudioCodecParameters> {
+    t.codec_params.as_ref()?.audio().filter(|p| p.codec != CODEC_ID_NULL_AUDIO)
 }
 
 /// Interleaved PCM resampled (linear) to `rate`.

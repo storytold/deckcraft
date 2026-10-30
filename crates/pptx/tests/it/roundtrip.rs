@@ -913,7 +913,7 @@ fn wordart_warps_and_their_adjusts_round_trip() {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         let mut data = vec![];
         std::io::Read::read_to_end(&mut f, &mut data).expect("read");
         if name == "ppt/slides/slide1.xml" {
@@ -1047,7 +1047,7 @@ fn transition_defaults_read_like_powerpoint() {
         let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         for i in 0..zip.len() {
             let mut f = zip.by_index(i).expect("entry");
-            let name = f.name().to_string();
+            let name = f.name().unwrap().to_string();
             let mut data = vec![];
             std::io::Read::read_to_end(&mut f, &mut data).expect("read");
             if name == "ppt/slides/slide1.xml" {
@@ -1212,7 +1212,7 @@ fn an_embedded_font_list_already_in_the_package_is_read() {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..zip.len() {
         let mut f = zip.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         let mut data = vec![];
         std::io::Read::read_to_end(&mut f, &mut data).expect("read");
         if name == "ppt/presentation.xml" {
@@ -1356,7 +1356,7 @@ fn patch_slides(bytes: Vec<u8>, from: &str, to: &str) -> Vec<u8> {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).expect("read");
         if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
@@ -1479,7 +1479,7 @@ fn repack(pkg: &[u8], edit: impl Fn(&str, String) -> String, extra: &[(&str, &[u
     let opts = zip::write::SimpleFileOptions::default();
     for i in 0..z.len() {
         let mut f = z.by_index(i).unwrap();
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         let mut data = vec![];
         f.read_to_end(&mut data).unwrap();
         if name.ends_with(".xml") || name.ends_with(".rels") {

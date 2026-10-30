@@ -58,10 +58,10 @@ fn rewrite(bytes: &[u8], drop: &[&str]) -> Vec<u8> {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
-        if drop.iter().any(|d| f.name() == *d) {
+        if drop.iter().any(|d| f.name().unwrap() == *d) {
             continue;
         }
-        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
+        out.start_file(f.name().unwrap(), zip::write::SimpleFileOptions::default()).expect("start");
         std::io::copy(&mut f, &mut out).expect("copy");
     }
     out.finish().expect("finish").into_inner()
@@ -166,8 +166,8 @@ fn legacy_only_package_imports() {
     let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
-        out.start_file(f.name(), zip::write::SimpleFileOptions::default()).expect("start");
-        if f.name() == "ppt/slides/slide1.xml" {
+        out.start_file(f.name().unwrap(), zip::write::SimpleFileOptions::default()).expect("start");
+        if f.name().unwrap() == "ppt/slides/slide1.xml" {
             let mut xml = String::new();
             f.read_to_string(&mut xml).expect("utf8");
             if let Some(start) = xml.find("<p:extLst>") {
@@ -219,7 +219,7 @@ fn every_written_xml_part_binds_its_prefixes() {
     let mut modern = 0;
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         if !(name.ends_with(".xml") || name.ends_with(".rels")) {
             continue;
         }

@@ -13,7 +13,7 @@ fn edit_slides(bytes: &[u8], edit: impl Fn(String) -> String) -> Vec<u8> {
         let mut f = z.by_index(i).expect("entry");
         let mut d = vec![];
         f.read_to_end(&mut d).expect("read");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         if name.starts_with("ppt/slides/slide") && name.ends_with(".xml") {
             d = edit(String::from_utf8(d).expect("utf8")).into_bytes();
         }

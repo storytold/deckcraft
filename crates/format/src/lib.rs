@@ -157,10 +157,20 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
     // and the deck can be saved again (a zip can't hold two `media/<id>`).
     let mut seen = std::collections::HashSet::new();
     p.media.retain(|m| seen.insert(m.id));
+    // zip 9 compares every entry's name for one it hasn't indexed, so a deck naming many missing
+    // members would scan the archive for each; they're looked up in this one pass instead.
+    let names: std::collections::HashSet<String> = z.file_names().filter_map(|n| n.ok().map(|n| n.into_owned())).collect();
     let mut left = budget.total;
     for item in &mut p.media {
         let name = format!("media/{}", item.id.0);
-        let linked_only = item.link.is_some() && z.index_for_name(&name).is_none();
+        let present = names.contains(&name);
+        let linked_only = item.link.is_some() && !present;
+        if !present {
+            if !linked_only {
+                damaged.push(FormatError::Damaged(format!("{name}: {}", zip::result::ZipError::FileNotFound)).to_string());
+            }
+            continue;
+        }
         if z.by_name(&name).is_ok_and(|f| f.size() > left) {
             return Err(FormatError::Damaged("embedded media is larger than DeckCraft can open".into()));
         }
@@ -173,7 +183,7 @@ fn load_within(bytes: &[u8], budget: Budget) -> Result<(Presentation, Vec<String
             Err(e) => damaged.push(e.to_string()),
         }
     }
-    chart_parts::restore(&mut p, &mut z, &mut left, items, budget.items, &mut damaged)?;
+    chart_parts::restore(&mut p, &mut z, &names, &mut left, items, budget.items, &mut damaged)?;
     repair(&mut p);
     Ok((p, damaged))
 }

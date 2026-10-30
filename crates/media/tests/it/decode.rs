@@ -139,6 +139,19 @@ fn mp3() {
 }
 
 #[test]
+fn mp3_behind_a_large_id3v2_tag() {
+    // symphonia 0.6 reads ID3v2 only with its `id3v2` feature; without it a tag over 1 MiB (cover
+    // art) was scanned as junk and the audio behind it was never found.
+    let size: u32 = 3 << 19;
+    let syncsafe = [(size >> 21) as u8 & 0x7f, (size >> 14) as u8 & 0x7f, (size >> 7) as u8 & 0x7f, size as u8 & 0x7f];
+    let mut b = b"ID3\x04\x00\x00".to_vec();
+    b.extend_from_slice(&syncsafe);
+    b.resize(10 + size as usize, 0);
+    b.extend_from_slice(&fixture("tone.mp3"));
+    check_tone("mp3", &Arc::new(b), 44_100, 1);
+}
+
+#[test]
 fn aac_m4a_and_adts() {
     check_tone("m4a", &fixture("tone.m4a"), 44_100, 1);
     let adts = fixture("tone.aac");

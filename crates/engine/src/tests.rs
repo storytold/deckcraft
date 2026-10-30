@@ -3571,7 +3571,7 @@ fn smartart_round_trips_through_pptx_as_a_diagram() {
     let bytes = deckcraft_pptx::export(&doc).unwrap();
     let names: Vec<String> = {
         let z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
-        z.file_names().map(String::from).collect()
+        z.file_names().map(|n| n.unwrap().into_owned()).collect()
     };
     for part in ["data1", "layout1", "quickStyle1", "colors1", "drawing1"] {
         assert!(names.iter().any(|n| n == &format!("ppt/diagrams/{part}.xml")), "{part} in {names:?}");
@@ -5104,10 +5104,10 @@ fn opening_a_pptx_with_an_unreadable_slide_says_so() {
         let mut f = zin.by_index(i).unwrap();
         let mut d = vec![];
         f.read_to_end(&mut d).unwrap();
-        if f.name() == "ppt/slides/slide2.xml" {
+        if f.name().unwrap() == "ppt/slides/slide2.xml" {
             d = b"<p:sld".to_vec();
         }
-        out.start_file(f.name(), o).unwrap();
+        out.start_file(f.name().unwrap(), o).unwrap();
         out.write_all(&d).unwrap();
     }
     let broken = out.finish().unwrap().into_inner();
