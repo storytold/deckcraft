@@ -23,6 +23,8 @@ mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
 mod logging;
+#[cfg(target_os = "macos")]
+mod native_menu;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
 
@@ -31,6 +33,7 @@ use deckcraft_ui_egui::{Services, SlideApp};
 
 struct App(
     SlideApp,
+    #[cfg(target_os = "macos")] Option<native_menu::NativeMenu>,
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
     fmv_macos_events::Inbox,
@@ -39,7 +42,15 @@ struct App(
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        apple_events::poll(&self.1, &mut self.0, ctx);
+        {
+            if self.1.is_none() && std::env::var_os("DECKCRAFT_NO_NATIVE_MENU").is_none() {
+                self.1 = Some(native_menu::NativeMenu::install(ctx));
+            }
+            if let Some(m) = &self.1 {
+                m.poll(&mut self.0, ctx);
+            }
+            apple_events::poll(&self.2, &mut self.0, ctx);
+        }
         self.0.logic(ctx);
     }
     /// Forward native raw input to the wrapped application once per pass.
@@ -296,6 +307,8 @@ fn main() -> eframe::Result {
             Ok(Box::new(App(
                 app,
                 #[cfg(target_os = "macos")]
+                None,
+                #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
             )))
         }),
@@ -313,6 +326,8 @@ mod tests {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
             let mut app = App(
                 SlideApp::new(Session::new(), Services::default()),
+                #[cfg(target_os = "macos")]
+                None,
                 #[cfg(target_os = "macos")]
                 fmv_macos_events::Inbox::default(),
             );
