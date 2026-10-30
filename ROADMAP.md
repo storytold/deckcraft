@@ -183,6 +183,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-25 | Format Shape ▸ Fill: Slide background fill shows the slide background through the shape (`shape.fill {background: true}`, saved as `useBgFill`). A shape opened from a file with this fill showed it as Automatic, and the pane offered no way to set it |
 | 2026-10-21 | Reuse Slides: pick which slides of the other presentation to insert from a list (`slide.reuseList`, #1103) |
 | 2026-10-21 | Slide list and slide sorter: Shift+click selects a range of slides and Ctrl+Shift+click adds it to the selection (`slide.selectRange`, #1105) |
+| 2026-10-21 | File: Save Selected Slides As… and Split Presentation… write part of a deck, or a deck split by N slides or by section, to new files (`file.saveSlidesAs`, `file.split`, #1104) |
 | 2026-10-18 | Native chart sidecar bytes move from JSON arrays into referenced ZIP entries, with shared media byte/item limits and bounded reads; older inline sidecars still load. Synthetic format regressions cover large workbooks and malformed members |
 | 2026-10-18 | Slide thumbnails and the Slide Sorter render only the slides in view: on a deck of more than 600 slides they used to evict their own thumbnails, so the pane flashed white and never finished (#969) |
 | 2026-10-18 | Resizing with the mouse snaps the edge being dragged to the slide, guides and other shapes: a fixed edge that already lined up used to take the snap and leave the dragged edge free, and a fixed edge near a line shifted the dragged one (#961) |
@@ -333,6 +334,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-21 | trivial | Progress log: Reuse Slides picker (#1103). Scores and milestone names unchanged |
 | 2026-10-21 | trivial | Progress log: slide range selection (#1105). Scores and milestone names unchanged |
+| 2026-10-21 | trivial | Progress log: save selected slides and split a presentation (#1104). Scores and milestone names unchanged |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-16 | minor | Symbol-font U+F0xx codes remap to the installed Symbol face's real Unicode (Apple Symbol on macOS) |
 | 2026-10-15 | trivial | Progress log: chart package parts survive a native save. Scores and milestone names unchanged |

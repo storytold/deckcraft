@@ -315,6 +315,10 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         let _ = app.run("slide.delete", json!({}));
         ui.close();
     }
+    if ui.button("Save Slides As…").clicked() {
+        app.save_slides_as_dialog(json!({}));
+        ui.close();
+    }
     ui.separator();
     if ui.button("Add Section").clicked() {
         let _ = app.run("section.add", json!({"at": i}));

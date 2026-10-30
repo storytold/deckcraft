@@ -403,6 +403,71 @@ impl SlideApp {
         }
     }
 
+    /// File › Save Selected Slides As…: write the selected slides to a new file (the save picker
+    /// on the desktop, a download on the web). The open presentation stays as it is.
+    /// `params` are further `file.saveSlidesAs` parameters (e.g. `slides`); without them the
+    /// selected slides are saved.
+    pub fn save_slides_as_dialog(&mut self, mut params: Value) {
+        let Some(name) = self.session.active().map(|d| d.title()) else { return };
+        if !params.is_object() {
+            params = json!({});
+        }
+        let suggested = format!("{name} (selected slides).pptx");
+        let Some(pick) = self.services.pick_save.as_mut() else {
+            let bytes = deckcraft_engine::cmd::split::slides_file(&self.session, &params, &suggested).map(|(_, b)| b);
+            self.download(&suggested, bytes);
+            return;
+        };
+        if let Some(path) = pick(&suggested) {
+            params["path"] = json!(path);
+            // The save picker has already asked before replacing a file.
+            params["overwrite"] = json!(true);
+            match self.session.execute("file.saveSlidesAs", &params) {
+                Ok(r) => self.set_status(format!("Saved {} slide(s) to {path}", r.get("slides").and_then(Value::as_u64).unwrap_or(0))),
+                Err(e) => self.set_status(e.to_string()),
+            }
+        }
+    }
+
+    /// File › Split Presentation…: ask for the base file name, then write the parts next to it
+    /// (on the web, each part is a download named the same way).
+    /// `params` are the `file.split` parameters without `path`.
+    pub fn split_presentation(&mut self, mut params: Value) {
+        let Some(name) = self.session.active().map(|d| d.title()) else { return };
+        let Some(pick) = self.services.pick_save.as_mut() else {
+            self.download_split(&format!("{name}.pptx"), &params);
+            return;
+        };
+        let Some(path) = pick(&format!("{name}.pptx")) else { return };
+        if let Some(o) = params.as_object_mut() {
+            o.insert("path".into(), json!(path));
+        }
+        match self.session.execute("file.split", &params) {
+            Ok(r) => self.set_status(format!("Split into {} files", r.get("files").and_then(Value::as_array).map_or(0, Vec::len))),
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
+    /// The web's Split Presentation: every part is handed to the browser as a download named like
+    /// the desktop's files (`<name>-1.pptx` …). Every part is encoded before the first download.
+    fn download_split(&mut self, base: &str, params: &Value) {
+        use deckcraft_engine::cmd::split::{part_bytes, split_plan};
+        let encoded = (|| {
+            let (format, parts) = split_plan(&self.session, params, base)?;
+            let doc = self.session.doc()?.doc.clone();
+            parts.into_iter().map(|(file, idx)| Ok((file, part_bytes(&doc, &idx, &format)?))).collect::<deckcraft_engine::Result<Vec<_>>>()
+        })();
+        match encoded {
+            Ok(files) => {
+                let n = files.len();
+                if files.into_iter().fold(true, |ok, (file, bytes)| self.download(&file, Ok(bytes)) && ok) {
+                    self.set_status(format!("Split into {n} files"));
+                }
+            }
+            Err(e) => self.set_status(e.to_string()),
+        }
+    }
+
     /// Save every presentation with unsaved changes (asking for a location where needed).
     /// Returns false if one wasn't saved (cancelled or failed).
     pub fn save_all(&mut self) -> bool {
@@ -440,11 +505,14 @@ impl SlideApp {
                 UiRequest::Pane { id } => self.ui.pane = Some(id),
                 UiRequest::StartShow { from } => self.start_show(from, false),
                 UiRequest::Message { text } => self.set_status(text),
-                UiRequest::PickFile { purpose } => {
-                    if purpose == "saveAs" {
-                        self.save_as_dialog("deckcraft");
-                    }
-                }
+                UiRequest::PickFile { purpose, params } => match purpose.as_str() {
+                    "saveAs" => self.save_as_dialog("deckcraft"),
+                    "saveSlidesAs" => self.save_slides_as_dialog(params),
+                    // A request that already says how to split only needs the file name.
+                    "splitPresentation" if params.get("every").is_some() || params.get("bySection").is_some() => self.split_presentation(params),
+                    "splitPresentation" => self.dialog = Some(dialogs::Dialog::new("splitPresentation")),
+                    _ => {}
+                },
                 UiRequest::Media { action, shape, ms } => {
                     let owner = if self.show.is_some() { media::Owner::Show } else { media::Owner::Editor };
                     // The command resolved `shape` on the editor's slide, also while a show runs.
