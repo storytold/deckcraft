@@ -99,7 +99,9 @@ pub fn remove_files(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize,
         Err(err) => return Err(format!("{path}: {err}")),
     };
     let mut removed = 0;
-    for e in entries.flatten() {
+    for e in entries {
+        // An entry that can't be read is an error, not a file skipped, so no earlier frame stays.
+        let e = e.map_err(|err| format!("{path}: {err}"))?;
         let name = e.file_name();
         if matches(&name.to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_file()) {
             let file = e.path();
@@ -115,6 +117,79 @@ pub fn remove_files(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize,
 #[cfg(target_arch = "wasm32")]
 pub fn remove_files(_path: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
     Ok(0)
+}
+
+/// The first entry directly in folder `path` whose name `matches` but which is not a regular file
+/// (a folder, a link, …), if any: [`remove_files`] and [`move_files`] leave such an entry alone, so
+/// a caller replacing those files checks for one before it removes anything. An entry outside the
+/// automation write root (a link leading out) is refused as such. A folder that is not there has
+/// none.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn non_file_named(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<Option<String>, String> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(format!("{path}: {err}")),
+    };
+    for e in entries {
+        let e = e.map_err(|err| format!("{path}: {err}"))?;
+        let name = e.file_name();
+        if matches(&name.to_string_lossy()) && !e.file_type().map_err(|err| format!("{path}: {err}"))?.is_file() {
+            let entry = e.path().to_string_lossy().to_string();
+            crate::file_access::check_write(&entry)?;
+            return Ok(Some(entry));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn non_file_named(_path: &str, _matches: &dyn Fn(&str) -> bool) -> Result<Option<String>, String> {
+    Ok(None)
+}
+
+/// Move the files directly in folder `from` whose names `matches` into folder `to`, keeping their
+/// names; both folders must be inside the automation write root and on one file system, as a
+/// staging folder inside `to` is. Returns how many moved.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn move_files(from: &str, to: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    let entries = std::fs::read_dir(from).map_err(|err| format!("{from}: {err}"))?;
+    let mut moved = 0;
+    for e in entries {
+        // An entry that can't be read is an error, not a file skipped, so no frame is left behind.
+        let e = e.map_err(|err| format!("{from}: {err}"))?;
+        let name = e.file_name();
+        if matches(&name.to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_file()) {
+            let (src, dst) = (e.path(), std::path::Path::new(to).join(&name));
+            let (src, dst) = (src.to_string_lossy(), dst.to_string_lossy());
+            crate::file_access::check_write(&src)?;
+            crate::file_access::check_write(&dst)?;
+            std::fs::rename(&*src, &*dst).map_err(|err| format!("{dst}: {err}"))?;
+            moved += 1;
+        }
+    }
+    Ok(moved)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn move_files(_from: &str, _to: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    Ok(0)
+}
+
+/// Remove the folder at `path` if it is there and empty. A folder that is gone, or still holds
+/// something, is left as it is and counts as done: this is cleanup, not part of the result.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_empty_folder(path: &str) -> Result<(), String> {
+    crate::file_access::check_write(path)?;
+    match std::fs::remove_dir(path) {
+        Err(err) if !matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty) => Err(format!("{path}: {err}")),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn remove_empty_folder(_path: &str) -> Result<(), String> {
+    Ok(())
 }
 
 /// Write `bytes` straight to `path` inside the automation write root: no temporary sibling and no

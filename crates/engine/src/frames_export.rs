@@ -496,18 +496,39 @@ fn run_jobs(folder: &std::path::Path, jobs: impl Iterator<Item = Job>, cap: u64)
     Ok(())
 }
 
-/// Render the frames of `doc` under `opts` into `folder` (created if missing; earlier
-/// `frame-NNNNNN.png` files in it are removed first). Nothing is written when the request is
-/// refused.
+/// Render the frames of `doc` under `opts` into `folder` (created if missing). The new sequence
+/// replaces the earlier `frame-NNNNNN.png` files only once every frame is written; a failed export
+/// leaves them as they were. Nothing is written when the request is refused, or when a frame's name
+/// in `folder` is taken by something other than a regular file (a folder, a link).
 pub fn export(doc: &Presentation, opts: &FramesOptions, folder: &str) -> Result<FramesOutput> {
+    export_capped(doc, opts, folder, MAX_TOTAL_BYTES)
+}
+
+/// The folder inside the export folder that a new sequence is written to before it replaces the
+/// old one; a dot name, so it is not mistaken for part of the sequence.
+const STAGING: &str = ".deckcraft-frames-new";
+
+/// [`export`] with the byte cap as a parameter, so a test can make the export fail part way.
+fn export_capped(doc: &Presentation, opts: &FramesOptions, folder: &str, cap: u64) -> Result<FramesOutput> {
     let plan = plan(doc, opts)?;
     let dir = std::path::Path::new(folder);
     let io = |e: String| EngineError::Other(format!("frames export: {e}"));
     crate::file_access::check_write(&dir.join(frame_name(1)).to_string_lossy()).map_err(io)?;
     crate::io::create_folder(folder).map_err(io)?;
-    // The frames of an earlier export go, so a video encoder reading the numbered sequence stops
-    // where this one ends.
-    crate::io::remove_files(folder, &is_frame_name).map_err(io)?;
+    // The clearing below removes regular files only. A frame name taken by anything else would
+    // survive it: a folder makes the move fail after the earlier frames are gone, and a link past
+    // the new sequence's end would carry it on with an old frame. Any such name in the folder is
+    // refused before anything is written.
+    if let Some(odd) = crate::io::non_file_named(folder, &is_frame_name).map_err(io)? {
+        return Err(io(format!("{odd} is not a regular file (a folder, a link, …): move it away and export again; nothing was written")));
+    }
+    // The new frames go to a staging folder first: a failed export (a write error, the byte cap)
+    // leaves the earlier sequence whole instead of half replaced. A staging folder an interrupted
+    // export left behind is cleared first.
+    let staging = dir.join(STAGING);
+    let staging_s = staging.to_string_lossy().to_string();
+    crate::io::remove_files(&staging_s, &is_frame_name).map_err(io)?;
+    crate::io::create_folder(&staging_s).map_err(io)?;
     let scale = f64::from(plan.width) / doc.slide_size.width;
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let mut painter = Painter { doc, size: (plan.width, plan.height), scale, threads: render_threads(), timeline: None, builds: vec![], parts: None };
@@ -520,7 +541,16 @@ pub fn export(doc: &Presentation, opts: &FramesOptions, folder: &str) -> Result<
         }
     }
     let jobs = runs.into_iter().map(|(f, numbers)| Job { numbers, image: painter.draw(&f) });
-    run_jobs(dir, jobs, MAX_TOTAL_BYTES).map_err(io)?;
+    if let Err(e) = run_jobs(&staging, jobs, cap) {
+        let _ = crate::io::remove_files(&staging_s, &is_frame_name);
+        let _ = crate::io::remove_empty_folder(&staging_s);
+        return Err(io(e));
+    }
+    // Then the earlier frames go, so a video encoder reading the numbered sequence stops where
+    // this one ends, and the new ones take their place.
+    crate::io::remove_files(folder, &is_frame_name).map_err(io)?;
+    crate::io::move_files(&staging_s, folder, &is_frame_name).map_err(io)?;
+    crate::io::remove_empty_folder(&staging_s).map_err(io)?;
     Ok(FramesOutput {
         folder: folder.to_string(),
         frames: plan.frames.len(),
@@ -538,6 +568,74 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// A failed export (here the byte cap) leaves the earlier sequence whole and no staging folder;
+    /// a successful one replaces it, shorter sequences included. A frame name taken by a folder is
+    /// refused before anything is written.
+    #[test]
+    fn a_failed_export_keeps_the_earlier_frames() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let folder = dir.to_string_lossy().to_string();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 2, "secondsPerSlide": 2, "width": 32})).unwrap();
+        let names = || {
+            let mut v: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+            v.sort();
+            v
+        };
+        let first = export(&doc, &opts, &folder).unwrap();
+        let before = names();
+        assert_eq!(before.len(), first.frames, "{before:?}");
+        let old = std::fs::read(dir.join(frame_name(1))).unwrap();
+        let longer = FramesOptions::from_params(&json!({"fps": 4, "secondsPerSlide": 2, "width": 48})).unwrap();
+        assert!(export_capped(&doc, &longer, &folder, 1).is_err());
+        assert_eq!(names(), before, "the earlier sequence is whole and the staging folder is gone");
+        assert_eq!(std::fs::read(dir.join(frame_name(1))).unwrap(), old);
+        let shorter = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 2, "width": 48})).unwrap();
+        let out = export(&doc, &shorter, &folder).unwrap();
+        assert_eq!(names().len(), out.frames, "the new sequence replaced the old one: {:?}", names());
+        assert!(out.frames < first.frames);
+        // Something other than frames in the staging folder stays, and the export still succeeds.
+        std::fs::create_dir_all(dir.join(STAGING)).unwrap();
+        std::fs::write(dir.join(STAGING).join("notes.txt"), b"x").unwrap();
+        let out = export(&doc, &opts, &folder).unwrap();
+        assert_eq!(names().iter().filter(|n| is_frame_name(n)).count(), out.frames);
+        assert!(dir.join(STAGING).join("notes.txt").exists());
+        // A folder with a frame's name is refused before anything changes: the earlier frames stay.
+        std::fs::remove_dir_all(dir.join(STAGING)).unwrap();
+        let before = names();
+        let odd = dir.join(frame_name(out.frames + 1));
+        std::fs::create_dir(&odd).unwrap();
+        let e = export(&doc, &longer, &folder).unwrap_err().to_string();
+        assert!(e.contains("is not a regular file") && e.contains(&frame_name(out.frames + 1)), "{e}");
+        let mut expected = before.clone();
+        expected.push(frame_name(out.frames + 1));
+        expected.sort();
+        assert_eq!(names(), expected, "nothing was removed or written");
+        std::fs::remove_dir(&odd).unwrap();
+        assert_eq!(export(&doc, &longer, &folder).unwrap().frames, names().len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A link with a frame's name, past the end of the new sequence, would survive the clearing and
+    /// carry the sequence on with an old frame: it is refused before anything is written.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_with_a_frame_name_is_refused() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("old.png"), b"old").unwrap();
+        std::os::unix::fs::symlink(dir.join("old.png"), dir.join(frame_name(MAX_FRAMES))).unwrap();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 1, "width": 32})).unwrap();
+        let e = export(&doc, &opts, &dir.to_string_lossy()).unwrap_err().to_string();
+        assert!(e.contains("is not a regular file"), "{e}");
+        assert!(!dir.join(frame_name(1)).exists() && !dir.join(STAGING).exists(), "nothing was written");
+        assert_eq!(std::fs::read(dir.join("old.png")).unwrap(), b"old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Past the byte cap the export fails instead of writing on; a hold's copies count.
     #[test]
