@@ -603,11 +603,68 @@ fn app(args: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `--allow-commands LIST|@FILE`: given at most once and always with its list. A flag left without
+/// a value (last on the line, or followed by another option) is an error, never a server that runs
+/// every command.
+fn allow_commands_value(current: Option<String>, next: Option<String>) -> Result<Option<String>, String> {
+    if current.is_some() {
+        return Err("duplicate --allow-commands option".into());
+    }
+    match next {
+        Some(v) if !v.starts_with("--") => Ok(Some(v)),
+        _ => Err("--allow-commands requires a list of commands (or @FILE)".into()),
+    }
+}
+
+/// The `--allow-commands` list: given inline (`format.*,text.insert`) or, after `@`, read from a
+/// file (`@allowed.txt`, one id or `group.*` per line, `#` comments). Any problem is an error at
+/// startup, never a server that runs unrestricted.
+fn read_command_allowlist(spec: &str) -> Result<deckcraft_engine::command_access::CommandAllowlist, String> {
+    let text = match spec.strip_prefix('@') {
+        Some(path) => read_allowlist_file(path, deckcraft_engine::command_access::MAX_LIST_BYTES)?,
+        None => spec.to_string(),
+    };
+    deckcraft_engine::command_access::CommandAllowlist::parse(&text).map_err(|e| format!("--allow-commands: {e}"))
+}
+
+/// The text of an `@FILE` command list, at most `max` bytes. Only a regular file (or a link to one)
+/// is read: a pipe, socket or device (`/dev/zero`, a FIFO that sends a short list and stays open)
+/// found at the first check is refused before it is opened, since opening or reading it could block
+/// startup forever. The check and the open are not atomic: another program that swaps a FIFO in
+/// between can still make the open wait for a writer. The read itself stops after `max + 1` bytes,
+/// whatever the file's metadata says, so a file that grows while it is read can't make startup read
+/// on; anything longer than `max` is refused, never cut short.
+fn read_allowlist_file(path: &str, max: usize) -> Result<String, String> {
+    use std::io::Read;
+    let not_regular = || format!("--allow-commands: {path} is not a regular file");
+    let cannot_read = |e: std::io::Error| format!("--allow-commands: cannot read {path}: {e}");
+    if !std::fs::metadata(path).map_err(cannot_read)?.is_file() {
+        return Err(not_regular());
+    }
+    let file = std::fs::File::open(path).map_err(cannot_read)?;
+    // Checked again on the opened file: a path swapped after the first look for a device or other
+    // non-regular file that opened without waiting is refused here, before any read.
+    if !file.metadata().map_err(cannot_read)?.is_file() {
+        return Err(not_regular());
+    }
+    let limit = u64::try_from(max).unwrap_or(u64::MAX).saturating_add(1);
+    let mut bytes = Vec::new();
+    file.take(limit).read_to_end(&mut bytes).map_err(cannot_read)?;
+    if bytes.len() > max {
+        return Err(format!("--allow-commands: {path} is too long (more than {max} bytes)"));
+    }
+    String::from_utf8(bytes).map_err(|_| format!("--allow-commands: {path} is not UTF-8 text"))
+}
+
+/// `mcp`: serve DeckCraft's commands to an agent over MCP on stdio, in process (optionally
+/// confined to folders and a command list) or on a running app with `--connect`.
 fn mcp(args: &[String]) -> Result<(), String> {
+    use deckcraft_engine::command_access;
     use deckcraft_engine::file_access::{self, AutomationRoots};
     use deckcraft_mcp::{Backend, Headless, Remote, Server, control_addr};
     let mut connect: Option<String> = None;
     let mut sample = false;
+    let mut allow_commands: Option<String> = None;
     let mut roots_args = automation_args::AutomationArgs::new(None, None);
     let mut it = args.iter().cloned();
     while let Some(a) = it.next() {
@@ -617,6 +674,7 @@ fn mcp(args: &[String]) -> Result<(), String> {
         match a.as_str() {
             "--connect" => connect = Some(it.next().ok_or("--connect needs a port or host:port")?),
             "--sample" => sample = true,
+            "--allow-commands" => allow_commands = allow_commands_value(allow_commands, it.next())?,
             "--help" | "-h" => {
                 outln!("{}", help_page("mcp"));
                 return Ok(());
@@ -630,6 +688,10 @@ fn mcp(args: &[String]) -> Result<(), String> {
 so drop --connect (or use --connect without the roots)"
             .into());
     }
+    if allow_commands.is_some() && connect.is_some() {
+        return Err("--allow-commands holds the in-process server to a list; a running app is not held to it, so drop --connect".into());
+    }
+    let commands = allow_commands.as_deref().map(read_command_allowlist).transpose()?.map(std::sync::Arc::new);
     let backend: Box<dyn Backend> = match connect {
         Some(c) => Box::new(Remote::connect(&control_addr(&c)).map_err(|e| format!("can't reach the app at {c}: {e}"))?),
         None => {
@@ -644,6 +706,12 @@ so drop --connect (or use --connect without the roots)"
                 let show = |root: Option<&std::path::Path>| root.map_or_else(|| "none".to_string(), |r| r.display().to_string());
                 eprintln!("deckcraft-cli: files confined: read root {}, write root {}", show(roots.read_root()), show(roots.write_root()));
                 h = h.with_automation_roots(Some(roots));
+            }
+            if let Some(list) = commands {
+                // Every thread of this process, like the roots.
+                command_access::confine_process(list.clone());
+                eprintln!("deckcraft-cli: commands allowed: {}", list.describe().join(", "));
+                h = h.with_command_allowlist(Some(list));
             }
             Box::new(h)
         }
@@ -661,6 +729,42 @@ mod tests {
 
     fn args(a: &[&str]) -> Vec<String> {
         a.iter().map(|s| s.to_string()).collect()
+    }
+
+    /// `--allow-commands` needs its list, once.
+    #[test]
+    fn allow_commands_needs_its_value_once() {
+        assert_eq!(allow_commands_value(None, Some("slide.*".into())), Ok(Some("slide.*".into())));
+        assert!(allow_commands_value(None, None).is_err());
+        assert!(allow_commands_value(None, Some("--connect".into())).is_err());
+        assert!(allow_commands_value(Some("slide.*".into()), Some("text.*".into())).unwrap_err().contains("duplicate"));
+    }
+
+    /// An `@FILE` list is read up to its limit; one byte more, non-UTF-8 text or a folder is refused.
+    #[test]
+    fn a_list_file_is_read_up_to_its_limit_and_no_further() {
+        let dir = std::env::temp_dir().join(format!("dc-allowlist-unit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let at = |name: &str, bytes: &[u8]| {
+            let path = dir.join(name);
+            std::fs::write(&path, bytes).unwrap();
+            path.to_string_lossy().into_owned()
+        };
+        assert_eq!(read_allowlist_file(&at("exact", b"slide.new"), 9).unwrap(), "slide.new");
+        assert!(read_allowlist_file(&at("long", b"slide.new\n"), 9).unwrap_err().contains("too long"));
+        assert!(read_allowlist_file(&at("latin1", &[b'c', b'a', b'f', 0xE9]), 9).unwrap_err().contains("not UTF-8"));
+        assert!(read_allowlist_file(&dir.to_string_lossy(), 9).unwrap_err().contains("not a regular file"));
+        assert!(read_allowlist_file(&dir.join("missing").to_string_lossy(), 9).unwrap_err().contains("cannot read"));
+        #[cfg(unix)]
+        {
+            assert!(read_allowlist_file("/dev/zero", 9).unwrap_err().contains("not a regular file"));
+            // A FIFO with no writer: opening it would block for good. The test would hang if it were.
+            let fifo = dir.join("fifo");
+            assert!(std::process::Command::new("mkfifo").arg(&fifo).status().is_ok_and(|s| s.success()));
+            assert!(read_allowlist_file(&fifo.to_string_lossy(), 9).unwrap_err().contains("not a regular file"));
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
