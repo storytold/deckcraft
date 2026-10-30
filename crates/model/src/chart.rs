@@ -324,6 +324,8 @@ pub struct Chart {
     pub legend: Option<String>,
     /// `c:legend/c:overlay`: the legend is drawn over the plot instead of shrinking it.
     pub legend_overlay: bool,
+    /// Explicit `c:plotArea/c:layout/c:manualLayout` position and size, as fractions of the chart.
+    pub manual_layout: Option<ManualLayout>,
     /// Text size in points of the axis labels and legend (from their `c:txPr`, else the chart's);
     /// `None`: the file gives none.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -398,6 +400,36 @@ pub struct Chart {
     pub kept: ChartKept,
 }
 
+/// The manually positioned plot-area rectangle from DrawingML.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManualLayout {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+    /// `inner` sizes the data plot; `outer` sizes the plot area including its axes.
+    pub target: ManualLayoutTarget,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ManualLayoutTarget {
+    #[default]
+    Outer,
+    Inner,
+}
+
+impl ManualLayout {
+    pub fn is_valid(self) -> bool {
+        [self.x, self.y, self.width, self.height].into_iter().all(|v| v.is_finite() && (0.0..=1.0).contains(&v))
+            && self.x + self.width <= 1.0
+            && self.y + self.height <= 1.0
+            && self.width > 0.0
+            && self.height > 0.0
+    }
+}
+
 /// One relationship of a chart part, with the target string as it was written.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -450,6 +482,7 @@ impl Default for Chart {
             series: vec![],
             legend: Some("b".into()),
             legend_overlay: false,
+            manual_layout: None,
             text_size: None,
             title_size: None,
             data_labels: false,

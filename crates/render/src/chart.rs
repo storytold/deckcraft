@@ -319,6 +319,8 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     // Each legend entry: its name, its key's paint and the key's outline.
     let legend_items = build_legend_items(rctx, c, pie, waterfall);
     area = draw_legend(ctx, &LegendDraw { rctx, chart: c, transform: m, items: &legend_items, base, text_color: text_col, width: w }, area);
+    let (manual_area, manual_plot) = apply_manual_layout(c, area, w, h, pie);
+    area = manual_area;
     if pie {
         draw_pie(ctx, rctx, c, m, area, base, text_col);
         return;
@@ -337,7 +339,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let horiz = if combo { bar_kind.is_some_and(ChartType::horizontal) } else { c.kind.horizontal() };
     area = draw_axis_titles(ctx, rctx, &AxisTitleDrawing { chart: c, transform: m, base, text_color: text_col, horiz }, area);
     // As many major units as the value axis has room for labels (PowerPoint's automatic unit).
-    let axis_len = if horiz { area.width() - base * 4.5 } else { area.height() - base * 1.8 };
+    let axis_len = manual_plot.map_or_else(|| auto_axis_len(area, horiz, base), |plot| if horiz { plot.width() } else { plot.height() });
     let max_intervals = (axis_len / if horiz { base * 6.0 } else { base * 1.9 }).floor().clamp(2.0, 12.0) as usize;
     // A logarithmic axis is scaled in exponents of its base.
     let log = c.log_axis_scale(max_intervals).map(|sc| (c.y_log_base.unwrap_or(10.0), sc));
@@ -366,11 +368,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
         clamp_soft(label_w(false, (min, max, step)), base * 1.5, area.width() * 0.3)
     };
     let gutter_r = second.filter(|_| !c.y2_hidden).map(|sc| clamp_soft(label_w(true, sc), base * 1.5, area.width() * 0.3)).unwrap_or(0.0);
-    let plot = if horiz {
-        Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - base * 1.6)
-    } else {
-        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, area.y1 - base * 1.8)
-    };
+    let plot = manual_plot.unwrap_or_else(|| auto_plot_rect(area, horiz, gutter, gutter_r, base));
     if let Some(f) = &c.plot_fill {
         crate::paint::fill_path(ctx, rctx, f, None, &plot.to_path(0.1), plot, m, deckcraft_geom::preset::FillMode::Norm, 1.0, rctx.pres);
     }
@@ -513,6 +511,36 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     ctx.set_paint(color(Rgba::rgb(0xBF, 0xBF, 0xBF), 1.0));
     ctx.set_stroke(kurbo::Stroke::new(0.75));
     ctx.stroke_path(&ax);
+}
+
+fn manual_layout_rect(layout: deckcraft_model::chart::ManualLayout, width: f64, height: f64) -> Rect {
+    Rect::new(layout.x * width, layout.y * height, (layout.x + layout.width) * width, (layout.y + layout.height) * height)
+}
+
+fn apply_manual_layout(c: &Chart, mut area: Rect, width: f64, height: f64, pie: bool) -> (Rect, Option<Rect>) {
+    let Some(layout) = c.manual_layout.filter(|layout| layout.is_valid()) else { return (area, None) };
+    let rect = manual_layout_rect(layout, width, height);
+    let axisless = pie
+        || matches!(
+            c.kind,
+            ChartType::Funnel | ChartType::Treemap | ChartType::Sunburst | ChartType::RegionMap | ChartType::Radar | ChartType::FilledRadar
+        );
+    if layout.target == deckcraft_model::chart::ManualLayoutTarget::Outer || axisless {
+        area = rect;
+    }
+    (area, (layout.target == deckcraft_model::chart::ManualLayoutTarget::Inner && !axisless).then_some(rect))
+}
+
+fn auto_axis_len(area: Rect, horiz: bool, base: f64) -> f64 {
+    if horiz { area.width() - base * 4.5 } else { area.height() - base * 1.8 }
+}
+
+fn auto_plot_rect(area: Rect, horiz: bool, gutter: f64, gutter_r: f64, base: f64) -> Rect {
+    if horiz {
+        Rect::new(area.x0 + gutter, area.y0, area.x1, area.y1 - base * 1.6)
+    } else {
+        Rect::new(area.x0 + gutter, area.y0, area.x1 - gutter_r, area.y1 - base * 1.8)
+    }
 }
 
 struct LegendDraw<'a, 'ctx> {
@@ -1407,6 +1435,22 @@ mod tests {
     use super::*;
 
     const AREA: Rect = Rect::new(0.0, 0.0, 400.0, 300.0);
+
+    #[test]
+    fn manual_plot_rectangle_uses_chart_fraction_and_keeps_target_independent() {
+        let layout = deckcraft_model::chart::ManualLayout {
+            x: 0.2,
+            y: 0.1,
+            width: 0.6,
+            height: 0.7,
+            target: deckcraft_model::chart::ManualLayoutTarget::Inner,
+        };
+        let rect = manual_layout_rect(layout, 400.0, 300.0);
+        assert!((rect.x0 - 80.0).abs() < 1e-9);
+        assert!((rect.y0 - 30.0).abs() < 1e-9);
+        assert!((rect.x1 - 320.0).abs() < 1e-9);
+        assert!((rect.y1 - 240.0).abs() < 1e-9);
+    }
 
     #[test]
     fn tiny_data_gets_several_ticks() {

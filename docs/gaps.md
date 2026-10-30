@@ -1,8 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-28 · **Change:** trivial (AutoFormat lists run independently of Replace text as you type; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-27 · **Last updated:** 2026-10-27 · **Change:** minor (docs refresh against merged PRs: #67 and #77 landed, #75 closed unmerged, #53 closed, Windows image paste is #1414; one header line; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-30 · **Change:** trivial (manual chart layout modes convert to rectangle dimensions before validation, and inner axis titles follow the manual plot; chart elements remain partial) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -181,7 +179,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
   or lines), stock charts as high-low lines with close dashes or up/down bars and saved as
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
   (`corpus_charts.rs`) and are drawn: linear, exponential, logarithmic, polynomial, power and
-  moving average, with forecast and the equation and R² label. A moving average is drawn with
+  moving average, with forecast and the equation and R² label. Manual plot-area rectangles now
+  import, render and write back, converting edge-mode widths and heights before validation and
+  using the inner target for the data plot; unsupported factor positions and invalid values use automatic layout.
+  A moving average is drawn with
   neither label. A combo chart's secondary value axis is read (`y2_*`,
   `Series.secondary_axis`) and is not written back when the chart is rebuilt.
   An unchanged chart's embedded workbook now survives save (#335); editing the chart still
@@ -370,6 +371,8 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-30 | trivial | Manual chart layout modes convert edge dimensions before validation; axis titles follow the inner manual plot |
+| 2026-10-28 | trivial | Chart manual plot rectangles and inner/outer target semantics now import, draw and save; overall chart elements remain partial |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |
 | 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
