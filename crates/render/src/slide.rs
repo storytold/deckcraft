@@ -15,6 +15,23 @@ pub fn panics_caught() -> u64 {
 }
 
 /// Does anything on this slide (or its layout/master graphics) use blur-based effects?
+/// Whether `s` or anything inside it draws with a filter effect (shadow, glow, reflection, soft
+/// edge, blurred text). `needs_filters` asks it of a whole slide; the renderer asks it per shape
+/// to send only that shape through its own canvas.
+pub(crate) fn shape_needs_filters(rctx: &Ctx, s: &Shape) -> bool {
+    let mut any = false;
+    deckcraft_model::walk(std::slice::from_ref(s), &mut |s, _| {
+        if any {
+            return;
+        }
+        let (e, _) = resolve::effects(rctx, s);
+        if e.is_some_and(|e| !e.is_empty()) || text_has_effects(rctx, s) {
+            any = true;
+        }
+    });
+    any
+}
+
 pub fn needs_filters(pres: &Presentation, slide: &Slide) -> bool {
     let Some(rctx) = Ctx::for_slide(pres, slide) else { return false };
     let mut any = false;
@@ -40,15 +57,50 @@ pub fn needs_filters(pres: &Presentation, slide: &Slide) -> bool {
 /// Does the shape's text have a shadow or glow (on a run, in its list style, or in the master's
 /// text styles it inherits)? Such text is blurred, which needs filters.
 fn text_has_effects(rctx: &Ctx, s: &Shape) -> bool {
-    use deckcraft_model::text::{ListStyle, RunProps};
+    use deckcraft_model::text::{ListStyle, RunProps, TextBody};
     let fx = |r: &RunProps| r.shadow.as_ref().is_some_and(|s| !s.inner) || r.glow.as_ref().is_some_and(|g| g.radius > 0.0);
     let styled = |l: &ListStyle| l.levels.iter().flatten().any(|lv| fx(&lv.run));
-    let Some(t) = &s.text else { return false };
-    t.paragraphs.iter().any(|p| p.runs.iter().any(|r| fx(&r.props)) || fx(&p.end_props))
-        || styled(&t.list_style)
-        || styled(&rctx.master.title_style)
-        || styled(&rctx.master.body_style)
-        || styled(&rctx.master.other_style)
+    let body = |t: &TextBody| t.paragraphs.iter().any(|p| p.runs.iter().any(|r| fx(&r.props)) || fx(&p.end_props)) || styled(&t.list_style);
+    // A table keeps its text in its cells, not in `s.text`: its runs cast shadows and glows too,
+    // and missing one would leave a filter to draw on a canvas that cannot run filters.
+    if let deckcraft_model::ShapeKind::Table(t) = &s.kind
+        && t.rows.iter().any(|r| r.cells.iter().any(|c| body(&c.text)))
+    {
+        return true;
+    }
+    let masters = styled(&rctx.master.title_style) || styled(&rctx.master.body_style) || styled(&rctx.master.other_style);
+    match &s.text {
+        Some(t) => body(t) || masters,
+        None => false,
+    }
+}
+
+/// Whether the whole slide has to be drawn on one thread: a fill overlay that blends (multiply,
+/// screen, darken, lighten) mixes with whatever lies behind the shape, so such a shape cannot be
+/// drawn apart and pasted — and if it also carries a filter, the canvas itself must be
+/// single-threaded. Everything else keeps its worker threads (see `Renderer::shape_filtered`).
+pub fn needs_st_canvas(pres: &Presentation, slide: &Slide) -> bool {
+    let Some(rctx) = Ctx::for_slide(pres, slide) else { return false };
+    let mut any = false;
+    let mut check = |shapes: &[Shape]| {
+        deckcraft_model::walk(shapes, &mut |s, _| {
+            if any {
+                return;
+            }
+            let (e, _) = resolve::effects(&rctx, s);
+            let blends =
+                e.is_some_and(|e| e.fill_overlay.as_ref().is_some_and(|o| matches!(o.blend.as_str(), "mult" | "screen" | "darken" | "lighten")));
+            if blends {
+                any = true;
+            }
+        });
+    };
+    check(&slide.shapes);
+    if let Some(l) = rctx.layout {
+        check(&l.shapes);
+    }
+    check(&rctx.master.shapes);
+    any
 }
 
 /// Render slide `index` at `opts.scale` pixels per point. A panic inside the renderer becomes a

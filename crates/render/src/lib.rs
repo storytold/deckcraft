@@ -117,4 +117,51 @@ mod mt_tests {
         // The shape itself is drawn (not a blank fallback).
         assert_ne!(img.pixel(30, 30), [255, 255, 255, 255]);
     }
+
+    /// A shadow on one shape used to cost the whole slide its worker threads, because vello_cpu
+    /// cannot run filter effects on the multi-threaded dispatcher. Only that shape draws apart
+    /// now, so the slide keeps its threads and the picture stays the one the single-threaded
+    /// render produces.
+    #[test]
+    fn a_shadowed_shape_draws_the_same_with_and_without_threads() {
+        let mut s = deckcraft_model::Presentation::default();
+        let sl = std::sync::Arc::make_mut(&mut s.slides[0]);
+        for (i, (x, shadow)) in [(10.0, true), (140.0, false), (270.0, true)].into_iter().enumerate() {
+            let mut sh = deckcraft_model::Shape {
+                id: ShapeId(900 + i as u32),
+                xfrm: Some(deckcraft_geom::Xfrm::new(x, 20.0, 100.0, 80.0)),
+                style: Some(deckcraft_model::ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+                ..Default::default()
+            };
+            if shadow {
+                let sh3 = deckcraft_model::style::Shadow {
+                    color: deckcraft_model::ColorRef::rgb(deckcraft_color::Rgba::BLACK),
+                    blur: 12.0,
+                    dist: 6.0,
+                    dir: 90.0,
+                    inner: false,
+                    sx: 1.0,
+                    sy: 1.0,
+                    kx: 0.0,
+                    ky: 0.0,
+                    align: String::new(),
+                    rotate_with_shape: true,
+                };
+                sh.effects = Some(deckcraft_model::Effects { outer_shadow: Some(sh3), ..Default::default() });
+            }
+            sl.shapes.push(sh);
+        }
+        assert!(needs_filters(&s, &s.slides[0]));
+        let draw =
+            |threads: u16| RENDERER.with(|r| r.borrow_mut().slide(&s, &s.slides[0], 0, &RenderOpts { scale: 1.0, threads, ..Default::default() }));
+        let one = draw(0);
+        let many = draw(4);
+        assert_eq!((one.width, one.height), (many.width, many.height));
+        // The shadow is drawn in both (the pixel just below a shadowed shape is not the white page).
+        assert_ne!(many.pixel(60, 108), [255, 255, 255, 255], "the shadow is missing from the threaded render");
+        // Pasting the shape's own canvas quantizes its edges once more: a channel may land a step
+        // or two away, nothing a viewer can see.
+        let worst = one.pixels.iter().zip(many.pixels.iter()).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        assert!(worst <= 4, "threaded render differs by {worst}/255");
+    }
 }
