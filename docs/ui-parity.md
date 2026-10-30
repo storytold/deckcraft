@@ -1,6 +1,6 @@
 # UI parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (Edit Points: Shift, Ctrl/Cmd or Alt/Option on a handle drag sets the point type; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: major, community PR wave 2026-10-14: 14 new dialogs (41 in all), Eyedropper, Export button, New Window, Grid Options, WordArt gallery and handles, Slide Sorter sections, Quick Access Toolbar, Format Background and Format Shape depth, rich-text clipboard; duplicated rows and headers folded; previous: minor, File tab / Backstage, #76) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-29 ? **Last updated:** 2026-10-29 ? **Change:** minor (Symbol insertion without a font override preserves formatting of the word at the caret; scores unchanged) ? **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (group fill and outline edits reach members, #1079; scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 How DeckCraft looks and feels next to PowerPoint: the shell, the ribbon, menus, panes, dialogs,
@@ -62,6 +62,8 @@ menu colours taken from the theme tokens (menu `chrome`, page `card`).
 | Options | Opens the PowerPoint Options dialog | Opens Preferences |
 
 ## Panes and dialogs
+
+Insert Symbol shows the selected font's characters in a virtualized grid, rendered in that font. Font and Unicode subset selectors, hexadecimal character-code entry, recent symbols and a Special Characters tab cover characters beyond a fixed palette. Insert keeps the dialog open; double-click also inserts. A chosen symbol font applies only to the inserted character, and subsequent typing resumes in the surrounding font. Both `.deckcraft` and `.pptx` retain the symbol's font (#1131). When no font override is chosen, formatting at a caret inside a word applies to that word. Insertion ends hyperlinks at their boundary, promotes a paragraph whose first strong character is Arabic or Hebrew, and resumes the remaining text's formatting after replacing a selection.
 
 | Pane / dialog | PowerPoint | DeckCraft |
 |---|---|---|
@@ -169,6 +171,9 @@ consistency is open (#73, #56).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-29 | minor | Symbol insertion without a font override preserves normal word formatting at the caret. Scores unchanged |
+| 2026-10-28 | minor | Symbol insertion regression fixes: hyperlink boundaries, RTL direction and replacement formatting (#1131). Scores unchanged |
+| 2026-10-28 | minor | Font-based Symbol browser: font and Unicode subset selectors, character grid, hex-code entry, recent symbols and Special Characters (#1131). Scores unchanged |
 | 2026-10-24 | trivial | Table cells: dragging across cells selects a range of cells |
 | 2026-10-24 | trivial | Edit Points: Shift, Ctrl/Cmd or Alt/Option held while dragging a handle makes the point smooth, straight or corner |
 | 2026-10-24 | trivial | Columns dialog: the number of text columns and the spacing between them. Dialog count 41 → 42 |

@@ -239,8 +239,13 @@ fn stamp_caret_lang(s: &mut Session, lang: &str) -> Result<()> {
 
 pub(super) fn symbol(s: &mut Session, p: &Value) -> Result<Value> {
     let t = str_param(p, "text").ok_or_else(|| bad("insert.symbol", "missing `text`"))?.to_string();
-    if s.doc()?.selection.text.is_none() {
-        return Err(bad("insert.symbol", "place the insertion point in text first"));
-    }
-    crate::cmd::text::insert_text(s, &t, None)
+    let font = match p.get("font") {
+        None => None,
+        Some(Value::String(f)) if !f.trim().is_empty() && f.len() <= 256 && !f.contains('\0') => Some(f.trim().to_string()),
+        Some(_) => return Err(bad("insert.symbol", "`font` must be a non-empty family name (at most 256 bytes)")),
+    };
+    let st = s.doc()?;
+    let sel = st.selection.text.as_ref().ok_or_else(|| bad("insert.symbol", "place the insertion point in text first"))?;
+    crate::cmd::text::body_of(st, sel).ok_or_else(|| bad("insert.symbol", "the text being edited is gone"))?;
+    crate::cmd::text::insert_symbol(s, &t, font.as_deref())
 }

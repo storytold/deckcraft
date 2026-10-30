@@ -41,7 +41,7 @@ pub(super) fn edit(s: &mut Session, p: &Value) -> Result<Value> {
     }
     s.select(|_, sel| {
         sel.shapes = vec![id];
-        sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, notes: false, line_end: None });
+        sel.text = Some(TextSel { shape: id, anchor: at, caret: at, cell, ..Default::default() });
         sel.cells = None;
     })?;
     Ok(json!({"id": id, "at": [at.0, at.1]}))
@@ -86,8 +86,10 @@ pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) 
     };
     let pos = edit_text(s, |body, t| {
         let (a, b) = t.ordered();
+        let resumed = t.resumed_props().cloned();
+        t.typing_props = None;
         let at = ed::delete(body, a, b);
-        let props = props.clone().or_else(|| if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) });
+        let props = props.clone().or(resumed).or_else(|| if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) });
         let c = ed::insert(body, at, &text, props);
         t.anchor = c;
         t.caret = c;
@@ -103,6 +105,41 @@ pub(crate) fn insert_text(s: &mut Session, text: &str, props: Option<RunProps>) 
     // AutoCorrect can move the caret: a replaced word, or a list lead it removed.
     let pos = s.doc()?.selection.text.as_ref().map_or(pos, |t| t.caret);
     Ok(json!({"caret": [pos.0, pos.1]}))
+}
+
+/// Insert literal symbols, keeping an optional symbol font local to this insertion.
+pub(crate) fn insert_symbol(s: &mut Session, text: &str, font: Option<&str>) -> Result<Value> {
+    let inherited = inherited_aligns_for_edit(s);
+    edit_text(s, |body, sel| {
+        let (a, b) = sel.ordered();
+        let resumed = sel.resumed_props().cloned();
+        let at = ed::delete(body, a, b);
+        // Match ordinary insertion: replacement inherits the remaining text; a collapsed
+        // caret at a hyperlink's end resumes without its link.
+        let original = resumed
+            .or_else(|| if a != b { Some(ed::props_at(body, at)) } else { unlinked_at_link_end(body, at) })
+            .unwrap_or_else(|| ed::props_at(body, at));
+        let mut props = original.clone();
+        if let Some(font) = font {
+            props.font = Some(font.to_string());
+            props.font_ea = Some(font.to_string());
+            props.font_cs = Some(font.to_string());
+            props.font_sym = Some(font.to_string());
+        }
+        // Do not apply smart quotes or AutoCorrect to literal symbols.
+        let end = ed::insert(body, at, text, Some(props));
+        sel.anchor = end;
+        sel.caret = end;
+        // Only a font override needs pending formatting; otherwise keep normal word formatting.
+        sel.typing_props = font.map(|_| (end, original));
+        let last = body.paragraphs.len().saturating_sub(1);
+        for pi in at.0..=end.0.min(last) {
+            if let Some(para) = body.paragraphs.get_mut(pi) {
+                promote_rtl_if_needed(para, &inherited);
+            }
+        }
+        json!({"caret": [end.0, end.1]})
+    })
 }
 
 /// Per outline level (0..=8), whether shape `id` on the current slide already resolves an

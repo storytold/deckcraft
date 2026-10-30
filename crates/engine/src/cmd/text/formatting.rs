@@ -10,6 +10,13 @@ use super::{
 pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sync)) -> Result<Value> {
     let st = s.doc()?;
     if let Some(t) = st.selection.text.clone() {
+        if let Some(mut props) = t.resumed_props().cloned() {
+            f(&mut props);
+            if let Some(sel) = s.doc_mut()?.selection.text.as_mut() {
+                sel.typing_props = Some((sel.caret, props));
+            }
+            return ok();
+        }
         let (a, b) = format_range(st, &t);
         let collapsed = a == b;
         edit_text(s, |body, _| {

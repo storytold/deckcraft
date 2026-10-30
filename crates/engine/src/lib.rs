@@ -85,9 +85,17 @@ pub struct TextSel {
     /// start of the next line. Ignored once the caret moves anywhere else.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line_end: Option<(usize, usize)>,
+    /// Formatting to resume at this caret after inserting a symbol in its own font.
+    #[serde(skip)]
+    pub typing_props: Option<((usize, usize), deckcraft_model::text::RunProps)>,
 }
 
 impl TextSel {
+    /// Pending formatting belongs only to the collapsed caret where it was recorded.
+    pub fn resumed_props(&self) -> Option<&deckcraft_model::text::RunProps> {
+        self.typing_props.as_ref().filter(|(at, _)| !self.is_range() && *at == self.caret).map(|(_, props)| props)
+    }
+
     pub fn is_range(&self) -> bool {
         self.anchor != self.caret
     }
@@ -744,6 +752,7 @@ impl Session {
         // A caret placed anywhere starts downstream; only End puts it back at a line's end.
         if let Some(t) = st.selection.text.as_mut() {
             t.line_end = None;
+            t.typing_props = None;
         }
         let owner = |sel: &Selection| sel.text.as_ref().map(|t| (sel.slide, sel.target, t.shape, t.cell, t.notes));
         let before = owner(&st.selection);

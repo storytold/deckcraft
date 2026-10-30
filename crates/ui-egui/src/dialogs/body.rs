@@ -45,7 +45,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "tabs" => tabs_dialog(app, ui, d),
         "export" => dlg_export(app, ui, d),
         "replaceFonts" => dlg_replace_fonts(app, ui, d),
-        "symbol" => dlg_symbol(app, ui, d),
+        "symbol" => super::symbol::show(app, ui, d),
         "equation" => dlg_equation(app, ui, d),
         "pasteSpecial" => dlg_paste_special(app, ui, d),
         "find" => find_dialog(app, ui, d),
@@ -847,33 +847,6 @@ fn dlg_replace_fonts(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         return cancel;
     }
     cancel
-}
-
-fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
-    ui.label("Click a symbol to insert it at the insertion point.");
-    let groups: [(&str, &str); 6] = [
-        ("Punctuation", "–—‘’“”…•·§¶†‡‰′″‹›«»¡¿"),
-        ("Currency", "$€£¥¢₹₩₽₺₿"),
-        ("Math", "±×÷≠≈≤≥∞√∑∏∫∂∆∇∈∉∩∪⊂⊃∀∃¬∧∨⇒⇔°′"),
-        ("Greek", "αβγδεζηθικλμνξοπρστυφχψωΓΔΘΛΞΠΣΦΨΩ"),
-        ("Arrows", "←↑→↓↔↕⇐⇑⇒⇓↖↗↘↙⟵⟶"),
-        ("Shapes", "■□▪▫▲△▶▷▼▽◀◁◆◇○●◎★☆✓✔✗✘♠♣♥♦"),
-    ];
-    for (g, chars) in groups {
-        ui.label(egui::RichText::new(g).font(theme::bold(12.0)));
-        ui.horizontal_wrapped(|ui| {
-            for c in chars.chars() {
-                if ui.add(egui::Button::new(egui::RichText::new(c.to_string()).size(16.0)).min_size(vec2(26.0, 26.0))).clicked() {
-                    if app.session.active().is_some_and(|s| s.selection.text.is_none()) {
-                        let _ = app.run("text.edit", json!({}));
-                    }
-                    let _ = app.run("insert.symbol", json!({"text": c.to_string()}));
-                }
-            }
-        });
-    }
-    let (ok, cancel) = buttons(ui, "Close");
-    ok || cancel
 }
 
 fn dlg_equation(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
