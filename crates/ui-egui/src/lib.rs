@@ -454,6 +454,8 @@ mod find_dialog_tests;
 #[cfg(test)]
 mod gpu_lock;
 #[cfg(test)]
+mod gradient_stop_tests;
+#[cfg(test)]
 mod huge_deck_tests;
 #[cfg(test)]
 mod ime_tests;

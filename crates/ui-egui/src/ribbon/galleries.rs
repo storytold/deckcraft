@@ -2,47 +2,37 @@ use super::{Align2, Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens
 
 /// A ColorRef as a command colour parameter.
 pub fn cref_param(c: &deckcraft_model::ColorRef) -> Value {
+    let mut v = cref_fields(c);
+    if !c.mods.is_empty()
+        && let Value::Object(o) = &mut v
+    {
+        o.insert("mods".into(), json!(c.mods));
+    }
+    v
+}
+
+fn cref_fields(c: &deckcraft_model::ColorRef) -> Value {
     match &c.base {
         deckcraft_model::ColorBase::Scheme { slot } => {
             let mut o = serde_json::Map::new();
             o.insert("scheme".into(), json!(slot.xml_name()));
-            for m in &c.mods {
-                if let Some(v) = m.value() {
-                    o.insert(m.xml_name().into(), json!(v));
-                }
-            }
             Value::Object(o)
         }
         deckcraft_model::ColorBase::Rgb { rgb } if c.mods.is_empty() => json!(format!("#{}", rgb.hex())),
         deckcraft_model::ColorBase::Rgb { rgb } => {
             let mut o = serde_json::Map::new();
             o.insert("rgb".into(), json!(format!("#{}", rgb.hex())));
-            for m in &c.mods {
-                if let Some(v) = m.value() {
-                    o.insert(m.xml_name().into(), json!(v));
-                }
-            }
             Value::Object(o)
         }
         deckcraft_model::ColorBase::Preset { name } => {
             let mut o = serde_json::Map::new();
             o.insert("preset".into(), json!(name));
-            for m in &c.mods {
-                if let Some(v) = m.value() {
-                    o.insert(m.xml_name().into(), json!(v));
-                }
-            }
             Value::Object(o)
         }
         deckcraft_model::ColorBase::System { name, last } => {
             let mut o = serde_json::Map::new();
             o.insert("system".into(), json!(name));
             o.insert("last".into(), json!(format!("#{}", last.hex())));
-            for m in &c.mods {
-                if let Some(v) = m.value() {
-                    o.insert(m.xml_name().into(), json!(v));
-                }
-            }
             Value::Object(o)
         }
     }

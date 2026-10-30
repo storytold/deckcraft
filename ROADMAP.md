@@ -146,6 +146,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-30 | Format Shape and Format Background ▸ Gradient fill: adjust the selected stop’s Brightness, with its ordered color transforms preserved across commands |
 | 2026-10-29 | Slide Show: going back to the previous slide plays the transition of the slide being left, reversed, as PowerPoint does, instead of the previous slide's own entrance transition (#1531); a jump (Go to Slide, links) still plays the target slide's transition |
 | 2026-10-27 | Set Up Slide Show ▸ Keep mouse cursor visible: a full-screen show no longer hides a still pointer, so the choices of a branching deck stay visible and clickable; the setting is kept with the user's preferences (`ui.json`, `showKeepCursor`), off by default (#1445) |
 | 2026-10-25 | A photo in a picture placeholder is cut into the shape its layout gives the placeholder, as PowerPoint draws it: a layout's round picture placeholder keeps a slide's photo in a circle with the layout's white border, where it came out as a rectangle (the reader only passed `p:sp` placeholders to `inherit_placeholder_geometry`, not `p:pic`) |
