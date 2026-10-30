@@ -154,10 +154,10 @@ pub(super) fn fit(avail: Rect, doc: &Presentation) -> Rect {
 /// A transition layer as an egui mesh: [`deckcraft_anim::layer_mesh`]'s triangles (perspective
 /// cards subdivided so their pictures stay straight) with per-vertex opacity.
 /// Where presenter view's "Next" preview goes: the column's width below its label, kept inside
-/// the top 60% of the column. A portrait slide used to get the full width and a height many
-/// times the window (a white slab over the notes and past the window edge).
+/// the column. A portrait slide used to get the full width and a height many times the window
+/// (a white slab over the notes and past the window edge).
 pub(super) fn next_rect(right: Rect, doc: &Presentation) -> Rect {
-    let area = Rect::from_min_max(right.min + vec2(0.0, 22.0), pos2(right.max.x, right.min.y + 22.0 + (right.height() - 22.0).max(0.0) * 0.6));
+    let area = Rect::from_min_max(right.min + vec2(0.0, 22.0), pos2(right.max.x, right.max.y.max(right.min.y + 22.0)));
     Rect::from_min_size(area.min, fit(area, doc).size())
 }
 

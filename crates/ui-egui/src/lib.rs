@@ -20,6 +20,7 @@ pub mod canvas;
 pub mod capture;
 pub mod control;
 pub mod dialogs;
+pub mod displays;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod icons;
@@ -327,6 +328,8 @@ pub struct SlideApp {
     next_file_id: u64,
     /// Picks and drops whose bytes have not arrived yet.
     pending_files: Vec<PendingFile>,
+    /// The displays, kept current by the desktop app; empty where it cannot tell ([`displays`]).
+    pub displays: displays::Displays,
     /// Owner/generation/cause bookkeeping for the canvas text IME producer.
     ime_tracker: egui::ime_context::ImeContextTracker,
     /// Canvas IME geometry for this pass: the caret while editing, or the selected shape.

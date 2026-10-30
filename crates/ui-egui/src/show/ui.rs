@@ -2,7 +2,7 @@ use super::keys::keyboard;
 use super::media::{
     Pick, Under, gif_hit, media_bar_target, media_hit, on_screen, pointer_on_media_bar, run_media_cues, shapes_under_pointer, show_media,
 };
-use super::presenter::{PresenterTimer, presenter_window};
+use super::presenter::{PRESENTER_SIZE, PresenterTimer, presenter_window};
 use super::render::{below_playing_video, fit, part_textures, quad_mesh, render_frame, render_overlay, render_threads, start_prefetch};
 use super::zoom::{
     Zoom, grid_indices, norm_on_slide, paint_grid, see_all_hit, slide_aspect, slide_box, slide_to_screen, toggle_blank, tool_bar_rect, unit_uv,
@@ -71,7 +71,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
         return;
     }
     show.observe_visible_frame(now, web_time::Instant::now());
-    begin_show(&ctx, &mut show, &doc, now);
+    begin_show(app, &ctx, &mut show, &doc, now);
     let mut out = Out { keep: keyboard(&ctx, &mut show, &doc, now, false), actions: vec![] };
     let (clicked, secondary, moved) = ctx.input(|i| (i.pointer.primary_clicked(), i.pointer.secondary_clicked(), i.pointer.delta().length() > 0.0));
     if moved {
@@ -93,7 +93,7 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     draw_slide(app, ui, &mut show, &f, &painter);
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
-    draw_extras(&mut show, &f, &painter, &mut out);
+    draw_extras(app, &mut show, &f, &painter, &mut out);
     finish(app, show, &f, out.keep);
 }
 
@@ -110,8 +110,12 @@ fn paint_hidden(ui: &Ui, doc: &Presentation, show: &Show) {
     }
 }
 
-fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) {
+fn begin_show(app: &SlideApp, ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64) {
     if !show.started {
+        // Use the display selected in Set Up Slide Show, falling back when it was disconnected.
+        if show_fills_screen(show.reading, &doc.show.show_type) && app.displays.list.len() > 1 {
+            show.display = Some(app.displays.first_choice(app.ui.show_display));
+        }
         show.started = true;
         show.slide_start = now;
         show.step_start = now;
@@ -122,7 +126,15 @@ fn begin_show(ctx: &egui::Context, show: &mut Show, doc: &Presentation, now: f64
         show.timer = PresenterTimer::start(now);
         show.last_move = now;
         if show_fills_screen(show.reading, &doc.show.show_type) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(true));
+            ctx.send_viewport_cmd(match show.display {
+                Some(i) => egui::ViewportCommand::SetMonitor(i),
+                None => egui::ViewportCommand::Fullscreen(true),
+            });
+            if show.presenter {
+                let px = |v: f32| (v * ctx.pixels_per_point()).round() as i32;
+                let size = [px(PRESENTER_SIZE[0]), px(PRESENTER_SIZE[1])];
+                show.presenter_place = app.displays.presenter(app.ui.presenter_window, show.display, size).map(|r| (r, false));
+            }
         }
         show.after_enter(doc, now);
     }
@@ -684,7 +696,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
     }
 }
 
-fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
+fn draw_extras(app: &mut SlideApp, show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) {
     let Fr { ctx, doc, now, full, .. } = *f;
     if show.grid && !show.ended {
         paint_grid(painter, ctx, show, doc, full);
@@ -705,7 +717,17 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
     }
     // Presenter view in a second window.
     if out.keep && show.presenter && !show.reading {
-        presenter_window(ctx, show, doc, now, &mut out.keep);
+        let previous_display = show.display;
+        presenter_window(ctx, show, doc, &app.displays, now, &mut out.keep);
+        // Remembered for the next show, as PowerPoint does.
+        if show.presenter_at.is_some() {
+            app.ui.presenter_window = show.presenter_at;
+        }
+        // Only an explicit Swap Displays changes the preference; automatic/fallback placement
+        // must not replace the user's saved choice.
+        if show.display != previous_display {
+            app.ui.show_display = show.display;
+        }
     }
 }
 

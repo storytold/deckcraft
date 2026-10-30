@@ -1,6 +1,6 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-26 · **Change:** minor (slide show monitor selection moves to Set Up Slide Show, #1225; previous: minor, Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
@@ -9,6 +9,12 @@ rehearsal and recording. Transition and animation playback are in
 ready** (estimated), **10–16 h** to parity.
 
 ## Running the show
+
+Set Up Slide Show includes **Multiple monitors → Slide show monitor**: Automatic or a
+connected display with its dimensions. OK commits the choice to the machine's `ui.json`
+(`showDisplay`); Cancel, Escape and the close button discard it. It is disabled for a
+browsed show. Starting a show uses the saved choice without prompting, with the existing
+automatic, disconnected-display and windowed fallbacks. Swap Displays updates the same setting.
 
 | Feature | PowerPoint | DeckCraft | Notes |
 |---|---|---|---|
@@ -47,8 +53,8 @@ ready** (estimated), **10–16 h** to parity.
 | Slide counter, previous/next/end buttons | yes | yes | |
 | Keyboard navigation while Presenter View has focus | yes | yes | Shares the audience window's key handling; handled keys are consumed before buttons, and the presenter stays available at the end screen |
 | Notes font size, scrolling | yes | yes: A- / A+ (and `[` / `]`), 12–48 pt in steps of 4, default 18; the notes scroll | |
-| Placed on the presenter's display automatically, show on the projector | yes | **no**: opens wherever the OS puts it | Beta blocker, 3–5 h. Open PR #433 places the show on a second display when one is attached. This change does not |
-| Swap displays | yes | no | Still open on #433 |
+| Placed on the presenter's display automatically, show on the projector | yes | yes: the saved show display is used for full-screen shows; Presenter View restores its saved placement or uses another display | On Wayland, the compositor controls window placement and stacking |
+| Swap displays | yes | yes: moves the audience show and Presenter View and saves the show display | On Wayland, the compositor controls Presenter View placement |
 | Pen, laser, black screen, zoom from presenter view | yes | Black, White and Zoom buttons; the audience zoom is framed on the presenter slide | Pen and laser are driven from the audience window only; the presenter window does not move the laser dot |
 | See all slides from presenter view | yes | yes: All slides (or G) opens the grid in presenter view only, the audience keeps the slide; click a thumbnail to go there, Esc closes it | |
 | Rehearse with Coach (Speaker Coach) | yes (cloud) | no | AI dimension |
@@ -79,6 +85,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-26 | minor | Move the machine-local monitor selector from Preferences to Set Up Slide Show (#1225); scores unchanged |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
 | 2026-10-14 | trivial | Community PR wave folded: one media playback row, the presenter pen/laser row matches the laser that exists, estimates keep only the open work (~9–16 h); checklist breadth 68% |
 | 2026-10-13 | minor | Click handling for interactive decks: triggers, per-slide state kept across visits, visible-shape hit testing with hand cursor, advance on click |

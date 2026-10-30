@@ -64,7 +64,7 @@ fn presenter_all_slides_does_not_cover_the_audience_screen() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, &crate::displays::Displays::default(), now, keep);
         },
         (doc, show, true),
     );
@@ -288,7 +288,7 @@ fn presenter_navigation_uses_its_own_keyboard_events() {
     let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
         |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
             let now = ui.input(|i| i.time);
-            presenter_window(ui.ctx(), show, doc, now, keep);
+            presenter_window(ui.ctx(), show, doc, &crate::displays::Displays::default(), now, keep);
         },
         (doc, show, true),
     );
@@ -992,4 +992,174 @@ fn input_state_tracks_the_modes_that_move_show_click_targets() {
 
     show.blank = Some(Color32::BLACK);
     assert_ne!(show.input_state(), base, "a blank screen has no slide click targets");
+}
+
+/// Set Up Slide Show selects the display; starting and restarting a show never asks again.
+#[test]
+fn the_show_uses_the_saved_display_without_asking() {
+    use crate::displays::{Display, Displays};
+    use egui_kittest::kittest::Queryable;
+
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.ui.presenter_view = true;
+    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    // The setting is used on each start, with automatic and disconnected-display fallbacks.
+    for (saved, expected) in [(Some(1), 1), (Some(1), 1), (None, 0), (Some(5), 0)] {
+        harness.state_mut().ui.show_display = saved;
+        harness.state_mut().start_show(0, false);
+        harness.run_steps(2);
+        let show = harness.state().show.as_ref().unwrap();
+        assert!(show.started);
+        assert_eq!(show.display, Some(expected));
+        assert_eq!(harness.state().ui.show_display, saved);
+        assert!(harness.query_by_label_contains("Which display").is_none());
+        harness.key_press(egui::Key::Escape);
+        harness.run_steps(2);
+        assert!(harness.state().show.is_none());
+    }
+    // Windowed reading mode must not be moved to the saved display.
+    harness.state_mut().ui.show_display = Some(1);
+    harness.state_mut().start_show(0, true);
+    harness.run_steps(2);
+    assert_eq!(harness.state().show.as_ref().unwrap().display, None);
+    harness.key_press(egui::Key::Escape);
+    harness.run_steps(2);
+    harness.state_mut().displays.list.truncate(1);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+    let show = harness.state().show.as_ref().unwrap();
+    assert!(show.started);
+    assert_eq!(show.display, None);
+}
+
+#[test]
+fn browsed_show_neither_selects_nor_swaps_displays() {
+    use crate::displays::{Display, Displays};
+    use egui_kittest::kittest::Queryable;
+
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("show.setup", &json!({"type": "browsed"})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    app.ui.presenter_view = true;
+    app.ui.show_display = Some(1);
+    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(2);
+    let show = harness.state().show.as_ref().unwrap();
+    assert!(show.started);
+    assert!(show.presenter);
+    assert_eq!(show.display, None, "a browsed show ignores the saved display");
+    assert_eq!(harness.state().ui.show_display, Some(1));
+
+    // Even a stale display assignment must not expose a path to SetMonitor.
+    let app = harness.state_mut();
+    let mut show = app.show.take().unwrap();
+    show.display = Some(1);
+    show.presenter_at = Some([0, 0, 1000, 700]);
+    let doc = app.session.active().unwrap().doc.clone();
+    let displays = app.displays.clone();
+    let mut presenter = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+        move |ui, (show, keep): &mut (Show, bool)| {
+            presenter_window(ui.ctx(), show, &doc, &displays, ui.input(|i| i.time), keep);
+        },
+        (show, true),
+    );
+    presenter.run_steps(2);
+    assert!(presenter.query_by_label("Swap Displays").is_none());
+}
+
+#[test]
+fn setup_show_display_selection_can_be_cancelled_or_saved() {
+    use crate::displays::{Display, Displays};
+    use egui_kittest::kittest::NodeT;
+    use egui_kittest::kittest::Queryable;
+
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    let mut h = egui_kittest::Harness::builder().with_size(vec2(1000.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    h.run_steps(3);
+    for close in ["Cancel", "Escape", "OK"] {
+        h.state_mut().run("app.dialog", json!({"id": "setupShow"})).unwrap();
+        h.run_steps(2);
+        h.get_by_label("Slide show monitor").click_accesskit();
+        h.run_steps(2);
+        h.get_by_label("Display 2 (1280 × 720)").click_accesskit();
+        h.run_steps(2);
+        assert_eq!(h.state().ui.show_display, None, "selection stays pending until OK");
+        if close == "Escape" {
+            h.key_press(egui::Key::Escape);
+        } else {
+            h.get_by_label(close).click_accesskit();
+        }
+        h.run_steps(2);
+        assert!(h.state().dialog.is_none());
+        assert_eq!(h.state().ui.show_display, if close == "OK" { Some(1) } else { None });
+    }
+    let saved = serde_json::to_value(&h.state().ui).unwrap();
+    assert_eq!(saved["showDisplay"], json!(1));
+    let restored: crate::UiState = serde_json::from_value(saved).unwrap();
+    assert_eq!(restored.show_display, Some(1));
+    h.state_mut().start_show(0, false);
+    h.run_steps(2);
+    assert!(h.state().show.as_ref().unwrap().started);
+    assert_eq!(h.state().show.as_ref().unwrap().display, Some(1));
+    assert!(h.query_by_label_contains("Which display").is_none());
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    h.state_mut().run("app.dialog", json!({"id": "setupShow"})).unwrap();
+    h.run_steps(2);
+    h.get_by_label("Browsed by an individual (window)").click_accesskit();
+    h.run_steps(2);
+    assert!(h.get_by_label("Slide show monitor").accesskit_node().is_disabled());
+    h.get_by_label("OK").click_accesskit();
+    h.run_steps(2);
+    assert_eq!(h.state().ui.show_display, Some(1));
+    h.state_mut().start_show(0, false);
+    h.run_steps(2);
+    assert_eq!(h.state().show.as_ref().unwrap().display, None);
+}
+
+#[test]
+fn saved_display_is_used_without_presenter_view() {
+    use crate::displays::{Display, Displays};
+    let mut app = SlideApp::new(deckcraft_engine::Session::with_new(), crate::Services::default());
+    app.ui.presenter_view = false;
+    app.ui.show_display = Some(1);
+    app.displays = Displays { list: vec![Display { x: 0, y: 0, w: 1920, h: 1080 }, Display { x: 1920, y: 0, w: 1280, h: 720 }], editor: Some(0) };
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1000.0, 700.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        app,
+    );
+    harness.run_steps(3);
+    harness.state_mut().start_show(0, false);
+    harness.run_steps(1);
+    let show = harness.state().show.as_ref().unwrap();
+    assert_eq!(show.display, Some(1));
+    assert!(!show.presenter);
+    assert!(show.presenter_place.is_none());
 }

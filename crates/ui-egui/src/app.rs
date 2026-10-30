@@ -111,6 +111,7 @@ impl SlideApp {
             ime_settles_seen: 0,
             ime_interrupt_pending: false,
             ime_reset: HashMap::new(),
+            displays: crate::displays::Displays::default(),
         }
     }
 

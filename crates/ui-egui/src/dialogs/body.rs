@@ -274,8 +274,33 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
     });
     let _ = combo.response.labelled_by(field.id);
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new("Multiple monitors").font(theme::bold(13.0)));
+    // Keep the machine-local choice pending until OK; Cancel, Esc and closing discard it.
+    let initial = app.ui.show_display.map_or_else(String::new, |i| i.to_string());
+    let mut display = d.get("showDisplay", &initial).parse::<usize>().ok();
+    let enabled = d.get("type", &sh.show_type) != "browsed";
+    ui.add_enabled_ui(enabled, |ui| {
+        ui.horizontal(|ui| {
+            let label = ui.label("Slide show monitor:");
+            let display_label = |i: usize| app.displays.list.get(i).map(|screen| format!("Display {} ({} × {})", i + 1, screen.w, screen.h));
+            craft_ui::ComboBox::from_id_salt("setup-show-monitor")
+                .selected_text(display.and_then(display_label).unwrap_or_else(|| "Automatic".into()))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut display, None, "Automatic");
+                    for (i, screen) in app.displays.list.iter().enumerate() {
+                        ui.selectable_value(&mut display, Some(i), format!("Display {} ({} × {})", i + 1, screen.w, screen.h));
+                    }
+                })
+                .response
+                .labelled_by(label.id)
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, enabled, "Slide show monitor"));
+        });
+    });
+    d.fields.insert("showDisplay".into(), display.map_or_else(String::new, |i| i.to_string()));
     let (ok, cancel) = buttons(ui, "OK");
     if ok {
+        app.ui.show_display = display;
         let ty = d.get("type", "speaker");
         let custom = d.fields.get("custom").cloned().unwrap_or_default();
         run(app, "show.setup", json!({"type": ty, "loop": lp, "noNarration": nn, "noAnimation": na, "useTimings": ut, "custom": custom}));
