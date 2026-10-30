@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod clipboard;
 pub mod cmd;
 pub mod compare;
 pub mod connect;
@@ -454,7 +455,7 @@ pub struct MediaStatus {
 }
 
 /// Clipboard contents copied within the app.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Clipboard {
     pub shapes: Vec<Shape>,
     pub slides: Vec<Slide>,
@@ -465,8 +466,18 @@ pub struct Clipboard {
     /// The copied shapes' theme colours (colour map applied) and fonts, for Paste Special ›
     /// Keep Source Formatting.
     pub source_theme: Option<(deckcraft_color::ColorScheme, deckcraft_model::theme::FontScheme)>,
+    /// Source layout name and kind for each copied slide, for destination-theme matching.
+    #[serde(default)]
+    pub slide_layouts: Vec<(String, deckcraft_model::LayoutType)>,
+    /// Slides from another process use the destination theme and layouts.
+    #[serde(skip)]
+    pub foreign: bool,
     /// How many times the shapes were pasted (each paste offsets further).
+    #[serde(skip)]
     pub pastes: u32,
+    /// Cached system representation used to recognize repeated offers.
+    #[serde(skip)]
+    pub system_bytes: Option<Vec<u8>>,
 }
 
 pub struct Session {

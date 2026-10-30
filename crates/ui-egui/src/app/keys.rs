@@ -146,6 +146,7 @@ impl SlideApp {
                 egui::Event::Copy => self.publish_clipboard(ctx, false),
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
+                    let native = self.import_system_clipboard();
                     // Our own marker for objects without text: paste what the session copied.
                     let text = if text == OBJECTS_MARKER { String::new() } else { text };
                     // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
@@ -153,15 +154,19 @@ impl SlideApp {
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
                     // egui 0.37 sends `PasteImage` directly; the services fallback stays for
                     // integrations that still send an empty `Paste`. Never insert twice.
-                    let img = if text.is_empty() && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+                    let img = if !native && text.is_empty() && !pasted_image_event {
+                        self.services.clipboard_image.as_mut().and_then(|f| f())
+                    } else {
+                        None
+                    };
                     let revision = self.session.active().map(|d| d.revision);
                     let r = match img {
                         Some(png) => self
                             .session
                             .execute("insert.picture", &json!({"name": "Pasted image.png", "data": deckcraft_engine::cmd::base64_encode(&png)})),
                         None => {
-                            let mut params = json!({"text": text});
-                            if let Some(h) = html {
+                            let mut params = if native { json!({}) } else { json!({"text": text}) };
+                            if let Some(h) = html.filter(|_| !native) {
                                 params["html"] = Value::String(h);
                             }
                             self.session.execute("edit.paste", &params)

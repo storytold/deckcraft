@@ -4,6 +4,44 @@
 //! words. A shape with no text is copied as an image by the UI; this module only reads a picture
 //! back (Keynote's TIFF) as PNG bytes.
 
+#[cfg(target_os = "windows")]
+const NATIVE_FORMAT: &str = "DeckCraft.Clipboard.v1";
+
+/// Read under one clipboard lock, with a length prefix because Windows can pad allocations.
+#[cfg(target_os = "windows")]
+pub fn native() -> Option<Vec<u8>> {
+    let format = clipboard_win::register_format(NATIVE_FORMAT)?.get();
+    let _lock = clipboard_win::Clipboard::new_attempts(10).ok()?;
+    let size = clipboard_win::size(format)?.get();
+    if size > deckcraft_engine::clipboard::MAX_BYTES + 4 {
+        return None;
+    }
+    let bytes: Vec<u8> = clipboard_win::get(clipboard_win::formats::RawData(format)).ok()?;
+    let len = u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?) as usize;
+    bytes.get(4..4usize.checked_add(len)?).map(<[u8]>::to_vec)
+}
+
+/// All formats are offered atomically; do not let egui's later CopyText clear native objects.
+#[cfg(target_os = "windows")]
+pub fn set_native(bytes: &[u8], html: &str, text: &str) -> bool {
+    fn write(bytes: &[u8], html: &str, text: &str) -> Option<()> {
+        if bytes.len() > deckcraft_engine::clipboard::MAX_BYTES {
+            return None;
+        }
+        let format = clipboard_win::register_format(NATIVE_FORMAT)?.get();
+        let mut framed = (u32::try_from(bytes.len()).ok()?).to_le_bytes().to_vec();
+        framed.extend_from_slice(bytes);
+        let _lock = clipboard_win::Clipboard::new_attempts(10).ok()?;
+        clipboard_win::set(clipboard_win::formats::Unicode, text).ok()?;
+        if !html.is_empty() {
+            clipboard_win::set(clipboard_win::formats::Html::new()?, html).ok()?;
+        }
+        clipboard_win::raw::set_without_clear(format, &framed).ok()?;
+        Some(())
+    }
+    write(bytes, html, text).is_some()
+}
+
 /// HTML currently on the pasteboard, when there is some.
 pub fn html() -> Option<String> {
     let mut cb = arboard::Clipboard::new().ok()?;
@@ -33,6 +71,27 @@ pub fn image_png() -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use std::borrow::Cow;
+
+    /// This touches the real OS clipboard: run explicitly, serially, on a desktop session.
+    #[cfg(target_os = "windows")]
+    #[test]
+    #[ignore = "writes the real Windows clipboard"]
+    #[allow(clippy::unwrap_used)]
+    fn native_clipboard_retains_html_and_plain_text_and_clears_on_external_copy() {
+        let _restore = Restore(arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()));
+        let bytes = b"native objects and media\0with binary bytes";
+        assert!(super::set_native(bytes, "<b>DeckCraft</b>", "DeckCraft"));
+        assert_eq!(super::native().as_deref(), Some(bytes.as_slice()));
+        assert!(super::html().unwrap().contains("<b>DeckCraft</b>"));
+        let mut cb = arboard::Clipboard::new().unwrap();
+        assert_eq!(cb.get_text().unwrap(), "DeckCraft");
+        cb.set_text("another app").unwrap();
+        drop(cb);
+        assert!(super::native().is_none(), "an external copy must retire our objects");
+        assert!(super::set_native(bytes, "", "\u{2060}"));
+        assert_eq!(super::native().as_deref(), Some(bytes.as_slice()));
+        assert_eq!(arboard::Clipboard::new().unwrap().get_text().unwrap(), "\u{2060}");
+    }
 
     /// Puts HTML and a 1×1 picture on the macOS pasteboard and reads them back.
     /// Restores whatever plain text was there. Other platforms return immediately.

@@ -127,6 +127,10 @@ fn services() -> Services {
         clipboard_image: Some(Box::new(pasteboard::image_png)),
         clipboard_html: Some(Box::new(pasteboard::html)),
         clipboard_set_html: Some(Box::new(pasteboard::set_html)),
+        #[cfg(target_os = "windows")]
+        clipboard_native: Some(Box::new(pasteboard::native)),
+        #[cfg(target_os = "windows")]
+        clipboard_set_native: Some(Box::new(pasteboard::set_native)),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()

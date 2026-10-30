@@ -38,5 +38,9 @@ cpal = "0.16"
 # our workspace forbids) behind a safe API. Pinned exactly: review the diff before bumping.
 fmv-macos-events = "=0.1.0"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+# Safe access to registered formats; already a transitive dependency of arboard.
+clipboard-win = "5.4.1"
+
 [target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
 winit = { version = "0.30", default-features = false, features = ["x11"] }

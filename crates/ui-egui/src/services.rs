@@ -54,6 +54,10 @@ pub struct Services {
     pub clipboard_html: Option<Box<dyn FnMut() -> Option<String>>>,
     /// Put HTML and its plain-text alternative on the system clipboard. `true` when it landed.
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
+    /// Native DeckCraft objects from the system clipboard (versioned engine payload).
+    pub clipboard_native: Option<Box<dyn FnMut() -> Option<Vec<u8>>>>,
+    /// Publish native objects, HTML and plain text together. `true` prevents egui overwriting it.
+    pub clipboard_set_native: Option<Box<dyn FnMut(&[u8], &str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
 }

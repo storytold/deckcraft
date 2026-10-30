@@ -142,7 +142,7 @@ fn renumber(cmd: &str, doc: &mut Presentation, shapes: &mut [deckcraft_model::Sh
 }
 
 /// The destination layout a reused slide moves to: same name, else same kind, else the first.
-fn matching_layout(doc: &Presentation, name: &str, kind: deckcraft_model::LayoutType) -> LayoutId {
+pub(crate) fn matching_layout(doc: &Presentation, name: &str, kind: deckcraft_model::LayoutType) -> LayoutId {
     let all = || doc.masters.iter().flat_map(|m| m.layouts.iter());
     all()
         .find(|l| !name.is_empty() && l.name.eq_ignore_ascii_case(name))

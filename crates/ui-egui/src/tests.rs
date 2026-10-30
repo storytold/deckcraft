@@ -2339,3 +2339,72 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
 }
+
+/// Independent sessions exchange objects through the host, by keyboard and menu, even when
+/// their plain-text alternatives are identical. Source closure does not invalidate bytes.
+#[test]
+fn system_clipboard_between_sessions_keyboard_and_menu() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    for slides in [false, true] {
+        let shared = Rc::new(RefCell::new(None::<Vec<u8>>));
+        let record = shared.clone();
+        let services = Services {
+            clipboard_set_native: Some(Box::new(move |bytes, _, text| {
+                assert!(!text.is_empty(), "textless objects still produce a paste event");
+                *record.borrow_mut() = Some(bytes.to_vec());
+                true
+            })),
+            ..Default::default()
+        };
+        let mut source = step_app(services);
+        source.state_mut().run("shape.insert", json!({"preset": "star5", "rect": [80, 80, 120, 90]})).unwrap();
+        if slides {
+            source.state_mut().run("edit.cut", json!({"scope": "slides"})).unwrap();
+            source.run_steps(1);
+        } else {
+            source.event(egui::Event::Copy);
+            source.run_steps(1);
+        }
+        assert!(shared.borrow().is_some());
+        assert!(!source.output().platform_output.commands.iter().any(|c| matches!(c, egui::OutputCommand::CopyText(_))));
+        drop(source);
+        let read = shared.clone();
+        let services = Services { clipboard_native: Some(Box::new(move || read.borrow().clone())), ..Default::default() };
+        let mut dest = step_app(services);
+        let before = dest.state().session.active().unwrap().doc.slides[0].shapes.len();
+        if slides {
+            dest.state_mut().run("edit.paste", json!({"scope": "slides"})).unwrap();
+        } else {
+            dest.event(egui::Event::Paste(OBJECTS_MARKER.into()));
+            dest.run_steps(1);
+        }
+        let st = dest.state().session.active().unwrap();
+        if slides {
+            assert_eq!(st.doc.slides.len(), 2);
+            assert_eq!(st.doc.slides[1].shapes.len(), before + 1);
+        } else {
+            assert_eq!(st.doc.slides[0].shapes.len(), before + 1);
+            dest.event(egui::Event::Paste(OBJECTS_MARKER.into()));
+            dest.run_steps(1);
+            assert_eq!(dest.state().session.clipboard.pastes, 2, "same offer must not reset the offset counter");
+        }
+        dest.state_mut().run("edit.undo", json!({})).unwrap();
+        dest.state_mut().run("edit.redo", json!({})).unwrap();
+    }
+}
+
+#[test]
+fn system_clipboard_invalid_native_preserves_html_fallback() {
+    let services = Services {
+        clipboard_native: Some(Box::new(|| Some(b"invalid native format".to_vec()))),
+        clipboard_html: Some(Box::new(|| Some("<p><b>External</b></p>".into()))),
+        ..Default::default()
+    };
+    let mut dest = step_app(services);
+    dest.event(egui::Event::Paste("External".into()));
+    dest.run_steps(1);
+    let st = dest.state().session.active().unwrap();
+    let text = st.doc.slides[0].shapes.iter().filter_map(|s| s.text.as_ref()).find(|t| t.text() == "External").unwrap();
+    assert_eq!(text.paragraphs[0].runs[0].props.bold, Some(true));
+}

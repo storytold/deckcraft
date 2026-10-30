@@ -78,7 +78,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Slides | Slide layouts (11 standard) | P0 | D |
 | Slides | Reset slide | P1 | D |
 | Slides | Slides from outline | P2 | D |
-| Slides | Copy/paste slides between decks | P1 | P |
+| Slides | Copy/paste slides between decks (including separate Windows processes; native system format not yet offered on other hosts) | P1 | P |
 | Slides | Zoom (summary, section and slide zoom) | P2 | P |
 | Views | Normal view (thumbnails, slide, notes) | P0 | D |
 | Views | Outline view | P1 | D |
@@ -233,3 +233,5 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |
 | Platforms (✱) | BSD build | P2 | P |
+
+2026-10-26: Windows native clipboard transfer now covers slides, shapes and media across processes; pasted slides take the destination layout with the same name or type. The between-decks row stays P pending native clipboard adapters on other hosts.
