@@ -398,6 +398,31 @@ mod tests {
     }
 
     #[test]
+    fn font_dialog_ok_keeps_the_text_color() {
+        use deckcraft_color::Rgba;
+        let preset = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![] }.with(ColorTransform::LumMod(50_000));
+        let system = ColorRef { base: ColorBase::System { name: "windowText".into(), last: Rgba::rgb(0x12, 0x34, 0x56) }, mods: vec![] }
+            .with(ColorTransform::Alpha(60_000));
+        // A transform without a value, and a color that is not opaque.
+        let inverted = ColorRef { base: ColorBase::Preset { name: "red".into() }, mods: vec![] }.with(ColorTransform::Inv);
+        let translucent = ColorRef { base: ColorBase::System { name: "windowText".into(), last: Rgba::rgba(0x12, 0x34, 0x56, 0x80) }, mods: vec![] };
+        let rgb = ColorRef::rgb(Rgba::rgba(0x12, 0x34, 0x56, 0x80));
+        // A repeated transform, and two transforms in an order that is not alphabetical.
+        let twice = inverted.clone().with(ColorTransform::Inv);
+        let ordered = ColorRef::scheme(SchemeSlot::Accent2).with(ColorTransform::LumOff(20_000)).with(ColorTransform::LumMod(50_000));
+        for color in [preset, system, inverted, translucent, rgb, twice, ordered] {
+            let mut s = shape();
+            let fill = Fill::Solid { color: color.clone() };
+            format_run(&mut s, &|r| r.fill = Some(fill.clone())).unwrap();
+            s.ui_requests.clear();
+            s.execute("format.fontDialog", &json!({})).unwrap();
+            let Some(UiRequest::Dialog { params, .. }) = s.ui_requests.last().cloned() else { panic!("dialog request") };
+            s.execute("format.fontDialog", &json!({"color": params["color"]})).unwrap();
+            assert_eq!(props(&s).fill, Some(Fill::Solid { color }), "{}", params["color"]);
+        }
+    }
+
+    #[test]
     fn font_dialog_with_no_fields_asks_the_ui_to_open() {
         let mut s = shape();
         s.execute("format.italic", &json!({"on": true})).unwrap();
