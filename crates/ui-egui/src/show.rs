@@ -152,10 +152,33 @@ struct Transition {
     /// moves contents over backgrounds (Pan, Ferris Wheel, Reveal…): old back, old content, new
     /// back, new content.
     parts: Option<[Option<TextureHandle>; 4]>,
+    /// The time of the key press. A hidden show, which draws nothing, expires the transition
+    /// from it.
     start: f64,
+    /// Where the drawn transition's clock starts: the frame after the first one (see `progress`),
+    /// because rendering the new slide and the transition's pictures can take longer than the
+    /// whole transition (#1385). `None` until then.
+    clock: Option<f64>,
+    /// The first frame of the transition has been drawn: the new slide and the pictures the
+    /// transition needs exist, so the time they took is not part of the transition.
+    primed: bool,
     kind: String,
     option: String,
     dur: f64,
+}
+
+impl Transition {
+    /// How far the transition has come at frame time `now`, from 0 to 1. The first frame is the
+    /// one that renders the new slide and the transition's pictures and the second one starts the
+    /// clock, so a slow render never eats the transition's duration (#1385).
+    fn progress(&mut self, now: f64) -> f64 {
+        if !self.primed {
+            self.primed = true;
+            return 0.0;
+        }
+        let clock = *self.clock.get_or_insert(now);
+        ((now - clock) / self.dur.max(0.01)).clamp(0.0, 1.0)
+    }
 }
 
 /// A copy of the show's clock origins for regressions that must not depend on wall time.
@@ -464,7 +487,7 @@ impl Show {
                     self.last_viewed = from;
                 }
                 self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
-                    Some(Transition { old, from, morph: None, parts: None, start: now, kind, option, dur })
+                    Some(Transition { old, from, morph: None, parts: None, start: now, clock: None, primed: false, kind, option, dur })
                 } else {
                     None
                 };

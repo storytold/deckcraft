@@ -444,6 +444,29 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
 }
 
 #[test]
+fn a_slow_first_frame_does_not_use_up_the_transition() {
+    // #1385: the clock started at the key press, so rendering the new slide for longer than the
+    // transition's duration showed the next slide with no transition at all.
+    let mut s = deckcraft_engine::Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "fade", "index": 1, "duration": 500})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let mut show = Show::new(&doc, 0, false, false);
+    assert!(show.apply(ShowAction::Slide(1), &doc, 10.0));
+    let tr = show.trans.as_mut().expect("the fade plays");
+    assert!((tr.dur - 0.5).abs() < 1e-9);
+    // The first frame renders for two seconds; it still shows the start of the transition.
+    assert_eq!(tr.progress(10.0), 0.0);
+    // The frame after it starts the clock.
+    assert_eq!(tr.progress(12.0), 0.0);
+    assert!((tr.progress(12.25) - 0.5).abs() < 1e-9);
+    assert_eq!(tr.progress(12.5), 1.0);
+    assert_eq!(tr.progress(20.0), 1.0);
+    // A hidden show still expires it from the key press.
+    assert_eq!(tr.start, 10.0);
+}
+
+#[test]
 fn media_in_the_click_sequence_plays_with_its_step() {
     // #116: media set to play in the click sequence never started; only a click on it did.
     let s = deckcraft_engine::Session::with_new();

@@ -339,11 +339,12 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
     let Fr { ctx, doc, now, srect, .. } = *f;
     let Sl { idx, size, .. } = *sl;
     let mut drew = false;
-    let morphing = show.trans.as_ref().is_some_and(|tr| tr.kind == "morph" && tr.from.is_some() && now - tr.start < tr.dur);
+    let progress = show.trans.as_mut().map(|tr| tr.progress(now));
+    let morphing = show.trans.as_ref().is_some_and(|tr| tr.kind == "morph" && tr.from.is_some()) && progress.is_some_and(|p| p < 1.0);
     let tl = if morphing { Some(show.timeline(doc).clone()) } else { None };
     let morph = match (&show.trans, tl) {
         (Some(tr), Some(tl)) => {
-            let p = ((now - tr.start) / tr.dur.max(0.01)).clamp(0.0, 1.0);
+            let p = progress.unwrap_or(1.0);
             let hidden_b = |id: ShapeId| {
                 let st = state_for(&tl, id, 0, 0.0, &[], &[]);
                 !st.visible || st.opacity <= 0.0 || sl.hidden.contains(&id)
@@ -381,7 +382,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
         drew = true;
         ctx.request_repaint();
     } else if let (Some(tr), Some(new)) = (show.trans.as_mut(), &tex) {
-        let p = ((now - tr.start) / tr.dur.max(0.01)).clamp(0.0, 1.0);
+        let p = progress.unwrap_or(1.0);
         if p < 1.0 {
             // Slides split into background and content are rendered once per transition;
             // every frame only composites cached textures.
