@@ -154,6 +154,7 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
 
 /// A large square command button (Print, Create PDF, Check for Issues…).
 pub(super) fn square_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egui::Response {
+    let label = tl!(label);
     let t = Tokens::get(ui.ctx());
     let (rect, resp) = ui.allocate_exact_size(vec2(88.0, 80.0), if enabled { Sense::click() } else { Sense::hover() });
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, enabled, label));
