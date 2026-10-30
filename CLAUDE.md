@@ -8,17 +8,18 @@ New workspace crates must include `[lints] workspace = true` in `Cargo.toml` to 
 before modules or other crate items; crate-level `//!` documentation may precede them.
 
 ## Start every session
-1. Read `plan/STATUS.md`, then the current milestone in `plan/execution-plan.md`.
-2. Read `../../craftrules/AGENTS.md` and the standards it lists for your task.
-3. Run `cargo xtask ci` before you change anything, so you know the tree is green.
+1. Read `plan/STATUS.md` when it exists.
+2. Read `ROADMAP.md` and `docs/roadmap.md`.
+3. Read `../../craftrules/AGENTS.md` and the standards it lists for your task.
+4. Run `cargo xtask ci` before you change anything, so you know the tree is green.
 
 ## Habits
 - Every user-visible action is a command with tests (`crates/engine/src/cmd/*`).
 - Look at UI changes: `deckcraft --sample --control 7990` + `ui.screenshot`, or
   `deckcraft-cli render`.
 - Commit after each landed arc (`M<n>.<k>: what`) and push to `origin main`.
-- Keep `ROADMAP.md`, the progress docs in `docs/` (AGENTS.md §7) and `plan/STATUS.md` current.
-- Don't ask the user questions; record genuinely-theirs decisions in `plan/STATUS.md`.
+- Keep `ROADMAP.md` and the progress docs in `docs/` (AGENTS.md §7) current.
+- Don't ask the user questions; record genuinely-theirs decisions in `ROADMAP.md`.
 
 ## CI workflows
 - Workflows in `.github/workflows/` call the shared workflows in [`storytold/craft-common-actions`](https://github.com/storytold/craft-common-actions) at `@main`, with their inputs and secrets. No other jobs: if no shared workflow does what's needed, it doesn't go here.
