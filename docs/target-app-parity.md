@@ -194,7 +194,7 @@ Features row of the dimension table keeps ~62% until the next full re-measure). 
 | Pictures | 7 | 60% | ~45% | 12–20 | SVG, EMF+ records, clipboard paste on Windows (#1414), remove background, artistic-effect and correction depth | [file-format-parity.md](file-format-parity.md) |
 | Media | 4 | 67% | ~60% | 8–14 | WMA/WMV decode, record audio/screen, 3-D models and stock content, playback options lost on PPTX round trip (#74) | [file-format-parity.md](file-format-parity.md) |
 | Transitions | 4 | 100% | ~80% | 4–8 | 3-D transitions approximated in 2-D | [animation-parity.md](animation-parity.md) |
-| Animations | 6 | 85% | ~65% | 10–16 | 64 of PowerPoint's ~190 effects | [animation-parity.md](animation-parity.md) |
+| Animations | 6 | 85% | ~65% | 10–16 | 64 playable effects; 173 captured preset IDs in the catalog | [animation-parity.md](animation-parity.md) |
 | Slide show and presenter view | 8 | 68% | ~60% | 10–16 | Second-display placement, laser from presenter view, recording, subtitles, ink depth | [slideshow-parity.md](slideshow-parity.md) |
 | Review | 3 | 70% | ~45% | 8–14 | Compare depth, version history, real spelling dictionaries | [file-format-parity.md](file-format-parity.md) |
 | Draw (ink) | 2 | 50% | ~30% | 5–9 | Pen tilt, ink to math, lasso, ink to shape/text depth | [hardware-parity.md](hardware-parity.md) |
@@ -233,7 +233,7 @@ Carried from the 2026-10-07 ROADMAP status and updated with what has landed sinc
 - **Editing:** select, marquee, move, resize, rotate, adjust; smart guides; nudge; duplicate;
   z-order; group/ungroup; align/distribute; Format Painter; Selection pane; clipboard.
 - **Transitions and animations:** 48 transitions including Morph (objects, words, characters,
-  geometry outlines), 64 animation effects (entrance, emphasis, exit, motion paths, media),
+  geometry outlines), 173 catalog animation presets (64 with slideshow playback),
   triggers, by-paragraph builds, Animation Painter, on a shared timeline engine.
 - **Slide show:** full screen, keyboard/mouse navigation, blank screens, go-to-slide (the typed
   number is shown), See All Slides, click-to-zoom, pen, laser pointer, presenter window (black,
@@ -289,6 +289,7 @@ scored done (16 open issues).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-30 | minor | Current animation catalog has 173 captured preset IDs; 64 effects have playback and unsupported entries stay out of the picker |
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
 | 2026-10-16 | trivial | Arrange shortfall: Align to Slide and Align Selected Objects are in the Align menu. Percentages unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one headline breadth row (84% over 191 features after `cargo xtask parity`; duplicate checklist rows removed), one row per feature area with the latest breadth and shortfalls, one Themes / Slide show / Views / Review / Automation bullet each (320 engine commands). SmartArt ready ~35% (Text Pane, 6e40335) moves the area mean to 62.8%; dimension and headline percentages unchanged |

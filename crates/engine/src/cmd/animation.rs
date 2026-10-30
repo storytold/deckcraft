@@ -353,7 +353,13 @@ fn clear(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
-    Ok(Value::Array(ANIMATIONS.iter().map(|a| json!({"id": a.0, "label": a.1, "class": a.2.xml(), "options": a.5})).collect()))
+    Ok(Value::Array(
+        ANIMATIONS
+            .iter()
+            .filter(|a| deckcraft_anim::supports_animation_playback(a.0, a.2))
+            .map(|a| json!({"id": a.0, "label": a.1, "class": a.2.xml(), "options": a.5}))
+            .collect(),
+    ))
 }
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
@@ -436,6 +442,16 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn animation_gallery_hides_effects_without_playback() {
+        let mut s = Session::with_new();
+        let gallery = s.execute("animation.list", &json!({})).unwrap();
+        let effects = gallery.as_array().unwrap();
+        assert!(effects.iter().any(|a| a["id"] == "fade"));
+        assert!(!effects.iter().any(|a| a["id"] == "crawl"));
+        assert!(!effects.iter().any(|a| a["id"] == "changeFontSize"));
+    }
 
     #[test]
     fn clear_rejects_invalid_index() {
