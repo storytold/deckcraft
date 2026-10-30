@@ -543,7 +543,8 @@ pub fn spinner(ui: &mut Ui, id: &str, label: &str, value: f64, step: f64, suffix
             ui.data_mut(|d| d.remove::<String>(key));
         }
         if r.lost_focus() {
-            let num: String = text.chars().filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
+            // A decimal comma (`0,5`, as typed in many locales) reads as a point.
+            let num: String = text.chars().map(|c| if c == ',' { '.' } else { c }).filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
             if let Ok(v) = num.parse::<f64>() {
                 out = Some(v);
             }

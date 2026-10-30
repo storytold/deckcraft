@@ -113,13 +113,13 @@ fn dlg_slide_size(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let _ = combo.response.labelled_by(label.id);
     let abbr = unit_abbr(len);
     let (w_seed, h_seed) = (field_of(d, "w"), field_of(d, "h"));
-    field(ui, d, &format!("Width ({abbr}):"), "w", &w_seed);
-    field(ui, d, &format!("Height ({abbr}):"), "h", &h_seed);
+    field(ui, d, &crate::i18n::fmt(tl!("Width ({abbr}):"), &[("abbr", abbr)]), "w", &w_seed);
+    field(ui, d, &crate::i18n::fmt(tl!("Height ({abbr}):"), &[("abbr", abbr)]), "h", &h_seed);
     let (w, h) = (slide_dim_points(d, "w", ppu, cur.width), slide_dim_points(d, "h", ppu, cur.height));
     ui.horizontal(|ui| {
         ui.label(tl!("Orientation:"));
-        let portrait = ui.radio(h > w, "Portrait").clicked();
-        let landscape = ui.radio(w >= h, "Landscape").clicked();
+        let portrait = ui.radio(h > w, tl!("Portrait")).clicked();
+        let landscape = ui.radio(w >= h, tl!("Landscape")).clicked();
         // Picking the other orientation swaps the width and height fields.
         if portrait && w > h || landscape && h > w {
             put_slide_dim(d, "w", h, ppu);
@@ -290,8 +290,12 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
         return true;
     }
-    let what = if names.len() == 1 { format!("“{}”", names[0]) } else { format!("{} presentations", names.len()) };
-    ui.label(egui::RichText::new(format!("Do you want to save the changes you made to {what}?")).strong());
+    let what = if names.len() == 1 {
+        crate::i18n::fmt(tl!("“{name}”"), &[("name", names[0].as_str())])
+    } else {
+        crate::i18n::fmt(&crate::i18n::tn(names.len() as u64, "{n} presentation", "{n} presentations"), &[("n", names.len().to_string().as_str())])
+    };
+    ui.label(egui::RichText::new(crate::i18n::fmt(tl!("Do you want to save the changes you made to {what}?"), &[("what", what.as_str())])).strong());
     ui.label(tl!("Your changes will be lost if you don't save them."));
     ui.add_space(8.0);
     let mut done = false;
@@ -323,7 +327,9 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
 fn dlg_close(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
     // File › Close and Ctrl+W on a presentation with unsaved changes.
     let Some(name) = app.session.active().map(|d| d.title()) else { return true };
-    ui.label(egui::RichText::new(format!("Do you want to save the changes you made to “{name}”?")).strong());
+    ui.label(
+        egui::RichText::new(crate::i18n::fmt(tl!("Do you want to save the changes you made to “{name}”?"), &[("name", name.as_str())])).strong(),
+    );
     ui.label(tl!("Your changes will be lost if you don't save them."));
     ui.add_space(8.0);
     let mut done = false;
