@@ -37,6 +37,11 @@ struct App(
 );
 
 impl eframe::App for App {
+    // App preferences already persist separately; only the native window belongs in eframe storage.
+    fn persist_egui_memory(&self) -> bool {
+        false
+    }
+
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
@@ -228,6 +233,9 @@ fn main() -> eframe::Result {
             .with_fullsize_content_view(true)
             .with_titlebar_shown(false)
             .with_title_shown(false),
+        // No-preferences and control-channel runs neither restore nor save the native window, so
+        // control-channel screenshots start from the same window every time.
+        persist_window: std::env::var_os("DECKCRAFT_NO_PREFS").is_none() && control_port.is_none(),
         ..Default::default()
     };
     options.viewport = options.viewport.with_app_id(APP_ID);
