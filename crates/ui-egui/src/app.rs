@@ -91,6 +91,7 @@ impl SlideApp {
             ui_fonts: uifonts::UiFonts::default(),
             thumb_drag: None,
             selpane: selpane::State::default(),
+            ask_agent: crate::ask_agent::AskAgent::default(),
             align_to: None,
             doc_window: None,
             sorter: sorter::State::default(),
@@ -116,6 +117,12 @@ impl SlideApp {
 
     pub fn with_control(mut self, rx: Receiver<ControlRequest>) -> Self {
         self.control_rx = Some(rx);
+        self
+    }
+
+    /// Ask Agent's queue, shared with the control channel's connections.
+    pub fn with_agent_hub(mut self, hub: crate::AgentHub) -> Self {
+        self.ask_agent.hub = Some(hub);
         self
     }
 
@@ -299,6 +306,9 @@ impl SlideApp {
             return;
         }
         self.sync_backstage();
+        // The canvas sets it again if it draws a selection this frame.
+        self.ask_agent.anchor = None;
+        crate::ask_agent::keyboard(self, &ctx);
         self.keyboard(&ctx);
         self.sync_backstage();
         ribbon::title_bar(self, ui);
@@ -340,12 +350,14 @@ impl SlideApp {
                 }
             }
         });
+        crate::ask_agent::show(self, &ctx);
         toast::note_missing_fonts(self);
         toast::show(self, &ctx);
         dialogs::show(self, &ctx);
         #[cfg(not(target_arch = "wasm32"))]
         updates_ui::show(self, &ctx);
         menus::palette(self, &ctx);
+        crate::ask_agent::remember_focus(self, &ctx);
         for url in std::mem::take(&mut self.pending_urls) {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }

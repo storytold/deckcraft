@@ -202,6 +202,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-20 | Tests: the Options dialog's Cancel, Esc and close button put the settings back the way they were (#878) |
 | 2026-10-20 | Tests: Ctrl+A in the slide sorter selects every slide, as in PowerPoint (#936) |
 | 2026-10-18 | Thumbnails: navigating slides with the arrow keys scrolls the thumbnail pane to keep the current slide visible (#917) |
+| 2026-10-15 | Ask Agent: select shapes, text or nothing (the slide) and type an instruction (chip beside the selection, Home › Ask Agent, Help › Ask Agent…, Ctrl+Shift+O); the agent the person already runs gets it over MCP (`wait_for_request` / `reply_to_request`, control methods `agent.listen` / `agent.reply`, token required) and edits the presentation, its edits one undo step and its answer a comment by "Agent (name)"; the bubble offers Keep, Undo and a follow-up, names the agent in its colour, and holds the shapes while it works. No model or provider key in DeckCraft |
 | 2026-10-15 | PPTX trigger sequences keep separate On Click steps, including paragraph builds; synthetic import/edit/save/reopen and headless show regressions |
 | 2026-10-16 | Export: PNG with a transparent background — the slide background is left out, only the slide's content is drawn (Export… dialog, File › Export, web download, `file.export`/`file.render` `transparentBackground`, `deckcraft-cli render --transparent`) (#784) |
 | 2026-10-16 | Arrange ▸ Align: Align to Slide and Align Selected Objects, as in PowerPoint. One object aligns to the slide and several to each other until the other choice is ticked; the choice holds for that selection and also drives Distribute |
@@ -321,6 +322,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-28 | trivial | Progress log: MCP accepts multiple automation read and write roots (#1154). Scores and milestone names unchanged |
 | 2026-10-26 | trivial | Progress log: dragging several selected slides moves them all. Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Review: accessibility contrast checks all runs, paragraphs and nested group descendants; checklist score and headline figures unchanged |
+| 2026-10-15 | trivial | Progress log: Ask Agent |
 | 2026-10-25 | trivial | Progress log: Windows shortcut icon survives updates (#1114). Scores and milestone names unchanged |
 | 2026-10-29 | trivial | Progress log: the Picture Styles row leaves room for Crop and Size (#1232). Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: selecting a range of table cells by dragging. Scores and milestone names unchanged |
