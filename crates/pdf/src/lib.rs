@@ -303,11 +303,11 @@ pub fn master_text_pieces(pres: &Presentation, m: &deckcraft_model::Master, pape
     for pt in deckcraft_render::place_master_texts(pres, m, n) {
         for run in &pt.layout.runs {
             let Some(g) = run.glyphs.first() else { continue };
+            // The text as drawn: a slide number is its value, not the saved `‹#›` (#1153).
             let text: String = pt
-                .body
-                .paragraphs
+                .shown
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(String::as_str)
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)
@@ -561,11 +561,11 @@ impl Exporter<'_> {
             if run.glyphs.is_empty() || run.size <= 0.0 {
                 continue;
             }
+            // The text as drawn: a slide number is its value, not the saved `‹#›` (#1153).
             let text: String = pt
-                .body
-                .paragraphs
+                .shown
                 .get(run.para)
-                .map(|p| p.runs.iter().map(|r| r.text.as_str()).collect::<String>())
+                .map(String::as_str)
                 .unwrap_or_default()
                 .chars()
                 .skip(run.chars.0)

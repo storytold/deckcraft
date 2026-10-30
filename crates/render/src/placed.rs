@@ -14,7 +14,11 @@ pub struct PlacedText {
     pub layout: TextLayout,
     /// Shape-local → slide points (text rotation included, flips not: see [`crate::text_transform`]).
     pub transform: Affine,
+    /// The text as saved. Its character offsets are not `layout`'s where a field or a line break
+    /// is drawn differently: read the text the runs index into from `shown`.
     pub body: TextBody,
+    /// Each paragraph's text as laid out, fields evaluated: what `layout`'s runs index into.
+    pub shown: Vec<String>,
 }
 
 /// A clickable area: a shape action or a text hyperlink.
@@ -162,7 +166,8 @@ fn place_text(out: &mut Placed, rctx: &Ctx, fields: &SlideFields, owner: ShapeId
         let r = Rect::new(x0, line.top, x1, line.bottom);
         out.links.push(PlacedLink { rect: m.transform_rect_bbox(r), link, shape: owner, text: true });
     }
-    out.texts.push(PlacedText { layout, transform: m, body: body.clone() });
+    let shown = deckcraft_text::shown_paragraphs(rctx, s, body, fields);
+    out.texts.push(PlacedText { layout, transform: m, body: body.clone(), shown });
 }
 
 /// The hyperlink of the model run containing character `at` of paragraph `para`.
