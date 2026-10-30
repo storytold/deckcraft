@@ -3,7 +3,9 @@
 `deckcraft-cli mcp` runs a Model Context Protocol server on stdio. By default it drives its own
 headless engine (no window); with `--connect PORT` it drives a running DeckCraft started with
 `--control PORT`, so an agent and a person can work on the same deck. `--sample` opens the sample
-deck.
+deck. The server serves even when the app isn't open yet: tool calls return "not reachable …
+will retry on each call" and succeed once the app's port opens (#1248), so a client that starts
+before DeckCraft doesn't lose the server for its whole session.
 
 Connected mode accepts only newline-terminated replies of at most 16 MiB (including the newline),
 with the current request's numeric `id`, a boolean `ok`, and either `result` on success or a string

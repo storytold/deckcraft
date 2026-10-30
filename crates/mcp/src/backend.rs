@@ -26,14 +26,22 @@ pub struct Remote {
     addr: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
+    /// Whether a connection ever succeeded (`lazy` starts without one; the app may open later).
+    connected: bool,
 }
 
 impl Remote {
     /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1, connected: false };
         r.reconnect()?;
         Ok(r)
+    }
+
+    /// A remote that connects on first use: the app may start after the MCP server, and a
+    /// server that exits at once reads as failed for the client's whole session (#1248).
+    pub fn lazy(addr: &str) -> Self {
+        Self { addr: addr.to_string(), conn: None, next_id: 1, connected: false }
     }
 
     pub fn addr(&self) -> &str {
@@ -51,6 +59,7 @@ impl Remote {
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
                     let read = s.try_clone()?;
                     self.conn = Some((BufReader::new(read), s));
+                    self.connected = true;
                     return Ok(());
                 }
                 Err(e) => last = e,
@@ -127,7 +136,8 @@ impl Backend for Remote {
             self.conn = None;
             self.send(&line).map_err(|e| {
                 self.conn = None;
-                format!("DeckCraft app at {} is not reachable: {e}", self.addr)
+                let retry = if self.connected { String::new() } else { "; will retry on each call".to_string() };
+                format!("DeckCraft app at {} is not reachable: {e}{retry}", self.addr)
             })?;
         }
         self.receive(id).map_err(|e| {
@@ -144,7 +154,11 @@ impl Backend for Remote {
     }
 
     fn describe(&self) -> String {
-        format!("connected to the DeckCraft app at {}", self.addr)
+        if self.connected {
+            format!("connected to the DeckCraft app at {}", self.addr)
+        } else {
+            format!("will connect to the DeckCraft app at {} when it opens", self.addr)
+        }
     }
 }
 
@@ -315,6 +329,34 @@ mod tests {
         // The next call opens a fresh connection and works.
         assert!(remote.call("document.inspect", json!({})).is_ok());
         assert_eq!(executed.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn a_lazy_remote_serves_once_the_app_opens() {
+        // Nothing is listening: the call fails, but the server stays up and says it will retry.
+        let mut r = Remote::lazy("127.0.0.1:1");
+        let e = r.call("document.inspect", json!({})).expect_err("nothing is listening");
+        assert!(e.contains("not reachable") && e.contains("will retry"), "{e}");
+        assert!(r.describe().contains("will connect to"));
+        // The app opens later: the next call connects and answers.
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr").to_string();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(&stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                    continue;
+                }
+                // The lazy remote's first call (while nothing listened) already spent id 1.
+                let id = serde_json::from_str::<Value>(&line).ok().and_then(|v| v["id"].as_u64()).unwrap_or(1);
+                let mut w = &stream;
+                let _ = w.write_all(format!("{{\"id\":{id},\"ok\":true,\"result\":7}}\n").as_bytes());
+            }
+        });
+        r.addr = addr;
+        assert_eq!(r.call("document.inspect", json!({})).unwrap(), json!(7));
+        assert!(r.describe().contains("connected to"));
     }
 
     #[test]
