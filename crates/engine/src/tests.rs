@@ -2294,6 +2294,17 @@ fn shape_line_sets_compound_and_arrow_sizes() {
     let l = line(&s);
     assert_eq!(l.tail.as_ref().map(|e| (e.kind.as_str(), e.w.as_str())), Some(("stealth", "lg")));
     assert_eq!(l.head.as_ref().map(|e| e.w.as_str()), Some("med"));
+    // Width and length are set apart, as in PowerPoint's nine arrowhead sizes.
+    s.execute("shape.line", &json!({"tailWidth": "sm", "tailLength": "med", "headWidth": "lg", "headLength": "huge"})).unwrap();
+    let l = line(&s);
+    assert_eq!(l.tail.as_ref().map(|e| (e.w.as_str(), e.len.as_str())), Some(("sm", "med")));
+    assert_eq!(l.head.as_ref().map(|e| (e.w.as_str(), e.len.as_str())), Some(("lg", "med")));
+    // Round Dot and Square Dot are the dot dash with a cap.
+    s.execute("shape.line", &json!({"dash": "dot", "cap": "round"})).unwrap();
+    assert_eq!(
+        (line(&s).dash, line(&s).cap),
+        (Some(deckcraft_model::style::Dash::Preset { name: "dot".into() }), Some(deckcraft_model::style::LineCap::Round))
+    );
     s.execute("shape.line", &json!({"head": "none", "compound": "single"})).unwrap();
     let l = line(&s);
     assert!(l.head.is_none());

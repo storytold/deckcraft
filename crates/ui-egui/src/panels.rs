@@ -139,6 +139,14 @@ mod tests {
     use crate::{Services, SlideApp};
 
     #[test]
+    fn dash_types_set_the_dash_and_the_cap_that_shows_them() {
+        use super::format_shape::dash_params;
+        assert_eq!(dash_params("roundDot"), json!({"dash": "dot", "cap": "round"}));
+        assert_eq!(dash_params("dot"), json!({"dash": "dot", "cap": "flat"}));
+        assert_eq!(dash_params("lgDash"), json!({"dash": "lgDash"}));
+    }
+
+    #[test]
     fn solid_fill_transparency_reads_the_alpha_shape_fill_writes() {
         assert_eq!(solid_fill_transparency_percent(None), 0.0);
         assert_eq!(solid_fill_transparency_percent(Some(&Fill::None)), 0.0);

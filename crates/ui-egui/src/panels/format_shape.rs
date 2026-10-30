@@ -378,29 +378,65 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "shape.line", json!({"width": v.max(0.0)}));
                 }
             });
-            ui.horizontal_wrapped(|ui| {
-                ui.label("Dash");
-                for (l, d) in [("—", "solid"), ("···", "sysDot"), ("- -", "dash"), ("-·-", "dashDot"), ("— —", "lgDash")] {
-                    if ui.small_button(l).clicked() {
-                        run(app, "shape.line", json!({"dash": d}));
-                    }
+            use deckcraft_model::style::{Dash, LineCap};
+            let l = sh.line.clone().unwrap_or_default();
+            let dash = match (&l.dash, l.cap) {
+                (Some(Dash::Preset { name }), cap) if name == "dot" && matches!(cap, Some(LineCap::Round | LineCap::Square)) => {
+                    if cap == Some(LineCap::Round) { "roundDot" } else { "squareDot" }
                 }
-            });
+                (Some(Dash::Preset { name }), _) => name.as_str(),
+                _ => "solid",
+            };
+            line_choice_with(app, ui, "Dash type", "dash", dash, &DASH_TYPES, dash_params);
             line_details(app, ui, &sh);
         }
+    }
+}
+
+/// Dash types, in the order of PowerPoint's list. Round Dot and Square Dot are the `dot` dash with
+/// a round or square cap, as PowerPoint saves them.
+const DASH_TYPES: [(&str, &str); 13] = [
+    ("Solid", "solid"),
+    ("Round Dot", "roundDot"),
+    ("Square Dot", "squareDot"),
+    ("Dot", "dot"),
+    ("Dash", "dash"),
+    ("Dash Dot", "dashDot"),
+    ("Long Dash", "lgDash"),
+    ("Long Dash Dot", "lgDashDot"),
+    ("Long Dash Dot Dot", "lgDashDotDot"),
+    ("System Dash", "sysDash"),
+    ("System Dot", "sysDot"),
+    ("System Dash Dot", "sysDashDot"),
+    ("System Dash Dot Dot", "sysDashDotDot"),
+];
+
+/// The `shape.line` parameters for a `DASH_TYPES` value.
+pub(super) fn dash_params(v: &str) -> Value {
+    match v {
+        "roundDot" => json!({"dash": "dot", "cap": "round"}),
+        "squareDot" => json!({"dash": "dot", "cap": "square"}),
+        // Plain Dot has a flat cap, so it does not stay Round Dot or Square Dot.
+        "dot" => json!({"dash": "dot", "cap": "flat"}),
+        v => json!({"dash": v}),
     }
 }
 
 /// A labelled drop-down on the Format Shape pane: picks one of `items` (label, value) and runs
 /// `shape.line` with `{key: value}`.
 fn line_choice(app: &mut SlideApp, ui: &mut Ui, label: &str, key: &str, current: &str, items: &[(&str, &str)]) {
+    line_choice_with(app, ui, label, key, current, items, |v| json!({key: v}));
+}
+
+/// `line_choice` with the `shape.line` parameters made from the picked value.
+fn line_choice_with(app: &mut SlideApp, ui: &mut Ui, label: &str, key: &str, current: &str, items: &[(&str, &str)], params: impl Fn(&str) -> Value) {
     ui.horizontal(|ui| {
         let field = ui.add_sized(vec2(90.0, 20.0), egui::Label::new(label));
         let shown = items.iter().find(|(_, v)| *v == current).map_or(current, |(l, _)| *l);
         let combo = craft_ui::ComboBox::from_id_salt(("fmt-line", key)).selected_text(shown).width(120.0).show_ui(ui, |ui| {
             for (l, v) in items {
                 if ui.selectable_label(*v == current, *l).clicked() {
-                    run(app, "shape.line", json!({key: v}));
+                    run(app, "shape.line", params(v));
                 }
             }
         });
@@ -442,12 +478,16 @@ fn line_details(app: &mut SlideApp, ui: &mut Ui, sh: &deckcraft_model::Shape) {
     line_choice(app, ui, "Join type", "join", join, &[("Round", "round"), ("Bevel", "bevel"), ("Miter", "miter")]);
     let arrows = [("None", "none"), ("Arrow", "triangle"), ("Open Arrow", "arrow"), ("Stealth", "stealth"), ("Diamond", "diamond"), ("Oval", "oval")];
     let sizes = [("Small", "sm"), ("Medium", "med"), ("Large", "lg")];
-    for (label, key, size_label, size_key, end) in
-        [("Begin arrow", "head", "Begin size", "headSize", &l.head), ("End arrow", "tail", "End size", "tailSize", &l.tail)]
-    {
+    // PowerPoint sizes an arrowhead's width and length apart.
+    let ends = [
+        ("Begin arrow", "head", "Begin width", "headWidth", "Begin length", "headLength", &l.head),
+        ("End arrow", "tail", "End width", "tailWidth", "End length", "tailLength", &l.tail),
+    ];
+    for (label, key, w_label, w_key, len_label, len_key, end) in ends {
         line_choice(app, ui, label, key, end.as_ref().map_or("none", |e| e.kind.as_str()), &arrows);
         if let Some(e) = end {
-            line_choice(app, ui, size_label, size_key, &e.w, &sizes);
+            line_choice(app, ui, w_label, w_key, &e.w, &sizes);
+            line_choice(app, ui, len_label, len_key, &e.len, &sizes);
         }
     }
 }
