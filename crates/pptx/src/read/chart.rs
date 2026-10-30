@@ -115,9 +115,11 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     c.style = root.child_val("style").and_then(|v| v.parse().ok()).unwrap_or(2);
     if let Some(t) = ch.child("title") {
         c.title = Some(rich_text(t).unwrap_or_else(|| "Chart Title".into()));
+        c.auto_title = Some(false);
     }
     if ch.child("autoTitleDeleted").and_then(|a| a.bool("val")) == Some(true) {
         c.title = None;
+        c.auto_title = Some(false);
     }
     c.legend = ch.child("legend").map(|l| l.child_val("legendPos").unwrap_or("r").to_string());
     c.legend_overlay = ch.child("legend").and_then(|l| l.child("overlay")).and_then(|o| o.bool("val")).unwrap_or(false);
@@ -149,8 +151,11 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         }
     }
     // `autoTitleDeleted val="0"` without `c:title`: PowerPoint and LibreOffice draw the series name as the title of a single-series chart.
-    if ch.child("title").is_none() && ch.child("autoTitleDeleted").and_then(|a| a.bool("val")) == Some(false) && c.series.len() == 1 {
-        c.title = c.series.first().map(|s| s.name.clone()).filter(|n| !n.is_empty());
+    if ch.child("title").is_none() && ch.child("autoTitleDeleted").and_then(|a| a.bool("val")) == Some(false) {
+        c.auto_title = Some(true);
+        if c.series.len() == 1 {
+            c.title = c.series.first().map(|s| s.name.clone()).filter(|n| !n.is_empty());
+        }
     }
     let first = *kinds.first()?;
     c.kind = if kinds.iter().any(|k| *k != first) { ChartType::Combo } else { first };
@@ -801,20 +806,28 @@ mod tests {
 
     #[test]
     fn single_series_gets_automatic_title() {
-        assert_eq!(chart(r#"<c:autoTitleDeleted val="0"/>"#, "", 1).title.as_deref(), Some("S0"));
+        let c = chart(r#"<c:autoTitleDeleted val="0"/>"#, "", 1);
+        assert_eq!(c.title.as_deref(), Some("S0"));
+        assert_eq!(c.auto_title, Some(true));
     }
 
     #[test]
     fn no_automatic_title_when_deleted_or_multi_series() {
-        assert_eq!(chart(r#"<c:autoTitleDeleted val="1"/>"#, "", 1).title, None);
+        let deleted = chart(r#"<c:autoTitleDeleted val="1"/>"#, "", 1);
+        assert_eq!(deleted.title, None);
+        assert_eq!(deleted.auto_title, Some(false));
         assert_eq!(chart("", "", 1).title, None);
-        assert_eq!(chart(r#"<c:autoTitleDeleted val="0"/>"#, "", 2).title, None);
+        let multiple = chart(r#"<c:autoTitleDeleted val="0"/>"#, "", 2);
+        assert_eq!(multiple.title, None);
+        assert_eq!(multiple.auto_title, Some(true));
     }
 
     #[test]
     fn explicit_title_wins() {
         let t = "<c:title><c:tx><c:rich><a:p><a:r><a:t>Mine</a:t></a:r></a:p></c:rich></c:tx></c:title>";
-        assert_eq!(chart(r#"<c:autoTitleDeleted val="0"/>"#, t, 1).title.as_deref(), Some("Mine"));
+        let c = chart(r#"<c:autoTitleDeleted val="0"/>"#, t, 1);
+        assert_eq!(c.title.as_deref(), Some("Mine"));
+        assert_eq!(c.auto_title, Some(false));
     }
 
     const NS_CHART: &str = "http://schemas.openxmlformats.org/drawingml/2006/chart";

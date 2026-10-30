@@ -137,6 +137,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-28 | Automatic chart titles stay linked after `chart.data` renames a sole series, survive temporary multi-series edits, and recover from older native files; explicit titles stay fixed and PPTX save/reopen retains the automatic marker (PowerPoint COM, Linux and Windows regressions) |
 | 2026-10-25 | Windows installer: the Start menu shortcut takes the icon embedded in `deckcraft.exe` instead of an MSI `<Icon>`, so a taskbar pin keeps its icon after an update (#1114); a pin that already lost it has to be unpinned and pinned again once |
 | 2026-10-24 | AutoFormat as you type: a paragraph that starts with `*`, `-`, `--`, `>`, `<>`, `1.`, `1)`, `I.`, `i.`, `A.`, `a.` or `a)` and a space or tab becomes a bulleted or numbered list in that style; Backspace right after puts the typed text back, and Tools ▸ AutoCorrect and `text.autocorrect {lists}` turn it off |
 | 2026-10-24 | Tables: while the caret is in a cell, dragging into another cell selects that range of cells (shaded, merged cells taken in whole), and Shift+arrow grows or shrinks it; formatting applies to the selected cells only, and Delete clears their text and keeps the table |

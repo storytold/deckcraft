@@ -63,6 +63,11 @@ pub fn import(bytes: &[u8]) -> Result<Presentation, PptxError> {
     read::import(bytes)
 }
 
+/// Whether a chart part has an automatic title marker (`autoTitleDeleted val="0"`).
+pub fn chart_auto_title_state(xml: &str) -> Option<bool> {
+    read::chart::read_chart_xml(xml.as_bytes()).map(|c| c.auto_title.unwrap_or(false))
+}
+
 /// [`import`], plus the part names of slides the file lists but that couldn't be read and were
 /// left out.
 pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxError> {

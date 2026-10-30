@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-28 · **Change:** minor (automatic chart titles follow series renames; broader chart editing gap remains; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -184,6 +184,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   moving average, with forecast and the equation and R² label. A moving average is drawn with
   neither label. A combo chart's secondary value axis is read (`y2_*`,
   `Series.secondary_axis`) and is not written back when the chart is rebuilt.
+  Imported one-series automatic titles remain linked to the series name after `chart.data` edits;
+  automatic state survives temporary multi-series edits and is recovered from older native files,
+  while explicit titles remain unchanged. PowerPoint COM and Linux/Windows regressions cover these paths.
   An unchanged chart's embedded workbook now survives save (#335); editing the chart still
   drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
   also survive `.deckcraft` save/reopen (`crates/engine/tests/it/chart_native.rs`), with binary
@@ -372,6 +375,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | One-series automatic chart titles remain linked after data edits; temporary multi-series edits preserve automatic state, and older native files recover it from retained XML. PowerPoint COM confirmed linked titles follow series renames while explicit titles stay fixed. Broader chart data and element gaps remain |
 | 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
 | 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |

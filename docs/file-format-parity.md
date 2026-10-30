@@ -119,6 +119,7 @@ the round trip even though DeckCraft doesn't model it.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | Imported one-series automatic chart titles remain automatic after data edits: renames update the displayed title, temporary multi-series edits preserve automatic state, and older native files recover the state from retained chart XML. PPTX save/reopen retains `c:autoTitleDeleted val="0"` without writing a frozen `c:title`; explicit titles stay fixed. Checked in PowerPoint COM and Linux/Windows regressions |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |
 | 2026-10-15 | trivial | Native `.deckcraft` files serialize a nonempty chart `kept` sidecar (relationships, part names, content types and bytes). Older files without it still load; empty sidecars are omitted. Headless PPTX → edit → native save/reopen → PPTX checks keep the workbook and drawing bytes; editing chart data still drops the stale workbook |
 | 2026-10-15 | trivial | PPTX interactive timing sequences keep later On Click steps and paragraph click builds (`trigger_steps.rs`); mixed starts and independent buttons survive import/edit/save/reopen |
