@@ -26,7 +26,7 @@ use presenter::{NOTES_DEFAULT, PresenterTimer};
 use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_notes, presenter_window, wall_clock};
 #[cfg(test)]
 use render::{below_playing_video, next_rect, render_frame, start_prefetch};
-use render::{render_backdrop, render_threads};
+use render::{draw_morph_frame, render_backdrop, render_threads};
 pub use ui::ui;
 use zoom::Zoom;
 #[cfg(test)]
@@ -148,6 +148,11 @@ struct Transition {
     /// The slide left behind (Morph matches its shapes) and the Morph frame texture.
     from: Option<usize>,
     morph: Option<TextureHandle>,
+    /// The Morph frame drawn into `morph` last, and its size in pixels: the next frame draws only
+    /// what differs from it.
+    last_morph: Option<(deckcraft_anim::MorphFrame, (u32, u32))>,
+    /// Whether either slide of a Morph uses blur-based effects (decided on the first frame).
+    filtered: Option<bool>,
     /// Backgrounds and contents of the old and new slides, rendered once when the transition
     /// moves contents over backgrounds (Pan, Ferris Wheel, Reveal…): old back, old content, new
     /// back, new content.
@@ -464,7 +469,7 @@ impl Show {
                     self.last_viewed = from;
                 }
                 self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
-                    Some(Transition { old, from, morph: None, parts: None, start: now, kind, option, dur })
+                    Some(Transition { old, from, morph: None, last_morph: None, filtered: None, parts: None, start: now, kind, option, dur })
                 } else {
                     None
                 };

@@ -58,7 +58,7 @@ pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts
 pub use table::cell_body as table_cell_body;
 pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;
-pub use transition::{SlideParts, composite_transition, render_transition};
+pub use transition::{PixelRect, SlideParts, composite_transition, opts_for_part, pixel_region, render_transition};
 
 mod geometry;
 mod opts;

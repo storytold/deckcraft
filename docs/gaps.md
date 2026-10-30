@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** trivial (Morph frames draw only what changed (#1004); previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -351,7 +351,11 @@ Detail in [localization-parity.md](localization-parity.md).
   open, per-slide render, save, PPTX round trip and PDF export, and peak memory, against a saved
   baseline; show frame rate isn't measured and there are no PowerPoint numbers to set beside it.
   2–4 h.
-- **Morph aligns outlines every frame** (#67, PR open). 1 h.
+- **Morph still rasterises on the CPU every frame** (#1004). A frame that differs from the one
+  before only where plain shapes (preset geometry, no text or effects) moved is now drawn and
+  uploaded for that region alone; text, effects (and any slide with a shadow, glow or soft edge),
+  groups that change, outline morphs and backdrops that differ still redraw the whole frame, and a composited (GPU) Morph like the one
+  slides with animations got is not there yet. 4–8 h.
 
 ## Ecosystem
 

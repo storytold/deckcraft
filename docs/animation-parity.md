@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** trivial (Morph frames draw only what changed (#1004); previous: minor, Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -94,6 +94,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-25 | trivial | Morph plays smoother (#1004): a group that is the same on both slides moves instead of cross-fading two copies, and a frame draws and uploads only the region where plain shapes moved. No change to scores |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |
 | 2026-10-15 | trivial | PPTX interactive sequences preserve later On Click effects and one click per paragraph; no change to playback or feature scores |
 | 2026-10-16 | trivial | PPTX paragraph builds edited in PowerPoint keep their clicks; sub-points save With Previous of their parent (#844) |

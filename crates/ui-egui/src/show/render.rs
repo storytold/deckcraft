@@ -1,11 +1,71 @@
 use super::zoom::GRID_CAP;
 use super::{
-    BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
-    TriggerPlay, pos2, state_for, vec2,
+    BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, ShapeState, Show, ShowState, StepStamp, TextureHandle,
+    Timeline, Transition, TriggerPlay, pos2, state_for, vec2,
 };
 
 pub(super) fn render_threads() -> u16 {
     if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) }
+}
+
+/// Draw Morph frame `m` (from slide `from` to slide `to`) into the transition's texture. A frame
+/// that differs from the last one only where a few plain shapes moved is drawn and uploaded for
+/// that region alone; anything else redraws the whole frame.
+pub(super) fn draw_morph_frame(
+    ctx: &egui::Context,
+    doc: &Presentation,
+    (from, to): (usize, usize),
+    m: deckcraft_anim::MorphFrame,
+    size: (u32, u32),
+    tr: &mut Transition,
+) {
+    let f = |id: ShapeId| ShapeState { opacity: m.opacity_of(id), ..Default::default() };
+    let opts = RenderOpts {
+        scale: size.0 as f64 / doc.slide_size.width.max(1.0),
+        size: Some(size),
+        state: Some(&f),
+        threads: render_threads(),
+        ..Default::default()
+    };
+    let text: Vec<deckcraft_render::TextMorph> =
+        m.text.iter().map(|x| deckcraft_render::TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix }).collect();
+    let paths: Vec<deckcraft_render::PathMorph> = m
+        .paths
+        .iter()
+        .map(|x| deckcraft_render::PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix })
+        .collect();
+    // A shadow, glow or soft edge reaches into a block from a shape that did not change, and a
+    // block drawn alone has not got that shape's pixels to blur: such slides draw whole frames.
+    let filtered =
+        *tr.filtered.get_or_insert_with(|| [from, to].iter().any(|i| doc.slides.get(*i).is_some_and(|s| deckcraft_render::needs_filters(doc, s))));
+    let change = match (&tr.morph, &tr.last_morph) {
+        (Some(_), Some((last, last_size))) if *last_size == size && !filtered => m.changed_since(last),
+        _ => deckcraft_anim::MorphChange::Everything,
+    };
+    // Some(None): nothing to draw; Some(Some(block)): draw that block; None: the whole frame.
+    let part = match change {
+        deckcraft_anim::MorphChange::Nothing => Some(None),
+        deckcraft_anim::MorphChange::Region(r) => Some(deckcraft_render::pixel_region(r, opts.scale, size)),
+        deckcraft_anim::MorphChange::Everything => None,
+    };
+    match (part, tr.morph.as_mut()) {
+        (Some(None), Some(_)) => {}
+        (Some(Some(block)), Some(tex)) => {
+            let img =
+                deckcraft_render::render_blend(doc, (from, to), m.mix, &m.shapes, &text, &paths, &deckcraft_render::opts_for_part(&opts, block));
+            let ci = crate::textures::to_color_image(&img, false);
+            tex.set_partial([block.0 as usize, block.1 as usize], ci, egui::TextureOptions::LINEAR);
+        }
+        _ => {
+            let img = deckcraft_render::render_blend(doc, (from, to), m.mix, &m.shapes, &text, &paths, &opts);
+            let ci = crate::textures::to_color_image(&img, false);
+            match tr.morph.as_mut() {
+                Some(tex) => crate::textures::replace(ctx, tex, ci),
+                None => tr.morph = Some(crate::textures::upload(ctx, "morph", ci)),
+            }
+        }
+    }
+    tr.last_morph = Some((m, size));
 }
 
 pub(super) fn render_backdrop(doc: &Presentation, key: BackKey, threads: u16) -> deckcraft_render::Image {

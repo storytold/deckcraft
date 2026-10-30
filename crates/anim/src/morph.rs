@@ -1,5 +1,6 @@
 //! Morph: matching shapes between two slides, interpolating their boxes and building the frames.
 
+use deckcraft_geom::{KurboShape, Rect, preset};
 use deckcraft_model::resolve::{self, Ctx};
 use deckcraft_model::{ColorRef, Fill, Geom, Presentation, Rgba, Shape, ShapeId, ShapeKind, Slide, Xfrm, walk};
 
@@ -113,6 +114,12 @@ pub struct MorphFrame {
     /// Frame shapes whose outline turns from another geometry into their own (the renderer's
     /// `PathMorph`).
     pub paths: Vec<MorphPath>,
+    /// Whether the two slides' backdrops (background, master and layout graphics) look the same, so
+    /// the cross-fade of [`MorphFrame::mix`] changes nothing behind the shapes.
+    pub same_backdrop: bool,
+    /// For each of `shapes`, in slide points, the region it can draw in, or `None` when that is not
+    /// known (text, effects, groups, custom geometry…). See [`MorphFrame::changed_since`].
+    pub reach: Vec<Option<Rect>>,
 }
 
 /// A frame shape whose outline morphs from `from` (the old shape's geometry) into its own.
@@ -164,9 +171,21 @@ fn box_of(ctx: Option<&Ctx>, s: &Shape) -> Option<Xfrm> {
     }
 }
 
+/// `s` with the ids of the shapes inside it (a group's children) cleared: every shape of a
+/// presentation has an id of its own, so the same group on two slides never has the same ones.
+fn without_ids(s: &Shape) -> Shape {
+    let mut c = Shape { id: ShapeId(0), ..s.clone() };
+    if let ShapeKind::Group { children, .. } = &mut c.kind {
+        for child in children.iter_mut() {
+            *child = without_ids(child);
+        }
+    }
+    c
+}
+
 /// The content of a shape apart from what Morph interpolates (identity, box and fill).
 fn content(s: &Shape) -> Shape {
-    Shape { id: ShapeId(0), name: String::new(), xfrm: None, fill: None, ..s.clone() }
+    Shape { name: String::new(), xfrm: None, fill: None, ..without_ids(s) }
 }
 
 /// Whether two shapes differ in their geometry only, and it is drawn as an outline (shapes,
@@ -224,6 +243,64 @@ pub fn morph_crop(ca: [f64; 4], xa: Xfrm, cb: [f64; 4], xb: Xfrm, x: Xfrm, t: f6
     if c.iter().all(|v| v.is_finite()) { c } else { cb }
 }
 
+/// Whether slides `a` and `b` get the same backdrop: the same master and layout, background and
+/// colour map, and no field (slide number, date) in the graphics they show, which differ per slide.
+fn same_backdrop(pres: &Presentation, a: &Slide, b: &Slide) -> bool {
+    let (Some((ma, la)), Some((mb, lb))) = (pres.master_for(a), pres.master_for(b)) else { return false };
+    if !std::ptr::eq(ma, mb) || la.map(|l| l.id) != lb.map(|l| l.id) {
+        return false;
+    }
+    if a.background != b.background || a.show_master_shapes != b.show_master_shapes || a.color_map != b.color_map {
+        return false;
+    }
+    let (show_layout, show_master) = resolve::show_master_shapes(a, la);
+    let mut field = false;
+    let mut look = |shapes: &[Shape]| {
+        walk(shapes, &mut |x, _| {
+            let runs = x.text.iter().flat_map(|t| t.paragraphs.iter()).flat_map(|p| p.runs.iter());
+            field |= x.ph.is_none() && runs.into_iter().any(|r| matches!(r.kind, deckcraft_model::text::RunKind::Field { .. }));
+        })
+    };
+    if show_master {
+        look(&ma.shapes);
+    }
+    if show_layout && let Some(l) = la {
+        look(&l.shapes);
+    }
+    !field
+}
+
+/// The region of slide points frame shape `s` (of the slide `ctx` belongs to) draws in, when that
+/// is known: a plain shape or an uncropped picture of preset geometry, without text or effects,
+/// whose outline and line stay inside it. `None` for anything else.
+fn reach_of(ctx: Option<&Ctx>, s: &Shape) -> Option<Rect> {
+    let ctx = ctx?;
+    if s.text.as_ref().is_some_and(|t| !t.is_empty()) {
+        return None;
+    }
+    match &s.kind {
+        ShapeKind::Shape | ShapeKind::Connector { .. } => {}
+        ShapeKind::Picture { fill } if fill.crop == [0.0; 4] && fill.artistic.is_none() => {}
+        _ => return None,
+    }
+    if resolve::effects(ctx, s).0.is_some_and(|e| !e.is_empty() || e.raw3d.is_some()) {
+        return None;
+    }
+    let Geom::Preset { name, adj } = &s.geom else { return None };
+    let x = resolve::xfrm(ctx, s);
+    if !(x.is_finite() && x.w >= 0.0 && x.h >= 0.0) {
+        return None;
+    }
+    let geometry = preset::build(name, x.w, x.h, adj)?;
+    let local = geometry.paths.iter().fold(Rect::new(0.0, 0.0, x.w, x.h), |r, p| r.union(p.path.bounding_box()));
+    let line = resolve::line(ctx, s).0;
+    // A mitred corner reaches up to four half-widths out; an arrowhead several widths.
+    let width = line.width.unwrap_or(1.0).abs().min(1.0e4);
+    let margin = if line.head.is_some() || line.tail.is_some() { 12.0 * width } else { 4.0 * width } + 2.0;
+    let r = x.affine().transform_rect_bbox(local).inflate(margin, margin);
+    (r.x0.is_finite() && r.y0.is_finite() && r.x1.is_finite() && r.y1.is_finite()).then_some(r)
+}
+
 /// Morph frame from slide `a` to slide `b` at progress `t` (0..1, eased here). Paired shapes
 /// ([`morph_pairs`]) move along [`morph_xfrm`]; when they differ only in solid fill colour the
 /// colour blends, when pictures differ only in crop the crop morphs ([`morph_crop`]), when only
@@ -240,7 +317,7 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
     let mut next = 1u32;
     walk(&a.shapes, &mut |x, _| next = next.max(x.id.0.saturating_add(1)));
     walk(&b.shapes, &mut |x, _| next = next.max(x.id.0.saturating_add(1)));
-    let mut f = MorphFrame { mix: s, ..Default::default() };
+    let mut f = MorphFrame { mix: s, same_backdrop: same_backdrop(pres, a, b), ..Default::default() };
     let by = b.transition.as_ref().map(|tr| tr.option.as_str()).unwrap_or("");
     let (by_text, chars) = (by == "words" || by == "characters", by == "characters");
     let has_text = |x: &Shape| x.text.as_ref().is_some_and(|t| !t.is_empty()) && !matches!(x.kind, ShapeKind::Group { .. } | ShapeKind::Table(_));
@@ -253,6 +330,7 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
         if op < 1.0 {
             f.opacity.push((id, op));
         }
+        f.reach.push(reach_of(if old { ca.as_ref() } else { cb.as_ref() }, &sh));
         f.shapes.push((sh, old));
         id
     };
@@ -313,6 +391,14 @@ pub fn morph_frame(pres: &Presentation, a: &Slide, b: &Slide, t: f64, hidden_b: 
         }
     }
     f.text = text;
+    // An outline that morphs draws beyond either shape's own.
+    for p in &paths {
+        if let Some(i) = f.shapes.iter().position(|(x, _)| x.id == p.id)
+            && let Some(r) = f.reach.get_mut(i)
+        {
+            *r = None;
+        }
+    }
     f.paths = paths;
     f
 }

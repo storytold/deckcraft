@@ -9,8 +9,8 @@ use super::zoom::{
     wheel_zoom_lines,
 };
 use super::{
-    Align2, BackKey, Click, Color32, CornerRadius, Key, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction, SlideApp,
-    Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    Align2, BackKey, Click, Color32, CornerRadius, Key, LinkJump, Pos2, Rect, Sense, ShapeId, Show, ShowAction, SlideApp, Source, Stroke,
+    TextureHandle, Ui, draw_morph_frame, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -356,28 +356,10 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
         _ => None,
     };
     if let (Some((from, m)), Some(tr)) = (morph, show.trans.as_mut()) {
-        let f = |id: ShapeId| ShapeState { opacity: m.opacity_of(id), ..Default::default() };
-        let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
-        let opts =
-            RenderOpts { scale: size.0 as f64 / doc.slide_size.width.max(1.0), size: Some(size), state: Some(&f), threads, ..Default::default() };
-        let text: Vec<deckcraft_render::TextMorph> =
-            m.text.iter().map(|x| deckcraft_render::TextMorph { old: x.old, new: x.new, from: x.from, to: x.to, chars: x.chars, t: m.mix }).collect();
-        let paths: Vec<deckcraft_render::PathMorph> = m
-            .paths
-            .iter()
-            .map(|x| deckcraft_render::PathMorph { id: x.id, from: x.from.clone(), from_box: x.from_box, to_box: x.to_box, t: m.mix })
-            .collect();
-        let img = deckcraft_render::render_blend(doc, (from, idx), m.mix, &m.shapes, &text, &paths, &opts);
-        let ci = crate::textures::to_color_image(&img, false);
-        let frame = match tr.morph.take() {
-            Some(mut h) => {
-                crate::textures::replace(ctx, &mut h, ci);
-                h
-            }
-            None => crate::textures::upload(ctx, "morph", ci),
-        };
-        painter.image(frame.id(), srect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
-        tr.morph = Some(frame);
+        draw_morph_frame(ctx, doc, (from, idx), m, size, tr);
+        if let Some(frame) = &tr.morph {
+            painter.image(frame.id(), srect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE);
+        }
         drew = true;
         ctx.request_repaint();
     } else if let (Some(tr), Some(new)) = (show.trans.as_mut(), &tex) {

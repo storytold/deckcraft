@@ -1,7 +1,7 @@
 use super::{
     Ctx, Fields, Fill, Image, Opts, PathMorph, Point, RENDERER, Rect, Region, RenderOpts, Renderer, Rgba, ShapeState, SlideFields, TextMorph,
-    crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, parse_path, pasteboard_region, place_slide,
-    render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
+    crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, opts_for_part, parse_path, pasteboard_region,
+    pixel_region, place_slide, render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
 };
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
@@ -624,6 +624,98 @@ fn blend_ends_match_the_slides_and_mixes_backdrops() {
     // Hostile input: bad indices and NaN never panic.
     assert_eq!(render_blend(&p, (0, 9), 0.5, &shapes, &[], &[], &o).width, 0);
     let _ = render_blend(&p, (0, 1), f64::NAN, &shapes, &[], &[], &o);
+}
+
+#[test]
+fn pixel_regions_cover_the_region_inside_the_frame() {
+    let r = |x0, y0, x1, y1| Rect::new(x0, y0, x1, y1);
+    // 10 x 20 points at 2 px per point, two pixels of margin each way.
+    assert_eq!(pixel_region(r(10.0, 20.0, 20.0, 40.0), 2.0, (1920, 1080)), Some((18, 38, 24, 44)));
+    // Clamped to the frame, and nothing for a region outside it or a bad scale.
+    assert_eq!(pixel_region(r(-50.0, -50.0, 5000.0, 5000.0), 1.0, (100, 50)), Some((0, 0, 100, 50)));
+    assert_eq!(pixel_region(r(2000.0, 0.0, 2100.0, 10.0), 1.0, (100, 50)), None);
+    assert_eq!(pixel_region(r(0.0, 0.0, 10.0, 10.0), 0.0, (100, 50)), None);
+    assert_eq!(pixel_region(r(f64::NAN, 0.0, 10.0, 10.0), 1.0, (100, 50)), None);
+}
+
+/// Morph frames at `t`: the whole frame, and the pixels `part` of it drawn on their own.
+fn morph_frames(p: &Presentation, t: f64, o: &RenderOpts) -> (deckcraft_anim::MorphFrame, Image) {
+    let (a, b) = (&p.slides[0], &p.slides[1]);
+    let m = deckcraft_anim::morph_frame(p, a, b, t, &|_| false);
+    let img = {
+        let f = |id: ShapeId| ShapeState { opacity: m.opacity_of(id), ..Default::default() };
+        let o = RenderOpts { state: Some(&f), ..crate::transition::copy_opts(o) };
+        let paths: Vec<PathMorph> = vec![];
+        render_blend(p, (0, 1), m.mix, &m.shapes, &[], &paths, &o)
+    };
+    (m, img)
+}
+
+#[test]
+fn drawing_only_the_changed_region_gives_the_same_frame() {
+    // Two slides with a gradient box that moves and turns, a stroked ellipse that grows, a
+    // static box in their way and one that fades in: every frame of the Morph, drawn as the
+    // previous frame with the changed region replaced, equals the frame drawn whole.
+    let stop = |pos, r, g, b| deckcraft_model::style::GradientStop { pos, color: ColorRef::rgb(deckcraft_color::Rgba::rgb(r, g, b)) };
+    let grad = Some(Fill::Gradient(deckcraft_model::style::Gradient {
+        stops: vec![stop(0.0, 220, 40, 40), stop(1.0, 30, 60, 200)],
+        shape: deckcraft_model::style::GradientShape::Linear { angle: 30.0, scaled: false },
+        rotate_with_shape: true,
+        tile: [0.0; 4],
+    }));
+    let mover = |id, x: f64, rot, w| Shape {
+        id: ShapeId(id),
+        name: "Mover".into(),
+        xfrm: Some(Xfrm { rot, ..Xfrm::new(x, 80.0, w, 120.0) }),
+        fill: grad.clone(),
+        ..Default::default()
+    };
+    let ring = |id, w: f64| Shape {
+        id: ShapeId(id),
+        name: "Ring".into(),
+        xfrm: Some(Xfrm::new(300.0, 300.0, w, 90.0)),
+        geom: Geom::Preset { name: "ellipse".into(), adj: vec![] },
+        line: Some(deckcraft_model::Line::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(10, 10, 10)), 9.0)),
+        ..Default::default()
+    };
+    let still = Shape {
+        id: ShapeId(30),
+        name: "Still".into(),
+        xfrm: Some(Xfrm::new(400.0, 120.0, 120.0, 60.0)),
+        fill: Some(deckcraft_model::Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(40, 160, 70)))),
+        ..Default::default()
+    };
+    let late = Shape { id: ShapeId(40), name: "Late".into(), xfrm: Some(Xfrm::new(700.0, 400.0, 100.0, 60.0)), ..Default::default() };
+    let mut p = deck_with(vec![mover(10, 40.0, 0.0, 160.0), ring(11, 100.0), still.clone()]);
+    let mut next = (*p.slides[0]).clone();
+    next.shapes = vec![mover(10, 640.0, 40.0, 220.0), ring(11, 180.0), still, late];
+    p.slides.push(std::sync::Arc::new(next));
+    let o = RenderOpts { scale: 1.0, ..Default::default() };
+    let steps: Vec<f64> = (0..=20).map(|i| i as f64 / 20.0).collect();
+    let (mut prev_frame, mut shown) = morph_frames(&p, steps[0], &o);
+    let mut partial = 0;
+    for t in &steps[1..] {
+        let (frame, whole) = morph_frames(&p, *t, &o);
+        if let deckcraft_anim::MorphChange::Region(r) = frame.changed_since(&prev_frame) {
+            let part = pixel_region(r, o.scale, (whole.width, whole.height)).expect("the region is on the slide");
+            let f = |id: ShapeId| ShapeState { opacity: frame.opacity_of(id), ..Default::default() };
+            let part_opts = opts_for_part(&RenderOpts { state: Some(&f), ..crate::transition::copy_opts(&o) }, part);
+            let bits = render_blend(&p, (0, 1), frame.mix, &frame.shapes, &[], &[], &part_opts);
+            assert_eq!((bits.width, bits.height), (part.2, part.3));
+            for y in 0..part.3 {
+                let row = ((part.1 + y) as usize * shown.width as usize + part.0 as usize) * 4;
+                let src = y as usize * bits.width as usize * 4;
+                shown.pixels[row..row + part.2 as usize * 4].copy_from_slice(&bits.pixels[src..src + part.2 as usize * 4]);
+            }
+            partial += 1;
+        } else {
+            shown = whole.clone();
+        }
+        let worst = shown.pixels.iter().zip(&whole.pixels).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+        assert!(worst <= 1, "t = {t}: a pixel differs by {worst}");
+        prev_frame = frame;
+    }
+    assert!(partial >= 10, "only {partial} of the frames were drawn in part");
 }
 
 fn text_shape(id: u32, text: &str, x: f64, y: f64) -> Shape {

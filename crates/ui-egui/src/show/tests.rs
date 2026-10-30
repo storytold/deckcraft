@@ -443,6 +443,92 @@ fn a_transition_keeps_the_old_slide_in_its_own_texture() {
     assert!(show.tex.is_none(), "the new slide gets a texture of its own instead of overwriting the old one");
 }
 
+/// The pieces of the textures uploaded since the last call: where each lands (`None`: the whole
+/// texture) and its size.
+fn uploads(ctx: &egui::Context) -> Vec<(Option<[usize; 2]>, [usize; 2])> {
+    let mut delta = ctx.tex_manager().write().take_delta();
+    // A texture is first allocated empty, then set.
+    let sizes = delta.set.values().flatten().map(|d| (d.pos, d.image.size())).filter(|(_, size)| *size != [0, 0]).collect();
+    delta.clear();
+    sizes
+}
+
+/// Two slides with a box that moves across the slide, `still` shapes on both, and a Morph
+/// transition state at its start.
+fn morph_fixture(still: Vec<deckcraft_model::Shape>) -> (deckcraft_model::Presentation, Transition) {
+    let mut doc = deckcraft_model::Presentation::default();
+    let boxed = |x: f64| deckcraft_model::Shape {
+        id: ShapeId(10),
+        name: "Box".into(),
+        xfrm: Some(deckcraft_model::Xfrm::new(x, 100.0, 120.0, 80.0)),
+        ..Default::default()
+    };
+    std::sync::Arc::make_mut(&mut doc.slides[0]).shapes = [vec![boxed(40.0)], still.clone()].concat();
+    let mut next = (*doc.slides[0]).clone();
+    next.shapes = [vec![boxed(700.0)], still].concat();
+    doc.slides.push(std::sync::Arc::new(next));
+    let tr = Transition {
+        old: None,
+        from: Some(0),
+        morph: None,
+        last_morph: None,
+        filtered: None,
+        parts: None,
+        start: 0.0,
+        kind: "morph".into(),
+        option: "objects".into(),
+        dur: 1.0,
+    };
+    (doc, tr)
+}
+
+fn morph_frame_at(doc: &deckcraft_model::Presentation, t: f64) -> deckcraft_anim::MorphFrame {
+    deckcraft_anim::morph_frame(doc, &doc.slides[0], &doc.slides[1], t, &|_| false)
+}
+
+#[test]
+fn a_morph_frame_draws_and_uploads_only_what_changed() {
+    // A box moving across the slide is a small part of every frame (the show used to draw and
+    // upload the whole picture for each).
+    let (doc, mut tr) = morph_fixture(vec![]);
+    let ctx = egui::Context::default();
+    let full = 960 * 540;
+    let area = |u: &[(Option<[usize; 2]>, [usize; 2])]| u.iter().map(|(_, [w, h])| w * h).sum::<usize>();
+    // The first frame is drawn whole.
+    draw_morph_frame(&ctx, &doc, (0, 1), morph_frame_at(&doc, 0.2), (960, 540), &mut tr);
+    assert_eq!(uploads(&ctx), [(None, [960, 540])]);
+    // The next one only where the box was and where it is.
+    draw_morph_frame(&ctx, &doc, (0, 1), morph_frame_at(&doc, 0.3), (960, 540), &mut tr);
+    let patch = uploads(&ctx);
+    assert!(matches!(patch.as_slice(), [(Some(_), _)]), "{patch:?}");
+    assert!(area(&patch) * 5 < full, "{patch:?}");
+    // The same frame again changes nothing.
+    draw_morph_frame(&ctx, &doc, (0, 1), morph_frame_at(&doc, 0.3), (960, 540), &mut tr);
+    assert!(uploads(&ctx).is_empty());
+    // A window that changed size starts over.
+    draw_morph_frame(&ctx, &doc, (0, 1), morph_frame_at(&doc, 0.4), (480, 270), &mut tr);
+    assert_eq!(uploads(&ctx), [(None, [480, 270])]);
+}
+
+#[test]
+fn a_morph_over_a_blurred_effect_draws_whole_frames() {
+    // A soft-edged shape that does not move still blurs into the block the box moves through:
+    // a block drawn alone cannot know its pixels, so every frame is drawn whole.
+    let soft = deckcraft_model::Shape {
+        id: ShapeId(20),
+        name: "Soft".into(),
+        xfrm: Some(deckcraft_model::Xfrm::new(300.0, 100.0, 120.0, 80.0)),
+        effects: Some(deckcraft_model::Effects { soft_edge: Some(12.0), ..Default::default() }),
+        ..Default::default()
+    };
+    let (doc, mut tr) = morph_fixture(vec![soft]);
+    let ctx = egui::Context::default();
+    for t in [0.2, 0.3, 0.4] {
+        draw_morph_frame(&ctx, &doc, (0, 1), morph_frame_at(&doc, t), (960, 540), &mut tr);
+        assert_eq!(uploads(&ctx), [(None, [960, 540])], "t = {t}");
+    }
+}
+
 #[test]
 fn media_in_the_click_sequence_plays_with_its_step() {
     // #116: media set to play in the click sequence never started; only a click on it did.
