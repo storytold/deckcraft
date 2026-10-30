@@ -1150,6 +1150,7 @@ name = "deckcraft-media"
 version = "0.12.0"
 dependencies = [
  "deckcraft-av1",
+ "deckcraft-bitstream",
  "deckcraft-h264",
  "deckcraft-hevc",
  "deckcraft-isobmff",

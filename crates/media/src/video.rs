@@ -9,6 +9,25 @@ use deckcraft_matroska::Codec as MkvCodec;
 use crate::yuv::{self, Matrix, Planes};
 use crate::{Bytes, Container, MediaError, Result};
 
+#[cfg(not(target_arch = "wasm32"))]
+const RGBA_PICTURE_SLOTS: u64 = 25; // Feed, sender, current/next, and the largest codec-ready batch.
+#[cfg(target_arch = "wasm32")]
+const RGBA_PICTURE_SLOTS: u64 = 18; // Current/next and the largest codec-ready batch.
+
+fn rgba_picture_bytes(width: u32, height: u32) -> Option<u64> {
+    u64::from(width).checked_mul(u64::from(height))?.checked_mul(4)
+}
+
+fn rgba_store_bytes(width: u32, height: u32, pictures: u64) -> Option<u64> {
+    rgba_picture_bytes(width, height)?.checked_mul(pictures)
+}
+
+fn frame_budgets(width: u32, height: u32, budget: u64) -> Option<(u64, u64)> {
+    let rgba_queue = rgba_store_bytes(width, height, RGBA_PICTURE_SLOTS)?;
+    let planes = budget.checked_sub(rgba_queue)?;
+    Some((planes, rgba_picture_bytes(width, height)?))
+}
+
 /// A decoded picture, RGBA8 (straight alpha, always opaque), with its presentation time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
@@ -29,8 +48,9 @@ struct Pic {
 
 trait Codec: Send {
     fn decode(&mut self, sample: &[u8], pts: i64) -> Result<Vec<Pic>>;
-    fn flush(&mut self) -> Vec<Pic>;
+    fn flush(&mut self) -> Result<Vec<Pic>>;
     fn reset(&mut self);
+    fn set_memory_budget(&mut self, planes: u64, rgba_picture: u64);
 }
 
 fn dec_err(e: impl std::fmt::Display) -> MediaError {
@@ -42,14 +62,16 @@ fn dec_err(e: impl std::fmt::Display) -> MediaError {
 struct H264 {
     avcc: Vec<u8>,
     dec: deckcraft_h264::Decoder,
+    plane_budget: u64,
+    rgba_picture_budget: u64,
 }
 
 impl H264 {
     fn new(avcc: Vec<u8>) -> Result<H264> {
         let dec = deckcraft_h264::Decoder::from_avcc(&avcc).map_err(dec_err)?;
-        Ok(H264 { avcc, dec })
+        Ok(H264 { avcc, dec, plane_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET, rgba_picture_budget: 0 })
     }
-    fn convert(p: deckcraft_h264::Picture) -> Pic {
+    fn convert(p: deckcraft_h264::Picture, budget: u64) -> Result<Pic> {
         let (w, h) = (p.width as usize, p.height as usize);
         let planes = Planes {
             y: &p.y,
@@ -64,28 +86,36 @@ impl H264 {
             bits: 8,
             mono: p.chroma_width == 0,
         };
-        let rgba = yuv::to_rgba(&planes, Matrix::from_code(p.color.matrix, p.height), p.color.full_range);
-        Pic { pts: p.pts, width: p.width, height: p.height, rgba }
+        let rgba = yuv::to_rgba(&planes, Matrix::from_code(p.color.matrix, p.height), p.color.full_range, budget)
+            .ok_or_else(|| MediaError::Corrupt("RGBA picture exceeds the video memory budget".into()))?;
+        Ok(Pic { pts: p.pts, width: p.width, height: p.height, rgba })
     }
 }
 
 impl Codec for H264 {
     fn decode(&mut self, sample: &[u8], pts: i64) -> Result<Vec<Pic>> {
-        Ok(self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(H264::convert).collect())
+        self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(|p| H264::convert(p, self.rgba_picture_budget)).collect()
     }
-    fn flush(&mut self) -> Vec<Pic> {
-        self.dec.flush().into_iter().map(H264::convert).collect()
+    fn flush(&mut self) -> Result<Vec<Pic>> {
+        self.dec.flush().into_iter().map(|p| H264::convert(p, self.rgba_picture_budget)).collect()
     }
     fn reset(&mut self) {
         if let Ok(d) = deckcraft_h264::Decoder::from_avcc(&self.avcc) {
+            let mut d = d;
+            d.set_memory_budget(self.plane_budget);
             self.dec = d;
         }
+    }
+    fn set_memory_budget(&mut self, planes: u64, rgba_picture: u64) {
+        self.plane_budget = planes;
+        self.dec.set_memory_budget(planes);
+        self.rgba_picture_budget = rgba_picture;
     }
 }
 
 /// Convert an HEVC / VP9 style picture (planes of u8 or u16 with strides).
 macro_rules! plane_pic {
-    ($p:expr, $Plane:path, $sx:expr, $sy:expr, $matrix:expr, $full:expr, $mono:expr) => {{
+    ($p:expr, $Plane:path, $sx:expr, $sy:expr, $matrix:expr, $full:expr, $mono:expr, $budget:expr) => {{
         let p = $p;
         use $Plane as P;
         let (w, h) = (p.width as usize, p.height as usize);
@@ -94,6 +124,7 @@ macro_rules! plane_pic {
                 &Planes { y, u, v, y_stride: p.y_stride, c_stride: p.uv_stride, width: w, height: h, sx: $sx, sy: $sy, bits: 8, mono: $mono },
                 $matrix,
                 $full,
+                $budget,
             ),
             (P::U16(y), P::U16(u), P::U16(v)) => yuv::to_rgba(
                 &Planes {
@@ -111,57 +142,74 @@ macro_rules! plane_pic {
                 },
                 $matrix,
                 $full,
+                $budget,
             ),
-            _ => vec![0; w * h * 4],
-        };
-        Pic { pts: p.pts, width: p.width, height: p.height, rgba }
+            _ => None,
+        }
+        .ok_or_else(|| MediaError::Corrupt("RGBA picture exceeds the video memory budget".into()))?;
+        Ok(Pic { pts: p.pts, width: p.width, height: p.height, rgba })
     }};
 }
 
 struct Hevc {
     hvcc: Vec<u8>,
     dec: deckcraft_hevc::Decoder,
+    plane_budget: u64,
+    rgba_picture_budget: u64,
 }
 
 impl Hevc {
     fn new(hvcc: Vec<u8>) -> Result<Hevc> {
         let dec = deckcraft_hevc::Decoder::from_hvcc(&hvcc).map_err(dec_err)?;
-        Ok(Hevc { hvcc, dec })
+        Ok(Hevc { hvcc, dec, plane_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET, rgba_picture_budget: 0 })
     }
-    fn convert(p: deckcraft_hevc::Picture) -> Pic {
+    fn convert(p: deckcraft_hevc::Picture, budget: u64) -> Result<Pic> {
         let sx = u32::from(p.chroma_width < p.width);
         let sy = u32::from(p.chroma_height < p.height);
         let m = Matrix::from_code(p.color.matrix, p.height);
-        plane_pic!(&p, deckcraft_hevc::Plane, sx, sy, m, p.color.full_range, p.chroma_width == 0)
+        plane_pic!(&p, deckcraft_hevc::Plane, sx, sy, m, p.color.full_range, p.chroma_width == 0, budget)
     }
 }
 
 impl Codec for Hevc {
     fn decode(&mut self, sample: &[u8], pts: i64) -> Result<Vec<Pic>> {
-        Ok(self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(Hevc::convert).collect())
+        self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(|p| Hevc::convert(p, self.rgba_picture_budget)).collect()
     }
-    fn flush(&mut self) -> Vec<Pic> {
-        self.dec.flush().into_iter().map(Hevc::convert).collect()
+    fn flush(&mut self) -> Result<Vec<Pic>> {
+        self.dec.flush().into_iter().map(|p| Hevc::convert(p, self.rgba_picture_budget)).collect()
     }
     fn reset(&mut self) {
         if let Ok(d) = deckcraft_hevc::Decoder::from_hvcc(&self.hvcc) {
+            let mut d = d;
+            d.set_memory_budget(self.plane_budget);
             self.dec = d;
         }
+    }
+    fn set_memory_budget(&mut self, planes: u64, rgba_picture: u64) {
+        self.plane_budget = planes;
+        self.dec.set_memory_budget(planes);
+        self.rgba_picture_budget = rgba_picture;
     }
 }
 
 struct Vp9 {
     dec: deckcraft_vp9::Decoder,
+    rgba_picture_budget: u64,
 }
 
 impl Vp9 {
-    fn convert(p: deckcraft_vp9::Picture) -> Pic {
+    fn convert(p: deckcraft_vp9::Picture, budget: u64) -> Result<Pic> {
         let (w, h) = (p.width as usize, p.height as usize);
         if p.color.color_space == 7 {
             // RGB (4:4:4): the planes carry G, B, R.
             let shift = p.bit_depth.saturating_sub(8);
             let at = |pl: &deckcraft_vp9::Plane, i: usize| if i < pl.len() { (pl.get(i) >> shift) as u8 } else { 0 };
-            let mut rgba = Vec::with_capacity(w * h * 4);
+            let len = rgba_picture_bytes(p.width, p.height)
+                .filter(|n| *n <= budget)
+                .and_then(|n| usize::try_from(n).ok())
+                .ok_or_else(|| MediaError::Corrupt("RGBA picture exceeds the video memory budget".into()))?;
+            let mut rgba = Vec::new();
+            rgba.try_reserve_exact(len).map_err(dec_err)?;
             for row in 0..h {
                 for col in 0..w {
                     let i = row * p.y_stride + col;
@@ -169,7 +217,7 @@ impl Vp9 {
                     rgba.extend_from_slice(&[at(&p.v, c), at(&p.y, i), at(&p.u, c), 255]);
                 }
             }
-            return Pic { pts: p.pts, width: p.width, height: p.height, rgba };
+            return Ok(Pic { pts: p.pts, width: p.width, height: p.height, rgba });
         }
         // color_space (VP9 §7.2.2): 1 BT.601, 2 BT.709, 3 SMPTE-170, 4 SMPTE-240, 5 BT.2020.
         let m = match p.color.color_space {
@@ -178,19 +226,23 @@ impl Vp9 {
             5 => Matrix::Bt2020,
             _ => Matrix::from_code(2, p.height),
         };
-        plane_pic!(&p, deckcraft_vp9::Plane, u32::from(p.subsampling_x), u32::from(p.subsampling_y), m, p.color.full_range, false)
+        plane_pic!(&p, deckcraft_vp9::Plane, u32::from(p.subsampling_x), u32::from(p.subsampling_y), m, p.color.full_range, false, budget)
     }
 }
 
 impl Codec for Vp9 {
     fn decode(&mut self, sample: &[u8], pts: i64) -> Result<Vec<Pic>> {
-        Ok(self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(Vp9::convert).collect())
+        self.dec.decode(sample, pts).map_err(dec_err)?.into_iter().map(|p| Vp9::convert(p, self.rgba_picture_budget)).collect()
     }
-    fn flush(&mut self) -> Vec<Pic> {
-        self.dec.flush().into_iter().map(Vp9::convert).collect()
+    fn flush(&mut self) -> Result<Vec<Pic>> {
+        self.dec.flush().into_iter().map(|p| Vp9::convert(p, self.rgba_picture_budget)).collect()
     }
     fn reset(&mut self) {
         self.dec.reset();
+    }
+    fn set_memory_budget(&mut self, planes: u64, rgba_picture: u64) {
+        self.dec.set_memory_budget(planes);
+        self.rgba_picture_budget = rgba_picture;
     }
 }
 
@@ -198,10 +250,12 @@ struct Av1 {
     dec: deckcraft_av1::Decoder,
     config_obus: Vec<u8>,
     primed: bool,
+    plane_budget: u64,
+    rgba_picture_budget: u64,
 }
 
 impl Av1 {
-    fn convert(p: deckcraft_av1::Picture) -> Pic {
+    fn convert(p: deckcraft_av1::Picture, budget: u64) -> Result<Pic> {
         let (w, h) = (p.width as usize, p.height as usize);
         let cw = p.plane_width(1) as usize;
         let rgba = yuv::to_rgba(
@@ -220,8 +274,10 @@ impl Av1 {
             },
             Matrix::from_code(p.matrix_coefficients, p.height),
             p.full_range,
-        );
-        Pic { pts: p.pts, width: p.width, height: p.height, rgba }
+            budget,
+        )
+        .ok_or_else(|| MediaError::Corrupt("RGBA picture exceeds the video memory budget".into()))?;
+        Ok(Pic { pts: p.pts, width: p.width, height: p.height, rgba })
     }
 }
 
@@ -233,14 +289,20 @@ impl Codec for Av1 {
                 self.dec.decode(&self.config_obus).map_err(dec_err)?;
             }
         }
-        Ok(self.dec.decode_pts(sample, pts).map_err(dec_err)?.into_iter().map(Av1::convert).collect())
+        self.dec.decode_pts(sample, pts).map_err(dec_err)?.into_iter().map(|p| Av1::convert(p, self.rgba_picture_budget)).collect()
     }
-    fn flush(&mut self) -> Vec<Pic> {
-        self.dec.flush().into_iter().map(Av1::convert).collect()
+    fn flush(&mut self) -> Result<Vec<Pic>> {
+        self.dec.flush().into_iter().map(|p| Av1::convert(p, self.rgba_picture_budget)).collect()
     }
     fn reset(&mut self) {
         self.dec = deckcraft_av1::Decoder::new();
+        self.dec.set_memory_budget(self.plane_budget);
         self.primed = false;
+    }
+    fn set_memory_budget(&mut self, planes: u64, rgba_picture: u64) {
+        self.plane_budget = planes;
+        self.dec.set_memory_budget(planes);
+        self.rgba_picture_budget = rgba_picture;
     }
 }
 
@@ -280,8 +342,14 @@ fn open_track(bytes: &[u8]) -> Result<(Demux, Track, Box<dyn Codec>)> {
             let codec: Box<dyn Codec> = match &entry.codec {
                 CodecConfig::Avc(a) => Box::new(H264::new(a.to_bytes())?),
                 CodecConfig::Hevc(c) => Box::new(Hevc::new(c.to_bytes())?),
-                CodecConfig::Vp9(_) => Box::new(Vp9 { dec: deckcraft_vp9::Decoder::new() }),
-                CodecConfig::Av1(c) => Box::new(Av1 { dec: deckcraft_av1::Decoder::new(), config_obus: c.config_obus.clone(), primed: false }),
+                CodecConfig::Vp9(_) => Box::new(Vp9 { dec: deckcraft_vp9::Decoder::new(), rgba_picture_budget: 0 }),
+                CodecConfig::Av1(c) => Box::new(Av1 {
+                    dec: deckcraft_av1::Decoder::new(),
+                    config_obus: c.config_obus.clone(),
+                    primed: false,
+                    plane_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET,
+                    rgba_picture_budget: 0,
+                }),
                 other => return Err(MediaError::Unsupported(format!("{} video", codec_name(other)))),
             };
             let (w, h) = entry.video.as_ref().map(|v| (v.width as u32, v.height as u32)).unwrap_or((t.width, t.height));
@@ -300,11 +368,13 @@ fn open_track(bytes: &[u8]) -> Result<(Demux, Track, Box<dyn Codec>)> {
             let codec: Box<dyn Codec> = match &t.codec {
                 MkvCodec::Avc { avcc } => Box::new(H264::new(avcc.clone())?),
                 MkvCodec::Hevc { hvcc } => Box::new(Hevc::new(hvcc.clone())?),
-                MkvCodec::Vp9 { .. } => Box::new(Vp9 { dec: deckcraft_vp9::Decoder::new() }),
+                MkvCodec::Vp9 { .. } => Box::new(Vp9 { dec: deckcraft_vp9::Decoder::new(), rgba_picture_budget: 0 }),
                 MkvCodec::Av1 { av1c } => Box::new(Av1 {
                     dec: deckcraft_av1::Decoder::new(),
                     config_obus: deckcraft_isobmff::Av1Config::parse(av1c).map(|c| c.config_obus).unwrap_or_default(),
                     primed: false,
+                    plane_budget: deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET,
+                    rgba_picture_budget: 0,
                 }),
                 other => return Err(MediaError::Unsupported(format!("{} video", mkv_codec_name(other)))),
             };
@@ -382,7 +452,12 @@ pub struct VideoDecoder {
 
 impl VideoDecoder {
     pub fn open(bytes: Bytes) -> Result<VideoDecoder> {
-        let (demux, track, codec) = open_track(&bytes)?;
+        let (demux, track, mut codec) = open_track(&bytes)?;
+        let budget = deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET;
+        let (plane_budget, rgba_picture) = frame_budgets(track.width, track.height, budget)
+            .filter(|(planes, rgba)| *planes > 0 && *rgba > 0)
+            .ok_or_else(|| MediaError::Corrupt("RGBA frame queue exceeds the video memory budget".into()))?;
+        codec.set_memory_budget(plane_budget, rgba_picture);
         Ok(VideoDecoder { bytes, demux, track, codec, next: 0, ready: VecDeque::new(), skip_before: f64::NEG_INFINITY, eos: false, errors: 0 })
     }
     pub fn size(&self) -> (u32, u32) {
@@ -415,7 +490,7 @@ impl VideoDecoder {
             }
             if self.next >= self.track.samples.len() {
                 self.eos = true;
-                let mut pics = self.codec.flush();
+                let mut pics = self.codec.flush()?;
                 pics.sort_by_key(|p| p.pts);
                 self.ready.extend(pics);
                 continue;
@@ -489,4 +564,32 @@ pub fn poster_png(bytes: &Bytes, t: f64) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     image::DynamicImage::ImageRgba8(img).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).map_err(dec_err)?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rgba_queue_budget_rejects_when_yuv_store_fits_alone() {
+        let budget = 100;
+        let yuv = deckcraft_bitstream::budget::PictureShape { width: 4, height: 4, shift_x: 1, shift_y: 1, chroma_planes: 2, bytes_per_sample: 1 };
+        assert!(yuv.fits(1, budget));
+        assert!(frame_budgets(4, 4, budget).is_none());
+    }
+
+    #[test]
+    fn ordinary_frame_queue_reserves_plane_budget() {
+        let budget = deckcraft_bitstream::budget::DECODE_MEMORY_BUDGET;
+        let (planes, frame) = frame_budgets(1920, 1080, budget).unwrap_or((0, 0));
+        assert!(planes > 0);
+        assert_eq!(frame, 1920 * 1080 * 4);
+        assert_eq!(planes + frame * RGBA_PICTURE_SLOTS, budget);
+    }
+
+    #[test]
+    fn rgba_size_overflow_is_rejected() {
+        assert_eq!(rgba_picture_bytes(u32::MAX, u32::MAX), None);
+        assert!(frame_budgets(u32::MAX, u32::MAX, u64::MAX).is_none());
+    }
 }

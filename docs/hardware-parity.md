@@ -1,6 +1,6 @@
 # Hardware parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-14 · **Change:** minor (community PR wave 2026-10-14: picture export DPI, Retina pixel grid (#184), twist to rotate, swipe to turn the page, pen pressure; duplicated rows and headers folded; previous: minor, IME input, #101) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-28 · **Change:** minor (decoded YUV planes and queued RGBA frames share checked video memory limits) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365); PowerPoint for Windows where noted
 
 What hardware PowerPoint uses and what DeckCraft uses, per platform. Dimension score: **~40%
 ready** (estimated), **25–45 h** to parity. Performance (unmeasured, ~55%) is tracked here too
@@ -29,6 +29,10 @@ because it mostly follows from hardware use.
 | Microphone (record audio, narration) | yes | no |
 | Camera (Cameo, record with camera) | yes | no |
 | Screen recording | yes | no |
+
+The software decoder reserves checked `width × height × 4` RGBA storage for its bounded feed and
+ready frames from the same per-decoder budget used for codec planes. It rejects a frame whose RGBA
+allocation would exceed that reservation before conversion.
 
 ## Displays
 
@@ -73,6 +77,7 @@ outlines every frame (#67, fix open), and the decoders run in software.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | Codec plane and queued RGBA frame storage share checked video memory budgets; arithmetic boundary and codec playback tests pass |
 | 2026-10-14 | minor | PNG and JPEG slide export record 144 dpi at the default 2 pixels per point, so a Retina picture opens at the slide's size |
 | 2026-10-13 | trivial | Editor slide rasters sit on the physical pixel grid (#184) |
 | 2026-10-14 | trivial | Community PR wave folded: one row each for pinch/two-finger gestures and pen pressure |
