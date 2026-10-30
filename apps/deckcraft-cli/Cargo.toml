@@ -9,13 +9,17 @@ publish = false
 [lints]
 workspace = true
 
+[features]
+default = ["video"]
+video = ["deckcraft-engine/video", "deckcraft-mcp/video"]
+
 [[bin]]
 name = "deckcraft-cli"
 path = "src/main.rs"
 
 [dependencies]
-deckcraft-engine = { workspace = true }
-deckcraft-mcp = { workspace = true }
+deckcraft-engine = { workspace = true, default-features = false }
+deckcraft-mcp = { workspace = true, default-features = false }
 serde_json = { workspace = true }
 
 [dev-dependencies]

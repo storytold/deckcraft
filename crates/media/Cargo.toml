@@ -8,15 +8,19 @@ description = "DeckCraft media: probing, audio decoding (MP3, AAC/M4A, WAV, AIFF
 [lints]
 workspace = true
 
+[features]
+default = ["video"]
+video = ["dep:deckcraft-h264", "dep:deckcraft-hevc", "dep:deckcraft-vp9", "dep:deckcraft-av1"]
+
 [dependencies]
 deckcraft-isobmff = { workspace = true }
 deckcraft-matroska = { workspace = true }
 deckcraft-ogg = { workspace = true }
 deckcraft-opus = { workspace = true }
-deckcraft-h264 = { workspace = true }
-deckcraft-hevc = { workspace = true }
-deckcraft-vp9 = { workspace = true }
-deckcraft-av1 = { workspace = true }
+deckcraft-h264 = { workspace = true, optional = true }
+deckcraft-hevc = { workspace = true, optional = true }
+deckcraft-vp9 = { workspace = true, optional = true }
+deckcraft-av1 = { workspace = true, optional = true }
 thiserror = { workspace = true }
 log = { workspace = true }
 image = { workspace = true }

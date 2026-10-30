@@ -8,6 +8,10 @@ description = "DeckCraft engine: sessions, undo history, selection, the command 
 [lints]
 workspace = true
 
+[features]
+default = ["video"]
+video = ["deckcraft-media/video"]
+
 [dependencies]
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
@@ -18,7 +22,7 @@ deckcraft-render = { workspace = true }
 deckcraft-pdf = { workspace = true }
 deckcraft-format = { workspace = true }
 deckcraft-pptx = { workspace = true }
-deckcraft-media = { workspace = true }
+deckcraft-media = { workspace = true, default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
 i_overlay = { workspace = true }
