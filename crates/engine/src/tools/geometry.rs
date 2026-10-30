@@ -227,6 +227,29 @@ impl Session {
         (off, guides)
     }
 
+    /// Snap a crop rectangle in slide coordinates, then return it to the original picture's
+    /// local frame. Exclude the picture itself: its fixed crop box is not a snap target.
+    pub(super) fn snap_crop_rect(&mut self, r: Rect, orig: &Xfrm, handle: Option<u8>, id: ShapeId, tol: f64, enabled: bool) -> Rect {
+        if !enabled || orig.rot != 0.0 {
+            self.tool.guides.clear();
+            return r;
+        }
+        let x = cmd::crop::frame_xfrm(orig, r);
+        let snapped = if let Some(h) = handle {
+            self.snap_resize(x, orig, h, id, tol).rect()
+        } else {
+            let (off, guides) = self.snap_rect(x.rect(), &[id], tol * 1.5, true);
+            self.tool.guides = guides;
+            x.rect() + off
+        };
+        let local = orig.affine().inverse().transform_rect_bbox(snapped);
+        if local.width() < cmd::crop::MIN_SIDE || local.height() < cmd::crop::MIN_SIDE {
+            self.tool.guides.clear();
+            return r;
+        }
+        local
+    }
+
     /// Snap the edges that resize handle `handle` drags in the resized box `x` to the smart guides.
     pub(super) fn snap_resize(&mut self, x: Xfrm, _orig: &Xfrm, handle: u8, id: ShapeId, tol: f64) -> Xfrm {
         if x.rot != 0.0 {

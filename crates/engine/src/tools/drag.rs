@@ -1,6 +1,7 @@
 use super::hit::{constrain_45, line_xfrm, resize_box};
 use super::{
-    Affine, DRAW_TABLE, Drag, Mods, Point, Rect, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, Vec2, Xfrm, cmd, json, set_warp_adj,
+    Affine, CropPart, DRAW_TABLE, Drag, Mods, Point, Rect, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, Vec2, Xfrm, cmd, json,
+    set_warp_adj,
 };
 
 struct MoveDrag {
@@ -25,6 +26,41 @@ impl Session {
             }
             Drag::Move { ids, start, origs, moved, duplicate, enter_text } => {
                 return self.drag_move(MoveDrag { ids, start, origs, moved, duplicate, enter_text }, p, mods, tol);
+            }
+            Drag::Crop { id, part, orig, img, start } => {
+                let inv = orig.affine().inverse();
+                let mut d = inv * p - inv * start;
+                if !(d.x.is_finite() && d.y.is_finite()) {
+                    return Ok(Value::Null);
+                }
+                let (nx, nc) = match part {
+                    CropPart::Frame(h) => {
+                        let f = cmd::crop::drag_frame(orig.w, orig.h, h, d);
+                        let f = self.snap_crop_rect(f, &orig, Some(h), id, tol, !mods.cmd);
+                        let c = cmd::crop::crop_of(f.width(), f.height(), img - f.origin().to_vec2());
+                        (cmd::crop::frame_xfrm(&orig, f), c)
+                    }
+                    CropPart::Image(h) => {
+                        let image = cmd::crop::drag_image(img, h, d, mods.shift);
+                        let image = self.snap_crop_rect(image, &orig, Some(h), id, tol, !mods.cmd);
+                        (orig, cmd::crop::crop_of(orig.w, orig.h, image))
+                    }
+                    CropPart::Pan => {
+                        if mods.shift {
+                            if d.x.abs() > d.y.abs() {
+                                d.y = 0.0;
+                            } else {
+                                d.x = 0.0;
+                            }
+                        }
+                        let image = self.snap_crop_rect(img + d, &orig, None, id, tol, !mods.cmd);
+                        (orig, cmd::crop::crop_of(orig.w, orig.h, image))
+                    }
+                };
+                // Stored as the renderer draws it, so the next gesture starts from what is shown.
+                if let Some(c) = nc.map(|c| c.map(|v| v.clamp(-10.0, 0.99))) {
+                    cmd::crop::store(self, "crop", &[(id, Some(nx), c)])?;
+                }
             }
             Drag::Resize { id, handle, orig, start } => {
                 let nx = resize_box(&orig, handle, p - start, mods.shift || self.is_picture(id), mods.alt);

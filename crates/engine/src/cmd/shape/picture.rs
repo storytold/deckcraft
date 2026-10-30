@@ -2,12 +2,19 @@ use super::{NO_ID_SPACE, Result, Session, Value, bad, bool_or, bool_param, edit_
 
 pub(super) fn crop(s: &mut Session, p: &Value) -> Result<Value> {
     let c = [f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom")];
+    if !bool_or(p, "keepFrame", false) {
+        return crate::cmd::crop::crop_keeping_scale(s, p, c);
+    }
     edit_geometry(s, p, "picture.crop", |sh| {
         if let deckcraft_model::ShapeKind::Picture { fill } = &mut sh.kind {
             for (i, v) in c.iter().enumerate() {
                 if let (Some(v), Some(slot)) = (v, fill.crop.get_mut(i)) {
                     *slot = v.clamp(-10.0, 0.95);
                 }
+            }
+            // Keep at least a sliver showing, as without keepFrame.
+            if fill.crop[0] + fill.crop[2] > 0.99 || fill.crop[1] + fill.crop[3] > 0.99 {
+                return Err(bad("picture.crop", "the crop leaves nothing of the picture"));
             }
         }
         Ok(())
