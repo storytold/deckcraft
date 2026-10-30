@@ -358,7 +358,7 @@ fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn get(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "slide", "animation.get")?.unwrap_or(st.selection.slide);
     let sl = st.doc.slides.get(i).ok_or_else(|| bad("animation.get", "no such slide"))?;
     Ok(serde_json::to_value(&sl.animations).unwrap_or_default())
 }
