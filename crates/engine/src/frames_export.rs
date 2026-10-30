@@ -496,18 +496,88 @@ fn run_jobs(folder: &std::path::Path, jobs: impl Iterator<Item = Job>, cap: u64)
     Ok(())
 }
 
-/// Render the frames of `doc` under `opts` into `folder` (created if missing; earlier
-/// `frame-NNNNNN.png` files in it are removed first). Nothing is written when the request is
-/// refused.
+/// Render the frames of `doc` under `opts` into `folder` (created if missing). The new sequence
+/// replaces the earlier `frame-NNNNNN.png` files only once every frame is written; a failed export
+/// leaves them as they were. Nothing is written when the request is refused, when a frame's name
+/// in `folder` is taken by something other than a regular file (a folder, a link), or when an
+/// interrupted export left earlier frames in its backup folder.
 pub fn export(doc: &Presentation, opts: &FramesOptions, folder: &str) -> Result<FramesOutput> {
+    export_capped(doc, opts, folder, MAX_TOTAL_BYTES)
+}
+
+/// The folder inside the export folder that a new sequence is written to before it replaces the
+/// old one; a dot name, so it is not mistaken for part of the sequence.
+const STAGING: &str = ".deckcraft-frames-new";
+
+/// The folder inside the export folder that the earlier sequence moves to while the new one moves
+/// in, so a move that fails part way can put it back.
+const BACKUP: &str = ".deckcraft-frames-old";
+
+/// Replace the frames in `folder` with those in `staging`. The earlier ones move to `backup` first
+/// and are removed only once every new one is in place; a move that fails part way removes the new
+/// ones it placed and puts the earlier ones back, so the folder never holds half a sequence
+/// (unless putting them back fails too, which the error says).
+fn replace_sequence(folder: &str, staging: &str, backup: &str) -> std::result::Result<(), String> {
+    crate::io::create_folder(backup)?;
+    if let Err(e) = crate::io::move_files(folder, backup, &is_frame_name) {
+        return Err(restore_sequence(folder, backup, e));
+    }
+    if let Err(e) = crate::io::move_files(staging, folder, &is_frame_name) {
+        if let Err(r) = crate::io::remove_files(folder, &is_frame_name) {
+            return Err(format!("{e}; the new frames already moved could not be removed ({r}), and the earlier frames are in {backup}"));
+        }
+        return Err(restore_sequence(folder, backup, e));
+    }
+    crate::io::remove_files(backup, &is_frame_name).map_err(|e| {
+        format!("the new frames are in place, but the earlier ones in {backup} could not all be removed ({e}): delete them before the next export")
+    })?;
+    // The new sequence is in place: emptied folders that won't go are left, not an error.
+    let _ = crate::io::remove_empty_folder(backup);
+    let _ = crate::io::remove_empty_folder(staging);
+    Ok(())
+}
+
+/// Put the earlier frames in `backup` back into `folder` after `error`; answers the error to report.
+fn restore_sequence(folder: &str, backup: &str, error: String) -> String {
+    match crate::io::move_files(backup, folder, &is_frame_name) {
+        Ok(_) => {
+            let _ = crate::io::remove_empty_folder(backup);
+            error
+        }
+        Err(r) => format!("{error}; the earlier frames could not all be put back ({r}) and the rest are in {backup}"),
+    }
+}
+
+/// [`export`] with the byte cap as a parameter, so a test can make the export fail part way.
+fn export_capped(doc: &Presentation, opts: &FramesOptions, folder: &str, cap: u64) -> Result<FramesOutput> {
     let plan = plan(doc, opts)?;
     let dir = std::path::Path::new(folder);
     let io = |e: String| EngineError::Other(format!("frames export: {e}"));
     crate::file_access::check_write(&dir.join(frame_name(1)).to_string_lossy()).map_err(io)?;
     crate::io::create_folder(folder).map_err(io)?;
-    // The frames of an earlier export go, so a video encoder reading the numbered sequence stops
-    // where this one ends.
-    crate::io::remove_files(folder, &is_frame_name).map_err(io)?;
+    // The clearing below removes regular files only. A frame name taken by anything else would
+    // survive it: a folder makes the move fail after the earlier frames are gone, and a link past
+    // the new sequence's end would carry it on with an old frame. Any such name in the folder is
+    // refused before anything is written.
+    if let Some(odd) = crate::io::non_file_named(folder, &is_frame_name).map_err(io)? {
+        return Err(io(format!("{odd} is not a regular file (a folder, a link, …): move it away and export again; nothing was written")));
+    }
+    // The new frames go to a staging folder first: a failed export (a write error, the byte cap)
+    // leaves the earlier sequence whole instead of half replaced. A staging folder an interrupted
+    // export left behind is cleared first.
+    let staging = dir.join(STAGING);
+    let staging_s = staging.to_string_lossy().to_string();
+    // A backup folder still holding frames is an earlier sequence that an interrupted export could
+    // not put back (or a finished one could not remove): it is the user's to sort out, so it is
+    // refused rather than overwritten.
+    let backup_s = dir.join(BACKUP).to_string_lossy().to_string();
+    if crate::io::count_files(&backup_s, &is_frame_name).map_err(io)? > 0 {
+        return Err(io(format!(
+            "{backup_s} still holds earlier frames (an export was interrupted, or could not put them back or remove them): delete them, or, if the frames in the folder are incomplete, delete those and move these back; then export again; nothing was written"
+        )));
+    }
+    crate::io::remove_files(&staging_s, &is_frame_name).map_err(io)?;
+    crate::io::create_folder(&staging_s).map_err(io)?;
     let scale = f64::from(plan.width) / doc.slide_size.width;
     let scale = if scale.is_finite() && scale > 0.0 { scale } else { 1.0 };
     let mut painter = Painter { doc, size: (plan.width, plan.height), scale, threads: render_threads(), timeline: None, builds: vec![], parts: None };
@@ -520,7 +590,18 @@ pub fn export(doc: &Presentation, opts: &FramesOptions, folder: &str) -> Result<
         }
     }
     let jobs = runs.into_iter().map(|(f, numbers)| Job { numbers, image: painter.draw(&f) });
-    run_jobs(dir, jobs, MAX_TOTAL_BYTES).map_err(io)?;
+    if let Err(e) = run_jobs(&staging, jobs, cap) {
+        let _ = crate::io::remove_files(&staging_s, &is_frame_name);
+        let _ = crate::io::remove_empty_folder(&staging_s);
+        return Err(io(e));
+    }
+    // Then the new frames take the earlier ones' place, all of them, so a video encoder reading
+    // the numbered sequence stops where this one ends.
+    if let Err(e) = replace_sequence(folder, &staging_s, &backup_s) {
+        let _ = crate::io::remove_files(&staging_s, &is_frame_name);
+        let _ = crate::io::remove_empty_folder(&staging_s);
+        return Err(io(e));
+    }
     Ok(FramesOutput {
         folder: folder.to_string(),
         frames: plan.frames.len(),
@@ -538,6 +619,136 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    /// A failed export (here the byte cap) leaves the earlier sequence whole and no staging folder;
+    /// a successful one replaces it, shorter sequences included. A frame name taken by a folder is
+    /// refused before anything is written.
+    #[test]
+    fn a_failed_export_keeps_the_earlier_frames() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let folder = dir.to_string_lossy().to_string();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 2, "secondsPerSlide": 2, "width": 32})).unwrap();
+        let names = || {
+            let mut v: Vec<String> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+            v.sort();
+            v
+        };
+        let first = export(&doc, &opts, &folder).unwrap();
+        let before = names();
+        assert_eq!(before.len(), first.frames, "{before:?}");
+        let old = std::fs::read(dir.join(frame_name(1))).unwrap();
+        let longer = FramesOptions::from_params(&json!({"fps": 4, "secondsPerSlide": 2, "width": 48})).unwrap();
+        assert!(export_capped(&doc, &longer, &folder, 1).is_err());
+        assert_eq!(names(), before, "the earlier sequence is whole and the staging folder is gone");
+        assert_eq!(std::fs::read(dir.join(frame_name(1))).unwrap(), old);
+        let shorter = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 2, "width": 48})).unwrap();
+        let out = export(&doc, &shorter, &folder).unwrap();
+        assert_eq!(names().len(), out.frames, "the new sequence replaced the old one: {:?}", names());
+        assert!(out.frames < first.frames);
+        // Something other than frames in the staging folder stays, and the export still succeeds.
+        std::fs::create_dir_all(dir.join(STAGING)).unwrap();
+        std::fs::write(dir.join(STAGING).join("notes.txt"), b"x").unwrap();
+        let out = export(&doc, &opts, &folder).unwrap();
+        assert_eq!(names().iter().filter(|n| is_frame_name(n)).count(), out.frames);
+        assert!(dir.join(STAGING).join("notes.txt").exists());
+        // A folder with a frame's name is refused before anything changes: the earlier frames stay.
+        std::fs::remove_dir_all(dir.join(STAGING)).unwrap();
+        let before = names();
+        let odd = dir.join(frame_name(out.frames + 1));
+        std::fs::create_dir(&odd).unwrap();
+        let e = export(&doc, &longer, &folder).unwrap_err().to_string();
+        assert!(e.contains("is not a regular file") && e.contains(&frame_name(out.frames + 1)), "{e}");
+        let mut expected = before.clone();
+        expected.push(frame_name(out.frames + 1));
+        expected.sort();
+        assert_eq!(names(), expected, "nothing was removed or written");
+        std::fs::remove_dir(&odd).unwrap();
+        assert_eq!(export(&doc, &longer, &folder).unwrap().frames, names().len());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A link with a frame's name, past the end of the new sequence, would survive the clearing and
+    /// carry the sequence on with an old frame: it is refused before anything is written.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_with_a_frame_name_is_refused() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("old.png"), b"old").unwrap();
+        std::os::unix::fs::symlink(dir.join("old.png"), dir.join(frame_name(MAX_FRAMES))).unwrap();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 1, "width": 32})).unwrap();
+        let e = export(&doc, &opts, &dir.to_string_lossy()).unwrap_err().to_string();
+        assert!(e.contains("is not a regular file"), "{e}");
+        assert!(!dir.join(frame_name(1)).exists() && !dir.join(STAGING).exists(), "nothing was written");
+        assert_eq!(std::fs::read(dir.join("old.png")).unwrap(), b"old");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A move of the new frames that fails part way (here onto a folder with a frame's name) puts
+    /// the earlier frames back and removes the new ones it placed: no half sequence, no backup.
+    #[cfg(unix)]
+    #[test]
+    fn a_failed_move_puts_the_earlier_frames_back() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-restore-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let staging = dir.join(STAGING);
+        std::fs::create_dir_all(&staging).unwrap();
+        for n in [1, 3] {
+            std::fs::write(dir.join(frame_name(n)), b"old").unwrap();
+        }
+        std::fs::create_dir(dir.join(frame_name(2))).unwrap();
+        for n in 1..=3 {
+            std::fs::write(staging.join(frame_name(n)), b"new").unwrap();
+        }
+        let s = |p: std::path::PathBuf| p.to_string_lossy().to_string();
+        assert!(replace_sequence(&s(dir.clone()), &s(staging.clone()), &s(dir.join(BACKUP))).is_err());
+        for n in [1, 3] {
+            assert_eq!(std::fs::read(dir.join(frame_name(n))).unwrap(), b"old", "frame {n} is the earlier one");
+        }
+        assert!(dir.join(frame_name(2)).is_dir());
+        assert!(!dir.join(BACKUP).exists(), "the backup folder is gone");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Frames left in the backup folder by an interrupted export are the user's to recover: the
+    /// export is refused, nothing is written, and it goes ahead once they are gone.
+    #[test]
+    fn frames_left_in_the_backup_folder_are_refused() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-backup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(BACKUP)).unwrap();
+        std::fs::write(dir.join(BACKUP).join(frame_name(1)), b"old").unwrap();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 1, "width": 32})).unwrap();
+        let folder = dir.to_string_lossy().to_string();
+        let e = export(&doc, &opts, &folder).unwrap_err().to_string();
+        assert!(e.contains("interrupted") && e.contains(BACKUP), "{e}");
+        assert!(!dir.join(frame_name(1)).exists() && !dir.join(STAGING).exists(), "nothing was written");
+        assert_eq!(std::fs::read(dir.join(BACKUP).join(frame_name(1))).unwrap(), b"old");
+        std::fs::remove_dir_all(dir.join(BACKUP)).unwrap();
+        assert_eq!(export(&doc, &opts, &folder).unwrap().frames, 1);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A path that is a file is refused, and the file is left as it was.
+    #[test]
+    fn a_path_that_is_a_file_is_refused() {
+        let dir = std::env::temp_dir().join(format!("dc-frames-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("frames");
+        std::fs::write(&file, b"keep").unwrap();
+        let doc = deckcraft_model::defaults::new_presentation(None);
+        let opts = FramesOptions::from_params(&json!({"fps": 1, "secondsPerSlide": 1, "width": 32})).unwrap();
+        let e = export(&doc, &opts, &file.to_string_lossy()).unwrap_err().to_string();
+        assert!(e.contains("is not a folder"), "{e}");
+        assert_eq!(std::fs::read(&file).unwrap(), b"keep");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// Past the byte cap the export fails instead of writing on; a hold's copies count.
     #[test]
