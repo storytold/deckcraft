@@ -106,11 +106,13 @@ slide current and answers `{"changed": 1, "onSlides": [4], "currentSlide": 4}`; 
 lookups (`shape.inspect`, `text.get`, `shape.sites`) find it anywhere, move nothing, and
 `shape.inspect` and `text.get` answer the `slide` index it is on. These work on the current slide:
 `shape.connect` refuses an id on another slide, saying where the shape is and the `slide.go` that
-gets there, and `text.edit` (the text cursor), `smartArt.*` and `arrange.group` refuse it too;
-`arrange.align`, `arrange.distribute` and the order commands (`arrange.bringToFront`…) succeed but
-leave it where it is, so `slide.go` first. `arrange.nudge`, `arrange.rotate*` and `arrange.flip*`
+gets there, and `text.edit` (the text cursor), `smartArt.*`, `arrange.group` and `edit.delete`
+refuse it too; `arrange.distribute` and the order commands (`arrange.bringToFront`…) succeed but
+leave it where it is, and `arrange.align` moves it but measures the alignment from the current
+slide, so `slide.go` first. `arrange.nudge`, `arrange.rotate*` and `arrange.flip*`
 edit a shape on any slide like the other shape commands. `comment.add` and the other comment edits
-act on the current slide; `comment.list`, `comment.next` and `comment.prev` take `slide`. `batch` items and `run_command` may name a tool (`add_shape`,
+act on the current slide, except `comment.delete {all: true}`, which clears the comments on every
+slide; `comment.list`, `comment.next` and `comment.prev` take `slide`. `batch` items and `run_command` may name a tool (`add_shape`,
 `add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`; a
 `batch` answers one text array, so an item naming a tool that answers an image (`render_slide`,
 `screenshot` without `path`) is refused and told to run on its own. A
