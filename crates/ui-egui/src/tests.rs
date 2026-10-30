@@ -1628,6 +1628,19 @@ fn interface_size_applies_when_the_slider_is_let_go() {
     assert!(after > before + 0.3, "letting go applies the size dragged to: {before} -> {after}");
     assert!(harness.state().dialog.is_some(), "Preferences stays open");
 }
+#[test]
+fn a_standing_notice_survives_opening_a_file_and_yields_to_a_fresh_status() {
+    // #1305: the install-location hint was a status message, which opening the file Finder
+    // launched the app with clears.
+    let mut app = SlideApp::new(Session::with_new(), Services::default());
+    app.set_standing_status("move me to Applications");
+    assert_eq!(app.shown_status().as_deref(), Some("move me to Applications"));
+    app.set_status("Recovered 1 unsaved presentation");
+    assert_eq!(app.shown_status().as_deref(), Some("Recovered 1 unsaved presentation"));
+    app.note_recent("/tmp/talk.pptx");
+    assert_eq!(app.shown_status().as_deref(), Some("move me to Applications"));
+}
+
 /// The status bar's zoom slider has no room for a visible label; it still needs an accessible
 /// name, and adding that name must not change the slider's shared control geometry at either
 /// size.

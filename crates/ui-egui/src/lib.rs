@@ -232,6 +232,9 @@ pub struct SlideApp {
     /// Audio/video playback (editor control bar, slide show, `media.*` commands).
     pub media: media::MediaHost,
     pub status: Option<(String, f64)>,
+    /// A notice that stays while nothing fresher is in `status` (opening a file clears `status`,
+    /// not this): the app runs where Finder can't make it the default app (#1305).
+    standing_status: Option<String>,
     /// A presentation being read in the background, with its progress window ([`opening`]).
     pub opening: Option<opening::Opening>,
     /// A brief notice over the bottom of the window (missing fonts on opening a file).

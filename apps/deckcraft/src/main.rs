@@ -22,6 +22,8 @@ mod control_server;
 mod display;
 #[cfg(any(target_os = "windows", test))]
 mod graphics;
+#[cfg(any(target_os = "macos", test))]
+mod install_location;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
@@ -269,6 +271,14 @@ fn main() -> eframe::Result {
             let mut app = SlideApp::new(Session::new(), services());
             load_prefs(&mut app);
             app.enable_update_checks();
+            // Finder can't make an app the default for a file type while it runs from a disk image
+            // or a quarantine location (#1305). A standing notice, not a status message: opening
+            // the file Finder launched us with clears the status. The recovery notice below
+            // takes its place while it is fresh: unsaved work matters more.
+            #[cfg(target_os = "macos")]
+            if let Some(m) = std::env::current_exe().ok().and_then(|exe| install_location::check(&exe)) {
+                app.set_standing_status(m.message());
+            }
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.
             if std::env::var_os("DECKCRAFT_NO_RECOVERY").is_none() {
                 app.session.recovery_dir = deckcraft_engine::recovery::default_dir();

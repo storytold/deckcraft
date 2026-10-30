@@ -51,6 +51,7 @@ impl SlideApp {
             reuse_target: None,
             media: media::MediaHost::new(audio_out),
             status: None,
+            standing_status: None,
             opening: None,
             toast: None,
             fonts_noted: Default::default(),
@@ -121,6 +122,17 @@ impl SlideApp {
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status = Some((msg.into(), now_ms()));
+    }
+
+    /// Set the notice shown whenever there is no fresh status message (see [`Self::shown_status`]).
+    pub fn set_standing_status(&mut self, msg: impl Into<String>) {
+        self.standing_status = Some(msg.into());
+    }
+
+    /// What the status bar and the start screen show: the fresh status message, or else the
+    /// standing notice.
+    pub fn shown_status(&mut self) -> Option<String> {
+        self.fresh_status().or_else(|| self.standing_status.clone())
     }
 
     /// Turn on the automatic check for a newer release at start-up (desktop shell only; tests and
