@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option set the point type; previous: trivial, progress log: scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-29 · **Change:** minor (progress log: See All Slides shows every slide, scrolls and filters by section, and Presenter View can keep it open; previous: trivial, Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option set the point type; previous: trivial, progress log: scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (progress log: Ctrl+wheel zoom during the slide show, #1286; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (progress log: picture and embedded object fills; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (fill and outline edits reach group members, #1079; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -20,7 +20,7 @@ format plus PPTX), scriptable by agents (CLI, JSON control channel, MCP), and av
 
 | | Value | Kind |
 |---|---|---|
-| **Feature breadth** | **84%** weighted over 191 PowerPoint features (P0 92%, P1 82%, P2 55%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
+| **Feature breadth** | **84%** weighted over 192 PowerPoint features (P0 92%, P1 82%, P2 55%) | measured: `cargo xtask parity` over [docs/parity-checklist.md](docs/parity-checklist.md) |
 | Menu-bar coverage | 59% of 217 app-specific PowerPoint menu items matched by name (lower bound) | measured: script over the PowerPoint menu dump and the 226 commands at d556ff9 (the registry has grown since; not re-measured) |
 | **Ready for real work** | **~55%** | estimated: weighted dimensions below |
 | Mainstream practitioner | ~53% | estimated: weekly-use areas × discounts for interaction (×0.92), stability (×0.92) and `.pptx` exchange (×0.88), [method](docs/target-app-parity.md#mainstream-practitioner-and-essentials-user) |
@@ -82,7 +82,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | Media | 67% | ~60% | 8–14 | [file formats](docs/file-format-parity.md) |
 | Transitions | 100% | ~80% | 4–8 | [animation-parity](docs/animation-parity.md) |
 | Animations | 85% | ~65% | 10–16 | [animation-parity](docs/animation-parity.md) |
-| Slide show and presenter view | 68% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
+| Slide show and presenter view | 71% | ~60% | 10–16 | [slideshow-parity](docs/slideshow-parity.md) |
 | Review | 70% | ~45% | 8–14 | [gaps](docs/gaps.md) |
 | Draw (ink) | 50% | ~30% | 5–9 | [hardware-parity](docs/hardware-parity.md) |
 | Undo and clipboard | 100% | ~75% | 3–5 | [ui-parity](docs/ui-parity.md) |
@@ -137,6 +137,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-29 | Slide Show: See All Slides lists every slide (the 48-slide cap is gone), scrolls with readable thumbnails and filters by section with tabs (All slides / section / Other slides); the current slide's section is selected, the same grid works in Presenter View, and only the cells in view are rendered. Presenter View's **Keep All slides open** keeps the grid up after a pick, so the presenter can jump again without reopening it |
 | 2026-10-25 | Windows installer: the Start menu shortcut takes the icon embedded in `deckcraft.exe` instead of an MSI `<Icon>`, so a taskbar pin keeps its icon after an update (#1114); a pin that already lost it has to be unpinned and pinned again once |
 | 2026-10-24 | AutoFormat as you type: a paragraph that starts with `*`, `-`, `--`, `>`, `<>`, `1.`, `1)`, `I.`, `i.`, `A.`, `a.` or `a)` and a space or tab becomes a bulleted or numbered list in that style; Backspace right after puts the typed text back, and Tools ▸ AutoCorrect and `text.autocorrect {lists}` turn it off |
 | 2026-10-24 | Tables: while the caret is in a cell, dragging into another cell selects that range of cells (shaded, merged cells taken in whole), and Shift+arrow grows or shrinks it; formatting applies to the selected cells only, and Delete clears their text and keeps the table |

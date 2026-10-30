@@ -1,11 +1,11 @@
 # Slide show and presenter view: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** minor (Ctrl+wheel zooms the show around the pointer, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; breadth 68%; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-29 · **Change:** minor (See All Slides shows every slide, scrollable, with section tabs and the current section selected; the 48-slide cap is gone; breadth 71%; previous: minor, Ctrl+wheel zoom, #1286; previous: major, community PR wave 2026-10-14: interactive decks, laser pointer, See All Slides and zoom, go-to-slide number, custom show playback, presenter timer, clock, notes size and keyboard, Show Media Controls, swipe; duplicated rows and headers folded; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Presenting is the job PowerPoint is hired for. This doc covers the show window, presenter view,
 rehearsal and recording. Transition and animation playback are in
 [animation-parity.md](animation-parity.md); display hardware in
-[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **68%** (measured), **~60%
+[hardware-parity.md](hardware-parity.md). Area score: checklist breadth **71%** (measured), **~60%
 ready** (estimated), **10–16 h** to parity.
 
 ## Running the show
@@ -28,7 +28,7 @@ ready** (estimated), **10–16 h** to parity.
 | Hyperlinks and action settings followed (slides, web, mail, End Show, Last Viewed, Custom Show) | yes | yes | Only `http(s)` and `mailto` open outside the show, by design (`safe_url`). A Custom Show action plays that show |
 | Media playback with controls, play across slides, full-screen video, Play/Pause/Stop in the click sequence | yes | yes | WMA/WMV not decodable. Click sequence since #116. Slide Show ▸ Show Media Controls (on by default) hides the playback bar. Seeks and loops preserve new-generation video frames and end-of-stream; queue regression and repeated seeks across H.264/HEVC/VP9/AV1 in `crates/media` |
 | Animated GIFs play; pause from their corner button | yes | yes (#39) | The corner button hides with Show Media Controls |
-| See All Slides grid during the show | yes | yes: G, or All on the show bar; click a thumbnail, Esc closes the grid | Hidden slides are labelled; the first 48 slides are shown |
+| See All Slides grid during the show | yes | yes: G, or All on the show bar; every slide, scrollable with the wheel or Page Up/Down; section tabs (All slides / section / Other slides) with the current slide's section selected; click a thumbnail, Esc closes the grid | Hidden slides are labelled. A deck without sections keeps a single grid. Thumbnails keep a readable minimum size and only the cells in view are rendered. In Presenter View, **Keep All slides open** leaves the grid up after a pick; turning it off (or All slides on) returns to the classic current/next/notes layout |
 | Zoom into part of a slide during the show | yes | yes: Z, then click the slide (or the presenter slide); 2×, Esc or another click leaves it. Ctrl+wheel (Cmd+wheel on a Mac) over the slide zooms in and out around the pointer, four notches per doubling, up to 4× (#1286) | The presenter keeps the whole slide and draws a frame on the zoomed part. The wheel zooms in the audience window only; no panning while zoomed |
 | Pen and highlighter ink | yes | pen only (Cmd+P pen, Cmd+A arrow, E erases all ink) | No highlighter, per-stroke eraser, ink colours, or keep/discard annotations prompt |
 | Laser pointer | yes | yes in the show | Cmd/Ctrl+L and the on-screen button draw the show's laser colour and leave no ink. The presenter window does not move that dot |
@@ -79,6 +79,7 @@ Reading View in a window with navigation: present (checklist row done).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-29 | minor | See All Slides no longer stops at 48 slides: the grid scrolls with readable thumbnails, renders only the cells in view, and filters by section with tabs (All slides / section / Other slides). The current slide's section is selected; the same grid works in Presenter View, where **Keep All slides open** keeps it up for the next jump. Checklist breadth 68 → 71% |
 | 2026-10-22 | minor | See All Slides from presenter view opens in presenter view, not on the audience screen (#1130) |
 | 2026-10-14 | trivial | Community PR wave folded: one media playback row, the presenter pen/laser row matches the laser that exists, estimates keep only the open work (~9–16 h); checklist breadth 68% |
 | 2026-10-13 | minor | Click handling for interactive decks: triggers, per-slide state kept across visits, visible-shape hit testing with hand cursor, advance on click |
