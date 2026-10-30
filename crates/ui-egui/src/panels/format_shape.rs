@@ -378,7 +378,7 @@ pub(super) fn format_shape(app: &mut SlideApp, ui: &mut Ui) {
                 if k == "background" && !background_ok {
                     continue;
                 }
-                if ui.radio(kind == k, l).clicked() {
+                if ui.radio(kind == k, tl!(l)).clicked() {
                     match k {
                         "none" => run(app, "shape.fill", json!({"none": true})),
                         "solid" => run(app, "shape.fill", json!({"color": "accent1"})),
