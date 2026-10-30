@@ -1,4 +1,4 @@
-use super::zoom::GRID_CAP;
+use super::zoom::MAX_THUMBS;
 use super::{
     BackKey, Color32, Key, Layer, Mesh, Prefetch, Presentation, Rect, RenderOpts, ShapeId, Show, ShowState, StepStamp, TextureHandle, Timeline,
     TriggerPlay, pos2, state_for, vec2,
@@ -197,7 +197,7 @@ pub(super) fn part_textures(ctx: &egui::Context, doc: &Presentation, from: Optio
 }
 
 pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize) -> Option<TextureHandle> {
-    if show.thumbs.len() >= GRID_CAP {
+    if show.thumbs.len() >= MAX_THUMBS {
         return None;
     }
     let w = 320.0_f64;
@@ -209,5 +209,29 @@ pub(super) fn render_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentat
     );
     let tex = crate::textures::upload(ctx, format!("show-grid-{i}"), crate::textures::to_color_image(&img, false));
     show.thumbs.push((i, tex.clone()));
+    Some(tex)
+}
+
+/// The most section-rail previews kept at once. The rail renders only the rows in view and asks
+/// for a repaint while more are missing, so a long section never uploads its whole deck.
+const RAIL_MAX_THUMBS: usize = 48;
+
+/// One small preview for the Presenter View section rail, cached apart from the grid's thumbnails.
+pub(super) fn render_rail_thumb(ctx: &egui::Context, show: &mut Show, doc: &Presentation, i: usize) -> Option<TextureHandle> {
+    if let Some((_, tex)) = show.rail_thumbs.iter().find(|(k, _)| *k == i) {
+        return Some(tex.clone());
+    }
+    if show.rail_thumbs.len() >= RAIL_MAX_THUMBS {
+        let _ = show.rail_thumbs.remove(0);
+    }
+    let w = 320.0_f64;
+    let h = (w * doc.slide_size.height / doc.slide_size.width.max(1.0)).round().max(1.0);
+    let img = deckcraft_render::render_slide(
+        doc,
+        i,
+        &RenderOpts { scale: w / doc.slide_size.width.max(1.0), size: Some((w as u32, h as u32)), ..Default::default() },
+    );
+    let tex = crate::textures::upload(ctx, format!("show-rail-{i}"), crate::textures::to_color_image(&img, false));
+    show.rail_thumbs.push((i, tex.clone()));
     Some(tex)
 }

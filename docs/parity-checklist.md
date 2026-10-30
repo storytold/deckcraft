@@ -3,12 +3,12 @@
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The summary between `<!-- SUMMARY -->
-**Weighted breadth parity: 84%** over 191 features.
+**Weighted breadth parity: 84%** over 192 features.
 
 | Priority | Features | Done | Partial | Missing | Parity |
 |---|---|---|---|---|---|
 | P0 | 72 | 61 | 11 | 0 | 92% |
-| P1 | 65 | 45 | 16 | 4 | 82% |
+| P1 | 66 | 46 | 16 | 4 | 82% |
 | P2 | 54 | 18 | 24 | 12 | 56% |
 
 | Area | Parity |
@@ -29,7 +29,7 @@ The summary between `<!-- SUMMARY -->
 | Media | 67% |
 | Transitions | 100% |
 | Animations | 85% |
-| Slide show | 68% |
+| Slide show | 71% |
 | Review | 70% |
 | Draw | 50% |
 | Undo & clipboard | 100% |
@@ -211,6 +211,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Animations | Preview in editor | P1 | D |
 | Slide show | Full-screen show from start / current | P0 | D |
 | Slide show | Navigation (keys, click, go to slide, blank screen) | P0 | D |
+| Slide show | See All Slides: every slide, scrollable, sections (tabs); Presenter View keeps it open | P1 | D |
 | Slide show | Presenter view (notes, next slide, timer) | P0 | P |
 | Slide show | Pen and highlighter ink during the show | P1 | P |
 | Slide show | Laser pointer | P2 | P |

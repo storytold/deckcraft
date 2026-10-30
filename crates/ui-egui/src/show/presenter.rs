@@ -1,7 +1,9 @@
 use super::keys::keyboard;
-use super::render::{fit, next_rect};
-use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
-use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use super::render::{fit, next_rect, render_rail_thumb};
+use super::zoom::{Zoom, grid_slide_hit, grid_tab_hit, paint_grid, scroll_grid, slide_aspect, toggle_blank, unit_uv, zoom_frame};
+use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, ShowAction, Stroke, Ui, pos2, theme, vec2};
+use crate::icons::{self, Icon};
+use crate::sections::{self, GridFilter};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -73,6 +75,85 @@ pub(super) fn wall_clock() -> String {
         Some(t) if t.hour < 24 && t.minute < 60 => format!("{:02}:{:02}", t.hour, t.minute),
         _ => "--:--".to_string(),
     }
+}
+
+/// The widest the Presenter View section rail may get: a third of the window, but never so wide
+/// that the slide and notes drop below their minimum room.
+pub(super) fn section_rail_max(window_width: f32) -> f32 {
+    if !window_width.is_finite() {
+        return 0.0;
+    }
+    ((window_width - RAIL_GAP - MIN_CONTENT_W).max(0.0)).min(window_width / 3.0)
+}
+
+/// The rail's width for this frame: never more than a third of the window, and zero when there
+/// are no sections to show.
+pub(super) fn section_rail_width(preferred: f32, tabs: usize, window_width: f32) -> f32 {
+    if tabs == 0 {
+        return 0.0;
+    }
+    preferred.clamp(0.0, section_rail_max(window_width))
+}
+
+pub(super) const DEFAULT_RAIL_W: f32 = 208.0;
+
+const RAIL_GAP: f32 = 12.0;
+const MIN_CONTENT_W: f32 = 320.0;
+/// Below this the rail has no room for its header and previews; dragging further hides it.
+const RAIL_DRAW_MIN: f32 = 160.0;
+
+/// How many previews the rail uploads per frame. A long section requests a repaint until the
+/// rows already on screen are drawn, so opening it never renders the whole deck at once.
+const RAIL_PREVIEW_BUDGET: usize = 8;
+
+const RAIL_LABEL_H: f32 = 16.0;
+
+/// One clickable slide preview in an unfolded section of the Presenter View rail.
+fn rail_slide_preview(ui: &mut Ui, show: &mut Show, doc: &Presentation, i: usize, w: f32, made: &mut usize) -> egui::Response {
+    let thumb_h = (w / slide_aspect(doc)).max(1.0);
+    let (rect, resp) = ui.allocate_exact_size(vec2(w, thumb_h + RAIL_LABEL_H), Sense::click());
+    let title = doc.slides.get(i).map(|s| s.title().split_whitespace().collect::<Vec<_>>().join(" ")).unwrap_or_default();
+    let name = if title.is_empty() { format!("Slide {}", i + 1) } else { format!("Slide {}: {title}", i + 1) };
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, name.clone()));
+    if rect.intersects(ui.clip_rect()) {
+        let thumb = Rect::from_min_size(rect.min, vec2(w, thumb_h));
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(thumb, CornerRadius::same(4), Color32::from_gray(28));
+        let tex = match show.rail_thumbs.iter().find(|(k, _)| *k == i).map(|(_, t)| t.clone()) {
+            Some(t) => Some(t),
+            None if *made < RAIL_PREVIEW_BUDGET => {
+                *made += 1;
+                render_rail_thumb(ui.ctx(), show, doc, i)
+            }
+            None => {
+                ui.ctx().request_repaint();
+                None
+            }
+        };
+        if let Some(tex) = tex {
+            painter.image(tex.id(), thumb, unit_uv(), Color32::WHITE);
+        }
+        let current = i == show.state.slide;
+        if resp.hovered() {
+            painter.rect_stroke(thumb, CornerRadius::same(4), Stroke::new(1.0, Color32::from_gray(160)), egui::StrokeKind::Inside);
+        }
+        painter.rect_stroke(
+            thumb,
+            CornerRadius::same(4),
+            Stroke::new(if current { 3.0 } else { 1.0 }, if current { Color32::WHITE } else { Color32::from_gray(70) }),
+            egui::StrokeKind::Inside,
+        );
+        let hidden = doc.slides.get(i).is_some_and(|s| s.hidden);
+        let label = if hidden { format!("{}  Hidden", i + 1) } else { format!("{}", i + 1) };
+        painter.text(
+            pos2(thumb.center().x, thumb.max.y + RAIL_LABEL_H * 0.5),
+            Align2::CENTER_CENTER,
+            label,
+            theme::font(11.0),
+            if current { Color32::WHITE } else { Color32::from_gray(180) },
+        );
+    }
+    resp.on_hover_text(name)
 }
 
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
@@ -153,33 +234,59 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
                         toggle_blank(show, Color32::WHITE);
                     }
                     if button(ui, if show.presenter_grid { "All slides on" } else { "All slides" }).clicked() {
-                        show.presenter_grid = !show.presenter_grid;
+                        if show.presenter_grid {
+                            show.presenter_grid = false;
+                        } else {
+                            show.open_grid(true, doc);
+                        }
                     }
+                    let mut stay = show.presenter_grid_stay;
+                    let stay_resp =
+                        ui.add(egui::Checkbox::new(&mut stay, egui::RichText::new("Keep All slides open").size(13.0).color(Color32::WHITE)));
+                    if stay_resp.changed() {
+                        show.presenter_grid_stay = stay;
+                        // Turning the option off is also the way back to the classic presenter view.
+                        if !stay {
+                            show.presenter_grid = false;
+                        }
+                    }
+                    let _ = stay_resp.on_hover_text("Keep the grid open after choosing a slide; turn it off to return to Presenter View");
                     if button(ui, show.zoom_label()).clicked() {
                         show.zoom_key();
                     }
                 });
                 ui.add_space(8.0);
                 let avail = ui.available_rect_before_wrap();
+                // A resizable section rail: hidden, a narrow strip, or up to a third of the window.
+                let rail_tabs: Vec<(GridFilter, String, usize)> =
+                    sections::tabs(doc).into_iter().filter(|(filter, _, count)| !matches!(filter, GridFilter::All) && *count > 0).collect();
+                let content = sections_rail(ui, show, doc, cur, avail, &rail_tabs, &mut actions);
                 if show.presenter_grid {
                     // The grid fills this window; the audience keeps seeing the current slide.
-                    paint_grid(ui.painter(), ui.ctx(), show, doc, avail);
-                    let hit = ui.interact(avail, ui.scope_id().with("presenter_grid"), Sense::click());
+                    let delta = ui.input(|i| i.smooth_scroll_delta.y);
+                    if delta != 0.0 {
+                        scroll_grid(show, -delta, content, doc);
+                    }
+                    paint_grid(ui.painter(), ui.ctx(), show, doc, content);
+                    let hit = ui.interact(content, ui.scope_id().with("presenter_grid"), Sense::click());
                     if hit.clicked()
                         && let Some(p) = hit.interact_pointer_pos()
-                        && let Some(n) = see_all_hit(avail, grid_indices(doc.slides.len()).len(), slide_aspect(doc), p)
-                        && let Some(&i) = grid_indices(doc.slides.len()).get(n)
                     {
-                        show.presenter_grid = false;
-                        show.blank = None;
-                        show.zoom = None;
-                        show.zoom_arm = false;
-                        actions.push(show.state.goto(doc, i));
+                        if let Some(filter) = grid_tab_hit(content, doc, p) {
+                            if filter != show.grid_filter {
+                                show.grid_filter = filter;
+                                show.grid_scroll = 0.0;
+                                ui.ctx().request_repaint();
+                            }
+                        } else if let Some(i) = grid_slide_hit(content, doc, show.grid_filter, show.grid_scroll, p) {
+                            pick_presenter_slide(show);
+                            actions.push(show.state.goto(doc, i));
+                        }
                     }
                     return;
                 }
-                let left = Rect::from_min_max(avail.min, pos2(avail.min.x + avail.width() * 0.62, avail.max.y));
-                let right = Rect::from_min_max(pos2(left.max.x + 16.0, avail.min.y), avail.max);
+                let left = Rect::from_min_max(content.min, pos2(content.min.x + content.width() * 0.62, content.max.y));
+                let right = Rect::from_min_max(pos2(left.max.x + 16.0, content.min.y), content.max);
                 let cr = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
                 let cr = Rect::from_min_size(left.min, cr.size());
                 if let Some(t) = &cur_tex {
@@ -245,6 +352,182 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
             *keep = false;
         }
     }
+}
+
+/// A thumbnail picked in the Presenter View grid: the slide changes; the grid stays when the
+/// presenter asked it to, otherwise it returns to the classic current/next/notes layout.
+/// Draw the section rail and its resize handle in `avail`; returns the rectangle left for the
+/// slide and notes.
+fn sections_rail(
+    ui: &mut Ui,
+    show: &mut Show,
+    doc: &Presentation,
+    cur: usize,
+    avail: Rect,
+    rail_tabs: &[(GridFilter, String, usize)],
+    actions: &mut Vec<ShowAction>,
+) -> Rect {
+    let max_rail = section_rail_max(avail.width());
+    let rail_w = section_rail_width(show.presenter_rail_w, rail_tabs.len(), avail.width());
+    let content = if rail_tabs.is_empty() { avail } else { Rect::from_min_max(pos2(avail.min.x + rail_w + RAIL_GAP, avail.min.y), avail.max) };
+    let rail = Rect::from_min_max(avail.min, pos2(avail.min.x + rail_w, avail.max.y));
+    if rail_w > 0.0 {
+        ui.painter().rect_filled(rail, CornerRadius::same(6), Color32::from_gray(32));
+    }
+    if rail_w >= RAIL_DRAW_MIN {
+        sections_rail_contents(ui, show, doc, cur, rail_tabs, rail, actions);
+    } else {
+        // A narrow strip has no room for the header or previews; free their textures.
+        show.rail_thumbs.clear();
+    }
+    if !rail_tabs.is_empty() && max_rail > 0.0 {
+        sections_rail_handle(ui, show, avail, rail_w, max_rail);
+    }
+    content
+}
+
+fn sections_rail_contents(
+    ui: &mut Ui,
+    show: &mut Show,
+    doc: &Presentation,
+    cur: usize,
+    rail_tabs: &[(GridFilter, String, usize)],
+    rail: Rect,
+    actions: &mut Vec<ShowAction>,
+) {
+    let t = theme::Tokens::get(ui.ctx());
+    let mut rail_ui = ui.new_child(egui::UiBuilder::new().max_rect(rail.shrink2(vec2(8.0, 8.0))));
+    rail_ui.vertical(|ui| {
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("Sections").size(13.0).color(Color32::from_gray(170)));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let cols = show.presenter_section_cols.clamp(1, 2);
+                let label = if cols == 2 { "2 per row" } else { "1 per row" };
+                let tip = if cols == 2 { "Show one slide per row" } else { "Show two slides per row" };
+                let resp =
+                    ui.add(egui::Button::new(egui::RichText::new(label).size(10.5).color(t.accent_text)).fill(t.accent).min_size(vec2(0.0, 20.0)));
+                if resp.on_hover_text(tip).clicked() {
+                    show.presenter_section_cols = if cols == 2 { 1 } else { 2 };
+                }
+            });
+        });
+        ui.add_space(4.0);
+        let current = sections::current_filter(doc, cur);
+        // Previews of folded sections (or of a closed show) must not keep textures alive.
+        if show.presenter_sections_open.is_empty() {
+            show.rail_thumbs.clear();
+        } else {
+            let open: Vec<usize> = show.presenter_sections_open.iter().flat_map(|f| sections::grid_slides(doc, *f)).collect();
+            show.rail_thumbs.retain(|(k, _)| open.contains(k));
+        }
+        egui::ScrollArea::vertical().id_salt("presenter_sections").auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            let mut made = 0;
+            for (filter, name, count) in rail_tabs {
+                let selected = *filter == current;
+                let open = show.presenter_sections_open.contains(filter);
+                let arrow = if open { "-" } else { "+" };
+                let resp = ui.add(
+                    egui::Button::new(egui::RichText::new(format!("{arrow} {name} ({count})")).size(13.0).color(if selected {
+                        t.accent_text
+                    } else {
+                        Color32::WHITE
+                    }))
+                    .fill(if selected { t.accent } else { Color32::from_gray(48) })
+                    .min_size(vec2(ui.available_width(), 30.0))
+                    .truncate(),
+                );
+                let resp = resp.on_hover_text(format!("{} the slides in {name}", if open { "Hide" } else { "Show" }));
+                if resp.clicked() {
+                    // The section row only unfolds its slides; the audience keeps the current
+                    // slide until the presenter picks one.
+                    if open {
+                        show.presenter_sections_open.retain(|f| f != filter);
+                    } else {
+                        show.presenter_sections_open.push(*filter);
+                        resp.scroll_to_me(Some(egui::Align::TOP));
+                    }
+                }
+                if open {
+                    let slides = sections::grid_slides(doc, *filter);
+                    let inner_w = ui.available_width();
+                    let cols = show.presenter_section_cols.clamp(1, 2);
+                    let gap = 6.0;
+                    let cell_w = if cols == 1 { inner_w } else { ((inner_w - gap) / 2.0).max(1.0) };
+                    for row in slides.chunks(cols) {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = gap;
+                            for &i in row {
+                                if rail_slide_preview(ui, show, doc, i, cell_w, &mut made).clicked() {
+                                    pick_presenter_slide(show);
+                                    actions.push(show.state.goto(doc, i));
+                                }
+                            }
+                        });
+                    }
+                }
+            }
+        });
+    });
+}
+
+/// The divider grip: drag to resize, click to hide or restore the rail.
+fn sections_rail_handle(ui: &mut Ui, show: &mut Show, avail: Rect, rail_w: f32, max_rail: f32) {
+    let handle = Rect::from_min_max(pos2(avail.min.x + rail_w, avail.min.y), pos2(avail.min.x + rail_w + RAIL_GAP, avail.max.y));
+    let resp = ui.interact(handle, ui.scope_id().with("presenter_rail_handle"), Sense::click_and_drag());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Resize sections panel"));
+    if resp.dragged() {
+        let delta = resp.drag_delta().x;
+        if delta.is_finite() {
+            let next = (rail_w + delta).clamp(0.0, max_rail);
+            show.presenter_rail_w = next;
+            if next >= RAIL_DRAW_MIN {
+                show.presenter_rail_last_w = next;
+            }
+            ui.ctx().request_repaint();
+        }
+    }
+    if resp.clicked() {
+        if rail_w > 0.0 {
+            if rail_w >= RAIL_DRAW_MIN {
+                show.presenter_rail_last_w = rail_w;
+            }
+            show.presenter_rail_w = 0.0;
+        } else {
+            let open = show.presenter_rail_last_w.clamp(0.0, max_rail);
+            show.presenter_rail_w = if open > 0.0 { open } else { DEFAULT_RAIL_W.min(max_rail) };
+        }
+        ui.ctx().request_repaint();
+    }
+    let t = theme::Tokens::get(ui.ctx());
+    let hot = resp.hovered() || resp.dragged();
+    let painter = ui.painter_at(handle);
+    painter.line_segment(
+        [pos2(handle.center().x, handle.min.y), pos2(handle.center().x, handle.max.y)],
+        Stroke::new(if hot { 2.0 } else { 1.0 }, if hot { t.accent } else { Color32::from_gray(48) }),
+    );
+    let tab = Rect::from_center_size(pos2(handle.center().x, handle.center().y), vec2(12.0, 52.0));
+    painter.rect_filled(tab, CornerRadius::same(3), if hot { t.accent } else { Color32::from_gray(52) });
+    icons::paint(
+        &painter,
+        tab.shrink(1.0),
+        if rail_w > 0.0 { Icon::ChevronLeft } else { Icon::ChevronRight },
+        if hot { t.accent_text } else { Color32::from_gray(200) },
+        false,
+    );
+    if hot {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    let _ = resp.on_hover_text(if rail_w > 0.0 { "Drag to resize; click to hide Sections" } else { "Drag to resize; click to show Sections" });
+}
+
+pub(super) fn pick_presenter_slide(show: &mut Show) {
+    if !show.presenter_grid_stay {
+        show.presenter_grid = false;
+    }
+    show.blank = None;
+    show.zoom = None;
+    show.zoom_arm = false;
 }
 
 /// The current slide's notes in the presenter's notes pane, `px` for 12 pt text.
