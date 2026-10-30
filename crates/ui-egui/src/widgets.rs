@@ -542,12 +542,10 @@ pub fn spinner(ui: &mut Ui, id: &str, label: &str, value: f64, step: f64, suffix
         } else {
             ui.data_mut(|d| d.remove::<String>(key));
         }
-        if r.lost_focus() {
-            // A decimal comma (`0,5`, as typed in many locales) reads as a point.
-            let num: String = text.chars().map(|c| if c == ',' { '.' } else { c }).filter(|c| c.is_ascii_digit() || *c == '.' || *c == '-').collect();
-            if let Ok(v) = num.parse::<f64>() {
-                out = Some(v);
-            }
+        if r.lost_focus()
+            && let Some(v) = spinner_number(&text, crate::i18n::current().code())
+        {
+            out = Some(v);
         }
         let (rect, _) = ui.allocate_exact_size(vec2(12.0, 22.0), Sense::hover());
         let up = ui.interact(Rect::from_min_max(rect.min, pos2(rect.max.x, rect.center().y)), key.with("up"), Sense::click());
@@ -611,6 +609,13 @@ pub fn drop_button(ui: &mut Ui, label: &str, size: egui::Vec2, enabled: bool) ->
     let col = if enabled { t.text_dim } else { t.text_faint };
     chevron(ui.painter(), egui::pos2(r.rect.max.x - 8.0, r.rect.center().y), 3.0, col);
     r
+}
+
+/// The number typed into a spinner, read as `locale` writes numbers: units and spaces are dropped,
+/// so `0,5` is a half in Russian and `1,000` a thousand in English.
+fn spinner_number(text: &str, locale: &str) -> Option<f64> {
+    let num: String = text.chars().filter(|c| c.is_ascii_digit() || matches!(c, '.' | ',' | '-')).collect();
+    craft_i18n::parse_number(&num, locale).ok()
 }
 
 #[cfg(test)]
@@ -845,5 +850,18 @@ mod tests {
         let stored = Some(("old".to_string(), "old plus typing".to_string()));
         assert_eq!(text_draft(stored, "undone"), "undone");
         assert_eq!(text_draft(None, "fresh"), "fresh");
+    }
+
+    /// A spinner reads separators as the interface language writes them: a grouped thousand in
+    /// English stays a thousand, a decimal comma in Russian is a fraction, and units are dropped.
+    #[test]
+    fn a_spinner_reads_numbers_the_way_the_interface_language_writes_them() {
+        assert_eq!(spinner_number("1,000", "en"), Some(1000.0));
+        assert_eq!(spinner_number("1.5", "en"), Some(1.5));
+        assert_eq!(spinner_number("12 pt", "en"), Some(12.0));
+        assert_eq!(spinner_number("0,5", "ru"), Some(0.5));
+        assert_eq!(spinner_number("1.5", "ru"), Some(1.5));
+        assert_eq!(spinner_number("-2,25\"", "ru"), Some(-2.25));
+        assert_eq!(spinner_number("pt", "en"), None);
     }
 }

@@ -149,7 +149,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
-| 2026-10-30 | Russian interface (`ru`): the craft-i18n catalog covers the ribbon, menus, command palette, status bar, File tab, dialogs and panes; spinners accept a decimal comma |
+| 2026-10-30 | Russian interface (`ru`): the craft-i18n catalog covers the ribbon, menus, command palette, status bar, File tab, dialogs and panes; spinners read numbers as the interface language writes them |
 | 2026-10-28 | Interface languages (#15): DeckCraft reads the craft-i18n catalogs (`CRAFT_I18N_DIR`, pinned in `craft-i18n.rev`), follows the system language and has Preferences › Interface language and `app.language`. German is the first language: ribbon, menus, command palette, status bar, File tab, dialogs and panes |
 | 2026-10-30 | Print-preview tests use the URL emitted by egui and its exact file path; previews are explicitly removed before the macOS process exits |
 | 2026-10-30 | `slide.actions` lists shape click and hover actions and text-run hyperlinks (including table cells and grouped shapes) for audit; listing never runs an action. The UI pane is a follow-up |
