@@ -35,6 +35,7 @@ fn finite(s: &AnimState) -> bool {
         && s.scale_y.is_finite()
         && s.rotate.is_finite()
         && s.clip.is_none_or(|c| c.iter().all(|v| v.is_finite()))
+        && s.dissolve.is_none_or(|d| d.is_finite() && (0.0..=1.0).contains(&d))
 }
 
 #[test]
@@ -1154,4 +1155,62 @@ fn many_by_paragraph_animations_on_one_shape_share_paragraph_targets() {
     let tl = Timeline::new(&s, W, H);
     assert_eq!(tl.effects().len(), 6_000);
     assert_eq!(tl.paragraph_targets(ShapeId(1)), vec![0, 1, 2]);
+}
+
+#[test]
+fn dissolve_in_shows_a_growing_share_not_a_fade() {
+    let tl = Timeline::new(&slide_with(vec![anim(1, AnimClass::Entrance, "dissolve", AnimStart::OnClick)]), W, H);
+    let mut last = -1.0;
+    // Hidden until the effect starts.
+    assert!(!tl.state(ShapeId(1), None, 0, 0.0).visible);
+    for t in [0.01, 0.1, 0.25, 0.4, 0.5, 0.6, 0.75, 0.9, 0.99] {
+        let s = tl.state(ShapeId(1), None, 0, t);
+        // The shape stays opaque: the renderer decides which parts show.
+        assert!(s.visible && (s.opacity - 1.0).abs() < 1e-12, "{t}: {s:?}");
+        let d = s.dissolve.expect("a dissolve level while it plays");
+        assert!(d >= last, "the share only grows: {last} then {d} at {t}");
+        last = d;
+    }
+    assert!(last > 0.999, "all of it shows by the end: {last}");
+    // Done: nothing left to apply.
+    assert!(tl.state(ShapeId(1), None, 0, 1.0).is_identity());
+    assert!(tl.state(ShapeId(1), None, 1, 0.0).is_identity());
+}
+
+#[test]
+fn dissolve_share_follows_powerpoints_s_curve() {
+    // PowerPoint's Dissolve In on a 4 s effect, from its video export, at p = .1 .. .9.
+    let measured = [0.003, 0.040, 0.140, 0.305, 0.508, 0.707, 0.866, 0.962, 0.997];
+    for (i, m) in measured.iter().enumerate() {
+        let p = (i + 1) as f64 / 10.0;
+        let share = crate::effects::dissolve_share(p);
+        assert!((share - m).abs() < 0.02, "p={p}: {share} against {m}");
+    }
+    assert_eq!(crate::effects::dissolve_share(0.0), 0.0);
+    assert!((crate::effects::dissolve_share(1.0) - 1.0).abs() < 1e-12);
+    assert_eq!(crate::effects::dissolve_share(f64::NAN), 0.0);
+}
+
+#[test]
+fn dissolve_out_takes_back_what_dissolve_in_shows() {
+    let tl = Timeline::new(&slide_with(vec![anim(1, AnimClass::Exit, "dissolveOut", AnimStart::OnClick)]), W, H);
+    let (start, mid, end) = (tl.state(ShapeId(1), None, 0, 0.01), tl.state(ShapeId(1), None, 0, 0.5), tl.state(ShapeId(1), None, 0, 0.99));
+    assert!(start.visible && start.dissolve.is_some_and(|d| d > 0.99));
+    assert!(mid.dissolve.is_some_and(|d| (d - 0.5).abs() < 0.05));
+    assert!(end.dissolve.is_some_and(|d| d < 0.05));
+    assert!(!tl.state(ShapeId(1), None, 1, 0.0).visible);
+}
+
+#[test]
+fn dissolves_compose_to_the_smaller_share_and_stay_sane() {
+    let a = AnimState { dissolve: Some(0.7), ..Default::default() };
+    let b = AnimState { dissolve: Some(0.4), ..Default::default() };
+    assert_eq!(a.compose(&b).dissolve, Some(0.4));
+    assert_eq!(a.compose(&AnimState::default()).dissolve, Some(0.7));
+    assert_eq!(AnimState::default().compose(&b).dissolve, Some(0.4));
+    assert_eq!(AnimState { dissolve: Some(f64::NAN), ..Default::default() }.sanitized().dissolve, Some(1.0));
+    assert_eq!(AnimState { dissolve: Some(7.0), ..Default::default() }.sanitized().dissolve, Some(1.0));
+    // A part that cannot dissolve fades instead.
+    assert!((AnimState { opacity: 0.5, dissolve: Some(0.5), ..Default::default() }.fade_opacity() - 0.25).abs() < 1e-12);
+    assert!(!AnimState { dissolve: Some(0.5), ..Default::default() }.is_identity());
 }

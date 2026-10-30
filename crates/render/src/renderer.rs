@@ -396,7 +396,8 @@ impl Renderer {
         }
         // Footer placeholders on layouts/masters show only on slides that include them.
         let st = f.opts.state.map(|g| g(s.id)).unwrap_or_default();
-        if !st.visible || st.opacity <= 0.001 {
+        let dissolve = st.dissolve.filter(|d| *d < 0.999);
+        if !st.visible || st.opacity <= 0.001 || dissolve.is_some_and(|d| d <= 0.001) {
             return;
         }
         let x = resolve::xfrm(rctx, s);
@@ -415,11 +416,23 @@ impl Renderer {
         if let Some(a) = camera_turn(rctx, s, x.w, x.h) {
             m *= a;
         }
-        let layered = st.opacity < 0.999 || st.clip.is_some();
+        let layered = st.opacity < 0.999 || st.clip.is_some() || dissolve.is_some();
         if layered {
             ctx.set_transform(m);
             let clip = st.clip.map(|[l, t, r, b]| Rect::new(l * x.w, t * x.h, r * x.w, b * x.h).to_path(0.1));
-            ctx.push_layer(clip.as_ref(), None, Some(st.opacity.clamp(0.0, 1.0) as f32), None, None);
+            let mut opacity = st.opacity.clamp(0.0, 1.0);
+            // A dissolve shows part of the shape, wherever its noise is below the level: the area
+            // is the whole canvas, as a shadow, reflection or overflowing text can fall anywhere.
+            let mask = dissolve.and_then(|d| {
+                let area = Rect::new(0.0, 0.0, f64::from(ctx.width()), f64::from(ctx.height()));
+                let view = Affine::translate(f.opts.offset) * Affine::scale(f.opts.scale);
+                let mask = dissolve::mask(ctx.width(), ctx.height(), area, view, 0x5DEE_CE66 ^ u64::from(s.id.0).wrapping_mul(0x9E37_79B9), d);
+                if mask.is_none() {
+                    opacity *= d;
+                }
+                mask
+            });
+            ctx.push_layer(clip.as_ref(), None, Some(opacity as f32), mask, None);
         }
         match &s.kind {
             ShapeKind::Group { children, child } => {
