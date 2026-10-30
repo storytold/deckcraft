@@ -99,7 +99,9 @@ pub fn remove_files(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize,
         Err(err) => return Err(format!("{path}: {err}")),
     };
     let mut removed = 0;
-    for e in entries.flatten() {
+    for e in entries {
+        // An entry that can't be read is an error, not a file skipped, so no earlier frame stays.
+        let e = e.map_err(|err| format!("{path}: {err}"))?;
         let name = e.file_name();
         if matches(&name.to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_file()) {
             let file = e.path();
@@ -115,6 +117,50 @@ pub fn remove_files(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize,
 #[cfg(target_arch = "wasm32")]
 pub fn remove_files(_path: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
     Ok(0)
+}
+
+/// Move the files directly in folder `from` whose names `matches` into folder `to`, keeping their
+/// names; both folders must be inside the automation write root and on one file system, as a
+/// staging folder inside `to` is. Returns how many moved.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn move_files(from: &str, to: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    let entries = std::fs::read_dir(from).map_err(|err| format!("{from}: {err}"))?;
+    let mut moved = 0;
+    for e in entries {
+        // An entry that can't be read is an error, not a file skipped, so no frame is left behind.
+        let e = e.map_err(|err| format!("{from}: {err}"))?;
+        let name = e.file_name();
+        if matches(&name.to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_file()) {
+            let (src, dst) = (e.path(), std::path::Path::new(to).join(&name));
+            let (src, dst) = (src.to_string_lossy(), dst.to_string_lossy());
+            crate::file_access::check_write(&src)?;
+            crate::file_access::check_write(&dst)?;
+            std::fs::rename(&*src, &*dst).map_err(|err| format!("{dst}: {err}"))?;
+            moved += 1;
+        }
+    }
+    Ok(moved)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn move_files(_from: &str, _to: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    Ok(0)
+}
+
+/// Remove the folder at `path` if it is there and empty. A folder that is gone, or still holds
+/// something, is left as it is and counts as done: this is cleanup, not part of the result.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_empty_folder(path: &str) -> Result<(), String> {
+    crate::file_access::check_write(path)?;
+    match std::fs::remove_dir(path) {
+        Err(err) if !matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty) => Err(format!("{path}: {err}")),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn remove_empty_folder(_path: &str) -> Result<(), String> {
+    Ok(())
 }
 
 /// Write `bytes` straight to `path` inside the automation write root: no temporary sibling and no
