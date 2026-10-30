@@ -1197,6 +1197,7 @@ name = "deckcraft-pdf"
 version = "0.12.0"
 dependencies = [
  "craft-pdf",
+ "deckcraft-color",
  "deckcraft-fonts",
  "deckcraft-model",
  "deckcraft-render",

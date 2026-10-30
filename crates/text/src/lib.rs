@@ -117,6 +117,9 @@ pub struct TextLayout {
     /// Per paragraph: whether a caret may stand at each character offset 0..=len (grapheme
     /// boundaries), for logical caret movement.
     pub boundaries: Vec<Vec<bool>>,
+    /// Per paragraph: its characters as laid out (fields filled in), indexed like
+    /// [`GlyphRun::cells`] and [`GlyphRun::chars`] (text extraction of exports with real text).
+    pub texts: Vec<String>,
 }
 
 /// Which side of a boundary a caret belongs to: `Downstream` sticks to the character after it

@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
+use super::*;
+use deckcraft_color::Rgba;
+use deckcraft_model::style::{ColorRef, Effects, Fill as ShapeFill, Gradient, GradientShape, GradientStop, PictureFill, Shadow};
+use deckcraft_model::text::{Hyperlink, TextBody};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, Xfrm};
 use std::collections::HashMap;
 
 use deckcraft_fonts::FontDb;
 use deckcraft_render::RenderOpts;
 use kurbo::Rect;
-
-use super::{
-    MAX_RASTER_PIXELS, PAPERS, PageLayout, PdfError, PdfOptions, Presentation, export, glyph_text_ranges, handout_boxes, master_text_pieces,
-    master_texts, notes_frames, notes_slide_box, opaque, paper_size, raster_scale, straight,
-};
-use deckcraft_model::text::TextBody;
 
 fn deck(n: usize) -> Presentation {
     let mut p = deckcraft_model::defaults::new_presentation(None);
@@ -33,23 +32,86 @@ fn opts(layout: PageLayout) -> PdfOptions {
     PdfOptions { layout, dpi: 48.0, ..Default::default() }
 }
 
+fn add(p: &mut Presentation, slide: usize, sh: Shape) {
+    Arc::make_mut(&mut p.slides[slide]).shapes.push(sh);
+}
+
+fn rect(id: u32, x: f64, y: f64, fill: ShapeFill) -> Shape {
+    Shape { id: ShapeId(id), xfrm: Some(Xfrm::new(x, y, 200.0, 100.0)), fill: Some(fill), ..Default::default() }
+}
+
+fn shadow() -> Effects {
+    Effects {
+        outer_shadow: Some(Shadow {
+            color: ColorRef::rgb(Rgba::BLACK),
+            blur: 8.0,
+            dist: 6.0,
+            dir: 45.0,
+            inner: false,
+            sx: 1.0,
+            sy: 1.0,
+            kx: 0.0,
+            ky: 0.0,
+            align: String::new(),
+            rotate_with_shape: false,
+        }),
+        ..Default::default()
+    }
+}
+
+/// A PDF with readable (uncompressed) page contents and text maps.
+fn plain(p: &Presentation, o: &PdfOptions) -> Vec<u8> {
+    export_with(p, o, false).expect("export")
+}
+
+fn count(hay: &[u8], needle: &[u8]) -> usize {
+    hay.windows(needle.len()).filter(|w| *w == needle).count()
+}
+
+fn pages(pdf: &[u8]) -> usize {
+    count(pdf, b"/Type/Page") - count(pdf, b"/Type/Pages")
+}
+
+/// (width, height) of every image XObject, soft masks included.
+fn images(pdf: &[u8]) -> Vec<(u32, u32)> {
+    let num = |d: &[u8], key: &[u8]| -> u32 {
+        let Some(at) = d.windows(key.len()).position(|w| w == key) else { return 0 };
+        d[at + key.len()..]
+            .iter()
+            .skip_while(|c| c.is_ascii_whitespace())
+            .take_while(|c| c.is_ascii_digit())
+            .fold(0, |n, c| n * 10 + (c - b'0') as u32)
+    };
+    let key = b"/Subtype/Image";
+    let mut out = vec![];
+    for (at, _) in pdf.windows(key.len()).enumerate().filter(|(_, w)| *w == key) {
+        let start = pdf[..at].windows(3).rposition(|w| w == b"obj").unwrap_or(0);
+        let end = at + pdf[at..].windows(6).position(|w| w == b"stream").unwrap_or(0);
+        let d = &pdf[start..end];
+        out.push((num(d, b"/Width"), num(d, b"/Height")));
+    }
+    out
+}
+
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
 #[cfg_attr(not(target_arch = "wasm32"), test)]
 fn exports_slides_notes_and_handouts() {
     let p = deck(5);
-    for layout in [PageLayout::Slides, PageLayout::Notes, PageLayout::Handouts { per_page: 3 }, PageLayout::Handouts { per_page: 6 }] {
-        let bytes = export(&p, &opts(layout)).expect("export");
-        assert!(bytes.starts_with(b"%PDF-"), "{layout:?}");
-        assert!(bytes.len() > 1000);
-        let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
-        let (pages, size) = match layout {
-            PageLayout::Slides => (5, (960.0, 540.0)),
-            PageLayout::Notes => (5, (612.0, 792.0)),
-            PageLayout::Handouts { per_page: 3 } => (2, (612.0, 792.0)),
-            _ => (1, (612.0, 792.0)),
-        };
-        assert_eq!(pdf.pages().len(), pages);
-        assert!(pdf.pages().iter().all(|page| page.render_dimensions() == size));
+    for vector in [true, false] {
+        for layout in [PageLayout::Slides, PageLayout::Notes, PageLayout::Handouts { per_page: 3 }, PageLayout::Handouts { per_page: 6 }] {
+            let bytes = export(&p, &PdfOptions { vector, ..opts(layout) }).expect("export");
+            assert!(bytes.starts_with(b"%PDF-"), "{layout:?}");
+            assert!(bytes.len() > 1000);
+            let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
+            let (pages, size) = match layout {
+                PageLayout::Slides => (5, (960.0, 540.0)),
+                PageLayout::Notes => (5, (612.0, 792.0)),
+                PageLayout::Handouts { per_page: 3 } => (2, (612.0, 792.0)),
+                _ => (1, (612.0, 792.0)),
+            };
+            assert_eq!(pdf.pages().len(), pages);
+            assert!(pdf.pages().iter().all(|page| page.render_dimensions() == size));
+        }
     }
 }
 
@@ -66,12 +128,168 @@ fn empty_range_is_an_error() {
 fn hidden_slides_skipped_unless_asked() {
     let mut p = deck(2);
     Arc::make_mut(&mut p.slides[1]).hidden = true;
-    let a = export(&p, &opts(PageLayout::Slides)).unwrap();
-    let b = export(&p, &PdfOptions { include_hidden: true, ..opts(PageLayout::Slides) }).unwrap();
-    assert_eq!(hayro_syntax::Pdf::new(a.clone()).unwrap().pages().len(), 1);
-    assert_eq!(hayro_syntax::Pdf::new(b.clone()).unwrap().pages().len(), 2);
+    for vector in [true, false] {
+        let a = plain(&p, &PdfOptions { vector, ..opts(PageLayout::Slides) });
+        let b = plain(&p, &PdfOptions { vector, include_hidden: true, ..opts(PageLayout::Slides) });
+        assert_eq!(pages(&a), 1, "vector {vector}");
+        assert_eq!(pages(&b), 2, "vector {vector}");
+    }
     let ranged = export(&p, &PdfOptions { slides: Some(vec![1, 0, 9]), ..opts(PageLayout::Slides) }).unwrap();
-    assert_eq!(hayro_syntax::Pdf::new(ranged.clone()).unwrap().pages().len(), 2);
+    assert_eq!(hayro_syntax::Pdf::new(ranged).unwrap().pages().len(), 2);
+}
+
+#[test]
+fn vector_slides_are_paths_and_text_without_a_page_image() {
+    let mut p = deck(1);
+    add(&mut p, 0, rect(900, 40.0, 300.0, ShapeFill::solid(ColorRef::rgb(Rgba::rgb(0x20, 0x60, 0xC0)))));
+    let grad = Gradient {
+        stops: vec![
+            GradientStop { pos: 0.0, color: ColorRef::rgb(Rgba::rgb(255, 0, 0)) },
+            GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::rgba(0, 0, 255, 128)) },
+        ],
+        shape: GradientShape::Linear { angle: 30.0, scaled: false },
+        rotate_with_shape: true,
+        tile: [0.0; 4],
+    };
+    add(&mut p, 0, rect(901, 300.0, 300.0, ShapeFill::Gradient(grad)));
+    let pdf = plain(&p, &opts(PageLayout::Slides));
+    assert!(images(&pdf).is_empty(), "{:?}", images(&pdf));
+    // Paths (filled), real text and a shading for the gradient.
+    assert!(count(&pdf, b"\nf\n") + count(&pdf, b" f\n") > 0);
+    assert!(count(&pdf, b"BT") > 0 && count(&pdf, b" Tf") > 0);
+    assert!(count(&pdf, b"/ShadingType 2") > 0);
+    // The raster mode draws the slide as one image the size of the page.
+    let raster = plain(&p, &PdfOptions { vector: false, ..opts(PageLayout::Slides) });
+    assert!(images(&raster).iter().any(|(w, _)| *w >= 600), "{:?}", images(&raster));
+}
+
+#[test]
+fn vector_text_is_extractable() {
+    let p = deck(1);
+    let pdf = plain(&p, &opts(PageLayout::Slides));
+    // The title's characters are mapped back to Unicode (UTF-16 hex in the ToUnicode map).
+    assert!(count(&pdf, b"begincmap") > 0);
+    for c in "Slide title".chars().filter(|c| !c.is_whitespace()) {
+        let hex = format!("<{:04X}>", c as u32);
+        assert!(count(&pdf, hex.as_bytes()) > 0, "{c}");
+    }
+    // No invisible layer: the text is drawn once.
+    assert_eq!(count(&pdf, b"3 Tr"), 0);
+}
+
+#[test]
+fn vector_pdf_is_much_smaller_than_raster() {
+    let mut p = deck(5);
+    add(&mut p, 1, rect(900, 40.0, 300.0, ShapeFill::solid(ColorRef::rgb(Rgba::rgb(0x20, 0x60, 0xC0)))));
+    let o = PdfOptions { dpi: 200.0, ..Default::default() };
+    let vector = export(&p, &o).expect("vector");
+    let raster = export(&p, &PdfOptions { vector: false, ..o }).expect("raster");
+    assert!(vector.len() * 5 < raster.len(), "vector {} raster {}", vector.len(), raster.len());
+}
+
+#[test]
+fn a_shadow_rasterizes_that_shape_only() {
+    let mut p = deck(1);
+    let mut sh = rect(900, 100.0, 300.0, ShapeFill::solid(ColorRef::rgb(Rgba::rgb(0xF0, 0x80, 0x20))));
+    sh.effects = Some(shadow());
+    sh.text = Some(TextBody::from_text("Shadowed"));
+    add(&mut p, 0, sh);
+    let pdf = plain(&p, &PdfOptions { dpi: 72.0, ..opts(PageLayout::Slides) });
+    let imgs = images(&pdf);
+    // One local raster (and its soft mask), far smaller than the 960 × 540 page.
+    assert!(!imgs.is_empty() && imgs.len() <= 2, "{imgs:?}");
+    assert!(imgs.iter().all(|(w, h)| *w > 200 && *w < 400 && *h < 250), "{imgs:?}");
+    // The shape's text stays text.
+    assert!(count(&pdf, format!("<{:04X}>", 'S' as u32).as_bytes()) > 0);
+    assert!(count(&pdf, format!("<{:04X}>", 'w' as u32).as_bytes()) > 0);
+}
+
+#[test]
+fn pattern_fills_rasterize_their_area_only() {
+    let mut p = deck(1);
+    let pat = deckcraft_model::style::PatternFill {
+        preset: "dkHorz".into(),
+        fg: ColorRef::rgb(Rgba::rgb(0x20, 0x20, 0x20)),
+        bg: ColorRef::rgb(Rgba::rgb(0xF0, 0xF0, 0xF0)),
+    };
+    add(&mut p, 0, rect(900, 100.0, 300.0, ShapeFill::Pattern(pat)));
+    let pdf = plain(&p, &PdfOptions { dpi: 72.0, ..opts(PageLayout::Slides) });
+    let imgs = images(&pdf);
+    assert!(!imgs.is_empty() && imgs.iter().all(|(w, h)| *w <= 201 && *h <= 101), "{imgs:?}");
+}
+
+#[test]
+fn jpeg_pictures_are_embedded_as_they_are() {
+    let mut p = deck(1);
+    let px: Vec<u8> = (0..64 * 48).flat_map(|i| [(i % 64 * 4) as u8, (i / 64 * 5) as u8, 128, 255]).collect();
+    let jpeg = deckcraft_render::Image { width: 64, height: 48, pixels: px }.to_jpeg(90);
+    assert!(jpeg.starts_with(&[0xFF, 0xD8]));
+    let media = p.add_media("photo.jpg", "image/jpeg", jpeg.clone()).expect("media");
+    let pic = Shape {
+        id: ShapeId(900),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 320.0, 240.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media, crop: [0.1, 0.0, 0.0, 0.1], ..Default::default() } },
+        ..Default::default()
+    };
+    add(&mut p, 0, pic);
+    let pdf = plain(&p, &opts(PageLayout::Slides));
+    assert_eq!(count(&pdf, b"/DCTDecode"), 1);
+    assert_eq!(images(&pdf), vec![(64, 48)]);
+    // The file itself, byte for byte.
+    assert_eq!(count(&pdf, &jpeg[..64]), 1);
+    // Cropped: drawn under a clip.
+    assert!(count(&pdf, b"W n") + count(&pdf, b"W\nn") > 0);
+}
+
+/// A PNG whose header reads but whose data doesn't shows the missing-picture placeholder, not a hole.
+#[test]
+fn a_picture_that_cannot_be_decoded_draws_the_placeholder() {
+    let mut p = deck(1);
+    let empty = plain(&p, &opts(PageLayout::Slides));
+    let png = deckcraft_render::Image { width: 8, height: 8, pixels: vec![255; 8 * 8 * 4] }.to_png();
+    let media = p.add_media("broken.png", "image/png", png[..33].to_vec()).expect("media");
+    let pic = Shape {
+        id: ShapeId(900),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 320.0, 240.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+        ..Default::default()
+    };
+    add(&mut p, 0, pic);
+    let pdf = plain(&p, &opts(PageLayout::Slides));
+    assert!(images(&pdf).is_empty());
+    assert!(pdf.len() > empty.len(), "the placeholder is drawn");
+}
+
+#[test]
+fn links_and_bookmarks_survive_vector_export() {
+    let mut p = deck(3);
+    let mut sh = rect(900, 40.0, 300.0, ShapeFill::solid(ColorRef::rgb(Rgba::rgb(0x20, 0x60, 0xC0))));
+    sh.click = Some(Hyperlink {
+        action: deckcraft_model::text::Action::Url { url: "https://example.org/deck".into() },
+        tooltip: String::new(),
+        highlight_click: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
+    add(&mut p, 0, sh);
+    let mut next = rect(901, 300.0, 300.0, ShapeFill::solid(ColorRef::rgb(Rgba::rgb(0x20, 0xA0, 0x60))));
+    next.click = Some(Hyperlink {
+        action: deckcraft_model::text::Action::LastSlide,
+        tooltip: String::new(),
+        highlight_click: false,
+        sound: None,
+        stop_sound: false,
+        zoom_return: None,
+    });
+    add(&mut p, 0, next);
+    for layout in [PageLayout::Slides, PageLayout::Handouts { per_page: 6 }] {
+        let pdf = plain(&p, &opts(layout));
+        assert_eq!(count(&pdf, b"https://example.org/deck"), 1, "{layout:?}");
+        assert!(count(&pdf, b"/Subtype/Link") >= 2, "{layout:?}");
+        assert!(count(&pdf, b"/Outlines") > 0, "{layout:?}");
+        assert!(count(&pdf, b"Slide title 2") > 0, "{layout:?}");
+    }
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
@@ -123,15 +341,16 @@ fn text_layer_links_and_bookmarks_survive_serialization() {
     for (shape, action) in slide.shapes.iter_mut().zip([Action::Url { url: "https://example.com/deck".into() }, Action::Slide { slide: last }]) {
         shape.click = Some(Hyperlink { action, tooltip: "Link".into(), highlight_click: false, sound: None, stop_sound: false, zoom_return: None });
     }
-    for text_layer in [true, false] {
-        let bytes = export(&p, &PdfOptions { text_layer, ..opts(PageLayout::Slides) }).unwrap();
+    // Vector slides always carry real text; raster slides only with the text layer.
+    for (vector, text_layer) in [(false, true), (false, false), (true, false)] {
+        let bytes = export(&p, &PdfOptions { vector, text_layer, ..opts(PageLayout::Slides) }).unwrap();
         let pdf = hayro_syntax::Pdf::new(bytes.clone()).unwrap();
         let page = &pdf.pages()[0];
         let annotations = page.raw().get::<Array<'_>>(b"Annots").unwrap();
         assert_eq!(annotations.iter::<Dict<'_>>().count(), 2);
         let resources = page.raw().get::<Dict<'_>>(b"Resources").unwrap();
         let fonts = resources.get::<Dict<'_>>(b"Font");
-        assert_eq!(fonts.is_some_and(|fonts| !fonts.is_empty()), text_layer);
+        assert_eq!(fonts.is_some_and(|fonts| !fonts.is_empty()), vector || text_layer);
         let catalog = pdf.xref().get::<Dict<'_>>(pdf.xref().root_id()).unwrap();
         let outlines = catalog.get::<Dict<'_>>(b"Outlines").unwrap();
         let first = outlines.get::<Dict<'_>>(b"First").unwrap();
@@ -241,9 +460,12 @@ fn unembeddable_font_returns_error_instead_of_a_pdf_missing_text() {
         }
     }
     slide.shapes = vec![Shape { id: ShapeId(9000), xfrm: Some(Xfrm::new(20.0, 20.0, 500.0, 200.0)), text: Some(body), ..Default::default() }];
-    let error = export(&p, &opts(PageLayout::Slides)).unwrap_err();
-    assert!(matches!(error, PdfError::Write(_)));
-    assert!(error.to_string().contains("font could not be read for embedding"));
+    // Vector slides and the raster mode's text layer both report it.
+    for vector in [true, false] {
+        let error = export(&p, &PdfOptions { vector, ..opts(PageLayout::Slides) }).unwrap_err();
+        assert!(matches!(error, PdfError::Write(_)));
+        assert!(error.to_string().contains("font could not be read for embedding"), "vector {vector}: {error}");
+    }
     // Master text remains visible even when the optional slide text layer is off.
     // It must propagate the same embedding error through notes and handout pages.
     let mut header = ph(deckcraft_model::PhType::Header, 0.0, 0.0, 500.0, 40.0, "");
@@ -511,7 +733,7 @@ fn slides_share_one_backdrop_raster_and_keep_their_pixels() {
     /// The image XObjects the export stores, one entry per distinct object: the pages that draw
     /// it, its filters, color channel, alpha channel (the SMask) and pixel size.
     fn images(p: &Presentation) -> Vec<(Vec<usize>, Vec<hayro_syntax::Filter>, Vec<u8>, Option<Vec<u8>>, (u32, u32))> {
-        let bytes = export(p, &opts(PageLayout::Slides)).expect("export");
+        let bytes = export(p, &PdfOptions { vector: false, ..opts(PageLayout::Slides) }).expect("export");
         let pdf = hayro_syntax::Pdf::new(bytes).expect("pdf");
         let mut out: Vec<(String, Vec<usize>, Vec<hayro_syntax::Filter>, Vec<u8>, Option<Vec<u8>>, (u32, u32))> = Vec::new();
         for (n, page) in pdf.pages().iter().enumerate() {
@@ -642,6 +864,108 @@ fn glyph_ranges_follow_shaping_clusters() {
     assert_eq!(glyph_text_ranges("ab", (0, 2), &[(0, 'a'), (0, 'a'), (1, 'b')], 3), vec![0..1, 0..1, 1..2]);
     // A run starting mid-paragraph, multi-byte characters in visual (right-to-left) order.
     assert_eq!(glyph_text_ranges("αβγ", (3, 6), &[(5, 'γ'), (4, 'β'), (3, 'α')], 3), vec![4..6, 2..4, 0..2]);
+}
+
+/// A placeable WMF, 2 x 1 inch: a red rectangle over the left half.
+fn half_red_wmf() -> Vec<u8> {
+    fn rec(func: u16, params: &[i16]) -> Vec<u8> {
+        let mut v = ((3 + params.len()) as u32).to_le_bytes().to_vec();
+        v.extend(func.to_le_bytes());
+        for p in params {
+            v.extend(p.to_le_bytes());
+        }
+        v
+    }
+    let body = [rec(0x02FC, &[0, 0xFF, 0, 0]), rec(0x012D, &[0]), rec(0x041B, &[1440, 1440, 0, 0]), rec(0, &[])].concat();
+    let mut f = 0x9AC6_CDD7u32.to_le_bytes().to_vec();
+    f.extend(0u16.to_le_bytes());
+    for v in [0i16, 0, 2880, 1440] {
+        f.extend(v.to_le_bytes());
+    }
+    f.extend(1440u16.to_le_bytes());
+    f.extend(0u32.to_le_bytes());
+    f.extend(0u16.to_le_bytes());
+    let total = (f.len() + 18 + body.len()) / 2;
+    for v in [1u16, 9, 0x300] {
+        f.extend(v.to_le_bytes());
+    }
+    f.extend((total as u32).to_le_bytes());
+    f.extend(16u16.to_le_bytes());
+    f.extend(0u32.to_le_bytes());
+    f.extend(0u16.to_le_bytes());
+    f.extend(body);
+    f
+}
+
+/// What the renderer draws only as pixels (pattern fills, rectangle path gradients, text shadows,
+/// WMF pictures, colour emoji) exports as local images in a vector PDF: nothing panics, nothing is
+/// dropped, and the text around stays text.
+#[test]
+fn pixel_only_drawing_exports_as_local_images() {
+    use deckcraft_model::style::{PatternFill, Shadow};
+    let mut p = deck(1);
+    let pat = PatternFill { preset: "dkVert".into(), fg: ColorRef::rgb(Rgba::rgb(0x20, 0x20, 0x20)), bg: ColorRef::rgb(Rgba::rgb(0xF0, 0xF0, 0xF0)) };
+    add(&mut p, 0, rect(900, 40.0, 300.0, ShapeFill::Pattern(pat)));
+    let stops = vec![
+        GradientStop { pos: 0.0, color: ColorRef::rgb(Rgba::rgb(255, 0, 0)) },
+        GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::rgb(0, 0, 255)) },
+    ];
+    let path =
+        Gradient { stops, shape: GradientShape::Path { path: "rect".into(), focus: [0.5, 0.5, 0.5, 0.5] }, rotate_with_shape: true, tile: [0.0; 4] };
+    add(&mut p, 0, rect(901, 260.0, 300.0, ShapeFill::Gradient(path)));
+    let mut text = Shape { id: ShapeId(902), xfrm: Some(Xfrm::new(480.0, 280.0, 440.0, 120.0)), text_box: true, ..Default::default() };
+    let mut body = TextBody::from_text("Shade \u{1F600} me");
+    body.paragraphs[0].runs[0].props.size = Some(40.0);
+    body.paragraphs[0].runs[0].props.shadow =
+        Some(Shadow { color: ColorRef::rgb(Rgba { r: 0, g: 0, b: 0, a: 160 }), blur: 4.0, dist: 4.0, ..shadow_of() });
+    text.text = Some(body);
+    add(&mut p, 0, text);
+    let media = p.add_media("image1.wmf", "image/x-wmf", half_red_wmf()).expect("media");
+    let pic = Shape {
+        id: ShapeId(903),
+        xfrm: Some(Xfrm::new(480.0, 420.0, 200.0, 100.0)),
+        kind: ShapeKind::Picture { fill: PictureFill { media, ..Default::default() } },
+        ..Default::default()
+    };
+    add(&mut p, 0, pic);
+    let pdf = plain(&p, &PdfOptions { dpi: 72.0, ..opts(PageLayout::Slides) });
+    let imgs = images(&pdf);
+    // Pattern, path gradient, text shadow, metafile (emoji when a colour font is installed),
+    // each a local image well under the page size, soft masks included.
+    assert!(imgs.len() >= 4, "{imgs:?}");
+    assert!(imgs.iter().all(|(w, h)| *w < 600 && *h < 300), "{imgs:?}");
+    for c in "Shademe".chars() {
+        assert!(count(&pdf, format!("<{:04X}>", c as u32).as_bytes()) > 0, "{c} is text");
+    }
+}
+
+fn shadow_of() -> Shadow {
+    shadow().outer_shadow.expect("shadow")
+}
+
+/// Upright glyphs in East Asian vertical text (`eaVert`) each turn about their own em box, which a
+/// PDF text run can't express: they are drawn as outlines over the same text, invisible, so the
+/// characters still search, select and copy.
+#[test]
+fn upright_vertical_text_is_outlines_over_invisible_text() {
+    let mut p = deck(1);
+    let mut sh = Shape { id: ShapeId(904), xfrm: Some(Xfrm::new(100.0, 40.0, 120.0, 400.0)), text_box: true, ..Default::default() };
+    let mut body = TextBody::from_text("一二三");
+    body.body.vert = Some(deckcraft_model::text::TextDir::EaVertical);
+    body.paragraphs[0].runs[0].props.size = Some(40.0);
+    sh.text = Some(body);
+    add(&mut p, 0, sh);
+    let pdf = plain(&p, &opts(PageLayout::Slides));
+    // The run's text, drawn fully transparent (the outlines carry the ink).
+    assert!(count(&pdf, b"/Type/ExtGState/ca 0>>") > 0, "an invisible text layer for the upright run");
+    for c in "一二三".chars() {
+        assert!(count(&pdf, format!("<{:04X}>", c as u32).as_bytes()) > 0, "{c} is text");
+    }
+    let mut q = deck(1);
+    let mut sh = Shape { id: ShapeId(905), xfrm: Some(Xfrm::new(100.0, 40.0, 400.0, 100.0)), text_box: true, ..Default::default() };
+    sh.text = Some(TextBody::from_text("一二三"));
+    add(&mut q, 0, sh);
+    assert_eq!(count(&plain(&q, &opts(PageLayout::Slides)), b"/Type/ExtGState/ca 0>>"), 0, "horizontal text is drawn as text");
 }
 
 #[test]

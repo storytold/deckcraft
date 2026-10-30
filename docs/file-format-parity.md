@@ -24,7 +24,7 @@ PowerPoint opens and saves; Viewer = opens only).
 | `.odp` OpenDocument | Editor | no | no | | none |
 | `.thmx` Office theme | Viewer | theme only (Design › Browse for Themes…) | no | Browse for Themes takes a `.thmx`'s colours, fonts and effects; a `.pptx` or `.potx` brings its slide master and layouts as well, and slides move to the matching layouts (#807). A `.thmx`'s own master and layouts aren't read yet | `crates/pptx/src/lib.rs` (`import_theme_tests`), `crates/engine/src/cmd/design/browse_theme_tests.rs` |
 | `.deckcraft` native (zip + JSON) | n/a | yes (also `.slidecraft`) | yes | Lossless for the DeckCraft model, forward compatible | `crates/format` tests |
-| PDF | export | no | yes | Slides, notes pages, handouts (1–9); real-text layer with embedded subsets, links, bookmarks. Slide artwork is a raster image at print resolution, not vector | `crates/pdf` tests |
+| PDF | export | no | yes | Slides, notes pages, handouts (1–9), links, bookmarks. Vector: shapes, outlines, gradients, transparency, tables and charts as PDF paths; real text in embedded font subsets; JPEG/PNG pictures embedded as they are. Shapes with shadow, glow, soft edges, reflection or a fill overlay, pattern fills, rectangle and outline path gradients, text shadows and glows, and colour emoji rasterize alone at `dpi`; WMF/EMF pictures embed as pixels; `vector: false` keeps whole-slide rasters | `crates/pdf` tests |
 | Outline `.rtf` / `.txt` | export (RTF), import (outline) | `.txt` and `.rtf` outline; `.md` as Markdown (headings are slides, list items bullets) (open, drop, `slide.fromOutline`) | `.txt` and `.rtf` outline | — | format + engine tests |
 | PNG / JPEG slide images | export | n/a | yes (`file.export`, `deckcraft-cli render`) | Matches the editor's renderer. PNG `pHYs` and JPEG JFIF density are `scale` × 72 dpi (default scale 2 is 144 dpi), so Preview shows the slide's real size. PNG can leave the slide background out (`transparentBackground`, Export… “Transparent background”, `deckcraft-cli render --transparent`), so only the slide's content is opaque (#784) | render, engine, UI and CLI tests |
 | TIFF / BMP / GIF slide images | export | n/a | no | Easy (the `image` crate writes them) | none |
@@ -129,6 +129,7 @@ the round trip even though DeckCraft doesn't model it.
 | 2026-10-15 | minor | `.thmx` row: Browse for Themes reads a theme's colours, fonts and effects; a `.pptx`/`.potx` brings its slide master and layouts (#807) |
 | 2026-10-14 | minor | Community PR wave folded: one row each for `.pptx` (seven owned corpus files), outline, 3-D models, embedded fonts, text, effects, 3-D (extrusion sides draw now), SmartArt (written as a diagram) and VBA (tags and custom XML are kept) |
 | 2026-10-12 | minor | SmartArt import lays each shape's text out on its `dsp:txXfrm` text rectangle instead of the shape box |
+| 2026-10-15 | minor | PDF export draws slides as vectors and real text through the renderer's canvas; effects and patterns rasterize per element |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions limit later drawing; EMF+ records remain |
 | 2026-10-13 | minor | Embedded fonts read and written; TrueType, OpenType and Embedded OpenType faces drawn |
 | 2026-10-13 | minor | Owned corpus round-trip (parts and text). Notes-master header, footer, date and slide-number text is written back |

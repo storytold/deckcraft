@@ -9,6 +9,7 @@
 
 mod bevel;
 mod camera;
+pub mod canvas;
 mod chart;
 mod chartex;
 mod colr;
@@ -48,6 +49,7 @@ use kurbo::{Affine, BezPath, PathEl, Point, Rect, Shape as _, Vec2};
 use vello_common::filter_effects::{EdgeMode, Filter, FilterPrimitive};
 use vello_cpu::{RenderContext, Resources, peniko};
 
+pub use canvas::{Canvas, CanvasImage, Fallback, Paint, missing_picture};
 pub use deckcraft_anim::{transition_frame, transition_layers, uses_slide_parts};
 pub use extent::{Region, TILE, layout_extent, pasteboard_region, slide_extent};
 pub use images::{decode as decode_image, gif_frame};
@@ -78,7 +80,7 @@ pub use raster::{Image, MAX_SIDE, dpi_for_scale, image_dpi};
 use renderer::RENDERER;
 pub use renderer::Renderer;
 pub use slide::{
-    SlidePart, needs_filters, panics_caught, render_blend, render_layout, render_shape, render_shapes, render_slide, render_slide_drawn,
+    SlidePart, draw_slide, needs_filters, panics_caught, render_blend, render_layout, render_shape, render_shapes, render_slide, render_slide_drawn,
     render_slide_part,
 };
 pub(crate) use stroke::stroke;
@@ -93,6 +95,9 @@ mod tests;
 
 #[cfg(test)]
 mod tests_wild;
+
+#[cfg(test)]
+mod tests_vector;
 
 #[cfg(test)]
 mod mt_tests {

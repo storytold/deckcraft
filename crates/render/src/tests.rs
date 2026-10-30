@@ -1,7 +1,8 @@
 use super::{
-    Ctx, Fields, Fill, Image, Opts, PathMorph, Point, RENDERER, Rect, Region, RenderOpts, Renderer, Rgba, ShapeState, SlideFields, TextMorph,
-    crop_dest, dpi_for_scale, gif_frame, image_dpi, images, morph_path, morph_text, needs_filters, parse_path, pasteboard_region, place_slide,
-    render_blend, render_shapes, render_slide, render_slide_drawn, slide_extent, text_transform,
+    Affine, BezPath, Canvas, CanvasImage, Ctx, Fallback, Fields, Fill, Image, Opts, Paint, PathMorph, Point, RENDERER, Rect, Region, RenderOpts,
+    Renderer, Rgba, ShapeState, SlideFields, TextMorph, canvas, crop_dest, dpi_for_scale, draw_slide, gif_frame, image_dpi, images, morph_path,
+    morph_text, needs_filters, parse_path, pasteboard_region, place_slide, render_blend, render_shapes, render_slide, render_slide_drawn,
+    slide_extent, text_transform,
 };
 use deckcraft_model::chart::{ChartType, Trendline, TrendlineType};
 use deckcraft_model::style::ColorRef;
@@ -2892,6 +2893,226 @@ fn empty_bullet_is_gray_only_while_editing_and_never_in_exports() {
     assert!(!changed.is_empty(), "an empty bullet must be visible");
     assert!(changed.iter().any(|(px, _)| px[0] == 179 && px[1] == 179 && px[2] == 179));
     assert!(changed.iter().all(|(px, _)| px[0] >= 179 && px[0] == px[1] && px[1] == px[2]));
+}
+
+#[test]
+fn draw_slide_on_a_pixel_canvas_matches_render_slide() {
+    let p = deckcraft_model::defaults::new_presentation(None);
+    let opts = RenderOpts { scale: 0.25, ..Default::default() };
+    let a = render_slide(&p, 0, &opts);
+    let (w, h) = (a.width as u16, a.height as u16);
+    let mut ctx = vello_cpu::RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+    draw_slide(&mut ctx, &p, 0, &opts, Affine::scale(0.25));
+    let b = RENDERER.with(|r| r.borrow_mut().finish(ctx, w, h));
+    assert_eq!(diff_px(&a, &b), 0);
+}
+
+/// Records what reaches a vector canvas.
+#[derive(Default)]
+struct Recorder {
+    fills: usize,
+    strokes: usize,
+    runs: usize,
+    /// Pictures: whether each came as its original file (else as decoded pixels).
+    images: Vec<bool>,
+    pixels: Vec<Rect>,
+    depth: i32,
+}
+
+impl Canvas for Recorder {
+    fn set_transform(&mut self, _t: Affine) {}
+    fn set_paint_to(&mut self, _p: Paint) {}
+    fn set_stroke(&mut self, _s: kurbo::Stroke) {}
+    fn set_fill_rule(&mut self, _r: canvas::FillRule) {}
+    fn fill_path(&mut self, _p: &BezPath) {
+        self.fills += 1;
+    }
+    fn stroke_path(&mut self, _p: &BezPath) {
+        self.strokes += 1;
+    }
+    fn push_layer(&mut self, _clip: Option<&BezPath>, _opacity: Option<f32>) {
+        self.depth += 1;
+    }
+    fn pop_layer(&mut self) {
+        self.depth -= 1;
+    }
+    fn draw_image(&mut self, img: &CanvasImage, _alpha: f64) {
+        assert!(img.encoded.is_some() || img.pixmap.is_some());
+        self.images.push(img.encoded.is_some());
+    }
+    fn glyph_run(&mut self, _run: &deckcraft_text::GlyphRun, text: &str, _at: Affine, _opacity: f64) -> bool {
+        assert!(!text.is_empty());
+        self.runs += 1;
+        true
+    }
+    fn fallback(&self) -> Option<Fallback> {
+        Some(Fallback { scale: 1.0, clip: Rect::new(0.0, 0.0, 960.0, 540.0) })
+    }
+    fn draw_pixels(&mut self, img: &Image, dest: Rect) {
+        assert!(img.width > 0 && img.height > 0);
+        self.pixels.push(dest);
+    }
+}
+
+#[test]
+fn vector_canvases_get_paths_and_text_and_effects_as_local_pixels() {
+    let mut sh = Shape {
+        id: ShapeId(600),
+        xfrm: Some(Xfrm::new(50.0, 50.0, 200.0, 100.0)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        text: Some(TextBody::from_text("Glowing")),
+        ..Default::default()
+    };
+    sh.effects = Some(deckcraft_model::Effects {
+        glow: Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 200, 0)), radius: 6.0 }),
+        ..Default::default()
+    });
+    let plain = Shape { id: ShapeId(601), xfrm: Some(Xfrm::new(400.0, 50.0, 200.0, 100.0)), ..sh.clone() };
+    let plain = Shape { effects: None, ..plain };
+    let p = deck_with(vec![sh, plain]);
+    let mut rec = Recorder::default();
+    draw_slide(&mut rec, &p, 0, &RenderOpts::default(), Affine::IDENTITY);
+    assert_eq!(rec.depth, 0);
+    // Background and the plain shape are paths; both texts are glyph runs.
+    assert!(rec.fills >= 2, "{}", rec.fills);
+    assert_eq!(rec.runs, 2);
+    // Only the glowing shape is pixels, around it.
+    assert_eq!(rec.pixels.len(), 1);
+    let r = rec.pixels[0];
+    assert!(r.x0 < 50.0 && r.x1 > 250.0 && r.x1 < 300.0 && r.y1 < 220.0, "{r:?}");
+}
+
+/// What `p`'s first slide sends a vector canvas (layers balanced).
+fn record(p: &Presentation) -> Recorder {
+    let mut rec = Recorder::default();
+    draw_slide(&mut rec, p, 0, &RenderOpts::default(), Affine::IDENTITY);
+    assert_eq!(rec.depth, 0);
+    rec
+}
+
+/// A 200 x 100 shape at (100, 100) with `fill` and no outline.
+fn filled(fill: deckcraft_model::style::Fill) -> Shape {
+    use deckcraft_model::style::{Fill, Line};
+    Shape {
+        id: ShapeId(610),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        fill: Some(fill),
+        line: Some(Line { fill: Some(Fill::None), ..Default::default() }),
+        ..Default::default()
+    }
+}
+
+fn assert_over(r: Rect, around: Rect) {
+    let a = around.inflate(4.0, 4.0);
+    assert!(r.x0 >= a.x0 && r.y0 >= a.y0 && r.x1 <= a.x1 && r.y1 <= a.y1 && r.area() > 0.0, "{r:?} not over {around:?}");
+}
+
+/// Drawing that only the pixel context does (pattern tiles, rectangle and outline path
+/// gradients, blended fill overlays) reaches a vector canvas as pixels over that shape alone,
+/// never dropped; compound outlines stay vector strokes.
+#[test]
+fn vector_canvases_get_pixel_only_fills_as_local_pixels() {
+    use deckcraft_model::style::{Compound, Fill, FillOverlay, Gradient, GradientShape, GradientStop, Line, PatternFill};
+    let rgb = |r, g, b| ColorRef::rgb(deckcraft_color::Rgba::rgb(r, g, b));
+    let area = Rect::new(100.0, 100.0, 300.0, 200.0);
+    let pattern = filled(Fill::Pattern(PatternFill { preset: "dkVert".into(), fg: rgb(20, 20, 20), bg: rgb(240, 240, 240) }));
+    let rect_gradient = filled(Fill::Gradient(Gradient {
+        stops: vec![GradientStop { pos: 0.0, color: rgb(255, 0, 0) }, GradientStop { pos: 1.0, color: rgb(0, 0, 255) }],
+        shape: GradientShape::Path { path: "rect".into(), focus: [0.5, 0.5, 0.5, 0.5] },
+        rotate_with_shape: true,
+        tile: [0.0; 4],
+    }));
+    let mut overlay = filled(Fill::solid(rgb(200, 220, 240)));
+    overlay.effects = Some(deckcraft_model::Effects {
+        fill_overlay: Some(FillOverlay { blend: "mult".into(), fill: Fill::solid(rgb(255, 128, 0)) }),
+        ..Default::default()
+    });
+    for (name, sh) in [("pattern", pattern), ("rect gradient", rect_gradient), ("fill overlay", overlay)] {
+        let rec = record(&deck_with(vec![sh]));
+        assert_eq!(rec.pixels.len(), 1, "{name}");
+        assert_over(rec.pixels[0], area);
+    }
+    // A linear gradient is a vector paint.
+    let linear = filled(Fill::Gradient(Gradient {
+        stops: vec![GradientStop { pos: 0.0, color: rgb(255, 0, 0) }, GradientStop { pos: 1.0, color: rgb(0, 0, 255) }],
+        shape: GradientShape::Linear { angle: 0.0, scaled: false },
+        rotate_with_shape: true,
+        tile: [0.0; 4],
+    }));
+    let rec = record(&deck_with(vec![linear]));
+    assert!(rec.pixels.is_empty() && rec.fills >= 2);
+    // Compound outlines: one stroke per band, no pixels.
+    let mut double = filled(Fill::solid(rgb(255, 255, 255)));
+    double.line = Some(Line { compound: Some(Compound::Triple), ..Line::solid(rgb(0, 0, 0), 9.0) });
+    let rec = record(&deck_with(vec![double]));
+    assert!(rec.pixels.is_empty());
+    assert_eq!(rec.strokes, 3);
+}
+
+/// Text shadows and glows need a blur: on a vector canvas the text stays a real glyph run and the
+/// effect comes as pixels around it. Gradient-filled text is drawn glyph by glyph as vector paths.
+#[test]
+fn vector_canvases_keep_text_and_rasterize_its_effects() {
+    use deckcraft_model::style::{Fill, Gradient, GradientShape, GradientStop};
+    let text = Rect::new(100.0, 100.0, 700.0, 400.0);
+    let glow =
+        effect_text(|p| p.glow = Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 8.0 }));
+    let shadow = effect_text(|p| p.shadow = Some(shadow(2.0, 12.0, 45.0)));
+    for (name, p) in [("glow", glow), ("shadow", shadow)] {
+        let rec = record(&p);
+        assert_eq!(rec.runs, 1, "{name}: the text is a glyph run");
+        assert_eq!(rec.pixels.len(), 1, "{name}");
+        let r = rec.pixels[0];
+        assert!(r.x0 >= text.x0 - 30.0 && r.x1 <= text.x1 + 30.0 && r.y0 >= text.y0 - 30.0 && r.y1 <= text.y1 + 30.0, "{name}: {r:?}");
+        assert!(r.width() > 50.0 && r.height() > 50.0, "{name}: {r:?}");
+    }
+    let rgb = |r, g, b| ColorRef::rgb(deckcraft_color::Rgba::rgb(r, g, b));
+    let gradient = effect_text(|p| {
+        p.fill = Some(Fill::Gradient(Gradient {
+            stops: vec![GradientStop { pos: 0.0, color: rgb(255, 0, 0) }, GradientStop { pos: 1.0, color: rgb(0, 0, 255) }],
+            shape: GradientShape::Linear { angle: 90.0, scaled: false },
+            rotate_with_shape: true,
+            tile: [0.0; 4],
+        }))
+    });
+    let plain = record(&effect_text(|_| {}));
+    let rec = record(&gradient);
+    assert_eq!(rec.runs, 0);
+    assert!(rec.pixels.is_empty());
+    assert_eq!(rec.fills, plain.fills + 4, "one path per glyph of IIII");
+}
+
+/// A WMF picture reaches a vector canvas as decoded pixels (the metafile drawn by the renderer),
+/// not as a file it can't embed.
+#[test]
+fn vector_canvases_get_metafile_pictures_as_pixels() {
+    let mut p = Presentation::default();
+    let media = p.add_media("image1.wmf", "image/x-wmf", half_red_wmf()).expect("media");
+    let fill = deckcraft_model::style::PictureFill { media, ..Default::default() };
+    let sh = Shape { id: ShapeId(600), xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 200.0)), kind: ShapeKind::Picture { fill }, ..Default::default() };
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes = vec![sh];
+    let rec = record(&p);
+    assert_eq!(rec.images, vec![false]);
+}
+
+/// Colour emoji (COLR glyphs) reach a vector canvas as pixels over the emoji; the letters around
+/// them stay text. Skipped without an installed colour emoji font.
+#[test]
+fn vector_canvases_get_colour_emoji_as_pixels() {
+    let probe = deckcraft_fonts::FontDb::global().cascade(&['\u{1F600}'], &[], "Regular");
+    if !probe.is_color() || !crate::colr::has_color(&probe, probe.glyph_for('\u{1F600}')) {
+        return;
+    }
+    let mut sh = Shape { id: ShapeId(620), xfrm: Some(Xfrm::new(100.0, 100.0, 600.0, 200.0)), text_box: true, ..Default::default() };
+    let mut t = TextBody::from_text("ab \u{1F600} cd");
+    t.paragraphs[0].runs[0].props.size = Some(60.0);
+    sh.text = Some(t);
+    let rec = record(&deck_with(vec![sh]));
+    assert!(rec.runs >= 1, "the letters are text");
+    assert_eq!(rec.pixels.len(), 1, "the emoji is pixels");
+    let r = rec.pixels[0];
+    // The emoji em box (with room for its ascent), past the second letter, about 60 pt wide.
+    assert!(r.x0 >= 150.0 && r.x1 <= 710.0 && r.y0 >= 50.0 && r.y1 <= 310.0 && r.width() < 150.0, "{r:?}");
 }
 
 /// A chart that has no text colour of its own takes PowerPoint's default, the theme's text colour

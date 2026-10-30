@@ -2,18 +2,18 @@
 //! boxes of a box and whisker chart (waterfall bars are drawn by [`crate::chart`], histograms as
 //! the column chart of their bins).
 
+use crate::canvas::Canvas;
 use deckcraft_color::Rgba;
 use deckcraft_model::chart::{BoxStats, Chart, ChartType, TreeNode};
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::text::{Align, Anchor};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
-use vello_cpu::RenderContext;
 
 use crate::chart::{label, series_color};
 use crate::color;
 
 /// Draw `c` inside `area` (the space left by the title and legend).
-pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {
+pub fn draw(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {
     let Some(s) = c.series.first() else { return };
     if c.kind == ChartType::RegionMap {
         region_tiles(ctx, rctx, c, m, area, base, text_col);
@@ -38,7 +38,7 @@ pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
 /// the left, values inside.
 #[allow(clippy::too_many_arguments)]
 fn funnel(
-    ctx: &mut RenderContext,
+    ctx: &mut dyn Canvas,
     rctx: &Ctx,
     c: &Chart,
     m: Affine,
@@ -93,7 +93,7 @@ fn mix(a: Rgba, b: Rgba, t: f64) -> Rgba {
 /// map service in an undocumented format and DeckCraft ships no map data, so each region is a
 /// tile in a grid, coloured on the map's value scale, with the scale below and a note saying
 /// the map itself is not drawn.
-fn region_tiles(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {
+fn region_tiles(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {
     let Some(s) = c.series.first() else { return };
     let regions: Vec<(String, Option<f64>)> =
         c.categories.iter().enumerate().map(|(i, n)| (n.clone(), s.values.get(i).copied().flatten())).filter(|(n, _)| !n.is_empty()).collect();
@@ -265,16 +265,7 @@ pub fn squarify(vals: &[f64], r: Rect) -> Vec<Rect> {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn treemap(
-    ctx: &mut RenderContext,
-    rctx: &Ctx,
-    c: &Chart,
-    m: Affine,
-    area: Rect,
-    base: f64,
-    vals: &[f64],
-    value_label: Option<&dyn Fn(f64) -> String>,
-) {
+fn treemap(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, vals: &[f64], value_label: Option<&dyn Fn(f64) -> String>) {
     for (i, t) in squarify(vals, area).into_iter().enumerate() {
         if t.area() <= 0.0 {
             continue;
@@ -304,7 +295,7 @@ fn treemap(
 }
 
 /// One ring of the innermost level, with the centre left open.
-fn sunburst(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, vals: &[f64]) {
+fn sunburst(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, vals: &[f64]) {
     let total: f64 = vals.iter().sum();
     let r = area.width().min(area.height()) / 2.0 * 0.95;
     let hole = r * 0.35;
@@ -357,11 +348,11 @@ fn lighten(col: Rgba, k: f64) -> Rgba {
 /// a banner along the top, and their children squarified inside, down to the leaves. A group
 /// and everything in it take the group's colour.
 #[allow(clippy::too_many_arguments)]
-fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, value_label: Option<&dyn Fn(f64) -> String>) {
+fn tree_treemap(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, value_label: Option<&dyn Fn(f64) -> String>) {
     let tree = c.category_tree();
     #[allow(clippy::too_many_arguments)]
     fn place(
-        ctx: &mut RenderContext,
+        ctx: &mut dyn Canvas,
         rctx: &Ctx,
         m: Affine,
         nodes: &[TreeNode],
@@ -431,7 +422,7 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
 
 /// A multi-level sunburst: the top level as the inner ring, each deeper level in the next ring
 /// out within its parent's angle, coloured by top-level group and lighter further out.
-fn tree_sunburst(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64) {
+fn tree_sunburst(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64) {
     let tree = c.category_tree();
     fn depth(n: &[TreeNode]) -> usize {
         n.iter().map(|c| 1 + depth(&c.children)).max().unwrap_or(0)
@@ -447,7 +438,7 @@ fn tree_sunburst(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area
     let cen = area.center();
     #[allow(clippy::too_many_arguments)]
     fn ring_of(
-        ctx: &mut RenderContext,
+        ctx: &mut dyn Canvas,
         rctx: &Ctx,
         m: Affine,
         nodes: &[TreeNode],
@@ -546,17 +537,7 @@ pub fn box_view(c: &Chart) -> (Chart, Boxes) {
 /// to the furthest points within 1.5 IQR, and outliers as dots; series side by side in each
 /// group's band.
 #[allow(clippy::too_many_arguments)]
-pub fn draw_boxes(
-    ctx: &mut RenderContext,
-    rctx: &Ctx,
-    c: &Chart,
-    b: &Boxes,
-    m: Affine,
-    plot: Rect,
-    band: f64,
-    horiz: bool,
-    to_v: &dyn Fn(f64) -> f64,
-) {
+pub fn draw_boxes(ctx: &mut dyn Canvas, rctx: &Ctx, c: &Chart, b: &Boxes, m: Affine, plot: Rect, band: f64, horiz: bool, to_v: &dyn Fn(f64) -> f64) {
     let ns = b.stats.len().max(1);
     let group = band / (1.0 + c.gap_width.clamp(0.0, 5.0));
     let w = group / ns as f64;

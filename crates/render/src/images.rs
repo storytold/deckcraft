@@ -318,6 +318,15 @@ fn png_crc(data: &[u8]) -> u32 {
     !c
 }
 
+/// Pixel size of a JPEG or PNG file (other formats: `None`), without decoding it.
+pub fn encoded_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if !(bytes.starts_with(&[0xFF, 0xD8, 0xFF]) || bytes.starts_with(&[0x89, b'P', b'N', b'G'])) {
+        return None;
+    }
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()?;
+    (w > 0 && h > 0).then_some((w, h))
+}
+
 /// A premultiplied pixmap of the picture, downsampled so its longer side is near `want` px.
 pub fn decode_for(bytes: &Arc<Vec<u8>>, want: f64, adj: &PictureAdjust) -> Option<Arc<Pixmap>> {
     let addr = Arc::as_ptr(bytes) as usize;

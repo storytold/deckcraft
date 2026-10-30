@@ -2,6 +2,7 @@ use super::opts::{RenderOpts, SlideFields};
 use super::raster::{Image, MAX_SIDE};
 use super::renderer::{Frame, RENDERER, Renderer};
 use super::{Affine, Ctx, PathMorph, Presentation, Rect, RenderContext, Shape, ShapeId, Slide, TextMorph, resolve};
+use crate::{Canvas, canvas, colr};
 
 static PANICS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
@@ -116,6 +117,20 @@ pub fn render_slide_part(pres: &Presentation, index: usize, part: SlidePart, opt
     }
 }
 
+/// Draw slide `index` onto any [`Canvas`] (the PDF export's vector pages), `view` mapping slide
+/// points to canvas units: what [`render_slide`] draws. A panic inside the renderer stops the
+/// drawing (logged), never crashes.
+pub fn draw_slide(canvas: &mut dyn Canvas, pres: &Presentation, index: usize, opts: &RenderOpts, view: Affine) {
+    let Some(slide) = pres.slides.get(index) else { return };
+    let drawn = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        RENDERER.with(|r| r.borrow_mut().slide_on(canvas, pres, slide, index, opts, view));
+    }));
+    if drawn.is_err() {
+        log::error!("drawing slide {index} panicked; the page stops there");
+        RENDERER.with(|r| *r.borrow_mut() = Renderer::default());
+    }
+}
+
 /// Render a frame between slides `old` and `new` (indices into `pres.slides`), e.g. of Morph: the
 /// backdrop (background, master and layout graphics) of `old` cross-fading into that of `new` by
 /// `mix` (0..1), then `shapes` in order, each resolved against the slide it comes from (`true`:
@@ -207,6 +222,25 @@ pub fn render_shapes(pres: &Presentation, slide: &Slide, ids: &[ShapeId], scale:
         }
         Some(r.finish(ctx, w, h))
     })
+}
+
+/// A colour glyph (emoji): painted on the pixel context; on vector canvases rasterized over the
+/// glyph's em box. False when the glyph has no colour version.
+pub(crate) fn color_glyph(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, k: f64, alpha: f64) -> bool {
+    if let Some(px) = ctx.raster() {
+        return colr::paint(px, &run.face, gid, at, k, run.color, alpha);
+    }
+    let Some(fb) = ctx.fallback() else { return false };
+    if !colr::has_color(&run.face, gid) {
+        return false;
+    }
+    let em = run.size.abs();
+    let adv = run.face.advance(gid).abs() * k;
+    let adv = if adv.is_finite() { adv.min(em * 4.0) } else { em };
+    let area = at.transform_rect_bbox(Rect::new(-0.25 * em, -1.3 * em, adv + 0.25 * em, 0.5 * em));
+    let mut drawn = false;
+    canvas::rasterize(ctx, fb, area, &mut |v, pre| drawn = colr::paint(v, &run.face, gid, pre * at, k, run.color, alpha));
+    drawn
 }
 
 /// Render one shape alone onto a transparent canvas (drag previews, copy as picture).

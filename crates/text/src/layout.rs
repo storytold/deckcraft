@@ -249,6 +249,7 @@ pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &Body
         })
         .collect();
     // Merge adjacent decorations of the same colour on the same line.
+    out.texts = shaped_paras.iter().map(|p| p.cells.iter().map(|c| c.ch).collect()).collect();
     out.decos = merge_decos(std::mem::take(&mut out.decos));
     out
 }

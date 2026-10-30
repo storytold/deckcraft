@@ -8,7 +8,9 @@ use deckcraft_model::text::{Anchor, TextBody, TextDir};
 use deckcraft_model::{Presentation, Shape};
 use deckcraft_text::Fields;
 use kurbo::{Affine, BezPath, Rect, Shape as _};
-use vello_cpu::{RenderContext, peniko};
+use vello_cpu::peniko;
+
+use crate::canvas::Canvas;
 
 use crate::color;
 
@@ -353,17 +355,26 @@ pub fn cell_rects(t: &Table, heights: &[f64]) -> Vec<(usize, usize, Rect)> {
     out
 }
 
-/// Can a cell's text be left undrawn because it lands wholly outside the `target` (pixels)? Only
+/// Can a cell's text be left undrawn because it lands wholly outside `view` (the pixels of a pixel
+/// canvas, the slide's box on a vector one)? Only
 /// for cells whose text stays inside the cell: its row grew to fit it (one row, horizontal text,
 /// not at the height cap), so nothing overflows. A margin covers italic overhang and the like.
 /// A table of thousands of rows otherwise lays out every cell's text off the slide's bottom.
-fn text_off_target(cell: &Cell, rect: Rect, m: Affine, target: (u16, u16)) -> bool {
+fn text_off_target(cell: &Cell, rect: Rect, m: Affine, view: Option<Rect>) -> bool {
+    let Some(view) = view else { return false };
     if cell.row_span > 1 || !matches!(cell.vertical, None | Some(TextDir::Horizontal)) || rect.height() >= 20_000.0 {
         return false;
     }
     let b = m.transform_rect_bbox(rect).inflate(64.0, 64.0);
-    let view = Rect::new(0.0, 0.0, f64::from(target.0), f64::from(target.1));
     b.is_finite() && (b.x1 < view.x0 || b.y1 < view.y0 || b.x0 > view.x1 || b.y0 > view.y1)
+}
+
+/// What a canvas shows: its pixels, or on a vector canvas the slide's box.
+fn target_view(ctx: &mut dyn Canvas) -> Option<Rect> {
+    match ctx.raster() {
+        Some(px) => Some(Rect::new(0.0, 0.0, f64::from(px.width()), f64::from(px.height()))),
+        None => ctx.fallback().map(|f| f.clip),
+    }
 }
 
 #[cfg(test)]
@@ -375,7 +386,7 @@ thread_local! {
 /// Draws the table; returns the box its cells cover (table space), which grows with their text.
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
-    ctx: &mut RenderContext,
+    ctx: &mut dyn Canvas,
     pres: &Presentation,
     rctx: &Ctx,
     t: &Table,
@@ -469,7 +480,7 @@ pub fn draw(
     // Text.
     for (r, c, rect) in &rects {
         let Some(cell) = t.cell(*r, *c) else { continue };
-        if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, (ctx.width(), ctx.height())) {
+        if (cell.text.is_empty() && !editing) || text_off_target(cell, *rect, m, target_view(ctx)) {
             continue;
         }
         let body = cell_body_with_def(rctx, style_def, t, *r, *c, cell);

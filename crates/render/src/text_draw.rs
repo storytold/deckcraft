@@ -1,8 +1,7 @@
 use super::geometry::{blur, color, pre_translate, scale_of};
 use super::opts::ParaState;
-use super::{
-    Affine, Arc, BezPath, Ctx, FontDb, HashMap, Opts, PhType, Rect, RenderContext, Rgba, Shape, TextBody, Vec2, colr, paint, peniko, resolve,
-};
+use super::slide::color_glyph;
+use super::*;
 
 /// The prompt shown in an empty placeholder, formatted like its content would be.
 pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
@@ -55,10 +54,11 @@ pub(crate) fn glyph(face: &deckcraft_fonts::FontFace, gid: u32) -> Arc<BezPath> 
     p
 }
 
-/// Draw a text body into shape space `m` within the text rect `opts.rect`.
-pub fn draw_text(ctx: &mut RenderContext, rctx: &Ctx, s: &Shape, body: &TextBody, m: Affine, opts: &Opts) {
-    let l = deckcraft_text::layout(rctx, s, body, opts);
-    draw_layout(ctx, &l, opts.rect, m);
+/// Draw a text body into shape space `m` within the text rect.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_text(ctx: &mut dyn Canvas, rctx: &Ctx, s: &Shape, body: &TextBody, tr: Rect, m: Affine, fields: &dyn Fields, prompt: Option<Rgba>) {
+    let l = deckcraft_text::layout(rctx, s, body, &Opts { rect: tr, fields, prompt_color: prompt, no_shrink: false });
+    draw_layout(ctx, &l, tr, m);
 }
 
 /// Add transient list markers to an editor layout, using the document's own bullet glyphs.
@@ -97,15 +97,15 @@ pub fn text_warp(rctx: &Ctx, s: &Shape, tr: Rect) -> Option<deckcraft_geom::warp
 }
 
 /// Draw an already laid-out text block.
-pub fn draw_layout(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
+pub fn draw_layout(ctx: &mut dyn Canvas, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine) {
     draw_layout_with(ctx, l, tr, m, &[]);
 }
 
 /// Draw a laid-out text block with per-paragraph animation states.
-pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
+pub fn draw_layout_with(ctx: &mut dyn Canvas, l: &deckcraft_text::TextLayout, tr: Rect, m: Affine, paras: &[(usize, ParaState)]) {
     let para = |i: usize| paras.iter().find(|(p, _)| *p == i).map(|(_, s)| *s).unwrap_or_default();
     let m = text_transform(m, tr, l.rotation);
-    let deco = |ctx: &mut RenderContext, d: &deckcraft_text::Deco| {
+    let deco = |ctx: &mut dyn Canvas, d: &deckcraft_text::Deco| {
         let ps = para(d.para);
         if !ps.visible || ps.opacity <= 0.001 {
             return;
@@ -135,9 +135,14 @@ pub fn draw_layout_with(ctx: &mut RenderContext, l: &deckcraft_text::TextLayout,
             continue;
         }
         let m = m * Affine::translate(ps.offset);
+        // Vector canvases draw plain runs as real text; gradient fills and colour glyphs (emoji)
+        // are drawn below, glyph by glyph.
+        if run.gradient.is_none() && !run.face.is_color() && ctx.glyph_run(run, l.texts.get(run.para).map_or("", String::as_str), m, ps.opacity) {
+            continue;
+        }
         // A gradient fill starts over on every line and spans that line's text (from its top to
         // its bottom, from its first to its last character), as in PowerPoint.
-        let mut grads: Vec<(usize, peniko::Gradient)> = Vec::new();
+        let mut grads: Vec<(usize, Paint)> = Vec::new();
         for (gid, x, y) in &run.glyphs {
             let at = m * glyph_place(run, *gid, *x, *y);
             let Some(g) = run.gradient.as_ref().filter(|g| !g.stops.is_empty()) else {
@@ -172,7 +177,7 @@ pub(crate) fn glyph_place(run: &deckcraft_text::GlyphRun, gid: u32, x: f64, y: f
 
 /// Fill an underline, strikethrough or highlight with the current paint and transform: its box,
 /// its dashes, or its zigzag stroked.
-pub(crate) fn fill_deco(ctx: &mut RenderContext, d: &deckcraft_text::Deco) {
+pub(crate) fn fill_deco(ctx: &mut dyn Canvas, d: &deckcraft_text::Deco) {
     if let Some((pts, w)) = d.wave() {
         let mut path = BezPath::new();
         for (i, p) in pts.iter().enumerate() {
@@ -229,8 +234,36 @@ enum TextEffect {
     Glow,
 }
 
-/// Draw `run`'s shadow or glow (if it has one) under its glyphs, placed by `m`.
-fn text_effect(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, which: TextEffect, m: Affine, opacity: f64) {
+/// Draw `run`'s shadow or glow (if it has one) under its glyphs, placed by `m`. Blurs need pixels:
+/// vector canvases get the effect rasterized over the run's area.
+fn text_effect(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, which: TextEffect, m: Affine, opacity: f64) {
+    let Some(fx) = run.effects else { return };
+    let reach = match (which, fx.shadow, fx.glow) {
+        (TextEffect::Shadow, Some(s), _) => s.dx.abs() + s.dy.abs() + s.blur * 1.5,
+        (TextEffect::Glow, _, Some((_, r))) => r * 1.5,
+        _ => return,
+    };
+    if let Some(px) = ctx.raster() {
+        text_effect_px(px, run, which, m, opacity);
+        return;
+    }
+    let Some(fb) = ctx.fallback() else { return };
+    let k = run.size / run.face.upem.max(1.0);
+    let skew = if run.fake_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
+    let mut area: Option<Rect> = None;
+    for (gid, x, y) in &run.glyphs {
+        let b = (m * glyph_place(run, *gid, *x, *y) * skew * Affine::scale(k)).transform_rect_bbox(glyph(&run.face, *gid).bounding_box());
+        if b.is_finite() {
+            area = Some(area.map_or(b, |a| a.union(b)));
+        }
+    }
+    let Some(area) = area else { return };
+    let pad = (if reach.is_finite() { reach.clamp(0.0, 1.0e4) } else { 0.0 } + 2.0) * scale_of(m);
+    canvas::rasterize(ctx, fb, area.inflate(pad, pad), &mut |v, pre| text_effect_px(v, run, which, pre * m, opacity));
+}
+
+/// [`text_effect`] on the pixel context.
+fn text_effect_px(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, which: TextEffect, m: Affine, opacity: f64) {
     let Some(fx) = run.effects else { return };
     let k = run.size / run.face.upem.max(1.0);
     let skew = if run.fake_italic { Affine::new([1.0, 0.0, -0.2, 1.0, 0.0, 0.0]) } else { Affine::IDENTITY };
@@ -267,20 +300,13 @@ fn text_effect(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, which: T
 }
 
 /// Draw glyph `gid` of `run` with its origin (on the baseline) mapped by `at`, faded by `opacity`.
-pub(crate) fn draw_glyph(ctx: &mut RenderContext, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64) {
+pub(crate) fn draw_glyph(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64) {
     draw_glyph_with(ctx, run, gid, at, opacity, None);
 }
 
 /// [`draw_glyph`], filled with `fill` (a gradient laid out in the text's space, and the map from
 /// the glyph's origin to that space) instead of the run's colour.
-fn draw_glyph_with(
-    ctx: &mut RenderContext,
-    run: &deckcraft_text::GlyphRun,
-    gid: u32,
-    at: Affine,
-    opacity: f64,
-    fill: Option<(&peniko::Gradient, Affine)>,
-) {
+fn draw_glyph_with(ctx: &mut dyn Canvas, run: &deckcraft_text::GlyphRun, gid: u32, at: Affine, opacity: f64, fill: Option<(&Paint, Affine)>) {
     let alpha = run.alpha * opacity;
     if (alpha <= 0.0 || run.color.a == 0) && run.outline.is_none() {
         return;
@@ -288,7 +314,7 @@ fn draw_glyph_with(
     let k = run.size / run.face.upem.max(1.0);
     // Colour glyphs (emoji) paint their own colours; an outline (text outline effect) still
     // strokes the plain glyph below.
-    if alpha > 0.0 && run.outline.is_none() && run.face.is_color() && colr::paint(ctx, &run.face, gid, at, k, run.color, alpha) {
+    if alpha > 0.0 && run.outline.is_none() && run.face.is_color() && color_glyph(ctx, run, gid, at, k, alpha) {
         return;
     }
     let path = glyph(&run.face, gid);
@@ -300,10 +326,14 @@ fn draw_glyph_with(
     if let Some((g, to_text)) = fill
         && alpha > 0.0
     {
+        // The glyph moved into the text's space, where the gradient is laid out (no paint
+        // transform: vector canvases have none).
+        let mut in_text = (*path).clone();
+        in_text.apply_affine(to_text.inverse() * skew * Affine::scale(k));
+        ctx.set_transform(at * to_text);
         ctx.set_paint(g.clone());
-        ctx.set_paint_transform((skew * Affine::scale(k)).inverse() * to_text);
-        ctx.fill_path(&path);
-        ctx.reset_paint_transform();
+        ctx.fill_path(&in_text);
+        ctx.set_transform(at * skew * Affine::scale(k));
     } else if alpha > 0.0 && run.color.a > 0 {
         ctx.set_paint(color(run.color, alpha));
         ctx.fill_path(&path);

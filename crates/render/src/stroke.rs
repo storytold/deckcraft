@@ -5,7 +5,7 @@ use super::*;
 /// line belongs to; `path` itself when `None`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn stroke(
-    ctx: &mut RenderContext,
+    ctx: &mut dyn Canvas,
     rctx: &Ctx,
     line: &Line,
     ph: Option<Rgba>,
@@ -155,7 +155,7 @@ fn square_dash_ends(path: &BezPath, pattern: &[f64], width: f64) -> BezPath {
 /// A gradient line's paint: laid out, as PowerPoint lays it, over the box the stroke covers (the
 /// path's bounds grown by half the line width), so a horizontal line's vertical gradient runs
 /// across its width.
-fn line_gradient(rctx: &Ctx, g: &deckcraft_model::style::Gradient, ph: Option<Rgba>, path: &BezPath, lw: f64, alpha: f64) -> peniko::Gradient {
+fn line_gradient(rctx: &Ctx, g: &deckcraft_model::style::Gradient, ph: Option<Rgba>, path: &BezPath, lw: f64, alpha: f64) -> Paint {
     let bounds = path.bounding_box().inflate(lw / 2.0, lw / 2.0);
     let bounds = paint::tile_box(bounds, g.tile);
     let stops: Vec<(f64, Rgba)> = g.stops.iter().map(|s| (s.pos, rctx.color(&s.color, ph))).collect();
@@ -358,7 +358,7 @@ pub(crate) fn trim_ends(path: &BezPath, start: f64, end: f64) -> BezPath {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: Option<Rgba>, geo: &Geometry, rel: Affine, m: Affine, lw: f64) {
+pub(crate) fn arrowheads(ctx: &mut dyn Canvas, rctx: &Ctx, line: &Line, ph: Option<Rgba>, geo: &Geometry, rel: Affine, m: Affine, lw: f64) {
     let Some(sp) = geo.paths.iter().find(|p| p.stroke) else { return };
     let Some(((a, a2), (b, b2))) = end_points(&sp.path) else { return };
     // The outline's ends in the space the arrowheads are sized and drawn in.
@@ -376,7 +376,7 @@ pub(crate) fn arrowheads(ctx: &mut RenderContext, rctx: &Ctx, line: &Line, ph: O
         }
         _ => None,
     };
-    let set_paint = |ctx: &mut RenderContext| match &grad {
+    let set_paint = |ctx: &mut dyn Canvas| match &grad {
         Some(g) => ctx.set_paint(g.clone()),
         None => ctx.set_paint(color(col, 1.0)),
     };

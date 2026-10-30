@@ -188,6 +188,12 @@ pub(crate) fn shadow_local(sh: &deckcraft_model::style::Shadow, w: f64, h: f64) 
     Affine::translate(a) * k * Affine::translate(-a)
 }
 
+/// Does this shape show blur-based effects (shadows, glow, soft edges, reflection)? Bevels and
+/// 3-D face lighting are drawn on their own (local pixels on vector canvases).
+pub(crate) fn draws_effects(e: &Effects) -> bool {
+    e.outer_shadow.is_some() || e.inner_shadow.is_some() || e.glow.is_some() || e.soft_edge.is_some_and(|r| r > 0.0) || e.reflection.is_some()
+}
+
 pub(crate) fn pre_translate(m: Affine, d: Vec2) -> Affine {
     Affine::translate(d) * m
 }
