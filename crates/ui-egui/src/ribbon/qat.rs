@@ -105,7 +105,7 @@ fn tip(q: &QatItem) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));
     match sc {
-        Some(s) => format!("{} ({})", q.label, crate::ribbon::pretty_shortcut(s)),
+        Some(s) => format!("{} ({})", tl!(&q.label), crate::ribbon::pretty_shortcut(s)),
         None => q.label.clone(),
     }
 }
@@ -125,7 +125,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             run(app, q);
         }
         r.context_menu(|ui| {
-            if ui.button("Remove from Quick Access Toolbar").clicked() {
+            if ui.button(tl!("Remove from Quick Access Toolbar")).clicked() {
                 let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 ui.close();
             }
@@ -133,10 +133,10 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
     }
     let r = crate::widgets::icon_toggle(ui, Icon::ChevronDown, "Customize Quick Access Toolbar", true, false);
     egui::Popup::menu(&r).show(|ui| {
-        ui.label(egui::RichText::new("Customize Quick Access Toolbar").strong());
+        ui.label(egui::RichText::new(tl!("Customize Quick Access Toolbar")).strong());
         for c in common() {
             let mut on = app.ui.qat.iter().any(|q| q.same(&c.id, &Value::Null));
-            if ui.checkbox(&mut on, &c.label).changed() {
+            if ui.checkbox(&mut on, tl!(&c.label)).changed() {
                 let key = if on { "add" } else { "remove" };
                 let _ = command(app, &json!({key: c.id}));
             }
@@ -146,14 +146,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             for q in extra {
                 let mut on = true;
-                if ui.checkbox(&mut on, &q.label).changed() {
+                if ui.checkbox(&mut on, tl!(&q.label)).changed() {
                     let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 }
             }
         }
         ui.separator();
-        ui.label(egui::RichText::new("Right-click any ribbon button to add it.").weak());
-        if ui.button("Reset to Defaults").clicked() {
+        ui.label(egui::RichText::new(tl!("Right-click any ribbon button to add it.")).weak());
+        if ui.button(tl!("Reset to Defaults")).clicked() {
             let _ = command(app, &json!({"reset": true}));
             ui.close();
         }

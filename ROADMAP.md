@@ -2,7 +2,7 @@
 
 **Stage: alpha** · next: beta, ~20 points and ~120–210 h away
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option set the point type; previous: trivial, progress log: scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-29 · **Last updated:** 2026-10-29 · **Change:** minor (Simplified Chinese interface catalog from craft-i18n: 1,093 DeckCraft rows plus shared rows, CJK faces borrowed for the UI's own text; localization ~15% → ~20%; previous: minor, interface languages from craft-i18n: language setting and German, #15) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (progress log: Ctrl+wheel zoom during the slide show, #1286; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-24 · **Change:** trivial (progress log: picture and embedded object fills; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (fill and outline edits reach group members, #1079; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -55,7 +55,7 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 | UI/UX fidelity | ~60% | 30–50 | [docs/ui-parity.md](docs/ui-parity.md) |
 | File formats (PPTX, PDF, legacy, export) | ~58% | 60–110 | [docs/file-format-parity.md](docs/file-format-parity.md) |
 | Hardware (GPU raster, video decode, displays, pens) | ~40% | 25–45 | [docs/hardware-parity.md](docs/hardware-parity.md) |
-| Localization | ~8% | 55–90 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
+| Localization | ~20% | 40–75 + native review | [docs/localization-parity.md](docs/localization-parity.md) |
 | Performance (unmeasured) | ~55% | 10–20 | [docs/hardware-parity.md](docs/hardware-parity.md#performance) |
 | Stability | ~60% | 10–20 | [docs/gaps.md](docs/gaps.md#stability) |
 | Platforms | ~80% | 5–10 | [Downloads in README](README.md#downloads) |
@@ -90,13 +90,13 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+English, German and Simplified Chinese. Interface text comes from the shared [craft-i18n](https://github.com/storytold/craft-i18n) catalogs (`locales/<lang>/deckcraft.tsv`); the interface follows the system language, or Preferences › Interface language (#15). Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
 |---|---|---:|---|---|
 | English | en | 100% | full | 0 |
-| Simplified Chinese | zh-Hans | 0% | none | 6–10 |
+| Simplified Chinese | zh-Hans | 1,093 DeckCraft rows + shared rows | partial | 2–4 + review |
 | Spanish | es | 0% | none | 3–5 |
 | Hindi | hi | 0% | none | 4–7 |
 | Arabic | ar | 0% (slide text: bidi and shaping done) | none | 10–16 |
@@ -104,11 +104,11 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | Portuguese | pt | 0% | none | 3–5 |
 | Indonesian | id | 0% | none | 3–5 |
 | Japanese | ja | 0% | none | 4–7 |
-| German | de | 0% | none | 3–5 |
+| German | de | ~80% | partial | 1–3 |
 | Korean | ko | 0% | none | 4–7 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
+The catalog infrastructure is in place: a new language is a `deckcraft.tsv` in craft-i18n plus one entry in `LANGUAGES` (`crates/ui-egui/src/i18n.rs`). PowerPoint for Mac
 ships 26.
 
 ## Upcoming
@@ -137,6 +137,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-29 | Interface languages (#15): Simplified Chinese is offered as `zh-hans` from the craft-i18n catalog (1,093 DeckCraft rows plus shared rows); the interface borrows CJK faces for its own labels, so the UI draws before a Chinese deck is open. Dynamic strings still assembled with `format!` stay English until the source uses `tl!`/`fmt` |
+| 2026-10-28 | Interface languages (#15): DeckCraft reads the craft-i18n catalogs (`CRAFT_I18N_DIR`, pinned in `craft-i18n.rev`), follows the system language and has Preferences › Interface language and `app.language`. German is the first language: ribbon, menus, command palette, status bar, File tab, dialogs and panes |
 | 2026-10-25 | Windows installer: the Start menu shortcut takes the icon embedded in `deckcraft.exe` instead of an MSI `<Icon>`, so a taskbar pin keeps its icon after an update (#1114); a pin that already lost it has to be unpinned and pinned again once |
 | 2026-10-24 | AutoFormat as you type: a paragraph that starts with `*`, `-`, `--`, `>`, `<>`, `1.`, `1)`, `I.`, `i.`, `A.`, `a.` or `a)` and a space or tab becomes a bulleted or numbered list in that style; Backspace right after puts the typed text back, and Tools ▸ AutoCorrect and `text.autocorrect {lists}` turn it off |
 | 2026-10-24 | Tables: while the caret is in a cell, dragging into another cell selects that range of cells (shaded, merged cells taken in whole), and Shift+arrow grows or shrinks it; formatting applies to the selected cells only, and Delete clears their text and keeps the table |
@@ -294,6 +296,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-28 | minor | Interface languages from craft-i18n with German (#15): Localization ~8% → ~15%, German row partial |
 | 2026-10-25 | trivial | Progress log: Windows shortcut icon survives updates (#1114). Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: selecting a range of table cells by dragging. Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: measurement units in centimetres (#1326). Scores unchanged |

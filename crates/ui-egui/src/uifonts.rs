@@ -43,6 +43,8 @@ pub struct UiFonts {
     doc: Option<(u64, u64)>,
     /// Faces were added since the fonts were last installed.
     changed: bool,
+    /// The interface language whose catalog text was borrowed for, if any.
+    pub language: Option<&'static str>,
 }
 
 /// Characters worth a lookup: not ASCII, a space, a control or a private-use character.
