@@ -76,6 +76,10 @@ impl SlideApp {
             palette: None,
             integrated_titlebar: false,
             backstage: None,
+            #[cfg(network_print)]
+            net_print: super::network_glue::NetTasks::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            local_print: super::localprint::Local::default(),
             pending_urls: vec![],
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
@@ -214,6 +218,10 @@ impl SlideApp {
         if !self.synthetic_batch_is_live(ctx) {
             self.drain_control(ctx);
             self.poll_opening();
+            #[cfg(network_print)]
+            self.poll_network();
+            #[cfg(not(target_arch = "wasm32"))]
+            self.poll_local_print();
             #[cfg(not(target_arch = "wasm32"))]
             updates_ui::tick(self, ctx);
             // Inbox results are host file bytes and do not need fonts or a painted frame. A

@@ -180,6 +180,10 @@ pub struct Backstage {
     /// Notes and handouts: a paper id from [`deckcraft_engine::cmd::file::PAPERS`] and its orientation.
     pub print_paper: &'static str,
     pub print_landscape: bool,
+    /// Where Print sends the PDF ([`crate::print_dest`]).
+    pub print_dest: crate::print_dest::PrintDest,
+    /// The Print page has been shown since the File tab opened (a confirmation from before is void).
+    print_seen: bool,
     pub preview_page: usize,
     pub export: ExportTask,
     /// Export › Change File Type / Save As: the chosen type (an [`SAVE_TYPES`] id).
@@ -207,6 +211,8 @@ impl Backstage {
             print_frame: true,
             print_paper: "letter",
             print_landscape: false,
+            print_dest: Default::default(),
+            print_seen: false,
             preview_page: 0,
             export: ExportTask::Pdf,
             file_type: "pptx",
@@ -219,6 +225,7 @@ impl Backstage {
     /// Show `page`, as a click in the side menu does.
     pub fn go(&mut self, page: Page) {
         if self.page != page {
+            self.print_seen = false;
             self.query.clear();
             self.preview_page = 0;
         }

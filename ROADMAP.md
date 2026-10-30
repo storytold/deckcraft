@@ -191,6 +191,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-15 | A `.pptx` slide that can't be read is reported, not dropped in silence: `lostSlides` from `file.open`, a message and a repaired copy in the app, a warning from `deckcraft-cli` (#203) |
 | 2026-10-16 | AutoFormat as you type: ordinals (1st, 22nd, 103rd) get superscript suffixes after a space or punctuation; Tools ▸ AutoCorrect and `text.autocorrect {ordinals}` turn it off |
 | 2026-10-16 | A PowerPoint Show (`.ppsx`) opened from the command line or the file association starts its slide show, as in PowerPoint; File › Open still opens it for editing (#862) |
+| 2026-10-15 | File › Print gains a destination list: the PDF viewer (as before), a printer of this computer through the system spooler, or a network printer over WS-Print or IPP (craft-print and craft-ui, desktop only); a network job needs the printer queried and the confirmation ticked, and names the printer in its progress and result |
 | 2026-10-15 | Canvas: the Format and Animation Painter override the cursor to show the tool is armed (#830) |
 | 2026-10-24 | Edit Points: Esc pressed before the mouse button is released cancels a point or handle drag, as in PowerPoint, and leaves the shape as it was with no undo step. Edit Points stays on after the cancel |
 | 2026-10-15 | Edit Points: right-click a segment for Straight/Curved Segment, a point for Open/Close Path (`shape.segmentType`, `shape.openPath`, `shape.closePath`); Delete Segment and Add Point in the menu still to come |
