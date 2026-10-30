@@ -258,7 +258,9 @@ fn render(args: &[String]) -> Result<(), String> {
     let mut sample = false;
     let mut slide: Option<usize> = None;
     let mut all = false;
-    let mut scale = 2.0;
+    let mut scale: Option<f64> = None;
+    let mut width: Option<f64> = None;
+    let mut include_hidden = false;
     let mut edit = false;
     let mut transparent = false;
     let mut out = None;
@@ -270,7 +272,11 @@ fn render(args: &[String]) -> Result<(), String> {
             "--slide" => slide = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--slide needs a number")?),
             "--all" => all = true,
             "--edit" => edit = true,
-            "--scale" => scale = it.next().and_then(|v| v.parse().ok()).ok_or("--scale needs a number")?,
+            "--include-hidden" => include_hidden = true,
+            "--scale" => scale = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--scale needs a number")?),
+            "--width" => {
+                width = Some(it.next().and_then(|v| v.parse().ok()).filter(|w: &f64| w.is_finite() && *w >= 1.0).ok_or("--width needs pixels")?)
+            }
             "--help" | "-h" => {
                 outln!("{}", help_page("render"));
                 return Ok(());
@@ -289,14 +295,52 @@ fn render(args: &[String]) -> Result<(), String> {
             other => out = Some(other.to_string()),
         }
     }
+    if scale.is_some() && width.is_some() {
+        return Err("--scale and --width are two ways to size the image; give one".into());
+    }
     let out = out.ok_or("render needs an output path")?;
     let mut s = Session::new();
     open(&mut s, input.as_deref(), sample)?;
     let st = s.doc().map_err(|e| e.to_string())?;
     let n = st.doc.slides.len();
-    let list = slide_indices(n, all, slide)?;
+    let sw = st.doc.slide_size.width.max(1.0);
+    // --width says the image's width in pixels, --scale says pixels per point; both end as a
+    // scale, which image_scale caps at the renderer's limits. A width the renderer cannot
+    // produce for this slide would silently come out a different size, so it is refused with
+    // the width the limits do allow.
+    let scale = match width {
+        Some(w) => {
+            let eff = deckcraft_engine::cmd::file::image_scale(&st.doc, w / sw);
+            // The renderer's own size calculation (`output_size`): the raw slide width times the
+            // effective scale, rounded to whole pixels, at least one, at most its side limit. A
+            // width the renderer cannot produce for this slide would silently come out a
+            // different size, so it is refused with the width the limits do allow.
+            let made = ((st.doc.slide_size.width * eff).round().max(1.0) as u32).clamp(1, deckcraft_engine::render::MAX_SIDE);
+            if (f64::from(made) - w).abs() > 0.5 {
+                return Err(format!(
+                    "--width {w}: this slide renders {made} px wide at the renderer's scale limits (0.01–16 px per point, 16000 px per side)"
+                ));
+            }
+            w / sw
+        }
+        None => scale.unwrap_or(2.0),
+    };
+    let hidden: Vec<bool> = st.doc.slides.iter().map(|sl| sl.hidden).collect();
+    let list = slide_indices(n, &hidden, all, include_hidden, slide)?;
     if all {
         std::fs::create_dir_all(&out).map_err(|e| format!("{out}: {e}"))?;
+        // A folder rendered with --include-hidden may still hold images of the slides this run
+        // skips: a caller collecting the folder's slide-NN.png files would otherwise receive
+        // the hidden slides anyway.
+        if !include_hidden {
+            for i in (0..n).filter(|i| !list.contains(i)) {
+                let path = format!("{out}/slide-{:02}.png", i + 1);
+                if std::path::Path::new(&path).exists() {
+                    std::fs::remove_file(&path).map_err(|e| format!("{path}: {e}"))?;
+                    outln!("removed {path} (hidden slide)");
+                }
+            }
+        }
     }
     for i in list {
         let (png, w, h) = deckcraft_engine::cmd::file::render_png_with(&st.doc, i, scale, edit, transparent);
@@ -308,10 +352,12 @@ fn render(args: &[String]) -> Result<(), String> {
 }
 
 /// Slides `--slide` asks for. `N` is a 0-based index, the same one `slide.go` uses.
-/// `--all` still names files from 1 (`slide-01.png`), which is PowerPoint's slide number.
-fn slide_indices(n: usize, all: bool, slide: Option<usize>) -> Result<Vec<usize>, String> {
+/// `--all` still names files from 1 (`slide-01.png`), which is PowerPoint's slide number, and
+/// skips hidden slides like PowerPoint's export does; `--include-hidden` draws them too. An
+/// explicit `--slide` renders a hidden slide: the caller asked for that one.
+fn slide_indices(n: usize, hidden: &[bool], all: bool, include_hidden: bool, slide: Option<usize>) -> Result<Vec<usize>, String> {
     if all {
-        return Ok((0..n).collect());
+        return Ok((0..n).filter(|&i| include_hidden || !hidden.get(i).copied().unwrap_or(false)).collect());
     }
     let i = slide.unwrap_or(0);
     if i >= n {
@@ -740,25 +786,101 @@ mod tests {
         assert!(run(&args(&["--sample", "--export-params", r#"{"width": 64}"#])).is_err());
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn all_skips_hidden_slides_and_width_sizes_the_image() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-cli-hidden-{}", std::process::id()));
+        // A previous run's files would survive a crash and turn the "skipped" assertions below
+        // into lies, so the folder starts empty.
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let deck = dir.join("three.deckcraft").to_string_lossy().to_string();
+        run(&args(&["--cmd", "slide.new", "--cmd", "slide.new", "--cmd", "slide.new", "--cmd", r#"slide.hide={"index":1}"#, "--save", &deck]))
+            .unwrap();
+
+        // --all draws the shown slides and keeps their PowerPoint numbers: slide 2 (hidden) is
+        // not there, slides 1 and 3 are.
+        let all = dir.join("all").to_string_lossy().to_string();
+        render(&args(&[&deck, "--all", &all])).unwrap();
+        assert!(std::path::Path::new(&format!("{all}/slide-01.png")).exists(), "slide 1 is drawn");
+        assert!(!std::path::Path::new(&format!("{all}/slide-02.png")).exists(), "the hidden slide 2 is skipped");
+        assert!(std::path::Path::new(&format!("{all}/slide-03.png")).exists(), "slide 3 keeps its number");
+
+        // --include-hidden draws every slide again; an explicit --slide renders a hidden one.
+        let full = dir.join("full").to_string_lossy().to_string();
+        render(&args(&[&deck, "--all", "--include-hidden", &full])).unwrap();
+        assert!(std::path::Path::new(&format!("{full}/slide-02.png")).exists(), "--include-hidden draws slide 2");
+        let one = dir.join("one.png").to_string_lossy().to_string();
+        render(&args(&[&deck, "--slide", "1", &one])).unwrap();
+        assert!(std::path::Path::new(&one).exists(), "--slide renders a hidden slide");
+
+        // A folder that holds slide 2's image from a --include-hidden run loses it to a plain
+        // --all into the same folder: a caller collecting the folder must not see hidden slides.
+        let again = dir.join("again").to_string_lossy().to_string();
+        render(&args(&[&deck, "--all", "--include-hidden", &again])).unwrap();
+        assert!(std::path::Path::new(&format!("{again}/slide-02.png")).exists());
+        render(&args(&[&deck, "--all", &again])).unwrap();
+        assert!(!std::path::Path::new(&format!("{again}/slide-02.png")).exists(), "the stale image of a hidden slide is removed");
+        assert!(std::path::Path::new(&format!("{again}/slide-01.png")).exists());
+
+        // --width sizes the image in pixels; --scale and --width are not two sizes at once.
+        let w = dir.join("wide.png").to_string_lossy().to_string();
+        render(&args(&[&deck, "--slide", "0", "--width", "960", &w])).unwrap();
+        let png = std::fs::read(&w).unwrap();
+        assert_eq!(u32::from_be_bytes([png[16], png[17], png[18], png[19]]), 960, "PNG IHDR width");
+        assert!(render(&args(&[&deck, "--slide", "0", "--scale", "2", "--width", "960", &w])).is_err_and(|e| e.contains("give one")));
+        assert!(render(&args(&[&deck, "--slide", "0", "--width", "0", &w])).is_err_and(|e| e.contains("--width needs pixels")));
+        // A width below or above what the renderer's scale limits produce for this slide is
+        // refused with the achievable size, not silently rendered at another size.
+        assert!(render(&args(&[&deck, "--slide", "0", "--width", "1", &w])).is_err_and(|e| e.contains("--width 1")));
+        assert!(render(&args(&[&deck, "--slide", "0", "--width", "999999", &w])).is_err_and(|e| e.contains("--width 999999")));
+
+        // The check uses the renderer's own rounding, not a nearby one. A 72.01875-pt slide at
+        // the 16 px/pt scale cap renders round(72.01875 × 16) = 1152 px, so --width 1153 is
+        // refused where a ceil-based check would accept it and draw a different size. (The slide
+        // stays small: a big fixture would render a ~586 MiB RGBA buffer just for this test.)
+        let wide = dir.join("wide.deckcraft").to_string_lossy().to_string();
+        run(&args(&["--cmd", "slide.new", "--cmd", r#"design.slideSize={"w": 72.01875, "h": 72, "scale": "none"}"#, "--save", &wide])).unwrap();
+        assert!(render(&args(&[&wide, "--slide", "0", "--width", "1153", &w])).is_err_and(|e| e.contains("1152 px")));
+        render(&args(&[&wide, "--slide", "0", "--width", "1152", &w])).unwrap();
+        let png = std::fs::read(&w).unwrap();
+        assert_eq!(u32::from_be_bytes([png[16], png[17], png[18], png[19]]), 1152, "the renderer's own rounding");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 #[cfg(test)]
 mod slide_index_tests {
     use super::{missing_slide, slide_indices};
 
+    fn flags(hidden: &[usize], n: usize) -> Vec<bool> {
+        (0..n).map(|i| hidden.contains(&i)).collect()
+    }
+
     #[test]
     fn slide_numbers_start_at_zero_and_files_at_one() {
-        assert_eq!(slide_indices(8, false, None).ok().as_deref(), Some(&[0][..]));
-        assert_eq!(slide_indices(8, false, Some(0)).ok().as_deref(), Some(&[0][..]));
-        assert_eq!(slide_indices(8, false, Some(7)).ok().as_deref(), Some(&[7][..]));
-        assert_eq!(slide_indices(8, true, None).ok().as_deref(), Some(&[0, 1, 2, 3, 4, 5, 6, 7][..]));
-        let err = slide_indices(8, false, Some(8)).err().unwrap_or_default();
+        assert_eq!(slide_indices(8, &flags(&[], 8), false, false, None).ok().as_deref(), Some(&[0][..]));
+        assert_eq!(slide_indices(8, &flags(&[], 8), false, false, Some(0)).ok().as_deref(), Some(&[0][..]));
+        assert_eq!(slide_indices(8, &flags(&[], 8), false, false, Some(7)).ok().as_deref(), Some(&[7][..]));
+        assert_eq!(slide_indices(8, &flags(&[], 8), true, false, None).ok().as_deref(), Some(&[0, 1, 2, 3, 4, 5, 6, 7][..]));
+        let err = slide_indices(8, &flags(&[], 8), false, false, Some(8)).err().unwrap_or_default();
         assert!(!err.is_empty(), "index 8 was accepted");
         assert!(err.contains("numbered 0 through 7"), "{err}");
         assert!(err.contains("slide-01.png"), "{err}");
         assert!(err.contains("slide-08.png"), "{err}");
         assert!(missing_slide(0, 0).contains("no slides"));
         assert!(missing_slide(1, 1).contains("index 0"));
+    }
+
+    #[test]
+    fn all_skips_hidden_slides_and_keeps_their_numbers() {
+        // Slides 1 and 4 are hidden: --all leaves them out, the rest keep their PowerPoint
+        // numbers, and --include-hidden draws every one.
+        assert_eq!(slide_indices(6, &flags(&[1, 4], 6), true, false, None).ok().as_deref(), Some(&[0, 2, 3, 5][..]));
+        assert_eq!(slide_indices(6, &flags(&[1, 4], 6), true, true, None).ok().as_deref(), Some(&[0, 1, 2, 3, 4, 5][..]));
+        // An explicit --slide on a hidden slide still renders that one.
+        assert_eq!(slide_indices(6, &flags(&[1, 4], 6), false, false, Some(4)).ok().as_deref(), Some(&[4][..]));
     }
 }
 
