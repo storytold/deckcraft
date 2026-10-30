@@ -188,7 +188,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
         }
         if let Some((oc, ow)) = run.outline {
             ctx.set_paint(color(oc, ps.opacity));
-            ctx.set_stroke(kurbo::Stroke::new(ow.max(0.0)).with_join(kurbo::Join::Round));
+            ctx.set_stroke(crate::text_draw::outline_stroke(&path, ow, &run.outline_dash));
             ctx.stroke_path(&path);
         }
     }

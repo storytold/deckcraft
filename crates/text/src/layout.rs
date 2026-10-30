@@ -234,7 +234,10 @@ pub(crate) fn layout_scaled(ctx: &Ctx, shape: &Shape, body: &TextBody, bp: &Body
     LAYOUT_PASSES.with(|n| n.set(n.get() + 1));
     let g = BoxGeom::new(shape, bp, opts.rect);
     let shaped_paras = shape_paragraphs(ctx, shape, body, opts, scale, g.upright());
-    let mut out = TextLayout { inner: g.inner, font_scale: scale, line_reduction: reduce, rotation: g.rotation, ..Default::default() };
+    // Keep text upright when requested by counter-rotating it by the shape's own turn.
+    // A rotated parent group is not included here.
+    let held = if bp.upright == Some(true) { resolve::xfrm(ctx, shape).rot } else { 0.0 };
+    let mut out = TextLayout { inner: g.inner, font_scale: scale, line_reduction: reduce, rotation: g.rotation - held, ..Default::default() };
     let first_last = bp.space_first_last.unwrap_or(false);
     let mut flow = Flow { y: 0.0, prev_after: 0.0, tail: 0.0, lines: vec![] };
     for (pi, p) in shaped_paras.iter().enumerate() {
@@ -634,6 +637,7 @@ fn emit_bullet(out: &mut TextLayout, p: &ParaShaped, pl: &PlacedLine, shift_x: f
         fake_bold: false,
         fake_italic: false,
         outline: None,
+        outline_dash: vec![],
         para: line.para,
         chars: (0, 0),
         link: false,
@@ -671,6 +675,7 @@ fn new_run(cell: &Cell, st: &Style, face: &Arc<FontFace>, para: usize, pos: &Cel
         fake_bold: st.fake_bold,
         fake_italic: st.fake_italic,
         outline: st.outline,
+        outline_dash: st.outline_dash.clone(),
         para,
         chars: (pos.ci, pos.ci + 1),
         link: st.link,

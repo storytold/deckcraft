@@ -784,4 +784,9 @@ fn a_tiny_dash_on_a_huge_shape_draws_without_running_out_of_memory() {
     p.line_to((4.0e6, 0.0));
     let pat = limit_dash_count(&p, vec![1.0, 1.0]);
     assert!((4.0e6 / (pat[0] + pat[1]) - MAX_DASHES).abs() < 1.0, "{pat:?}");
+    let many: Vec<f64> = (0..64).flat_map(|_| [1.0, 1.0]).collect();
+    let many = limit_dash_count(&p, many);
+    let active = many.iter().step_by(2).count() as f64;
+    let periods = 4.0e6 / many.iter().sum::<f64>();
+    assert!((periods * active - MAX_DASHES).abs() < 1.0, "{} active dashes", periods * active);
 }

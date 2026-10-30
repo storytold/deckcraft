@@ -101,7 +101,12 @@ fn glyph_at(l: &TextLayout, (ri, gi): (usize, usize)) -> Option<(&GlyphRun, u32,
 }
 
 fn same_look(a: &GlyphRun, b: &GlyphRun) -> bool {
-    a.face.id() == b.face.id() && a.size == b.size && a.color == b.color && a.alpha == b.alpha && a.outline == b.outline
+    a.face.id() == b.face.id()
+        && a.size == b.size
+        && a.color == b.color
+        && a.alpha == b.alpha
+        && a.outline == b.outline
+        && a.outline_dash == b.outline_dash
 }
 
 fn lerp(a: f64, b: f64, t: f64) -> f64 {

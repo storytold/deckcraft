@@ -178,7 +178,7 @@ pub(crate) fn dash_with_caps(mut pat: Vec<f64>, cap: kurbo::Cap, width: f64) -> 
     pat
 }
 
-/// The most dashes one stroke is cut into. Stroking expands every dash into its own outline, so a
+/// The most active dashes one stroke is cut into. Stroking expands every dash into its own outline, so a
 /// tiny dash on a huge shape (a 1 EMU-wide `custDash` on a 2147483647 EMU rectangle) would
 /// otherwise need gigabytes and abort the app when the slide is drawn. Past this count the
 /// pattern is scaled up evenly, which looks the same: the dashes are far below a pixel by then.
@@ -190,16 +190,17 @@ pub(crate) fn limit_dash_count(path: &BezPath, pat: Vec<f64>) -> Vec<f64> {
     if !(period.is_finite() && period > 0.0) {
         return pat;
     }
+    let active_dashes = pat.len().div_ceil(2) as f64;
     let len: f64 = path.segments().map(|s| s.arclen(1e-2)).sum();
-    let dashes = len / period;
     if !len.is_finite() {
         return vec![];
     }
-    if dashes <= MAX_DASHES {
+    let max_periods = MAX_DASHES / active_dashes;
+    if len / period <= max_periods {
         return pat;
     }
-    let k = dashes / MAX_DASHES;
-    pat.into_iter().map(|v| v * k).collect()
+    let target_period = len / max_periods;
+    pat.into_iter().map(|v| v / period * target_period).collect()
 }
 
 fn end_points(path: &BezPath) -> Option<((Point, Point), (Point, Point))> {

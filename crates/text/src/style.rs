@@ -45,6 +45,7 @@ pub(crate) struct Style {
     pub(crate) strike: Option<Strike>,
     pub(crate) highlight: Option<Rgba>,
     pub(crate) outline: Option<(Rgba, f64)>,
+    pub(crate) outline_dash: Vec<f64>,
     pub(crate) link: bool,
     pub(crate) gradient: Option<deckcraft_model::style::Gradient>,
     pub(crate) effects: Option<RunEffects>,
@@ -158,6 +159,7 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
         Some(Fill::Solid { color: c }) => Some((ctx.color(c, None), l.width.unwrap_or(0.75))),
         _ => None,
     });
+    let outline_dash = r.outline.as_ref().and_then(|l| l.dash.as_ref()).map(|d| d.pattern()).unwrap_or_default();
     Style {
         face,
         size,
@@ -172,6 +174,7 @@ pub(crate) fn make_style(ctx: &Ctx, r: &RunProps, scale: f64, prompt: Option<Rgb
         strike: r.strike.filter(|s| *s != Strike::None),
         highlight: r.highlight.as_ref().map(|c| ctx.color(c, None)),
         outline,
+        outline_dash,
         link: r.link.is_some(),
         gradient,
         effects: run_effects(ctx, r, scale),

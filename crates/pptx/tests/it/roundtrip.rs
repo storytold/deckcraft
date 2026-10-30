@@ -1926,6 +1926,30 @@ fn zoom_inserts_linked_slide_pictures() {
     assert!(s.execute("insert.zoom", &json!({"kind": "slide"})).is_err());
 }
 
+/// Text Options (text fill, outline width and dash, direction, Do not rotate text) survive a save.
+#[test]
+fn text_options_round_trip() {
+    use deckcraft_engine::Session;
+    use deckcraft_model::style::Dash;
+    let mut s = Session::with_new();
+    s.execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Hi"})).unwrap();
+    s.execute("format.textFill", &serde_json::json!({"mode": "gradient", "angle": 45})).unwrap();
+    s.execute("format.textOutline", &serde_json::json!({"color": "#336699", "width": 2.5, "dash": "sysDot"})).unwrap();
+    s.execute("format.direction", &serde_json::json!({"dir": "rotate90"})).unwrap();
+    s.execute("format.upright", &serde_json::json!({"on": true})).unwrap();
+    let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc.clone()).unwrap();
+    let back = deckcraft_pptx::import(&bytes).unwrap();
+    let sh = back.slides[0].shapes.iter().find(|sh| sh.text.as_ref().is_some_and(|t| t.text().contains("Hi"))).unwrap();
+    let t = sh.text.as_ref().unwrap();
+    let props = &t.paragraphs[0].runs[0].props;
+    assert!(matches!(props.fill, Some(deckcraft_model::Fill::Gradient(_))), "{:?}", props.fill);
+    let line = props.outline.as_ref().unwrap();
+    assert_eq!(line.width, Some(2.5));
+    assert_eq!(line.dash, Some(Dash::Preset { name: "sysDot".into() }));
+    assert_eq!(t.body.vert, Some(deckcraft_model::text::TextDir::Vertical));
+    assert_eq!(t.body.upright, Some(true));
+}
+
 #[test]
 fn darken_and_desaturate_write_powerpoints_hsl_shift() {
     for (effect, preset, shift) in [("darken", 24, r#"s="0" l="-25098""#), ("desaturate", 25, r#"s="-70588" l="0""#)] {

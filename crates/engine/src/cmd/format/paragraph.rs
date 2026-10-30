@@ -397,6 +397,11 @@ pub(super) fn wrap(s: &mut Session, p: &Value) -> Result<Value> {
     format_body(s, &move |b| b.wrap = Some(on))
 }
 
+pub(super) fn upright(s: &mut Session, p: &Value) -> Result<Value> {
+    let on = bool_or(p, "on", true);
+    format_body(s, &move |b| b.upright = Some(on))
+}
+
 pub(super) fn margins(s: &mut Session, p: &Value) -> Result<Value> {
     let (l, t, r, b) = (f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom"));
     format_body(s, &move |bp| {

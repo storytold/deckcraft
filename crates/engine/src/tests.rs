@@ -5800,6 +5800,122 @@ fn invalid_ids_array_never_falls_back_to_the_selection() {
     }
 }
 
+/// Text Options: Text Fill none / solid / gradient, Text Outline width and dash, and
+/// Do Not Rotate Text, each one undo step.
+#[test]
+fn text_fill_outline_and_upright_commands() {
+    use deckcraft_model::style::{Dash, GradientShape};
+    use deckcraft_model::{ColorBase, Fill, Rgba};
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "Hi"})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let run = |s: &Session| s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    let body = |s: &Session| s.doc().unwrap().shape(id).unwrap().text.as_ref().unwrap().body.clone();
+
+    s.execute("format.color", &json!({"color": "#C00000"})).unwrap();
+    s.execute("format.textFill", &json!({"mode": "none"})).unwrap();
+    assert_eq!(run(&s).fill, Some(Fill::None));
+    // Back to solid: the colour before the gradient or none is gone, so it falls back to the text colour.
+    s.execute("format.color", &json!({"color": "#C00000"})).unwrap();
+    s.execute("format.textFill", &json!({"mode": "gradient", "angle": 90})).unwrap();
+    let Some(Fill::Gradient(g)) = run(&s).fill else { panic!("gradient expected") };
+    assert_eq!(g.stops.len(), 2);
+    assert_eq!(g.stops[1].color, deckcraft_model::ColorRef::scheme(deckcraft_model::SchemeSlot::Accent1));
+    assert_eq!(g.stops[0].color.base, ColorBase::Rgb { rgb: Rgba::rgb(0xC0, 0, 0) });
+    assert_eq!(g.shape, GradientShape::Linear { angle: 90.0, scaled: false });
+    // A new angle keeps the stops, with their transparency.
+    s.execute("format.textTransparency", &json!({"value": 0.5})).unwrap();
+    s.execute("format.textFill", &json!({"mode": "gradient", "angle": 180})).unwrap();
+    let Some(Fill::Gradient(g2)) = run(&s).fill else { panic!("gradient expected") };
+    assert_eq!(g2.shape, GradientShape::Linear { angle: 180.0, scaled: false });
+    assert!(g2.stops.iter().all(|st| (st.color.alpha() - 0.5).abs() < 1e-9), "{:?}", g2.stops);
+    s.execute("format.textFill", &json!({"mode": "solid"})).unwrap();
+    let Some(Fill::Solid { color }) = run(&s).fill else { panic!("solid expected") };
+    assert_eq!(color.base, ColorBase::Rgb { rgb: Rgba::rgb(0xC0, 0, 0) });
+    assert!(s.execute("format.textFill", &json!({"mode": "rainbow"})).is_err());
+    assert!(s.execute("format.textFill", &json!({})).is_err());
+
+    // Outline: parts replace parts, a bare call removes it.
+    s.execute("format.textOutline", &json!({"width": 2.5})).unwrap();
+    let l = run(&s).outline.unwrap();
+    assert_eq!((l.width, l.dash.clone()), (Some(2.5), None));
+    s.execute("format.textOutline", &json!({"dash": "lgDash"})).unwrap();
+    s.execute("format.textOutline", &json!({"color": "#336699"})).unwrap();
+    let l = run(&s).outline.unwrap();
+    assert_eq!(l.width, Some(2.5));
+    assert_eq!(l.dash, Some(Dash::Preset { name: "lgDash".into() }));
+    let Some(Fill::Solid { color }) = l.fill else { panic!() };
+    assert_eq!(color.base, ColorBase::Rgb { rgb: Rgba::rgb(0x33, 0x66, 0x99) });
+    s.execute("format.textOutline", &json!({"dash": "solid"})).unwrap();
+    assert_eq!(run(&s).outline.unwrap().dash, None);
+    for bad in [
+        json!({"dash": "wavy"}),
+        json!({"dash": 123}),
+        json!({"color": "not-a-color"}),
+        json!({"width": -1}),
+        json!({"width": 1e9}),
+        json!({"width": "wide"}),
+    ] {
+        assert!(s.execute("format.textOutline", &bad).is_err(), "{bad}");
+    }
+    s.execute("format.textOutline", &json!({})).unwrap();
+    assert_eq!(run(&s).outline, Some(deckcraft_model::Line::none()));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(run(&s).outline.unwrap().width, Some(2.5));
+
+    // Upright and direction.
+    assert_eq!(body(&s).upright, None);
+    s.execute("format.upright", &json!({"on": true})).unwrap();
+    assert_eq!(body(&s).upright, Some(true));
+    s.execute("format.direction", &json!({"dir": "rotate270"})).unwrap();
+    assert_eq!(body(&s).vert, Some(deckcraft_model::text::TextDir::Vertical270));
+    s.execute("format.upright", &json!({"on": false})).unwrap();
+    assert_eq!(body(&s).upright, Some(false));
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(body(&s).upright, Some(true));
+}
+
+#[test]
+fn text_outline_edits_resolve_each_selected_shape() {
+    use deckcraft_model::text::LevelStyle;
+    use deckcraft_model::{Fill, Line, Rgba, ShapeId};
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [40, 40, 120, 80], "text": "A\nA2"})).unwrap()["id"].as_u64().unwrap() as u32;
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 40, 120, 80], "text": "B"})).unwrap()["id"].as_u64().unwrap() as u32;
+    {
+        let st = s.doc_mut().unwrap();
+        let pres = std::sync::Arc::make_mut(&mut st.doc);
+        let slide = std::sync::Arc::make_mut(pres.slides.get_mut(0).unwrap());
+        for (id, colors) in [(a, vec![Rgba::rgb(0xC0, 0, 0), Rgba::rgb(0, 0x80, 0)]), (b, vec![Rgba::rgb(0, 0, 0xC0)])] {
+            let shape = deckcraft_model::find_shape_mut(&mut slide.shapes, ShapeId(id)).unwrap();
+            let text = shape.text.as_mut().unwrap();
+            for (level, color) in colors.into_iter().enumerate() {
+                if let Some(paragraph) = text.paragraphs.get_mut(level) {
+                    paragraph.level = level as u8;
+                }
+                let mut style = LevelStyle::default();
+                style.run.outline = Some(Line::solid(deckcraft_model::ColorRef::rgb(color), 2.0));
+                text.list_style.set(level as u8, style);
+            }
+        }
+    }
+    s.execute("edit.select", &json!({"ids": [a, b]})).unwrap();
+    s.execute("format.textOutline", &json!({})).unwrap();
+    let outline = |session: &Session, id: u32, paragraph: usize| {
+        session.doc().unwrap().shape(ShapeId(id)).unwrap().text.as_ref().unwrap().paragraphs[paragraph].runs[0].props.outline.clone()
+    };
+    assert_eq!(outline(&s, a, 0), Some(Line::none()));
+    assert_eq!(outline(&s, a, 1), Some(Line::none()));
+    assert_eq!(outline(&s, b, 0), Some(Line::none()));
+    s.execute("edit.undo", &json!({})).unwrap();
+    s.execute("format.textOutline", &json!({"width": 5.0})).unwrap();
+    for (id, paragraph, color) in [(a, 0, Rgba::rgb(0xC0, 0, 0)), (a, 1, Rgba::rgb(0, 0x80, 0)), (b, 0, Rgba::rgb(0, 0, 0xC0))] {
+        let line = outline(&s, id, paragraph).unwrap();
+        assert_eq!(line.width, Some(5.0));
+        assert_eq!(line.fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(color))));
+    }
+}
+
 #[test]
 fn table_cell_align_sets_the_horizontal_alignment() {
     use deckcraft_model::text::{Align, Anchor};

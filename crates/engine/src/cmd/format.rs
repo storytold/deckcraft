@@ -25,13 +25,14 @@ mod text_effects;
 pub use font::SIZES;
 use font::{
     bold, caps, clear, color, font, font_dialog, grow, highlight, italic, language, language_all, shrink, size, spacing, strike, subscript,
-    superscript, text_transparency, underline,
+    superscript, text_fill, text_transparency, underline,
 };
 pub use painter::Painted;
 pub(crate) use painter::apply_painted;
 use painter::{font_add, font_rescan, painter_apply, painter_pick, state};
 use paragraph::{
-    align, align_to, anchor, autofit, bullets, columns, direction, level, line_spacing, margins, numbering, paragraph, paragraph_dialog, rtl, wrap,
+    align, align_to, anchor, autofit, bullets, columns, direction, level, line_spacing, margins, numbering, paragraph, paragraph_dialog, rtl,
+    upright, wrap,
 };
 use ruler::{ruler, tabs};
 use text_effects::{case, text_outline, text_shadow, text_warp};
@@ -75,6 +76,15 @@ pub fn specs() -> Vec<CommandSpec> {
             "{value: 0..1} — 0 opaque, 1 invisible; keeps the text's colour (inherited colours included)",
             has_text_or_shapes,
             text_transparency
+        ),
+        cmd!(
+            "format.textFill",
+            "Text Fill",
+            ["Shape Format", "WordArt Styles"],
+            None,
+            "{mode: none|solid|gradient, angle?: deg} — solid and gradient start from the colour the text shows now; gradient fades into accent 1",
+            has_text_or_shapes,
+            text_fill
         ),
         cmd!(
             "format.language",
@@ -130,7 +140,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Text Outline",
             ["Shape Format", "WordArt Styles"],
             None,
-            "{color?, width?: pt} (no color = none)",
+            "{color?, width?: pt (0–1584), dash?: solid|dot|dash|…|sysDashDotDot, none?: bool} — given parts replace those of the outline the text has (new: black, 0.75 pt, solid); no color, width or dash (or none: true) removes it",
             has_text_or_shapes,
             text_outline
         ),
@@ -243,6 +253,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.autofit", "Autofit", ["Format Shape", "Text Box"], None, "{mode: none|shrink|resize}", has_text_or_shapes, autofit),
         cmd!("format.wrap", "Wrap Text in Shape", ["Format Shape", "Text Box"], None, "{on: bool}", has_text_or_shapes, wrap),
+        cmd!(
+            "format.upright",
+            "Do Not Rotate Text",
+            ["Format Shape", "Text Box"],
+            None,
+            "{on?: bool (default true)} — the text stays upright when the shape is rotated",
+            has_text_or_shapes,
+            upright
+        ),
         cmd!(
             "format.margins",
             "Text Box Margins",

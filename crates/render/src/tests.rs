@@ -2974,6 +2974,42 @@ fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
     assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
 }
 
+/// A text outline draws its dash: a dashed outline leaves gaps a solid one covers.
+#[test]
+fn dashed_text_outline_leaves_gaps() {
+    use deckcraft_model::style::{Dash, Fill, Line};
+    use deckcraft_model::text::{Run, RunProps, TextBody};
+    let ink = |dash: Option<Dash>| {
+        let props = RunProps {
+            size: Some(120.0),
+            bold: Some(true),
+            fill: Some(Fill::None),
+            outline: Some(Line { dash, ..Line::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 0, 0)), 3.0) }),
+            ..Default::default()
+        };
+        let mut body = TextBody::from_text("I");
+        body.paragraphs[0].runs = vec![Run::with("I", props)];
+        let sh = Shape { id: ShapeId(790), xfrm: Some(Xfrm::new(100.0, 50.0, 400.0, 300.0)), text: Some(body), ..Default::default() };
+        let img = render_slide(&deck_with(vec![sh]), 0, &RenderOpts { scale: 1.0, ..Default::default() });
+        (0..img.height).flat_map(|y| (0..img.width).map(move |x| (x, y))).filter(|(x, y)| img.pixel(*x, *y)[0] < 128).count()
+    };
+    let solid = ink(None);
+    let dashed = ink(Some(Dash::Preset { name: "dash".into() }));
+    assert!(solid > 500, "a solid outline draws ink: {solid}");
+    assert!(dashed < solid * 3 / 4, "dashes leave gaps: {dashed} of {solid}");
+    assert!(dashed > 100, "and still draw: {dashed}");
+}
+
+#[test]
+fn tiny_custom_text_outline_dash_is_bounded() {
+    use kurbo::ParamCurveArclen;
+    let path = kurbo::BezPath::from_vec(vec![kurbo::PathEl::MoveTo(Point::ZERO), kurbo::PathEl::LineTo(Point::new(100.0, 0.0))]);
+    let stroke = crate::text_draw::outline_stroke(&path, 1.0, &[1e-12, 1e-12]);
+    let length: f64 = path.segments().map(|segment| segment.arclen(1e-2)).sum();
+    let period: f64 = stroke.dash_pattern.iter().sum();
+    assert!(length / period <= crate::stroke::MAX_DASHES + 1.0);
+}
+
 /// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a
 /// buffer from its on-screen length and abort. It is skipped; the rest of the slide still draws.
 #[test]
