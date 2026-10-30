@@ -219,6 +219,15 @@ impl SlideApp {
             }
             "app.palette" => self.palette = Some((String::new(), 0)),
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
+            "app.language" => {
+                let lang = p.get("lang").and_then(Value::as_str).unwrap_or_default();
+                if !crate::i18n::SETTINGS.contains(&lang) {
+                    return Err(format!("unknown language `{lang}`: system, en or ko"));
+                }
+                self.ui.language = lang.into();
+                crate::i18n::set(crate::i18n::resolve(lang));
+                return Ok(json!({ "lang": lang }));
+            }
             "app.openDialog" => self.pick_and_open(),
             "app.insertPictureDialog" => self.pick_and_insert("picture", "insert.picture"),
             "app.smartArtPictureDialog" => {

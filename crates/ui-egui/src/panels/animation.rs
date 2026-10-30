@@ -2,6 +2,7 @@ use super::{
     Align2, AnimClass, AnimStart, Color32, CornerRadius, Icon, Rect, Sense, SlideApp, Stroke, Tokens, Ui, animtimeline, icons, json, paint_anim_tile,
     pos2, run, theme, vec2,
 };
+use crate::i18n::tr;
 
 /// Render the animation pane and route its controls through the engine's animation commands.
 pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
@@ -29,7 +30,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
             (false, Some(_)) => "▶ Play From",
             (false, None) => "▶ Play All",
         };
-        if ui.button(label).clicked() {
+        if ui.button(tr(label)).clicked() {
             let p = match (playing, from) {
                 (false, Some(i)) => json!({"on": true, "from": i}),
                 _ => json!({"on": !playing}),
@@ -39,7 +40,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.separator();
     if anims.is_empty() {
-        ui.label(egui::RichText::new("Select an object on the slide and add an animation from the Animations tab.").color(t.text_dim));
+        ui.label(egui::RichText::new(tr("Select an object on the slide and add an animation from the Animations tab.")).color(t.text_dim));
         return;
     }
     let bars = animtimeline::bars(anims.len(), &effects);
@@ -146,23 +147,23 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
         }
         resp.context_menu(|ui| {
             for (l, v) in [("Start On Click", "onClick"), ("Start With Previous", "withPrevious"), ("Start After Previous", "afterPrevious")] {
-                if ui.button(l).clicked() {
+                if ui.button(tr(l)).clicked() {
                     run(app, "animation.timing", json!({"index": i, "start": v}));
                     ui.close();
                 }
             }
             ui.separator();
-            if ui.button("Move Up").clicked() {
+            if ui.button(tr("Move Up")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i.saturating_sub(1)}));
                 ui.close();
             }
-            if ui.button("Move Down").clicked() {
+            if ui.button(tr("Move Down")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i + 1}));
                 ui.close();
             }
-            if ui.button("Remove").clicked() {
+            if ui.button(tr("Remove")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.remove", json!({"index": i}));
                 ui.close();

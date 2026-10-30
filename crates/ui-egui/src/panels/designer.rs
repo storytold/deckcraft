@@ -1,4 +1,5 @@
 use super::{Color32, CornerRadius, Rect, Sense, SlideApp, Stroke, Tokens, Ui, json, pos2, run, vec2};
+use crate::i18n::tr;
 
 /// Design Ideas: offline suggestions — the current slide in each theme and layout variations.
 /// Rendered idea thumbnails, kept until the deck, slide or pane width changes (rendering eight
@@ -13,7 +14,7 @@ struct IdeaThumbs {
 /// `design.applyIdea` or `design.theme`.
 pub(super) fn designer(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    ui.label(egui::RichText::new("Pick a design for this slide. Ideas are generated on your device.").color(t.text_dim));
+    ui.label(egui::RichText::new(tr("Pick a design for this slide. Ideas are generated on your device.")).color(t.text_dim));
     ui.add_space(6.0);
     let Some(st) = app.session.active() else { return };
     let doc = st.doc.clone();
@@ -76,7 +77,7 @@ pub(super) fn designer(app: &mut SlideApp, ui: &mut Ui) {
         clicked
     };
     if ideas.is_empty() {
-        ui.label(egui::RichText::new("Add a title with a picture or some text to get layout ideas.").color(t.text_dim));
+        ui.label(egui::RichText::new(tr("Add a title with a picture or some text to get layout ideas.")).color(t.text_dim));
     }
     for (id, label) in &ideas {
         if thumb(ui, &format!("layout:{id}"), label) {
@@ -84,7 +85,7 @@ pub(super) fn designer(app: &mut SlideApp, ui: &mut Ui) {
         }
     }
     ui.add_space(4.0);
-    ui.label(egui::RichText::new("Themes (whole presentation)").color(t.text_dim));
+    ui.label(egui::RichText::new(tr("Themes (whole presentation)")).color(t.text_dim));
     ui.add_space(4.0);
     for th in &themes {
         if thumb(ui, &format!("theme:{}", th.name), &th.name) {

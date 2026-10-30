@@ -1,4 +1,5 @@
 use super::{Dialog, SlideApp, Ui, Value, check, field, json, num, vec2};
+use crate::i18n::tr;
 
 /// The export dialog's Animated GIF options (size, seconds per slide, loop, slide range, hidden
 /// slides) as `file.export` params; a slide range that doesn't fit the deck is an error message.
@@ -15,7 +16,7 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
     };
     ui.add_space(4.0);
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new("Size:"));
+        let field = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(tr("Size:")));
         let combo = craft_ui::ComboBox::from_id_salt("gif_size").selected_text(size_label(&size)).show_ui(ui, |ui| {
             for k in SIZE_PRESETS.iter().map(|(k, _)| *k).chain(["custom"]) {
                 if ui.selectable_label(size == k, size_label(k)).clicked() {
@@ -26,14 +27,14 @@ pub(super) fn gif_options(app: &SlideApp, ui: &mut Ui, d: &mut Dialog) -> Result
         let _ = combo.response.labelled_by(field.id);
     });
     if size == "custom" {
-        field(ui, d, "Width (pixels):", "gifWidth", "960");
+        field(ui, d, tr("Width (pixels):"), "gifWidth", "960");
     }
-    field(ui, d, "Seconds per slide:", "gifSeconds", "5");
+    field(ui, d, tr("Seconds per slide:"), "gifSeconds", "5");
     let n_text = n.max(1).to_string();
-    field(ui, d, "From slide:", "gifFrom", "1");
-    field(ui, d, "To slide:", "gifTo", &n_text);
-    let forever = check(ui, d, "Loop forever", "gifLoop", true);
-    let hidden = check(ui, d, "Include hidden slides", "gifHidden", false);
+    field(ui, d, tr("From slide:"), "gifFrom", "1");
+    field(ui, d, tr("To slide:"), "gifTo", &n_text);
+    let forever = check(ui, d, tr("Loop forever"), "gifLoop", true);
+    let hidden = check(ui, d, tr("Include hidden slides"), "gifHidden", false);
 
     let width = if size == "custom" {
         let w = num(d, "gifWidth", 960.0).round();

@@ -241,7 +241,7 @@ pub const LANGS: &[(&str, &str)] = &[
 
 /// The display name of a language tag (the tag itself when it isn't in [`LANGS`]).
 pub fn lang_name(tag: &str) -> String {
-    LANGS.iter().find(|(_, t)| t.eq_ignore_ascii_case(tag)).map_or_else(|| tag.to_string(), |(n, _)| n.to_string())
+    LANGS.iter().find(|(_, t)| t.eq_ignore_ascii_case(tag)).map_or_else(|| tag.to_string(), |(n, _)| crate::i18n::tr(n).to_string())
 }
 
 /// A language name the current interface fonts can actually draw: the native name when every

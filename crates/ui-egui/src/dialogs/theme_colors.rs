@@ -1,4 +1,5 @@
 use super::{Color32, CornerRadius, Dialog, SchemeSlot, Sense, SlideApp, Stroke, Tokens, Ui, Value, buttons, json, theme, vec2};
+use crate::i18n::tr;
 
 fn seed_theme_colors(d: &mut Dialog) {
     if d.fields.contains_key("seeded") {
@@ -70,18 +71,18 @@ pub(super) fn theme_colors_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialo
     ui.add_space(6.0);
     let mut name = d.get("schemeName", "");
     ui.horizontal(|ui| {
-        ui.label("Name:");
+        ui.label(tr("Name:"));
         let resp = ui.add(egui::TextEdit::singleline(&mut name).desired_width(280.0).id_salt("schemeName"));
         let shown = name.clone();
         resp.widget_info(move || {
-            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, "Scheme name");
+            let mut info = egui::WidgetInfo::labeled(egui::Role::TextInput, true, tr("Scheme name"));
             info.current_text_value = Some(shown.clone());
             info
         });
     });
     d.fields.insert("schemeName".into(), name);
-    ui.label(egui::RichText::new("Applies to this presentation's theme colours.").size(11.0).color(Tokens::get(ui.ctx()).text_dim));
-    let (ok, cancel) = buttons(ui, "Save");
+    ui.label(egui::RichText::new(tr("Applies to this presentation's theme colours.")).size(11.0).color(Tokens::get(ui.ctx()).text_dim));
+    let (ok, cancel) = buttons(ui, tr("Save"));
     if ok {
         match theme_color_payload(d) {
             Ok(payload) => return app.run("design.colors", payload).is_ok(),

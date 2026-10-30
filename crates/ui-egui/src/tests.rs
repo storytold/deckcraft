@@ -2339,3 +2339,37 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
 }
+
+/// The interface in Korean: `app.language` (and Preferences › Language) switch the ribbon,
+/// dialogs and placeholder prompts; Cancel in Preferences puts the language back.
+#[test]
+fn korean_interface_switches_and_cancel_restores_it() {
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+        },
+        SlideApp::new(Session::with_new(), Services::default()),
+    );
+    harness.run_steps(2);
+    assert!(harness.query_all_by_label("File").next().is_some(), "English by default");
+    assert!(harness.state_mut().run("app.language", json!({"lang": "ja"})).is_err(), "only system, en and ko");
+    harness.state_mut().run("app.language", json!({"lang": "ko"})).unwrap();
+    harness.run_steps(2);
+    assert_eq!(harness.state().ui.language, "ko", "saved with the UI state");
+    assert!(harness.query_all_by_label("파일").next().is_some(), "the File tab reads 파일");
+    assert!(harness.query_all_by_label("File").next().is_none());
+    assert_eq!(i18n::prompts().and_then(|f| f(deckcraft_model::PhType::Title.prompt())), Some("제목을 입력하십시오"));
+
+    // Preferences opens in Korean; switching to English there and cancelling keeps Korean.
+    harness.state_mut().run("app.preferences", json!({})).unwrap();
+    harness.run_steps(2);
+    harness.state_mut().run("app.language", json!({"lang": "en"})).unwrap();
+    harness.run_steps(2);
+    harness.query_all_by_role_and_label(egui::accesskit::Role::Button, "Cancel").next().unwrap().click_accesskit();
+    harness.run_steps(2);
+    assert_eq!(harness.state().ui.language, "ko", "Cancel restores the language");
+    harness.state_mut().run("app.language", json!({"lang": "en"})).unwrap();
+    harness.run_steps(2);
+    assert!(harness.query_all_by_label("File").next().is_some(), "English again");
+}

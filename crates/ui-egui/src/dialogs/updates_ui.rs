@@ -4,6 +4,7 @@
 use craft_update::updater::{Action, Status, Updater};
 
 use crate::SlideApp;
+use crate::i18n::{tr, trf};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -28,7 +29,7 @@ pub(crate) fn enable(app: &mut SlideApp) {
 pub(crate) fn request_check(app: &mut SlideApp) {
     if !matches!(app.updates_rt.updater.status(), Status::Checking) {
         app.updates_rt.check_requested = true;
-        app.notify("Checking for updates…");
+        app.notify(tr("Checking for updates…"));
     }
 }
 
@@ -41,8 +42,8 @@ pub(crate) fn tick(app: &mut SlideApp, ctx: &egui::Context) {
     }
     rt.updater.tick(ctx);
     let outcome = match rt.updater.status() {
-        Status::UpToDate => Some(format!("DeckCraft {VERSION} is up to date.")),
-        Status::Failed(e) => Some(format!("Could not check for updates: {e}")),
+        Status::UpToDate => Some(trf("DeckCraft {} is up to date.", &[&VERSION])),
+        Status::Failed(e) => Some(trf("Could not check for updates: {}", &[&e])),
         Status::Idle | Status::Checking => None,
     };
     if let Some(message) = outcome {

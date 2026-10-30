@@ -5,7 +5,7 @@ use super::{
 };
 
 /// The prompt shown in an empty placeholder, formatted like its content would be.
-pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
+pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType, tr: Option<fn(&str) -> Option<&'static str>>) -> TextBody {
     // Layout/master prompt text when the layout supplies a custom one.
     let (lp, _) = resolve::parents(rctx, s);
     let custom = lp.and_then(|l| l.ph.as_ref().filter(|p| p.has_custom_prompt).and(l.text.as_ref())).filter(|t| !t.is_empty());
@@ -15,7 +15,7 @@ pub(crate) fn prompt_body(rctx: &Ctx, s: &Shape, kind: PhType) -> TextBody {
     if matches!(rctx.owner, resolve::Owner::Layout | resolve::Owner::Master) {
         return TextBody::default();
     }
-    let txt = kind.prompt();
+    let txt = tr.and_then(|f| f(kind.prompt())).unwrap_or(kind.prompt());
     if txt.is_empty() || kind.is_footer_kind() {
         return TextBody::default();
     }

@@ -4,6 +4,7 @@ use super::{
     Align2, Backstage, Color32, CornerRadius, ExportTask, Icon, PrintScope, Rect, RichText, Sense, SlideApp, Stroke, StrokeKind, Tokens, Ui, Value,
     bullets, dim, heading, icon_button, json, pos2, theme, vec2,
 };
+use crate::i18n::tr;
 
 /// The slides the Print page prints, in order (0-based).
 pub fn print_slides(doc: &deckcraft_model::Presentation, bs: &Backstage, current: usize) -> Result<Vec<usize>, String> {
@@ -67,7 +68,7 @@ const LAYOUTS: [(&str, &str); 8] = [
 pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     let t = Tokens::get(ui.ctx());
     let Some((doc, current)) = app.session.active().map(|d| (d.doc.clone(), d.selection.slide)) else {
-        dim(ui, "No presentation is open.");
+        dim(ui, tr("No presentation is open."));
         return;
     };
     let slides = print_slides(&doc, bs, current);
@@ -75,7 +76,7 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.vertical(|ui| {
             ui.set_width(250.0);
             let ok = slides.as_ref().is_ok_and(|s| !s.is_empty());
-            if square_button(ui, Icon::Print, "Print", ok).clicked()
+            if square_button(ui, Icon::Print, tr("Print"), ok).clicked()
                 && let Ok(s) = &slides
             {
                 app.print_pdf(print_params(bs, s));
@@ -83,34 +84,34 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             ui.add_space(6.0);
             dim(
                 ui,
-                if app.services.pick_save.is_some() {
+                tr(if app.services.pick_save.is_some() {
                     "DeckCraft prints through a PDF: it opens in your PDF viewer, where you choose the printer."
                 } else {
                     "DeckCraft prints through a PDF: it downloads, ready to print from your browser or PDF viewer."
-                },
+                }),
             );
             ui.add_space(14.0);
-            heading(ui, "Settings");
+            heading(ui, tr("Settings"));
             let scope = match bs.print_scope {
                 PrintScope::All => "Print All Slides",
                 PrintScope::Current => "Print Current Slide",
                 PrintScope::Custom => "Custom Range",
             };
-            let combo = craft_ui::ComboBox::from_id_salt("backstage_print_scope").width(240.0).selected_text(scope).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt("backstage_print_scope").width(240.0).selected_text(tr(scope)).show_ui(ui, |ui| {
                 for (s, label) in
                     [(PrintScope::All, "Print All Slides"), (PrintScope::Current, "Print Current Slide"), (PrintScope::Custom, "Custom Range")]
                 {
-                    if ui.selectable_label(bs.print_scope == s, label).clicked() {
+                    if ui.selectable_label(bs.print_scope == s, tr(label)).clicked() {
                         bs.print_scope = s;
                         bs.preview_page = 0;
                     }
                 }
             });
-            combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Print range"));
+            combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr("Print range")));
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let l = ui.label("Slides:");
-                let r = ui.add(egui::TextEdit::singleline(&mut bs.print_range).hint_text("e.g. 1-3, 5").desired_width(176.0)).labelled_by(l.id);
+                let l = ui.label(tr("Slides:"));
+                let r = ui.add(egui::TextEdit::singleline(&mut bs.print_range).hint_text(tr("e.g. 1-3, 5")).desired_width(176.0)).labelled_by(l.id);
                 if r.changed() {
                     // Typing a range picks Custom Range, as in PowerPoint.
                     bs.print_scope = if bs.print_range.trim().is_empty() { PrintScope::All } else { PrintScope::Custom };
@@ -119,15 +120,15 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             });
             ui.add_space(4.0);
             let layout = LAYOUTS.iter().find(|l| l.0 == bs.print_layout).map_or("Full Page Slides", |l| l.1);
-            let combo = craft_ui::ComboBox::from_id_salt("backstage_print_layout").width(240.0).selected_text(layout).show_ui(ui, |ui| {
+            let combo = craft_ui::ComboBox::from_id_salt("backstage_print_layout").width(240.0).selected_text(tr(layout)).show_ui(ui, |ui| {
                 for (id, label) in LAYOUTS {
-                    if ui.selectable_label(bs.print_layout == id, label).clicked() {
+                    if ui.selectable_label(bs.print_layout == id, tr(label)).clicked() {
                         bs.print_layout = id;
                         bs.preview_page = 0;
                     }
                 }
             });
-            combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Print layout"));
+            combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr("Print layout")));
             ui.add_space(4.0);
             // PowerPoint prints full-page slides on slide-shaped pages; paper and orientation are
             // for notes pages and handouts.
@@ -135,36 +136,36 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 let paper = deckcraft_engine::cmd::file::PAPERS.iter().find(|p| p.0 == bs.print_paper).map_or("Letter", |p| p.1);
                 craft_ui::ComboBox::from_id_salt("backstage_print_paper")
                     .width(240.0)
-                    .selected_text(paper)
+                    .selected_text(tr(paper))
                     .show_ui(ui, |ui| {
                         for (id, label, _) in deckcraft_engine::cmd::file::PAPERS {
-                            if ui.selectable_label(bs.print_paper == id, label).clicked() {
+                            if ui.selectable_label(bs.print_paper == id, tr(label)).clicked() {
                                 bs.print_paper = id;
                             }
                         }
                     })
                     .response
-                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Paper size"));
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr("Paper size")));
                 ui.add_space(4.0);
-                let orient = if bs.print_landscape { "Landscape Orientation" } else { "Portrait Orientation" };
+                let orient = tr(if bs.print_landscape { "Landscape Orientation" } else { "Portrait Orientation" });
                 craft_ui::ComboBox::from_id_salt("backstage_print_orientation")
                     .width(240.0)
                     .selected_text(orient)
                     .show_ui(ui, |ui| {
                         for (land, label) in [(false, "Portrait Orientation"), (true, "Landscape Orientation")] {
-                            if ui.selectable_label(bs.print_landscape == land, label).clicked() {
+                            if ui.selectable_label(bs.print_landscape == land, tr(label)).clicked() {
                                 bs.print_landscape = land;
                             }
                         }
                     })
                     .response
-                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Orientation"));
+                    .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr("Orientation")));
             });
             ui.add_space(4.0);
-            if ui.checkbox(&mut bs.print_hidden, "Print Hidden Slides").changed() {
+            if ui.checkbox(&mut bs.print_hidden, tr("Print Hidden Slides")).changed() {
                 bs.preview_page = 0;
             }
-            ui.checkbox(&mut bs.print_frame, "Frame Slides");
+            ui.checkbox(&mut bs.print_frame, tr("Frame Slides"));
             ui.add_space(6.0);
             if ui.link("Edit Header & Footer").clicked() {
                 let _ = app.run("app.dialog", json!({"id": "headerFooter"}));
@@ -175,8 +176,8 @@ pub(super) fn print(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
         ui.painter().line_segment([r.center_top(), r.center_bottom()], Stroke::new(1.0, t.separator));
         ui.add_space(20.0);
         ui.vertical(|ui| match &slides {
-            Err(e) => dim(ui, e),
-            Ok(s) if s.is_empty() => dim(ui, "Nothing to print: every slide in the range is hidden."),
+            Err(e) => dim(ui, tr(e)),
+            Ok(s) if s.is_empty() => dim(ui, tr("Nothing to print: every slide in the range is hidden.")),
             Ok(s) => preview(app, ui, bs, &doc, s),
         });
     });
@@ -270,12 +271,12 @@ fn preview(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, doc: &deckcraft_
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let prev = icon_button(ui, Icon::ChevronLeft, "Previous Page", bs.preview_page > 0);
+        let prev = icon_button(ui, Icon::ChevronLeft, tr("Previous Page"), bs.preview_page > 0);
         if prev {
             bs.preview_page = bs.preview_page.saturating_sub(1);
         }
         ui.label(format!("{} of {}", bs.preview_page + 1, pages.len()));
-        if icon_button(ui, Icon::ChevronRight, "Next Page", bs.preview_page < last) {
+        if icon_button(ui, Icon::ChevronRight, tr("Next Page"), bs.preview_page < last) {
             bs.preview_page = (bs.preview_page + 1).min(last);
         }
     });
@@ -294,7 +295,7 @@ pub(super) fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                 (ExportTask::Handouts, Icon::Notes, "Create Handouts"),
                 (ExportTask::FileType, Icon::Export, "Change File Type"),
             ] {
-                if place_row(ui, icon, label, bs.export == task, 244.0).clicked() {
+                if place_row(ui, icon, tr(label), bs.export == task, 244.0).clicked() {
                     bs.export = task;
                 }
             }
@@ -306,19 +307,19 @@ pub(super) fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             ui.set_max_width(560.0);
             match bs.export {
                 ExportTask::Pdf => {
-                    ui.label(RichText::new("Create a PDF Document").font(theme::font(16.0)).color(t.text));
+                    ui.label(RichText::new(tr("Create a PDF Document")).font(theme::font(16.0)).color(t.text));
                     bullets(
                         ui,
                         &["Keeps the layout, fonts and pictures", "Opens on any device with a PDF viewer", "The presentation keeps its own file"],
                     );
-                    ui.checkbox(&mut bs.pdf_hidden, "Include hidden slides");
+                    ui.checkbox(&mut bs.pdf_hidden, tr("Include hidden slides"));
                     ui.add_space(10.0);
-                    if square_button(ui, Icon::File, "Create PDF", true).clicked() {
+                    if square_button(ui, Icon::File, tr("Create PDF"), true).clicked() {
                         app.export_as("pdf", json!({"includeHidden": bs.pdf_hidden}));
                     }
                 }
                 ExportTask::Handouts => {
-                    ui.label(RichText::new("Create Handouts").font(theme::font(16.0)).color(t.text));
+                    ui.label(RichText::new(tr("Create Handouts")).font(theme::font(16.0)).color(t.text));
                     bullets(ui, &["Several slides on each page of a PDF", "Three a page leaves lines for notes", "Print them for your audience"]);
                     let combo = craft_ui::ComboBox::from_id_salt("backstage_handouts")
                         .width(240.0)
@@ -330,14 +331,14 @@ pub(super) fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                                 }
                             }
                         });
-                    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Slides per page"));
+                    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tr("Slides per page")));
                     ui.add_space(10.0);
-                    if square_button(ui, Icon::Notes, "Create Handouts", true).clicked() {
+                    if square_button(ui, Icon::Notes, tr("Create Handouts"), true).clicked() {
                         app.export_as("pdf", json!({"layout": "handouts", "perPage": bs.handouts_per_page}));
                     }
                 }
                 ExportTask::FileType => {
-                    ui.label(RichText::new("Change File Type").font(theme::font(16.0)).color(t.text));
+                    ui.label(RichText::new(tr("Change File Type")).font(theme::font(16.0)).color(t.text));
                     ui.add_space(8.0);
                     for (id, label, detail) in SAVE_TYPES.iter().filter(|s| s.0 != "pdf") {
                         let selected = bs.file_type == *id;
@@ -358,11 +359,11 @@ pub(super) fn export(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     ui.add_space(12.0);
                     let png = bs.file_type == "png";
                     if png {
-                        ui.checkbox(&mut bs.png_transparent, "Transparent background")
-                            .on_hover_text("Leave the slide background out: only what is on the slide is drawn");
+                        ui.checkbox(&mut bs.png_transparent, tr("Transparent background"))
+                            .on_hover_text(tr("Leave the slide background out: only what is on the slide is drawn"));
                         ui.add_space(8.0);
                     }
-                    if square_button(ui, Icon::SaveAs, "Save As", true).clicked() {
+                    if square_button(ui, Icon::SaveAs, tr("Save As"), true).clicked() {
                         let extra = if png && bs.png_transparent { json!({"transparentBackground": true}) } else { json!({}) };
                         app.export_as(bs.file_type, extra);
                     }

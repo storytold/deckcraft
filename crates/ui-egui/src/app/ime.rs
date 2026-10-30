@@ -18,6 +18,9 @@ impl SlideApp {
                 .collect()
         });
         self.ui_fonts.note(ctx, &typed);
+        if crate::i18n::current() == crate::i18n::Lang::Ko {
+            self.ui_fonts.note(ctx, crate::i18n::ko_text());
+        }
         for d in self.session.documents() {
             self.ui_fonts.note(ctx, &d.title());
         }

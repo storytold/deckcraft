@@ -1,6 +1,7 @@
 //! Task panes on the right: Format Shape, Format Background, Animation, Selection, Comments and
 //! Design Ideas.
 
+use crate::i18n::tr;
 use deckcraft_model::{AnimClass, AnimStart, Fill, ShapeKind};
 use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::{Value, json};
@@ -52,7 +53,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 _ => "Pane",
             };
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(title).font(theme::bold(16.0)));
+                ui.label(egui::RichText::new(tr(title)).font(theme::bold(16.0)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
                     if resp.hovered() {
@@ -97,9 +98,9 @@ fn color_button(
 ) {
     let sc = scheme(app);
     ui.horizontal(|ui| {
-        ui.label(label);
+        ui.label(tr(label));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let r = widgets::drop_button(ui, "Color", vec2(70.0, 22.0), true);
+            let r = widgets::drop_button(ui, tr("Color"), vec2(70.0, 22.0), true);
             widgets::color_popup(&r).show(|ui| {
                 if let Some(c) = widgets::color_grid(ui, &sc, none_label) {
                     let (id, p) = on_pick(c);

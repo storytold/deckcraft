@@ -1,8 +1,9 @@
 use super::{Icon, SlideApp, Ui, Value, big, big_button, big_button_ex, enabled, group, json, rows, run, small_button, tip};
+use crate::i18n::tr;
 
 fn comment_nav(app: &mut SlideApp, ui: &mut Ui, forward: bool) {
     let (icon, label, id) = if forward { (Icon::NextComment, "Next", "comment.next") } else { (Icon::PrevComment, "Previous", "comment.prev") };
-    if small_button(ui, icon, label, enabled(app, id), false).on_hover_text(tip(id, label)).clicked() {
+    if small_button(ui, icon, tr(label), enabled(app, id), false).on_hover_text(tip(id, label)).clicked() {
         let params = match app.ui.comment_focus {
             Some((slide, index)) if app.session.active().is_some_and(|d| d.selection.slide == slide) => json!({"slide": slide, "index": index}),
             _ => json!({}),
@@ -26,17 +27,17 @@ pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::Accessibility, "Check\nAccessibility", "app.dialog", json!({"id": "accessibility"}));
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Translate, "Translate", false);
-        let _ = r.on_hover_text("Translation needs a language model (not bundled)");
+        let r = big_button(ui, Icon::Translate, tr("Translate"), false);
+        let _ = r.on_hover_text(tr("Translation needs a language model (not bundled)"));
         big(app, ui, Icon::Language, "Language", "app.dialog", json!({"id": "language"}));
     });
     group(ui, |ui| {
         big(app, ui, Icon::Compare, "Compare", "app.compareDialog", json!({}));
         let comparing = enabled(app, "review.endCompare");
-        if big_button(ui, Icon::Check, "Accept\nAll", comparing).clicked() {
+        if big_button(ui, Icon::Check, tr("Accept\nAll"), comparing).clicked() {
             run(app, "review.accept", json!({"all": true}));
         }
-        if big_button(ui, Icon::Close, "End\nReview", comparing).clicked() {
+        if big_button(ui, Icon::Close, tr("End\nReview"), comparing).clicked() {
             run(app, "review.endCompare", json!({}));
             if app.ui.pane.as_deref() == Some("revisions") {
                 app.ui.pane = None;
@@ -51,7 +52,7 @@ pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
         });
         big(app, ui, Icon::DeleteComment, "Delete", "comment.delete", json!({}));
         let show = app.ui.pane.as_deref() == Some("comments");
-        if big_button_ex(ui, Icon::ShowComments, "Show\nComments", true, false, show).0.clicked() {
+        if big_button_ex(ui, Icon::ShowComments, tr("Show\nComments"), true, false, show).0.clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));
         }
     });

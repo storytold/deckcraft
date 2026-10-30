@@ -11,6 +11,7 @@
 //! Laid out after PowerPoint for Windows (observed black-box): a 160-point side menu darker than
 //! the page, 40-point entries with an outline icon, the current page in the accent colour.
 
+use crate::i18n::tr;
 use egui::{Align2, Color32, CornerRadius, Key, Rect, RichText, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use serde_json::{Value, json};
 
@@ -328,7 +329,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         ui.spacing_mut().item_spacing.y = 0.0;
         if has_doc {
             let (r, resp) = ui.allocate_exact_size(vec2(NAV_W, BACK_H), Sense::click());
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Back"));
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Back")));
             let hovered = resp.hovered();
             if hovered {
                 ui.painter().rect_filled(Rect::from_center_size(pos2(r.left() + 26.0, r.center().y), vec2(34.0, 34.0)), 17.0, t.hover);
@@ -340,7 +341,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 t.text,
                 false,
             );
-            if resp.on_hover_text("Back (Esc)").clicked() {
+            if resp.on_hover_text(tr("Back (Esc)")).clicked() {
                 out.close = true;
             }
         } else {
@@ -391,14 +392,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             egui::Frame::NONE.inner_margin(egui::Margin { left: 48, right: 36, top: 22, bottom: 32 }).show(ui, |ui| {
                 ui.set_max_width(CONTENT_W);
                 if bs.page != Page::Home {
-                    ui.label(RichText::new(bs.page.label()).font(theme::bold(22.0)).color(t.text));
+                    ui.label(RichText::new(tr(bs.page.label())).font(theme::bold(22.0)).color(t.text));
                     ui.add_space(16.0);
                 }
                 // Errors raised on a backstage page (a missing recent file, a failed open) would
                 // otherwise vanish: the status bar only draws once the backstage is closed (#172).
                 // A real label, not painted text, so screen readers see it too.
                 if let Some(msg) = app.fresh_status() {
-                    ui.label(RichText::new(&msg).font(theme::font(12.0)).color(t.accent));
+                    ui.label(RichText::new(tr(&msg)).font(theme::font(12.0)).color(t.accent));
                     ui.add_space(8.0);
                     ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
                 }
@@ -432,7 +433,7 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
 fn nav_item(ui: &mut Ui, nav: Nav, bs: &Backstage, index: usize, t: &Tokens) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(NAV_W, ITEM_H), Sense::click());
     let selected = nav == Nav::Page(bs.page);
-    let label = nav.label();
+    let label = tr(nav.label());
     resp.widget_info(|| egui::WidgetInfo::selected(egui::Role::Button, true, selected, label));
     let p = ui.painter();
     let row = rect.shrink2(vec2(6.0, 1.0));
@@ -491,7 +492,7 @@ fn icon_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> bool {
         ui.painter().rect_filled(r, CornerRadius::same(3), t.hover);
     }
     icons::paint(ui.painter(), r.shrink(3.0), icon, t.text, !enabled);
-    resp.on_hover_text(label).clicked()
+    resp.on_hover_text(tr(label)).clicked()
 }
 
 fn bullets(ui: &mut Ui, items: &[&str]) {
@@ -499,7 +500,7 @@ fn bullets(ui: &mut Ui, items: &[&str]) {
     for b in items {
         ui.horizontal(|ui| {
             ui.add_space(6.0);
-            ui.label(RichText::new(format!("•  {b}")).font(theme::font(12.5)));
+            ui.label(RichText::new(format!("•  {}", tr(b))).font(theme::font(12.5)));
         });
     }
     ui.add_space(10.0);

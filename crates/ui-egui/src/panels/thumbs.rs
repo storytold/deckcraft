@@ -6,6 +6,7 @@ use egui::{Align2, Color32, CornerRadius, Rect, Sense, Stroke, Ui, pos2, vec2};
 use serde_json::json;
 
 use crate::SlideApp;
+use crate::i18n::tr;
 use crate::theme::{self, Tokens};
 
 /// Render the slide thumbnail pane, including section headers, selection, and scroll state.
@@ -83,25 +84,25 @@ fn list(app: &mut SlideApp, ui: &mut Ui) {
                 t.text_dim,
             );
             resp.context_menu(|ui| {
-                if ui.button("Rename Section…").clicked() {
+                if ui.button(tr("Rename Section…")).clicked() {
                     let mut d = crate::dialogs::Dialog::new("renameSection");
                     d.params = json!({"index": si, "name": sec.name});
                     app.dialog = Some(d);
                     ui.close();
                 }
-                if ui.button("Remove Section").clicked() {
+                if ui.button(tr("Remove Section")).clicked() {
                     let _ = app.run("section.remove", json!({"index": si}));
                     ui.close();
                 }
-                if ui.button("Remove Section & Slides").clicked() {
+                if ui.button(tr("Remove Section & Slides")).clicked() {
                     let _ = app.run("section.remove", json!({"index": si, "slides": true}));
                     ui.close();
                 }
-                if ui.button("Move Section Up").clicked() {
+                if ui.button(tr("Move Section Up")).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si.saturating_sub(1)}));
                     ui.close();
                 }
-                if ui.button("Move Section Down").clicked() {
+                if ui.button(tr("Move Section Down")).clicked() {
                     let _ = app.run("section.move", json!({"index": si, "to": si + 1}));
                     ui.close();
                 }
@@ -229,52 +230,52 @@ pub fn slide_menu(app: &mut SlideApp, ui: &mut Ui, i: usize) {
         ("Copy", "edit.copy", json!({"scope": "slides"})),
         ("Paste", "edit.paste", json!({"scope": "slides"})),
     ] {
-        if ui.button(l).clicked() {
+        if ui.button(tr(l)).clicked() {
             let _ = app.run(id, p);
             ui.close();
         }
     }
     ui.separator();
-    if ui.button("New Slide").clicked() {
+    if ui.button(tr("New Slide")).clicked() {
         let _ = app.run("slide.new", json!({}));
         ui.close();
     }
-    if ui.button("Duplicate Slide").clicked() {
+    if ui.button(tr("Duplicate Slide")).clicked() {
         let _ = app.run("slide.duplicate", json!({}));
         ui.close();
     }
-    if ui.button("Delete Slide").clicked() {
+    if ui.button(tr("Delete Slide")).clicked() {
         let _ = app.run("slide.delete", json!({}));
         ui.close();
     }
     ui.separator();
-    if ui.button("Add Section").clicked() {
+    if ui.button(tr("Add Section")).clicked() {
         let _ = app.run("section.add", json!({"at": i}));
         ui.close();
     }
-    ui.menu_button("Layout", |ui| {
+    ui.menu_button(tr("Layout"), |ui| {
         let layouts: Vec<(String, u32)> = app
             .session
             .active()
             .and_then(|d| d.doc.masters.first().map(|m| m.layouts.iter().map(|l| (l.name.clone(), l.id.0)).collect()))
             .unwrap_or_default();
         for (n, id) in layouts {
-            if ui.button(n).clicked() {
+            if ui.button(&n).clicked() {
                 let _ = app.run("slide.layout", json!({"layout": id}));
                 ui.close();
             }
         }
     });
-    if ui.button("Reset Slide").clicked() {
+    if ui.button(tr("Reset Slide")).clicked() {
         let _ = app.run("slide.reset", json!({}));
         ui.close();
     }
-    if ui.button("Format Background…").clicked() {
+    if ui.button(tr("Format Background…")).clicked() {
         let _ = app.run("view.pane", json!({"pane": "background"}));
         ui.close();
     }
     let hidden = app.session.active().and_then(|d| d.doc.slides.get(i).map(|s| s.hidden)).unwrap_or(false);
-    if ui.button(if hidden { "Show Slide" } else { "Hide Slide" }).clicked() {
+    if ui.button(tr(if hidden { "Show Slide" } else { "Hide Slide" })).clicked() {
         let _ = app.run("slide.hide", json!({"index": i}));
         ui.close();
     }
@@ -328,9 +329,9 @@ fn master_list(app: &mut SlideApp, ui: &mut Ui) {
                 );
                 let name = match li {
                     Some(l) => m.layouts.get(l).map(|x| x.name.clone()).unwrap_or_default(),
-                    None => format!("{} Slide Master", m.name),
+                    None => crate::i18n::trf("{} Slide Master", &[&m.name]),
                 };
-                let resp = resp.on_hover_text(name);
+                let resp = resp.on_hover_text(&name);
                 if resp.clicked() {
                     let p = match li {
                         Some(l) => json!({"master": mi, "layout": l}),

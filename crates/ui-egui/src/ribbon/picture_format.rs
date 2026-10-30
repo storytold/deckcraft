@@ -4,45 +4,46 @@ use super::{
     Color32, CornerRadius, Icon, Rect, SlideApp, Stroke, Ui, Value, big, big_button, color_split, enabled, group, json, pos2, rows, run, scheme,
     small, small_button_ex, theme, vec2, widgets,
 };
+use crate::i18n::{tr, trf};
 
 /// Render the Picture Format tab's corrections, colour, artistic effects, transparency, styles,
 /// border, and picture actions.
 pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let r = big_button(ui, Icon::RemoveBackground, "Remove\nBackground", enabled(app, "picture.removeBackground"));
+        let r = big_button(ui, Icon::RemoveBackground, tr("Remove\nBackground"), enabled(app, "picture.removeBackground"));
         egui::Popup::menu(&r).show(|ui| {
             for (label, tol) in [("Remove Background", 20.0), ("Remove More (looser)", 35.0), ("Remove Less (tighter)", 10.0)] {
-                if ui.button(label).clicked() {
+                if ui.button(tr(label)).clicked() {
                     run(app, "picture.removeBackground", json!({"tolerance": tol}));
                 }
             }
         });
-        let r = big_button(ui, Icon::Corrections, "Corrections", true);
+        let r = big_button(ui, Icon::Corrections, tr("Corrections"), true);
         egui::Popup::menu(&r).show(|ui| {
             for b in [-0.4, -0.2, 0.0, 0.2, 0.4] {
-                if ui.button(format!("Brightness {:+}%", (b * 100.0) as i32)).clicked() {
+                if ui.button(trf("Brightness {}%", &[&format!("{:+}", (b * 100.0) as i32)])).clicked() {
                     run(app, "picture.adjust", json!({"brightness": b}));
                 }
             }
             ui.separator();
             for c in [-0.4, -0.2, 0.0, 0.2, 0.4] {
-                if ui.button(format!("Contrast {:+}%", (c * 100.0) as i32)).clicked() {
+                if ui.button(trf("Contrast {}%", &[&format!("{:+}", (c * 100.0) as i32)])).clicked() {
                     run(app, "picture.adjust", json!({"contrast": c}));
                 }
             }
         });
-        let r = big_button(ui, Icon::ColorAdjust, "Color", true);
+        let r = big_button(ui, Icon::ColorAdjust, tr("Color"), true);
         egui::Popup::menu(&r).show(|ui| {
             for s in [0.0, 0.33, 0.66, 1.0, 1.5, 2.0, 3.0] {
-                if ui.button(format!("Saturation {}%", (s * 100.0) as i32)).clicked() {
+                if ui.button(trf("Saturation {}%", &[&((s * 100.0) as i32)])).clicked() {
                     run(app, "picture.adjust", json!({"saturation": s}));
                 }
             }
             ui.separator();
-            ui.label("Recolor");
+            ui.label(tr("Recolor"));
             let sc = scheme(app);
             let presets = deckcraft_engine::cmd::recolor::presets();
-            let names: Vec<String> = presets.iter().map(|(_, l)| l.clone()).collect();
+            let names: Vec<String> = presets.iter().map(|(_, l)| tr(l).to_string()).collect();
             if let Some(i) = widgets::gallery(
                 ui,
                 presets.len(),
@@ -61,14 +62,14 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             // As in PowerPoint, the pointer picks the colour in the picture itself: a colour
             // chosen from a grid almost never matches a photo's pixels.
-            if ui.button("Set Transparent Color").on_hover_text("Click a colour in the picture to make it transparent").clicked() {
+            if ui.button(tr("Set Transparent Color")).on_hover_text(tr("Click a colour in the picture to make it transparent")).clicked() {
                 crate::eyedropper::request_transparent_color(ui.ctx());
                 ui.close();
             }
         });
-        let r = big_button(ui, Icon::ArtisticEffects, "Artistic\nEffects", enabled(app, "picture.artisticEffect"));
+        let r = big_button(ui, Icon::ArtisticEffects, tr("Artistic\nEffects"), enabled(app, "picture.artisticEffect"));
         egui::Popup::menu(&r).show(|ui| {
-            if ui.button("None").clicked() {
+            if ui.button(tr("None")).clicked() {
                 run(app, "picture.artisticEffect", json!({"effect": "none"}));
             }
             for (e, l) in deckcraft_engine::cmd::artistic::EFFECTS {
@@ -77,7 +78,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
         });
-        let r = big_button(ui, Icon::Transparency, "Transparency", true);
+        let r = big_button(ui, Icon::Transparency, tr("Transparency"), true);
         egui::Popup::menu(&r).show(|ui| {
             for tr in [0.0, 0.15, 0.3, 0.5, 0.65, 0.8, 0.95] {
                 if ui.button(format!("{}%", (tr * 100.0) as i32)).clicked() {
@@ -88,7 +89,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
         rows(ui, |ui| {
             small(app, ui, Icon::ChangePicture, "Change Picture", "app.changePictureDialog", json!({}));
             small(app, ui, Icon::ResetPicture, "Reset Picture", "picture.reset", json!({}));
-            let (main, arrow) = small_button_ex(ui, Icon::CompressPictures, "Compress Pictures", enabled(app, "picture.compress"), false, true);
+            let (main, arrow) = small_button_ex(ui, Icon::CompressPictures, tr("Compress Pictures"), enabled(app, "picture.compress"), false, true);
             if let Some(arrow) = arrow {
                 widgets::split_popup(&main, &arrow)
                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -99,7 +100,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         use deckcraft_engine::cmd::picture_style::{STYLES, look};
-        let names: Vec<String> = STYLES.iter().map(|(_, l)| l.to_string()).collect();
+        let names: Vec<String> = STYLES.iter().map(|(_, l)| tr(l).to_string()).collect();
         if let Some(i) = widgets::gallery(
             ui,
             STYLES.len(),
@@ -114,7 +115,7 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let sc = scheme(app);
-        let (m, a) = color_split(ui, Icon::QuickStyles, "Picture Border", Color32::BLACK, true);
+        let (m, a) = color_split(ui, Icon::QuickStyles, tr("Picture Border"), Color32::BLACK, true);
         if m.clicked() {
             run(app, "shape.line", json!({"color": "#000000", "width": 1.0}));
         }
@@ -126,14 +127,14 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            ui.menu_button("Weight", |ui| {
+            ui.menu_button(tr("Weight"), |ui| {
                 for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
                     if ui.button(format!("{w} pt")).clicked() {
                         run(app, "shape.line", json!({"width": w}));
                     }
                 }
             });
-            ui.menu_button("Dashes", |ui| {
+            ui.menu_button(tr("Dashes"), |ui| {
                 for (l, d) in [
                     ("Solid", "solid"),
                     ("Round Dot", "sysDot"),
@@ -142,28 +143,28 @@ pub(super) fn picture_format(app: &mut SlideApp, ui: &mut Ui) {
                     ("Dash Dot", "dashDot"),
                     ("Long Dash", "lgDash"),
                 ] {
-                    if ui.button(l).clicked() {
+                    if ui.button(tr(l)).clicked() {
                         run(app, "shape.line", json!({"dash": d}));
                     }
                 }
             });
         });
-        if ui.small_button("Reset Style").on_hover_text("Remove the picture style").clicked() {
+        if ui.small_button(tr("Reset Style")).on_hover_text(tr("Remove the picture style")).clicked() {
             run(app, "picture.style", json!({"style": "none"}));
         }
         big(app, ui, Icon::AltText, "Alt\nText", "app.dialog", json!({"id": "altText"}));
     });
     arrange_group(app, ui);
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Crop, "Crop", true);
+        let r = big_button(ui, Icon::Crop, tr("Crop"), true);
         egui::Popup::menu(&r).show(|ui| {
-            ui.label("Crop to Shape");
+            ui.label(tr("Crop to Shape"));
             if let Some(p) = shapes_gallery(ui) {
                 run(app, "shape.change", json!({"preset": p}));
             }
             ui.separator();
             for (l, v) in [("Crop 10% each side", 0.1), ("Crop 20% each side", 0.2), ("Reset Crop", 0.0)] {
-                if ui.button(l).clicked() {
+                if ui.button(tr(l)).clicked() {
                     run(app, "picture.crop", json!({"left": v, "top": v, "right": v, "bottom": v}));
                 }
             }
@@ -248,22 +249,22 @@ fn paint_recolor(p: &egui::Painter, r: Rect, id: &str, sc: &deckcraft_color::Col
 fn compress_menu(app: &mut SlideApp, ui: &mut Ui) {
     let id = egui::Id::unique("compress_pictures_opts");
     let (mut ppi, mut only_selected, mut delete_cropped): (u32, bool, bool) = ui.data_mut(|d| d.get_temp(id).unwrap_or((220, true, true)));
-    ui.label(egui::RichText::new("Compression options").strong());
-    ui.checkbox(&mut only_selected, "Apply only to this picture");
-    ui.checkbox(&mut delete_cropped, "Delete cropped areas of pictures");
+    ui.label(egui::RichText::new(tr("Compression options")).strong());
+    ui.checkbox(&mut only_selected, tr("Apply only to this picture"));
+    ui.checkbox(&mut delete_cropped, tr("Delete cropped areas of pictures"));
     ui.separator();
-    ui.label(egui::RichText::new("Resolution").strong());
+    ui.label(egui::RichText::new(tr("Resolution")).strong());
     for (v, label) in [
         (330, "HD (330 ppi): good quality for high-definition displays"),
         (220, "Print (220 ppi): excellent quality on most printers and screens"),
         (150, "Web (150 ppi): good for web pages and projectors"),
         (96, "E-mail (96 ppi): minimise document size for sharing"),
     ] {
-        ui.radio_value(&mut ppi, v, label);
+        ui.radio_value(&mut ppi, v, tr(label));
     }
     ui.data_mut(|d| d.insert_temp(id, (ppi, only_selected, delete_cropped)));
     ui.separator();
-    if ui.button("Compress").clicked() {
+    if ui.button(tr("Compress")).clicked() {
         let p = json!({"ppi": ppi, "deleteCropped": delete_cropped, "all": !only_selected});
         match app.session.execute("picture.compress", &p) {
             Ok(r) => {

@@ -1,4 +1,5 @@
 use super::{Dialog, SlideApp, Ui, Value, buttons, field, json, num, vec2};
+use crate::i18n::tr;
 
 const TAB_KINDS: [(&str, &str); 4] = [("l", "Left"), ("ctr", "Center"), ("r", "Right"), ("dec", "Decimal")];
 
@@ -24,9 +25,9 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             Some((p.parse::<f64>().ok().filter(|v| v.is_finite())?, a.to_string()))
         })
         .collect();
-    field(ui, d, "Default tab stops (in):", "default", "1");
+    field(ui, d, tr("Default tab stops (in):"), "default", "1");
     ui.add_space(6.0);
-    ui.label("Tab stops:");
+    ui.label(tr("Tab stops:"));
     let mut remove = None;
     egui::Grid::new("tab_stops").num_columns(3).spacing(vec2(12.0, 4.0)).show(ui, |ui| {
         if stops.is_empty() {
@@ -36,7 +37,7 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         for (i, (pos, align)) in stops.iter().enumerate() {
             ui.label(format!("{pos:.2}\""));
             ui.label(TAB_KINDS.iter().find(|k| k.0 == align).map(|k| k.1).unwrap_or("Left"));
-            if ui.small_button("Clear").on_hover_text(format!("Clear the tab at {pos:.2}\"")).clicked() {
+            if ui.small_button(tr("Clear")).on_hover_text(format!("Clear the tab at {pos:.2}\"")).clicked() {
                 remove = Some(i);
             }
             ui.end_row();
@@ -47,22 +48,22 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     }
     ui.add_space(6.0);
     ui.horizontal(|ui| {
-        let l = ui.label("Tab stop position (in):");
+        let l = ui.label(tr("Tab stop position (in):"));
         let mut v = d.get("newpos", "");
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(60.0)).labelled_by(l.id);
         d.fields.insert("newpos".into(), v);
     });
     let cur = d.get("newalign", "l");
     ui.horizontal(|ui| {
-        ui.label("Alignment:");
+        ui.label(tr("Alignment:"));
         for (k, label) in TAB_KINDS {
-            if ui.radio(cur == k, label).clicked() {
+            if ui.radio(cur == k, tr(label)).clicked() {
                 d.fields.insert("newalign".into(), k.into());
             }
         }
     });
     ui.horizontal(|ui| {
-        if ui.button("Set").clicked()
+        if ui.button(tr("Set")).clicked()
             && let Some(p) = Some(num(d, "newpos", f64::NAN)).filter(|v| v.is_finite() && *v >= 0.0 && *v <= 56.0)
         {
             stops.retain(|(q, _)| (q - p).abs() > 0.005);
@@ -70,12 +71,12 @@ pub(super) fn tabs_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             stops.sort_by(|a, b| a.0.total_cmp(&b.0));
             d.fields.insert("newpos".into(), String::new());
         }
-        if ui.button("Clear All").clicked() {
+        if ui.button(tr("Clear All")).clicked() {
             stops.clear();
         }
     });
     d.fields.insert("stops".into(), stops.iter().map(|(p, a)| format!("{p}:{a}")).collect::<Vec<_>>().join("|"));
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, tr("OK"));
     if ok {
         let set: Vec<Value> = stops.iter().map(|(p, a)| json!({"pos": p * 72.0, "align": a})).collect();
         let dt = num(d, "default", 1.0).clamp(0.02, 56.0) * 72.0;

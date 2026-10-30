@@ -4,6 +4,7 @@ use super::{
     Color32, CornerRadius, Icon, Rect, Sense, ShapeKind, SlideApp, Stroke, Ui, Value, big, big_button, big_button_ex, color_split, group, json,
     menu_item, pos2, rows, run, scheme, small, theme, toggle, vec2, widgets,
 };
+use crate::i18n::tr;
 
 pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
     let tbl = app
@@ -15,31 +16,31 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
             let flags = tbl.as_ref().map(|t| (t.first_row, t.last_row, t.band_row, t.first_col, t.last_col, t.band_col)).unwrap_or_default();
             ui.horizontal(|ui| {
                 let mut a = flags.0;
-                if ui.checkbox(&mut a, "Header Row").changed() {
+                if ui.checkbox(&mut a, tr("Header Row")).changed() {
                     run(app, "table.options", json!({"headerRow": a}));
                 }
                 let mut d = flags.3;
-                if ui.checkbox(&mut d, "First Column").changed() {
+                if ui.checkbox(&mut d, tr("First Column")).changed() {
                     run(app, "table.options", json!({"firstColumn": d}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut b = flags.1;
-                if ui.checkbox(&mut b, "Total Row").changed() {
+                if ui.checkbox(&mut b, tr("Total Row")).changed() {
                     run(app, "table.options", json!({"totalRow": b}));
                 }
                 let mut e = flags.4;
-                if ui.checkbox(&mut e, "Last Column").changed() {
+                if ui.checkbox(&mut e, tr("Last Column")).changed() {
                     run(app, "table.options", json!({"lastColumn": e}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut c = flags.2;
-                if ui.checkbox(&mut c, "Banded Rows").changed() {
+                if ui.checkbox(&mut c, tr("Banded Rows")).changed() {
                     run(app, "table.options", json!({"bandedRows": c}));
                 }
                 let mut f = flags.5;
-                if ui.checkbox(&mut f, "Banded Columns").changed() {
+                if ui.checkbox(&mut f, tr("Banded Columns")).changed() {
                     run(app, "table.options", json!({"bandedColumns": f}));
                 }
             });
@@ -61,7 +62,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                     paint_table_style(p, r, id, &sc);
                 }
             },
-            |i| quick.get(i).map(|x| x.1.clone()).unwrap_or_default(),
+            |i| quick.get(i).map(|x| tr(&x.1).to_string()).unwrap_or_default(),
         ) && let Some((id, _)) = quick.get(i)
         {
             run(app, "table.style", json!({"style": id}));
@@ -72,7 +73,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                 for (id, label) in &styles {
                     let (r, resp) = ui.allocate_exact_size(vec2(48.0, 36.0), Sense::click());
                     paint_table_style(ui.painter(), r.shrink(2.0), id, &sc);
-                    if resp.on_hover_text(label).clicked() {
+                    if resp.on_hover_text(tr(label)).clicked() {
                         run(app, "table.style", json!({"style": id}));
                         ui.close();
                     }
@@ -82,7 +83,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let sc = scheme(app);
-        let (m, a) = color_split(ui, Icon::Shading, "Shading", Color32::from_rgb(0x2E, 0x6F, 0xD8), true);
+        let (m, a) = color_split(ui, Icon::Shading, tr("Shading"), Color32::from_rgb(0x2E, 0x6F, 0xD8), true);
         if m.clicked() {
             run(app, "table.cellFill", json!({"color": "accent1"}));
         }
@@ -96,7 +97,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
         });
     });
     group(ui, |ui| {
-        let r = big_button(ui, Icon::Borders, "Borders", true);
+        let r = big_button(ui, Icon::Borders, tr("Borders"), true);
         egui::Popup::menu(&r).show(|ui| {
             let pen = app.table_pen.clone();
             for (label, which) in [
@@ -118,7 +119,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                 menu_item(app, ui, Icon::Borders, label, "table.borders", p);
             }
             ui.separator();
-            ui.menu_button("Pen Weight", |ui| {
+            ui.menu_button(tr("Pen Weight"), |ui| {
                 for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
                     let cur = app.table_pen.get("width").and_then(Value::as_f64) == Some(w);
                     if ui.radio(cur, format!("{w} pt")).clicked() {
@@ -126,15 +127,15 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            ui.menu_button("Pen Style", |ui| {
+            ui.menu_button(tr("Pen Style"), |ui| {
                 for (l, d) in [("Solid", "solid"), ("Dash", "dash"), ("Dot", "sysDot"), ("Dash Dot", "dashDot"), ("Long Dash", "lgDash")] {
                     let cur = app.table_pen.get("dash").and_then(Value::as_str).unwrap_or("solid") == d;
-                    if ui.radio(cur, l).clicked() {
+                    if ui.radio(cur, tr(l)).clicked() {
                         app.table_pen["dash"] = json!(d);
                     }
                 }
             });
-            ui.menu_button("Pen Color", |ui| {
+            ui.menu_button(tr("Pen Color"), |ui| {
                 let sc = scheme(app);
                 if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                     app.table_pen["color"] = cref_param(&c);
@@ -149,7 +150,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
         let cur = app.session.tool.kind.clone();
         for (icon, label, preset) in [(Icon::Pencil, "Draw Table", DRAW_TABLE), (Icon::Eraser, "Table Eraser", TABLE_ERASER)] {
             let on = matches!(&cur, ToolKind::Shape { preset: p } if p == preset);
-            if big_button_ex(ui, icon, label, true, false, on).0.clicked() {
+            if big_button_ex(ui, icon, tr(label), true, false, on).0.clicked() {
                 app.session.set_tool(if on { ToolKind::Select } else { ToolKind::Shape { preset: preset.into() } });
             }
         }
@@ -190,7 +191,7 @@ pub fn paint_table_style(p: &egui::Painter, r: Rect, id: &str, sc: &deckcraft_co
 
 pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
-        let r = big_button(ui, Icon::DeleteTable, "Delete", true);
+        let r = big_button(ui, Icon::DeleteTable, tr("Delete"), true);
         egui::Popup::menu(&r).show(|ui| {
             menu_item(app, ui, Icon::DeleteTable, "Delete Columns", "table.deleteColumn", json!({}));
             menu_item(app, ui, Icon::DeleteTable, "Delete Rows", "table.deleteRow", json!({}));
@@ -220,13 +221,13 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
             });
             ui.horizontal(|ui| {
                 for (l, a) in [("Top", "top"), ("Center", "middle"), ("Bottom", "bottom")] {
-                    if ui.small_button(l).on_hover_text(format!("Align text to the {l} of the cell").to_lowercase()).clicked() {
+                    if ui.small_button(tr(l)).on_hover_text(format!("Align text to the {l} of the cell").to_lowercase()).clicked() {
                         run(app, "table.cellAlign", json!({"anchor": a}));
                     }
                 }
-                ui.menu_button("Cell Margins", |ui| {
+                ui.menu_button(tr("Cell Margins"), |ui| {
                     for (l, preset) in [("Normal", "normal"), ("None", "none"), ("Narrow", "narrow"), ("Wide", "wide")] {
-                        if ui.button(l).clicked() {
+                        if ui.button(tr(l)).clicked() {
                             run(app, "table.cellMargins", json!({"preset": preset}));
                             ui.close();
                         }

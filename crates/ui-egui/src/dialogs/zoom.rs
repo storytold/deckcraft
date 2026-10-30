@@ -1,4 +1,5 @@
 use super::{Dialog, SlideApp, Ui, buttons};
+use crate::i18n::tr;
 
 /// Preset percents in the Zoom dialog, largest first.
 const ZOOM_PRESETS: &[u32] = &[400, 200, 150, 100, 75, 66, 50, 33];
@@ -23,8 +24,8 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     }
     let mut mode = d.get("mode", "percent");
     let mut percent = d.get("percent", "100");
-    ui.label("Zoom to");
-    if ui.radio(mode == "fit", "Fit").clicked() {
+    ui.label(tr("Zoom to"));
+    if ui.radio(mode == "fit", tr("Fit")).clicked() {
         mode = "fit".into();
     }
     for pct in ZOOM_PRESETS {
@@ -35,7 +36,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
         }
     }
     ui.horizontal(|ui| {
-        let l = ui.label("Percent:");
+        let l = ui.label(tr("Percent:"));
         let edit = ui.add(egui::TextEdit::singleline(&mut percent).desired_width(72.0)).labelled_by(l.id);
         if edit.changed() {
             mode = "percent".into();
@@ -44,7 +45,7 @@ pub(super) fn zoom_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
     });
     d.fields.insert("mode".into(), mode.clone());
     d.fields.insert("percent".into(), percent.clone());
-    let (ok, cancel) = buttons(ui, "OK");
+    let (ok, cancel) = buttons(ui, tr("OK"));
     if ok {
         if mode == "fit" {
             app.ui.zoom = None;

@@ -114,6 +114,7 @@ fn copy_opts<'a>(o: &RenderOpts<'a>) -> RenderOpts<'a> {
         date_text: o.date_text.clone(),
         now: o.now,
         transparent_background: o.transparent_background,
+        prompt: o.prompt,
     }
 }
 

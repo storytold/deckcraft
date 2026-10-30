@@ -12,6 +12,7 @@ use super::{
     Align2, BackKey, Click, Color32, CornerRadius, Key, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction, SlideApp,
     Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
+use crate::i18n::{tr, trf};
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
 
@@ -550,7 +551,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.rect_filled(full, CornerRadius::ZERO, c);
     }
     if !show.goto.is_empty() {
-        let label = format!("Go to slide {}", show.goto);
+        let label = trf("Go to slide {}", &[&show.goto]);
         let w = (28.0 + label.len() as f32 * 10.0).clamp(160.0, full.width() - 32.0);
         let r = Rect::from_min_size(pos2(full.min.x + 16.0, full.max.y - 96.0), vec2(w, 36.0));
         painter.rect_filled(r, CornerRadius::same(6), Color32::from_black_alpha(190));
@@ -560,7 +561,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
     // Pen.
     let resp = ui.interact(full, ui.scope_id().with("show_pen"), if show.pen { Sense::drag() } else { Sense::hover() });
     if show.pen {
-        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Pen"));
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Pen")));
     }
     if show.pen {
         if resp.drag_started() {
@@ -621,7 +622,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         painter.text(
             pos2(bar.min.x + 14.0, bar.center().y),
             Align2::LEFT_CENTER,
-            format!("Slide {} of {}", show.state.slide + 1, doc.slides.len()),
+            trf("Slide {} of {}", &[&(show.state.slide + 1), &doc.slides.len()]),
             theme::font(12.0),
             Color32::from_gray(200),
         );
@@ -630,7 +631,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(tr("Close")).clicked() {
             out.keep = false;
         }
         if child.button("▶").clicked() {

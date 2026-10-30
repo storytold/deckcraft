@@ -1,4 +1,5 @@
 use super::{Align2, Color32, CornerRadius, Point, Pos2, Rect, Sense, SlideApp, Stroke, Tokens, Ui, Xf, json, pos2, theme, vec2};
+use crate::i18n::tr;
 
 /// The ruler's numbered step in points and the ticks per step: quarter inches, or half
 /// centimetres. Any other unit (only a hand-edited `prefs.json` gives one) keeps inches, since a
@@ -89,7 +90,7 @@ pub(super) fn ruler_markers(app: &mut SlideApp, ui: &mut Ui, p: &egui::Painter, 
     p.rect_stroke(area, CornerRadius::ZERO, Stroke::new(1.0, t.text_faint.gamma_multiply(0.5)), egui::StrokeKind::Inside);
 
     let resp = ui.interact(top, ui.scope_id().with("ruler_markers"), Sense::click_and_drag());
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, "Text ruler"));
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Unknown, true, tr("Text ruler")));
     let id = ui.scope_id().with("ruler_drag");
     let mut drag: Option<RulerDrag> = ui.data(|d| d.get_temp::<RulerDrag>(id));
     let pointer = resp.interact_pointer_pos().or(resp.hover_pos());

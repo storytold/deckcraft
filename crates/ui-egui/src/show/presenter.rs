@@ -2,6 +2,7 @@ use super::keys::keyboard;
 use super::render::{fit, next_rect};
 use super::zoom::{Zoom, grid_indices, paint_grid, see_all_hit, slide_aspect, toggle_blank, zoom_frame};
 use super::{Align2, Color32, CornerRadius, Presentation, Rect, RenderOpts, Sense, Show, Stroke, Ui, pos2, theme, vec2};
+use crate::i18n::{tr, trf};
 
 pub(super) const NOTES_DEFAULT: f32 = 18.0;
 
@@ -104,11 +105,11 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
     let mut actions = vec![];
     // The presenter window is dark; default buttons draw dark text on it (#221).
     let button = |ui: &mut Ui, s: &str| {
-        ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
+        ui.add(egui::Button::new(egui::RichText::new(tr(s)).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
+        egui::ViewportBuilder::default().with_title(tr("Presenter View — DeckCraft")).with_inner_size([1100.0, 700.0]),
         |ui, _| {
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
@@ -126,7 +127,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
                     ui.add_space(12.0);
                     ui.label(egui::RichText::new(clock.clone()).size(16.0).color(Color32::from_gray(200)));
                     ui.add_space(20.0);
-                    ui.label(egui::RichText::new(format!("Slide {} of {}", cur + 1, doc.slides.len())).size(16.0).color(Color32::from_gray(200)));
+                    ui.label(egui::RichText::new(trf("Slide {} of {}", &[&(cur + 1), &doc.slides.len()])).size(16.0).color(Color32::from_gray(200)));
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if button(ui, "End Show").clicked() {
                             *keep = false;
@@ -191,7 +192,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
                 }
                 if show.zoom_arm {
                     let hit = ui.interact(cr, ui.scope_id().with("presenter_zoom"), Sense::click());
-                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Zoom"));
+                    hit.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tr("Zoom")));
                     if hit.clicked()
                         && let Some(p) = hit.interact_pointer_pos()
                         && cr.width() > 1.0
@@ -218,12 +219,12 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
                 let notes_head = Rect::from_min_size(pos2(right.min.x, nr.max.y + 12.0), vec2(right.width(), 28.0));
                 let mut head = ui.new_child(egui::UiBuilder::new().max_rect(notes_head));
                 head.horizontal(|ui| {
-                    ui.label(egui::RichText::new("Notes").size(13.0).color(Color32::from_gray(170)));
-                    if ui.button("A-").clicked() {
+                    ui.label(egui::RichText::new(tr("Notes")).size(13.0).color(Color32::from_gray(170)));
+                    if ui.button(tr("A-")).clicked() {
                         show.nudge_notes(-NOTES_STEP);
                     }
                     ui.label(egui::RichText::new(format!("{}", show.notes_px as i32)).size(13.0).color(Color32::from_gray(200)));
-                    if ui.button("A+").clicked() {
+                    if ui.button(tr("A+")).clicked() {
                         show.nudge_notes(NOTES_STEP);
                     }
                 });
@@ -251,7 +252,7 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &Prese
 pub(super) fn presenter_notes(ui: &mut Ui, notes: &deckcraft_model::text::TextBody, px: f32) -> egui::Response {
     let color = Color32::from_gray(230);
     if notes.text().is_empty() {
-        ui.label(egui::RichText::new("No notes.").size(px).color(color))
+        ui.label(egui::RichText::new(tr("No notes.")).size(px).color(color))
     } else {
         crate::notes::view(ui, notes, &crate::notes::Look { size: px, color: Some(color) })
     }

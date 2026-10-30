@@ -1054,7 +1054,7 @@ impl Renderer {
                 }
             } else if f.opts.edit && s.ph.is_some() {
                 let kind = s.ph_type().unwrap_or(PhType::Body);
-                let prompt_body = prompt_body(rctx, s, kind);
+                let prompt_body = prompt_body(rctx, s, kind, f.opts.prompt);
                 if !prompt_body.is_empty() {
                     let grey = Rgba::rgb(0x59, 0x59, 0x59);
                     draw_text(ctx, rctx, s, &prompt_body, m, &Opts { rect: tr, fields: &f.fields, prompt_color: Some(grey), no_shrink: false });

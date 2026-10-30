@@ -198,6 +198,7 @@ impl SlideApp {
     /// opening/inbox results, screenshot completions/deadlines, AutoRecover pacing and media
     /// clocks. UI events are handled in [`Self::ui`], where a forced hidden paint also arrives.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        crate::i18n::set(crate::i18n::resolve(&self.ui.language));
         if !Self::root_viewport_admitted(ctx) {
             log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
             return;
