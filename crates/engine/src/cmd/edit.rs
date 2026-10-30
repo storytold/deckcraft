@@ -600,6 +600,14 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     if ids.is_empty() {
         return ok();
     }
+    // Delete works on the current slide: a named shape elsewhere is refused, saying where it is,
+    // not answered `{deleted: 0}`.
+    if !no_ids {
+        let st = s.doc()?;
+        if let Some(&id) = ids.iter().find(|id| st.shape(**id).is_none()) {
+            return Err(super::no_such_shape(&st.doc, &st.selection, id, "edit.delete"));
+        }
+    }
     s.edit(|doc, sel| {
         let shapes = crate::shapes_mut(doc, sel).ok_or_else(|| bad("edit.delete", "no slide"))?;
         let mut before = Vec::new();

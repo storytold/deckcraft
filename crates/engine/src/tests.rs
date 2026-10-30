@@ -7183,6 +7183,13 @@ fn edit_delete_with_an_id_deletes_that_shape_not_the_text_or_the_slide() {
     s.execute("slide.selectSlides", &json!({"indices": [0]})).unwrap();
     s.execute("edit.delete", &json!({"id": c})).unwrap();
     assert_eq!(s.doc().unwrap().doc.slides.len(), n, "the slide stays");
+    // A shape on another slide is refused, naming its slide, and nothing is deleted or ended.
+    let other = ins(&mut s, 300.0);
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let e = s.execute("edit.delete", &json!({"id": other})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {other} is on slide index")) && e.contains("slide.go"), "{e}");
+    assert!(s.doc().unwrap().doc.slides.iter().any(|sl| sl.shapes.iter().any(|x| u64::from(x.id.0) == other)), "still there");
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
     // `id: null` is no id: with table cells selected, Delete clears their text and keeps the table.
     let t = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
     s.execute("table.selectCells", &json!({"id": t, "from": [0, 0], "to": [0, 1]})).unwrap();
