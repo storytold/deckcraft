@@ -47,7 +47,29 @@ pub(super) fn subscript(s: &mut Session, p: &Value) -> Result<Value> {
 
 pub(super) fn font(s: &mut Session, p: &Value) -> Result<Value> {
     let f = str_param(p, "family").ok_or_else(|| bad("format.font", "missing `family`"))?.to_string();
-    format_run(s, &move |r| r.font = Some(f.clone()))
+    let ea = is_east_asian_font(&f);
+    format_run(s, &move |r| set_family(r, &f, ea))
+}
+
+/// The run's font is `family`, and so is its East Asian font when `ea`, as in PowerPoint: picking
+/// 맑은 고딕 or NanumGothic changes the Korean text, not only the Latin letters around it.
+fn set_family(r: &mut RunProps, family: &str, ea: bool) {
+    r.font = Some(family.to_string());
+    if ea {
+        r.font_ea = Some(family.to_string());
+    }
+}
+
+/// Does installed `family` draw Hangul, kana or CJK ideographs? Only the family's own face counts,
+/// never a stand-in the font database would substitute for it.
+fn is_east_asian_font(family: &str) -> bool {
+    let db = deckcraft_fonts::FontDb::global();
+    if !db.has_family(family) {
+        return false;
+    }
+    let face = db.face(family, "Regular");
+    let own = face.family.eq_ignore_ascii_case(&db.canonical(family)) || face.legacy.as_ref().is_some_and(|(f, _)| f.eq_ignore_ascii_case(family));
+    own && ['\u{ac00}', '\u{3042}', '\u{4e00}'].into_iter().any(|c| face.covers(c))
 }
 
 pub(super) fn size(s: &mut Session, p: &Value) -> Result<Value> {
@@ -247,6 +269,8 @@ pub(super) fn spacing(s: &mut Session, p: &Value) -> Result<Value> {
 /// Character formatting applied together, so the Font dialog is one undo step.
 struct FontEdits {
     family: Option<String>,
+    /// `family` is an East Asian font, so it is the East Asian font too (see `set_family`).
+    family_ea: bool,
     size: Option<f64>,
     bold: Option<bool>,
     italic: Option<bool>,
@@ -274,7 +298,7 @@ impl FontEdits {
 
     fn write(&self, r: &mut RunProps) {
         if let Some(f) = &self.family {
-            r.font = Some(f.clone());
+            set_family(r, f, self.family_ea);
         }
         if let Some(v) = self.size {
             r.size = Some(v);
@@ -386,7 +410,20 @@ fn font_edits(p: &Value) -> Result<FontEdits> {
             Some(n.clamp(-100.0, 400.0))
         }
     };
-    Ok(FontEdits { family, size, bold: font_bool(p, "bold")?, italic: font_bool(p, "italic")?, underline, color, strike, baseline, caps, spacing })
+    let family_ea = family.as_deref().is_some_and(is_east_asian_font);
+    Ok(FontEdits {
+        family,
+        family_ea,
+        size,
+        bold: font_bool(p, "bold")?,
+        italic: font_bool(p, "italic")?,
+        underline,
+        color,
+        strike,
+        baseline,
+        caps,
+        spacing,
+    })
 }
 
 /// A colour as a `format.fontDialog` / `format.color` parameter, including transforms.

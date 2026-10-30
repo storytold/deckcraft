@@ -719,17 +719,52 @@ pub fn paragraph_words(p: &deckcraft_model::Paragraph, default: &str) -> Vec<Wor
         let mut k = a;
         for part in text.split('-') {
             let n = part.chars().count();
-            if !part.is_empty()
-                && let Some(c) = chars.get(k)
-            {
-                if p.runs.get(c.1).is_some_and(|r| r.props.no_proof == Some(true)) {
-                    // Marked "do not check spelling".
-                } else {
-                    out.push(Word { start: k, end: k + n, text: part.to_string(), lang: lang_of(c.1), repeated: None });
+            // Hangul next to other letters ("PPT발표") is checked apart from them.
+            let mut at = k;
+            for piece in script_pieces(part) {
+                let len = piece.chars().count();
+                if let Some(c) = chars.get(at) {
+                    if p.runs.get(c.1).is_some_and(|r| r.props.no_proof == Some(true)) {
+                        // Marked "do not check spelling".
+                    } else {
+                        // Hangul is Korean whatever the run says: typed text often carries the
+                        // presentation's default (English) language, and an English dictionary
+                        // would flag every Korean word.
+                        let mut lang = lang_of(c.1);
+                        if piece.chars().any(deckcraft_model::words::is_hangul) && !is_korean(&lang) {
+                            lang = "ko-KR".into();
+                        }
+                        out.push(Word { start: at, end: at + len, text: piece.to_string(), lang, repeated: None });
+                    }
                 }
+                at += len;
             }
             k += n + 1;
         }
+    }
+    out
+}
+
+/// Is `lang` Korean (`ko`, `ko-KR`, `ko_KR`)? Its primary subtag decides: `kok` is Konkani.
+fn is_korean(lang: &str) -> bool {
+    lang.split(['-', '_']).next().is_some_and(|p| p.eq_ignore_ascii_case("ko"))
+}
+
+/// `word` cut where it changes between Hangul and other letters; empty pieces are left out.
+fn script_pieces(word: &str) -> Vec<&str> {
+    let mut out = vec![];
+    let mut start = 0;
+    let mut prev: Option<bool> = None;
+    for (i, c) in word.char_indices() {
+        let h = deckcraft_model::words::is_hangul(c);
+        if prev.is_some_and(|p| p != h) {
+            out.push(&word[start..i]);
+            start = i;
+        }
+        prev = Some(h);
+    }
+    if start < word.len() {
+        out.push(&word[start..]);
     }
     out
 }
@@ -878,6 +913,31 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
                 ("l'été", "de-DE", 34)
             ]
         );
+    }
+
+    /// Korean typed into an English run is checked as Korean (and so skipped when no Korean
+    /// dictionary is installed), not flagged word by word by the English one.
+    #[test]
+    fn hangul_words_are_korean() {
+        use deckcraft_model::{Paragraph, Run, RunProps};
+        let p = Paragraph {
+            runs: vec![Run::with("Hello 안녕하세요 world", RunProps { lang: Some("xx-HG".into()), ..Default::default() })],
+            ..Default::default()
+        };
+        let got: Vec<(String, String)> = paragraph_words(&p, "en-US").into_iter().map(|w| (w.text, w.lang)).collect();
+        assert_eq!(got, vec![("Hello".into(), "xx-HG".into()), ("안녕하세요".into(), "ko-KR".into()), ("world".into(), "xx-HG".into())]);
+        install("xx-HG", d());
+        // An installed Korean dictionary would decide on its own.
+        if dictionary("ko-KR").is_none() {
+            let flagged: Vec<String> = misspelt(&p, "en-US", &[]).into_iter().map(|w| w.text).collect();
+            assert!(!flagged.iter().any(|w| w == "안녕하세요"), "{flagged:?}");
+        }
+        // Latin and Hangul written together are two words; Konkani (`kok`) isn't Korean.
+        let p =
+            Paragraph { runs: vec![Run::with("PPT발표", RunProps { lang: Some("kok-IN".into()), ..Default::default() })], ..Default::default() };
+        let got: Vec<(String, String, usize)> = paragraph_words(&p, "en-US").into_iter().map(|w| (w.text, w.lang, w.start)).collect();
+        assert_eq!(got, vec![("PPT".into(), "kok-IN".into(), 0), ("발표".into(), "ko-KR".into(), 3)]);
+        assert!(is_korean("ko") && is_korean("KO_kr") && !is_korean("kok-IN") && !is_korean("en-US"));
     }
 
     #[test]

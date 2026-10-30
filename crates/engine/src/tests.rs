@@ -1529,6 +1529,42 @@ fn title_text(s: &Session) -> String {
     sh.text.as_ref().map(|t| t.paragraphs.iter().map(|p| p.text()).collect::<Vec<_>>().join("\n")).unwrap_or_default()
 }
 
+/// Picking a Korean font in the Font box or the Font dialog sets the East Asian font too, so the Hangul changes; a
+/// Latin-only font leaves the East Asian font alone. Found by its Korean name as well.
+#[test]
+fn a_korean_font_is_the_east_asian_font_too() {
+    let db = deckcraft_fonts::FontDb::global();
+    if !db.has_family("NanumGothic") {
+        eprintln!("skipped: NanumGothic isn't installed or bundled (craft-fonts)");
+        return;
+    }
+    let mut s = session();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("text.insert", &json!({"text": "한글 Text"})).unwrap();
+    s.execute("edit.selectAll", &json!({})).unwrap();
+    let run = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes[0].text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    s.execute("format.font", &json!({"family": "NanumGothic"})).unwrap();
+    assert_eq!((run(&s).font.as_deref(), run(&s).font_ea.as_deref()), (Some("NanumGothic"), Some("NanumGothic")));
+    // The Font dialog does the same.
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(run(&s).font_ea, None);
+    s.execute("format.fontDialog", &json!({"family": "NanumGothic"})).unwrap();
+    assert_eq!((run(&s).font.as_deref(), run(&s).font_ea.as_deref()), (Some("NanumGothic"), Some("NanumGothic")), "Font dialog");
+    // A Latin-only font that is really there (not a stand-in for a missing one).
+    let latin_only = |f: &str| {
+        let face = db.face(f, "Regular");
+        db.has_family(f) && face.family.eq_ignore_ascii_case(f) && !['\u{ac00}', '\u{3042}', '\u{4e00}'].into_iter().any(|c| face.covers(c))
+    };
+    let Some(latin) = [deckcraft_fonts::FALLBACK_FAMILY, "Arial", "Liberation Sans", "DejaVu Sans", "Helvetica"].into_iter().find(|f| latin_only(f))
+    else {
+        eprintln!("skipped the Latin-only half: no Latin-only font here");
+        return;
+    };
+    s.execute("format.font", &json!({"family": latin})).unwrap();
+    assert_eq!((run(&s).font.as_deref(), run(&s).font_ea.as_deref()), (Some(latin), Some("NanumGothic")), "Latin only");
+}
+
 /// #101: Korean typed through an input method arrives as preedit updates (ㅎ → 하 → 한 → 한ㄱ →
 /// 한그 → 한글) and a commit. The preedit is shown in place and replaced on each update; the
 /// committed text is one undo step, and nothing on the way is an undo step of its own.
