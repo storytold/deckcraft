@@ -413,8 +413,12 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
                 ColorRef::rgb(deckcraft_color::Rgba::from_hex(o.get("rgb").and_then(Value::as_str)?)?)
             };
             for (k, val) in o {
-                if let Some(t) = deckcraft_color::ColorTransform::from_xml(k, val.as_i64().and_then(|x| i32::try_from(x).ok())) {
-                    c.mods.push(t);
+                let n = val.as_i64().and_then(|x| i32::try_from(x).ok());
+                if let Some(t) = deckcraft_color::ColorTransform::from_xml(k, n) {
+                    // A value-bearing transform without a usable integer is skipped, not zeroed.
+                    if n.is_some() || t.value().is_none() {
+                        c.mods.push(t);
+                    }
                 }
             }
             Some(c)
@@ -637,6 +641,16 @@ pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_non_integer_colour_transform_is_skipped_not_zeroed() {
+        for bad in [serde_json::json!("75000"), serde_json::json!(75000.0), serde_json::json!(0.75), serde_json::json!(3_000_000_000i64)] {
+            let c = color_value(&serde_json::json!({"scheme": "accent1", "lumMod": bad})).unwrap();
+            assert!(c.mods.is_empty(), "{bad}: {:?}", c.mods);
+        }
+        let c = color_value(&serde_json::json!({"scheme": "accent1", "lumMod": 75000})).unwrap();
+        assert_eq!(c.mods, vec![deckcraft_color::ColorTransform::LumMod(75000)]);
+    }
 
     #[test]
     fn the_palette_skips_a_command_that_needs_a_value() {
