@@ -194,7 +194,7 @@ fn exact_of(d: &Dialog, key: &str) -> Option<f64> {
 fn text_row(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str) {
     let mut v = field_of(d, key);
     ui.horizontal(|ui| {
-        let l = ui.add_sized(vec2(148.0, 20.0), egui::Label::new(label));
+        let l = ui.add_sized(vec2(148.0, 20.0), egui::Label::new(tl!(label)));
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(96.0)).labelled_by(l.id);
     });
     d.fields.insert(key.into(), v);
