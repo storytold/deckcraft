@@ -137,6 +137,8 @@ impl Show {
         }
     }
 
+    /// The show's state for the control channel: slide and step, overlays, the presenter timer,
+    /// and where the See All Slides grid and the presenter slide strip put each slide.
     pub fn showing_value(&self, n_slides: usize, aspect: f32, full: Rect, now: f64) -> serde_json::Value {
         let mut v = json!({
             "slide": self.state.slide,
@@ -149,6 +151,10 @@ impl Show {
             "presenterPaused": self.timer.paused(),
             "presenterSecs": self.timer.elapsed(now),
             "notesPx": self.notes_px,
+            "strip": self.strip,
+            "stripFirst": self.strip_first,
+            "stripCells": self.strip_cells.iter().map(|(i, r)| json!({"slide": i, "x": r.center().x, "y": r.center().y})).collect::<Vec<_>>(),
+            "stripBar": self.strip_track.map(|r| json!({"x0": r.min.x, "x1": r.max.x, "y": r.center().y})),
             "custom": self.state.custom_name(),
             "goto": if self.goto.is_empty() { None } else { Some(self.goto.clone()) },
         });

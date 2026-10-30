@@ -76,6 +76,8 @@ pub struct UiState {
     pub sorter_zoom: f32,
     pub recent: Vec<String>,
     pub presenter_view: bool,
+    /// The slide strip along the bottom of presenter view.
+    pub presenter_strip: bool,
     pub ui_scale: f32,
     /// Format Shape pane: tab (`fill`, `effects`, `size`, `picture`, `text`).
     pub format_tab: String,
@@ -115,6 +117,7 @@ impl Default for UiState {
             sorter_zoom: 1.0,
             recent: vec![],
             presenter_view: true,
+            presenter_strip: true,
             ui_scale: 1.0,
             format_tab: "fill".into(),
             smartart_row: 0,

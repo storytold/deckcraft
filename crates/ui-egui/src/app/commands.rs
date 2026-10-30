@@ -165,6 +165,13 @@ impl SlideApp {
                 }
             }
             "show.presenter" => self.ui.presenter_view = self.flag(p, self.ui.presenter_view),
+            "show.presenterStrip" => {
+                let on = self.flag(p, self.ui.presenter_strip);
+                self.ui.presenter_strip = on;
+                if let Some(show) = self.show.as_mut() {
+                    show.strip = on;
+                }
+            }
             "show.end" => {
                 self.show = None;
                 self.media.stop_owned(media::Owner::Show);

@@ -119,6 +119,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
     ("show.presenter", "Presenter View", None, "{on?: bool}"),
+    ("show.presenterStrip", "Presenter View Slide Strip", None, "{on?: bool}"),
     ("show.end", "End Show", None, "{}"),
     ("animation.preview", "Preview Animations", None, "{on?: bool, from?: effect index}"),
     ("app.home", "Home", None, "{on?}"),

@@ -161,6 +161,20 @@ pub(super) fn next_rect(right: Rect, doc: &Presentation) -> Rect {
     Rect::from_min_size(area.min, fit(area, doc).size())
 }
 
+/// Where presenter view shows the current slide in its `left` column: as wide as the column and at
+/// most 80% of its height, as without the slide strip. It shrinks only when that would reach
+/// `bottom` (the top of the strip), so turning the strip on and off leaves it alone when there is
+/// room.
+pub(super) fn current_rect(left: Rect, bottom: f32, doc: &Presentation) -> Rect {
+    let unstripped = fit(Rect::from_min_max(left.min, pos2(left.max.x, left.min.y + left.height() * 0.8)), doc);
+    let r = if left.min.y + unstripped.height() <= bottom {
+        unstripped
+    } else {
+        fit(Rect::from_min_max(left.min, pos2(left.max.x, bottom.max(left.min.y))), doc)
+    };
+    Rect::from_min_size(left.min, r.size())
+}
+
 pub(super) fn quad_mesh(tex: Option<egui::TextureId>, rect: Rect, l: &Layer, color: Color32) -> Mesh {
     let mut m = match tex {
         Some(id) => Mesh::with_texture(id),

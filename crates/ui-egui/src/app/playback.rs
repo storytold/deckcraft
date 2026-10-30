@@ -28,7 +28,8 @@ impl SlideApp {
     }
 
     /// Leave animation preview, stop editor-owned media, and create a show at the requested slide
-    /// with the current reading/presenter configuration; an out-of-range slide starts an ended show.
+    /// with the current reading/presenter configuration (and presenter view's slide strip as saved);
+    /// an out-of-range slide starts an ended show.
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
@@ -36,6 +37,7 @@ impl SlideApp {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
             let mut show = show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading);
             show.instance = self.show_instance;
+            show.strip = self.ui.presenter_strip;
             self.show = Some(show);
         }
     }
