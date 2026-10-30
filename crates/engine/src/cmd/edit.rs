@@ -75,6 +75,10 @@ fn slides_scope(s: &Session, p: &Value) -> bool {
         || s.active().is_some_and(|d| d.selection.shapes.is_empty() && d.selection.text.is_none() && !d.selection.slides.is_empty())
 }
 
+pub(crate) fn media_of_shapes(shapes: &[Shape], out: &mut Vec<MediaId>) {
+    crate::media_refs::visit::shapes(shapes, &mut |id| out.push(*id));
+}
+
 fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
     let st = s.doc()?;
     // Text selection.
@@ -95,6 +99,11 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
         let slides: Vec<Slide> = ids.iter().filter_map(|id| st.doc.slide(*id).cloned()).collect();
         let mut mids = vec![];
         for sl in &slides {
+            media_of_shapes(&sl.shapes, &mut mids);
+            if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &sl.background {
+                mids.push(pf.media);
+                mids.extend(pf.svg);
+            }
             mids.extend(crate::media_refs::slide_media(sl));
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
@@ -233,6 +242,16 @@ fn walk_mut(shapes: &mut [Shape], f: &mut dyn FnMut(&mut Shape)) {
     rec(shapes, f, 0);
 }
 
+/// Rewrite the media ids shapes use (`map`: clipboard id to destination id).
+fn remap_media(shapes: &mut [Shape], map: &HashMap<MediaId, MediaId>) {
+    if map.is_empty() {
+        return;
+    }
+    crate::media_refs::visit_mut::shapes(shapes, &mut |id| {
+        if let Some(n) = map.get(id) {
+            *id = *n;
+        }
+    });
 /// Rewrite a media id the clipboard used (`map`: clipboard id to destination id).
 fn remap_media(map: &HashMap<MediaId, MediaId>) -> impl FnMut(&mut MediaId) + '_ {
     move |id: &mut MediaId| {
@@ -296,6 +315,13 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                 sl.id = SlideId(doc.alloc_id().ok_or_else(|| bad("edit.paste", NO_ID_SPACE))?);
                 let map = reid("edit.paste", doc, &mut sl.shapes)?;
                 remap_animations(&mut sl.animations, &map);
+                remap_media(&mut sl.shapes, &media);
+                if let Some(deckcraft_model::Background::Fill { fill: deckcraft_model::Fill::Picture(pf) }) = &mut sl.background {
+                    if let Some(n) = media.get(&pf.media) {
+                        pf.media = *n;
+                    }
+                    pf.svg = pf.svg.map(|s| media.get(&s).copied().unwrap_or(s));
+                }
                 crate::media_refs::visit_mut::slide(&mut sl, &mut remap_media(&media));
                 if doc.layout(sl.layout).is_none() {
                     sl.layout = doc.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id).unwrap_or_default();
