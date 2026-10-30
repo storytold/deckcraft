@@ -567,8 +567,9 @@ pub fn outline_to_slides(p: &mut Presentation, text: &str) -> usize {
         let spaces = raw.chars().take_while(|c| *c == ' ').count() / 2;
         let level = tabs.max(spaces);
         let t = raw.trim();
+        // Bullet markers only mark indented body lines; a title keeps its text.
         let line = match t.strip_prefix(['-', '*', '•']) {
-            Some(rest) if rest.starts_with([' ', '\t']) => rest.trim(),
+            Some(rest) if level > 0 && rest.starts_with([' ', '\t']) => rest.trim(),
             _ => t,
         }
         .to_string();
