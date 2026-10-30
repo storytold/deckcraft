@@ -104,10 +104,13 @@ id, …}` so the title or body can be set without an inspect. Shape ids are uniq
 presentation: a shape or text command given an id on another slide edits it there, makes that
 slide current and answers `{"changed": 1, "onSlides": [4], "currentSlide": 4}`; the read-only
 lookups (`shape.inspect`, `text.get`, `shape.sites`) find it anywhere, move nothing, and
-`shape.inspect` and `text.get` answer the `slide` index it is on. Only the commands that need
-several shapes on one slide (`shape.connect`, `arrange.*`, `smartArt.*`) refuse an id on another
-slide, saying where the shape is and the `slide.go` that gets there; `comment.*` acts on the
-current slide. `batch` items and `run_command` may name a tool (`add_shape`,
+`shape.inspect` and `text.get` answer the `slide` index it is on. These work on the current slide:
+`shape.connect` refuses an id on another slide, saying where the shape is and the `slide.go` that
+gets there, and `text.edit` (the text cursor), `smartArt.*` and `arrange.group` refuse it too;
+`arrange.align`, `arrange.distribute` and the order commands (`arrange.bringToFront`…) succeed but
+leave it where it is, so `slide.go` first. `arrange.nudge`, `arrange.rotate*` and `arrange.flip*`
+edit a shape on any slide like the other shape commands. `comment.add` and the other comment edits
+act on the current slide; `comment.list`, `comment.next` and `comment.prev` take `slide`. `batch` items and `run_command` may name a tool (`add_shape`,
 `add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`; a
 `batch` answers one text array, so an item naming a tool that answers an image (`render_slide`,
 `screenshot` without `path`) is refused and told to run on its own. A
@@ -119,7 +122,7 @@ Answers carry what the next step needs, so it costs no inspect: `insert.table`, 
 `insert.picture` and `insert.smartArt` (which takes a `rect` too) answer `{id, rect}`; the `table.insertRow*`/`insertColumn*` commands answer the
 table's `rect`, `rows`, `cols` and `overflows` (true when the box runs off the slide);
 `slide.duplicate` answers the copy's `index`, `placeholders` and `shapes`; `slide.move` answers
-`{index, id}`; `slide.fromOutline` answers `{slides, indices, ids}` and leaves its last new slide
+`{index, moved, ids}`, with `id` too when one slide moves; `slide.fromOutline` answers `{slides, indices, ids}` and leaves its last new slide
 current, so a following `slide.new` lands after it; `section.add` answers the resulting
 `sections: [{name, start, slides}]`, refusing an `at` past the end with the valid range;
 `design.theme` answers the palette as `design.palette {}` does; `design.headerFooter` answers
@@ -135,8 +138,8 @@ since copying nothing would clear every slide; `{clear: true}` does that on purp
 refuses `perPage` with the `notes` or `slides` PDF layout: as in PowerPoint's Print page, notes
 pages (one slide with its notes per page) and handouts (several slides per page) are separate
 layouts, and `perPage` belongs to handouts. `file.export {all: true, path: "d.png"}` writes one
-file per slide numbered from 1, the displayed slide number (`d1.png`, `d2.png`…), while `slide`
-is a 0-based index; it answers `{files, indices}`, `indices` being the 0-based slide of each file.
+file per slide numbered from 1, the displayed slide number (`d1.png`, `d2.png`…), or just `d.png`
+when there is one slide, while `slide` is a 0-based index; it answers `{files, indices}`, `indices` being the 0-based slide of each file.
 `chart.data` replaces the whole `categories`/`series` it is given, so pass every series to keep.
 `text.replace {text, with, scope?: body|titles|notes|all}` answers `{replaced, slides}`; `body` is the
 text in non-title placeholders, text boxes, shapes and tables, so a product name in body text can be
