@@ -217,6 +217,10 @@ impl SlideApp {
                 #[cfg(target_arch = "wasm32")]
                 return Err("updates are handled by the browser: reload the page".into());
             }
+            "app.reportIssue" => {
+                let url = crate::report_issue::url(self);
+                self.open_url(&url);
+            }
             "app.palette" => self.palette = Some((String::new(), 0)),
             "app.preferences" => self.dialog = Some(dialogs::Dialog::new("preferences")),
             "app.openDialog" => self.pick_and_open(),

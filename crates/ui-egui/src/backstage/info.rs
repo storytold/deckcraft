@@ -237,6 +237,7 @@ pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
             ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+            ui.hyperlink_to("Report an Issue…", crate::report_issue::url(app));
         });
     });
 }
