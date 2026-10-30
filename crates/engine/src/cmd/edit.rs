@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use deckcraft_model::text::TextBody;
-use deckcraft_model::{MediaId, Shape, ShapeId, Slide, SlideId};
+use deckcraft_model::{MediaId, MediaItem, Shape, ShapeId, Slide, SlideId};
 use serde_json::{Value, json};
 
 use super::{
@@ -98,7 +98,7 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             mids.extend(crate::media_refs::slide_media(sl));
         }
         let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
-        let plain = slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n");
+        let plain = slide_titles(&slides);
         s.clipboard = crate::Clipboard { slides, media, plain: plain.clone(), ..Default::default() };
         return Ok(plain);
     }
@@ -140,8 +140,14 @@ fn copy(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"text": t, "html": html}))
 }
 
-/// HTML for what was just copied, when it is text (a selection, or the text on the copied shapes).
-fn copied_html(s: &Session) -> String {
+/// HTML for what was just copied, when it is text (a selection, or the text on the copied shapes)
+/// or slides.
+fn copied_html(s: &mut Session) -> String {
+    if !s.clipboard.slides.is_empty() {
+        let (html, id) = slides_html(s);
+        s.clipboard.slides_payload = id;
+        return html;
+    }
     if let Some(body) = &s.clipboard.text {
         return richclip::body_to_html(body);
     }
@@ -263,10 +269,88 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
     Ok(map)
 }
 
+/// Copied slides reach another DeckCraft process (a deck opened from the file manager) in the
+/// clipboard HTML: a comment holding them as a `.deckcraft` file in base64, before their titles.
+const SLIDES_MARK: &str = "<!--deckcraft-slides:";
+/// Larger copies paste only in the window they were copied in.
+const MAX_SLIDES_B64: usize = 16 << 20;
+
+/// The plain text copied slides leave: their titles, a line each.
+fn slide_titles(slides: &[Slide]) -> String {
+    slides.iter().map(|x| x.title()).collect::<Vec<_>>().join("\n")
+}
+
+/// The clipboard HTML for the copied slides and the identity of the payload it carries:
+/// `<!--deckcraft-slides:{id}:{base64}-->` before the visible titles. `None` when the copy is too
+/// large to carry (it then pastes only in this window).
+fn slides_html(s: &Session) -> (String, Option<u64>) {
+    let c = &s.clipboard;
+    let visible = richclip::body_to_html(&TextBody::from_text(&c.plain));
+    // Media saved as is can't shrink: past the limit, don't serialize it only to drop it.
+    let stored: usize = c.media.iter().filter(|m| deckcraft_format::is_compressed(&m.content_type)).map(|m| m.data.len()).sum();
+    if stored.div_ceil(3).saturating_mul(4) > MAX_SLIDES_B64 {
+        return (visible, None);
+    }
+    let Ok(st) = s.doc() else { return (visible, None) };
+    let mut deck = (*st.doc).clone();
+    deck.slides = c.slides.iter().cloned().map(Arc::new).collect();
+    deck.media = c.media.clone();
+    match deckcraft_format::save(&deck) {
+        Ok(bytes) if bytes.len().div_ceil(3) * 4 <= MAX_SLIDES_B64 => {
+            let id = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::hash::DefaultHasher::new();
+                bytes.hash(&mut h);
+                h.finish()
+            };
+            (format!("{SLIDES_MARK}{id:016x}:{}-->{visible}", super::base64_encode(&bytes)), Some(id))
+        }
+        _ => (visible, None),
+    }
+}
+
+/// The payload identity and base64 in clipboard HTML from [`slides_html`].
+fn slides_payload(html: &str) -> Option<(u64, &str)> {
+    let start = html.find(SLIDES_MARK)? + SLIDES_MARK.len();
+    let rest = html.get(start..)?;
+    let (id, rest) = rest.split_once(':')?;
+    let id = u64::from_str_radix(id, 16).ok()?;
+    Some((id, rest.get(..rest.find("-->")?)?))
+}
+
+/// The slides and their media in a payload. Clipboard bytes are untrusted: the size is capped and
+/// the file goes through the checked loader.
+fn load_slides(b64: &str) -> Option<(Vec<Slide>, Vec<MediaItem>)> {
+    if b64.len() > MAX_SLIDES_B64 {
+        return None;
+    }
+    // A payload missing a part (media without its bytes) is refused rather than pasted half.
+    let (deck, damaged) = deckcraft_format::load_checked(&super::base64_decode(b64)?).ok()?;
+    if !damaged.is_empty() {
+        return None;
+    }
+    Some((deck.slides.iter().map(|x| (**x).clone()).collect(), deck.media))
+}
+
 fn paste(s: &mut Session, p: &Value) -> Result<Value> {
+    // Windows hands clipboard text over with CRLF line ends; ours are LF.
+    let text = str_param(p, "text").map(|t| t.replace("\r\n", "\n"));
+    let text = text.as_deref();
+    // Slides copied in another DeckCraft process arrive in the clipboard HTML; slides this session
+    // copied carry its own payload identity and paste from its clipboard as before. A marker left
+    // behind by an older copy is not taken: the clipboard text no longer says those slides' titles.
+    if let Some((id, b64)) = str_param(p, "html").and_then(slides_payload)
+        && s.clipboard.slides_payload != Some(id)
+        && let Some((slides, media)) = load_slides(b64)
+    {
+        let plain = slide_titles(&slides);
+        if text.is_none_or(|t| t == plain) {
+            s.clipboard = crate::Clipboard { slides, media, plain, slides_payload: Some(id), ..Default::default() };
+        }
+    }
     // External plain text (from the system clipboard) wins when given and differs from ours.
     // HTML from Pages or Keynote keeps bold, italic and underline when it says the same words.
-    if let Some(t) = str_param(p, "text")
+    if let Some(t) = text
         && t != s.clipboard.plain
     {
         if let Some(html) = str_param(p, "html")

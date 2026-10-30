@@ -93,7 +93,9 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
     Ok(buf.into_inner())
 }
 
-fn is_compressed(ct: &str) -> bool {
+/// Whether [`save`] stores media of content type `ct` as is (already compressed) rather than
+/// deflating it.
+pub fn is_compressed(ct: &str) -> bool {
     ct.starts_with("image/jpeg")
         || ct.starts_with("image/png")
         || ct.starts_with("video/")

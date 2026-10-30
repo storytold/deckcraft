@@ -2185,6 +2185,123 @@ mod copy_remap {
         assert_eq!(table_pictures(&b, &shape(&b, 0, tb)), deck_pictures("b"));
     }
 
+    /// Slides copied in one DeckCraft process paste in another (a deck opened from the file
+    /// manager starts its own process): only the system clipboard's text and HTML get there.
+    #[test]
+    fn slides_copied_in_another_process_paste_from_the_clipboard_html() {
+        let mut a = Session::with_new();
+        picture_table(&mut a, "a");
+        let copied = a.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        // An untitled slide: the UI hands over empty text with the HTML.
+        let (text, html) = (copied["text"].as_str().unwrap(), copied["html"].as_str().unwrap());
+        let mut b = Session::with_new();
+        b.execute("edit.paste", &json!({"text": text, "html": html})).unwrap();
+        let d = b.doc().unwrap();
+        assert_eq!(d.doc.slides.len(), 2, "the slide is pasted, not its title as text");
+        let pasted = &d.doc.slides[1];
+        let table = pasted.shapes.iter().find(|x| matches!(x.kind, ShapeKind::Table(_))).cloned().unwrap();
+        assert_eq!(table_pictures(&b, &table), deck_pictures("a"));
+        // Damaged or foreign HTML pastes as text, as before.
+        let mut c = Session::with_new();
+        c.execute("edit.paste", &json!({"text": "Hello", "html": "<!--deckcraft-slides:!!!-->Hello"})).unwrap();
+        assert_eq!(c.doc().unwrap().doc.slides.len(), 1);
+    }
+
+    /// Another process's slides with the same (empty) title text still paste: the payload's
+    /// identity, not the plain text, says whose copy it is.
+    #[test]
+    fn slides_from_another_process_win_over_a_local_copy_with_the_same_text() {
+        let mut a = Session::with_new();
+        picture_table(&mut a, "a");
+        let copied = a.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        let mut b = Session::with_new();
+        b.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        assert_eq!(b.clipboard.plain, copied["text"].as_str().unwrap(), "both untitled");
+        b.execute("edit.paste", &json!({"text": copied["text"], "html": copied["html"]})).unwrap();
+        let d = b.doc().unwrap();
+        assert!(d.doc.slides[1].shapes.iter().any(|x| matches!(x.kind, ShapeKind::Table(_))), "a's slide, not b's own");
+    }
+
+    /// The session's own copy pastes from its clipboard; a slide marker left on the clipboard by
+    /// an older copy, under other text, is not pasted.
+    #[test]
+    fn own_and_stale_slide_payloads() {
+        let mut a = Session::with_new();
+        a.execute("slide.new", &json!({"title": "Hello"})).unwrap();
+        let copied = a.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        assert!(a.clipboard.slides_payload.is_some());
+        a.execute("edit.paste", &json!({"text": copied["text"], "html": copied["html"]})).unwrap();
+        assert_eq!(a.doc().unwrap().doc.slides.len(), 3);
+        let mut b = Session::with_new();
+        b.execute("edit.paste", &json!({"text": "Other words", "html": copied["html"]})).unwrap();
+        assert_eq!(b.doc().unwrap().doc.slides.len(), 1, "the newer text is pasted, not the old slides");
+        // Two titles with a CRLF line end (Windows) still paste as slides, here and in another deck.
+        a.execute("slide.new", &json!({"title": "World"})).unwrap();
+        let ids: Vec<_> = a.doc().unwrap().doc.slides.iter().rev().take(2).map(|x| x.id).collect();
+        a.doc_mut().unwrap().selection.slides = ids;
+        let two = a.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        let crlf = two["text"].as_str().unwrap().replace('\n', "\r\n");
+        assert!(crlf.contains("\r\n"));
+        let mut c = Session::with_new();
+        c.execute("edit.paste", &json!({"text": crlf, "html": two["html"]})).unwrap();
+        assert_eq!(c.doc().unwrap().doc.slides.len(), 3, "both slides, not their titles as text");
+        let before = a.doc().unwrap().doc.slides.len();
+        a.execute("edit.paste", &json!({"text": crlf, "html": two["html"]})).unwrap();
+        assert_eq!(a.doc().unwrap().doc.slides.len(), before + 2);
+    }
+
+    /// A payload that loads with a part missing (a picture's bytes) is refused, not pasted with
+    /// an empty picture: the paste falls back to the text.
+    #[test]
+    fn a_damaged_slide_payload_pastes_as_text() {
+        use std::io::{Read, Write};
+        let mut a = Session::with_new();
+        picture_table(&mut a, "a");
+        a.execute("slide.new", &json!({"title": "Hello"})).unwrap();
+        let ids = vec![a.doc().unwrap().doc.slides[0].id];
+        a.doc_mut().unwrap().selection.slides = ids;
+        let html = a.execute("edit.copy", &json!({"scope": "slides"})).unwrap()["html"].as_str().unwrap().to_string();
+        let start = html.find(':').unwrap() + 1;
+        let (id, rest) = html[start..].split_once(':').unwrap();
+        let b64 = &rest[..rest.find("-->").unwrap()];
+        let bytes = crate::cmd::base64_decode(b64).unwrap();
+        // The same file without its media members.
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let mut out = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        for i in 0..zip.len() {
+            let mut f = zip.by_index(i).unwrap();
+            if f.name().starts_with("media/") {
+                continue;
+            }
+            let name = f.name().to_string();
+            let mut data = vec![];
+            f.read_to_end(&mut data).unwrap();
+            out.start_file(&name, zip::write::SimpleFileOptions::default()).unwrap();
+            out.write_all(&data).unwrap();
+        }
+        let damaged = crate::cmd::base64_encode(&out.finish().unwrap().into_inner());
+        let html = format!("<!--deckcraft-slides:{id}:{damaged}-->");
+        let mut b = Session::with_new();
+        b.execute("edit.paste", &json!({"text": "", "html": html})).unwrap();
+        assert_eq!(b.doc().unwrap().doc.slides.len(), 1, "no slide with missing pictures");
+    }
+
+    /// Media saved as is that can't fit the payload isn't serialized only to be dropped.
+    #[test]
+    fn slides_with_too_much_stored_media_stay_in_this_window() {
+        let mut a = Session::with_new();
+        {
+            let st = a.doc_mut().unwrap();
+            let doc = Arc::make_mut(&mut st.doc);
+            let id = doc.add_media("big.jpg", "image/jpeg", vec![0u8; 13 << 20]).expect("media");
+            let slide = Arc::make_mut(&mut doc.slides[0]);
+            slide.background = Some(deckcraft_model::Background::Fill { fill: Fill::Picture(PictureFill { media: id, ..Default::default() }) });
+        }
+        let copied = a.execute("edit.copy", &json!({"scope": "slides"})).unwrap();
+        assert!(!copied["html"].as_str().unwrap().contains("deckcraft-slides"));
+        assert!(a.clipboard.slides_payload.is_none());
+    }
+
     #[test]
     fn copied_connectors_follow_copied_ends_and_detach_from_the_rest() {
         let mut s = Session::with_new();
