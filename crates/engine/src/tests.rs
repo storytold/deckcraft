@@ -5462,6 +5462,38 @@ fn a_shape_in_front_of_edited_text_takes_the_click() {
     assert!(st.selection.text.as_ref().is_none_or(|t| t.shape.0 as u64 != tb), "the click on the member in front left the text: {:?}", st.selection);
 }
 
+/// A host's save confirmation marks the document saved as it was when posted; until then (or if
+/// it never comes) the document stays dirty, and later edits keep it dirty.
+#[test]
+fn confirm_saved_marks_only_the_posted_snapshot() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let uid = s.doc().unwrap().uid;
+    let snapshot = s.doc().unwrap().doc.clone();
+    assert!(s.doc().unwrap().is_dirty(), "unconfirmed: still dirty");
+    // Another presentation opens and becomes active before the confirmation arrives.
+    s.add_document(DocState::new(deckcraft_model::Presentation::default(), None, "Other".into()));
+    assert!(s.confirm_saved(uid, snapshot.clone()));
+    assert!(!s.documents()[0].is_dirty(), "the saved presentation is clean, not the active one");
+    s.set_active(0);
+    s.execute("slide.new", &json!({})).unwrap();
+    assert!(s.confirm_saved(uid, snapshot));
+    assert!(s.doc().unwrap().is_dirty(), "edits after the posted save stay unsaved");
+    assert!(!s.confirm_saved(u64::MAX, s.doc().unwrap().doc.clone()), "a closed document confirms nothing");
+}
+
+/// The web host bridge confirms a save only when the presentation still serialises to the bytes
+/// it posted, so saving the same presentation twice must give the same bytes.
+#[test]
+fn deckcraft_save_bytes_are_deterministic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let doc = s.doc().unwrap().doc.clone();
+    let a = crate::cmd::file::save_bytes(&doc, "deckcraft").unwrap();
+    let b = crate::cmd::file::save_bytes(&doc, "deckcraft").unwrap();
+    assert_eq!(a, b);
+}
+
 /// A box at `rect` and a second box at `other` on a fresh slide; smart guides on, the grid off.
 /// The first box is selected.
 fn snap_scene(rect: [f64; 4], other: [f64; 4]) -> (Session, u64) {

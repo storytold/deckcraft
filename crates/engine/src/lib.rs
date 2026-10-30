@@ -613,6 +613,17 @@ impl Session {
             self.tool.vertex_kind = None;
         }
     }
+    /// Mark document `uid` saved as `snapshot` (what a host confirmed it stored). False when that
+    /// document is gone. Edits made since the snapshot keep it dirty.
+    pub fn confirm_saved(&mut self, uid: u64, snapshot: Arc<Presentation>) -> bool {
+        match self.docs.iter_mut().find(|d| d.uid == uid) {
+            Some(d) => {
+                d.saved_doc = snapshot;
+                true
+            }
+            None => false,
+        }
+    }
     pub fn next_untitled(&mut self) -> String {
         self.untitled += 1;
         format!("Presentation{}", self.untitled)
