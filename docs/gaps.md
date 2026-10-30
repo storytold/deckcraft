@@ -151,11 +151,6 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 10–16 h (render the timeline frame by frame, which the GIF can then reuse for
   transitions and builds; an H.264 encoder is the hard part, FilmCraft has one to copy).
 
-### Embedded MicroType Express font subsets aren't drawn
-- **Evidence:** `p:embeddedFontLst` is read and written. A raw TrueType/OpenType face, or one inside an Embedded OpenType wrapper, is loaded and used to draw. A MicroType Express subset (`application/x-fontdata` with neither form) is kept and written back, and the text still uses a stand-in.
-- **Impact:** decks that embed a MicroType subset reflow until that face is installed.
-- **Estimate:** 3–5 h.
-
 ## Features
 
 ### Font weights beyond Regular, Bold and Italic (#69)
@@ -387,6 +382,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-14 | minor | Community PR wave folded: one entry each for the soak tests (engine and UI), the PPTX corpus (seven owned corpus files), edit points / text warp / 3-D, proofing (Hunspell spelling, thesaurus, AutoCorrect), the smaller missing rows, dialogs (41 vs ~60; Print and Insert Object left) and pen/trackpad input; ranked rows 3, 4 and 10 de-duplicated (comment threads #70 and the pane timeline are done); the fixed command-palette entry (#79) removed |
 | 2026-10-13 | minor | EMF/WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records remain |
 | 2026-10-13 | minor | Embedded fonts are read, written and drawn (TrueType, OpenType, Embedded OpenType). The gap is now MicroType Express subsets, which are kept but not drawn |
+| 2026-10-27 | minor | MicroType Express embedded fonts are decompressed and drawn; the gap is closed |
 | 2026-10-13 | minor | WordArt Transform gallery: Shape Format ▸ Text Effects lists the 40 presets and No Transform; `format.textWarp` applies one (adjust handles still open) |
 | 2026-10-13 | minor | Edit Points: smooth/straight/corner point types, Bézier handle dragging, right-click point menu, no selection box while editing |
 | 2026-10-13 | minor | Edit Points: convert to freeform, drag, add and delete vertices (`shape.editPoints`, `shape.movePoint`, `shape.addPoint`, `shape.deletePoint`); left: point types and control handles |

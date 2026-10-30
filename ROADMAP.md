@@ -129,8 +129,8 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
 2. **PPTX on real decks:** the owned corpus now round-trips comments, links and actions, custom
    shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
-   and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records,
-   MicroType Express font subsets and SVG. 36–64 h.
+   and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records and
+   SVG. 36–64 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
@@ -229,6 +229,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-13 | Video seeks and loops keep newly decoded frames and end-of-stream notifications; stale generations are filtered when consumed (upstream #416). Deterministic queue coverage and repeated seeks across H.264, HEVC, VP9 and AV1 |
 | 2026-10-14 | Presenter View handles the same keyboard navigation as the audience window, consumes handled keys before focused buttons, and remains available at the end screen. Regression tests cover presenter-only input, single-step navigation and Escape |
 | 2026-10-13 | EMF and WMF rectangle clip regions (`INTERSECTCLIPRECT`, `EXCLUDECLIPRECT`, `EXTSELECTCLIPRGN`) limit later drawing. EMF+ records are still skipped |
+| 2026-10-27 | MicroType Express embedded fonts (as PowerPoint writes them) are decompressed and drawn |
 | 2026-10-13 | Embedded fonts (`p:embeddedFontLst`) are read, written and used to draw. TrueType, OpenType and Embedded OpenType faces load; MicroType Express subsets are kept for the round trip and still draw in a stand-in |
 | 2026-10-13 | Codec parsers (#426): H.264 and HEVC quantiser offsets, Matroska block times, Opus granule timing and QuickTime PCM frame sizes are range-checked before the arithmetic, so a hostile number is a format error instead of an overflow |
 | 2026-10-13 | WordArt Transform: Shape Format ▸ Text Effects shows the 40 text warps and No Transform; `format.textWarp` applies one to the selected text. Adjust handles are still open |
