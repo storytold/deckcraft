@@ -57,6 +57,10 @@ pub struct Show {
     /// The shapes stacked above the playing videos, drawn over the video frames (#1005).
     overlay: Option<(Key, Vec<ShapeId>, TextureHandle)>,
     next_tex: Option<(usize, TextureHandle)>,
+    remote_preview: Option<crate::presenter::Preview>,
+    remote_next: Option<(usize, crate::presenter::Preview)>,
+    remote_sent: f64,
+    remote_opened: bool,
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
@@ -222,6 +226,10 @@ impl Show {
             tex: None,
             overlay: None,
             next_tex: None,
+            remote_preview: None,
+            remote_next: None,
+            remote_sent: f64::NEG_INFINITY,
+            remote_opened: false,
             prefetch: None,
             backdrop: None,
             blank: None,
