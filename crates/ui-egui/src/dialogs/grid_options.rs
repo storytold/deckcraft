@@ -10,13 +10,13 @@ fn format_spacing(v: f64) -> String {
 /// Grid Options: spacing, snap and whether the grid and guides are drawn. OK applies one
 /// `view.gridOptions` call; Cancel leaves the presentation as it was.
 pub(super) fn grid_options(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label(egui::RichText::new("Snap").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::tl!("Snap")).font(theme::bold(13.0)));
     let snap = check(ui, d, "Snap objects to grid", "snap", app.session.prefs.snap_to_grid);
     let smart = check(ui, d, "Snap objects to other objects", "smart", app.session.prefs.smart_guides);
     let spacing_default = format_spacing(app.session.prefs.grid_spacing);
     field(ui, d, "Spacing (pt):", "spacing", &spacing_default);
     ui.add_space(6.0);
-    ui.label(egui::RichText::new("Display").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::tl!("Display")).font(theme::bold(13.0)));
     let gridlines = check(ui, d, "Display grid on screen", "gridlines", app.ui.gridlines);
     let guides = check(ui, d, "Display drawing guides on screen", "guides", app.ui.guides);
     if let Some(err) = d.fields.get("error").cloned().filter(|s| !s.is_empty()) {

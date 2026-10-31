@@ -27,7 +27,7 @@ pub(super) fn review(app: &mut SlideApp, ui: &mut Ui) {
     });
     group(ui, |ui| {
         let r = big_button(ui, Icon::Translate, "Translate", false);
-        let _ = r.on_hover_text("Translation needs a language model (not bundled)");
+        let _ = r.on_hover_text(crate::tl!("Translation needs a language model (not bundled)"));
         big(app, ui, Icon::Language, "Language", "app.dialog", json!({"id": "language"}));
     });
     group(ui, |ui| {
