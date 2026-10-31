@@ -782,11 +782,11 @@ fn smartart_gallery(
 /// Render paragraph formatting controls using the current paragraph state.
 fn paragraph_group(app: &mut SlideApp, ui: &mut Ui, st: &Value) {
     let en = enabled(app, "format.bullets");
+    let b = |k: &str| st.get(k).and_then(Value::as_bool).unwrap_or(false);
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 1.0;
-                let b = |k: &str| st.get(k).and_then(Value::as_bool).unwrap_or(false);
                 let (m, a) = small_button_named(ui, Icon::Bullets, "", "Bullets", en, b("bullets"), true);
                 if m.on_hover_text("Bullets").clicked() {
                     run(app, "format.bullets", json!({}));
