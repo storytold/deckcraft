@@ -550,7 +550,7 @@ fn draw_slide(app: &mut SlideApp, ui: &mut Ui, show: &mut Show, f: &Fr, painter:
         painter.text(
             pos2(full.center().x, full.min.y + 40.0),
             Align2::CENTER_CENTER,
-            "End of slide show, click to exit.",
+            crate::tl!("End of slide show, click to exit."),
             theme::font(18.0),
             Color32::from_gray(200),
         );
@@ -576,7 +576,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.rect_filled(full, CornerRadius::ZERO, c);
     }
     if !show.goto.is_empty() {
-        let label = format!("Go to slide {}", show.goto);
+        let label = crate::tl!("Go to slide {num}", num = show.goto);
         let w = (28.0 + label.len() as f32 * 10.0).clamp(160.0, full.width() - 32.0);
         let r = Rect::from_min_size(pos2(full.min.x + 16.0, full.max.y - 96.0), vec2(w, 36.0));
         painter.rect_filled(r, CornerRadius::same(6), Color32::from_black_alpha(190));
@@ -631,7 +631,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         painter.text(
             pos2(full.center().x, full.min.y + 36.0),
             Align2::CENTER_CENTER,
-            "Click the slide to zoom in. Esc cancels.",
+            crate::tl!("Click the slide to zoom in. Esc cancels."),
             theme::font(16.0),
             Color32::WHITE,
         );
@@ -647,7 +647,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
         painter.text(
             pos2(bar.min.x + 14.0, bar.center().y),
             Align2::LEFT_CENTER,
-            format!("Slide {} of {}", show.state.slide + 1, doc.slides.len()),
+            crate::tl!("Slide {current} of {total}", current = show.state.slide + 1, total = doc.slides.len()),
             theme::font(12.0),
             Color32::from_gray(200),
         );
@@ -656,7 +656,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(crate::tl!("Close")).clicked() {
             out.keep = false;
         }
         if child.button("▶").clicked() {
@@ -685,25 +685,27 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 out.keep = false;
             }
         }
-        if b(&mut child, if show.pen { "✏ on" } else { "✏" }).clicked() {
+        let pen_label = if show.pen { crate::tl!("✏ on") } else { "✏" };
+        if b(&mut child, pen_label).clicked() {
             show.set_pen(!show.pen);
         }
-        if b(&mut child, if show.laser { "◉ on" } else { "◉" }).clicked() {
+        let laser_label = if show.laser { crate::tl!("◉ on") } else { "◉" };
+        if b(&mut child, laser_label).clicked() {
             show.set_laser(!show.laser);
         }
-        if b(&mut child, "Black").clicked() {
+        if b(&mut child, crate::tl!("Black")).clicked() {
             toggle_blank(show, Color32::BLACK);
         }
-        if b(&mut child, "White").clicked() {
+        if b(&mut child, crate::tl!("White")).clicked() {
             toggle_blank(show, Color32::WHITE);
         }
-        if b(&mut child, "All").clicked() {
+        if b(&mut child, crate::tl!("All")).clicked() {
             show.grid = !show.grid;
         }
-        if b(&mut child, show.zoom_label()).clicked() {
+        if b(&mut child, crate::i18n::t(show.zoom_label())).clicked() {
             show.zoom_key();
         }
-        if b(&mut child, "End").clicked() {
+        if b(&mut child, crate::tl!("End")).clicked() {
             out.keep = false;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(300));
@@ -720,10 +722,12 @@ fn draw_extras(show: &mut Show, f: &Fr, painter: &egui::Painter, out: &mut Out) 
         let total = now - show.show_start;
         let r = Rect::from_min_size(pos2(full.min.x + 12.0, full.min.y + 12.0), vec2(220.0, 30.0));
         painter.rect_filled(r, CornerRadius::same(6), Color32::from_black_alpha(160));
+        let slide_time = format!("{:02}:{:04.1}", (t / 60.0) as u32, t % 60.0);
+        let total_time = format!("{:02}:{:02}", (total / 60.0) as u32, (total % 60.0) as u32);
         painter.text(
             r.center(),
             Align2::CENTER_CENTER,
-            format!("Slide {:02}:{:04.1}   Total {:02}:{:02}", (t / 60.0) as u32, t % 60.0, (total / 60.0) as u32, (total % 60.0) as u32),
+            crate::tl!("Slide {slide_time}   Total {total_time}", slide_time = slide_time, total_time = total_time),
             theme::font(13.0),
             Color32::WHITE,
         );
@@ -752,7 +756,7 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             for (i, secs) in show.timings.clone() {
                 let _ = app.run("transition.timing", json!({"index": i, "after": (secs * 1000.0).round() as u64}));
             }
-            app.set_status("Slide timings recorded.");
+            app.set_status(crate::tl!("Slide timings recorded."));
         }
         let last = show.state.slide;
         let _ = app.run("slide.go", json!({"index": last}));

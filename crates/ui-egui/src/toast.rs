@@ -20,12 +20,15 @@ pub fn missing_fonts_message(fonts: &[String]) -> Option<String> {
     let names = match fonts {
         [] => return None,
         [a] => a.clone(),
-        [a, b] => format!("{a} and {b}"),
-        [a, b, c] => format!("{a}, {b} and {c}"),
-        [a, b, c, rest @ ..] => format!("{a}, {b}, {c} and {} more", rest.len()),
+        [a, b] => crate::tl!("{} and {}", a, b),
+        [a, b, c] => crate::tl!("{}, {} and {}", a, b, c),
+        [a, b, c, rest @ ..] => crate::tl!("{}, {}, {} and {} more", a, b, c, rest.len()),
     };
-    let (it, them) = if fonts.len() == 1 { ("isn't", "it") } else { ("aren't", "them") };
-    Some(format!("{names} {it} installed on this computer. Text that uses {them} is shown in a similar font."))
+    if fonts.len() == 1 {
+        Some(crate::tl!("{} isn't installed on this computer. Text that uses it is shown in a similar font.", names))
+    } else {
+        Some(crate::tl!("{} aren't installed on this computer. Text that uses them is shown in a similar font.", names))
+    }
 }
 
 /// Toast the active presentation's missing fonts, once per opened document.
@@ -61,12 +64,12 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new(egui::RichText::new(&text).font(theme::font(13.0)).color(t.text)).wrap());
                     let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), egui::Sense::click());
-                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, "Close"));
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, crate::tl!("Close")));
                     if resp.hovered() {
                         ui.painter().rect_filled(r, CornerRadius::same(4), t.hover);
                     }
                     icons::paint(ui.painter(), r.shrink(3.0), Icon::Close, t.text_dim, false);
-                    if resp.on_hover_text("Close").clicked() {
+                    if resp.on_hover_text(crate::tl!("Close")).clicked() {
                         close = true;
                     }
                 });

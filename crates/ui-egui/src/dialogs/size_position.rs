@@ -133,17 +133,17 @@ fn reconcile_size_fields(d: &mut Dialog) {
 
 fn shown_points(d: &Dialog, key: &str, label: &str) -> Result<f64, String> {
     if edited(d, key) {
-        let n = parse_shown(&field_of(d, key)).ok_or_else(|| format!("{label} must be a number"))?;
+        let n = parse_shown(&field_of(d, key)).ok_or_else(|| crate::i18n::tf("{label} must be a number", &[("label", crate::i18n::t(label))]))?;
         return Ok(n * 72.0);
     }
-    exact_of(d, key).ok_or_else(|| format!("{label} must be a number"))
+    exact_of(d, key).ok_or_else(|| crate::i18n::tf("{label} must be a number", &[("label", crate::i18n::t(label))]))
 }
 
 fn shown_number(d: &Dialog, key: &str, label: &str) -> Result<f64, String> {
     if edited(d, key) {
-        return parse_shown(&field_of(d, key)).ok_or_else(|| format!("{label} must be a number"));
+        return parse_shown(&field_of(d, key)).ok_or_else(|| crate::i18n::tf("{label} must be a number", &[("label", crate::i18n::t(label))]));
     }
-    exact_of(d, key).ok_or_else(|| format!("{label} must be a number"))
+    exact_of(d, key).ok_or_else(|| crate::i18n::tf("{label} must be a number", &[("label", crate::i18n::t(label))]))
 }
 
 fn size_position_value(d: &Dialog) -> Result<Value, String> {
@@ -180,7 +180,7 @@ fn size_position_value(d: &Dialog) -> Result<Value, String> {
 
 pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     seed_size_position(app, d);
-    ui.label(egui::RichText::new("Size").strong());
+    ui.label(egui::RichText::new(crate::tl!("Size")).strong());
     text_row(ui, d, "Height (in):", "h");
     text_row(ui, d, "Width (in):", "w");
     text_row(ui, d, "Rotation (°):", "rot");
@@ -188,8 +188,8 @@ pub(super) fn size_position_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dial
     text_row(ui, d, "Scale width (%):", "scaleW");
     check(ui, d, "Lock aspect ratio", "lock", false);
     ui.add_space(8.0);
-    ui.label(egui::RichText::new("Position").strong());
-    ui.label("From the top-left corner of the slide");
+    ui.label(egui::RichText::new(crate::tl!("Position")).strong());
+    ui.label(crate::tl!("From the top-left corner of the slide"));
     text_row(ui, d, "Horizontal (in):", "x");
     text_row(ui, d, "Vertical (in):", "y");
     reconcile_size_fields(d);

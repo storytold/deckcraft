@@ -16,7 +16,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     };
     // What "Apply to All" re-applies: the current slide's background as command params.
     let mut current: Option<Value> = None;
-    ui.label(egui::RichText::new("Fill").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(crate::tl!("Fill")).font(theme::bold(13.0)));
     for (l, k) in [
         ("Solid fill", "solid"),
         ("Gradient fill", "gradient"),
@@ -24,7 +24,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
         ("Pattern fill", "pattern"),
         ("Follow the layout", "auto"),
     ] {
-        if ui.radio(kind == k, l).clicked() && kind != k {
+        if ui.radio(kind == k, crate::i18n::t(l)).clicked() && kind != k {
             match k {
                 "solid" => run(app, "design.background", json!({"color": "bg1"})),
                 "gradient" => {
@@ -50,7 +50,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
         Some(Fill::Solid { color }) => {
             current = Some(json!({"color": cref_param(color)}));
             ui.horizontal(|ui| {
-                ui.label("Color");
+                ui.label(crate::tl!("Color"));
                 let r = widgets::drop_button(ui, "Color", vec2(70.0, 20.0), true);
                 widgets::color_popup(&r).show(|ui| {
                     if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
@@ -59,7 +59,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
             let mut tr = ((1.0 - color.alpha()) * 100.0) as f32;
-            if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("Transparency").suffix("%")).drag_stopped() {
+            if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text(crate::tl!("Transparency")).suffix("%")).drag_stopped() {
                 run(app, "design.background", json!({"transparency": (f64::from(tr) / 100.0).clamp(0.0, 1.0)}));
             }
         }
@@ -76,7 +76,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
             }
         }
         Some(Fill::Picture(pf)) => {
-            if ui.button("Insert picture from file…").clicked()
+            if ui.button(crate::tl!("Insert picture from file…")).clicked()
                 && let Some(pick) = app.services.pick_open.as_mut()
                 && let Some(path) = pick("picture")
                 && let Some(Ok(bytes)) = app.services.read.as_ref().map(|r| r(&path))
@@ -90,13 +90,13 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
     ui.add_space(4.0);
     let hide = app.session.active().and_then(|d| d.current_slide().map(|s| !s.show_master_shapes)).unwrap_or(false);
     let mut h = hide;
-    if ui.checkbox(&mut h, "Hide background graphics").changed() {
+    if ui.checkbox(&mut h, crate::tl!("Hide background graphics")).changed() {
         run(app, "design.hideBackgroundGraphics", json!({"hide": h}));
     }
     ui.add_space(8.0);
     let picture = matches!(fill, Some(Fill::Picture(_)));
     ui.horizontal(|ui| {
-        if ui.add_enabled(current.is_some() || picture, egui::Button::new("Apply to All")).clicked() {
+        if ui.add_enabled(current.is_some() || picture, egui::Button::new(crate::tl!("Apply to All"))).clicked() {
             if let Some(Value::Object(mut o)) = current.clone() {
                 o.insert("all".into(), json!(true));
                 run(app, "design.background", Value::Object(o));
@@ -104,7 +104,7 @@ pub(super) fn background(app: &mut SlideApp, ui: &mut Ui) {
                 run(app, "design.background", json!({"copy": true}));
             }
         }
-        if ui.button("Reset Background").clicked() {
+        if ui.button(crate::tl!("Reset Background")).clicked() {
             run(app, "design.background", json!({"reset": true}));
         }
     });
@@ -116,11 +116,11 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
     use deckcraft_model::style::PictureMode;
     let alpha = pf.alpha.unwrap_or(1.0);
     let mut tr = ((1.0 - alpha) * 100.0) as f32;
-    if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text("Transparency").suffix("%")).drag_stopped() {
+    if ui.add(egui::Slider::new(&mut tr, 0.0..=100.0).text(crate::tl!("Transparency")).suffix("%")).drag_stopped() {
         run(app, "design.background", json!({"transparency": (f64::from(tr) / 100.0).clamp(0.0, 1.0)}));
     }
     let mut tile = matches!(pf.mode, PictureMode::Tile { .. });
-    if ui.checkbox(&mut tile, "Tile picture as texture").changed() {
+    if ui.checkbox(&mut tile, crate::tl!("Tile picture as texture")).changed() {
         run(app, "design.background", json!({"pictureProps": {"tile": tile}}));
     }
     let PictureMode::Tile { tx, ty, sx, sy, flip, align } = &pf.mode else { return };
@@ -130,6 +130,7 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
         ("Scale X", "bg-sx", *sx * 100.0, "%", 0.01),
         ("Scale Y", "bg-sy", *sy * 100.0, "%", 0.01),
     ] {
+        let label = crate::i18n::t(label);
         ui.horizontal(|ui| {
             ui.add_sized(vec2(72.0, 20.0), egui::Label::new(label));
             if let Some(v) = widgets::spinner(ui, id, label, value, if scale < 1.0 { 5.0 } else { 1.0 }, suffix, 64.0) {
@@ -155,8 +156,8 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
         _ => "Top Left",
     };
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(72.0, 20.0), egui::Label::new("Alignment"));
-        let combo = craft_ui::ComboBox::from_id_salt("bg-align").selected_text(align_name).width(140.0).show_ui(ui, |ui| {
+        let field = ui.add_sized(vec2(72.0, 20.0), egui::Label::new(crate::tl!("Alignment")));
+        let combo = craft_ui::ComboBox::from_id_salt("bg-align").selected_text(crate::i18n::t(align_name)).width(140.0).show_ui(ui, |ui| {
             for (k, l) in [
                 ("tl", "Top Left"),
                 ("t", "Top"),
@@ -168,7 +169,7 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
                 ("b", "Bottom"),
                 ("br", "Bottom Right"),
             ] {
-                if ui.selectable_label(align == k, l).clicked() {
+                if ui.selectable_label(align == k, crate::i18n::t(l)).clicked() {
                     run(app, "design.background", json!({"pictureProps": {"align": k}}));
                 }
             }
@@ -182,10 +183,10 @@ fn picture_background_options(app: &mut SlideApp, ui: &mut Ui, pf: &deckcraft_mo
         _ => "None",
     };
     ui.horizontal(|ui| {
-        let field = ui.add_sized(vec2(72.0, 20.0), egui::Label::new("Mirror"));
-        let combo = craft_ui::ComboBox::from_id_salt("bg-mirror").selected_text(mirror_name).width(140.0).show_ui(ui, |ui| {
+        let field = ui.add_sized(vec2(72.0, 20.0), egui::Label::new(crate::tl!("Mirror")));
+        let combo = craft_ui::ComboBox::from_id_salt("bg-mirror").selected_text(crate::i18n::t(mirror_name)).width(140.0).show_ui(ui, |ui| {
             for (k, l) in [("none", "None"), ("x", "Horizontal"), ("y", "Vertical"), ("xy", "Both")] {
-                if ui.selectable_label(flip == k, l).clicked() {
+                if ui.selectable_label(flip == k, crate::i18n::t(l)).clicked() {
                     run(app, "design.background", json!({"pictureProps": {"mirror": k}}));
                 }
             }

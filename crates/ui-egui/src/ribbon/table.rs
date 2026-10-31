@@ -15,31 +15,31 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
             let flags = tbl.as_ref().map(|t| (t.first_row, t.last_row, t.band_row, t.first_col, t.last_col, t.band_col)).unwrap_or_default();
             ui.horizontal(|ui| {
                 let mut a = flags.0;
-                if ui.checkbox(&mut a, "Header Row").changed() {
+                if ui.checkbox(&mut a, crate::tl!("Header Row")).changed() {
                     run(app, "table.options", json!({"headerRow": a}));
                 }
                 let mut d = flags.3;
-                if ui.checkbox(&mut d, "First Column").changed() {
+                if ui.checkbox(&mut d, crate::tl!("First Column")).changed() {
                     run(app, "table.options", json!({"firstColumn": d}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut b = flags.1;
-                if ui.checkbox(&mut b, "Total Row").changed() {
+                if ui.checkbox(&mut b, crate::tl!("Total Row")).changed() {
                     run(app, "table.options", json!({"totalRow": b}));
                 }
                 let mut e = flags.4;
-                if ui.checkbox(&mut e, "Last Column").changed() {
+                if ui.checkbox(&mut e, crate::tl!("Last Column")).changed() {
                     run(app, "table.options", json!({"lastColumn": e}));
                 }
             });
             ui.horizontal(|ui| {
                 let mut c = flags.2;
-                if ui.checkbox(&mut c, "Banded Rows").changed() {
+                if ui.checkbox(&mut c, crate::tl!("Banded Rows")).changed() {
                     run(app, "table.options", json!({"bandedRows": c}));
                 }
                 let mut f = flags.5;
-                if ui.checkbox(&mut f, "Banded Columns").changed() {
+                if ui.checkbox(&mut f, crate::tl!("Banded Columns")).changed() {
                     run(app, "table.options", json!({"bandedColumns": f}));
                 }
             });
@@ -61,7 +61,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                     paint_table_style(p, r, id, &sc);
                 }
             },
-            |i| quick.get(i).map(|x| x.1.clone()).unwrap_or_default(),
+            |i| quick.get(i).map(|x| crate::i18n::t(&x.1).to_string()).unwrap_or_default(),
         ) && let Some((id, _)) = quick.get(i)
         {
             run(app, "table.style", json!({"style": id}));
@@ -72,7 +72,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                 for (id, label) in &styles {
                     let (r, resp) = ui.allocate_exact_size(vec2(48.0, 36.0), Sense::click());
                     paint_table_style(ui.painter(), r.shrink(2.0), id, &sc);
-                    if resp.on_hover_text(label).clicked() {
+                    if resp.on_hover_text(crate::i18n::t(label)).clicked() {
                         run(app, "table.style", json!({"style": id}));
                         ui.close();
                     }
@@ -118,7 +118,7 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                 menu_item(app, ui, Icon::Borders, label, "table.borders", p);
             }
             ui.separator();
-            ui.menu_button("Pen Weight", |ui| {
+            ui.menu_button(crate::tl!("Pen Weight"), |ui| {
                 for w in [0.25, 0.5, 0.75, 1.0, 1.5, 2.25, 3.0, 4.5, 6.0] {
                     let cur = app.table_pen.get("width").and_then(Value::as_f64) == Some(w);
                     if ui.radio(cur, format!("{w} pt")).clicked() {
@@ -126,15 +126,15 @@ pub(super) fn table_design(app: &mut SlideApp, ui: &mut Ui) {
                     }
                 }
             });
-            ui.menu_button("Pen Style", |ui| {
+            ui.menu_button(crate::tl!("Pen Style"), |ui| {
                 for (l, d) in [("Solid", "solid"), ("Dash", "dash"), ("Dot", "sysDot"), ("Dash Dot", "dashDot"), ("Long Dash", "lgDash")] {
                     let cur = app.table_pen.get("dash").and_then(Value::as_str).unwrap_or("solid") == d;
-                    if ui.radio(cur, l).clicked() {
+                    if ui.radio(cur, crate::i18n::t(l)).clicked() {
                         app.table_pen["dash"] = json!(d);
                     }
                 }
             });
-            ui.menu_button("Pen Color", |ui| {
+            ui.menu_button(crate::tl!("Pen Color"), |ui| {
                 let sc = scheme(app);
                 if let Some(Some(c)) = widgets::color_grid(ui, &sc, None) {
                     app.table_pen["color"] = cref_param(&c);
@@ -219,14 +219,18 @@ pub(super) fn table_layout(app: &mut SlideApp, ui: &mut Ui) {
                 toggle(app, ui, Icon::AlignRight, "Align Right", "format.alignRight", false);
             });
             ui.horizontal(|ui| {
-                for (l, a) in [("Top", "top"), ("Center", "middle"), ("Bottom", "bottom")] {
-                    if ui.small_button(l).on_hover_text(format!("Align text to the {l} of the cell").to_lowercase()).clicked() {
+                for (l, a, tip) in [
+                    ("Top", "top", "Align text to the top of the cell"),
+                    ("Center", "middle", "Align text to the center of the cell"),
+                    ("Bottom", "bottom", "Align text to the bottom of the cell"),
+                ] {
+                    if ui.small_button(crate::i18n::t(l)).on_hover_text(crate::i18n::t(tip)).clicked() {
                         run(app, "table.cellAlign", json!({"anchor": a}));
                     }
                 }
-                ui.menu_button("Cell Margins", |ui| {
+                ui.menu_button(crate::tl!("Cell Margins"), |ui| {
                     for (l, preset) in [("Normal", "normal"), ("None", "none"), ("Narrow", "narrow"), ("Wide", "wide")] {
-                        if ui.button(l).clicked() {
+                        if ui.button(crate::i18n::t(l)).clicked() {
                             run(app, "table.cellMargins", json!({"preset": preset}));
                             ui.close();
                         }

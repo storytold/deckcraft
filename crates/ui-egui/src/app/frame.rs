@@ -4,6 +4,8 @@ impl SlideApp {
     /// Style, fonts and zoom setup. Runs in a real UI pass, not from `run_logic`, because
     /// `set_fonts`/`set_visuals` only take effect for the pass that lays out the UI.
     pub(super) fn ui_setup(&mut self, ctx: &egui::Context) -> bool {
+        let lang = crate::i18n::Lang::from_pref(&self.ui.language);
+        crate::i18n::set_current(lang);
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
@@ -37,7 +39,7 @@ impl SlideApp {
             if self.session.documents().iter().any(|d| d.is_dirty())
                 && let Err(e) = self.session.execute("file.recovery.save", &json!({}))
             {
-                self.set_status(format!("Couldn't save AutoRecover information: {e}"));
+                self.set_status(crate::tl!("Couldn't save AutoRecover information: {}", e));
             }
         }
         if self.session.documents().iter().any(|d| d.is_dirty()) {
