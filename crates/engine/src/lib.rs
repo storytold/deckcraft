@@ -33,7 +33,7 @@ use std::sync::Arc;
 
 use deckcraft_model::{Presentation, Shape, ShapeId, Slide, SlideId};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 pub use cmd::{CommandInfo, CommandSpec, command_specs, find_command};
 pub use deckcraft_geom as geom;
@@ -45,7 +45,7 @@ pub use tools::{Mods, PointerEvent, PointerKind, ToolKind};
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
-    #[error("unknown command `{0}`")]
+    #[error("unknown command `{0}`{like}", like = cmd::like_it(.0))]
     UnknownCommand(String),
     #[error("command `{0}` is not available right now: {1}")]
     Disabled(String, String),
@@ -295,8 +295,29 @@ impl DocState {
     pub fn shape(&self, id: ShapeId) -> Option<&Shape> {
         deckcraft_model::find_shape(self.shapes(), id)
     }
+    /// The shape with `id` where the selection is, else on any slide, with the selection that
+    /// gives its context (for inherited boxes): ids are unique in the presentation.
+    pub fn shape_anywhere(&self, id: ShapeId) -> Option<(&Shape, Selection)> {
+        if let Some(sh) = self.shape(id) {
+            return Some((sh, self.selection.clone()));
+        }
+        self.doc.slides.iter().enumerate().find_map(|(i, sl)| {
+            deckcraft_model::find_shape(&sl.shapes, id).map(|sh| (sh, Selection { slide: i, target: Target::Slides, ..self.selection.clone() }))
+        })
+    }
     pub fn selected_shapes(&self) -> Vec<&Shape> {
         self.selection.shapes.iter().filter_map(|id| self.shape(*id)).collect()
+    }
+    /// The selected shapes with their effective boxes, `[{id, rect: [x, y, w, h]}]`: what a
+    /// nudge or drag answers, so an agent needs no inspect after it.
+    pub fn selected_boxes(&self) -> Value {
+        Value::Array(
+            self.selection
+                .shapes
+                .iter()
+                .filter_map(|id| self.shape(*id).map(|sh| json!({"id": id, "rect": cmd::rect_json(&cmd::xfrm_of(&self.doc, &self.selection, sh))})))
+                .collect(),
+        )
     }
 }
 
@@ -628,14 +649,30 @@ impl Session {
     /// failed outer command, and committing the resulting undo entry or journal record.
     fn execute_unguarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
+        // A key the command doesn't take is refused, not dropped: dropped, the call "succeeds"
+        // and does something else (#298).
+        if let Some(given) = params.as_object()
+            && let Ok(keys) = cmd::accepted_keys(spec)
+        {
+            let mut unknown: Vec<&str> = given.keys().map(String::as_str).filter(|k| !keys.contains(k)).collect();
+            if !unknown.is_empty() {
+                unknown.sort_unstable();
+                return Err(cmd::bad(id, cmd::not_taken(spec, &unknown)));
+            }
+        }
         // Any other edit (or a click, a key, undo) settles an input method's composition first.
         if self.depth == 0 && (spec.journal || spec.undoable) && !matches!(id, "text.compose" | "text.commit") {
             self.settle_composition();
         }
         if let Err(e) = (spec.enabled)(self) {
-            let named = (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO) && (params.get("ids").is_some() || params.get("id").is_some());
+            // A command that takes `ids`/`id` runs on the shapes it names, not the selection; an
+            // empty or null target names nothing, so the command stays disabled.
+            let names = |k: &str| params.get(k).is_some_and(|v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+            let takes_ids = spec.params.split(|c: char| !c.is_ascii_alphanumeric()).any(|w| w == "ids" || w == "id");
+            let named =
+                (e == cmd::NOTHING_SELECTED || e == cmd::SELECT_TWO || e == cmd::SELECT_TEXT_OR_SHAPE) && takes_ids && (names("ids") || names("id"));
             if !named {
-                return Err(EngineError::Disabled(id.into(), e));
+                return Err(EngineError::Disabled(id.into(), cmd::how_to_enable(spec, &e)));
             }
         }
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));

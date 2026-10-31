@@ -119,7 +119,9 @@ impl Session {
             };
             if let Some((dx, dy)) = d {
                 self.execute("shape.move", &json!({"dx": dx, "dy": dy}))?;
-                return Ok(json!({"handled": true}));
+                // The moved boxes, so an agent nudging into place needs no inspect after each key.
+                let selected = self.active().map(crate::DocState::selected_boxes).unwrap_or_default();
+                return Ok(json!({"handled": true, "selected": selected}));
             }
             match k {
                 "backspace" | "delete" => {

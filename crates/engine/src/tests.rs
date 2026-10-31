@@ -3771,7 +3771,7 @@ fn smartart_pictures_3d_styles_and_colour_variants() {
     assert!(pics(&s).iter().all(|p| !matches!(p.fill, Some(deckcraft_model::Fill::Picture(_)))));
     // A 1×1 PNG put in through a sub-point lands in its top-level node.
     let png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
-    s.execute("smartArt.picture", &json!({"index": 1, "name": "p.png", "data": png})).unwrap();
+    s.execute("smartArt.picture", &json!({"index": 1, "data": png})).unwrap();
     let p = pics(&s);
     assert!(matches!(p[0].fill, Some(deckcraft_model::Fill::Picture(_))));
     assert!(!matches!(p[1].fill, Some(deckcraft_model::Fill::Picture(_))));
@@ -4624,21 +4624,21 @@ fn spelling_uses_a_dictionary_suggests_and_changes() {
     let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "Making sldie photos, sldie"})).unwrap();
     let id = r["id"].as_u64().unwrap();
     let v = s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap();
-    let list = v.as_array().unwrap();
+    let list = v["issues"].as_array().unwrap();
     assert_eq!(list.len(), 2, "{v}");
     assert_eq!(list[0]["word"], "sldie");
     assert_eq!(list[0]["suggestions"][0], "slide");
-    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST", "ignore": ["SLDIE"]})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST", "ignore": ["SLDIE"]})).unwrap()["issues"].as_array().unwrap().is_empty());
     let c = s.execute("review.spellingChange", &json!({"shape": id, "word": "sldie", "to": "slide"})).unwrap();
     assert_eq!(c["changed"], 1);
-    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap().as_array().unwrap().len(), 1);
+    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap()["issues"].as_array().unwrap().len(), 1);
     let c = s.execute("review.spellingChange", &json!({"word": "sldie", "to": "slide", "all": true})).unwrap();
     assert_eq!(c["changed"], 1);
-    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap()["issues"].as_array().unwrap().is_empty());
     // Whole words only, and one undo step per change.
     assert_eq!(s.execute("review.spellingChange", &json!({"word": "slid", "to": "x", "all": true})).unwrap()["changed"], 0);
     s.execute("edit.undo", &json!({})).unwrap();
-    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap().as_array().unwrap().len(), 1);
+    assert_eq!(s.execute("review.spelling", &json!({"lang": "xx-TEST"})).unwrap()["issues"].as_array().unwrap().len(), 1);
 }
 
 #[test]
@@ -4646,8 +4646,9 @@ fn spelling_without_a_dictionary_falls_back_to_common_misspellings() {
     let mut s = session();
     s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "Teh qzxv"})).unwrap();
     let v = s.execute("review.spelling", &json!({"lang": "zz-NONE"})).unwrap();
-    assert_eq!(v.as_array().map(Vec::len), Some(1));
-    assert_eq!(v[0]["word"], "Teh");
+    assert_eq!(v["issues"].as_array().map(Vec::len), Some(1));
+    assert_eq!(v["issues"][0]["word"], "Teh");
+    assert_eq!(v["dictionary"], false, "{v}");
     let d = s.execute("review.dictionary", &json!({"lang": "zz-NONE"})).unwrap();
     assert!(d["found"].is_null());
     assert_eq!(d["available"], false);
@@ -4678,7 +4679,7 @@ fn spelling_checks_each_run_in_its_language_and_learns_words() {
     })
     .unwrap();
     let v = s.execute("review.spelling", &json!({})).unwrap();
-    let words: Vec<_> = v
+    let words: Vec<_> = v["issues"]
         .as_array()
         .unwrap()
         .iter()
@@ -4686,7 +4687,7 @@ fn spelling_checks_each_run_in_its_language_and_learns_words() {
         .collect();
     assert_eq!(words, vec![("deckcraft".to_string(), "xx-ONE".to_string(), 12)]);
     s.execute("review.addToDictionary", &json!({"word": "deckcraft"})).unwrap();
-    assert!(s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({})).unwrap()["issues"].as_array().unwrap().is_empty());
     assert_eq!(std::fs::read_to_string(dir.join("user.dic")).unwrap(), "deckcraft\n");
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -4700,15 +4701,16 @@ fn language_marks_text_and_no_proof_and_repeats_are_reported() {
     s.execute("edit.select", &json!({"ids": [id]})).unwrap();
     s.execute("format.language", &json!({"lang": "xx-LN"})).unwrap();
     let v = s.execute("review.spelling", &json!({})).unwrap();
-    let got: Vec<(String, bool)> = v.as_array().unwrap().iter().map(|w| (w["word"].as_str().unwrap().to_string(), w["repeated"] == true)).collect();
+    let got: Vec<(String, bool)> =
+        v["issues"].as_array().unwrap().iter().map(|w| (w["word"].as_str().unwrap().to_string(), w["repeated"] == true)).collect();
     assert_eq!(got, vec![("the".to_string(), true), ("nigh".to_string(), false)]);
-    assert_eq!(v[0]["deleteFrom"], 3);
+    assert_eq!(v["issues"][0]["deleteFrom"], 3);
     // Deleting the repeat through the exact-occurrence change.
     s.execute("review.spellingChange", &json!({"shape": id, "para": 0, "start": 3, "word": " the", "to": ""})).unwrap();
     let v = s.execute("shape.inspect", &json!({"id": id})).unwrap();
     assert_eq!(v["shape"]["text"]["paragraphs"][0]["runs"][0]["text"], "the end is nigh");
     s.execute("format.language", &json!({"noProof": true})).unwrap();
-    assert!(s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().is_empty());
+    assert!(s.execute("review.spelling", &json!({})).unwrap()["issues"].as_array().unwrap().is_empty());
     assert!(s.execute("format.language", &json!({"lang": "en US!"})).is_err());
 }
 
@@ -4758,8 +4760,12 @@ fn language_all_marks_every_text_in_the_deck_with_nothing_selected() {
     // The defaults new text inherits.
     assert_eq!(st.doc.default_text_style.level(0).unwrap().run.lang.as_deref(), Some("xx-AL"));
     assert!(st.doc.masters.iter().all(|m| m.body_style.level(0).is_some_and(|l| l.run.lang.as_deref() == Some("xx-AL"))));
-    let words: Vec<String> =
-        s.execute("review.spelling", &json!({})).unwrap().as_array().unwrap().iter().map(|w| w["word"].as_str().unwrap().to_string()).collect();
+    let words: Vec<String> = s.execute("review.spelling", &json!({})).unwrap()["issues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["word"].as_str().unwrap().to_string())
+        .collect();
     assert_eq!(words, vec!["wurld", "hellow"]);
     // One undo step puts the per-box language back.
     s.execute("edit.undo", &json!({})).unwrap();
@@ -5968,6 +5974,1278 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
         assert!(matches!(r, Err(crate::EngineError::BadParams { .. })), "colorAt slide {slide} gave {r:?}");
     }
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #298: an unknown command id names the commands like it, so an agent that wrote `new` for
+/// `file.new` learns the id from the answer.
+#[test]
+fn an_unknown_command_names_commands_like_it() {
+    let mut s = session();
+    let e = s.execute("new", &json!({})).unwrap_err().to_string();
+    assert!(e.starts_with("unknown command `new`; commands named like it: "), "{e}");
+    assert!(e.contains("file.new") && e.contains("slide.new"), "{e}");
+    let e = s.execute("slide.nw", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("slide.new"), "{e}");
+    let e = s.execute("qqqqqq", &json!({})).unwrap_err().to_string();
+    assert_eq!(e, "unknown command `qqqqqq`");
+}
+
+/// #298: "not available" says how to make the command available, naming only the parameters
+/// that command takes.
+#[test]
+fn not_available_says_how_to_make_it_available() {
+    let mut s = session();
+    let e = s.execute("shape.setDefault", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("is not available right now: nothing selected") && e.contains("edit.select") && !e.contains("`ids`"), "{e}");
+    let e = s.execute("arrange.group", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("`ids`") && e.contains("edit.select"), "{e}");
+    let e = s.execute("table.style", &json!({"style": "grid"})).unwrap_err().to_string();
+    assert!(e.contains("`id`") && !e.contains("`ids`"), "{e}");
+    let e = s.execute("format.size", &json!({"size": 20})).unwrap_err().to_string();
+    assert!(e.contains("select text or a shape") && e.contains("text.edit") && e.contains("edit.select"), "{e}");
+    let mut empty = Session::new();
+    let e = empty.execute("slide.new", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("no presentation open") && e.contains("file.new") && e.contains("file.open"), "{e}");
+}
+
+/// #298: a parameter the command doesn't take is refused with the ones it does, instead of being
+/// dropped so the call "succeeds" and does something else.
+#[test]
+fn a_parameter_the_command_does_not_take_is_refused() {
+    let mut s = session();
+    let before = s.doc().unwrap().doc.clone();
+    let e = s.execute("shape.insert", &json!({"shape": "roundRect", "rect": [10, 10, 100, 50]})).unwrap_err().to_string();
+    assert!(e.contains("`shape.insert` was given `shape`, which it doesn't take. `shape.insert` takes {preset"), "{e}");
+    assert_eq!(s.doc().unwrap().doc, before, "a refused command changes nothing");
+    let e = s.execute("slide.new", &json!({"titel": "x", "layot": "blank"})).unwrap_err().to_string();
+    assert!(e.contains("was given `layot` and `titel`, which it doesn't take"), "{e}");
+    // The keys the docs list, including the ones they only mentioned in passing, still work.
+    s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [10, 10, 100, 50], "adj": [0.2], "flip": "h"})).unwrap();
+    s.execute("guide.add", &json!({"defaults": true})).unwrap();
+    // No command accepts a key it doesn't document: the check comes before anything runs.
+    for c in s.commands() {
+        let e = s.execute(c.id, &json!({"zzz": 1})).unwrap_err().to_string();
+        assert!(e.contains("was given `zzz`, which it doesn't take"), "{}: {e}", c.id);
+    }
+}
+
+/// #298: shape ids are unique in the presentation, so an edit by id reaches a shape on another
+/// slide, makes that slide current (the window follows) and says so; read-only lookups move
+/// nothing; commands that need several shapes on one slide say where the shape is; an id that is
+/// nowhere says so.
+#[test]
+fn a_shape_on_another_slide_is_edited_where_it_is() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    let r = s.execute("text.set", &json!({"id": a, "text": "far away"})).unwrap();
+    assert_eq!(r, json!({"changed": 1, "onSlides": [0], "currentSlide": 0}), "{r}");
+    let sel = s.doc().unwrap().selection.clone();
+    assert_eq!(
+        (sel.slide, sel.shapes.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>()),
+        (0, vec![a]),
+        "the edited shape's slide is current and it is selected"
+    );
+    s.execute("slide.go", &json!({"index": 1})).unwrap();
+    let r = s.execute("shape.fill", &json!({"ids": [a, b], "color": "#FF0000"})).unwrap();
+    assert_eq!(r, json!({"changed": 2, "onSlides": [0], "currentSlide": 0}), "{r}");
+    s.execute("slide.go", &json!({"index": 1})).unwrap();
+    assert_eq!(s.execute("text.get", &json!({"id": a})).unwrap()["text"], "far away");
+    assert_eq!(s.execute("shape.sites", &json!({"id": a})).unwrap().as_array().map(Vec::len), Some(4));
+    assert_eq!(s.doc().unwrap().selection.slide, 1, "a read-only lookup moves nothing");
+    let e = s.execute("shape.connect", &json!({"from": a, "to": b})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {a} is on slide index 0")) && e.contains("slide.go {\"index\": 0}"), "{e}");
+    let e = s.execute("text.set", &json!({"id": 999, "text": "x"})).unwrap_err().to_string();
+    assert!(e.contains("no shape 999 on the current slide (index 1)"), "{e}");
+}
+
+/// #298: slide.new answers the ids of the new slide's placeholders, so the title or body can be
+/// addressed without an inspect (both agents guessed "slide id + 1").
+#[test]
+fn slide_new_answers_its_placeholder_ids() {
+    let mut s = session();
+    let r = s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T"})).unwrap();
+    let title = r["placeholders"]["title"].as_u64().expect("title id");
+    let body = r["placeholders"]["body"].as_u64().expect("body id");
+    assert_ne!(title, body);
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let shapes = sl["shapes"].as_array().unwrap();
+    assert!(shapes.iter().any(|x| x["id"] == title && x["placeholder"] == "title" && x["text"] == "T"), "{sl}");
+    assert!(shapes.iter().any(|x| x["id"] == body), "{sl}");
+    s.execute("text.set", &json!({"id": body, "text": "first point"})).unwrap();
+    let keys: Vec<&str> = r["placeholders"].as_object().unwrap().keys().map(String::as_str).collect();
+    assert_eq!(keys, ["body", "title"], "one key per role, no duplicate under the xml kind: {r}");
+    let r = s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    assert_eq!(r["placeholders"], json!({}), "{r}");
+}
+
+/// #298: a diagram box is one command: shape.insert takes its fill, line, text size and colour,
+/// bold and name, instead of five follow-up commands that rely on the inserted shape being
+/// selected.
+#[test]
+fn shape_insert_takes_its_style_in_one_call() {
+    let mut s = session();
+    let r = s
+        .execute(
+            "shape.insert",
+            &json!({"preset": "roundRect", "rect": [10, 10, 200, 80], "text": "Engine", "fill": "#112233", "line": "none", "size": 20, "color": "#FFFFFF", "bold": true, "name": "Engine box"}),
+        )
+        .unwrap();
+    let id = r["id"].as_u64().unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.shape(deckcraft_model::ShapeId(id as u32)).unwrap();
+    assert_eq!(sh.name, "Engine box");
+    assert!(matches!(sh.fill, Some(deckcraft_model::Fill::Solid { .. })), "{:?}", sh.fill);
+    assert!(matches!(sh.line.as_ref().and_then(|l| l.fill.as_ref()), Some(deckcraft_model::Fill::None)), "{:?}", sh.line);
+    let run = &sh.text.as_ref().unwrap().paragraphs[0].runs[0].props;
+    assert_eq!((run.size, run.bold, run.fill.is_some()), (Some(20.0), Some(true), true), "{run:?}");
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let shape = sl["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).unwrap();
+    assert!(shape["fill"].as_str().unwrap_or("").to_uppercase().contains("112233"), "{shape}");
+    s.execute("edit.undo", &json!({})).unwrap();
+    assert!(s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).is_none(), "one undo step removes the styled shape");
+}
+
+#[test]
+fn design_palette_answers_the_active_themes_colours_and_fonts() {
+    let mut s = session();
+    let hex = |v: &serde_json::Value| -> String {
+        let h = v.as_str().unwrap().to_string();
+        assert!(h.len() == 7 && h.starts_with('#') && h[1..].chars().all(|c| c.is_ascii_digit() || ('A'..='F').contains(&c)), "{h}");
+        h
+    };
+    let lum = |h: &str| deckcraft_color::Rgba::from_hex(h).unwrap().luminance();
+    let check = |s: &mut Session| -> serde_json::Value {
+        let p = s.execute("design.palette", &json!({})).unwrap();
+        let colors = p["colors"].as_object().unwrap();
+        assert_eq!(colors.len(), 12);
+        for k in ["dk1", "lt1", "dk2", "lt2", "accent1", "accent2", "accent3", "accent4", "accent5", "accent6", "hlink", "folHlink"] {
+            hex(&colors[k]);
+        }
+        hex(&p["text"]);
+        hex(&p["background"]);
+        assert!(!p["fonts"]["major"].as_str().unwrap().is_empty());
+        assert!(!p["fonts"]["minor"].as_str().unwrap().is_empty());
+        assert!(!p["theme"].as_str().unwrap().is_empty());
+        p
+    };
+    let first = check(&mut s);
+    s.execute("design.theme", &json!({"name": "Nocturne"})).unwrap();
+    let nocturne = check(&mut s);
+    assert_ne!(first["colors"], nocturne["colors"]);
+    assert_eq!(nocturne["theme"], "Nocturne");
+    assert!(lum(nocturne["background"].as_str().unwrap()) < 0.2, "Nocturne slides are dark: {nocturne}");
+    assert!(lum(nocturne["text"].as_str().unwrap()) > 0.8, "Nocturne text is light: {nocturne}");
+    s.execute("design.theme", &json!({"name": "Harbor"})).unwrap();
+    let harbor = check(&mut s);
+    assert_ne!(nocturne["colors"], harbor["colors"]);
+    assert!(lum(harbor["background"].as_str().unwrap()) > 0.8, "Harbor slides are light: {harbor}");
+    assert!(lum(harbor["text"].as_str().unwrap()) < 0.2, "Harbor text is dark: {harbor}");
+    assert_eq!(harbor["fonts"], json!({"major": "Merriweather", "minor": "Open Sans"}));
+}
+
+/// Like the shape commands, edit.select follows an id to its slide (the window shows it, the
+/// answer says so) instead of answering ok and selecting nothing; an id that is nowhere is
+/// refused; ids spread over two slides are refused rather than half-selected.
+#[test]
+fn edit_select_follows_an_id_to_its_slide() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    let r = s.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    assert_eq!(r, json!({"selected": [a], "currentSlide": 0}), "{r}");
+    let sel = s.doc().unwrap().selection.clone();
+    assert_eq!((sel.slide, sel.shapes.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>()), (0, vec![a]));
+    s.execute("format.size", &json!({"size": 30})).unwrap();
+    let e = s.execute("edit.select", &json!({"ids": [999]})).unwrap_err().to_string();
+    assert!(e.contains("no shape 999 on the current slide (index 0)"), "{e}");
+    let e = s.execute("edit.select", &json!({"ids": [a, b]})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {b} is on slide index 1")) && e.contains("one slide"), "{e}");
+    assert_eq!(s.doc().unwrap().selection.shapes.iter().map(|x| u64::from(x.0)).collect::<Vec<_>>(), vec![a], "a refused select keeps the selection");
+}
+
+/// Final-run findings: an explicit empty `ids` is refused instead of quietly acting on the
+/// selection; animation.add and section.add answer what they made; slide.inspect leaves out an
+/// empty notesBody; and shape.connect's default sites face each other (right→left for shapes
+/// side by side, bottom→top for stacked ones) instead of "the closest pair", which crossed boxes.
+#[test]
+fn an_explicit_empty_ids_list_is_refused() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("shape.fill", &json!({"ids": [], "color": "#FF0000"})).unwrap_err().to_string();
+    assert!(e.contains("`ids` is empty"), "{e}");
+    s.execute("shape.fill", &json!({"ids": [a], "color": "#FF0000"})).unwrap();
+}
+
+/// An `ids` list whose entries are no shape ids (negative, strings, fractions) is not "empty": the
+/// refusal names the entry, so the caller sees what was wrong with it.
+#[test]
+fn an_ids_list_with_no_valid_id_is_refused_by_name() {
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap();
+    for ids in [json!([-1]), json!(["12"]), json!([1.5, null])] {
+        let e = s.execute("shape.fill", &json!({"ids": ids, "color": "#FF0000"})).unwrap_err().to_string();
+        assert!(e.contains("is not a shape id") && !e.contains("is empty"), "{ids}: {e}");
+    }
+    let e = s.execute("shape.fill", &json!({"ids": [], "color": "#FF0000"})).unwrap_err().to_string();
+    assert!(e.contains("`ids` is empty"), "{e}");
+}
+
+/// slide.new takes an id for the slide and one per placeholder it adds, and no more: with the
+/// footer, date and slide number off nothing is added, so the next shape's id follows on.
+#[test]
+fn slide_new_allocates_ids_only_for_what_it_adds() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(b, a + 2, "slide.new on a blank layout takes one id, the slide's");
+    // With a footer on, the slide gets one placeholder and one id for it.
+    s.execute("design.headerFooter", &json!({"footer": true, "footerText": "f"})).unwrap();
+    let c = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let d = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(d, c + 3, "slide.new with a footer takes the slide's id and the footer's");
+}
+
+#[test]
+fn animation_add_and_section_add_answer_what_they_made() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("animation.add", &json!({"ids": [a, b], "effect": "fade"})).unwrap();
+    assert_eq!(r, json!({"count": 2, "indices": [0, 1], "steps": [1, 1]}), "{r}");
+    let r = s.execute("animation.add", &json!({"ids": [a], "effect": "zoom", "class": "exit"})).unwrap();
+    assert_eq!(r, json!({"count": 3, "indices": [2], "steps": [2]}), "{r}");
+    s.execute("slide.new", &json!({})).unwrap();
+    let r = s.execute("section.add", &json!({"name": "Part B", "at": 1})).unwrap();
+    assert_eq!(r["sections"], json!([{"name": "Default Section", "start": 0, "slides": 1}, {"name": "Part B", "start": 1, "slides": 1}]), "{r}");
+}
+
+#[test]
+fn slide_inspect_leaves_out_an_empty_notes_body() {
+    let mut s = session();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert!(r.get("notesBody").is_none() && r["notes"] == "", "{r}");
+    s.execute("slide.notes", &json!({"text": "Say hello"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert!(r.get("notesBody").is_some() && r["notes"] == "Say hello", "{r}");
+}
+
+#[test]
+fn connector_default_sites_face_each_other() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [100, 200, 120, 60]})).unwrap()["id"].as_u64().unwrap();
+    let right = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [500, 220, 120, 60]})).unwrap()["id"].as_u64().unwrap();
+    let below = s.execute("shape.insert", &json!({"preset": "roundRect", "rect": [120, 400, 120, 60]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": a, "to": right})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(3), Some(1)), "side by side: right → left: {r}");
+    let r = s.execute("shape.connect", &json!({"from": a, "to": below})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(0)), "stacked: bottom → top: {r}");
+    let r = s.execute("shape.connect", &json!({"from": below, "to": right})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(3), Some(1)), "more sideways than up: right → left: {r}");
+}
+
+/// Agents export a PNG to learn that text wrapped or spilled: slide.inspect says so
+/// (`textOverflows`, `textHeight`), reports a table's drawn height (rows grow with their text),
+/// and carries no null fields.
+#[test]
+fn slide_inspect_flags_text_overflow_reports_drawn_table_height_and_has_no_nulls() {
+    let mut s = session();
+    let tight = s
+        .execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 120, 24], "text": "This sentence is far too long for a box this small to hold it", "size": 24}))
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let roomy = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 100, 600, 200], "text": "Fits"})).unwrap()["id"].as_u64().unwrap();
+    let table = s.execute("insert.table", &json!({"rows": 3, "cols": 1, "rect": [10, 320, 300, 30], "data": [["one"], ["two"], ["three"]]})).unwrap()
+        ["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("animation.add", &json!({"ids": [roomy], "effect": "fade"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    let shape = |id: u64| r["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).cloned().unwrap();
+    let t = shape(tight);
+    assert_eq!(t["textOverflows"], true, "{t}");
+    assert!(t["textHeight"].as_f64().unwrap_or(0.0) > 24.0, "{t}");
+    assert!(shape(roomy).get("textOverflows").is_none(), "{}", shape(roomy));
+    assert!(shape(table)["box"][3].as_f64().unwrap() > 30.0, "rows grow with their text: {}", shape(table));
+    fn has_null(v: &serde_json::Value) -> bool {
+        match v {
+            serde_json::Value::Null => true,
+            serde_json::Value::Object(o) => o.values().any(has_null),
+            serde_json::Value::Array(a) => a.iter().any(has_null),
+            _ => false,
+        }
+    }
+    assert!(!has_null(&r), "{r}");
+}
+
+/// animation.get numbers the click steps; several ids in one animation.add form one step.
+#[test]
+fn animation_get_numbers_the_click_steps() {
+    let mut s = session();
+    let ids: Vec<u64> = (0..3)
+        .map(|k| s.execute("shape.insert", &json!({"preset": "rect", "rect": [10 + 150 * k, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap())
+        .collect();
+    s.execute("animation.add", &json!({"ids": [ids[0], ids[1]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[2]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[0]], "effect": "zoom", "class": "exit", "start": "afterPrevious"})).unwrap();
+    let r = s.execute("animation.get", &json!({})).unwrap();
+    let steps: Vec<u64> = r.as_array().unwrap().iter().map(|a| a["step"].as_u64().unwrap()).collect();
+    assert_eq!(steps, [1, 1, 2, 2], "{r}");
+}
+
+/// W6: slide.inspect used to embed every animation (10-15 KB on an animated slide, read 14 times
+/// in one agent run). It now answers a summary {count, clickSteps}; `animations: true` embeds
+/// the list as before, and animation.get still answers it with click steps.
+#[test]
+fn slide_inspect_summarises_animations_unless_asked() {
+    let mut s = session();
+    let ids: Vec<u64> = (0..3)
+        .map(|k| s.execute("shape.insert", &json!({"preset": "rect", "rect": [10 + 150 * k, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap())
+        .collect();
+    s.execute("animation.add", &json!({"ids": [ids[0]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[1]], "effect": "fade", "start": "onClick"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [ids[2]], "effect": "zoom", "class": "exit", "start": "afterPrevious"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert_eq!(r["animations"], json!({"count": 3, "clickSteps": 2}), "{r}");
+    assert!(!r.to_string().contains("\"effect\""), "no per-animation entries: {r}");
+    let full = s.execute("slide.inspect", &json!({"animations": true})).unwrap();
+    let list = full["animations"].as_array().expect("the full list");
+    assert_eq!(list.len(), 3, "{full}");
+    assert!(list.iter().all(|a| a["effect"].is_string() && a["shape"].is_u64()), "{full}");
+    // A slide without animations still says so, cheaply.
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let r = s.execute("slide.inspect", &json!({})).unwrap();
+    assert_eq!(r["animations"], json!({"count": 0, "clickSteps": 0}), "{r}");
+}
+
+/// #786: format.font sets the East Asian and complex-script faces too, not only the Latin one
+/// (with keys checked against the params doc, `eastAsia` used to be refused outright).
+#[test]
+fn format_font_sets_the_east_asian_and_complex_script_faces() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60], "text": "Mixed 日本語 text"})).unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("format.font", &json!({"family": "Inter", "eastAsia": "BIZ UDPGothic", "complexScript": "Noto Sans Arabic"})).unwrap();
+    let props =
+        |s: &Session| s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    let r = props(&s);
+    assert_eq!((r.font.as_deref(), r.font_ea.as_deref(), r.font_cs.as_deref()), (Some("Inter"), Some("BIZ UDPGothic"), Some("Noto Sans Arabic")));
+    s.execute("format.font", &json!({"family": "Lato"})).unwrap();
+    let r = props(&s);
+    assert_eq!((r.font.as_deref(), r.font_ea.as_deref()), (Some("Lato"), Some("BIZ UDPGothic")), "a Latin-only call keeps the other faces");
+}
+
+/// #300 (item 4): master.insertPlaceholder refuses a kind it doesn't know instead of quietly
+/// inserting a content placeholder.
+#[test]
+fn master_insert_placeholder_refuses_an_unknown_kind() {
+    let mut s = session();
+    s.execute("view.slideMaster", &json!({"layout": 0})).unwrap();
+    let shapes = |s: &Session| s.doc().unwrap().doc.masters[0].layouts[0].shapes.len();
+    let before = shapes(&s);
+    let e = s.execute("master.insertPlaceholder", &json!({"kind": "footer", "rect": [10, 10, 100, 50]})).unwrap_err().to_string();
+    assert!(e.contains("`kind`") && e.contains("content, text, picture, chart, table or media") && e.contains("`footer`"), "{e}");
+    assert_eq!(shapes(&s), before, "nothing inserted");
+    s.execute("master.insertPlaceholder", &json!({"kind": "picture", "rect": [10, 10, 100, 50]})).unwrap();
+    assert_eq!(shapes(&s), before + 1);
+}
+
+/// P1: an animation index past the end says which slide it looked at and how many animations
+/// that slide has, so an agent on the wrong slide sees it.
+#[test]
+fn animation_errors_name_the_slide_they_looked_at() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [a], "effect": "fade"})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    for (cmd, params) in [
+        ("animation.remove", json!({"index": 0})),
+        ("animation.move", json!({"index": 0, "to": 0})),
+        ("animation.timing", json!({"index": 0, "duration": 100})),
+    ] {
+        let e = s.execute(cmd, &params).unwrap_err().to_string();
+        assert!(e.contains("slide index 1") && e.contains("no animations"), "{cmd}: {e}");
+    }
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let e = s.execute("animation.remove", &json!({"index": 3})).unwrap_err().to_string();
+    assert!(e.contains("slide index 0") && e.contains("1 animation"), "{e}");
+}
+
+/// `table.selectCells` then a run or paragraph formatter formats the selected cells only; a
+/// table selected as a shape (no cell range) is formatted whole, as before.
+#[test]
+fn formatting_after_select_cells_touches_only_those_cells() {
+    use deckcraft_model::text::Align;
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    let data = json!([["a", "b", "c"], ["d", "e", "f"], ["g", "h", "i"]]);
+    let id = s.execute("insert.table", &json!({"rows": 3, "cols": 3, "data": data})).unwrap()["id"].clone();
+    let table = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.shapes().iter().find(|sh| json!(sh.id) == id).unwrap().clone();
+        let deckcraft_model::ShapeKind::Table(t) = sh.kind else { panic!("not a table") };
+        t
+    };
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    // The header row.
+    s.execute("table.selectCells", &json!({"id": id, "from": [0, 0], "to": [0, 2]})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
+    s.execute("format.align", &json!({"align": "center"})).unwrap();
+    let t = table(&s);
+    for c in 0..3 {
+        let p = &t.rows[0].cells[c].text.paragraphs[0];
+        assert_eq!(p.runs[0].props.bold, Some(true), "header cell {c} bold");
+        assert_eq!(p.runs[0].props.fill, red, "header cell {c} red");
+        assert_eq!(p.props.align, Some(Align::Center), "header cell {c} centred");
+    }
+    for r in 1..3 {
+        for c in 0..3 {
+            let p = &t.rows[r].cells[c].text.paragraphs[0];
+            assert_eq!(p.runs[0].props.bold, None, "body cell {r},{c} not bold");
+            assert_eq!(p.runs[0].props.fill, None, "body cell {r},{c} not coloured");
+            assert_eq!(p.props.align, None, "body cell {r},{c} not centred");
+        }
+    }
+    // The whole table (selected as a shape, no cell range) still changes everywhere.
+    s.execute("edit.select", &json!({"ids": [id]})).unwrap();
+    assert!(s.doc().unwrap().selection.cells.is_none());
+    s.execute("format.italic", &json!({"on": true})).unwrap();
+    s.execute("format.align", &json!({"align": "right"})).unwrap();
+    let t = table(&s);
+    for cell in t.rows.iter().flat_map(|r| &r.cells) {
+        let p = &cell.text.paragraphs[0];
+        assert_eq!(p.runs[0].props.italic, Some(true));
+        assert_eq!(p.props.align, Some(Align::Right));
+    }
+}
+
+/// `edit.select` several shapes then `format.color` colours every one of them, however their
+/// text got there (styled insert, text.set afterwards, several paragraphs, selected from another
+/// slide), and the answer counts them.
+#[test]
+fn format_color_on_a_multi_selection_colours_every_shape() {
+    use deckcraft_model::{ColorRef, Fill};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let ins = |s: &mut Session, p: serde_json::Value| s.execute("shape.insert", &p).unwrap()["id"].as_u64().unwrap();
+    let a = ins(
+        &mut s,
+        json!({"preset": "roundRect", "rect": [20, 20, 200, 60], "text": "L1", "fill": "#1F3A5F", "size": 14, "color": "#FFFFFF", "bold": true}),
+    );
+    let b = ins(&mut s, json!({"preset": "roundRect", "rect": [20, 100, 200, 60], "text": "L2", "fill": "#1F3A5F", "size": 14, "color": "#222222"}));
+    s.execute("text.set", &json!({"id": b, "text": "L4 replaced"})).unwrap();
+    let c = ins(&mut s, json!({"preset": "roundRect", "rect": [20, 180, 200, 60], "fill": "#1F3A5F", "size": 14, "color": "#222222", "bold": true}));
+    s.execute("text.set", &json!({"id": c, "text": "L5 set later"})).unwrap();
+    let d = ins(&mut s, json!({"preset": "roundRect", "rect": [20, 260, 200, 60], "text": "L3\nsecond line", "fill": "#1F3A5F"}));
+    // Select them from the other slide: edit.select follows the ids to theirs.
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let r = s.execute("edit.select", &json!({"ids": [a, b, c, d]})).unwrap();
+    assert_eq!(r["selected"].as_array().map(Vec::len), Some(4), "{r}");
+    let r = s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
+    let red = Some(Fill::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(255, 0, 0))));
+    let st = s.doc().unwrap();
+    for id in [a, b, c, d] {
+        let sh = st.shape(ShapeId(id as u32)).unwrap();
+        let body = sh.text.as_ref().unwrap();
+        assert!(!body.paragraphs.is_empty() && body.paragraphs.iter().all(|p| !p.runs.is_empty()), "shape {id} has text");
+        for (pi, p) in body.paragraphs.iter().enumerate() {
+            for run in &p.runs {
+                assert_eq!(run.props.fill, red, "shape {id} paragraph {pi} run {:?}", run.text);
+            }
+        }
+    }
+    assert_eq!(r["changed"].as_u64().or_else(|| r.as_u64()), Some(4), "answer counts the shapes: {r}");
+}
+
+/// V1: `section.add` with `at` past the end is refused with the valid range instead of silently
+/// starting the section at the last slide, and the answer lists the resulting sections.
+#[test]
+fn section_add_refuses_an_index_past_the_end_and_lists_the_sections() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let e = s.execute("section.add", &json!({"name": "Late", "at": 2})).unwrap_err().to_string();
+    assert!(e.contains("no slide at index 2") && e.contains("2 slides") && e.contains("0 through 1"), "{e}");
+    assert!(s.doc().unwrap().doc.sections.is_empty(), "a refused section.add adds nothing");
+    let r = s.execute("section.add", &json!({"name": "Part B", "at": 1})).unwrap();
+    assert_eq!((r["index"].as_u64(), r["name"].as_str(), r["count"].as_u64()), (Some(1), Some("Part B"), Some(2)), "{r}");
+    assert_eq!(r["sections"], json!([{"name": "Default Section", "start": 0, "slides": 1}, {"name": "Part B", "start": 1, "slides": 1}]), "{r}");
+}
+
+/// V8: `slide.fromOutline` makes its last new slide current (as `slide.new` does), so a following
+/// `slide.new` lands after the outline's slides, and it answers the indices and ids it made.
+#[test]
+fn from_outline_makes_its_last_slide_current_and_answers_indices_and_ids() {
+    let mut s = session();
+    let r = s.execute("slide.fromOutline", &json!({"text": "# One\n- a\n# Two\n- b", "markdown": true})).unwrap();
+    assert_eq!(r["slides"], 2, "{r}");
+    assert_eq!(r["indices"], json!([1, 2]), "{r}");
+    let st = s.doc().unwrap();
+    let ids: Vec<u64> = st.doc.slides.iter().skip(1).map(|x| u64::from(x.id.0)).collect();
+    assert_eq!(r["ids"], json!(ids), "{r}");
+    assert_eq!(st.selection.slide, 2, "the last outline slide is current");
+    assert_eq!(st.selection.slides, vec![st.doc.slides[2].id]);
+    let n = s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(n["index"], 3, "a new slide goes after the outline's slides: {n}");
+}
+
+/// W7: the thin answers carry what the next step needs. `slide.duplicate` answers the copy's
+/// index and its shapes (placeholders by role, as slide.new does); `slide.move` answers the slide
+/// id; `design.theme` answers the palette as `design.palette {}` does; `comment.reply` and
+/// `comment.resolve` answer the thread's state; `edit.undo` and `edit.redo` name the slide.
+#[test]
+fn thin_answers_carry_the_next_steps_facts() {
+    let mut s = session();
+    let title = s.execute("slide.inspect", &json!({})).unwrap()["shapes"][0]["id"].as_u64().unwrap();
+    let d = s.execute("slide.duplicate", &json!({})).unwrap();
+    assert_eq!(d["index"], 1, "{d}");
+    let st = s.doc().unwrap();
+    assert_eq!(d["ids"], json!([st.doc.slides[1].id]), "{d}");
+    let copy_ids: Vec<u64> = st.doc.slides[1].shapes.iter().map(|x| u64::from(x.id.0)).collect();
+    assert_eq!(d["shapes"], json!(copy_ids), "{d}");
+    assert!(d["placeholders"]["title"].is_u64() && d["placeholders"]["title"] != title, "fresh placeholder ids: {d}");
+
+    let m = s.execute("slide.move", &json!({"from": 1, "to": 0})).unwrap();
+    let st = s.doc().unwrap();
+    let id = st.doc.slides[0].id;
+    assert_eq!(m, json!({"index": 0, "moved": 1, "ids": [id], "id": id}), "{m}");
+
+    let t = s.execute("design.theme", &json!({"name": "Harbor"})).unwrap();
+    let p = s.execute("design.palette", &json!({})).unwrap();
+    assert_eq!(t, p, "design.theme answers the palette");
+    assert_eq!(t["theme"], "Harbor", "{t}");
+
+    s.execute("comment.add", &json!({"text": "first"})).unwrap();
+    let r = s.execute("comment.reply", &json!({"index": 0, "text": "yes"})).unwrap();
+    assert_eq!(r, json!({"index": 0, "slide": 0, "resolved": false, "replies": 1}), "{r}");
+    let r = s.execute("comment.resolve", &json!({"index": 0})).unwrap();
+    assert_eq!(r, json!({"index": 0, "slide": 0, "resolved": true, "replies": 1}), "{r}");
+
+    let u = s.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(u, json!({"label": "Resolve Thread", "slide": 0}), "{u}");
+    let r = s.execute("edit.redo", &json!({})).unwrap();
+    assert_eq!(r, json!({"label": "Resolve Thread", "slide": 0}), "{r}");
+}
+
+/// V14: `insert.table`, `insert.chart` and `insert.picture` answer the final box as
+/// `rect: [x, y, w, h]` beside the id, so the next layout step needs no inspect.
+#[test]
+fn insert_table_chart_and_picture_answer_their_rect() {
+    const PNG: &[u8] = &[
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63, 0xf8, 0xcf,
+        0xc0, 0xf0, 0x1f, 0x00, 0x05, 0x00, 0x01, 0xff, 0x89, 0x99, 0x3d, 0x1d, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+        0x82,
+    ];
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let t = s.execute("insert.table", &json!({"rows": 2, "cols": 3, "rect": [100, 200, 300, 80]})).unwrap();
+    assert_eq!(t["rect"], json!([100.0, 200.0, 300.0, 80.0]), "{t}");
+    let c = s.execute("insert.chart", &json!({"type": "pie"})).unwrap();
+    let size = s.doc().unwrap().doc.slide_size;
+    assert_eq!(c["rect"], json!([size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7]), "{c}");
+    let p = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png", "rect": [10, 20, 30, 40]})).unwrap();
+    assert_eq!(p["rect"], json!([10.0, 20.0, 30.0, 40.0]), "{p}");
+    for (r, id) in [(&t, t["id"].clone()), (&c, c["id"].clone()), (&p, p["id"].clone())] {
+        let b = s.execute("shape.inspect", &json!({"id": id})).unwrap()["box"].clone();
+        assert_eq!(r["rect"], json!([b["x"], b["y"], b["w"], b["h"]]), "{r}");
+    }
+    // Into a selected empty content placeholder the picture takes the placeholder's box.
+    let n = s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+    let body = n["placeholders"]["body"].clone();
+    s.execute("edit.select", &json!({"ids": [body]})).unwrap();
+    let p = s.execute("insert.picture", &json!({"data": cmd::base64_encode(PNG), "name": "a.png"})).unwrap();
+    let b = s.execute("shape.inspect", &json!({"id": body})).unwrap()["box"].clone();
+    assert_eq!((p["id"].clone(), p["rect"].clone()), (body, json!([b["x"], b["y"], b["w"], b["h"]])), "{p}");
+}
+
+/// W3: the four table insert commands grow the table; the answer carries the table's resulting
+/// `rect`, `rows` and `cols`, and `overflows: true` when the box runs off the slide.
+#[test]
+fn table_inserts_answer_the_resulting_rect_and_flag_overflow() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.table", &json!({"rows": 2, "cols": 2, "rect": [600, 100, 300, 80]})).unwrap()["id"].clone();
+    let r = s.execute("table.insertRowBelow", &json!({"id": id, "row": 1})).unwrap();
+    assert_eq!((r["changed"].as_u64(), r["rows"].as_u64(), r["cols"].as_u64()), (Some(1), Some(3), Some(2)), "{r}");
+    assert_eq!(r["rect"], json!([600.0, 100.0, 300.0, 120.0]), "{r}");
+    assert_eq!(r["overflows"], false, "{r}");
+    // A third 150pt column takes the right edge to 1050 on a 960pt-wide slide.
+    let r = s.execute("table.insertColumnRight", &json!({"id": id, "col": 1})).unwrap();
+    assert_eq!((r["rows"].as_u64(), r["cols"].as_u64()), (Some(3), Some(3)), "{r}");
+    assert_eq!(r["rect"], json!([600.0, 100.0, 450.0, 120.0]), "{r}");
+    assert_eq!(r["overflows"], true, "{r}");
+    for cmd in ["table.insertRowAbove", "table.insertColumnLeft"] {
+        let r = s.execute(cmd, &json!({"id": id})).unwrap();
+        assert!(r["rect"].is_array() && r["rows"].is_u64() && r["cols"].is_u64() && r["overflows"].is_boolean(), "{cmd}: {r}");
+    }
+    // Delete and the other table edits answer as before.
+    let r = s.execute("table.deleteRow", &json!({"id": id, "row": 0})).unwrap();
+    assert_eq!(r, json!(1), "{r}");
+}
+
+/// V3: `table.style` refuses an unknown style naming the valid ids (built-in, plus the ones the
+/// file defines) instead of storing it and answering 1.
+#[test]
+fn table_style_refuses_an_unknown_style_naming_the_valid_ids() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.table", &json!({"rows": 2, "cols": 2})).unwrap()["id"].clone();
+    let e = s.execute("table.style", &json!({"id": id, "style": "Medium Style 2"})).unwrap_err().to_string();
+    assert!(e.contains("no table style `Medium Style 2`"), "{e}");
+    for want in ["none", "grid", "medium2-accent1", "light1-accent2", "dark1-tx1"] {
+        assert!(e.contains(want), "{want} missing from {e}");
+    }
+    assert_eq!(table_of(&s, deckcraft_model::ShapeId(id.as_u64().unwrap() as u32)).style, "medium2-accent1", "unchanged");
+    s.execute("table.style", &json!({"id": id, "style": "dark1-tx1"})).unwrap();
+    assert_eq!(table_of(&s, deckcraft_model::ShapeId(id.as_u64().unwrap() as u32)).style, "dark1-tx1");
+    // A style the file defines is valid too.
+    {
+        let d = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut d.doc);
+        doc.table_styles.push(deckcraft_model::table::TableStyleDef {
+            id: "{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}".into(),
+            name: "File".into(),
+            ..Default::default()
+        });
+    }
+    s.execute("table.style", &json!({"id": id, "style": "{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}"})).unwrap();
+    let e = s.execute("table.style", &json!({"id": id, "style": "nope"})).unwrap_err().to_string();
+    assert!(e.contains("{F5AB1C69-6EDB-4FF4-983F-18BD219EF322}"), "the file's style is named: {e}");
+}
+
+/// V4: `chart.options {palette}` takes a palette name; a list of colours (or any unknown value)
+/// is refused naming the palettes, instead of being accepted without effect.
+#[test]
+fn chart_options_palette_takes_a_name_and_refuses_a_colour_list() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let id = s.execute("insert.chart", &json!({"type": "pie"})).unwrap()["id"].clone();
+    let e = s.execute("chart.options", &json!({"id": id, "palette": ["#FF0000", "#00FF00"]})).unwrap_err().to_string();
+    assert!(e.contains("`palette`") && e.contains("colorful1") && e.contains("monochrome1"), "{e}");
+    let e = s.execute("chart.options", &json!({"id": id, "palette": "rainbow"})).unwrap_err().to_string();
+    assert!(e.contains("rainbow") && e.contains("colorful1"), "{e}");
+    s.execute("chart.options", &json!({"id": id, "palette": "monochrome3"})).unwrap();
+    let st = s.doc().unwrap();
+    let sh = st.shape(deckcraft_model::ShapeId(id.as_u64().unwrap() as u32)).unwrap();
+    let deckcraft_model::ShapeKind::Chart(c) = &sh.kind else { panic!("not a chart") };
+    assert_eq!(c.palette, "monochrome3");
+}
+
+/// V2: `design.headerFooter` answers the slides it changed and sets the presentation's default,
+/// so slides added later (slide.new, slide.fromOutline) get the same footer and slide number
+/// without running it again.
+#[test]
+fn header_footer_is_inherited_by_slides_added_later() {
+    use deckcraft_model::PhType;
+    let mut s = session();
+    let r = s.execute("design.headerFooter", &json!({"slideNumber": true, "footer": true, "footerText": "Q3 review"})).unwrap();
+    assert_eq!(r, json!({"slides": 1, "default": true}), "{r}");
+    let footer = |s: &Session, i: usize| {
+        let sl = s.doc().unwrap().doc.slides[i].clone();
+        let num = sl.shapes.iter().any(|x| x.ph_type() == Some(PhType::SlideNum));
+        let text = sl.shapes.iter().find(|x| x.ph_type() == Some(PhType::Footer)).and_then(|x| x.text.as_ref()).map(|t| t.text());
+        (num, text)
+    };
+    assert_eq!(footer(&s, 0), (true, Some("Q3 review".into())));
+    let n = s.execute("slide.new", &json!({"layout": "titleAndContent"})).unwrap();
+    assert_eq!(footer(&s, 1), (true, Some("Q3 review".into())), "slide.new inherits: {n}");
+    // The footer and slide number design.headerFooter adds are named in the answer too.
+    let num = s.doc().unwrap().doc.slides[1].shapes.iter().find(|x| x.ph_type() == Some(PhType::SlideNum)).map(|x| json!(x.id));
+    assert_eq!(n["placeholders"].get("sldNum"), num.as_ref(), "{n}");
+    assert!(n["placeholders"].get("ftr").is_some_and(Value::is_u64), "{n}");
+    s.execute("slide.fromOutline", &json!({"text": "# Two\n- b", "markdown": true})).unwrap();
+    assert_eq!(footer(&s, 2), (true, Some("Q3 review".into())), "slide.fromOutline inherits");
+    // Turning them off is inherited too.
+    let r = s.execute("design.headerFooter", &json!({"slideNumber": false, "footer": false})).unwrap();
+    assert_eq!(r["slides"], 3, "{r}");
+    s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(footer(&s, 3), (false, None));
+}
+
+/// V9: `comment.list {}` is the current slide's comments (the doc says so); `{all: true}` lists
+/// every slide's comments with their slide index, so "no comments" is not a wrong slide.
+#[test]
+fn comment_list_all_covers_every_slide() {
+    let mut s = session();
+    s.execute("comment.add", &json!({"text": "on first"})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("comment.add", &json!({"text": "on second"})).unwrap();
+    let here = s.execute("comment.list", &json!({})).unwrap();
+    assert_eq!(here.as_array().map(Vec::len), Some(1), "{here}");
+    assert_eq!(here[0]["text"], "on second", "{here}");
+    let all = s.execute("comment.list", &json!({"all": true})).unwrap();
+    let got: Vec<(u64, u64, &str)> =
+        all.as_array().unwrap().iter().map(|c| (c["slide"].as_u64().unwrap(), c["index"].as_u64().unwrap(), c["text"].as_str().unwrap())).collect();
+    assert_eq!(got, vec![(0, 0, "on first"), (1, 0, "on second")], "{all}");
+    assert!(all[0]["author"].is_string() && all[0]["resolved"].is_boolean(), "the comment's own fields stay: {all}");
+}
+
+/// W10: `transition.applyAll` copies kind, duration and options from the current slide to every
+/// slide and answers how many; the doc says what is copied.
+#[test]
+fn transition_apply_all_copies_everything_and_answers_the_slide_count() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "push", "option": "l", "duration": 1250})).unwrap();
+    let r = s.execute("transition.applyAll", &json!({})).unwrap();
+    assert_eq!(r, json!({"slides": 3, "source": 2, "kind": "push"}), "{r}");
+    let st = s.doc().unwrap();
+    let want = st.doc.slides[2].transition.clone().expect("set");
+    assert_eq!((want.kind.as_str(), want.option.as_str(), want.duration_ms), ("push", "l", 1250));
+    for sl in &st.doc.slides {
+        assert_eq!(sl.transition.as_ref(), Some(&want), "slide {} keeps kind, option and duration", sl.id);
+    }
+    let doc = command_specs().iter().find(|c| c.id == "transition.applyAll").unwrap().params;
+    assert!(doc.contains("duration") && doc.contains("option"), "{doc}");
+    let doc = command_specs().iter().find(|c| c.id == "animation.move").unwrap().params;
+    assert!(doc.contains("renumber") && doc.contains("step"), "{doc}");
+}
+
+/// X2: `transition.applyAll` refuses when the current slide has no transition (it used to clear
+/// every slide silently), unless `clear: true`; the answer names the source slide and kind.
+#[test]
+fn transition_apply_all_refuses_an_empty_source_unless_clearing() {
+    let mut s = session();
+    s.execute("transition.set", &json!({"kind": "fade", "duration": 700})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 2);
+    let e = s.execute("transition.applyAll", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("slide index 2 has no transition to copy") && e.contains("clear: true"), "{e}");
+    assert!(s.doc().unwrap().doc.slides[0].transition.is_some(), "refusing changed nothing");
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let r = s.execute("transition.applyAll", &json!({})).unwrap();
+    assert_eq!(r, json!({"slides": 3, "source": 0, "kind": "fade"}), "{r}");
+    assert!(s.doc().unwrap().doc.slides.iter().all(|sl| sl.transition.as_ref().is_some_and(|t| t.kind == "fade")));
+    s.execute("transition.set", &json!({"kind": "none"})).unwrap();
+    let r = s.execute("transition.applyAll", &json!({"clear": true})).unwrap();
+    assert_eq!(r, json!({"slides": 3, "source": 0, "kind": "none"}), "{r}");
+    assert!(s.doc().unwrap().doc.slides.iter().all(|sl| sl.transition.is_none()), "clear: true clears every slide");
+    let doc = command_specs().iter().find(|c| c.id == "transition.applyAll").unwrap().params;
+    assert!(doc.contains("clear?") && doc.contains("source"), "{doc}");
+}
+
+/// X3: a `smartArt.*` command given an id that is not a SmartArt graphic says what the id is and,
+/// when the slide has exactly one SmartArt graphic, which id that is.
+#[test]
+fn smartart_commands_say_what_a_wrong_id_is_and_name_the_graphic() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "title"})).unwrap();
+    let ph = s.doc().unwrap().doc.slides[1].shapes.iter().find(|sh| sh.ph.is_some()).map(|sh| sh.id.0).expect("a placeholder");
+    let g = s.execute("insert.smartArt", &json!({"kind": "list", "items": ["A", "B"]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("smartArt.colors", &json!({"id": ph, "colors": "accent3"})).unwrap_err().to_string();
+    assert!(e.ends_with(&format!("id {ph} is a placeholder, not a SmartArt graphic (the SmartArt on this slide is {g})")), "{e}");
+    let pic = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 50.0, 50.0]})).unwrap()["id"].as_u64().unwrap();
+    let e = s.execute("smartArt.style", &json!({"id": pic, "style": "intense"})).unwrap_err().to_string();
+    assert!(e.contains(&format!("id {pic} is a shape, not a SmartArt graphic (the SmartArt on this slide is {g})")), "{e}");
+    let e = s.execute("smartArt.colors", &json!({"id": 999_999, "colors": "accent3"})).unwrap_err().to_string();
+    assert!(e.contains("id 999999 is not on this slide") && e.contains(&format!("is {g})")), "{e}");
+    // A second graphic: no single one to name.
+    s.execute("insert.smartArt", &json!({"kind": "list", "items": ["C"]})).unwrap();
+    let e = s.execute("smartArt.colors", &json!({"id": ph, "colors": "accent3"})).unwrap_err().to_string();
+    assert!(e.contains(&format!("id {ph} is a placeholder, not a SmartArt graphic")) && !e.contains("on this slide is"), "{e}");
+}
+
+/// X4: `perPage` belongs to the handouts layout; with notes (one slide per page) or slides it
+/// was silently ignored, now it is refused, and the doc says the layouts are separate.
+#[test]
+fn export_refuses_per_page_outside_the_handouts_layout() {
+    let mut s = session();
+    let dir = std::env::temp_dir().join(format!("deckcraft-x4-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("notes.pdf").to_string_lossy().to_string();
+    let e = s.execute("file.export", &json!({"path": path, "format": "pdf", "layout": "notes", "perPage": 3})).unwrap_err().to_string();
+    assert!(e.contains("`perPage` applies to the handouts layout; notes pages are one slide per page"), "{e}");
+    assert!(!std::path::Path::new(&path).exists(), "nothing written");
+    let e = s.execute("file.export", &json!({"path": path, "format": "pdf", "perPage": 3})).unwrap_err().to_string();
+    assert!(e.contains("`perPage` applies to the handouts layout"), "{e}");
+    let o = cmd::file::pdf_options(&json!({"layout": "handouts", "perPage": 3}), 1).unwrap();
+    assert_eq!(o.layout, deckcraft_pdf::PageLayout::Handouts { per_page: 3 });
+    let o = cmd::file::pdf_options(&json!({"layout": "notes"}), 1).unwrap();
+    assert_eq!(o.layout, deckcraft_pdf::PageLayout::Notes);
+    let r = s.execute("file.export", &json!({"path": path, "format": "pdf", "layout": "notes"})).unwrap();
+    assert_eq!(r["path"], path, "{r}");
+    let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
+    assert!(doc.contains("handouts only") && doc.contains("separate"), "{doc}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// X5: `review.spelling` answers `{dictionary, lang, issues}`, so "no mistakes" and "no dictionary,
+/// only the common-misspellings list ran" are no longer the same empty list.
+#[test]
+fn spelling_answer_says_whether_a_dictionary_was_used() {
+    crate::spell::install("xx-DICT", crate::spell::Dictionary::parse(b"", b"2\nclean\ndeck\n"));
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 100], "text": "clean deck"})).unwrap();
+    let v = s.execute("review.spelling", &json!({"lang": "xx-DICT"})).unwrap();
+    assert_eq!(v, json!({"dictionary": true, "lang": "xx-DICT", "issues": []}), "{v}");
+    let v = s.execute("review.spelling", &json!({"lang": "zz-NONE"})).unwrap();
+    assert_eq!((v["dictionary"].as_bool(), v["lang"].as_str()), (Some(false), Some("zz-NONE")), "{v}");
+    assert_eq!(v["issues"].as_array().map(Vec::len), Some(0), "{v}");
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 300, 300, 100], "text": "Teh"})).unwrap();
+    let v = s.execute("review.spelling", &json!({"lang": "zz-NONE"})).unwrap();
+    assert_eq!(v["issues"][0]["word"], "Teh", "the common list still runs without a dictionary: {v}");
+    let doc = command_specs().iter().find(|c| c.id == "review.spelling").unwrap().params;
+    assert!(doc.contains("dictionary: bool") && doc.contains("issues") && doc.contains("common"), "{doc}");
+}
+
+/// X6: `file.export` and `file.save` to a folder that does not exist yet create it (the shared
+/// writer does), instead of failing with the raw OS error; the export doc says `slide` is 0-based.
+#[test]
+fn export_and_save_create_a_missing_folder() {
+    let mut s = session();
+    let dir = std::env::temp_dir().join(format!("deckcraft-x6-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let png = dir.join("new").join("deeper").join("slide.png");
+    let r = s.execute("file.export", &json!({"path": png.to_string_lossy(), "slide": 0})).unwrap();
+    assert!(png.is_file(), "{r}");
+    let deck = dir.join("saved").join("deck.deckcraft");
+    let r = s.execute("file.save", &json!({"path": deck.to_string_lossy()})).unwrap();
+    assert!(deck.is_file(), "{r}");
+    let pdf = dir.join("pdf").join("deck.pdf");
+    s.execute("file.export", &json!({"path": pdf.to_string_lossy(), "format": "pdf"})).unwrap();
+    assert!(pdf.is_file());
+    let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
+    assert!(doc.contains("slide?: 0-based index"), "{doc}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// X7: `comment.add` answers the slide it landed on beside `index`; `animation.add` answers the
+/// click step of each added animation (`steps`), as `animation.get` reports `step`.
+#[test]
+fn comment_add_answers_its_slide_and_animation_add_its_steps() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let r = s.execute("comment.add", &json!({"text": "here"})).unwrap();
+    assert_eq!(r, json!({"index": 0, "slide": 1}), "{r}");
+    let r = s.execute("comment.add", &json!({"text": "again"})).unwrap();
+    assert_eq!(r, json!({"index": 1, "slide": 1}), "{r}");
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [200, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("animation.add", &json!({"ids": [a, b], "effect": "fade"})).unwrap();
+    assert_eq!(r, json!({"count": 2, "indices": [0, 1], "steps": [1, 1]}), "one call, one click step: {r}");
+    let r = s.execute("animation.add", &json!({"ids": [a], "effect": "zoom", "class": "exit"})).unwrap();
+    assert_eq!(r, json!({"count": 3, "indices": [2], "steps": [2]}), "{r}");
+    let r = s.execute("animation.add", &json!({"ids": [b], "effect": "zoom", "class": "exit", "start": "afterPrevious"})).unwrap();
+    assert_eq!(r["steps"], json!([2]), "joins the step before it: {r}");
+    let got = s.execute("animation.get", &json!({})).unwrap();
+    let steps: Vec<u64> = got.as_array().unwrap().iter().map(|x| x["step"].as_u64().unwrap()).collect();
+    assert_eq!(steps, vec![1, 1, 2, 2], "{got}");
+    for id in ["comment.add", "animation.add"] {
+        let doc = command_specs().iter().find(|c| c.id == id).unwrap().params;
+        assert!(doc.contains(if id == "comment.add" { "slide" } else { "steps" }), "{id}: {doc}");
+    }
+}
+
+/// Y1: `slide.duplicate` names the copy's `placeholders` by each placeholder's own kind, as
+/// `slide.new` does: a Title Only copy has `title` and its footer and slide number as `ftr` and
+/// `sldNum`, no `body` (it once answered `body` and `ftr` with one id, the footer's); a Title and
+/// Content copy has `title` and `body`.
+#[test]
+fn slide_duplicate_names_placeholders_by_their_kind() {
+    let mut s = session();
+    s.execute("design.headerFooter", &json!({"slideNumber": true, "footer": true, "footerText": "Q3"})).unwrap();
+    s.execute("slide.new", &json!({"layout": "titleOnly", "title": "Only"})).unwrap();
+    let d = s.execute("slide.duplicate", &json!({})).unwrap();
+    let ph = d["placeholders"].as_object().unwrap();
+    assert!(ph.get("body").is_none(), "a Title Only slide has no body placeholder: {d}");
+    for k in ["title", "ftr", "sldNum"] {
+        assert!(ph.get(k).is_some_and(Value::is_u64), "{k}: {d}");
+    }
+    let mut ids: Vec<u64> = ph.values().filter_map(Value::as_u64).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), ph.len(), "one id per placeholder: {d}");
+    let shapes = d["shapes"].as_array().unwrap();
+    assert!(ids.iter().all(|id| shapes.contains(&json!(id))), "every id is on the copy: {d}");
+    let sl = s.execute("slide.inspect", &json!({})).unwrap();
+    let kinds: Vec<(Value, Value)> = sl["shapes"].as_array().unwrap().iter().map(|x| (x["id"].clone(), x["placeholder"].clone())).collect();
+    assert!(kinds.contains(&(ph["title"].clone(), json!("title"))), "{sl}");
+    assert!(kinds.contains(&(ph["ftr"].clone(), json!("ftr"))), "{sl}");
+    assert!(kinds.contains(&(ph["sldNum"].clone(), json!("sldNum"))), "{sl}");
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "b"})).unwrap();
+    let d = s.execute("slide.duplicate", &json!({})).unwrap();
+    let (t, b) = (&d["placeholders"]["title"], &d["placeholders"]["body"]);
+    assert!(t.is_u64() && b.is_u64() && t != b, "title and body: {d}");
+    assert!(d["placeholders"].get("ftr").is_some_and(Value::is_u64), "{d}");
+}
+
+/// Y2: `shape.connect {id, from, to, preset}` re-glues an existing connector *and* applies the
+/// preset; with `id`, `preset` was silently ignored, so a straight connector could never be made
+/// bent (it answered straightConnector1 to a bentConnector3 request).
+#[test]
+fn shape_connect_with_id_applies_the_preset() {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.connect", &json!({"from": a, "to": b})).unwrap()["id"].as_u64().unwrap();
+    let state = |s: &Session| {
+        let st = s.doc().unwrap();
+        let sh = st.shape(ShapeId(c as u32)).unwrap();
+        let glued = match sh.kind {
+            ShapeKind::Connector { start: Some((f, _)), end: Some((t, _)) } => f.0 as u64 == a && t.0 as u64 == b,
+            _ => false,
+        };
+        (sh.geom.preset_name().unwrap_or_default().to_string(), glued)
+    };
+    assert_eq!(state(&s), ("straightConnector1".into(), true));
+    let r = s.execute("shape.connect", &json!({"id": c, "from": a, "to": b, "preset": "bentConnector3"})).unwrap();
+    assert_eq!(r["id"], c, "{r}");
+    assert_eq!(state(&s), ("bentConnector3".into(), true), "the preset is applied and the ends stay glued");
+    let r = s.execute("shape.connect", &json!({"id": c, "from": a, "to": b, "preset": "curvedConnector3"})).unwrap();
+    assert_eq!(r["id"], c, "{r}");
+    assert_eq!(state(&s), ("curvedConnector3".into(), true));
+    // Only a connector preset: a box is not a line, so it is refused and the connector is unchanged.
+    let e = s.execute("shape.connect", &json!({"id": c, "from": a, "to": b, "preset": "rect"})).unwrap_err().to_string();
+    assert!(e.contains("not a connector preset"), "{e}");
+    assert_eq!(state(&s), ("curvedConnector3".into(), true));
+    let doc = command_specs().iter().find(|cm| cm.id == "shape.connect").unwrap().params;
+    assert!(doc.contains("with id: changes the connector's kind"), "{doc}");
+}
+
+/// Y4: `file.export {all: true, path: "d.png"}` writes d1.png, d2.png… numbered from 1 (the
+/// displayed slide number) while `slide` is a 0-based index; the doc says so and the answer
+/// carries `indices`, the 0-based slide of each file, beside `files`.
+#[test]
+fn export_all_numbers_files_from_one_and_answers_their_slide_indices() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleOnly", "title": "Two"})).unwrap();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-export-all-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let r = s.execute("file.export", &json!({"path": dir.join("d.png").to_string_lossy(), "all": true, "scale": 0.25})).unwrap();
+    let expect: Vec<Value> = (1..=3).map(|n| json!(dir.join(format!("d{n}.png")).to_string_lossy())).collect();
+    assert_eq!(r["files"], json!(expect), "{r}");
+    assert_eq!(r["indices"], json!([0, 1, 2]), "{r}");
+    for f in &expect {
+        assert!(std::path::Path::new(f.as_str().unwrap()).is_file(), "{f}");
+    }
+    let one = dir.join("one.png");
+    let r = s.execute("file.export", &json!({"path": one.to_string_lossy(), "slide": 1, "scale": 0.25})).unwrap();
+    assert_eq!(r, json!({"files": [one.to_string_lossy()], "indices": [1]}), "{r}");
+    let doc = command_specs().iter().find(|c| c.id == "file.export").unwrap().params;
+    assert!(doc.contains("numbered from 1") && doc.contains("indices"), "{doc}");
+    for (id, needle) in [("chart.data", "replaces all the series"), ("animation.timing", "as animation.get numbers them")] {
+        let doc = command_specs().iter().find(|c| c.id == id).unwrap().params;
+        assert!(doc.contains(needle), "{id}: {doc}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// AA1: the read-only shape lookups (shape.inspect, text.get, shape.sites) find an id on any
+/// slide, as the edits do, without making that slide current, and shape.inspect and text.get say
+/// which slide the shape is on.
+#[test]
+fn read_only_shape_lookups_find_an_id_on_any_slide_and_say_where() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 100, 50], "text": "far"})).unwrap()["id"].as_u64().unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [30, 40, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    assert_eq!(s.doc().unwrap().selection.slide, 1);
+    let r = s.execute("shape.inspect", &json!({"id": a})).unwrap();
+    assert_eq!((r["slide"].clone(), r["box"]["x"].clone()), (json!(0), json!(10.0)), "{r}");
+    let r = s.execute("text.get", &json!({"id": a})).unwrap();
+    assert_eq!((r["slide"].clone(), r["text"].clone()), (json!(0), json!("far")), "{r}");
+    assert_eq!(s.execute("shape.sites", &json!({"id": a})).unwrap().as_array().map(Vec::len), Some(4));
+    assert_eq!(s.doc().unwrap().selection.slide, 1, "a read-only lookup moves nothing");
+    assert_eq!(s.execute("shape.inspect", &json!({"id": b})).unwrap()["slide"], json!(1));
+    let e = s.execute("shape.inspect", &json!({"id": 999})).unwrap_err().to_string();
+    assert!(e.contains("no shape 999"), "{e}");
+}
+
+/// AA3: speeding up a whole slide cost one animation.timing call per animation. `all: true`
+/// changes every animation on the slide and `indices` a chosen set, answering `{changed}`.
+#[test]
+fn animation_timing_takes_all_or_indices() {
+    let mut s = session();
+    let mut ids = vec![];
+    for k in 0..3 {
+        ids.push(s.execute("shape.insert", &json!({"preset": "rect", "rect": [10 + 120 * k, 10, 100, 50]})).unwrap()["id"].clone());
+    }
+    for id in &ids {
+        s.execute("animation.add", &json!({"ids": [id], "effect": "fade", "duration": 1000})).unwrap();
+    }
+    let r = s.execute("animation.timing", &json!({"all": true, "duration": 200})).unwrap();
+    assert_eq!(r, json!({"changed": 3}), "{r}");
+    let r = s.execute("animation.timing", &json!({"indices": [0, 2], "delay": 50})).unwrap();
+    assert_eq!(r, json!({"changed": 2}), "{r}");
+    let anims = s.execute("animation.get", &json!({})).unwrap();
+    let a = anims.as_array().unwrap();
+    assert!(a.iter().all(|x| x["durationMs"] == 200), "{anims}");
+    assert_eq!((a[0]["delayMs"].clone(), a[1]["delayMs"].clone(), a[2]["delayMs"].clone()), (json!(50), json!(0), json!(50)), "{anims}");
+    let e = s.execute("animation.timing", &json!({"indices": [0, 7], "delay": 1})).unwrap_err().to_string();
+    assert!(e.contains("no animation at index 7"), "{e}");
+    let e = s.execute("animation.timing", &json!({"indices": [], "delay": 1})).unwrap_err().to_string();
+    assert!(e.contains("`indices` is empty"), "{e}");
+}
+
+/// AA5: an arrow-key nudge answers the moved shapes' boxes, and `edit.selection` answers the
+/// selection with its boxes, so an agent needs no inspect after each nudge or drag.
+#[test]
+fn a_nudge_answers_the_selected_boxes() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 20, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.key("ArrowRight", Mods::default()).unwrap();
+    assert_eq!(r, json!({"handled": true, "selected": [{"id": a, "rect": [16.0, 20.0, 100.0, 50.0]}]}), "{r}");
+    let r = s.key("ArrowDown", Mods { alt: true, ..Mods::default() }).unwrap();
+    assert_eq!(r["selected"][0]["rect"], json!([16.0, 21.0, 100.0, 50.0]), "{r}");
+    let r = s.execute("edit.selection", &json!({})).unwrap();
+    assert_eq!(r, json!({"slide": 0, "ids": [a], "selected": [{"id": a, "rect": [16.0, 21.0, 100.0, 50.0]}]}), "{r}");
+    s.execute("edit.deselect", &json!({})).unwrap();
+    assert_eq!(s.execute("edit.selection", &json!({})).unwrap()["selected"], json!([]));
+}
+
+/// BB1: `edit.select {ids: ["$sl.placeholders.title"]}` answered `{selected: []}` ok because
+/// invalid `ids` entries were dropped. Every `ids` reader refuses an entry that is not an integer
+/// id, naming it.
+#[test]
+fn an_ids_entry_that_is_not_an_id_is_refused_naming_it() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    for (cmd, extra) in [
+        ("edit.select", json!({})),
+        ("shape.fill", json!({"color": "#FF0000"})),
+        ("selection.select", json!({})),
+        ("animation.add", json!({"effect": "fade"})),
+        ("edit.delete", json!({})),
+    ] {
+        let mut p = extra;
+        p["ids"] = json!(["$sl.placeholders.title"]);
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains("\"$sl.placeholders.title\"") && e.contains("not a shape id"), "{cmd}: {e}");
+    }
+    let e = s.execute("edit.select", &json!({"ids": [a, 1.5]})).unwrap_err().to_string();
+    assert!(e.contains("1.5") && e.contains("not a shape id"), "{e}");
+    assert_eq!(s.doc().unwrap().selection.shapes.len(), 1, "a refused select keeps the selection");
+    assert_eq!(s.execute("edit.select", &json!({"ids": [a]})).unwrap()["selected"], json!([a]));
+}
+
+/// BB3: insert.smartArt took no `rect` and landed small mid-slide; it takes one and answers the
+/// final `rect`, as insert.table/chart/picture do.
+#[test]
+fn insert_smart_art_takes_a_rect_and_answers_it() {
+    let mut s = session();
+    let r = s.execute("insert.smartArt", &json!({"kind": "process", "items": ["A", "B", "C"], "rect": [40, 60, 880, 400]})).unwrap();
+    assert_eq!(r["rect"], json!([40.0, 60.0, 880.0, 400.0]), "{r}");
+    let id = r["id"].as_u64().unwrap();
+    let st = s.doc().unwrap();
+    let g = st.shape(deckcraft_model::ShapeId(id as u32)).unwrap();
+    assert_eq!(g.xfrm.map(|x| (x.x, x.y, x.w, x.h)), Some((40.0, 60.0, 880.0, 400.0)));
+    let kids = g.children();
+    assert!(kids.iter().all(|c| c.xfrm.is_some_and(|x| x.x >= 40.0 && x.x + x.w <= 920.0 + 0.01 && x.y >= 60.0)), "children inside the rect");
+    let r = s.execute("insert.smartArt", &json!({"kind": "cycle", "items": ["A", "B"]})).unwrap();
+    let d: Vec<f64> = r["rect"].as_array().unwrap().iter().filter_map(Value::as_f64).collect();
+    assert!(
+        d.len() == 4 && (d[0] - 96.0).abs() < 0.01 && (d[1] - 151.2).abs() < 0.01 && d[2] == 768.0 && d[3] == 324.0,
+        "the default area, answered too: {r}"
+    );
+}
+
+/// BB4: text.replace had no scope, so replacing a product name in body text hit titles, footers
+/// and notes. `scope: body|titles|notes|all` (default all) limits it, and the answer says which
+/// slides changed.
+#[test]
+fn text_replace_takes_a_scope_and_answers_the_slides() {
+    let mut s = session();
+    let r = s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "DeckCraft rocks", "body": "DeckCraft body"})).unwrap();
+    let title = r["placeholders"]["title"].as_u64().unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 300, 200, 100], "text": "DeckCraft box"})).unwrap();
+    s.execute("slide.notes", &json!({"text": "DeckCraft notes"})).unwrap();
+    s.execute("slide.new", &json!({"layout": "titleOnly", "title": "DeckCraft again"})).unwrap();
+    let r = s.execute("text.replace", &json!({"text": "DeckCraft", "with": "DC", "scope": "body"})).unwrap();
+    assert_eq!(r, json!({"replaced": 2, "slides": [1]}), "{r}");
+    assert_eq!(s.execute("text.get", &json!({"id": title})).unwrap()["text"], "DeckCraft rocks", "titles are untouched by scope body");
+    let r = s.execute("text.replace", &json!({"text": "DeckCraft", "with": "DC", "scope": "titles"})).unwrap();
+    assert_eq!(r, json!({"replaced": 2, "slides": [1, 2]}), "{r}");
+    assert_eq!(s.doc().unwrap().doc.slides[1].notes_text(), "DeckCraft notes", "notes are untouched by scope titles");
+    let r = s.execute("text.replace", &json!({"text": "DeckCraft", "with": "DC", "scope": "notes"})).unwrap();
+    assert_eq!(r, json!({"replaced": 1, "slides": [1]}), "{r}");
+    let e = s.execute("text.replace", &json!({"text": "DC", "with": "x", "scope": "footers"})).unwrap_err().to_string();
+    assert!(e.contains("footers") && e.contains("body|titles|notes|all"), "{e}");
+    let r = s.execute("text.replace", &json!({"text": "DC", "with": "DeckCraft"})).unwrap();
+    assert_eq!(r, json!({"replaced": 5, "slides": [1, 2]}), "the default is still everything: {r}");
+}
+
+/// Y3: slide.inspect showed only `fill` per shape, so text colour, line colour and width, a
+/// connector's ends and a link's target cost renders. Each is answered when present (a scheme
+/// colour as its slot name, else hex); a plain shape gains nothing but its text colour.
+#[test]
+fn slide_inspect_answers_text_colour_line_connector_ends_and_links() {
+    let mut s = session();
+    let a = s
+        .execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50], "text": "A", "color": "#FF0000", "line": "accent2"}))
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    s.execute("shape.line", &json!({"ids": [a], "width": 3})).unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [300, 10, 100, 50], "text": "B"})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.connect", &json!({"from": a, "to": b})).unwrap()["id"].as_u64().unwrap();
+    let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;
+    s.execute("text.edit", &json!({"id": title})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    s.execute("text.insert", &json!({"text": " and "})).unwrap();
+    s.execute("insert.hyperlink", &json!({"slide": 0, "text": "start"})).unwrap();
+    s.execute("text.exit", &json!({})).unwrap();
+    let v = s.execute("slide.inspect", &json!({})).unwrap();
+    let shape = |id: u64| v["shapes"].as_array().unwrap().iter().find(|x| x["id"] == id).cloned().unwrap();
+    let sa = shape(a);
+    assert_eq!(sa["textColor"], "#FF0000", "{sa}");
+    assert_eq!(sa["line"], json!({"color": "accent2", "width": 3.0}), "{sa}");
+    assert!(sa.get("from").is_none() && sa.get("links").is_none(), "absent fields are left out: {sa}");
+    let sb = shape(b);
+    assert_eq!(sb["textColor"], "lt1", "a scheme colour is its slot name: {sb}");
+    let sc = shape(c);
+    assert_eq!((sc["from"]["id"].clone(), sc["to"]["id"].clone(), sc["preset"].clone()), (json!(a), json!(b), json!("straightConnector1")), "{sc}");
+    assert!(sc["from"]["site"].is_u64() && sc["to"]["site"].is_u64(), "{sc}");
+    assert!(sc.get("textColor").is_none(), "no text, no text colour: {sc}");
+    let st = shape(u64::from(title));
+    assert_eq!(st["links"], json!([{"text": "https://example.org", "url": "https://example.org"}, {"text": "start", "slide": 0}]), "{st}");
+    assert_eq!(st["textColor"], "hlink", "the first run is a link, drawn in the hyperlink colour: {st}");
+}
+
+/// The second review: `indices` entries, `ids: null` and a non-list `ids` are handled like
+/// `ids` entries are: refused naming the value, or treated as absent, never dropped or retargeted.
+#[test]
+fn indices_entries_null_ids_and_a_non_list_ids_are_not_dropped() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [a], "effect": "fade"})).unwrap();
+    let e = s.execute("animation.timing", &json!({"indices": [0, "x"], "duration": 50})).unwrap_err().to_string();
+    assert!(e.contains("`indices` entry \"x\" is not an animation position"), "{e}");
+    let e = s.execute("animation.timing", &json!({"indices": [-1], "duration": 50})).unwrap_err().to_string();
+    assert!(e.contains("entry -1"), "{e}");
+    // ids: null is the same as no ids: the selection is the target.
+    s.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    let r = s.execute("shape.fill", &json!({"ids": null, "color": "#FF0000"})).unwrap();
+    assert!(r.as_u64() == Some(1) || r["changed"] == 1, "{r}");
+    // A non-list ids is refused, not retargeted to the selection.
+    for ids in [json!(12), json!("$box")] {
+        let e = s.execute("shape.fill", &json!({"ids": ids, "color": "#00FF00"})).unwrap_err().to_string();
+        assert!(e.contains("`ids` must be a list of shape ids"), "{ids}: {e}");
+    }
+    let fill = s.doc().unwrap().shape(deckcraft_model::ShapeId(a as u32)).unwrap().fill.clone();
+    assert!(format!("{fill:?}").contains("r: 255, g: 0, b: 0"), "still red: {fill:?}");
+}
+
+/// `edit.delete {id}` deletes that shape even while text is being edited in another, or slides are
+/// selected: the `id` is the target, as `ids` would be.
+#[test]
+fn edit_delete_with_an_id_deletes_that_shape_not_the_text_or_the_slide() {
+    let mut s = session();
+    let ins = |s: &mut Session, y: f64| {
+        s.execute("insert.textBox", &json!({"rect": [10.0, y, 200.0, 40.0], "text": "keep me"})).unwrap()["id"].as_u64().unwrap()
+    };
+    let (a, b) = (ins(&mut s, 10.0), ins(&mut s, 100.0));
+    s.execute("text.edit", &json!({"id": a})).unwrap();
+    s.execute("edit.delete", &json!({"id": b})).unwrap();
+    let st = s.doc().unwrap();
+    let sl = &st.doc.slides[st.selection.slide];
+    assert!(sl.shapes.iter().all(|x| u64::from(x.id.0) != b), "b is deleted");
+    assert_eq!(
+        sl.shapes.iter().find(|x| u64::from(x.id.0) == a).and_then(|x| x.text.as_ref()).map(|t| t.text()),
+        Some("keep me".to_string()),
+        "a's text is untouched"
+    );
+    let c = ins(&mut s, 200.0);
+    let n = s.doc().unwrap().doc.slides.len();
+    s.execute("slide.selectSlides", &json!({"indices": [0]})).unwrap();
+    s.execute("edit.delete", &json!({"id": c})).unwrap();
+    assert_eq!(s.doc().unwrap().doc.slides.len(), n, "the slide stays");
+    // A shape on another slide is refused, naming its slide, and nothing is deleted or ended.
+    let other = ins(&mut s, 300.0);
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let e = s.execute("edit.delete", &json!({"id": other})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {other} is on slide index")) && e.contains("slide.go"), "{e}");
+    assert!(s.doc().unwrap().doc.slides.iter().any(|sl| sl.shapes.iter().any(|x| u64::from(x.id.0) == other)), "still there");
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    // `id: null` is no id: with table cells selected, Delete clears their text and keeps the table.
+    let t = table_at(&mut s, &[100.0, 100.0], json!([["a", "b"], ["c", "d"]]));
+    s.execute("table.selectCells", &json!({"id": t, "from": [0, 0], "to": [0, 1]})).unwrap();
+    s.execute("edit.delete", &json!({"id": null})).unwrap();
+    let table = table_of(&s, t);
+    assert_eq!(table.cell(0, 0).map(|c| c.text.text()), Some(String::new()), "the selected cells are cleared");
+    assert_eq!(table.cell(1, 0).map(|c| c.text.text()), Some("c".to_string()), "the others keep their text");
+}
+
+/// Review of the rebased answers: a non-list `indices`, a palette spelled with a sign or leading
+/// zero, and `all` with a `slide` are refused; section.add answers the index of the section it made
+/// even when another has the same name.
+#[test]
+fn review_refusals_and_the_new_sections_index() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("animation.add", &json!({"ids": [id], "effect": "fade"})).unwrap();
+    for bad in [json!("0"), json!(2), json!({"0": 1})] {
+        let e = s.execute("animation.timing", &json!({"indices": bad, "delay": 50})).unwrap_err().to_string();
+        assert!(e.contains("`indices` is a list"), "{bad}: {e}");
+    }
+    let chart = s.execute("insert.chart", &json!({"type": "column"})).unwrap()["id"].clone();
+    for bad in ["colorful01", "colorful+1", "monochrome+13", "colorful0"] {
+        assert!(s.execute("chart.options", &json!({"id": chart, "palette": bad})).is_err(), "{bad}");
+    }
+    s.execute("chart.options", &json!({"id": chart, "palette": "monochrome13"})).unwrap();
+    let e = s.execute("file.export", &json!({"path": "unused.png", "all": true, "slide": 0})).unwrap_err().to_string();
+    assert!(e.contains("not both"), "{e}");
+    for _ in 0..3 {
+        s.execute("slide.new", &json!({})).unwrap();
+    }
+    s.execute("section.add", &json!({"at": 2})).unwrap();
+    let r = s.execute("section.add", &json!({"at": 1})).unwrap();
+    let k = r["index"].as_u64().unwrap() as usize;
+    let st = s.doc().unwrap();
+    let first = st.doc.sections[k].slides.first().copied();
+    assert_eq!(first, Some(st.doc.slides[1].id), "{r}");
+}
+
+/// The arrange commands that work on several shapes together use the current slide: a named shape
+/// on another slide is refused, saying where it is, even mixed with shapes on this slide, and
+/// nothing moves or changes slide.
+#[test]
+fn arrange_commands_refuse_a_shape_on_another_slide() {
+    let mut s = session();
+    let ins = |s: &mut Session, x: f64| {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100.0, 50.0, 50.0]})).unwrap()["id"].as_u64().unwrap()
+    };
+    let far = ins(&mut s, 400.0);
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let (a, b) = (ins(&mut s, 10.0), ins(&mut s, 200.0));
+    for (cmd, extra) in [
+        ("arrange.align", json!({"edge": "left", "to": "selection"})),
+        ("arrange.distribute", json!({"dir": "horizontal", "to": "selection"})),
+        ("arrange.group", json!({})),
+        ("arrange.ungroup", json!({})),
+        ("arrange.bringToFront", json!({})),
+        ("arrange.sendToBack", json!({})),
+    ] {
+        let rev = s.doc().unwrap().revision;
+        let mut p = extra.clone();
+        p["ids"] = json!([a, b, far]);
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains(cmd) && e.contains(&format!("shape {far} is on slide index 0")) && e.contains("slide.go"), "{cmd}: {e}");
+        assert_eq!(s.doc().unwrap().revision, rev, "{cmd} changed nothing");
+        assert_eq!(s.doc().unwrap().selection.slide, 1, "{cmd} stays on the current slide");
+    }
+    // text.edit and smartArt.* name the slide too.
+    let e = s.execute("text.edit", &json!({"id": far})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {far} is on slide index 0")), "{e}");
+    let e = s.execute("smartArt.nodes", &json!({"id": far})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {far} is on slide index 0")), "{e}");
+    // On the current slide they still work.
+    s.execute("arrange.align", &json!({"edge": "left", "to": "selection", "ids": [a, b]})).unwrap();
+    let x = |s: &Session, id: u64| s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().xfrm.unwrap().x;
+    assert_eq!(x(&s, b), x(&s, a));
 }
 
 #[test]

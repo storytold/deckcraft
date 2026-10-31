@@ -131,7 +131,7 @@ pub(super) fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
         let (x, y, w, h, rot) = {
             let st = s.doc()?;
             let id = targets(s, p)?.first().copied().ok_or_else(|| bad(SIZE_POS, "nothing selected"))?;
-            let sh = st.shape(id).ok_or_else(|| bad(SIZE_POS, "no such shape"))?;
+            let sh = st.shape(id).ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, SIZE_POS))?;
             let x = xfrm_of(&st.doc, &st.selection, sh);
             (x.x, x.y, x.w, x.h, x.rot)
         };
@@ -144,13 +144,15 @@ pub(super) fn size_position(s: &mut Session, p: &Value) -> Result<Value> {
     let changed = {
         let ids = targets(s, p)?;
         let st = s.doc()?;
-        let free: Vec<_> = ids.iter().copied().filter(|id| !st.shape(*id).is_some_and(|sh| sh.locked)).collect::<Vec<_>>();
+        // The shape may be on another slide (edit_geometry reaches it there): the lock and the
+        // box are read where it is.
+        let free: Vec<_> = ids.iter().copied().filter(|id| !st.shape_anywhere(*id).is_some_and(|(sh, _)| sh.locked)).collect::<Vec<_>>();
         if !ids.is_empty() && free.is_empty() {
             return Err(bad(SIZE_POS, "the object is locked"));
         }
         free.iter().any(|id| {
-            st.shape(*id).is_some_and(|sh| {
-                let mut x = xfrm_of(&st.doc, &st.selection, sh);
+            st.shape_anywhere(*id).is_some_and(|(sh, ctx)| {
+                let mut x = xfrm_of(&st.doc, &ctx, sh);
                 let before = x;
                 apply_size(&mut x, spec);
                 x != before

@@ -500,12 +500,16 @@ fn read_command_file_line(reader: &mut impl std::io::BufRead, line: &mut Vec<u8>
     }
 }
 
-/// The same command syntax and execution path for --cmd and each command-file line.
+/// Runs one command-file line, COMMAND[=PARAMS] as --cmd takes it.
 fn run_command(s: &mut Session, command: &str, print: bool) -> Result<(), String> {
     let (id, params) = match command.split_once('=') {
         Some((id, j)) => (id, serde_json::from_str::<Value>(j).map_err(|e| format!("{id}: bad JSON: {e}"))?),
         None => (command, json!({})),
     };
+    // As for --cmd: parameters that are not an object are refused, not taken as no parameters.
+    if !params.is_object() {
+        return Err(format!("{id}: the parameters are not a JSON object; a line takes COMMAND=PARAMS, PARAMS a JSON object"));
+    }
     let r = s.execute(id, &params).map_err(|e| e.to_string())?;
     if print {
         outln!("{id} → {r}");
@@ -534,6 +538,30 @@ fn run_command_file(s: &mut Session, path: &str, print: bool) -> Result<(), Stri
         run_command(s, command, print).map_err(|e| format!("{path}:{line_number}: {e}"))?;
     }
     Ok(())
+}
+
+/// A command read and ready to run: the n-th --cmd with its id and parameters, or a command file.
+enum Ready {
+    Cmd(usize, String, Value),
+    File(String),
+}
+
+/// Reads --cmd `n` of `total` as COMMAND[=PARAMS]; a refusal says how the text was read and the form
+/// that works.
+fn read_cmd(c: &str, n: usize, total: usize) -> Result<(String, Value), String> {
+    let Some((id, j)) = c.split_once('=') else {
+        return Ok((c.to_string(), json!({})));
+    };
+    let read = |problem: String| {
+        format!(
+            "--cmd {n} of {total} was read as command `{id}` with parameters `{j}`: {problem}. --cmd takes COMMAND=PARAMS: a command id, then `=`, then a JSON object, e.g. --cmd 'slide.new={{\"title\":\"Q3\"}}'. Nothing ran."
+        )
+    };
+    let v = serde_json::from_str::<Value>(j).map_err(|e| read(format!("the parameters are not JSON ({e})")))?;
+    if !v.is_object() {
+        return Err(read("the parameters are not a JSON object".into()));
+    }
+    Ok((id.to_string(), v))
 }
 
 fn run(args: &[String]) -> Result<(), String> {
@@ -571,18 +599,39 @@ fn run(args: &[String]) -> Result<(), String> {
     for p in save.iter().chain(&export) {
         output_format(p)?;
     }
+    // Every --cmd is read before the presentation is opened and before any runs (file.open and
+    // file.new included), so a malformed one leaves nothing half done and is reported ahead of an
+    // --in that cannot be opened; a refusal mirrors how the text was read and shows the form that
+    // works (#298). A command file is read line by line as it runs.
+    let total = cmds.iter().filter(|c| matches!(c, CommandSource::Inline(_))).count();
+    let mut ready = Vec::with_capacity(cmds.len());
+    for source in cmds {
+        ready.push(match source {
+            CommandSource::Inline(c) => {
+                let n = ready.iter().filter(|r| matches!(r, Ready::Cmd(..))).count() + 1;
+                let (id, p) = read_cmd(&c, n, total)?;
+                Ready::Cmd(n, id, p)
+            }
+            CommandSource::File(path) => Ready::File(path),
+        });
+    }
     let mut s = Session::new();
     open(&mut s, input.as_deref(), sample)?;
-    for source in cmds {
-        match source {
-            CommandSource::Inline(command) => run_command(&mut s, &command, print)?,
-            CommandSource::File(path) => run_command_file(&mut s, &path, print)?,
+    for r in &ready {
+        match r {
+            Ready::Cmd(n, id, p) => {
+                let r = s.execute(id, p).map_err(|e| format!("--cmd {n} of {total}, `{id}`: {e}"))?;
+                if print {
+                    outln!("{id} → {r}");
+                }
+            }
+            Ready::File(path) => run_command_file(&mut s, path, print)?,
         }
     }
-    if let Some(p) = save {
+    if let Some(p) = &save {
         s.execute("file.saveAs", &json!({"path": p})).map_err(|e| e.to_string())?;
     }
-    if let Some(p) = export {
+    if let Some(p) = &export {
         export_params["path"] = json!(p);
         s.execute("file.export", &export_params).map_err(|e| e.to_string())?;
     } else if export_params != json!({}) {
