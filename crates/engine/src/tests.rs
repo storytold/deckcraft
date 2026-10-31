@@ -5971,6 +5971,44 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
 }
 
 #[test]
+fn style_commands_given_nothing_to_set_are_refused() {
+    let mut s = session();
+    s.execute("insert.textBox", &json!({"text": "Hi", "rect": [50.0, 50.0, 200.0, 100.0]})).unwrap();
+    for cmd in ["shape.line", "shape.effects", "picture.adjust", "format.paragraph", "format.margins"] {
+        let rev = s.doc().unwrap().revision;
+        let e = s.execute(cmd, &json!({})).unwrap_err().to_string();
+        assert!(e.contains("given nothing to set") && e.contains(cmd), "{cmd}: {e}");
+        assert_eq!(s.doc().unwrap().revision, rev, "{cmd} changed the deck");
+    }
+    let e = s.execute("shape.line", &json!({})).unwrap_err().to_string();
+    assert!(e.contains("pass color, none, width, dash"), "{e}");
+    // A key, even one that changes nothing visible, is something to set.
+    s.execute("shape.line", &json!({"width": 2})).unwrap();
+    s.execute("format.margins", &json!({"left": 5})).unwrap();
+    // A null glow or soft edge clears it (No Glow, No Soft Edges): that is something to set.
+    let fx = |s: &Session| s.doc().unwrap().selected_shapes()[0].effects.clone().unwrap_or_default();
+    s.execute("shape.effects", &json!({"glow": 8, "softEdges": 5})).unwrap();
+    assert!(fx(&s).glow.is_some() && fx(&s).soft_edge.is_some());
+    s.execute("shape.effects", &json!({"glow": null})).unwrap();
+    assert!(fx(&s).glow.is_none() && fx(&s).soft_edge.is_some());
+    s.execute("shape.effects", &json!({"softEdges": null})).unwrap();
+    assert!(fx(&s).soft_edge.is_none());
+    // The Paragraph dialog's own fields are format.paragraphDialog's, and the refusal says so.
+    for (k, v) in [("special", json!("hanging")), ("spaceBeforeKind", json!("pct")), ("indentRight", json!(10))] {
+        let e = s.execute("format.paragraph", &json!({ k: v })).unwrap_err().to_string();
+        assert!(e.contains("format.paragraphDialog") && e.contains(k), "{k}: {e}");
+    }
+    let e = s.execute("format.paragraph", &json!({"spaceBeforeKind": "pct"})).unwrap_err().to_string();
+    assert!(e.contains("together with `spaceBefore`"), "{e}");
+    // The palette lists only commands that run without arguments; these need one key.
+    for cmd in ["shape.line", "shape.effects", "picture.adjust", "format.paragraph", "format.margins"] {
+        let spec = crate::command_specs().iter().find(|c| c.id == cmd).unwrap();
+        assert!(crate::cmd::needs_arguments(spec.params), "{cmd}: {}", spec.params);
+    }
+    s.execute("format.paragraphDialog", &json!({"special": "hanging", "specialBy": 18})).unwrap();
+}
+
+#[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
     let title = s.doc().unwrap().current_slide().unwrap().shapes[0].id.0;

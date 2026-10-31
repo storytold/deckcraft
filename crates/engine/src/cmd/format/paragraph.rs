@@ -1,6 +1,6 @@
 use super::{
     Align, Anchor, AutoFit, Bullet, Result, Session, Spacing, TextDir, Value, bad, bool_or, color_param, current_para, f64_or, f64_param,
-    format_body, format_para, json, ok, on_param, resolve, str_param,
+    format_body, format_para, json, ok, on_param, require_any, resolve, str_param,
 };
 
 pub(super) fn align_to(s: &mut Session, a: Align) -> Result<Value> {
@@ -117,6 +117,28 @@ pub(super) fn line_spacing(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn paragraph(s: &mut Session, p: &Value) -> Result<Value> {
+    if let Err(e) =
+        require_any(p, "format.paragraph", &["align", "indentLeft", "indentFirst", "spaceBefore", "spaceAfter", "lineSpacing", "lineSpacingPt"])
+    {
+        // The Paragraph dialog's other fields are format.paragraphDialog's; say so instead of
+        // calling the call empty.
+        if let Some(k) =
+            ["special", "specialBy", "indentRight", "spaceBeforeKind", "spaceAfterKind"].into_iter().find(|k| p.get(*k).is_some_and(|v| !v.is_null()))
+        {
+            // The dialog applies a kind or `specialBy` only with the value it qualifies.
+            let with = match k {
+                "spaceBeforeKind" => " together with `spaceBefore`",
+                "spaceAfterKind" => " together with `spaceAfter`",
+                "specialBy" => " together with `special`",
+                _ => "",
+            };
+            return Err(bad(
+                "format.paragraph",
+                format!("`{k}` is a field of format.paragraphDialog (the whole Paragraph dialog), given{with}; format.paragraph does not read it"),
+            ));
+        }
+        return Err(e);
+    }
     let a = str_param(p, "align").map(|a| match a {
         "center" => Align::Center,
         "right" => Align::Right,
@@ -405,6 +427,7 @@ pub(super) fn wrap(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 pub(super) fn margins(s: &mut Session, p: &Value) -> Result<Value> {
+    require_any(p, "format.margins", &["left", "top", "right", "bottom"])?;
     let (l, t, r, b) = (f64_param(p, "left"), f64_param(p, "top"), f64_param(p, "right"), f64_param(p, "bottom"));
     format_body(s, &move |bp| {
         if l.is_some() {
