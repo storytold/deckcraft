@@ -1,7 +1,7 @@
 use super::{
-    ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PictureFill, PictureMode,
-    Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value, edit_geometry,
-    edit_shapes, f64_param, inherited_fills, json, requested_fill, str_param, targets, usize_param,
+    ColorBase, ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, HashMap, Line, LineEnd, PictureFill,
+    PictureMode, Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value,
+    edit_geometry, edit_shapes, f64_param, inherited_fills, json, requested_fill, str_param, targets, usize_param,
 };
 
 pub(super) fn adjust(s: &mut Session, p: &Value) -> Result<Value> {
@@ -229,6 +229,18 @@ fn line_end(v: &str) -> Option<LineEnd> {
     if v == "none" { None } else { Some(LineEnd { kind: v.to_string(), w: "med".into(), len: "med".into() }) }
 }
 
+/// The line fill `shape` draws with: its own, or the one it inherits from its layout, master or
+/// theme style, with a solid color resolved to RGB (alpha included). `None` when nothing gives
+/// it one.
+pub fn effective_line_fill(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Option<Fill> {
+    let ctx = super::super::text::ctx_for(doc, sel)?;
+    let (l, ph) = deckcraft_model::resolve::line(&ctx, shape);
+    match l.fill? {
+        Fill::Solid { color } => Some(Fill::solid(ColorRef::rgb(ctx.color(&color, ph)))),
+        other => Some(other),
+    }
+}
+
 pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
     let reset = bool_or(p, "reset", false);
     let none = bool_or(p, "none", false);
@@ -256,11 +268,29 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         "miter" => deckcraft_model::style::LineJoin::Miter,
         _ => deckcraft_model::style::LineJoin::Round,
     });
+    let transparency = f64_param(p, "transparency");
+    // Transparency on an inherited (style) line needs the effective color.
+    let ctx_line = match transparency {
+        None => HashMap::new(),
+        Some(_) => {
+            let st = s.doc()?;
+            let mut lines = HashMap::new();
+            for id in targets(s, p)? {
+                if let Some(sh) = st.shape(id) {
+                    deckcraft_model::walk(std::slice::from_ref(sh), &mut |sh, _| {
+                        lines.insert(sh.id, effective_line_fill(&st.doc, &st.selection, sh));
+                    });
+                }
+            }
+            lines
+        }
+    };
     edit_group_appearance(s, p, "shape.line", |sh| {
         if reset {
             sh.line = None;
             return Ok(());
         }
+        let automatic = sh.line.is_none();
         let l = sh.line.get_or_insert_with(Line::default);
         if none {
             l.fill = Some(Fill::None);
@@ -307,6 +337,33 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
                 e.w.clone_from(sz);
                 e.len.clone_from(sz);
             }
+        }
+        // Format Shape ▸ Line ▸ Transparency: only a solid line has one.
+        if let Some(t) = transparency {
+            let inherited = l.fill.is_none();
+            let base = l.fill.clone().or_else(|| ctx_line.get(&sh.id).cloned().flatten());
+            if let Some(Fill::Solid { color: before }) = base {
+                let mut color = before.clone();
+                // The new transparency replaces any alpha: the alpha transforms, and the alpha an
+                // inherited color carries in its resolved RGBA. A theme, preset or system color
+                // (`phClr` included) resolves to an RGBA that can carry an alpha of its own, so 0%
+                // sets an explicit opaque alpha on it.
+                color.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_) | ColorTransform::AlphaMod(_) | ColorTransform::AlphaOff(_)));
+                if let ColorBase::Rgb { rgb } = &mut color.base {
+                    rgb.a = 255;
+                }
+                if t > 0.0 || !matches!(color.base, ColorBase::Rgb { .. }) {
+                    color.mods.push(ColorTransform::Alpha(((1.0 - t.clamp(0.0, 1.0)) * 100_000.0).round() as i32));
+                }
+                // An inherited color that already has this transparency stays inherited.
+                if !(inherited && color == before) {
+                    l.fill = Some(Fill::Solid { color });
+                }
+            }
+        }
+        // A parameter that changed nothing leaves an automatic line automatic.
+        if automatic && sh.line.as_ref().is_some_and(|l| *l == Line::default()) {
+            sh.line = None;
         }
         Ok(())
     })

@@ -1704,8 +1704,10 @@ fn preferences_and_format_pane_name_every_input() {
     harness.run_steps(3);
     harness.check_accessibility();
     let sliders: Vec<_> = harness.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").collect();
-    assert_eq!(sliders.len(), 1, "one fill Transparency slider");
-    assert!(sliders[0].rect().width() > 40.0, "the slider keeps room next to its one visible label: {:?}", sliders[0].rect());
+    assert_eq!(sliders.len(), 2, "the fill's and the line's Transparency sliders");
+    for s in &sliders {
+        assert!(s.rect().width() > 40.0, "the slider keeps room next to its one visible label: {:?}", s.rect());
+    }
 }
 
 /// A control `ui.screenshot` is admitted once, issued from a settled real UI pass, completed by
