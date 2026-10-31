@@ -1,7 +1,8 @@
 use super::{
     Arc, Caps, ColorRef, ColorTransform, Fill, Result, RunProps, SchemeSlot, Session, Shape, ShapeId, ShapeKind, Strike, Value, bad, bool_or,
-    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, json, ok, on_param, resolve, str_param,
+    bool_param, color_param, current_run, ed, edit_shapes, f64_param, format_run, format_run_at, json, ok, on_param, resolve, str_param,
 };
+use deckcraft_model::text::Hyperlink;
 
 pub(super) fn bold(s: &mut Session, p: &Value) -> Result<Value> {
     let v = on_param(p, current_run(s).bold);
@@ -109,7 +110,37 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
     }
-    format_run(s, &move |r| r.fill = Some(Fill::solid(c.clone())))
+    // Linked text keeps a colour the user gives it (PowerPoint writes `ahyp:hlinkClr val="tx"`),
+    // otherwise it draws in the theme's hyperlink colour. The flag belongs to the link, so a run
+    // whose link comes from its paragraph's `defRPr` or the list style gets that link as its own.
+    let inherited = inherited_links(s.doc()?);
+    format_run_at(s, &move |at, r| {
+        r.fill = Some(Fill::solid(c.clone()));
+        if r.link.is_none() {
+            r.link = at.and_then(|(id, pi)| inherited.get(&id).and_then(|v| v.get(pi)).cloned().flatten());
+        }
+        if r.link.is_some() {
+            r.link_keeps_color = Some(true);
+        }
+    })
+}
+
+/// For each shape whose text is being formatted, the link each paragraph gives runs that set
+/// none (from the paragraph's `defRPr` or the list style), by paragraph.
+fn inherited_links(st: &crate::DocState) -> std::collections::HashMap<ShapeId, Vec<Option<Hyperlink>>> {
+    let ids: Vec<ShapeId> = match &st.selection.text {
+        Some(t) if !t.notes && t.cell.is_none() => vec![t.shape],
+        Some(_) => vec![],
+        None => st.selection.shapes.clone(),
+    };
+    let Some(ctx) = crate::cmd::text::ctx_for(&st.doc, &st.selection) else { return Default::default() };
+    ids.into_iter()
+        .filter_map(|id| {
+            let sh = st.shape(id)?;
+            let body = sh.text.as_ref()?;
+            Some((id, body.paragraphs.iter().map(|p| resolve::run(&ctx, sh, p, &RunProps::default()).link).collect()))
+        })
+        .collect()
 }
 
 /// `a:alpha` for `transparency` (0–1) on `c`, replacing any alpha it had; fully opaque drops it.

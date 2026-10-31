@@ -8,22 +8,19 @@ use super::{
 /// selected shapes). A caret without a range formats the word it's in (PowerPoint behaviour),
 /// or sets the formatting for what is typed next at a word boundary.
 pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sync)) -> Result<Value> {
+    format_run_at(s, &|_, r| f(r))
+}
+
+/// [`format_run`], telling `f` which shape body and paragraph each run is in: `Some((shape,
+/// paragraph))` for a shape's own text, `None` for table cells and speaker notes.
+pub(crate) fn format_run_at(s: &mut Session, f: &(dyn Fn(Option<(ShapeId, usize)>, &mut RunProps) + Send + Sync)) -> Result<Value> {
     let st = s.doc()?;
     if let Some(t) = st.selection.text.clone() {
         let (a, b) = format_range(st, &t);
-        let collapsed = a == b;
-        edit_text(s, |body, _| {
-            if collapsed {
-                // Next typed text: put the props on an empty paragraph's end mark or keep pending.
-                ed::format(body, a, b, f);
-            } else {
-                ed::format(body, a, b, f);
-            }
-        })?;
-        if collapsed {
-            // Remember as pending typing props by inserting nothing: handled via end mark for
-            // empty paragraphs; mid-paragraph carets keep surrounding formatting.
-        }
+        let own = (!t.notes && t.cell.is_none()).then_some(t.shape);
+        // A bare caret puts the props on an empty paragraph's end mark; mid-paragraph carets keep
+        // the surrounding formatting.
+        edit_text(s, |body, _| ed::format_at(body, a, b, &|pi, r| f(own.map(|id| (id, pi)), r)))?;
         return ok();
     }
     let ids = st.selection.shapes.clone();
@@ -40,14 +37,14 @@ pub(crate) fn format_run(s: &mut Session, f: &(dyn Fn(&mut RunProps) + Send + Sy
                 for (r, row) in t.rows.iter_mut().enumerate() {
                     for (c, cell) in row.cells.iter_mut().enumerate() {
                         if crate::cmd::table::in_range(range, r, c) {
-                            ed::format_all(&mut cell.text, f);
+                            ed::format_all_at(&mut cell.text, &|_, r| f(None, r));
                         }
                     }
                 }
             }
             _ => {
                 let body = sh.text.get_or_insert_with(TextBody::default);
-                ed::format_all(body, f);
+                ed::format_all_at(body, &|pi, r| f(Some((id, pi)), r));
             }
         }
         Ok(())

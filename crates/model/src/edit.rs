@@ -179,6 +179,11 @@ fn props_of_range(p: &Paragraph, at: usize) -> RunProps {
 /// Apply `f` to the run properties of every run in [a, b). An empty range changes the empty
 /// paragraph's end mark (so typing there picks the formatting up).
 pub fn format(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(&mut RunProps)) {
+    format_at(body, a, b, &|_, r| f(r));
+}
+
+/// [`format`], telling `f` the index of the paragraph each run is in.
+pub fn format_at(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(usize, &mut RunProps)) {
     if body.paragraphs.is_empty() {
         return;
     }
@@ -188,16 +193,16 @@ pub fn format(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(&mut RunProps)) {
         let from = if pi == s.0 { s.1 } else { 0 };
         let to = if pi == e.0 { e.1 } else { p.char_len() };
         if p.runs.is_empty() || (from == to && s == e) {
-            f(&mut p.end_props);
+            f(pi, &mut p.end_props);
             continue;
         }
         let i0 = split_at(p, from);
         let i1 = split_at(p, to);
         for r in p.runs.iter_mut().take(i1).skip(i0) {
-            f(&mut r.props);
+            f(pi, &mut r.props);
         }
         if to == p.char_len() {
-            f(&mut p.end_props);
+            f(pi, &mut p.end_props);
         }
         p.normalize();
     }
@@ -205,11 +210,16 @@ pub fn format(body: &mut TextBody, a: Pos, b: Pos, f: &dyn Fn(&mut RunProps)) {
 
 /// Apply `f` to every run in the body (and end marks).
 pub fn format_all(body: &mut TextBody, f: &dyn Fn(&mut RunProps)) {
-    for p in &mut body.paragraphs {
+    format_all_at(body, &|_, r| f(r));
+}
+
+/// [`format_all`], telling `f` the index of the paragraph each run is in.
+pub fn format_all_at(body: &mut TextBody, f: &dyn Fn(usize, &mut RunProps)) {
+    for (pi, p) in body.paragraphs.iter_mut().enumerate() {
         for r in &mut p.runs {
-            f(&mut r.props);
+            f(pi, &mut r.props);
         }
-        f(&mut p.end_props);
+        f(pi, &mut p.end_props);
         p.normalize();
     }
 }

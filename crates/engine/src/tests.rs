@@ -1485,6 +1485,55 @@ fn inserted_hyperlinks_look_like_links() {
     assert_eq!(s.execute("format.state", &json!({})).unwrap()["underline"], false);
 }
 
+/// Font Color on linked text sticks (PowerPoint's `hlinkClr val="tx"`), whether the run has its
+/// own link or takes it from its paragraph's `defRPr`; text without a link gets no link.
+#[test]
+fn font_color_on_linked_text_keeps_the_colour() {
+    let mut s = session();
+    let r = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 400, 100], "text": "Read the docs"})).unwrap();
+    let id = deckcraft_model::ShapeId(r["id"].as_u64().unwrap() as u32);
+    let hlink = deckcraft_model::Fill::solid(deckcraft_model::ColorRef::scheme(deckcraft_model::SchemeSlot::Hlink));
+    let resolved = |s: &Session| {
+        let st = s.doc().unwrap();
+        let slide = st.current_slide().unwrap();
+        let ctx = deckcraft_model::resolve::Ctx::for_slide(&st.doc, slide).unwrap();
+        let sh = deckcraft_model::find_shape(&slide.shapes, id).unwrap();
+        let p = &sh.text.as_ref().unwrap().paragraphs[0];
+        p.runs
+            .iter()
+            .map(|r| (r.text.clone(), r.props.link.is_some(), deckcraft_model::resolve::run(&ctx, sh, p, &r.props).fill, r.props.fill.clone()))
+            .collect::<Vec<_>>()
+    };
+    // Own link: the word gets the colour, the rest stays unlinked.
+    s.execute("text.edit", &json!({"id": id.0})).unwrap();
+    s.execute("text.move", &json!({"to": "end"})).unwrap();
+    s.execute("text.move", &json!({"to": "wordLeft", "extend": true})).unwrap();
+    s.execute("insert.hyperlink", &json!({"url": "https://example.org"})).unwrap();
+    s.execute("text.move", &json!({"to": "start", "extend": true})).unwrap();
+    s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
+    let runs = resolved(&s);
+    assert!(runs.iter().all(|(_, _, f, own)| own.is_some() && f == own), "{runs:?}");
+    assert_eq!(runs.iter().filter(|(_, l, ..)| *l).map(|(t, ..)| t.as_str()).collect::<Vec<_>>(), ["docs"], "{runs:?}");
+    // Link from the paragraph's defRPr: the run takes it as its own, flagged.
+    s.execute("text.exit", &json!({})).unwrap();
+    s.edit(|doc, _| {
+        let sh = deckcraft_model::find_shape_mut(&mut std::sync::Arc::make_mut(&mut doc.slides[0]).shapes, id).unwrap();
+        let p = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        let link = p.runs.iter().find_map(|r| r.props.link.clone());
+        for r in &mut p.runs {
+            r.props = deckcraft_model::RunProps::default();
+        }
+        p.def_props.link = link;
+        Ok(())
+    })
+    .unwrap();
+    assert!(resolved(&s).iter().all(|(_, _, f, _)| f.as_ref() == Some(&hlink)), "the inherited link draws in the hyperlink colour");
+    s.execute("edit.select", &json!({"ids": [id.0]})).unwrap();
+    s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
+    let runs = resolved(&s);
+    assert!(runs.iter().all(|(_, l, f, own)| *l && own.is_some() && f == own), "{runs:?}");
+}
+
 /// #270: shapes off the slide (in the editor's pasteboard) are hit, selected, moved and marqueed
 /// like any other; one can be dragged back onto the slide or out of it.
 #[test]
