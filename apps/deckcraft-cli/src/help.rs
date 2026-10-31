@@ -96,11 +96,10 @@ What the ids don't say:
   slide.go {\"index\": N} makes slide N current.
 - Shape ids are unique in the presentation; a shape or text command given an id on another slide edits
   it there and makes that slide current (its answer says so). shape.inspect, text.get and shape.sites
-  read a shape on any slide and move nothing. text.edit (the text cursor), shape.connect, smartArt.*,
-  arrange.group and edit.delete refuse an id on another slide; arrange.distribute and the order
-  commands (arrange.bringToFront…) leave it where it is, and arrange.align moves it but measures
-  from the current slide: slide.go first. arrange.nudge, rotate and
-  flip edit a shape on any slide.
+  read a shape on any slide and move nothing. text.edit (the text cursor), edit.delete, shape.connect,
+  smartArt.* and the arrange commands that act on several shapes together (align, distribute,
+  group, ungroup, bringToFront…) work on the current slide and refuse an id on another slide:
+  slide.go first. arrange.nudge, rotate and flip edit a shape on any slide.
 - A command that adds a shape (shape.insert, insert.textBox, insert.table…) selects it. format.* acts
   on the selected text or shapes; edit.select {\"ids\": [...]} selects others. Many shape commands
   take the ids directly; `deckcraft-cli describe COMMAND` says what a command acts on.

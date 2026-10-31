@@ -7229,6 +7229,45 @@ fn review_refusals_and_the_new_sections_index() {
     assert_eq!(first, Some(st.doc.slides[1].id), "{r}");
 }
 
+/// The arrange commands that work on several shapes together use the current slide: a named shape
+/// on another slide is refused, saying where it is, even mixed with shapes on this slide, and
+/// nothing moves or changes slide.
+#[test]
+fn arrange_commands_refuse_a_shape_on_another_slide() {
+    let mut s = session();
+    let ins = |s: &mut Session, x: f64| {
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [x, 100.0, 50.0, 50.0]})).unwrap()["id"].as_u64().unwrap()
+    };
+    let far = ins(&mut s, 400.0);
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let (a, b) = (ins(&mut s, 10.0), ins(&mut s, 200.0));
+    for (cmd, extra) in [
+        ("arrange.align", json!({"edge": "left", "to": "selection"})),
+        ("arrange.distribute", json!({"dir": "horizontal", "to": "selection"})),
+        ("arrange.group", json!({})),
+        ("arrange.ungroup", json!({})),
+        ("arrange.bringToFront", json!({})),
+        ("arrange.sendToBack", json!({})),
+    ] {
+        let rev = s.doc().unwrap().revision;
+        let mut p = extra.clone();
+        p["ids"] = json!([a, b, far]);
+        let e = s.execute(cmd, &p).unwrap_err().to_string();
+        assert!(e.contains(cmd) && e.contains(&format!("shape {far} is on slide index 0")) && e.contains("slide.go"), "{cmd}: {e}");
+        assert_eq!(s.doc().unwrap().revision, rev, "{cmd} changed nothing");
+        assert_eq!(s.doc().unwrap().selection.slide, 1, "{cmd} stays on the current slide");
+    }
+    // text.edit and smartArt.* name the slide too.
+    let e = s.execute("text.edit", &json!({"id": far})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {far} is on slide index 0")), "{e}");
+    let e = s.execute("smartArt.nodes", &json!({"id": far})).unwrap_err().to_string();
+    assert!(e.contains(&format!("shape {far} is on slide index 0")), "{e}");
+    // On the current slide they still work.
+    s.execute("arrange.align", &json!({"edge": "left", "to": "selection", "ids": [a, b]})).unwrap();
+    let x = |s: &Session, id: u64| s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().xfrm.unwrap().x;
+    assert_eq!(x(&s, b), x(&s, a));
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
