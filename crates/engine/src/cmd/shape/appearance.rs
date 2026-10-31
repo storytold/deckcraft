@@ -1,7 +1,7 @@
 use super::{
-    ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, Line, LineEnd, PictureFill, PictureMode,
-    Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value, edit_geometry,
-    edit_shapes, f64_param, inherited_fills, json, requested_fill, str_param, targets, usize_param,
+    ColorBase, ColorRef, ColorTransform, Dash, Effects, Fill, Geom, Glow, Gradient, GradientShape, GradientStop, HashMap, Line, LineEnd, PictureFill,
+    PictureMode, Reflection, Result, Rgba, SchemeSlot, Session, Shadow, ShapeStyle, Value, apply_fill, bad, bool_or, color_param, color_value,
+    edit_geometry, edit_shapes, f64_param, inherited_fills, json, requested_fill, str_param, targets, usize_param,
 };
 
 pub(super) fn adjust(s: &mut Session, p: &Value) -> Result<Value> {
@@ -73,8 +73,8 @@ pub(super) fn change(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 /// `{stops: [[pos 0–1, color], …], kind?: linear|radial|rectangular|path, angle?: deg (linear),
-/// focus?: [l, t, r, b] fractions (radial/rectangular/path: where the first stop sits),
-/// rotateWithShape?}`.
+/// scaled?: bool (linear), focus?: [l, t, r, b] fractions (radial/rectangular/path: where the first
+/// stop sits), tile?: [l, t, r, b] insets from the shape's box (fractions), rotateWithShape?}`.
 pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
     let stops: Vec<GradientStop> = v
         .get("stops")?
@@ -105,11 +105,19 @@ pub(crate) fn gradient_param(v: &Value) -> Option<Gradient> {
         Some("path" | "shape") => path("shape"),
         _ => GradientShape::Linear {
             angle: v.get("angle").and_then(Value::as_f64).filter(|a| a.is_finite()).unwrap_or(90.0).rem_euclid(360.0),
-            scaled: false,
+            scaled: v.get("scaled").and_then(Value::as_bool).unwrap_or(false),
         },
     };
+    let tile = v
+        .get("tile")
+        .and_then(Value::as_array)
+        .and_then(|a| {
+            let f = |i: usize| a.get(i).and_then(Value::as_f64).filter(|x| x.is_finite()).map(|x| x.clamp(-10.0, 10.0));
+            Some([f(0)?, f(1)?, f(2)?, f(3)?])
+        })
+        .unwrap_or([0.0; 4]);
     Some(Gradient {
-        tile: [0.0; 4],
+        tile,
         stops,
         shape,
         rotate_with_shape: v.get("rotateWithShape").and_then(Value::as_bool).unwrap_or(true),
@@ -235,10 +243,26 @@ fn line_end(v: &str) -> Option<LineEnd> {
     if v == "none" { None } else { Some(LineEnd { kind: v.to_string(), w: "med".into(), len: "med".into() }) }
 }
 
+/// The line fill `shape` draws with: its own, or the one it inherits from its layout, master or
+/// theme style, with a solid color resolved to RGB (alpha included). `None` when nothing gives
+/// it one.
+pub fn effective_line_fill(doc: &deckcraft_model::Presentation, sel: &crate::Selection, shape: &deckcraft_model::Shape) -> Option<Fill> {
+    let ctx = super::super::text::ctx_for(doc, sel)?;
+    let (l, ph) = deckcraft_model::resolve::line(&ctx, shape);
+    match l.fill? {
+        Fill::Solid { color } => Some(Fill::solid(ColorRef::rgb(ctx.color(&color, ph)))),
+        other => Some(other),
+    }
+}
+
 pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
     let reset = bool_or(p, "reset", false);
     let none = bool_or(p, "none", false);
     let color = color_param(p, "color");
+    let gradient = match p.get("gradient") {
+        Some(g) => Some(gradient_param(g).ok_or_else(|| bad("shape.line", "gradient needs at least two `stops`: [[0, \"#fff\"], [1, \"#000\"]]"))?),
+        None => None,
+    };
     let width = f64_param(p, "width").map(|w| w.clamp(0.0, 1584.0));
     let dash = str_param(p, "dash").map(|d| Dash::Preset { name: d.to_string() });
     let head = str_param(p, "head").map(line_end);
@@ -262,11 +286,29 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         "miter" => deckcraft_model::style::LineJoin::Miter,
         _ => deckcraft_model::style::LineJoin::Round,
     });
+    let transparency = f64_param(p, "transparency");
+    // Transparency on an inherited (style) line needs the effective color.
+    let ctx_line = match transparency {
+        None => HashMap::new(),
+        Some(_) => {
+            let st = s.doc()?;
+            let mut lines = HashMap::new();
+            for id in targets(s, p)? {
+                if let Some(sh) = st.shape(id) {
+                    deckcraft_model::walk(std::slice::from_ref(sh), &mut |sh, _| {
+                        lines.insert(sh.id, effective_line_fill(&st.doc, &st.selection, sh));
+                    });
+                }
+            }
+            lines
+        }
+    };
     edit_group_appearance(s, p, "shape.line", |sh| {
         if reset {
             sh.line = None;
             return Ok(());
         }
+        let automatic = sh.line.is_none();
         let l = sh.line.get_or_insert_with(Line::default);
         if none {
             l.fill = Some(Fill::None);
@@ -274,6 +316,10 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(c) = &color {
             l.fill = Some(Fill::solid(c.clone()));
         }
+        if let Some(g) = &gradient {
+            l.fill = Some(Fill::Gradient(g.clone()));
+        }
+        let inherited_fill = l.fill.is_none();
         if width.is_some() {
             l.width = width;
             if l.fill.is_none() || matches!(l.fill, Some(Fill::None)) && !none {
@@ -313,6 +359,31 @@ pub(super) fn line(s: &mut Session, p: &Value) -> Result<Value> {
                 e.w.clone_from(sz);
                 e.len.clone_from(sz);
             }
+        }
+        // Format Shape ▸ Line ▸ Transparency: only a solid line has one.
+        if let Some(t) = transparency {
+            // A width given in the same call gives an automatic line a fill of its own, so the
+            // inherited color comes first.
+            let inherited = if inherited_fill { ctx_line.get(&sh.id).cloned().flatten() } else { None };
+            let base = inherited.or_else(|| l.fill.clone());
+            if let Some(Fill::Solid { mut color }) = base {
+                // The new transparency replaces any alpha: the alpha transforms, and the alpha an
+                // inherited color carries in its resolved RGBA. A theme, preset or system color
+                // (`phClr` included) resolves to an RGBA that can carry an alpha of its own, so 0%
+                // sets an explicit opaque alpha on it.
+                color.mods.retain(|m| !matches!(m, ColorTransform::Alpha(_) | ColorTransform::AlphaMod(_) | ColorTransform::AlphaOff(_)));
+                if let ColorBase::Rgb { rgb } = &mut color.base {
+                    rgb.a = 255;
+                }
+                if t > 0.0 || !matches!(color.base, ColorBase::Rgb { .. }) {
+                    color.mods.push(ColorTransform::Alpha(((1.0 - t.clamp(0.0, 1.0)) * 100_000.0).round() as i32));
+                }
+                l.fill = Some(Fill::Solid { color });
+            }
+        }
+        // A parameter that changed nothing leaves an automatic line automatic.
+        if automatic && sh.line.as_ref().is_some_and(|l| *l == Line::default()) {
+            sh.line = None;
         }
         Ok(())
     })
