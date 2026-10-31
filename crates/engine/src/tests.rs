@@ -1532,6 +1532,19 @@ fn font_color_on_linked_text_keeps_the_colour() {
     s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
     let runs = resolved(&s);
     assert!(runs.iter().all(|(_, l, f, own)| *l && own.is_some() && f == own), "{runs:?}");
+    // The Font dialog's colour sticks the same way.
+    s.edit(|doc, _| {
+        let sh = deckcraft_model::find_shape_mut(&mut std::sync::Arc::make_mut(&mut doc.slides[0]).shapes, id).unwrap();
+        for r in &mut sh.text.as_mut().unwrap().paragraphs[0].runs {
+            r.props.link_keeps_color = None;
+            r.props.fill = None;
+        }
+        Ok(())
+    })
+    .unwrap();
+    s.execute("format.fontDialog", &json!({"color": "#00FF00"})).unwrap();
+    let runs = resolved(&s);
+    assert!(runs.iter().all(|(_, l, f, own)| *l && own.is_some() && f == own), "{runs:?}");
 }
 
 /// #270: shapes off the slide (in the editor's pasteboard) are hit, selected, moved and marqueed

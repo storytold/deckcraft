@@ -116,13 +116,19 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
     let inherited = inherited_links(s.doc()?);
     format_run_at(s, &move |at, r| {
         r.fill = Some(Fill::solid(c.clone()));
-        if r.link.is_none() {
-            r.link = at.and_then(|(id, pi)| inherited.get(&id).and_then(|v| v.get(pi)).cloned().flatten());
-        }
-        if r.link.is_some() {
-            r.link_keeps_color = Some(true);
-        }
+        keep_link_colour(&inherited, at, r);
     })
+}
+
+/// After a font colour is set on `r`: a linked run keeps it (`link_keeps_color`), taking an
+/// inherited link (from `inherited_links`) as its own first.
+fn keep_link_colour(inherited: &std::collections::HashMap<ShapeId, Vec<Option<Hyperlink>>>, at: Option<(ShapeId, usize)>, r: &mut RunProps) {
+    if r.link.is_none() {
+        r.link = at.and_then(|(id, pi)| inherited.get(&id).and_then(|v| v.get(pi)).cloned().flatten());
+    }
+    if r.link.is_some() {
+        r.link_keeps_color = Some(true);
+    }
 }
 
 /// For each shape whose text is being formatted, the link each paragraph gives runs that set
@@ -480,7 +486,15 @@ pub(super) fn font_dialog(s: &mut Session, p: &Value) -> Result<Value> {
         s.ui_requests.push(crate::UiRequest::Dialog { id: "font".into(), params: font_dialog_params(s) });
         return ok();
     }
-    format_run(s, &|r| edits.write(r))
+    if edits.color.is_none() {
+        return format_run(s, &|r| edits.write(r));
+    }
+    // A colour from the dialog sticks on linked text, as Font Color does.
+    let inherited = inherited_links(s.doc()?);
+    format_run_at(s, &move |at, r| {
+        edits.write(r);
+        keep_link_colour(&inherited, at, r);
+    })
 }
 
 pub(super) fn clear(s: &mut Session, _p: &Value) -> Result<Value> {
