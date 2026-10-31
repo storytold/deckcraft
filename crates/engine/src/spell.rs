@@ -596,23 +596,29 @@ pub fn find_in(dirs: &[PathBuf], lang: &str) -> Option<(PathBuf, PathBuf)> {
             return Some(p);
         }
     }
-    let codes: Vec<&str> = std::iter::once(base.as_str()).chain(alias(&base).map(|(code, _)| code)).collect();
-    for d in dirs {
-        if let Some(p) = codes.iter().filter(|c| same_script(lang, c, &base)).find_map(|c| pair(d, c)) {
-            return Some(p);
-        }
-        let Ok(rd) = std::fs::read_dir(d) else { continue };
-        // `sr_Latn_RS`, LibreOffice's `sr-Latn` and Fedora's `sr_RS@latin` all name a Serbian
-        // dictionary.
-        let mut stems: Vec<String> = rd
-            .filter_map(|e| e.ok()?.file_name().into_string().ok())
-            .filter_map(|n| n.strip_suffix(".aff").map(str::to_string))
-            .filter(|n| codes.contains(&stem_language(n).as_str()) && stem_language(n) != n.to_ascii_lowercase())
-            .filter(|n| same_script(lang, n, &base))
-            .collect();
-        stems.sort();
-        if let Some(p) = stems.iter().find_map(|s| pair(d, s)) {
-            return Some(p);
+    // The language's own dictionaries first, in every folder; then those filed under its alias
+    // (a Serbian Latin dictionary before a Serbo-Croatian one).
+    let codes = std::iter::once(base.as_str()).chain(alias(&base).map(|(code, _)| code));
+    for code in codes {
+        for d in dirs {
+            if same_script(lang, code, &base)
+                && let Some(p) = pair(d, code)
+            {
+                return Some(p);
+            }
+            let Ok(rd) = std::fs::read_dir(d) else { continue };
+            // `sr_Latn_RS`, LibreOffice's `sr-Latn` and Fedora's `sr_RS@latin` all name a Serbian
+            // dictionary.
+            let mut stems: Vec<String> = rd
+                .filter_map(|e| e.ok()?.file_name().into_string().ok())
+                .filter_map(|n| n.strip_suffix(".aff").map(str::to_string))
+                .filter(|n| stem_language(n) == code && !n.eq_ignore_ascii_case(code))
+                .filter(|n| same_script(lang, n, &base))
+                .collect();
+            stems.sort();
+            if let Some(p) = stems.iter().find_map(|s| pair(d, s)) {
+                return Some(p);
+            }
         }
     }
     None
@@ -1046,6 +1052,9 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert_eq!(stem(&["sh"], "sr-Latn-RS").as_deref(), Some("sh"));
         assert_eq!(stem(&["sh_RS"], "sr-Cyrl-RS"), None);
         assert_eq!(stem(&["sh_RS", "sr"], "sr-RS").as_deref(), Some("sr"));
+        // A Serbian Latin dictionary comes before a Serbo-Croatian one.
+        assert_eq!(stem(&["sh_RS", "sr-Latn"], "sr-Latn-RS").as_deref(), Some("sr-Latn"));
+        assert_eq!(stem(&["sh", "sr_RS@latin"], "sr-Latn-RS").as_deref(), Some("sr_RS@latin"));
         // Only the other script installed: no dictionary, so no marks, rather than every word.
         assert_eq!(stem(&["sr"], "sr-Latn-RS"), None);
         assert_eq!(stem(&["sr-Latn"], "sr-Cyrl-RS"), None);
