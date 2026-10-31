@@ -1,11 +1,11 @@
 //! Theme parts.
 
-use deckcraft_color::SchemeSlot;
+use deckcraft_color::{ColorScheme, SchemeSlot};
 use deckcraft_model::style::{ColorRef, Effects, Fill};
 use deckcraft_model::theme::{FontSet, Theme, default_format};
 
 use super::{Exp, Out, dml};
-use crate::opc::{NS_A, NS_R};
+use crate::opc::{EXT_DC_COLORS, NS_A, NS_DC_COLORS, NS_R};
 use crate::xml::{A, W};
 
 fn font_set(w: &mut W, tag: &str, f: &FontSet) {
@@ -26,6 +26,35 @@ fn style_fill(f: &Fill) -> Fill {
     }
 }
 
+/// The scheme's extra named colours and explicit tint rows, as a DeckCraft `a:ext` after the
+/// twelve slots: `<dc:tints slot="accent1"><dc:clr val="RRGGBB"/>…</dc:tints>` and
+/// `<dc:color name="Sand" val="RRGGBB">(dc:clr…)</dc:color>`.
+fn extra_colors(w: &mut W, c: &ColorScheme) {
+    if c.extra.is_empty() && c.tints.is_empty() {
+        return;
+    }
+    w.open0("a:extLst");
+    w.open("a:ext", A::new().a("uri", EXT_DC_COLORS));
+    w.open("dc:extraColors", A::new().a("xmlns:dc", NS_DC_COLORS));
+    for (slot, tints) in &c.tints {
+        w.open("dc:tints", A::new().a("slot", slot.xml_name()));
+        for t in tints {
+            w.val("dc:clr", t.hex());
+        }
+        w.close("dc:tints");
+    }
+    for e in &c.extra {
+        w.open("dc:color", A::new().a("name", &e.name).a("val", e.color.hex()));
+        for t in e.tints.iter().flatten() {
+            w.val("dc:clr", t.hex());
+        }
+        w.close("dc:color");
+    }
+    w.close("dc:extraColors");
+    w.close("a:ext");
+    w.close("a:extLst");
+}
+
 pub fn theme_xml(x: &mut Exp, o: &mut Out, t: &Theme) -> Vec<u8> {
     let mut w = W::new();
     w.open("a:theme", A::new().a("xmlns:a", NS_A).a("xmlns:r", NS_R).a("name", if t.name.is_empty() { "Theme" } else { &t.name }));
@@ -37,6 +66,7 @@ pub fn theme_xml(x: &mut Exp, o: &mut Out, t: &Theme) -> Vec<u8> {
         w.val("a:srgbClr", t.colors.get(slot).hex());
         w.close(&tag);
     }
+    extra_colors(&mut w, &t.colors);
     w.close("a:clrScheme");
     w.open("a:fontScheme", A::new().a("name", if t.fonts.name.is_empty() { &t.name } else { &t.fonts.name }));
     font_set(&mut w, "a:majorFont", &t.fonts.major);

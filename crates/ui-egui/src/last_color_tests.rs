@@ -152,3 +152,60 @@ fn before_any_pick_the_buttons_still_apply_accent_1_and_text_1() {
     assert_eq!(slot(&sh.fill), Some(SchemeSlot::Accent1));
     assert_eq!(slot(&sh.line.as_ref().unwrap().fill), Some(SchemeSlot::Tx1));
 }
+
+/// Open the drop-down arrow of a split button and click the swatch labelled `swatch`.
+fn pick_swatch(h: &mut Harness<'static, SlideApp>, button: &str, swatch: &str) {
+    let arrow = h.get_by_role_and_label(egui::accesskit::Role::Button, &format!("{button} options")).rect().center();
+    h.input_mut().events.push(Event::PointerMoved(arrow));
+    h.run_steps(2);
+    for pressed in [true, false] {
+        h.input_mut().events.push(Event::PointerButton { pos: arrow, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+    h.run_steps(2);
+    // Several columns may share a computed row's label ("Lighter 80%"): the first one will do.
+    let cell =
+        h.get_all_by_role_and_label(egui::accesskit::Role::Button, swatch).next().unwrap_or_else(|| panic!("no swatch {swatch}")).rect().center();
+    h.input_mut().events.push(Event::PointerMoved(cell));
+    h.run_steps(2);
+    for pressed in [true, false] {
+        h.input_mut().events.push(Event::PointerButton { pos: cell, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+    h.run_steps(2);
+}
+
+#[test]
+fn the_gallery_offers_extra_colours_and_explicit_tint_rows() {
+    use deckcraft_color::Rgba;
+    let (mut h, [a, _]) = harness("Home");
+    let five = vec!["#C7EBBA", "#8EC58D", "#4DA060", "#2D7740", "#0D4A21"];
+    h.state_mut()
+        .session
+        .execute(
+            "design.colors",
+            &json!({"tints": {"accent5": five}, "extra": [{"name": "Sand", "color": "#EBE5E0", "tints": five}, {"name": "Navy", "color": "#000061"}]}),
+        )
+        .unwrap();
+    h.run_steps(2);
+    // An extra colour stores its RGB.
+    pick_swatch(&mut h, "Shape Fill", "Sand #EBE5E0");
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("EBE5E0"));
+    // An explicit tint row (an override) stores the exact RGB, under a slot or an extra colour.
+    pick_swatch(&mut h, "Shape Fill", "Accent 5 #0D4A21");
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("0D4A21"));
+    pick_swatch(&mut h, "Shape Fill", "Sand #EBE5E0 #8EC58D");
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("8EC58D"));
+    // An extra colour without an override gets computed rows, stored as RGB too.
+    let navy = Rgba::rgb(0, 0, 0x61);
+    let rows = deckcraft_color::variants_of(navy, None);
+    pick_swatch(&mut h, "Shape Fill", &format!("Navy #000061 {}", rows[0].label));
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some(rows[0].color.hex().as_str()));
+    // A computed row under a theme colour still stores the slot with its transforms.
+    pick_swatch(&mut h, "Shape Fill", "Lighter 80%");
+    let sh = h.state().session.active().unwrap().shape(a).unwrap().clone();
+    match sh.fill {
+        Some(Fill::Solid { color: ColorRef { base: ColorBase::Scheme { .. }, mods } }) => assert_eq!(mods.len(), 2),
+        other => panic!("{other:?}"),
+    }
+}

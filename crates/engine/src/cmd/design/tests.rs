@@ -498,3 +498,83 @@ fn background_rejects_invalid_index() {
         assert_eq!(s.doc().unwrap().doc.slides[0].background, before);
     }
 }
+
+#[test]
+fn colors_accepts_tint_overrides_and_extra_colours() {
+    use deckcraft_color::{ExtraColor, Rgba, VARIANT_ROWS};
+    let mut s = Session::with_new();
+    let n = undo_len(&s);
+    let five = ["#C7EBBA", "#8EC58D", "#4DA060", "#2D7740", "#0D4A21"];
+    s.execute(
+        "design.colors",
+        &json!({"tints": {"accent5": five}, "extra": [{"name": "Sand", "color": "#EBE5E0"}, {"name": "Dark green", "color": "#0D4A21", "tints": five}]}),
+    )
+    .unwrap();
+    let sc = scheme(&s);
+    assert_eq!(sc.name, "DeckCraft", "tints and extras alone keep the scheme name");
+    assert_eq!(sc.tints.get(&SchemeSlot::Accent5).map(Vec::len), Some(VARIANT_ROWS));
+    assert_eq!(sc.tints[&SchemeSlot::Accent5][0], Rgba::rgb(0xC7, 0xEB, 0xBA));
+    assert_eq!(sc.extra.len(), 2);
+    assert_eq!(sc.extra[0], ExtraColor { name: "Sand".into(), color: Rgba::rgb(0xEB, 0xE5, 0xE0), tints: None });
+    assert_eq!(sc.extra[1].tints.as_ref().map(Vec::len), Some(VARIANT_ROWS));
+    assert_eq!(undo_len(&s), n + 1);
+    // The gallery rows follow the override for accent5 only.
+    assert_eq!(sc.slot_variants(SchemeSlot::Accent5)[4].color, Rgba::rgb(0x0D, 0x4A, 0x21));
+    assert!(sc.slot_variants(SchemeSlot::Accent4).iter().all(|v| v.mods.is_some()));
+
+    // Read back: the dialog parameters and design.themes carry them.
+    s.ui_requests.clear();
+    s.execute("design.colors", &json!({})).unwrap();
+    let UiRequest::Dialog { params, .. } = &s.ui_requests[0] else { panic!("dialog") };
+    assert_eq!(params["tints"]["accent5"], json!(five));
+    assert_eq!(params["extra"][0], json!({"name": "Sand", "color": "#EBE5E0"}));
+    assert_eq!(params["extra"][1]["tints"], json!(five));
+    let themes = s.execute("design.themes", &json!({})).unwrap();
+    assert_eq!(themes["current"]["extra"][0]["name"], "Sand");
+    assert_eq!(themes["current"]["tints"]["accent5"], json!(five));
+    assert_eq!(themes["current"]["colors"]["accent1"], format!("#{}", sc.get(SchemeSlot::Accent1).hex()));
+
+    // Extra colours are accepted by name wherever a colour is, and store their RGB.
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap();
+    s.execute("shape.fill", &json!({"color": "sand"})).unwrap();
+    s.execute("shape.line", &json!({"color": "Dark green"})).unwrap();
+    let shape = s.doc().unwrap().selected_shapes()[0].clone();
+    assert_eq!(shape.fill, Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0xEB, 0xE5, 0xE0)))));
+    assert_eq!(shape.line.as_ref().and_then(|l| l.fill.clone()), Some(Fill::solid(deckcraft_model::ColorRef::rgb(Rgba::rgb(0x0D, 0x4A, 0x21)))));
+    assert_eq!(s.execute("slide.colorAt", &json!({"x": 150.0, "y": 150.0})).unwrap()["color"], "EBE5E0");
+    assert!(s.execute("shape.fill", &json!({"color": "Navy"})).is_err(), "an unknown name is still rejected");
+
+    // `null` removes a tint override, `[]` the extras; a builtin scheme by name has neither.
+    s.execute("design.colors", &json!({"tints": {"accent5": null}})).unwrap();
+    assert!(scheme(&s).tints.is_empty());
+    assert_eq!(scheme(&s).extra.len(), 2);
+    s.execute("design.colors", &json!({"extra": []})).unwrap();
+    assert!(scheme(&s).extra.is_empty());
+    assert!(s.execute("shape.fill", &json!({"color": "sand"})).is_err(), "removed extras are no longer names");
+    s.execute("design.colors", &json!({"extra": [{"name": "Sand", "color": "#EBE5E0"}]})).unwrap();
+    s.execute("design.colors", &json!({"name": "Harbor"})).unwrap();
+    assert!(scheme(&s).extra.is_empty());
+
+    // Rejections change nothing.
+    let before = scheme(&s);
+    let m = undo_len(&s);
+    for bad in [
+        json!({"tints": "x"}),
+        json!({"tints": {"bg1": vec!["#000000"; 5]}}),
+        json!({"tints": {"nope": vec!["#000000"; 5]}}),
+        json!({"tints": {"accent1": vec!["#000000"; 4]}}),
+        json!({"tints": {"accent1": ["#000000", "#000000", "#000000", "#000000", "zz"]}}),
+        json!({"extra": "Sand"}),
+        json!({"extra": [{"color": "#EBE5E0"}]}),
+        json!({"extra": [{"name": "Sand"}]}),
+        json!({"extra": [{"name": "Sand", "color": "#EBE5E0"}, {"name": "sand", "color": "#000000"}]}),
+        json!({"extra": [{"name": "accent1", "color": "#EBE5E0"}]}),
+        json!({"extra": [{"name": "#ABCDEF", "color": "#EBE5E0"}]}),
+        json!({"extra": [{"name": "Sand", "color": "#EBE5E0", "tints": ["#000000"]}]}),
+    ] {
+        assert!(s.execute("design.colors", &bad).is_err(), "{bad}");
+    }
+    assert_eq!(scheme(&s), before);
+    assert_eq!(undo_len(&s), m);
+}

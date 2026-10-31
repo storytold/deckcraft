@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
+use deckcraft_color::{ColorTransform, ExtraColor, Rgba, SchemeSlot, VARIANT_ROWS};
 use deckcraft_geom::Xfrm;
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, TextBuild, Transition};
 use deckcraft_model::chart::{Chart, ChartType};
@@ -2066,4 +2066,38 @@ fn default_durations_match_powerpoint() {
         let a = deckcraft_model::anim::ANIMATIONS.iter().find(|a| a.0 == effect).unwrap();
         assert_eq!(a.4, ms, "{effect}");
     }
+}
+
+#[test]
+fn extra_theme_colours_and_tint_rows_survive_save() {
+    let mut p = defaults::new_presentation(None);
+    {
+        let c = &mut Arc::make_mut(&mut p.masters[0]).theme.colors;
+        c.tints.insert(SchemeSlot::Accent5, vec![Rgba::rgb(0xC7, 0xEB, 0xBA), Rgba::rgb(0x4D, 0xA0, 0x60), Rgba::rgb(0x0D, 0x4A, 0x21)]);
+        c.tints.insert(SchemeSlot::Dk2, vec![Rgba::WHITE; VARIANT_ROWS]);
+        c.extra.push(ExtraColor { name: "Sand".into(), color: Rgba::rgb(0xEB, 0xE5, 0xE0), tints: None });
+        c.extra.push(ExtraColor {
+            name: "Grey & \"tones\"".into(),
+            color: Rgba::rgb(0xA5, 0xA5, 0xA5),
+            tints: Some(vec![Rgba::rgb(0xE6, 0xE6, 0xE6), Rgba::rgb(0x32, 0x32, 0x32)]),
+        });
+    }
+    let bytes = deckcraft_pptx::export(&p).expect("export");
+    let q = deckcraft_pptx::import(&bytes).expect("import");
+    assert_eq!(q.masters[0].theme.colors, p.masters[0].theme.colors);
+    // The extension sits inside the colour scheme, where other applications skip it.
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).expect("zip");
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut z.by_name("ppt/theme/theme1.xml").expect("theme part"), &mut xml).expect("utf8");
+    let (cs_start, cs_end) = (xml.find("<a:clrScheme").expect("clrScheme"), xml.find("</a:clrScheme>").expect("clrScheme end"));
+    let ext = xml.find("<a:extLst>").expect("extLst");
+    assert!(cs_start < ext && ext < cs_end, "the extension belongs to the colour scheme");
+    assert!(xml.contains("<dc:color name=\"Sand\" val=\"EBE5E0\">"), "{xml}");
+    assert!(xml.contains("Grey &amp; &quot;tones&quot;"), "{xml}");
+    // A plain scheme writes no extension at all.
+    let plain = deckcraft_pptx::export(&defaults::new_presentation(None)).expect("export");
+    let mut z = zip::ZipArchive::new(std::io::Cursor::new(plain)).expect("zip");
+    let mut xml = String::new();
+    std::io::Read::read_to_string(&mut z.by_name("ppt/theme/theme1.xml").expect("theme part"), &mut xml).expect("utf8");
+    assert!(!xml.contains("extraColors"), "{xml}");
 }

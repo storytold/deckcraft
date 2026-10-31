@@ -49,7 +49,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Colors",
             ["Design", "Variants"],
             None,
-            "{} opens Create New Theme Colors | {name} | {colors: {dk1|lt1|dk2|lt2|accent1..6|hlink|folHlink: #RRGGBB}}",
+            "{} opens Create New Theme Colors | {name} | {colors: {dk1|lt1|dk2|lt2|accent1..6|hlink|folHlink: #RRGGBB}, tints?: {slot: [5 × #RRGGBB] | null}, extra?: [{name, color: #RRGGBB, tints?: [5 × #RRGGBB]}]} — `tints` replaces the gallery's computed tints/shades under a colour; `extra` are named colours shown after the twelve slots and accepted by name wherever a colour is (DeckCraft only: .pptx keeps them in the colour scheme's extLst, PowerPoint shows the twelve slots)",
             has_doc,
             colors
         ),
@@ -294,8 +294,13 @@ fn master_index(doc: &Presentation, sel: &crate::Selection) -> usize {
     }
 }
 
-fn themes(_s: &mut Session, _p: &Value) -> Result<Value> {
+fn themes(s: &mut Session, _p: &Value) -> Result<Value> {
+    let current = s.doc().ok().map(|st| {
+        let mi = master_index(&st.doc, &st.selection);
+        st.doc.masters.get(mi).map(|m| colors::scheme_json(&m.theme.colors)).unwrap_or(Value::Null)
+    });
     Ok(json!({
+        "current": current,
         "themes": builtin_themes().iter().map(|t| json!({"name": t.name, "major": t.fonts.major.latin, "minor": t.fonts.minor.latin, "colors": t.colors.colors.iter().map(|c| format!("#{}", c.hex())).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "colorSchemes": builtin_color_schemes().iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
         "fontSchemes": builtin_font_schemes().iter().map(|f| json!({"name": f.name, "major": f.major.latin, "minor": f.minor.latin})).collect::<Vec<_>>(),

@@ -69,7 +69,7 @@ impl Default for Theme {
     fn default() -> Self {
         builtin_themes().into_iter().next().unwrap_or_else(|| Theme {
             name: "DeckCraft".into(),
-            colors: ColorScheme { name: "DeckCraft".into(), colors: [Rgba::BLACK; 12] },
+            colors: ColorScheme::new("DeckCraft", [Rgba::BLACK; 12]),
             fonts: FontScheme::default(),
             format: FormatScheme::default(),
             raw_extra: None,
@@ -97,7 +97,7 @@ fn hex(s: &str) -> Rgba {
 }
 
 fn scheme(name: &str, c: [&str; 12]) -> ColorScheme {
-    ColorScheme { name: name.into(), colors: c.map(hex) }
+    ColorScheme::new(name, c.map(hex))
 }
 
 fn ph() -> ColorRef {

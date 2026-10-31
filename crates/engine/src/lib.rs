@@ -641,6 +641,14 @@ impl Session {
         let before = self.active().map(|d| (d.uid, d.doc.clone(), d.selection.clone()));
         let vertex_kind = self.tool.vertex_kind.clone();
         let outer = self.depth == 0;
+        if outer {
+            // Colour parameters may name the theme's extra colours (`"Sand"`), from any master.
+            let extra = self
+                .active()
+                .map(|d| d.doc.masters.iter().flat_map(|m| m.theme.colors.extra.iter().map(|e| (e.name.clone(), e.color))).collect())
+                .unwrap_or_default();
+            cmd::set_extra_colors(extra);
+        }
         self.depth += 1;
         let r = (spec.run)(self, params);
         self.depth -= 1;

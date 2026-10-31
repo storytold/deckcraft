@@ -134,3 +134,54 @@ fn typing_a_hex_replaces_accent_1() {
     assert_eq!(scheme(&h).get(SchemeSlot::Accent1).hex(), "11AA22");
     assert_eq!(undo_len(&h), n + 1);
 }
+
+#[test]
+fn extra_colours_are_listed_added_and_removed() {
+    use deckcraft_color::Rgba;
+    let mut h = harness();
+    let five = vec!["#C7EBBA", "#8EC58D", "#4DA060", "#2D7740", "#0D4A21"];
+    h.state_mut()
+        .session
+        .execute(
+            "design.colors",
+            &serde_json::json!({"tints": {"accent5": five}, "extra": [{"name": "Sand", "color": "#EBE5E0", "tints": five}, {"name": "Navy", "color": "#000061"}]}),
+        )
+        .unwrap();
+    h.run_steps(2);
+    let n = undo_len(&h);
+    open_dialog(&mut h);
+    assert_eq!(h.get_by_label("Extra colour 1 name").value().as_deref(), Some("Sand"));
+    assert_eq!(h.get_by_label("Extra colour 2 hex").value().as_deref(), Some("#000061"));
+    let save = h.get_by_label("Save").rect();
+    let win = h.get_by_label("Create New Theme Colors").rect();
+    assert!(win.contains(save.center()), "Save {save:?} is outside the dialog window {win:?}");
+    // Remove Navy, add Digital blue.
+    h.get_by_label("Remove extra colour 2").click();
+    h.run_steps(2);
+    h.get_by_label("Add colour").click();
+    h.run_steps(2);
+    {
+        let d = h.state_mut().dialog.as_mut().unwrap();
+        assert_eq!(d.fields["extraCount"], "2");
+        d.fields.insert("extra.1.name".into(), "Digital blue".into());
+        d.fields.insert("extra.1.color".into(), "#0029ED".into());
+    }
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert!(h.state().dialog.is_none(), "status: {:?}", h.state().status);
+    let after = scheme(&h);
+    assert_eq!(after.extra.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["Sand", "Digital blue"]);
+    assert_eq!(after.extra[1].color, Rgba::rgb(0x00, 0x29, 0xED));
+    assert_eq!(after.extra[0].tints.as_ref().map(Vec::len), Some(5), "Sand keeps its tint rows");
+    assert_eq!(after.tints.get(&SchemeSlot::Accent5).map(Vec::len), Some(5), "slot tint rows pass through");
+    assert_eq!(undo_len(&h), n + 1);
+    // An extra colour without a name keeps the dialog open.
+    open_dialog(&mut h);
+    h.get_by_label("Add colour").click();
+    h.run_steps(2);
+    h.get_by_label("Save").click();
+    h.run_steps(2);
+    assert_eq!(h.state().dialog.as_ref().map(|d| d.id.as_str()), Some("themeColors"));
+    let status = h.state().status.as_ref().map(|(t, _)| t.clone()).unwrap_or_default();
+    assert!(status.contains("needs a name"), "{status}");
+}

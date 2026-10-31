@@ -4,6 +4,8 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 /// An sRGB colour with straight alpha, components 0–255.
@@ -138,7 +140,7 @@ impl Rgba {
 
 /// The twelve theme colour slots, plus the mapped aliases (`bg1`, `tx1`…) and `phClr` (the
 /// placeholder colour a style matrix entry is applied with).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SchemeSlot {
     Dk1,
@@ -237,15 +239,52 @@ impl SchemeSlot {
     }
 }
 
-/// A colour scheme: the twelve theme colours.
+/// Rows of tints and shades under each colour of the colour galleries.
+pub const VARIANT_ROWS: usize = 5;
+
+/// A named colour beyond the twelve slots (a brand palette entry). It is shown in the colour
+/// galleries after the theme colours and can be named wherever a scheme colour name is accepted;
+/// applying it stores its RGB, since files have no slot for it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtraColor {
+    pub name: String,
+    pub color: Rgba,
+    /// Explicit gallery variants (the [`VARIANT_ROWS`] rows under the colour) in place of the
+    /// computed tints and shades.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tints: Option<Vec<Rgba>>,
+}
+
+/// One cell under a gallery colour: the colour shown and how it is applied (`mods` on the slot
+/// when computed, the colour itself when it comes from an explicit `tints` override).
+#[derive(Clone, Debug, PartialEq)]
+pub struct GalleryVariant {
+    pub color: Rgba,
+    pub label: String,
+    pub mods: Option<Vec<ColorTransform>>,
+}
+
+/// A colour scheme: the twelve theme colours, plus any number of extra named colours and
+/// optional explicit tint rows (both DeckCraft extensions; `.pptx` keeps them in an `a:extLst`
+/// of the colour scheme that other applications ignore).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ColorScheme {
     pub name: String,
     pub colors: [Rgba; 12],
+    /// Named colours shown after the theme colours, in order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub extra: Vec<ExtraColor>,
+    /// Explicit gallery variants per theme slot, replacing the computed tints and shades.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub tints: BTreeMap<SchemeSlot, Vec<Rgba>>,
 }
 
 impl ColorScheme {
+    pub fn new(name: impl Into<String>, colors: [Rgba; 12]) -> Self {
+        ColorScheme { name: name.into(), colors, extra: Vec::new(), tints: BTreeMap::new() }
+    }
     pub fn get(&self, slot: SchemeSlot) -> Rgba {
         let i = match slot {
             SchemeSlot::Dk1 | SchemeSlot::Tx1 => 0,
@@ -271,6 +310,38 @@ impl ColorScheme {
             *v = c;
         }
     }
+    /// The extra colour called `name` (case-insensitive, trimmed), if any.
+    pub fn extra_color(&self, name: &str) -> Option<&ExtraColor> {
+        let name = name.trim();
+        if name.is_empty() {
+            return None;
+        }
+        self.extra.iter().find(|e| e.name.trim().eq_ignore_ascii_case(name))
+    }
+    /// The gallery rows under theme colour `slot`: its `tints` override where given, the computed
+    /// tints and shades otherwise.
+    pub fn slot_variants(&self, slot: SchemeSlot) -> Vec<GalleryVariant> {
+        variants_of(self.get(slot), self.tints.get(&slot).map(Vec::as_slice))
+    }
+    /// The gallery rows under extra colour `i`.
+    pub fn extra_variants(&self, i: usize) -> Vec<GalleryVariant> {
+        self.extra.get(i).map(|e| variants_of(e.color, e.tints.as_deref())).unwrap_or_default()
+    }
+}
+
+/// The [`VARIANT_ROWS`] cells under `base`: explicit `tints` where they exist (a short list falls
+/// back to the computed rows), computed tints and shades otherwise.
+pub fn variants_of(base: Rgba, tints: Option<&[Rgba]>) -> Vec<GalleryVariant> {
+    let computed = theme_variants(base);
+    (0..VARIANT_ROWS)
+        .map(|row| match tints.and_then(|t| t.get(row)) {
+            Some(c) => GalleryVariant { color: *c, label: format!("#{}", c.hex()), mods: None },
+            None => {
+                let (mods, label) = computed.get(row).cloned().unwrap_or((vec![], ""));
+                GalleryVariant { color: apply(base, &mods), label: label.to_string(), mods: Some(mods) }
+            }
+        })
+        .collect()
 }
 
 /// One colour transform, in file units (percentages ×1000, angles ×60000), applied in order.
@@ -820,12 +891,59 @@ mod tests {
 
     #[test]
     fn scheme_slots() {
-        let mut s = ColorScheme { name: "t".into(), colors: [Rgba::BLACK; 12] };
+        let mut s = ColorScheme::new("t", [Rgba::BLACK; 12]);
         s.set(SchemeSlot::Accent3, Rgba::WHITE);
         assert_eq!(s.get(SchemeSlot::Accent3), Rgba::WHITE);
         assert_eq!(s.get(SchemeSlot::Tx1), Rgba::BLACK);
         for slot in SchemeSlot::THEME {
             assert_eq!(SchemeSlot::from_xml(slot.xml_name()), Some(slot));
         }
+    }
+
+    #[test]
+    fn variants_follow_the_override_when_given() {
+        let base = Rgba::rgb(0x4D, 0xA0, 0x60);
+        let computed = variants_of(base, None);
+        assert_eq!(computed.len(), VARIANT_ROWS);
+        assert!(computed.iter().all(|v| v.mods.is_some()));
+        assert_eq!(computed[0].label, "Lighter 80%");
+        let tints = [Rgba::rgb(0xC7, 0xEB, 0xBA), Rgba::rgb(1, 2, 3)];
+        let partial = variants_of(base, Some(&tints));
+        assert_eq!(partial[0], GalleryVariant { color: tints[0], label: "#C7EBBA".into(), mods: None });
+        assert_eq!(partial[1].color, tints[1]);
+        assert_eq!(partial[2], computed[2], "rows without an explicit colour are computed");
+        let mut s = ColorScheme::new("t", [base; 12]);
+        s.tints.insert(SchemeSlot::Accent5, tints.to_vec());
+        assert_eq!(s.slot_variants(SchemeSlot::Accent5)[0].color, tints[0]);
+        assert_eq!(s.slot_variants(SchemeSlot::Accent4), computed);
+    }
+
+    #[test]
+    fn extra_colours_by_name() {
+        let mut s = ColorScheme::new("t", [Rgba::BLACK; 12]);
+        let sand = Rgba::rgb(0xEB, 0xE5, 0xE0);
+        s.extra.push(ExtraColor { name: "Sand".into(), color: sand, tints: Some(vec![Rgba::WHITE]) });
+        assert_eq!(s.extra_color("sand").map(|e| e.color), Some(sand));
+        assert_eq!(s.extra_color(" SAND ").map(|e| e.color), Some(sand));
+        assert_eq!(s.extra_color("Navy"), None);
+        assert_eq!(s.extra_color(""), None);
+        assert_eq!(s.extra_variants(0)[0].color, Rgba::WHITE);
+        assert!(s.extra_variants(0)[1].mods.is_some());
+        assert!(s.extra_variants(7).is_empty());
+    }
+
+    #[test]
+    fn scheme_json_keeps_extras_and_reads_old_files() {
+        let mut s = ColorScheme::new("KTH", [Rgba::WHITE; 12]);
+        s.extra.push(ExtraColor { name: "Sand".into(), color: Rgba::rgb(0xEB, 0xE5, 0xE0), tints: None });
+        s.tints.insert(SchemeSlot::Accent1, vec![Rgba::BLACK; VARIANT_ROWS]);
+        let json = serde_json::to_string(&s).unwrap();
+        assert!(json.contains("\"accent1\""), "{json}");
+        assert_eq!(serde_json::from_str::<ColorScheme>(&json).unwrap(), s);
+        // A file written before the extension has neither key.
+        let plain = ColorScheme::new("t", [Rgba::BLACK; 12]);
+        let json = serde_json::to_string(&plain).unwrap();
+        assert!(!json.contains("extra") && !json.contains("tints"), "{json}");
+        assert_eq!(serde_json::from_str::<ColorScheme>(&json).unwrap(), plain);
     }
 }
