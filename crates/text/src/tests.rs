@@ -856,6 +856,9 @@ fn a_word_does_not_break_after_a_slash_or_backslash() {
     // Outside a Latin word the Unicode break stays: "日本!" fits, "語" moves to the next line.
     let lines = wrapped("日本!語", one_line("日本!") + 0.5, |_| {});
     assert_eq!(lines[0], "日本!", "{lines:?}");
+    // Nor before a symbol that only shares the letters' line-break class.
+    let (allowed, _) = break_opportunities("ab!&cd", false);
+    assert!(allowed[3], "break after ! before &: {allowed:?}");
     // A slash followed by a space still breaks, and hyphens still break.
     let lines = wrapped("alpha-beta-gamma-delta-epsilon", one_line("alpha-beta-gamma-") + 1.0, |_| {});
     assert_eq!(lines[0], "alpha-beta-gamma-");

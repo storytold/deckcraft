@@ -82,11 +82,12 @@ fn is_cj_nonstarter(c: char) -> bool {
     )
 }
 
-/// A character that continues a Latin-style word (letters and digits that Unicode does not break
-/// between), as opposed to CJK ideographs, kana, spaces and punctuation.
+/// A character that continues a Latin-style word: a letter or digit that Unicode does not break
+/// between, as opposed to CJK ideographs, kana, spaces, punctuation and symbols such as `&` or `×`
+/// (which share the AL and AI line-break classes with letters).
 fn is_word_char(c: char) -> bool {
     use unicode_linebreak::BreakClass::{Alphabetic, Ambiguous, HebrewLetter, Numeric};
-    matches!(unicode_linebreak::break_property(c as u32), Alphabetic | Ambiguous | HebrewLetter | Numeric)
+    matches!(unicode_linebreak::break_property(c as u32), Alphabetic | Ambiguous | HebrewLetter | Numeric) && c.is_alphanumeric()
 }
 
 /// Break opportunities: allowed[i] = a line may start at char i. Unicode line breaking, then
