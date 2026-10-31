@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 description = "DeckCraft fonts: font database (craft-fonts + system), substitutes for Office fonts, metrics, outlines, shaping"
 
+[features]
+# For embedders whose document policy permits only attributed bundled font files.
+# Cargo unifies this feature across DeckCraft's font, text, render and PDF crates.
+bundled-fonts-only = []
+
 [lints]
 workspace = true
 
