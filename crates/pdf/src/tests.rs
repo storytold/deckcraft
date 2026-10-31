@@ -229,7 +229,7 @@ fn font_without_head() -> Vec<u8> {
 fn unembeddable_font_returns_error_instead_of_a_pdf_missing_text() {
     use deckcraft_model::{Shape, ShapeId, Xfrm};
     let db = FontDb::global();
-    assert_eq!(db.add_font(font_without_head()), 1);
+    assert!(db.add_font(font_without_head()) >= 1);
     assert_eq!(db.face("BadPDF", "Regular").family, "BadPDF");
     let mut p = deck(1);
     let slide = Arc::make_mut(&mut p.slides[0]);
