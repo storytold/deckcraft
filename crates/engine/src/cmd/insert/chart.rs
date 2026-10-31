@@ -1,5 +1,5 @@
 use super::{
-    Chart, ChartType, Result, RunKind, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
+    Chart, ChartType, Result, RunKind, Session, Shape, ShapeId, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
     rect_param, str_param,
 };
 
@@ -85,6 +85,51 @@ pub(super) fn chart_type_cmd(s: &mut Session, p: &Value) -> Result<Value> {
         c.raw = None;
         Ok(())
     })
+}
+
+pub(super) fn chart_axis_title(s: &mut Session, p: &Value) -> Result<Value> {
+    const CMD: &str = "chart.axisTitle";
+    let category = match str_param(p, "axis") {
+        Some("category") => true,
+        Some("value") => false,
+        _ => return Err(bad(CMD, "`axis` is `category` or `value`")),
+    };
+    let text = match p.get("text") {
+        Some(Value::Null) => None,
+        Some(Value::String(t)) => Some(t.clone()),
+        _ => return Err(bad(CMD, "`text` is the title, or null to remove it")),
+    };
+    // The charts edited: `ids`/`id` when given, else the selection, as the edit resolves them.
+    let ids: Vec<u32> = crate::cmd::targets(s, p)?.iter().map(|i| i.0).collect();
+    let changed = with_chart(s, p, CMD, |c| {
+        // Only charts whose titles are drawn and saved: the classic charts with a category and a
+        // value axis. Pie, doughnut and radar charts have none to title; the Office 2016 charts
+        // (waterfall, funnel, histogram…) are drawn and saved without them so far.
+        if c.kind.is_chartex() || matches!(c.kind, ChartType::Pie | ChartType::Doughnut | ChartType::Radar | ChartType::FilledRadar) {
+            return Err(bad(CMD, "axis titles are for column, bar, line, area, scatter, bubble, stock, surface and combo charts"));
+        }
+        if category {
+            c.axis_titles.0.clone_from(&text);
+        } else {
+            c.axis_titles.1.clone_from(&text);
+        }
+        c.raw = None;
+        Ok(())
+    })?;
+    // Only the charts the edit reached (a missing id is skipped); the titles are the first one's.
+    let charts: Vec<(u32, (Option<String>, Option<String>))> = {
+        let st = s.doc()?;
+        ids.iter()
+            .filter_map(|id| match &st.shape(ShapeId(*id))?.kind {
+                ShapeKind::Chart(c) => Some((*id, c.axis_titles.clone())),
+                _ => None,
+            })
+            .collect()
+    };
+    let ids: Vec<u32> = charts.iter().map(|(id, _)| *id).collect();
+    let titles = charts.into_iter().next().map(|(_, t)| t);
+    let (cat, val) = titles.unwrap_or_default();
+    Ok(json!({"changed": changed, "ids": ids, "axisTitles": {"category": cat, "value": val}}))
 }
 
 pub(super) fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
@@ -187,7 +232,61 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // Value axis bounds: a finite number, or null for automatic.
+    let axis_bound = |key: &str| -> Result<Option<Option<f64>>> {
+        match p.get(key) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(v) => v
+                .as_f64()
+                .filter(|v| v.is_finite())
+                .map(|v| Some(Some(v)))
+                .ok_or_else(|| bad("chart.options", format!("{key} must be a number or null"))),
+        }
+    };
+    let (axis_min, axis_max) = (axis_bound("axisMin")?, axis_bound("axisMax")?);
+    // Gap width in percent (0 to 500, as Format Data Series takes it) for bar and column charts.
+    let gap_width = match p.get("gapWidth") {
+        None => None,
+        Some(v) => Some(
+            v.as_f64()
+                .filter(|g| g.is_finite() && (0.0..=500.0).contains(g))
+                .ok_or_else(|| bad("chart.options", format!("`gapWidth` is a percentage from 0 to 500; not {v}")))?
+                // Whole percentages, as PowerPoint's Gap Width box takes them and the file stores them.
+                .round()
+                / 100.0,
+        ),
+    };
     with_chart(s, p, "chart.options", |c| {
+        // Pie and doughnut charts have no value axis; the Office 2016 charts don't save its bounds yet.
+        if (axis_min.is_some() || axis_max.is_some()) && (c.kind.is_chartex() || matches!(c.kind, ChartType::Pie | ChartType::Doughnut)) {
+            return Err(bad(
+                "chart.options",
+                "`axisMin` and `axisMax` are for column, bar, line, area, scatter, bubble, stock, surface, radar and combo charts",
+            ));
+        }
+        // A logarithmic axis runs above zero; PowerPoint takes only positive bounds there.
+        if c.y_log_base.is_some() && [axis_min, axis_max].iter().any(|b| matches!(b, Some(Some(v)) if *v <= 0.0)) {
+            return Err(bad("chart.options", "a logarithmic value axis takes only positive `axisMin` and `axisMax`"));
+        }
+        if let Some(v) = axis_min {
+            c.y_min = v;
+        }
+        if let Some(v) = axis_max {
+            c.y_max = v;
+        }
+        if let (Some(lo), Some(hi)) = (c.y_min, c.y_max)
+            && lo >= hi
+        {
+            return Err(bad("chart.options", "axisMin must be below axisMax"));
+        }
+        if let Some(g) = gap_width {
+            use deckcraft_model::chart::ChartType as T;
+            if !matches!(c.kind, T::Column | T::StackedColumn | T::PercentColumn | T::Bar | T::StackedBar | T::PercentBar) {
+                return Err(bad("chart.options", "`gapWidth` is for bar and column charts"));
+            }
+            c.gap_width = g;
+        }
         if let Some(t) = &text_color {
             c.text_color = t.clone();
         }
