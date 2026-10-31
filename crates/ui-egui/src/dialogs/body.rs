@@ -66,7 +66,7 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "themeFonts" => theme_fonts_dialog(app, ui, d),
         "dateTime" => date_time_dialog(app, ui, d),
         _ => {
-            ui.label(format!("“{}” is not available yet.", d.id));
+            ui.label(crate::i18n::fmt(tl!("“{dialog}” is not available yet."), &[("dialog", &d.id)]));
             let (ok, cancel) = buttons(ui, "OK");
             ok || cancel
         }
@@ -314,7 +314,7 @@ fn dlg_quit(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
                 }
                 done = true;
             }
-            if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+            if ui.add(egui::Button::new(tl!("Cancel")).min_size(vec2(72.0, 24.0))).clicked() {
                 done = true;
             }
         });
@@ -1340,9 +1340,9 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
-    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+    ui.label(egui::RichText::new(tl!("General")).font(theme::bold(13.0)));
     let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
+    if ui.checkbox(&mut dark, tl!("Dark appearance")).changed() {
         let _ = app.run("view.dark", json!({"on": dark}));
     }
     // While the pointer holds the slider its value only waits in the dialog: applying it
@@ -1353,7 +1353,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
     // No visible label here (the row is laid out to fit); the accessible name only.
     let enabled = r.enabled();
-    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
+    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), tl!("Interface size")));
     if r.is_pointer_button_down_on() {
         if r.changed() || pending.is_some() {
             d.fields.insert("uiScale".into(), scale.to_string());
@@ -1364,20 +1364,46 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         }
         d.fields.remove("uiScale");
     }
+    // Interface language: follow the system (the default) or pick a catalog by hand. It
+    // applies at once, so the dialog's own text changes with it; Cancel puts the opening
+    // setting back (`restore_preferences`).
+    ui.label(egui::RichText::new(tl!("Interface language:")).font(theme::bold(13.0)));
+    let auto = crate::i18n::fmt(tl!("Automatic ({language})"), &[("language", crate::i18n::system_lang().english_name())]);
+    let current = if app.ui.language == crate::i18n::AUTO { auto.clone() } else { crate::i18n::Lang::from_pref(&app.ui.language).name().to_string() };
+    let current_label = current.clone();
+    let opened = craft_ui::ComboBox::from_id_salt("interface_language").selected_text(current).width(220.0).show_ui(ui, |ui| {
+        if ui.selectable_label(app.ui.language == crate::i18n::AUTO, auto.as_str()).clicked() {
+            let _ = app.run("ui.language", json!({"value": crate::i18n::AUTO}));
+        }
+        for lang in crate::i18n::Lang::all().filter(|l| *l != crate::i18n::Lang::EN) {
+            if ui.selectable_label(app.ui.language == lang.code(), lang.name()).clicked() {
+                let _ = app.run("ui.language", json!({"value": lang.code()}));
+            }
+        }
+    });
+    // A ComboBox has no accessible label of its own: name it with the chosen option so
+    // screen readers and UI tests can find the picker.
+    let opened = opened.response;
+    opened.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, &current_label));
+    ui.label(
+        egui::RichText::new(tl!("Menus, commands and the status bar change. Your presentation and file names don't."))
+            .size(11.0)
+            .color(Tokens::get(ui.ctx()).text_dim),
+    );
     // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
     ui.horizontal(|ui| {
-        ui.label("Measurement units:");
+        ui.label(tl!("Measurement units:"));
         let units = &mut app.session.prefs.units;
-        ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
-        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
+        ui.radio_value(units, deckcraft_geom::Unit::Inches, tl!("Inches"));
+        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, tl!("Centimeters"));
     });
-    ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+    ui.label(egui::RichText::new(tl!("Editing")).font(theme::bold(13.0)));
+    ui.checkbox(&mut app.session.prefs.smart_guides, tl!("Show smart guides"));
+    ui.checkbox(&mut app.session.prefs.snap_to_grid, tl!("Snap objects to grid"));
+    ui.checkbox(&mut app.session.prefs.smart_quotes, tl!("Replace straight quotes with smart quotes"));
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-        if ui.button("AutoCorrect Options…").clicked() {
+        ui.checkbox(&mut app.session.prefs.autocorrect, tl!("AutoCorrect as you type"));
+        if ui.button(tl!("AutoCorrect Options…")).clicked() {
             *d = Dialog::new("autocorrect");
         }
     });
@@ -1385,7 +1411,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         return false;
     }
     ui.horizontal(|ui| {
-        let label = ui.label("Your name (comments):");
+        let label = ui.label(tl!("Your name (comments):"));
         // Name the field for assistive technology; a bare text edit next to a label is an
         // unnamed input in egui 0.37's accessibility tree.
         let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);

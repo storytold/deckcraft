@@ -1276,10 +1276,12 @@ dependencies = [
  "deckcraft-text",
  "egui",
  "egui_kittest",
+ "js-sys",
  "log",
  "serde",
  "serde_json",
  "skrifa 0.47.0",
+ "sys-locale",
  "toml",
  "web-time",
 ]
