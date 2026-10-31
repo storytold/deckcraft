@@ -70,7 +70,13 @@ impl Package {
             if f.is_dir() {
                 continue;
             }
-            let name = f.name().trim_start_matches('/').to_string();
+            let name = match f.name() {
+                Ok(name) => name.trim_start_matches('/').to_string(),
+                Err(e) => {
+                    log::warn!("pptx: skipping zip entry with an invalid name: {e}");
+                    continue;
+                }
+            };
             let declared = f.size();
             if declared > max_part {
                 log::warn!("pptx: skipping oversized part {name} ({declared} bytes)");
