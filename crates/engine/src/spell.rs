@@ -529,7 +529,35 @@ fn valid_lang(lang: &str) -> bool {
     (1..=16).contains(&lang.len()) && lang.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// The `.aff`/`.dic` pair for `lang` in `dirs`: the exact locale first, then any of its language.
+/// The script a language tag or a dictionary's name states: its four-letter subtag (`Latn`,
+/// `Cyrl`), lowercased.
+fn named_script(name: &str) -> Option<String> {
+    name.split(['-', '_']).skip(1).find(|p| p.len() == 4 && p.bytes().all(|b| b.is_ascii_alphabetic())).map(str::to_ascii_lowercase)
+}
+
+/// The script of a language written in more than one, when a tag or a dictionary's name doesn't
+/// state it: Serbian is Cyrillic (`sr-RS`, and LibreOffice's and Hunspell's `sr` dictionary), its
+/// Latin dictionary says so (`sr-Latn`, `sr_Latn_RS`).
+fn default_script(base: &str) -> Option<&'static str> {
+    match base {
+        "sr" => Some("cyrl"),
+        _ => None,
+    }
+}
+
+/// Is the dictionary named `stem` for text in the script of `lang` (language `base`)? A Cyrillic
+/// dictionary would flag every word of Latin text, and the other way round. When either side's
+/// script is unknown, any dictionary of the language fits, as before.
+fn same_script(lang: &str, stem: &str, base: &str) -> bool {
+    let default = default_script(base).map(str::to_string);
+    match (named_script(lang).or_else(|| default.clone()), named_script(stem).or(default)) {
+        (Some(want), Some(have)) => want == have,
+        _ => true,
+    }
+}
+
+/// The `.aff`/`.dic` pair for `lang` in `dirs`: the exact locale first, then any of its language
+/// in the same script.
 pub fn find_in(dirs: &[PathBuf], lang: &str) -> Option<(PathBuf, PathBuf)> {
     // A language tag names a file in the dictionary folders and nothing else: no `..`, no separators.
     if !valid_lang(lang) {
@@ -546,14 +574,18 @@ pub fn find_in(dirs: &[PathBuf], lang: &str) -> Option<(PathBuf, PathBuf)> {
         }
     }
     for d in dirs {
-        if let Some(p) = pair(d, &base) {
+        if same_script(lang, &base, &base)
+            && let Some(p) = pair(d, &base)
+        {
             return Some(p);
         }
         let Ok(rd) = std::fs::read_dir(d) else { continue };
+        // `sr_Latn_RS` and LibreOffice's `sr-Latn` both name a Serbian dictionary.
         let mut stems: Vec<String> = rd
             .filter_map(|e| e.ok()?.file_name().into_string().ok())
             .filter_map(|n| n.strip_suffix(".aff").map(str::to_string))
-            .filter(|n| n.to_lowercase().starts_with(&format!("{base}_")))
+            .filter(|n| n.to_lowercase().replace('-', "_").starts_with(&format!("{base}_")))
+            .filter(|n| same_script(lang, n, &base))
             .collect();
         stems.sort();
         if let Some(p) = stems.iter().find_map(|s| pair(d, s)) {
@@ -955,6 +987,36 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert_eq!(stem("de-DE").as_deref(), Some("de_DE"));
         assert_eq!(stem("en-US").as_deref(), Some("en_GB"));
         assert_eq!(stem("fr-FR"), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Serbian is written in two scripts, and each finds its own dictionary: LibreOffice names
+    /// the Cyrillic one `sr` and the Latin one `sr-Latn`, Hunspell packages `sr_RS` and
+    /// `sr_Latn_RS`. A dictionary of the other script is never used: it would flag every word.
+    #[test]
+    fn serbian_finds_the_dictionary_of_its_script() {
+        let dir = std::env::temp_dir().join(format!("deckcraft-dict-sr-{}", std::process::id()));
+        let stem = |names: &[&str], l: &str| {
+            let _ = std::fs::remove_dir_all(&dir);
+            let _ = std::fs::create_dir_all(&dir);
+            for n in names {
+                let _ = std::fs::write(dir.join(format!("{n}.aff")), "");
+                let _ = std::fs::write(dir.join(format!("{n}.dic")), "");
+            }
+            find_in(std::slice::from_ref(&dir), l).and_then(|(a, _)| a.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        };
+        let libreoffice = ["sr", "sr-Latn"];
+        assert_eq!(stem(&libreoffice, "sr-Cyrl-RS").as_deref(), Some("sr"));
+        assert_eq!(stem(&libreoffice, "sr-RS").as_deref(), Some("sr"));
+        assert_eq!(stem(&libreoffice, "sr-Latn-RS").as_deref(), Some("sr-Latn"));
+        let hunspell = ["sr_Latn_RS", "sr_RS"];
+        assert_eq!(stem(&hunspell, "sr-Cyrl-RS").as_deref(), Some("sr_RS"));
+        assert_eq!(stem(&hunspell, "sr-Latn-RS").as_deref(), Some("sr_Latn_RS"));
+        // Only the other script installed: no dictionary, so no marks, rather than every word.
+        assert_eq!(stem(&["sr"], "sr-Latn-RS"), None);
+        assert_eq!(stem(&["sr-Latn"], "sr-Cyrl-RS"), None);
+        // Languages in one script are unchanged.
+        assert_eq!(stem(&["de_DE"], "de-AT").as_deref(), Some("de_DE"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }
