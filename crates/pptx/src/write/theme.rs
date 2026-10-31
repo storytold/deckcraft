@@ -26,33 +26,39 @@ fn style_fill(f: &Fill) -> Fill {
     }
 }
 
-/// The scheme's extra named colours and explicit tint rows, as a DeckCraft `a:ext` after the
-/// twelve slots: `<dc:tints slot="accent1"><dc:clr val="RRGGBB"/>…</dc:tints>` and
-/// `<dc:color name="Sand" val="RRGGBB">(dc:clr…)</dc:color>`.
+/// The scheme's extra named colours, explicit tint rows and `computed_tints`, as a DeckCraft
+/// `a:ext` after the twelve slots: `<dc:extraColors computed="0"?>` holding
+/// `<dc:tints slot="accent1"><dc:clr val="RRGGBB"/>…</dc:tints>` per slot with a list (an empty
+/// list is an empty element) and `<dc:color name="Sand" val="RRGGBB">(<dc:tints>…</dc:tints>
+/// when it has a list)</dc:color>` per extra colour.
 fn extra_colors(w: &mut W, c: &ColorScheme) {
-    if c.extra.is_empty() && c.tints.is_empty() {
+    if c.extra.is_empty() && c.tints.is_empty() && c.computed_tints {
         return;
     }
     w.open0("a:extLst");
     w.open("a:ext", A::new().a("uri", EXT_DC_COLORS));
-    w.open("dc:extraColors", A::new().a("xmlns:dc", NS_DC_COLORS));
+    w.open("dc:extraColors", A::new().a("xmlns:dc", NS_DC_COLORS).o("computed", (!c.computed_tints).then_some("0")));
     for (slot, tints) in &c.tints {
-        w.open("dc:tints", A::new().a("slot", slot.xml_name()));
-        for t in tints {
-            w.val("dc:clr", t.hex());
-        }
-        w.close("dc:tints");
+        rows(w, A::new().a("slot", slot.xml_name()), tints);
     }
     for e in &c.extra {
         w.open("dc:color", A::new().a("name", &e.name).a("val", e.color.hex()));
-        for t in e.tints.iter().flatten() {
-            w.val("dc:clr", t.hex());
+        if let Some(t) = &e.tints {
+            rows(w, A::new(), t);
         }
         w.close("dc:color");
     }
     w.close("dc:extraColors");
     w.close("a:ext");
     w.close("a:extLst");
+}
+
+fn rows(w: &mut W, a: A, tints: &[deckcraft_color::Rgba]) {
+    w.open("dc:tints", a);
+    for t in tints {
+        w.val("dc:clr", t.hex());
+    }
+    w.close("dc:tints");
 }
 
 pub fn theme_xml(x: &mut Exp, o: &mut Out, t: &Theme) -> Vec<u8> {

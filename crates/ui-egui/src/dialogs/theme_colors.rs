@@ -13,6 +13,7 @@ fn seed_theme_colors(d: &mut Dialog) {
     }
     let extra = d.params.get("extra").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[]);
     d.fields.insert("extraCount".into(), extra.len().to_string());
+    d.fields.insert("computedTints".into(), if d.params.get("computedTints").and_then(Value::as_bool).unwrap_or(true) { "1" } else { "0" }.into());
     for (i, e) in extra.iter().enumerate() {
         d.fields.insert(format!("extra.{i}.name"), e.get("name").and_then(Value::as_str).unwrap_or("").to_string());
         d.fields.insert(format!("extra.{i}.color"), e.get("color").and_then(Value::as_str).unwrap_or("000000").to_string());
@@ -85,6 +86,10 @@ fn extra_color_rows(ui: &mut Ui, d: &mut Dialog) {
         d.fields.insert(format!("extra.{n}.color"), "000000".into());
         d.fields.insert("extraCount".into(), (n + 1).to_string());
     }
+    let mut computed = d.get("computedTints", "1") == "1";
+    ui.checkbox(&mut computed, "Computed tints and shades under colours without their own rows")
+        .on_hover_text("Off: a colour shows only the rows set with design.colors (tints), none when it has no list.");
+    d.fields.insert("computedTints".into(), if computed { "1" } else { "0" }.into());
 }
 
 /// Draw one theme-colour row with its hex editor and store the value for the scheme slot.
@@ -144,7 +149,7 @@ fn theme_color_payload(d: &mut Dialog) -> Result<Value, String> {
         }
         extra.push(e);
     }
-    let mut payload = json!({"name": name, "colors": colors, "extra": extra});
+    let mut payload = json!({"name": name, "colors": colors, "extra": extra, "computedTints": d.get("computedTints", "1") == "1"});
     if let (Some(t), Some(o)) = (d.params.get("tints").filter(|t| t.is_object()), payload.as_object_mut()) {
         o.insert("tints".into(), t.clone());
     }

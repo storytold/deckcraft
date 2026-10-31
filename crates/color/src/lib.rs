@@ -239,8 +239,10 @@ impl SchemeSlot {
     }
 }
 
-/// Rows of tints and shades under each colour of the colour galleries.
+/// Rows of tints and shades computed under a colour of the colour galleries.
 pub const VARIANT_ROWS: usize = 5;
+/// The most rows an explicit `tints` list may hold.
+pub const MAX_TINT_ROWS: usize = 10;
 
 /// A named colour beyond the twelve slots (a brand palette entry). It is shown in the colour
 /// galleries after the theme colours and can be named wherever a scheme colour name is accepted;
@@ -250,8 +252,8 @@ pub const VARIANT_ROWS: usize = 5;
 pub struct ExtraColor {
     pub name: String,
     pub color: Rgba,
-    /// Explicit gallery variants (the [`VARIANT_ROWS`] rows under the colour) in place of the
-    /// computed tints and shades.
+    /// Explicit gallery rows under the colour (0 to [`MAX_TINT_ROWS`]; exactly these are shown)
+    /// in place of the computed tints and shades.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tints: Option<Vec<Rgba>>,
 }
@@ -276,14 +278,23 @@ pub struct ColorScheme {
     /// Named colours shown after the theme colours, in order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extra: Vec<ExtraColor>,
-    /// Explicit gallery variants per theme slot, replacing the computed tints and shades.
+    /// Explicit gallery rows per theme slot (0 to [`MAX_TINT_ROWS`]; exactly these are shown),
+    /// replacing the computed tints and shades.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub tints: BTreeMap<SchemeSlot, Vec<Rgba>>,
+    /// Whether a colour without an explicit list gets the computed tint and shade rows (the
+    /// default); `false` shows no rows under it.
+    #[serde(default = "yes", skip_serializing_if = "Clone::clone")]
+    pub computed_tints: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl ColorScheme {
     pub fn new(name: impl Into<String>, colors: [Rgba; 12]) -> Self {
-        ColorScheme { name: name.into(), colors, extra: Vec::new(), tints: BTreeMap::new() }
+        ColorScheme { name: name.into(), colors, extra: Vec::new(), tints: BTreeMap::new(), computed_tints: true }
     }
     pub fn get(&self, slot: SchemeSlot) -> Rgba {
         let i = match slot {
@@ -318,30 +329,28 @@ impl ColorScheme {
         }
         self.extra.iter().find(|e| e.name.trim().eq_ignore_ascii_case(name))
     }
-    /// The gallery rows under theme colour `slot`: its `tints` override where given, the computed
-    /// tints and shades otherwise.
+    /// The gallery rows under theme colour `slot`: exactly its `tints` list where given, else the
+    /// computed tints and shades when `computed_tints`, else none.
     pub fn slot_variants(&self, slot: SchemeSlot) -> Vec<GalleryVariant> {
-        variants_of(self.get(slot), self.tints.get(&slot).map(Vec::as_slice))
+        variants_of(self.get(slot), self.tints.get(&slot).map(Vec::as_slice), self.computed_tints)
     }
-    /// The gallery rows under extra colour `i`.
+    /// The gallery rows under extra colour `i` (as for a slot).
     pub fn extra_variants(&self, i: usize) -> Vec<GalleryVariant> {
-        self.extra.get(i).map(|e| variants_of(e.color, e.tints.as_deref())).unwrap_or_default()
+        self.extra.get(i).map(|e| variants_of(e.color, e.tints.as_deref(), self.computed_tints)).unwrap_or_default()
     }
 }
 
-/// The [`VARIANT_ROWS`] cells under `base`: explicit `tints` where they exist (a short list falls
-/// back to the computed rows), computed tints and shades otherwise.
-pub fn variants_of(base: Rgba, tints: Option<&[Rgba]>) -> Vec<GalleryVariant> {
-    let computed = theme_variants(base);
-    (0..VARIANT_ROWS)
-        .map(|row| match tints.and_then(|t| t.get(row)) {
-            Some(c) => GalleryVariant { color: *c, label: format!("#{}", c.hex()), mods: None },
-            None => {
-                let (mods, label) = computed.get(row).cloned().unwrap_or((vec![], ""));
-                GalleryVariant { color: apply(base, &mods), label: label.to_string(), mods: Some(mods) }
-            }
-        })
-        .collect()
+/// The cells under `base`: exactly the explicit `tints` when there is a list (possibly none), the
+/// [`VARIANT_ROWS`] computed tints and shades when `computed`, nothing otherwise.
+pub fn variants_of(base: Rgba, tints: Option<&[Rgba]>, computed: bool) -> Vec<GalleryVariant> {
+    match tints {
+        Some(list) => list.iter().take(MAX_TINT_ROWS).map(|c| GalleryVariant { color: *c, label: format!("#{}", c.hex()), mods: None }).collect(),
+        None if computed => theme_variants(base)
+            .into_iter()
+            .map(|(mods, label)| GalleryVariant { color: apply(base, &mods), label: label.to_string(), mods: Some(mods) })
+            .collect(),
+        None => Vec::new(),
+    }
 }
 
 /// One colour transform, in file units (percentages ×1000, angles ×60000), applied in order.
@@ -901,21 +910,31 @@ mod tests {
     }
 
     #[test]
-    fn variants_follow_the_override_when_given() {
+    fn variants_are_the_list_given_else_computed_else_none() {
         let base = Rgba::rgb(0x4D, 0xA0, 0x60);
-        let computed = variants_of(base, None);
+        let computed = variants_of(base, None, true);
         assert_eq!(computed.len(), VARIANT_ROWS);
         assert!(computed.iter().all(|v| v.mods.is_some()));
         assert_eq!(computed[0].label, "Lighter 80%");
-        let tints = [Rgba::rgb(0xC7, 0xEB, 0xBA), Rgba::rgb(1, 2, 3)];
-        let partial = variants_of(base, Some(&tints));
-        assert_eq!(partial[0], GalleryVariant { color: tints[0], label: "#C7EBBA".into(), mods: None });
-        assert_eq!(partial[1].color, tints[1]);
-        assert_eq!(partial[2], computed[2], "rows without an explicit colour are computed");
+        assert!(variants_of(base, None, false).is_empty(), "no list and no computed rows: nothing");
+        let two = [Rgba::rgb(0xC7, 0xEB, 0xBA), Rgba::rgb(0x0D, 0x4A, 0x21)];
+        for computed in [true, false] {
+            let v = variants_of(base, Some(&two), computed);
+            assert_eq!(v.len(), 2, "exactly the list, no filling");
+            assert_eq!(v[0], GalleryVariant { color: two[0], label: "#C7EBBA".into(), mods: None });
+            assert_eq!(v[1].color, two[1]);
+            assert!(variants_of(base, Some(&[]), computed).is_empty(), "an empty list: no rows");
+        }
+        assert_eq!(variants_of(base, Some(&[Rgba::WHITE; 20]), true).len(), MAX_TINT_ROWS, "a long list is cut");
         let mut s = ColorScheme::new("t", [base; 12]);
-        s.tints.insert(SchemeSlot::Accent5, tints.to_vec());
-        assert_eq!(s.slot_variants(SchemeSlot::Accent5)[0].color, tints[0]);
+        s.tints.insert(SchemeSlot::Accent5, two.to_vec());
+        s.tints.insert(SchemeSlot::Accent6, vec![]);
+        assert_eq!(s.slot_variants(SchemeSlot::Accent5).len(), 2);
+        assert!(s.slot_variants(SchemeSlot::Accent6).is_empty());
         assert_eq!(s.slot_variants(SchemeSlot::Accent4), computed);
+        s.computed_tints = false;
+        assert_eq!(s.slot_variants(SchemeSlot::Accent5).len(), 2);
+        assert!(s.slot_variants(SchemeSlot::Accent4).is_empty());
     }
 
     #[test]
@@ -927,9 +946,13 @@ mod tests {
         assert_eq!(s.extra_color(" SAND ").map(|e| e.color), Some(sand));
         assert_eq!(s.extra_color("Navy"), None);
         assert_eq!(s.extra_color(""), None);
-        assert_eq!(s.extra_variants(0)[0].color, Rgba::WHITE);
-        assert!(s.extra_variants(0)[1].mods.is_some());
+        assert_eq!(s.extra_variants(0), vec![GalleryVariant { color: Rgba::WHITE, label: "#FFFFFF".into(), mods: None }]);
         assert!(s.extra_variants(7).is_empty());
+        s.extra.push(ExtraColor { name: "Navy".into(), color: Rgba::rgb(0, 0, 0x61), tints: None });
+        assert_eq!(s.extra_variants(1).len(), VARIANT_ROWS);
+        s.computed_tints = false;
+        assert!(s.extra_variants(1).is_empty());
+        assert_eq!(s.extra_variants(0).len(), 1);
     }
 
     #[test]
@@ -937,13 +960,18 @@ mod tests {
         let mut s = ColorScheme::new("KTH", [Rgba::WHITE; 12]);
         s.extra.push(ExtraColor { name: "Sand".into(), color: Rgba::rgb(0xEB, 0xE5, 0xE0), tints: None });
         s.tints.insert(SchemeSlot::Accent1, vec![Rgba::BLACK; VARIANT_ROWS]);
+        s.tints.insert(SchemeSlot::Accent2, vec![]);
+        s.computed_tints = false;
         let json = serde_json::to_string(&s).unwrap();
-        assert!(json.contains("\"accent1\""), "{json}");
+        assert!(json.contains("\"accent1\"") && json.contains("\"computedTints\":false"), "{json}");
         assert_eq!(serde_json::from_str::<ColorScheme>(&json).unwrap(), s);
+        s.computed_tints = true;
+        assert!(!serde_json::to_string(&s).unwrap().contains("computedTints"), "the default is not written");
         // A file written before the extension has neither key.
         let plain = ColorScheme::new("t", [Rgba::BLACK; 12]);
         let json = serde_json::to_string(&plain).unwrap();
         assert!(!json.contains("extra") && !json.contains("tints"), "{json}");
         assert_eq!(serde_json::from_str::<ColorScheme>(&json).unwrap(), plain);
+        assert!(plain.computed_tints);
     }
 }

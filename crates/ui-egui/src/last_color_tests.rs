@@ -155,14 +155,7 @@ fn before_any_pick_the_buttons_still_apply_accent_1_and_text_1() {
 
 /// Open the drop-down arrow of a split button and click the swatch labelled `swatch`.
 fn pick_swatch(h: &mut Harness<'static, SlideApp>, button: &str, swatch: &str) {
-    let arrow = h.get_by_role_and_label(egui::accesskit::Role::Button, &format!("{button} options")).rect().center();
-    h.input_mut().events.push(Event::PointerMoved(arrow));
-    h.run_steps(2);
-    for pressed in [true, false] {
-        h.input_mut().events.push(Event::PointerButton { pos: arrow, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
-        h.run_steps(2);
-    }
-    h.run_steps(2);
+    open_menu(h, button);
     // Several columns may share a computed row's label ("Lighter 80%"): the first one will do.
     let cell =
         h.get_all_by_role_and_label(egui::accesskit::Role::Button, swatch).next().unwrap_or_else(|| panic!("no swatch {swatch}")).rect().center();
@@ -178,27 +171,36 @@ fn pick_swatch(h: &mut Harness<'static, SlideApp>, button: &str, swatch: &str) {
 #[test]
 fn the_gallery_offers_extra_colours_and_explicit_tint_rows() {
     use deckcraft_color::Rgba;
+    use egui_kittest::kittest::Queryable;
     let (mut h, [a, _]) = harness("Home");
-    let five = vec!["#C7EBBA", "#8EC58D", "#4DA060", "#2D7740", "#0D4A21"];
+    let two = vec!["#C7EBBA", "#0D4A21"];
     h.state_mut()
         .session
         .execute(
             "design.colors",
-            &json!({"tints": {"accent5": five}, "extra": [{"name": "Sand", "color": "#EBE5E0", "tints": five}, {"name": "Navy", "color": "#000061"}]}),
+            &json!({"tints": {"accent5": two, "accent6": []}, "extra": [{"name": "Sand", "color": "#EBE5E0", "tints": two}, {"name": "Navy", "color": "#000061"}, {"name": "Broken white", "color": "#FCFCFC", "tints": []}]}),
         )
         .unwrap();
     h.run_steps(2);
     // An extra colour stores its RGB.
     pick_swatch(&mut h, "Shape Fill", "Sand #EBE5E0");
     assert_eq!(fill_rgb(&h, a).as_deref(), Some("EBE5E0"));
-    // An explicit tint row (an override) stores the exact RGB, under a slot or an extra colour.
+    // An explicit row stores the exact RGB, under a slot or an extra colour; a list is exactly
+    // the rows shown (no filling), an empty list no rows.
     pick_swatch(&mut h, "Shape Fill", "Accent 5 #0D4A21");
     assert_eq!(fill_rgb(&h, a).as_deref(), Some("0D4A21"));
-    pick_swatch(&mut h, "Shape Fill", "Sand #EBE5E0 #8EC58D");
-    assert_eq!(fill_rgb(&h, a).as_deref(), Some("8EC58D"));
-    // An extra colour without an override gets computed rows, stored as RGB too.
+    pick_swatch(&mut h, "Shape Fill", "Sand #EBE5E0 #C7EBBA");
+    assert_eq!(fill_rgb(&h, a).as_deref(), Some("C7EBBA"));
+    open_menu(&mut h, "Shape Fill");
+    assert_eq!(h.get_all_by_label("Accent 5 #0D4A21").count(), 1);
+    assert_eq!(h.query_all_by_label("Accent 5 Lighter 80%").count(), 0, "no computed rows under a listed colour");
+    assert!(h.get_all_by_label("Lighter 80%").count() >= 1, "other theme colours keep their computed rows");
+    assert_eq!(h.query_all_by_label("Accent 6 Lighter 80%").count() + h.query_all_by_label("Accent 6 #FFBE00").count(), 0, "an empty list: no rows");
+    assert_eq!(h.query_all_by_label("Broken white #FCFCFC Lighter 80%").count(), 0);
+    let _ = h.get_by_label("Broken white #FCFCFC");
+    // An extra colour without a list gets computed rows, stored as RGB too.
     let navy = Rgba::rgb(0, 0, 0x61);
-    let rows = deckcraft_color::variants_of(navy, None);
+    let rows = deckcraft_color::variants_of(navy, None, true);
     pick_swatch(&mut h, "Shape Fill", &format!("Navy #000061 {}", rows[0].label));
     assert_eq!(fill_rgb(&h, a).as_deref(), Some(rows[0].color.hex().as_str()));
     // A computed row under a theme colour still stores the slot with its transforms.
@@ -208,4 +210,30 @@ fn the_gallery_offers_extra_colours_and_explicit_tint_rows() {
         Some(Fill::Solid { color: ColorRef { base: ColorBase::Scheme { .. }, mods } }) => assert_eq!(mods.len(), 2),
         other => panic!("{other:?}"),
     }
+    // computedTints: false leaves every column without a list with just its base colour.
+    h.state_mut().session.execute("design.colors", &json!({"computedTints": false})).unwrap();
+    h.run_steps(2);
+    open_menu(&mut h, "Shape Fill");
+    assert_eq!(h.query_all_by_label("Lighter 80%").count(), 0);
+    assert_eq!(h.query_all_by_label(&format!("Navy #000061 {}", rows[0].label)).count(), 0);
+    let _ = h.get_by_label("Navy #000061");
+    let _ = h.get_by_label("Accent 5 #0D4A21");
+    pick_swatch(&mut h, "Shape Fill", "Text/Background - Dark 2");
+    assert!(fill_rgb(&h, a).is_none(), "a theme colour pick is still scheme-relative");
+}
+
+/// Open the drop-down arrow of a split button (and leave it open); a menu already open stays.
+fn open_menu(h: &mut Harness<'static, SlideApp>, button: &str) {
+    use egui_kittest::kittest::Queryable;
+    if h.query_by_label("Theme Colors").is_some() {
+        return;
+    }
+    let arrow = h.get_by_role_and_label(egui::accesskit::Role::Button, &format!("{button} options")).rect().center();
+    h.input_mut().events.push(Event::PointerMoved(arrow));
+    h.run_steps(2);
+    for pressed in [true, false] {
+        h.input_mut().events.push(Event::PointerButton { pos: arrow, button: PointerButton::Primary, pressed, modifiers: Modifiers::NONE });
+        h.run_steps(2);
+    }
+    h.run_steps(2);
 }

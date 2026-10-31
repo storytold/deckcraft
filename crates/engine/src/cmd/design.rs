@@ -49,7 +49,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Colors",
             ["Design", "Variants"],
             None,
-            "{} opens Create New Theme Colors | {name} | {colors: {dk1|lt1|dk2|lt2|accent1..6|hlink|folHlink: #RRGGBB}, tints?: {slot: [5 × #RRGGBB] | null}, extra?: [{name, color: #RRGGBB, tints?: [5 × #RRGGBB]}]} — `tints` replaces the gallery's computed tints/shades under a colour; `extra` are named colours shown after the twelve slots and accepted by name wherever a colour is (DeckCraft only: .pptx keeps them in the colour scheme's extLst, PowerPoint shows the twelve slots)",
+            "{} opens Create New Theme Colors | {name} | {colors: {dk1|lt1|dk2|lt2|accent1..6|hlink|folHlink: #RRGGBB}, computedTints?: bool, tints?: {slot: [#RRGGBB × 0..10] | null}, extra?: [{name, color: #RRGGBB, tints?: [#RRGGBB × 0..10]}]} — a `tints` list is exactly the gallery rows under that colour (nothing computed); `computedTints: false` shows no rows under colours without a list; `extra` are named colours shown after the twelve slots and accepted by name wherever a colour is (DeckCraft only: .pptx keeps them in the colour scheme's extLst, PowerPoint shows the twelve slots)",
             has_doc,
             colors
         ),

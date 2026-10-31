@@ -460,9 +460,15 @@ pub fn color_grid(ui: &mut Ui, scheme: &ColorScheme, none_label: Option<&str>) -
                 }
             }
             ui.end_row();
-            for row in 0..deckcraft_color::VARIANT_ROWS {
+            // Columns may have different numbers of rows (explicit lists): the grid is as tall as
+            // the longest, with empty cells where a column has fewer (none when all are empty).
+            let rows = cols.iter().map(|c| c.rows.len()).max().unwrap_or(0);
+            for row in 0..rows {
                 for col in cols {
-                    let Some(v) = col.rows.get(row) else { continue };
+                    let Some(v) = col.rows.get(row) else {
+                        ui.allocate_exact_size(vec2(cell, cell), Sense::hover());
+                        continue;
+                    };
                     // A computed row keeps its transforms on the slot, as PowerPoint stores it; an
                     // explicit row (a `tints` override) and an extra colour store the exact RGB.
                     let (tip, pick) = match (&v.mods, col.slot) {

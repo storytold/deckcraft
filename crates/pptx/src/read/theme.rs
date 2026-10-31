@@ -1,6 +1,6 @@
 //! Theme parts (`a:theme`).
 
-use deckcraft_color::{ColorScheme, ExtraColor, Rgba, SchemeSlot, VARIANT_ROWS};
+use deckcraft_color::{ColorScheme, ExtraColor, MAX_TINT_ROWS, Rgba, SchemeSlot};
 use deckcraft_model::style::{ColorBase, Effects};
 use deckcraft_model::theme::{FontScheme, FontSet, FormatScheme, ScriptFont, Theme, default_format};
 
@@ -105,15 +105,13 @@ fn extra_colors(cs: &El, scheme: &mut ColorScheme) {
     else {
         return;
     };
-    let clrs = |e: &El| -> Vec<Rgba> { e.children_named("clr").filter_map(|c| c.attr("val").and_then(Rgba::from_hex)).take(VARIANT_ROWS).collect() };
+    let clrs = |e: &El| -> Vec<Rgba> { e.children_named("clr").filter_map(|c| c.attr("val").and_then(Rgba::from_hex)).take(MAX_TINT_ROWS).collect() };
+    scheme.computed_tints = x.attr("computed") != Some("0");
     for t in x.children_named("tints").take(SchemeSlot::THEME.len()) {
         if let Some(slot) = t.attr("slot").and_then(SchemeSlot::from_xml)
             && SchemeSlot::THEME.contains(&slot)
         {
-            let v = clrs(t);
-            if !v.is_empty() {
-                scheme.tints.insert(slot, v);
-            }
+            scheme.tints.insert(slot, clrs(t));
         }
     }
     for c in x.children_named("color").take(256) {
@@ -121,8 +119,7 @@ fn extra_colors(cs: &El, scheme: &mut ColorScheme) {
         if name.trim().is_empty() {
             continue;
         }
-        let tints = clrs(c);
-        scheme.extra.push(ExtraColor { name: name.to_string(), color, tints: (!tints.is_empty()).then_some(tints) });
+        scheme.extra.push(ExtraColor { name: name.to_string(), color, tints: c.child("tints").map(clrs) });
     }
 }
 
