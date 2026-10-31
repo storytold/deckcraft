@@ -40,7 +40,13 @@ pub fn start() {
                     }
                     deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
                     let inbox: Inbox = Inbox::default();
-                    let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone());
+                    let provider = deckcraft_ui_egui::file_providers::Host::default();
+                    if let Err(error) = crate::file_providers::install(provider.clone(), cc.egui_ctx.clone()) {
+                        log::error!("file providers are unavailable: {error:?}");
+                    }
+                    services.file_providers = Some(provider);
+                    let mut app = SlideApp::new(Session::new(), services);
                     let q = query();
                     if !q.contains("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
@@ -80,6 +86,9 @@ impl eframe::App for WebShell {
     /// Delegate one eframe logic pass to the wrapped application.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.logic(ctx);
+        if let Some(host) = &self.app.services.file_providers {
+            crate::file_providers::publish(host);
+        }
     }
 
     /// Consume browser drops with fresh input, capture the identity before the asynchronous read,
@@ -111,6 +120,9 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        if let Some(host) = &self.app.services.file_providers {
+            crate::file_providers::publish(host);
+        }
     }
 }
 
@@ -119,6 +131,7 @@ impl eframe::App for WebShell {
 fn services(inbox: Inbox, ctx: egui::Context) -> Services {
     let open_inbox = inbox.clone();
     Services {
+        provider_download: Some(Box::new(download)),
         open_async: Some(Box::new(move |purpose: &str, request: u64| {
             let inbox = open_inbox.clone();
             let ctx = ctx.clone();

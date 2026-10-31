@@ -95,6 +95,9 @@ pub fn split_path(path: &str) -> (String, String) {
 /// Recent presentations whose name matches `query`, newest first, at most `limit`. Opening one is
 /// the user's explicit choice.
 fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
+    if let Some(host) = &app.services.file_providers {
+        host.recent_ui(ui);
+    }
     let t = Tokens::get(ui.ctx());
     if app.ui.recent.is_empty() {
         dim(ui, "Presentations you open show up here. Use Open to browse for one.");
