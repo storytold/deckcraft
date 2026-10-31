@@ -10,8 +10,8 @@ use deckcraft_model::{Presentation, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
 use super::{
-    CommandSpec, NO_TEXT_POINT, SELECT_TEXT_OR_SHAPE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, has_text, id_param, ok, shape_of,
-    str_param, xfrm_of,
+    CommandSpec, NO_TEXT_POINT, SELECT_TEXT_OR_SHAPE, always, bad, bool_or, cmd, edit_shapes, has_doc, has_slide, has_text, id_param, ok, str_param,
+    xfrm_of,
 };
 use crate::{DocState, HistoryEntry, Result, Selection, Session, Target, TextSel, push_undo};
 
