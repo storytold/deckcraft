@@ -139,6 +139,7 @@ fn craft_fonts(dir: &std::path::Path, wasm: bool, required: bool) -> Result<Font
 fn manifest(dir: &std::path::Path, manifest: &std::path::Path, wasm: bool) -> Result<FontInput, String> {
     println!("cargo::rerun-if-changed={}", manifest.display());
     let text = std::fs::read_to_string(manifest).map_err(|e| format!("{}: {e}", manifest.display()))?;
+    let root = dir.canonicalize().map_err(|e| format!("{}: {e}", dir.display()))?;
     let mut input = FontInput::default();
     for line in text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')) {
         let f: Vec<&str> = line.split(" | ").map(str::trim).collect();
@@ -153,6 +154,9 @@ fn manifest(dir: &std::path::Path, manifest: &std::path::Path, wasm: bool) -> Re
             continue;
         }
         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;
+        if !path.starts_with(&root) {
+            return Err(format!("{file}: font path escapes the font checkout"));
+        }
         println!("cargo::rerun-if-changed={}", path.display());
         let scripts: Vec<String> = scripts.split(',').map(|s| format!("{:?}", s.trim())).collect();
         input.faces.push(((*family).to_owned(), (*style).to_owned()));
@@ -206,22 +210,24 @@ mod tests {
     static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
     const CHINESE_ROW: &str = "LXGW WenKai Lite | Regular | fonts/fixture.ttf | Hani,Hans | OFL-1.1 | OFL.txt | fixture | https://example.invalid\n";
 
-    struct InputFixture(PathBuf);
+    struct InputFixture(PathBuf, PathBuf);
 
     impl InputFixture {
         /// Test helper: create a unique temporary fixture with a main manifest and asset file.
         fn new() -> Self {
             let path = std::env::temp_dir().join(format!("deck-font-input-{}-{}", std::process::id(), NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed)));
             std::fs::create_dir(&path).unwrap();
+            let outside = path.with_extension("outside.ttf");
             std::fs::create_dir(path.join("fonts")).unwrap();
             std::fs::write(path.join("fonts/fixture.ttf"), b"build-input path fixture").unwrap();
+            std::fs::write(&outside, b"owned path fixture outside root").unwrap();
             std::fs::write(
                 path.join("fonts/manifest.txt"),
                 "BIZ UDPGothic | Regular | fonts/fixture.ttf | Jpan,Latn | OFL-1.1 | OFL.txt | fixture | https://example.invalid\n\
                  BIZ UDPGothic | Bold | fonts/fixture.ttf | Jpan,Latn | OFL-1.1 | OFL.txt | fixture | https://example.invalid\n",
             )
             .unwrap();
-            Self(path)
+            Self(path, outside)
         }
 
         /// Test helper: replace the fixture's main manifest contents.
@@ -257,7 +263,33 @@ mod tests {
         /// Test helper: best-effort removal of the temporary fixture directory.
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+            let _ = std::fs::remove_file(&self.1);
         }
+    }
+
+    /// Font manifest paths must resolve inside the checkout, including through symlinks.
+    #[test]
+    fn manifest_rejects_paths_outside_the_font_checkout() {
+        let fixture = InputFixture::new();
+        let manifest_path = fixture.0.join("fonts/manifest.txt");
+        let outside_name = fixture.1.file_name().unwrap().to_str().unwrap();
+        let traversal = format!("../{}", outside_name);
+        for file in [traversal.as_str(), fixture.1.to_str().unwrap()] {
+            let row = format!("Inter | Regular | {file} | Latn | OFL-1.1 | original | fixture | https://example.invalid\n");
+            fixture.main(&row);
+            assert!(manifest(&fixture.0, &manifest_path, false).err().expect("outside paths must fail").contains("font path escapes"), "{file}");
+        }
+
+        #[cfg(unix)]
+        {
+            let link = fixture.0.join("fonts/escape.ttf");
+            std::os::unix::fs::symlink(&fixture.1, &link).unwrap();
+            fixture.main("Inter | Regular | fonts/escape.ttf | Latn | OFL-1.1 | original | fixture | https://example.invalid\n");
+            assert!(manifest(&fixture.0, &manifest_path, false).err().expect("escaping symlink must fail").contains("font path escapes"));
+        }
+
+        fixture.main("Inter | Regular | fonts/fixture.ttf | Latn | OFL-1.1 | original | fixture | https://example.invalid\n");
+        assert!(manifest(&fixture.0, &manifest_path, false).is_ok());
     }
 
     /// A required build without a font directory fails; an optional build embeds no fonts.
