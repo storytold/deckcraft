@@ -240,6 +240,8 @@ pub struct ParaProps {
     pub bullet_color: Option<ColorRef>,
     /// Bullet size as a fraction of the text size.
     pub bullet_size: Option<f64>,
+    /// Absolute bullet font size in points, independent of the paragraph's run size.
+    pub bullet_size_points: Option<f64>,
     pub tabs: Option<Vec<TabStop>>,
     pub default_tab: Option<f64>,
     pub rtl: Option<bool>,
@@ -269,7 +271,13 @@ impl ParaProps {
         if self.bullet_color.is_none() {
             self.bullet_color.clone_from(&p.bullet_color);
         }
-        self.bullet_size = self.bullet_size.or(p.bullet_size);
+        if self.bullet_size.is_none() && self.bullet_size_points.is_none() {
+            if p.bullet_size_points.is_some() {
+                self.bullet_size_points = p.bullet_size_points;
+            } else {
+                self.bullet_size = p.bullet_size;
+            }
+        }
         if self.tabs.is_none() {
             self.tabs.clone_from(&p.tabs);
         }
@@ -281,6 +289,26 @@ impl ParaProps {
         self.east_asian_line_break = self.east_asian_line_break.or(p.east_asian_line_break);
         self.latin_line_break = self.latin_line_break.or(p.latin_line_break);
         self.hanging_punct = self.hanging_punct.or(p.hanging_punct);
+    }
+}
+
+#[cfg(test)]
+mod bullet_size_tests {
+    use super::ParaProps;
+
+    #[test]
+    fn bullet_size_inheritance_keeps_percentage_and_points_as_one_mode() {
+        let parent = ParaProps { bullet_size_points: Some(12.0), ..Default::default() };
+        let mut child = ParaProps { bullet_size: Some(2.0), ..Default::default() };
+        child.inherit(&parent);
+        assert_eq!(child.bullet_size, Some(2.0));
+        assert_eq!(child.bullet_size_points, None);
+
+        let parent = ParaProps { bullet_size: Some(1.5), ..Default::default() };
+        let mut child = ParaProps { bullet_size_points: Some(14.0), ..Default::default() };
+        child.inherit(&parent);
+        assert_eq!(child.bullet_size, None);
+        assert_eq!(child.bullet_size_points, Some(14.0));
     }
 }
 

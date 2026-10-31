@@ -23,6 +23,10 @@ pub fn pct(e: &El, name: &str) -> Option<f64> {
     e.f64(name).map(|v| v / 100_000.0)
 }
 
+fn bullet_size_points(value: Option<&str>) -> Option<f64> {
+    value.and_then(|v| v.trim().parse::<u32>().ok()).filter(|v| (100..=400_000).contains(v)).map(|v| v as f64 / 100.0)
+}
+
 /// 1/60 000 degree → degrees.
 pub fn ang(e: &El, name: &str) -> Option<f64> {
     e.f64(name).map(|v| v / 60_000.0)
@@ -432,7 +436,14 @@ pub fn ppr(imp: &mut Imp, part: &Part, p: &El) -> (Option<u8>, ParaProps, Option
             }
             "buFont" => pp.bullet_font = e.attr("typeface").map(String::from),
             "buClr" => pp.bullet_color = color(e),
-            "buSzPct" => pp.bullet_size = pct(e, "val").map(|v| v.clamp(0.25, 4.0)),
+            "buSzPct" => {
+                pp.bullet_size_points = None;
+                pp.bullet_size = pct(e, "val").map(|v| v.clamp(0.25, 4.0));
+            }
+            "buSzPts" => {
+                pp.bullet_size = None;
+                pp.bullet_size_points = bullet_size_points(e.attr("val"));
+            }
             "tabLst" => {
                 pp.tabs = Some(
                     e.children_named("tab")
@@ -666,6 +677,13 @@ mod tests {
         assert!(matches!(color(&d.root).unwrap().base, ColorBase::System { last: Rgba::WHITE, .. }));
         let d = parse(br#"<x><a:scrgbClr r="100000" g="0" b="0"/></x>"#).unwrap();
         assert_eq!(color(&d.root).unwrap().base, ColorBase::Rgb { rgb: Rgba::rgb(255, 0, 0) });
+    }
+
+    #[test]
+    fn bullet_point_size_trims_schema_whitespace() {
+        let d = parse(br#"<a:buSzPts xmlns:a="x" val=" 1400 "/>"#).unwrap();
+        assert_eq!(bullet_size_points(d.root.attr("val")), Some(14.0));
+        assert_eq!(bullet_size_points(Some("1400")), Some(14.0));
     }
 
     #[test]
