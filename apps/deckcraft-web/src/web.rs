@@ -52,7 +52,7 @@ pub fn start() {
                     if q.contains("show") {
                         app.start_show(0, false);
                     }
-                    Ok(Box::new(WebShell { app, inbox }))
+                    Ok(Box::new(WebShell { app, inbox, page_title: String::new() }))
                 }),
             )
             .await;
@@ -74,12 +74,23 @@ fn query() -> String {
 struct WebShell {
     app: SlideApp,
     inbox: Inbox,
+    /// The page title last set (`document.title`), so it is written only when it changes.
+    page_title: String,
 }
 
 impl eframe::App for WebShell {
     /// Delegate one eframe logic pass to the wrapped application.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.app.logic(ctx);
+        // eframe's web runner ignores `ViewportCommand::Title`: put the same window title on the
+        // page, which a host embedding it reads to tell which presentation a drop opened (#1058).
+        let title = self.app.window_title();
+        if title != self.page_title
+            && let Some(doc) = web_sys::window().and_then(|w| w.document())
+        {
+            doc.set_title(&title);
+            self.page_title = title;
+        }
     }
 
     /// Consume browser drops with fresh input, capture the identity before the asynchronous read,

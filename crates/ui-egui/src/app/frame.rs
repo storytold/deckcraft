@@ -46,6 +46,29 @@ impl SlideApp {
         }
     }
 
+    /// The window's title: `<presentation> — DeckCraft`, with ` •` after the name while it has
+    /// unsaved changes, or `DeckCraft` with none open. The desktop shows it where the system lists
+    /// windows (taskbar, window switcher); a host embedding the web build reads it to tell which
+    /// presentation a drop opened and whether it is saved (#1058).
+    pub fn window_title(&self) -> String {
+        let Some(d) = self.session.active() else { return "DeckCraft".into() };
+        let mut name = d.title();
+        // X11 window titles are C strings: a NUL from a file name would not reach the window.
+        name.retain(|c| c != '\0');
+        format!("{name}{} — DeckCraft", if d.is_dirty() { " •" } else { "" })
+    }
+
+    /// Send the window title when it changed: a viewport command schedules a repaint, so sending
+    /// it every frame would keep an idle window redrawing. Runs from `logic`, so a document opened
+    /// or renamed while the window is hidden updates it too.
+    pub(super) fn sync_window_title(&mut self, ctx: &egui::Context) {
+        let title = self.window_title();
+        if title != self.sent_title {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            self.sent_title = title;
+        }
+    }
+
     /// Issue due screenshots and finish pass-local UI bookkeeping. Call once at the end of a real
     /// pass after layout; the outer [`Self::ui`] wrapper observes IME output after this returns.
     pub(super) fn ui_end(&mut self, ctx: &egui::Context) {

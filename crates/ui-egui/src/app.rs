@@ -80,6 +80,7 @@ impl SlideApp {
             canvas_region: None,
             palette: None,
             integrated_titlebar: false,
+            sent_title: String::new(),
             backstage: None,
             pending_urls: vec![],
             print_previews: files::PrintPreviews::default(),
@@ -246,6 +247,7 @@ impl SlideApp {
             }
         }
         self.autosave_if_due(ctx);
+        self.sync_window_title(ctx);
         self.tick_media_clock(ctx);
         self.note_settled_composition(ctx);
         // In a full run_ui pass the UI callback after this logic half still owns the pass's final
