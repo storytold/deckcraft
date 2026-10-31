@@ -658,19 +658,33 @@ fn dlg_reuse_slides(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             }
         }
     });
-    egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+    let mut budget = 3u32;
+    let mut need_more = false;
+    egui::ScrollArea::vertical().max_height(320.0).show(ui, |ui| {
         for (i, title) in &slides {
             let mut on = !off(d, *i);
             let label = if title.trim().is_empty() { format!("{}  (no title)", i + 1) } else { format!("{}  {}", i + 1, title.trim()) };
-            if ui.checkbox(&mut on, label).changed() {
-                if on {
-                    d.fields.remove(&format!("off{i}"));
-                } else {
-                    d.fields.insert(format!("off{i}"), "1".into());
-                }
-            }
+            ui.horizontal_top(|ui| {
+                need_more |= super::reuse::reuse_thumb(app, ui, *i, &mut budget);
+                // A long title wraps beside its thumbnail instead of widening the dialog past the
+                // list, where the scroll area would clip it.
+                ui.scope(|ui| {
+                    ui.set_max_width(super::reuse::TITLE_W);
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                    if ui.checkbox(&mut on, label).changed() {
+                        if on {
+                            d.fields.remove(&format!("off{i}"));
+                        } else {
+                            d.fields.insert(format!("off{i}"), "1".into());
+                        }
+                    }
+                });
+            });
         }
     });
+    if need_more {
+        ui.ctx().request_repaint();
+    }
     let mut keep = d.params.get("keep").and_then(Value::as_bool).unwrap_or(false);
     if ui.checkbox(&mut keep, "Keep source formatting").changed()
         && let Some(o) = d.params.as_object_mut()

@@ -356,27 +356,24 @@ impl SlideApp {
             return;
         };
         let Some(path) = pick("open") else { return };
-        // Read the file once: the list shown and the slides inserted come from the same bytes, even
-        // if the file changes while the dialog is open. Without a reader the path is used as is.
-        let mut source = json!({});
-        match self.services.read.as_ref().map(|r| r(&path)) {
-            Some(Ok(bytes)) => {
-                let name = std::path::Path::new(&path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                source["name"] = json!(name);
-                source["data"] = json!(deckcraft_engine::cmd::base64_encode(&bytes));
-            }
-            Some(Err(e)) => {
-                self.set_status(e.to_string());
+        // Read the file once: the list shown, the thumbnails and the slides inserted all come from
+        // the same bytes, even if the file changes while the dialog is open.
+        let (name, bytes) = match self.read_picked(&path) {
+            Ok(read) => read,
+            Err(e) => {
+                self.set_status(e);
                 return;
             }
-            None => source["path"] = json!(path),
-        }
+        };
+        let source = json!({"name": name, "data": deckcraft_engine::cmd::base64_encode(&bytes)});
         // Offer the file's slides to choose from; all of them are ticked to begin with.
         match self.session.execute("slide.reuseList", &source) {
             Ok(list) => {
                 let mut d = dialogs::Dialog::new("reuseSlides");
                 d.params = json!({"path": path, "source": source, "keep": keep, "slides": list["slides"]});
                 self.reuse_target = Some(self.capture_file_target());
+                // The thumbnails' copy of the file, parsed only once the file has proved to list.
+                self.reuse_preview = Some(dialogs::ReusePreview::new(&name, &bytes));
                 self.dialog = Some(d);
             }
             Err(e) => self.set_status(e.to_string()),
@@ -406,6 +403,17 @@ impl SlideApp {
                 false
             }
         }
+    }
+
+    /// The name and bytes of the file at `path` the user picked: through the host's reader when
+    /// it has one (the desktop app's), else the engine's, which keeps to the automation read root.
+    pub(crate) fn read_picked(&self, path: &str) -> Result<(String, Vec<u8>), String> {
+        let bytes = match self.services.read.as_ref() {
+            Some(read) => read(path).map_err(|e| e.to_string())?,
+            None => deckcraft_engine::io::read_file(path)?,
+        };
+        let name = std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        Ok((name, bytes))
     }
 
     pub(crate) fn pick_and_insert(&mut self, purpose: &str, cmd: &str) {
