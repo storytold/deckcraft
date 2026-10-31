@@ -237,6 +237,57 @@ fn office_fonts_have_substitutes() {
     assert!(substitutes("Times New Roman").contains(&"Liberation Serif"));
     assert!(substitutes("Aptos").contains(&"Inter"));
     assert!(substitutes("zzz").is_empty());
+
+    for mono in [
+        "Courier New",
+        "Cousine",
+        "Consolas",
+        "Menlo",
+        "Monaco",
+        "Source Code Pro",
+        "JetBrains Mono",
+        "Cascadia Code",
+        "Cascadia Mono",
+        "Fira Code",
+        "Inconsolata",
+        "DejaVu Sans Mono",
+        "Roboto Mono",
+        "Hack",
+        "Ubuntu Mono",
+        "Custom Monospace",
+        "Fantasque Sans Mono",
+    ] {
+        assert!(substitutes(mono).contains(&"Liberation Mono"), "{mono} should have Liberation Mono substitute");
+        assert!(is_monospace_family(mono), "{mono} should be recognized as monospace");
+    }
+
+    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monotype Baskerville", "zzz"] {
+        assert!(!is_monospace_family(prop), "{prop} should not be recognized as monospace");
+    }
+}
+
+#[test]
+fn missing_monospace_fonts_keep_monospace_fallback() {
+    let db = FontDb::global();
+    let mono_sub = db.face("Unavailable JetBrains Mono", "Regular").family.clone();
+    let calibri_target = db.face(MISSING_FONT_FAMILY, "Regular").family.clone();
+
+    assert!(is_monospace_family(&mono_sub), "substitute {mono_sub} must be monospace");
+
+    // Cousine is metric-compatible with Courier New / Liberation Mono and must not fall back to Calibri.
+    if !db.has_family("Cousine") {
+        assert_eq!(db.document_face("Cousine", "Regular").family, mono_sub);
+    }
+
+    // Monospace fonts missing from the system must resolve to a monospace substitute.
+    for mono in ["Unavailable JetBrains Mono", "Custom App Code", "Unknown Space Mono", "Mock Terminal Font"] {
+        let f = db.document_face(mono, "Regular");
+        assert_eq!(f.family, mono_sub, "{mono}");
+        assert!(is_monospace_family(&f.family), "{mono} must resolve to a monospace family");
+        if mono_sub != calibri_target {
+            assert_ne!(f.family, calibri_target, "{mono} must not fall back to Calibri");
+        }
+    }
 }
 
 #[test]
