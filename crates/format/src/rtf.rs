@@ -1,9 +1,11 @@
 //! Outline / RTF: PowerPoint's "Outline/RTF" save type, and reading such a file back as slides.
 //!
 //! The export writes one paragraph per slide title (outline level 0, bold, larger) and one per
-//! body paragraph (outline level = indent + 1, indented), keeping bold, italic and underline.
-//! The import reads paragraphs and their `\outlinelevel` (or, failing that, `\li` indent) into
-//! the tab-indented outline [`crate::outline_to_slides`] understands.
+//! body paragraph (outline level = indent + 1, indented), keeping bold, italic and underline. Each
+//! carries PowerPoint's `\s1`-`\s9` heading style, which is how PowerPoint finds the outline levels.
+//! The import reads paragraphs and their `\outlinelevel` (or, failing that, the `\s1`-`\s9` style,
+//! or the `\li` indent) into the tab-indented outline [`crate::outline_to_slides`] understands, or,
+//! with [`rtf_to_slides`], straight into slides that keep empty titles and titles starting `- `.
 
 use deckcraft_model::Presentation;
 use deckcraft_model::text::{Paragraph, RunKind};
@@ -53,10 +55,14 @@ fn runs(out: &mut String, p: &Paragraph) {
 
 /// The presentation's outline (slide titles and body text) as RTF.
 pub fn slides_to_rtf(p: &Presentation) -> String {
-    let mut out = String::from("{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1{\\fonttbl{\\f0\\fswiss Liberation Sans;}}\n");
+    let mut out = String::from("{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1{\\fonttbl{\\f0\\fswiss Liberation Sans;}}\n{\\stylesheet");
+    for n in 1..=9 {
+        out.push_str(&format!("{{\\s{n}\\li{}\\fi-360\\level{n} heading {n};}}", 360 * n));
+    }
+    out.push_str("}\n");
     for s in &p.slides {
         let title = s.shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())).and_then(|sh| sh.text.as_ref());
-        out.push_str("\\pard\\outlinelevel0\\sb240\\b\\fs32 ");
+        out.push_str("\\pard\\s1\\outlinelevel0\\sb240\\b\\fs32 ");
         // The title stays one outline paragraph (a `\par` would start another slide on re-import),
         // so its paragraphs are joined with line breaks.
         let mut tps = title.into_iter().flat_map(|t| &t.paragraphs).filter(|p| !p.is_empty()).peekable();
@@ -77,7 +83,7 @@ pub fn slides_to_rtf(p: &Presentation) -> String {
             let Some(t) = &sh.text else { continue };
             for para in t.paragraphs.iter().filter(|p| !p.is_empty()) {
                 let lvl = para.level.min(8) as u32;
-                out.push_str(&format!("\\pard\\outlinelevel{}\\li{}\\fs24 ", lvl + 1, 360 * (lvl + 1)));
+                out.push_str(&format!("\\pard\\s{}\\outlinelevel{}\\li{}\\fs24 ", (lvl + 2).min(9), lvl + 1, 360 * (lvl + 1)));
                 runs(&mut out, para);
                 out.push_str("\\par\n");
             }
@@ -141,15 +147,97 @@ struct Outline<'a> {
     stack: Vec<St>,
     st: St,
     level: Option<u32>,
+    /// The level a `\s1`-`\s9` heading style gives, used when no `\outlinelevel` is set.
+    style_level: Option<u32>,
     indent: i64,
+    /// Which `\s1`-`\s9` the stylesheet names "heading N"; any other `\sN` is a body style.
+    headings: [bool; 10],
     pending_skip: usize,
     line: String,
-    out: String,
+    /// Paragraphs so far: outline level and text (empty only for an empty level-0 title).
+    out: Vec<(usize, String)>,
 }
 
 /// Read an RTF outline into tab-indented outline text: a paragraph's outline level (or its left
 /// indent in 0.25" steps) becomes its number of tabs.
 pub fn rtf_to_outline(rtf: &str) -> String {
+    let mut out = String::new();
+    for (n, text) in paragraphs(rtf).into_iter().filter(|(_, t)| !t.is_empty()) {
+        out.push_str(&"\t".repeat(n));
+        out.push_str(&text);
+        out.push('\n');
+    }
+    out
+}
+
+/// Append a slide per level-0 paragraph of an RTF outline, its deeper paragraphs the body; unlike
+/// [`rtf_to_outline`] then [`crate::outline_to_slides`], an empty title makes an (untitled) slide
+/// and a title starting `- ` keeps it, as PowerPoint's own outline export has both.
+pub fn rtf_to_slides(p: &mut Presentation, rtf: &str) -> usize {
+    let mut slides: crate::OutlineSlides = Vec::new();
+    for (n, text) in paragraphs(rtf) {
+        if n == 0 {
+            slides.push((text, Vec::new()));
+        } else if let Some((_, body)) = slides.last_mut() {
+            body.push(((n - 1).min(8) as u8, text));
+        }
+    }
+    crate::add_outline_slides(p, slides)
+}
+
+/// The `\sN` styles the stylesheet calls "heading N": `{\s1\li360 heading 1;}`.
+fn heading_styles(rtf: &str) -> [bool; 10] {
+    let mut out = [false; 10];
+    let Some(at) = rtf.find("\\stylesheet") else { return out };
+    let b = rtf.as_bytes();
+    let (mut i, mut depth) = (at + "\\stylesheet".len(), 1);
+    let (mut style, mut name): (Option<usize>, String) = (None, String::new());
+    while i < b.len() && depth > 0 {
+        match b[i] {
+            b'{' => {
+                depth += 1;
+                (style, name) = (None, String::new());
+            }
+            b'}' => {
+                depth -= 1;
+                if depth == 1
+                    && let Some(n) = style.filter(|n| (1..=9).contains(n))
+                {
+                    out[n] = name.trim().to_ascii_lowercase().starts_with("heading");
+                }
+            }
+            b'\\' => {
+                let w = i + 1;
+                let mut j = w;
+                while j < b.len() && b[j].is_ascii_alphabetic() {
+                    j += 1;
+                }
+                let k = j;
+                while j < b.len() && (b[j].is_ascii_digit() || j == k && b[j] == b'-') {
+                    j += 1;
+                }
+                if depth == 2 && &rtf[w..k] == "s" {
+                    style = rtf[k..j].parse().ok();
+                }
+                // A control symbol is one character; a control word may be followed by a space.
+                i = if k == w {
+                    w + 1
+                } else if b.get(j) == Some(&b' ') {
+                    j + 1
+                } else {
+                    j
+                };
+                continue;
+            }
+            c if depth == 2 && !matches!(c, b'\r' | b'\n') => name.push(c as char),
+            _ => {}
+        }
+        i += 1;
+    }
+    out
+}
+
+fn paragraphs(rtf: &str) -> Vec<(usize, String)> {
     let mut p = Outline {
         rtf,
         b: rtf.as_bytes(),
@@ -157,14 +245,16 @@ pub fn rtf_to_outline(rtf: &str) -> String {
         stack: vec![],
         st: St { skip: false, uc: 1 },
         level: None,
+        style_level: None,
         indent: 0,
+        headings: heading_styles(rtf),
         pending_skip: 0,
         line: String::new(),
-        out: String::new(),
+        out: vec![],
     };
     p.run();
-    p.flush();
-    finish_surrogates(p.out)
+    p.flush(false);
+    p.out.into_iter().map(|(n, t)| (n, finish_surrogates(t))).collect()
 }
 
 impl Outline<'_> {
@@ -245,12 +335,18 @@ impl Outline<'_> {
 
     fn apply(&mut self, word: &str, arg: Option<i64>) {
         match word {
-            "par" => self.flush(),
+            "par" => self.flush(true),
             "pard" => {
                 self.level = None;
+                self.style_level = None;
                 self.indent = 0;
             }
-            "outlinelevel" => self.level = arg.map(|a| a.clamp(0, 9) as u32),
+            "outlinelevel" => {
+                self.level = arg.map(|a| a.clamp(0, 9) as u32);
+            }
+            "s" => {
+                self.style_level = arg.filter(|a| (1..=9).contains(a) && self.headings[*a as usize]).map(|a| a as u32 - 1);
+            }
             "li" => self.indent = arg.unwrap_or(0),
             "tab" | "line" => self.line.push(' '),
             "uc" => self.st.uc = arg.unwrap_or(1).clamp(0, 8) as usize,
@@ -307,7 +403,7 @@ impl Outline<'_> {
             b'\\' | b'{' | b'}' => self.line.push(n as char),
             b'~' => self.line.push('\u{a0}'),
             b'_' => self.line.push('\u{2011}'),
-            b'\n' | b'\r' => self.flush(),
+            b'\n' | b'\r' => self.flush(true),
             _ => {}
         }
     }
@@ -325,14 +421,15 @@ impl Outline<'_> {
         }
     }
 
-    /// Ends the current line: a non-empty line becomes one outline entry, indented by its level.
-    fn flush(&mut self) {
+    /// Ends the current line: a non-empty line becomes one entry at its level, and so does an empty
+    /// one that a `\par` ends while its style is a title (`\s1` or `\outlinelevel0`, inherited or
+    /// not): PowerPoint writes an untitled slide so. The flush at the end of the input is no `\par`.
+    fn flush(&mut self, par: bool) {
         let text = self.line.trim();
-        if !text.is_empty() {
-            let n = self.level.map(|l| l as i64).unwrap_or(self.indent.saturating_add(180) / 360).clamp(0, 9) as usize;
-            self.out.push_str(&"\t".repeat(n));
-            self.out.push_str(text);
-            self.out.push('\n');
+        let explicit = self.level.or(self.style_level);
+        if !text.is_empty() || par && explicit == Some(0) {
+            let n = explicit.map(|l| l as i64).unwrap_or(self.indent.saturating_add(180) / 360).clamp(0, 9) as usize;
+            self.out.push((n, text.to_string()));
         }
         self.line.clear();
     }
@@ -454,6 +551,38 @@ mod tests {
         let rtf = slides_to_rtf(&p);
         assert!(rtf.contains("First line\\line Second line\\b0\\par"), "{rtf}");
         assert_eq!(rtf_to_outline(&rtf), crate::slides_to_outline(&p));
+    }
+
+    /// PowerPoint writes `\\s1`-`\\s9` (no `\\outlinelevel`), an untitled slide as an empty `\\s1`
+    /// paragraph, and a title may start `- `; all three must survive reading.
+    #[test]
+    fn reads_powerpoint_outline_with_styles_and_empty_titles() {
+        let rtf = r"{\rtf1\ansi{\stylesheet{\s1\li360 heading 1;}{\s2\li1080 heading 2;}{\s3\li1800 heading 3;}}\pard\plain\s1\li0 {\f1 Title one}{\f1 \par }\pard\plain\s2\li360 {\pntext\pard\plain\f3 \'95\tab}{\f2 Body a\par }\pard\plain\s3\li1080 Body b\par\pard\plain\s1 {\f3 \par }\pard\plain\s1 - dash\par\pard\plain\s2 x\par}";
+        assert_eq!(rtf_to_outline(rtf), "Title one\n\tBody a\n\t\tBody b\n- dash\n\tx\n");
+        let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        assert_eq!(rtf_to_slides(&mut p, rtf), 3);
+        assert_eq!(crate::slides_to_outline(&p), "Title one\n\tBody a\n\t\tBody b\n\n- dash\n\tx\n");
+    }
+
+    #[test]
+    fn a_style_the_stylesheet_does_not_call_a_heading_is_a_body_paragraph() {
+        let rtf = r"{\rtf1\ansi{\stylesheet{\s1\li720 Indented body;}{\s2\li360 heading 2;}}\pard\s1\li720 Point\par\pard\s2\li360 Sub\par}";
+        assert_eq!(rtf_to_outline(rtf), "\t\tPoint\n\tSub\n");
+    }
+
+    #[test]
+    fn an_empty_title_after_an_inherited_heading_style_is_kept() {
+        let rtf = r"{\rtf1\ansi{\stylesheet{\s1\li360 heading 1;}}\pard\s1 A\par\par B\par}";
+        let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        assert_eq!(rtf_to_slides(&mut p, rtf), 3);
+    }
+
+    #[test]
+    fn export_writes_heading_styles() {
+        let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        crate::outline_to_slides(&mut p, "A\n\tB\n\t\tC\n");
+        let rtf = slides_to_rtf(&p);
+        assert!(rtf.contains("{\\s9\\li3240") && rtf.contains("\\pard\\s1\\outlinelevel0") && rtf.contains("\\pard\\s3\\outlinelevel2"), "{rtf}");
     }
 
     #[test]
