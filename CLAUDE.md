@@ -13,6 +13,9 @@ before modules or other crate items; crate-level `//!` documentation may precede
 3. Run `cargo xtask ci` before you change anything, so you know the tree is green.
 
 ## Habits
+- **Before starting an issue, check whether a PR already fixes it**:
+  `gh pr list --state all --search "<issue number> OR <keywords>"`. If one exists, review or
+  support it instead of duplicating the work.
 - Every user-visible action is a command with tests (`crates/engine/src/cmd/*`).
 - Look at UI changes: `deckcraft --sample --control 7990` + `ui.screenshot`, or
   `deckcraft-cli render`.
