@@ -7,9 +7,9 @@
 use std::io::Cursor;
 
 use symphonia::core::audio::SampleBuffer;
-use symphonia::core::codecs::{CODEC_TYPE_NULL, DecoderOptions};
+use symphonia::core::codecs::{CODEC_TYPE_NULL, Decoder, DecoderOptions};
 use symphonia::core::errors::Error as SymError;
-use symphonia::core::formats::FormatOptions;
+use symphonia::core::formats::{FormatOptions, Track};
 use symphonia::core::io::{MediaSourceStream, MediaSourceStreamOptions};
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::probe::Hint;
@@ -172,7 +172,17 @@ fn decode_symphonia(bytes: &Bytes, ext: &str) -> Result<Pcm> {
     decode_symphonia_capped(bytes, ext, MAX_PCM_SAMPLES)
 }
 
-/// [`decode_symphonia`] failing once more than `max_samples` samples have been decoded.
+/// The track playback decodes, with its decoder: the first one a decoder can be made for (a
+/// video's audio track follows its video track). The duration probe measures the same track.
+fn playable_track(tracks: &[Track]) -> Option<(u32, Box<dyn Decoder>)> {
+    let codecs = symphonia::default::get_codecs();
+    tracks
+        .iter()
+        .filter(|t| t.codec_params.codec != CODEC_TYPE_NULL)
+        .find_map(|t| codecs.make(&t.codec_params, &DecoderOptions::default()).ok().map(|d| (t.id, d)))
+}
+
+/// [`decode_symphonia`] stopping once `max_samples` samples have been decoded.
 fn decode_symphonia_capped(bytes: &Bytes, ext: &str, max_samples: usize) -> Result<Pcm> {
     let mss = MediaSourceStream::new(Box::new(Cursor::new(Shared(bytes.clone()))), MediaSourceStreamOptions::default());
     let mut hint = Hint::new();
@@ -191,14 +201,7 @@ fn decode_symphonia_capped(bytes: &Bytes, ext: &str, max_samples: usize) -> Resu
         other => sym_err(other),
     })?;
     let mut format = probed.format;
-    let codecs = symphonia::default::get_codecs();
-    // The first track we can decode (a video's audio track follows its video track).
-    let (track_id, mut decoder) = format
-        .tracks()
-        .iter()
-        .filter(|t| t.codec_params.codec != CODEC_TYPE_NULL)
-        .find_map(|t| codecs.make(&t.codec_params, &DecoderOptions::default()).ok().map(|d| (t.id, d)))
-        .ok_or(MediaError::Missing("audio track we can decode"))?;
+    let (track_id, mut decoder) = playable_track(format.tracks()).ok_or(MediaError::Missing("audio track we can decode"))?;
     let mut out: Vec<f32> = Vec::new();
     let mut rate = 0;
     let mut channels = 0u16;
@@ -247,10 +250,15 @@ fn decode_symphonia_capped(bytes: &Bytes, ext: &str, max_samples: usize) -> Resu
                 }
                 if let Some(b) = buf.as_mut() {
                     b.copy_interleaved_ref(decoded);
-                    if b.samples().len() > max_samples.saturating_sub(out.len()) {
-                        return Err(MediaError::Unsupported("audio this long".into()));
+                    // stop at the cap with whole frames, keeping what fits, like the Opus paths
+                    let room = max_samples.saturating_sub(out.len());
+                    let s = b.samples();
+                    if s.len() > room {
+                        let fit = room - room % (ch.max(1) as usize);
+                        out.extend_from_slice(s.get(..fit).unwrap_or_default());
+                        break;
                     }
-                    out.extend_from_slice(b.samples());
+                    out.extend_from_slice(s);
                 }
             }
             Err(SymError::DecodeError(e)) => log::debug!("audio decode: {e}"),
@@ -285,7 +293,7 @@ pub(crate) fn probe_symphonia(bytes: &Bytes, ext: &str) -> Option<(String, u32, 
     Some((name, p.sample_rate.unwrap_or(0), p.channels.map(|c| c.count() as u16).unwrap_or(0), p.n_frames))
 }
 
-/// Length in milliseconds of the first decodable track, summed from its packet durations: the
+/// Length in milliseconds of the track playback decodes, summed from its packet durations: the
 /// file is demuxed but not decoded. `None` when the demuxer reports no durations.
 pub(crate) fn demux_duration_ms(bytes: &Bytes, ext: &str) -> Option<u64> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -296,8 +304,8 @@ pub(crate) fn demux_duration_ms(bytes: &Bytes, ext: &str) -> Option<u64> {
         }
         let opts = FormatOptions { enable_gapless: true, ..Default::default() };
         let mut format = symphonia::default::get_probe().format(&hint, mss, &opts, &MetadataOptions::default()).ok()?.format;
-        let t = format.tracks().iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)?;
-        let (id, tb) = (t.id, t.codec_params.time_base?);
+        let (id, _) = playable_track(format.tracks())?;
+        let tb = format.tracks().iter().find(|t| t.id == id)?.codec_params.time_base?;
         let mut ticks = 0u64;
         let mut errors = 0u32;
         loop {
@@ -363,12 +371,34 @@ mod tests {
         assert!((r.at(101, 0) - 0.505).abs() < 1e-3);
     }
 
-    /// A sample cap makes a long decode fail instead of growing without bound.
+    /// A long decode stops at the sample cap and keeps what it has, like the Opus paths, so audio
+    /// past the cap still plays (up to the cap) instead of failing.
     #[test]
-    fn decode_past_the_sample_cap_is_an_error() {
+    fn decode_stops_at_the_sample_cap() {
         let b: Bytes = std::sync::Arc::new(std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tone.aac")).unwrap_or_default());
-        assert!(decode_symphonia_capped(&b, "aac", usize::MAX).is_ok());
-        assert!(decode_symphonia_capped(&b, "aac", 1000).is_err());
+        let full = decode_symphonia_capped(&b, "aac", usize::MAX).unwrap();
+        let capped = decode_symphonia_capped(&b, "aac", 1001).unwrap();
+        assert!(full.samples.len() > 1001, "the fixture is longer than the cap");
+        assert!(!capped.samples.is_empty() && capped.samples.len() <= 1001, "{}", capped.samples.len());
+        assert_eq!(capped.samples.len() % capped.channels as usize, 0, "whole frames only");
+        assert_eq!(capped.samples[..], full.samples[..capped.samples.len()], "the start is kept as decoded");
+    }
+
+    /// The duration is measured on the track playback decodes: the first one a decoder can be made
+    /// for, not the first one with any codec.
+    #[test]
+    fn duration_and_playback_pick_the_same_track() {
+        use symphonia::core::audio::Channels;
+        use symphonia::core::codecs::{CODEC_TYPE_AAC, CODEC_TYPE_OPUS, CodecParameters};
+        let stereo = Channels::FRONT_LEFT | Channels::FRONT_RIGHT;
+        let mut opus = CodecParameters::new();
+        opus.for_codec(CODEC_TYPE_OPUS).with_sample_rate(48_000).with_channels(stereo);
+        let mut aac = CodecParameters::new();
+        aac.for_codec(CODEC_TYPE_AAC).with_sample_rate(44_100).with_channels(stereo);
+        let tracks = [Track::new(1, opus), Track::new(2, aac)];
+        // the first track has a codec but no decoder in this build (Symphonia has no Opus decoder)
+        assert_ne!(tracks[0].codec_params.codec, CODEC_TYPE_NULL);
+        assert_eq!(playable_track(&tracks).map(|(id, _)| id), Some(2));
     }
 
     #[test]
