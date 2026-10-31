@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (Animations shortfall: preview from the selected effect is in; previous: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (no break after `?`, `!`, `}`, `+` inside a word; previous: trivial, Animations shortfall: preview from the selected effect is in; before that: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -289,6 +289,7 @@ scored done (16 open issues).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
+| 2026-10-17 | trivial | A word no longer breaks after `?`, `!`, `}` or `+` (a URL's query wraps at the edge as in PowerPoint 2016 for Windows), as it already didn't after `/` and `\`. Headline percentages unchanged |
 | 2026-10-16 | trivial | Arrange shortfall: Align to Slide and Align Selected Objects are in the Align menu. Percentages unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one headline breadth row (84% over 191 features after `cargo xtask parity`; duplicate checklist rows removed), one row per feature area with the latest breadth and shortfalls, one Themes / Slide show / Views / Review / Automation bullet each (320 engine commands). SmartArt ready ~35% (Text Pane, 6e40335) moves the area mean to 62.8%; dimension and headline percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed to adjust handles: the Transform gallery applies a preset |

@@ -857,18 +857,29 @@ fn one_line(text: &str) -> f64 {
 #[test]
 fn a_word_does_not_break_after_a_slash_or_backslash() {
     // PowerPoint (latinLnBrk off, its default) keeps "alpha/beta/gamma" whole and only breaks it
-    // where it no longer fits; Unicode line breaking would allow a break after each slash.
-    for sep in ["/", "\\"] {
+    // where it no longer fits; Unicode line breaking would allow a break after each slash. The
+    // same holds after ?, !, } and + (a URL's query, measured in PowerPoint 2016 for Windows).
+    for sep in ["/", "\\", "?", "!", "}", "+"] {
         let text = ["alpha", "beta", "gamma", "delta", "epsilon"].join(sep);
         let w = one_line(&text) * 0.6;
         let lines = wrapped(&text, w, |_| {});
         assert!(lines.len() >= 2, "{lines:?}");
         assert!(lines[0].chars().count() > "alpha/beta".len(), "filled to the edge, not cut at a separator: {lines:?}");
+        // The line breaks where the next character no longer fits, not at an earlier separator
+        // (it may still end with one when that is where the width runs out).
+        let next: String = lines[0].chars().chain(lines[1].chars().take(1)).collect();
+        assert!(one_line(&next) > w, "no break right after {sep:?} while more fits: {lines:?}");
     }
     // latinLnBrk on: Unicode's break after a slash is allowed again.
     let text = "alpha/beta/gamma/delta/epsilon";
     let lines = wrapped(text, one_line(text) * 0.6, |p| p.latin_line_break = Some(true));
     assert!(lines[0].ends_with('/'), "{lines:?}");
+    // Outside a Latin word the Unicode break stays: "日本!" fits, "語" moves to the next line.
+    let lines = wrapped("日本!語", one_line("日本!") + 0.5, |_| {});
+    assert_eq!(lines[0], "日本!", "{lines:?}");
+    // Nor before a symbol that only shares the letters' line-break class.
+    let (allowed, _) = break_opportunities("ab!&cd", false);
+    assert!(allowed[3], "break after ! before &: {allowed:?}");
     // A slash followed by a space still breaks, and hyphens still break.
     let lines = wrapped("alpha-beta-gamma-delta-epsilon", one_line("alpha-beta-gamma-") + 1.0, |_| {});
     assert_eq!(lines[0], "alpha-beta-gamma-");
