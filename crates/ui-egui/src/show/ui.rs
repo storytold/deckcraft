@@ -656,7 +656,7 @@ fn draw_bars(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Painter, out:
                 .max_rect(Rect::from_min_max(pos2(bar.max.x - 260.0, bar.min.y), bar.max))
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
-        if child.button("Close").clicked() {
+        if child.button(tl!("Close")).clicked() {
             out.keep = false;
         }
         if child.button("▶").clicked() {
@@ -752,7 +752,7 @@ fn finish(app: &mut SlideApp, mut show: Show, f: &Fr, keep: bool) {
             for (i, secs) in show.timings.clone() {
                 let _ = app.run("transition.timing", json!({"index": i, "after": (secs * 1000.0).round() as u64}));
             }
-            app.set_status("Slide timings recorded.");
+            app.set_status(tl!("Slide timings recorded."));
         }
         let last = show.state.slide;
         let _ = app.run("slide.go", json!({"index": last}));

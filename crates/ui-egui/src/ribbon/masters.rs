@@ -23,15 +23,15 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
         rows(ui, |ui| {
             let (preserve, title, footers) = master_checks(app);
             let mut on = preserve;
-            if ui.checkbox(&mut on, "Preserve").changed() {
+            if ui.checkbox(&mut on, tl!("Preserve")).changed() {
                 run(app, "master.preserve", json!({"preserve": on}));
             }
             let mut on = title;
-            if ui.checkbox(&mut on, "Title").changed() {
+            if ui.checkbox(&mut on, tl!("Title")).changed() {
                 run(app, "master.placeholders", json!({"title": on}));
             }
             let mut on = footers;
-            if ui.checkbox(&mut on, "Footers").changed() {
+            if ui.checkbox(&mut on, tl!("Footers")).changed() {
                 run(app, "master.placeholders", json!({"footers": on}));
             }
         });
@@ -57,7 +57,7 @@ pub(super) fn slide_master(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Browse for Themes…").clicked() {
+            if ui.button(tl!("Browse for Themes…")).clicked() {
                 run(app, "app.browseThemeDialog", json!({}));
             }
         });

@@ -198,9 +198,16 @@ impl SlideApp {
     /// opening/inbox results, screenshot completions/deadlines, AutoRecover pacing and media
     /// clocks. UI events are handled in [`Self::ui`], where a forced hidden paint also arrives.
     pub fn logic(&mut self, ctx: &egui::Context) {
+        // The interface language is drawn from this frame on; `ui()` sets it too, for callers that
+        // lay the window out without running `logic` first (`ui_shot`, tests).
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         if !Self::root_viewport_admitted(ctx) {
             log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
             return;
+        }
+        let scale = self.ui.ui_scale.clamp(0.5, 3.0);
+        if (ctx.zoom_factor() - scale).abs() > 1e-3 {
+            ctx.set_zoom_factor(scale);
         }
         self.tick_hidden_show(ctx, web_time::Instant::now());
         // `raw_input_hook` runs before `App::logic`. In a full pass egui has already built
@@ -257,6 +264,7 @@ impl SlideApp {
     /// no-document paths, reaches the same outer reset observation and finalizer below. No early
     /// route may publish or inspect IME output on its own.
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        crate::i18n::set_current(crate::i18n::Lang::from_pref(&self.ui.language));
         let ctx = ui.ctx().clone();
         if !Self::root_viewport_admitted(&ctx) {
             log::debug!("ignoring SlideApp::ui for render-only viewport {:?}", ctx.viewport_id());

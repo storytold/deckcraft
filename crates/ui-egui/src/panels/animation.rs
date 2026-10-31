@@ -39,7 +39,7 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
     });
     ui.separator();
     if anims.is_empty() {
-        ui.label(egui::RichText::new("Select an object on the slide and add an animation from the Animations tab.").color(t.text_dim));
+        ui.label(egui::RichText::new(tl!("Select an object on the slide and add an animation from the Animations tab.")).color(t.text_dim));
         return;
     }
     let bars = animtimeline::bars(anims.len(), &effects);
@@ -152,17 +152,17 @@ pub(super) fn animation(app: &mut SlideApp, ui: &mut Ui) {
                 }
             }
             ui.separator();
-            if ui.button("Move Up").clicked() {
+            if ui.button(tl!("Move Up")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i.saturating_sub(1)}));
                 ui.close();
             }
-            if ui.button("Move Down").clicked() {
+            if ui.button(tl!("Move Down")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.move", json!({"index": i, "to": i + 1}));
                 ui.close();
             }
-            if ui.button("Remove").clicked() {
+            if ui.button(tl!("Remove")).clicked() {
                 ui.data_mut(|m| m.remove::<usize>(pick_id));
                 run(app, "animation.remove", json!({"index": i}));
                 ui.close();
