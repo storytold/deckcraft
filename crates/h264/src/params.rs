@@ -1,7 +1,7 @@
 //! Sequence and picture parameter sets (7.3.2.1, 7.3.2.2) including VUI and scaling lists.
 
 use crate::error::{Result, ensure, unsupported};
-use crate::tables::*;
+use crate::tables::{DEFAULT_4X4_INTER, DEFAULT_4X4_INTRA, DEFAULT_8X8_INTER, DEFAULT_8X8_INTRA, ZIGZAG4, ZIGZAG8};
 use deckcraft_bitstream::BitReader;
 
 /// Scaling matrices after applying fall-back rules, stored in raster order (weightScale).
@@ -575,7 +575,7 @@ impl Pps {
         ensure!(sps_id < 32, "seq_parameter_set_id out of range");
         let sps = spss
             .get(sps_id as usize)
-            .and_then(|s| s.as_ref())
+            .and_then(Option::as_ref)
             .ok_or_else(|| crate::Error::MissingParameterSet(format!("SPS {sps_id} for PPS {id}")))?;
         let entropy_coding_mode = r.read_flag()?;
         let bottom_field_pic_order_in_frame_present = r.read_flag()?;

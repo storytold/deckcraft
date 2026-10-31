@@ -208,7 +208,7 @@ pub(crate) fn draw(
         }
     }
     let unmatched_b =
-        tb.iter().enumerate().filter(|(j, _)| pairs.get(*j).is_none_or(|p| p.is_none())).flat_map(|(_, tok)| tok.glyphs.iter().copied());
+        tb.iter().enumerate().filter(|(j, _)| pairs.get(*j).is_none_or(Option::is_none)).flat_map(|(_, tok)| tok.glyphs.iter().copied());
     for g in unmatched_b.chain(loose_b) {
         if let Some((run, gid, pos)) = glyph_at(&lb, g) {
             draw_glyph(ctx, run, gid, place_b * Affine::translate(pos.to_vec2()), t);

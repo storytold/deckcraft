@@ -1,6 +1,6 @@
 //! Pulse cache and bit allocation (RFC 6716 §4.3.3, §4.3.4.1).
 
-use super::tables::*;
+use super::tables::{ALLOC, EBANDS, LOG2_FRAC_TABLE, MAX_LM, NB_EBANDS, OVERLAP};
 use crate::range::{BITRES, RangeDecoder};
 
 const MAX_PSEUDO: i32 = 40;

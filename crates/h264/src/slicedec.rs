@@ -5,11 +5,11 @@ use crate::deblock;
 use crate::error::{Result, ensure, invalid};
 use crate::inter::{self, Weight};
 use crate::intra::{self, Avail};
-use crate::mbtypes::*;
+use crate::mbtypes::{CBP_ME, MbTypeInfo, Part, SubMbInfo, SubPart, b_mb_type, b_sub_mb_type, intra_mb_type, p_mb_type, p_sub_mb_type};
 use crate::params::{Pps, Sps};
-use crate::picture::*;
+use crate::picture::{Frame, FrameRef, MbKind, MbState, Planes, RefPic};
 use crate::slice::{SliceHeader, SliceType};
-use crate::tables::*;
+use crate::tables::{BLK4_XY, QPC_TABLE, RASTER_TO_BLK4, ZIGZAG4, ZIGZAG8};
 use crate::transform::{self, LevelScale};
 use deckcraft_bitstream::BitReader;
 
@@ -232,7 +232,7 @@ fn predict_block(f: &Frame, mv: [i16; 2], px: usize, py: usize, bw: usize, bh: u
     let (fx, fy) = ((mv[0] & 7) as u32, (mv[1] & 7) as u32);
     for (comp, out) in c.into_iter().enumerate() {
         let mut w = [0u8; 16 * 9];
-        f.chroma_window(comp, cx, cy, cw + 1, ch + 1, &mut w, 16);
+        f.chroma_window(comp, (cx, cy), (cw + 1, ch + 1), &mut w, 16);
         inter::mc_chroma_win(&w, 16, fx, fy, cw, ch, out, cs);
     }
 }
@@ -665,33 +665,38 @@ impl<'a> SliceDecoder<'a> {
             return Ok(());
         }
         for p in 0..4 {
-            let sub = self.cur.sub[p];
-            let (x8, y8) = ((p & 1) * 2, (p >> 1) * 2);
-            if sub.direct {
-                self.derive_direct(1 << p)?;
-                continue;
+            self.derive_sub_mb_motion(p, n)?;
+        }
+        Ok(())
+    }
+
+    /// Motion of one 8x8 sub-macroblock `p` of a P8x8/B8x8 MB.
+    fn derive_sub_mb_motion(&mut self, p: usize, n: [usize; 2]) -> Result<()> {
+        let sub = self.cur.sub[p];
+        let (x8, y8) = ((p & 1) * 2, (p >> 1) * 2);
+        if sub.direct {
+            return self.derive_direct(1 << p);
+        }
+        let mut refs = [-1i8; 2];
+        for (l, r) in refs.iter_mut().enumerate() {
+            if sub.pred & (1 << l) != 0 {
+                let v = self.cur.ref_idx[l][p];
+                ensure!((v as usize) < n[l], "ref_idx {v} out of range (list {l}, size {})", n[l]);
+                *r = v;
             }
-            let mut refs = [-1i8; 2];
-            for (l, r) in refs.iter_mut().enumerate() {
-                if sub.pred & (1 << l) != 0 {
-                    let v = self.cur.ref_idx[l][p];
-                    ensure!((v as usize) < n[l], "ref_idx {v} out of range (list {l}, size {})", n[l]);
-                    *r = v;
+        }
+        for j in 0..sub.shape.num_parts() {
+            let (sx, sy, w, h) = sub.shape.rect(j);
+            let (x, y) = (x8 + sx, y8 + sy);
+            let mut mvs = [[0i16; 2]; 2];
+            for l in 0..2 {
+                if refs[l] >= 0 {
+                    let mvp = self.mvp(l, x, y, w, refs[l], 0, 0);
+                    let d = self.cur.mvd[l][p * 4 + j];
+                    mvs[l] = [mvp[0].wrapping_add(d[0]), mvp[1].wrapping_add(d[1])];
                 }
             }
-            for j in 0..sub.shape.num_parts() {
-                let (sx, sy, w, h) = sub.shape.rect(j);
-                let (x, y) = (x8 + sx, y8 + sy);
-                let mut mvs = [[0i16; 2]; 2];
-                for l in 0..2 {
-                    if refs[l] >= 0 {
-                        let mvp = self.mvp(l, x, y, w, refs[l], 0, 0);
-                        let d = self.cur.mvd[l][p * 4 + j];
-                        mvs[l] = [mvp[0].wrapping_add(d[0]), mvp[1].wrapping_add(d[1])];
-                    }
-                }
-                self.set_motion(x, y, w, h, refs, mvs);
-            }
+            self.set_motion(x, y, w, h, refs, mvs);
         }
         Ok(())
     }
@@ -907,7 +912,7 @@ impl<'a> SliceDecoder<'a> {
         let stride = self.pic.planes.width;
         let px = self.mb_x * 16 + (raster & 3) * 4;
         let py = self.mb_y * 16 + (raster >> 2) * 4;
-        let Some(blk) = self.s.coef.get_mut(raster * 16..).and_then(|c| c.first_chunk_mut::<16>()) else {
+        let Some(blk) = self.s.coef.get_mut(raster * 16..).and_then(<[_]>::first_chunk_mut::<16>) else {
             return;
         };
         transform::idct4_add(blk, &mut self.pic.planes.y[py * stride + px..], stride);
@@ -921,7 +926,7 @@ impl<'a> SliceDecoder<'a> {
         let stride = self.pic.planes.width;
         let px = self.mb_x * 16 + (b8 & 1) * 8;
         let py = self.mb_y * 16 + (b8 >> 1) * 8;
-        let Some(blk) = self.s.coef.get_mut(b8 * 64..).and_then(|c| c.first_chunk_mut::<64>()) else {
+        let Some(blk) = self.s.coef.get_mut(b8 * 64..).and_then(<[_]>::first_chunk_mut::<64>) else {
             return;
         };
         transform::idct8_add(blk, &mut self.pic.planes.y[py * stride + px..], stride);
@@ -940,7 +945,7 @@ impl<'a> SliceDecoder<'a> {
                 }
                 let px = self.mb_x * 8 + (b & 1) * 4;
                 let py = self.mb_y * 8 + (b >> 1) * 4;
-                let Some(blk) = self.s.coef_c[c].get_mut(b * 16..).and_then(|c| c.first_chunk_mut::<16>()) else {
+                let Some(blk) = self.s.coef_c[c].get_mut(b * 16..).and_then(<[_]>::first_chunk_mut::<16>) else {
                     continue;
                 };
                 let plane = if c == 0 { &mut self.pic.planes.cb } else { &mut self.pic.planes.cr };
@@ -1380,6 +1385,11 @@ impl<'a> SliceDecoder<'a> {
             cavlc::residual_block(r, &mut lv, 0, 15, 16, nc)?;
             self.put_luma_dc(&lv);
         }
+        self.residual_cavlc_luma(r, cbp, kind, t8)?;
+        self.residual_cavlc_chroma(r, cbp)
+    }
+
+    fn residual_cavlc_luma(&mut self, r: &mut BitReader, cbp: u8, kind: MbKind, t8: bool) -> Result<()> {
         for b8 in 0..4 {
             let (bx8, by8) = ((b8 & 1) * 2, (b8 >> 1) * 2);
             if cbp & (1 << b8) == 0 {
@@ -1413,6 +1423,10 @@ impl<'a> SliceDecoder<'a> {
                 }
             }
         }
+        Ok(())
+    }
+
+    fn residual_cavlc_chroma(&mut self, r: &mut BitReader, cbp: u8) -> Result<()> {
         let cbp_c = cbp >> 4;
         if cbp_c & 3 != 0 {
             for c in 0..2 {

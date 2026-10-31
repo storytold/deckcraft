@@ -8,7 +8,7 @@ use deckcraft_model::style::PictureFill;
 use deckcraft_model::{MediaId, Shape, ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, f64_param, has_doc, targets};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
