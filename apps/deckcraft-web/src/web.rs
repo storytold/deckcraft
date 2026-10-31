@@ -24,6 +24,8 @@ pub fn start() {
             log::error!("missing <canvas id=\"{CANVAS_ID}\">");
             return;
         };
+        let bridge = if query().contains("host=parent") { crate::host::Bridge::new() } else { None };
+        let app_bridge = bridge.clone();
         let mut options = eframe::WebOptions::default();
         if query().contains("webgl")
             && let eframe::egui_wgpu::WgpuSetup::CreateNew(create) = &mut options.wgpu_options.wgpu_setup
@@ -52,10 +54,19 @@ pub fn start() {
                     if q.contains("show") {
                         app.start_show(0, false);
                     }
-                    Ok(Box::new(WebShell { app, inbox }))
+                    if let Some(bridge) = &app_bridge {
+                        bridge.connect(&mut app.services, cc.egui_ctx.clone());
+                    }
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
                 }),
             )
             .await;
+        if let Some(bridge) = &bridge {
+            match &result {
+                Ok(()) => bridge.post_ready(),
+                Err(e) => bridge.post_failed(&format!("{e:?}")),
+            }
+        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -74,11 +85,38 @@ fn query() -> String {
 struct WebShell {
     app: SlideApp,
     inbox: Inbox,
+    bridge: Option<crate::host::Bridge>,
 }
 
 impl eframe::App for WebShell {
     /// Delegate one eframe logic pass to the wrapped application.
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Files the host page handed over (`deckcraft:open`): open a presentation, insert
+        // pictures/media on the current slide.
+        if let Some(bridge) = &self.bridge {
+            for (name, bytes) in bridge.take_incoming() {
+                self.app.open_or_insert_bytes(&name, &bytes);
+                let is_deck_file =
+                    name.rsplit('.').next().is_some_and(|ext| ["pptx", "potx", "ppsx", "deckcraft"].iter().any(|e| ext.eq_ignore_ascii_case(e)));
+                if is_deck_file && let Some(d) = self.app.session.active() {
+                    bridge.set_host_uid(d.uid);
+                }
+                let ext = name.rsplit('.').next().map(str::to_ascii_lowercase);
+                ctx.request_repaint();
+            }
+            // Commands the host sent (`deckcraft:cmd`): run them like ribbon buttons.
+            for (id, params, request_id) in bridge.take_commands() {
+                let result = self
+                    .app
+                    .run(&id, params)
+                    .map(|v| if id == "file.close" { serde_json::json!({ "docs": self.app.session.documents().len() }) } else { v });
+                let close_ok = id == "file.close" && result.is_ok();
+                bridge.post_response(&id, request_id.as_deref(), result);
+                if close_ok {
+                    bridge.sync(&mut self.app);
+                }
+            }
+        }
         self.app.logic(ctx);
     }
 
@@ -111,6 +149,9 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        if let Some(bridge) = &self.bridge {
+            bridge.sync(&mut self.app);
+        }
     }
 }
 
