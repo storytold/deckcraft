@@ -3742,6 +3742,11 @@ fn smartart_round_trips_through_pptx_as_a_diagram() {
     let outline: Vec<(&str, u8)> = d.nodes.iter().map(|n| (n.text.as_str(), n.level)).collect();
     assert_eq!(outline, [("CEO", 0), ("CTO", 1), ("Dev", 2), ("CFO", 1)]);
     assert!(g.children().len() >= 4, "the cached drawing is read back as shapes");
+    let original = doc.slides[1].shapes.iter().find(|x| x.diagram.is_some()).unwrap();
+    let anchors = |sh: &deckcraft_model::Shape| -> Vec<_> {
+        sh.children().iter().filter_map(|c| c.text.as_ref().map(|t| t.body.anchor.unwrap_or(deckcraft_model::text::Anchor::Middle))).collect()
+    };
+    assert_eq!(anchors(g), anchors(original), "cached SmartArt text must not jump from the centre to the top on reopen");
 
     // The Text Pane works on the imported diagram, and a second round trip keeps the edit.
     let gid = g.id.0;

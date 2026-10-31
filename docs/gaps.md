@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **Update 2026-10-31:** data-only categorical chart edits preserve source formatting, line labels render, partial shape locks survive saving, and default flat process SmartArt exports its canvas dimensions. These are bounded fixes; chart and SmartArt parity remain partial. See the evidence and limits below.
+
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-10-30 · **Change:** minor (slide-show hit testing follows each shape’s own animation state; scale and rotation covered; previous: trivial, AutoFormat lists run independently of Replace text as you type; previous: minor, slide-show click targets follow animated shapes and text links; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
@@ -73,7 +75,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 ### PPTX corpus is only decks we author
 - **Evidence:** every PPTX test (`crates/pptx/tests`) uses decks built in this repo; the
   2026-10-07 alpha checklist already listed this as open, and no reference renders from PowerPoint
-  exist to compare against. The owned corpus checks open → save → reopen (package parts and text):
+  are part of the shared CI corpus. The owned corpus checks open → save → reopen (package parts and text):
   `corpus.rs` (a talk with a table, chart, picture, link and comment; a notes master's header and
   footer), `corpus_kinds.rs` (tables, charts, animations, media, sections, several masters and
   layouts; a handout master's header, footer, date and slide number), `corpus_elements.rs`
@@ -185,6 +187,12 @@ Detail in [file-format-parity.md](file-format-parity.md).
   drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
   also survive `.deckcraft` save/reopen (`crates/engine/tests/it/chart_native.rs`), with binary
   payloads in bounded ZIP entries sharing the media load budget (`crates/format` tests).
+  Data-only changes to names, categories and values now patch the imported XML when the series
+  count is unchanged, preserving axis fonts, tick units and unrelated sidecars. Unsupported
+  changes (including scatter/bubble data and structural/type/style changes) still rebuild the
+  chart and can lose unmodelled formatting. A changed embedded workbook is removed, not updated.
+  Line labels now render, including per-series overrides and original values on stacked lines;
+  precise label placement and complete chart typography remain open.
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
 
@@ -195,8 +203,13 @@ Detail in [file-format-parity.md](file-format-parity.md).
   cached drawing; `crates/pptx/src/dgm.rs`), and PowerPoint diagrams read their outline from the
   data model, so they get the Text Pane too. 15 layouts (bullet and block lists, five process, two cycle and
   a radial, hierarchy, two pyramids, two matrices), four SmartArt Styles and Change Colors
-  (colourful or one accent). Still missing: DeckCraft's own layout definitions are simple (not yet
-  checked in PowerPoint itself); PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
+  (colourful or one accent). The default, flat `process` layout now exports node sizes, spacing,
+  arrows and font size from its canvas geometry instead of a fixed 65 pt template; it was checked
+  by opening generated PPTX files in PowerPoint for Mac 16.113.3. Imported/custom definitions
+  are not rewritten by this fix. Cached diagram shapes now write the same implicit middle text
+  anchor as ordinary shapes, so text does not jump to the top when reopened. Still missing:
+  other generated layouts are simple and have not
+  received the same native validation; PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
   imported diagram's outline redraws it with DeckCraft's layout; a diagram with no cached drawing
   isn't drawn.
 - **Impact:** a PowerPoint diagram edited in DeckCraft changes look.
@@ -368,6 +381,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | minor | Bounded chart data preservation, line labels, partial lock round trips and flat process export; paragraph defaults and proofing-language-sensitive CJK punctuation now imported/rendered. Chart and SmartArt scores remain partial |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |

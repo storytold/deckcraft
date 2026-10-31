@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.
+
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The summary between `<!-- SUMMARY -->
@@ -136,7 +138,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Arrange | Group, ungroup, regroup | P0 | D |
 | Arrange | Selection pane (names, visibility, order) | P1 | D |
 | Arrange | Nudge, duplicate with repeat offset | P1 | D |
-| Arrange | Lock shapes | P2 | D |
+| Arrange | Lock shapes (including imported partial restrictions on save) | P2 | D |
 | Arrange | Alt text | P1 | D |
 | Text | In-place text editing (caret, selection, mouse, keyboard) | P0 | D |
 | Text | Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69) | P0 | P |
@@ -173,10 +175,10 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Tables | Keyboard navigation between cells | P0 | D |
 | Charts | Insert chart (column, bar, line, area, pie, doughnut, scatter) | P0 | D |
 | Charts | Other chart types (radar, stock, combo, waterfall, funnel, treemap, sunburst, histogram, box) | P2 | P |
-| Charts | Edit chart data | P0 | P |
-| Charts | Chart elements (title, legend, labels, axes, gridlines) | P1 | P |
+| Charts | Edit chart data (same-series-count categorical edits preserve source formatting) | P0 | P |
+| Charts | Chart elements (title, legend, labels including line series, axes, gridlines) | P1 | P |
 | Charts | Chart styles and colours | P2 | P |
-| SmartArt | Insert SmartArt (lists, processes, cycles, hierarchy) | P1 | P |
+| SmartArt | Insert SmartArt (flat default process export checked in PowerPoint; other layouts partial) | P1 | P |
 | SmartArt | Text pane and layout switching | P2 | P |
 | Pictures | Insert picture (PNG, JPEG, GIF, WebP, BMP, TIFF) | P0 | D |
 | Pictures | SVG pictures | P1 | M |
@@ -233,3 +235,9 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |
 | Platforms (✱) | BSD build | P2 | P |
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-31 | minor | Clarified bounded chart-data, line-label, partial-lock and flat-process export coverage. Feature scores unchanged |

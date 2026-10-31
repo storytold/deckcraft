@@ -130,7 +130,7 @@ pub(super) fn chart_data(s: &mut Session, p: &Value) -> Result<Value> {
                 })
                 .collect();
         }
-        c.raw = None;
+        // Keep the source part so the PPTX writer can patch data without rebuilding formatting.
         Ok(())
     })
 }

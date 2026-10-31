@@ -488,6 +488,9 @@ fn axes(w: &mut W, c: &Chart, g: Group) {
     w.val("c:crossAx", AX_CAT);
     w.val("c:crosses", "autoZero");
     w.val("c:crossBetween", if g == Group::Area || g == Group::Scatter { "midCat" } else { "between" });
+    if let Some(unit) = c.y_major.filter(|v| v.is_finite() && *v > 0.0) {
+        w.val("c:majorUnit", fmt_num(unit));
+    }
     w.close("c:valAx");
 }
 
@@ -610,6 +613,8 @@ fn kept_chartex(c: &Chart) -> Option<Vec<u8>> {
 
 /// The chart part XML, and whether it is the original part (so its relationships still apply).
 pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
+    let patched = super::chart_data::patched(c);
+    let c = patched.as_ref().unwrap_or(c);
     // Reuse the kept part when the chart is unchanged since it was read.
     if let Some(raw) = &c.raw
         && !raw.contains(NS_CX)
@@ -788,6 +793,9 @@ pub fn write_kept(pkg: &mut crate::opc::PackageOut, chart_name: &str, c: &Chart,
     use std::collections::HashMap;
 
     use crate::opc::{RelsOut, norm, relative, rels_path};
+
+    let patched = super::chart_data::patched(c);
+    let c = patched.as_ref().unwrap_or(c);
 
     if c.kept.rels.is_empty() {
         return;

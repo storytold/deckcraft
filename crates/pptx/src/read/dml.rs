@@ -579,14 +579,30 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
 /// `a:lstStyle`, `p:titleStyle`, `a:defaultTextStyle`… → list style.
 pub fn list_style(imp: &mut Imp, part: &Part, ls: &El) -> ListStyle {
     let mut out = ListStyle::default();
+    // defPPr supplies defaults to every level (including the proofing language used by CJK
+    // line breaking). Materialise it in each level; an explicit lvlNpPr still takes precedence.
+    let default = ls.child("defPPr").map(|e| {
+        let (_, para, run) = ppr(imp, part, e);
+        LevelStyle { para, run: run.unwrap_or_default() }
+    });
+    if let Some(default) = &default {
+        for level in 0..9 {
+            out.set(level, default.clone());
+        }
+    }
     for e in ls.elements() {
         let n = e.local();
         let Some(l) = n.strip_prefix("lvl").and_then(|r| r.strip_suffix("pPr")).and_then(|d| d.parse::<u8>().ok()) else { continue };
         if !(1..=9).contains(&l) {
             continue;
         }
-        let (_, para, run) = ppr(imp, part, e);
-        out.set(l - 1, LevelStyle { para, run: run.unwrap_or_default() });
+        let (_, mut para, run) = ppr(imp, part, e);
+        let mut run = run.unwrap_or_default();
+        if let Some(default) = &default {
+            para.inherit(&default.para);
+            run.inherit(&default.run);
+        }
+        out.set(l - 1, LevelStyle { para, run });
     }
     out
 }

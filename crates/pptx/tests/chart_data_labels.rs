@@ -58,6 +58,37 @@ fn chart_of(p: &Presentation) -> &Chart {
     panic!("no chart in the deck");
 }
 
+/// A data edit must retain formatting that the model doesn't describe, not just pass no-op export.
+#[test]
+fn data_edit_preserves_axis_fonts_and_units() {
+    use deckcraft_engine::Session;
+    let p = reimport(&bar_chart_pptx(), |xml| {
+        xml.replace("</c:valAx>", r#"<c:majorUnit val="10"/></c:valAx>"#)
+            .replace("<c:crossAx", r#"<c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="1350"><a:latin typeface="Example Sans"/><a:ea typeface="Example CJK"/></a:defRPr></a:pPr></a:p></c:txPr><c:crossAx"#)
+    });
+    let source = deckcraft_pptx::export(&p).expect("source");
+    let path = std::env::temp_dir().join(format!("deckcraft-data-format-{}.pptx", std::process::id()));
+    std::fs::write(&path, source).expect("write source");
+    let mut session = Session::with_new();
+    session.execute("file.open", &serde_json::json!({"path": path})).expect("open");
+    let id = session.doc().unwrap().doc.slides[0].shapes[0].id.0;
+    let series: Vec<_> = chart_of(&p).series.iter().map(|s| serde_json::json!({"name": s.name, "values": [15, null, 40]})).collect();
+    session.execute("chart.data", &serde_json::json!({"id": id, "categories": ["One", "Two", "Three"], "series": series})).expect("edit");
+    let p = session.doc().unwrap().doc.clone();
+    let bytes = deckcraft_pptx::export(&p).expect("edited export");
+    let mut zip = zip::ZipArchive::new(Cursor::new(&bytes)).expect("zip");
+    let mut xml = String::new();
+    zip.by_name("ppt/charts/chart1.xml").expect("chart").read_to_string(&mut xml).expect("xml");
+    assert!(xml.contains(r#"typeface="Example Sans""#), "Latin font was dropped");
+    assert!(xml.contains(r#"typeface="Example CJK""#), "East Asian font was dropped");
+    assert!(xml.contains(r#"sz="1350""#), "font size was dropped");
+    assert!(xml.contains(r#"majorUnit val="10""#), "axis unit was dropped");
+    let back = deckcraft_pptx::import(&bytes).expect("read edit");
+    assert_eq!(chart_of(&back).series[0].values, vec![Some(15.0), None, Some(40.0)]);
+    assert_eq!(chart_of(&back).categories, ["One", "Two", "Three"]);
+    let _ = std::fs::remove_file(path);
+}
+
 /// `<c:showVal/>` on the first series: that series shows labels although the chart-wide
 /// setting is off; the other series stay quiet.
 #[test]

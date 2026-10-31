@@ -185,8 +185,9 @@ fn nv_pr(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape) {
 /// Locking attributes. Lock writes the full set PowerPoint writes for the element's kind (and
 /// reads back as locked): see `read::shapes::is_locked`.
 fn locks(w: &mut W, tag: &str, s: &Shape, extra: A) {
-    let a = extra.t("noGrp", s.ph.is_some() || s.locked);
+    let a = extra.t("noGrp", s.ph.is_some() || s.locked || tag == "a:graphicFrameLocks");
     let a = match tag {
+        "a:graphicFrameLocks" => a.t("noDrilldown", s.locked).t("noMove", s.locked).t("noResize", s.locked),
         "a:grpSpLocks" => a.t("noUngrp", s.locked).t("noRot", s.locked).t("noMove", s.locked).t("noResize", s.locked),
         _ => {
             let a = a
@@ -200,6 +201,30 @@ fn locks(w: &mut W, tag: &str, s: &Shape, extra: A) {
             if tag == "a:picLocks" { a.t("noCrop", s.locked) } else { a }
         }
     };
+    let mut a = a;
+    for k in [
+        "noGrp",
+        "noUngrp",
+        "noSelect",
+        "noRot",
+        "noMove",
+        "noResize",
+        "noEditPoints",
+        "noAdjustHandles",
+        "noChangeArrowheads",
+        "noChangeShapeType",
+        "noChangeAspect",
+        "noTextEdit",
+        "noCrop",
+        "noDrilldown",
+    ] {
+        if !s.locked
+            && let Some((_, v)) = s.partial_locks.iter().find(|(name, _)| name == k)
+        {
+            a.v.retain(|(name, _)| *name != k);
+            a = a.a(k, if *v { "1" } else { "0" });
+        }
+    }
     if a.v.is_empty() {
         return;
     }
@@ -347,7 +372,7 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
             cnvpr(w, x, o, id, s);
             let st = start.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
             let en = end.and_then(|(sid, site)| cx.ids.get(sid).map(|i| (i, site)));
-            if st.is_none() && en.is_none() && !s.locked {
+            if st.is_none() && en.is_none() && !s.locked && s.partial_locks.is_empty() {
                 w.empty0("p:cNvCxnSpPr");
             } else {
                 w.open0("p:cNvCxnSpPr");
@@ -548,9 +573,7 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
         if let Some(st) = &c.style {
             style_tag(&mut dw, st, "dsp:style");
         }
-        if let Some(tb) = &c.text {
-            dml::text_body(&mut dw, x, &mut dout, "dsp:txBody", tb, false);
-        }
+        shape_text_body(&mut dw, x, &mut dout, "dsp:txBody", &c, false);
         dw.close("dsp:sp");
     }
     dw.close("dsp:spTree");
@@ -568,14 +591,32 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     x.pkg.rels(&data, &mout.rels);
     let dm = rel(o, "diagramData", &data);
     let layout = name("layout");
-    let lo_xml = d.layout_xml.clone().map(String::into_bytes).unwrap_or_else(|| dgm::layout_xml(&d.kind));
+    let process = dgm::process::parts(d, children, child);
+    let lo_xml = process
+        .as_ref()
+        .map(|p| p.layout.clone())
+        .unwrap_or_else(|| d.layout_xml.clone().map(String::into_bytes).unwrap_or_else(|| dgm::layout_xml(&d.kind)));
     x.pkg.xml_part(&layout, dgm::CT_LAYOUT, lo_xml);
     let lo = rel(o, "diagramLayout", &layout);
     let style = name("quickStyle");
-    x.pkg.xml_part(&style, dgm::CT_STYLE, d.style_xml.clone().map(String::into_bytes).unwrap_or_else(|| dgm::style_xml(&d.style)));
+    x.pkg.xml_part(
+        &style,
+        dgm::CT_STYLE,
+        process
+            .as_ref()
+            .map(|p| p.style.clone())
+            .unwrap_or_else(|| d.style_xml.clone().map(String::into_bytes).unwrap_or_else(|| dgm::style_xml(&d.style))),
+    );
     let qs = rel(o, "diagramQuickStyle", &style);
     let colors = name("colors");
-    x.pkg.xml_part(&colors, dgm::CT_COLORS, d.colors_xml.clone().map(String::into_bytes).unwrap_or_else(|| dgm::colors_xml(&d.colors)));
+    x.pkg.xml_part(
+        &colors,
+        dgm::CT_COLORS,
+        process
+            .as_ref()
+            .map(|p| p.colors.clone())
+            .unwrap_or_else(|| d.colors_xml.clone().map(String::into_bytes).unwrap_or_else(|| dgm::colors_xml(&d.colors))),
+    );
     let cs = rel(o, "diagramColors", &colors);
     let mut fs = s.clone();
     fs.xfrm = Some(frame);
@@ -635,7 +676,7 @@ fn sp(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, math: bool) {
     if s.text_box {
         cnv = cnv.a("txBox", "1");
     }
-    let lock = s.ph.is_some() || s.locked;
+    let lock = s.ph.is_some() || s.locked || !s.partial_locks.is_empty();
     if lock {
         w.open("p:cNvSpPr", cnv);
         locks(w, "a:spLocks", s, A::new());
@@ -658,18 +699,23 @@ fn sp(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, math: bool) {
     if let Some(st) = &s.style {
         style(w, st);
     }
+    shape_text_body(w, x, o, "p:txBody", s, math);
+    w.close("p:sp");
+}
+
+/// Normal shapes and cached diagram shapes must materialise the same model anchor default.
+fn shape_text_body(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, s: &Shape, math: bool) {
     if let Some(tb) = &s.text {
         // A shape's text without its own anchor sits in the middle in the model; a file without
         // one would put it at the top, so say so.
         if s.ph.is_none() && !s.text_box && tb.body.anchor.is_none() {
             let mut tb = tb.clone();
             tb.body.anchor = Some(deckcraft_model::text::Anchor::Middle);
-            dml::text_body(w, x, o, "p:txBody", &tb, math);
+            dml::text_body(w, x, o, tag, &tb, math);
         } else {
-            dml::text_body(w, x, o, "p:txBody", tb, math);
+            dml::text_body(w, x, o, tag, tb, math);
         }
     }
-    w.close("p:sp");
 }
 
 fn frame_open(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
@@ -677,7 +723,7 @@ fn frame_open(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
     w.open0("p:nvGraphicFramePr");
     cnvpr(w, x, o, id, s);
     w.open0("p:cNvGraphicFramePr");
-    w.empty("a:graphicFrameLocks", A::new().a("noGrp", "1").t("noDrilldown", s.locked).t("noMove", s.locked).t("noResize", s.locked));
+    locks(w, "a:graphicFrameLocks", s, A::new());
     w.close("p:cNvGraphicFramePr");
     nv_pr(w, x, o, s);
     w.close("p:nvGraphicFramePr");

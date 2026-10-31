@@ -266,7 +266,12 @@ fn label_number_format(s: &El, g: &El) -> Option<String> {
     let label_fmt = |d: Option<&El>| {
         d.and_then(|d| d.child("numFmt")).filter(|n| n.attr("sourceLinked") != Some("1")).and_then(|n| n.attr("formatCode")).map(str::to_string)
     };
-    let source = s.child("val").or_else(|| s.child("yVal")).and_then(|v| v.find("numCache")).and_then(|c| c.child("formatCode")).map(|f| f.text());
+    let source = s
+        .child("val")
+        .or_else(|| s.child("yVal"))
+        .and_then(|v| v.find("numCache").or_else(|| v.find("numLit")))
+        .and_then(|c| c.child("formatCode"))
+        .map(|f| f.text());
     label_fmt(s.child("dLbls")).or_else(|| label_fmt(g.child("dLbls"))).or(source).filter(|f| !f.is_empty())
 }
 
@@ -352,7 +357,11 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
             .filter(|g| g.children_named("axId").any(|a| a.attr("val") == id))
             .flat_map(|g| g.children_named("ser"))
             .find_map(|s| {
-                s.child("val").or_else(|| s.child("yVal")).and_then(|v| v.find("numCache")).and_then(|c| c.child("formatCode")).map(|f| f.text())
+                s.child("val")
+                    .or_else(|| s.child("yVal"))
+                    .and_then(|v| v.find("numCache").or_else(|| v.find("numLit")))
+                    .and_then(|c| c.child("formatCode"))
+                    .map(|f| f.text())
             })
             .filter(|f| !f.is_empty() && f != "General")
     };

@@ -383,6 +383,7 @@ fn lock(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn set_locked(sh: &mut deckcraft_model::Shape, to: bool, depth: usize) {
     sh.locked = to;
+    sh.partial_locks.clear();
     if depth > 64 {
         return;
     }

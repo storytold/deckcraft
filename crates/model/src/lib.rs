@@ -344,6 +344,9 @@ pub struct Shape {
     pub text: Option<TextBody>,
     pub hidden: bool,
     pub locked: bool,
+    /// Individual DrawingML editing restrictions, independent of the UI's full Lock state.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub partial_locks: Vec<(String, bool)>,
     /// Text box (`txBox="1"`): no fill, autosize, wrap off by default.
     pub text_box: bool,
     /// Alt text.
@@ -427,6 +430,7 @@ impl Default for Shape {
             text: None,
             hidden: false,
             locked: false,
+            partial_locks: vec![],
             text_box: false,
             descr: String::new(),
             title: String::new(),

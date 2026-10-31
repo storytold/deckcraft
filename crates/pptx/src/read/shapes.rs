@@ -147,6 +147,12 @@ fn base(imp: &mut Imp, part: &Part, ctx: &mut IdCtx, nv: Option<&El>) -> Shape {
         s.decorative = c.find("decorative").and_then(|d| d.bool("val")).unwrap_or(false);
     }
     if let Some(nv) = nv {
+        // A partial restriction is not the Selection pane's full Lock, but must survive saving.
+        for l in nv.elements().flat_map(|e| e.elements()).filter(|l| l.local().ends_with("Locks")) {
+            if !is_locked(l) {
+                s.partial_locks = l.attrs.iter().filter_map(|(k, _)| l.bool(k).map(|v| (k.clone(), v))).collect();
+            }
+        }
         for e in nv.elements() {
             match e.local() {
                 "cNvSpPr" => {

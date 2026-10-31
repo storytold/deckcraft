@@ -837,10 +837,17 @@ fn single_spaced_lines_are_1_2_times_the_size_apart_whatever_the_font() {
 
 /// The lines of `text` in an Arial-free (whatever face resolves) box `w` wide, as strings.
 fn wrapped(text: &str, w: f64, set: impl Fn(&mut ParaProps)) -> Vec<String> {
+    wrapped_lang(text, w, None, set)
+}
+
+fn wrapped_lang(text: &str, w: f64, lang: Option<&str>, set: impl Fn(&mut ParaProps)) -> Vec<String> {
     let (p, mut sh) = bidi_setup(vec![Run::new(text)], w, false, Align::Left);
     let t = sh.text.as_mut().unwrap();
     t.body.inset_l = Some(0.0);
     t.body.inset_r = Some(0.0);
+    for run in &mut t.paragraphs[0].runs {
+        run.props.lang = lang.map(str::to_string);
+    }
     set(&mut t.paragraphs[0].props);
     let l = lay(&p, &sh, w, 600.0);
     let chars: Vec<char> = text.chars().collect();
@@ -883,6 +890,19 @@ fn korean_wraps_between_words() {
     // Japanese and Chinese still break between characters.
     let lines = wrapped("日本語の文章は空白なしで続きます", one_line("日本語の文章") + 0.5, |_| {});
     assert_eq!(lines[0], "日本語の文章");
+}
+
+#[test]
+fn explicit_english_does_not_hang_cjk_full_stops() {
+    let text = "白なしで続きます。";
+    let before = "白なしで続きます";
+    let w = one_line(before) + 0.5;
+    for hang in [true, false] {
+        let lines = wrapped_lang(text, w, Some("en-US"), |p| p.hanging_punct = Some(hang));
+        assert_eq!(lines, [before, "。"], "English proofing doesn't apply CJK punctuation rules");
+    }
+    let lines = wrapped_lang(text, w, Some("ja-JP"), |p| p.hanging_punct = Some(true));
+    assert_eq!(lines, [text], "Japanese retains hanging punctuation");
 }
 
 #[test]

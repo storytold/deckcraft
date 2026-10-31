@@ -476,6 +476,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
             zero,
             base,
             error_marks: &mut err_marks,
+            text_color: text_col,
         },
     );
     // A category position (0-based, fractional) as a slot, the way `slot` places the bars.
@@ -856,6 +857,7 @@ struct LineDrawing<'a, 'ctx> {
     zero: f64,
     base: f64,
     error_marks: &'a mut Vec<(f64, f64, f64, f64, bool)>,
+    text_color: Rgba,
 }
 
 fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
@@ -883,6 +885,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
+        let mut labels = vec![];
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
             let v = if stacked {
@@ -909,6 +912,9 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
                 err_marks.push((x, to_axis(sec, lo), to_axis(sec, hi), base * 0.4, s.error_bars.as_ref().is_some_and(|e| e.end_cap)));
             }
             pts.push(Point::new(x, to_axis(sec, v)));
+            if let Some(t) = bar_data_label(c, s, i) {
+                labels.push((Point::new(x, to_axis(sec, v)), t));
+            }
         }
         if pts.is_empty() {
             continue;
@@ -935,6 +941,16 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
             for q in &pts {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
             }
+        }
+        for (q, text) in labels {
+            label(
+                ctx,
+                rctx,
+                m,
+                &text,
+                Rect::new(q.x - 40.0, q.y - base * 1.6 - 4.0, q.x + 40.0, q.y - 4.0),
+                LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: draw.text_color, bold: false },
+            );
         }
     }
 }

@@ -42,6 +42,17 @@ fn is_hanging_punct(c: char) -> bool {
     matches!(c, '、' | '。' | '，' | '．' | '､' | '｡')
 }
 
+/// PowerPoint's East Asian punctuation rules follow the run's proofing language. In particular,
+/// an explicitly English run can start its next line with a CJK full stop even with hangingPunct
+/// enabled (observed in PowerPoint Mac 16.113). Unspecified language retains script-based behaviour.
+fn east_asian_punctuation(p: &ParaShaped, i: usize) -> bool {
+    let lang = p.cells.get(i).and_then(|c| p.styles.get(c.style)).and_then(|s| s.lang.as_deref());
+    lang.is_none_or(|lang| {
+        let base = lang.split(['-', '_']).next().unwrap_or("");
+        ["zh", "ja", "ko"].iter().any(|ea| base.eq_ignore_ascii_case(ea))
+    })
+}
+
 /// Small kana, the prolonged sound mark and iteration marks: PowerPoint keeps them off the start
 /// of a line (strict Japanese line breaking), where UAX #14's default allows a break before them.
 fn is_cj_nonstarter(c: char) -> bool {
@@ -175,12 +186,13 @@ pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> 
                 p.cells.get(i).map(|c| c.adv).unwrap_or(0.0)
             };
             let breakable = |j: usize| p.cells.get(j).is_none_or(|c| c.breakable(j));
-            if i > start && allowed.get(i).copied().unwrap_or(false) && breakable(i) {
+            let ea_punct = !is_hanging_punct(c) || east_asian_punctuation(p, i);
+            if i > start && (allowed.get(i).copied().unwrap_or(false) || !ea_punct && is_hanging_punct(c)) && breakable(i) {
                 last_break = Some(i);
             }
             // Closing East Asian punctuation hangs past the end instead of wrapping
             // (`hangingPunct`); the line breaks after it.
-            if wrap && hang && x + adv > avail + 0.01 && x <= avail + 0.01 && is_hanging_punct(c) && i > start {
+            if wrap && hang && ea_punct && x + adv > avail + 0.01 && x <= avail + 0.01 && is_hanging_punct(c) && i > start {
                 end = i + 1;
                 next = i + 1;
                 break;

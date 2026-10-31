@@ -1,6 +1,7 @@
 //! PPTX export: [`Presentation`] → package.
 
 pub(crate) mod chart;
+mod chart_data;
 pub(crate) mod dml;
 mod shapes;
 mod theme;
