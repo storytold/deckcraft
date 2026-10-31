@@ -301,8 +301,7 @@ Detail in [ui-parity.md](ui-parity.md).
   and texture options, 3-D). 6–10 h. **Beta blocker.**
 - **File tab depth** (#76 landed the Backstage): no online templates, cloud places, printer
   choice, video/GIF/CD exports or document protection. 4–8 h for the parts that need no cloud.
-- **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar, #41 system light/dark).
-  2–4 h.
+- **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar). 1–3 h.
 - **Icon consistency across Craft apps** (#73, #56). 2–4 h.
 - **Dialogs**: 42 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
   and Tabs, Columns, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
@@ -368,6 +367,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | trivial | Window chrome: #41 (follow the system's light or dark setting) is done |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |

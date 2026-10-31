@@ -38,6 +38,12 @@ impl SlideApp {
         r
     }
 
+    /// The appearance the interface is drawn in: Dark appearance, applied to the system's own
+    /// setting under Use system setting.
+    pub fn brightness(&self) -> theme::Brightness {
+        self.ui.dark_mode.brightness(self.system_theme)
+    }
+
     fn flag(&mut self, params: &Value, cur: bool) -> bool {
         params.get("on").and_then(Value::as_bool).unwrap_or(!cur)
     }
@@ -150,9 +156,13 @@ impl SlideApp {
             }
             "view.collapseRibbon" => self.ui.ribbon_collapsed = !self.ui.ribbon_collapsed,
             "view.dark" => {
-                let on = self.flag(p, self.ui.brightness == theme::Brightness::Dark);
-                self.ui.brightness = if on { theme::Brightness::Dark } else { theme::Brightness::Light };
-                self.restyle = true;
+                self.ui.dark_mode = match p.get("mode") {
+                    Some(mode) => serde_json::from_value(mode.clone()).map_err(|_| "`mode` must be system, on or off")?,
+                    None => {
+                        let on = self.flag(p, self.brightness() == theme::Brightness::Dark);
+                        if on { theme::DarkMode::On } else { theme::DarkMode::Off }
+                    }
+                };
             }
             "view.grayscale" => self.ui.grayscale = self.flag(p, self.ui.grayscale),
             "view.newWindow" => return doc_window::command(self, p),

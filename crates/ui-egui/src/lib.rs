@@ -114,7 +114,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("review.thesaurusPane", "Thesaurus", Some("Shift+F7"), "{word?}: open the Thesaurus pane on the selected word"),
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
-    ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("view.dark", "Dark Mode", None, "{mode?: system|on|off, on?: bool}: with neither, toggles"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -301,7 +301,11 @@ pub struct SlideApp {
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
     capture: capture::Capture,
     styled: bool,
-    restyle: bool,
+    /// The operating system's light or dark setting as of this frame (`None` when the host can't
+    /// read it), for Dark appearance ▸ Use system setting.
+    system_theme: Option<egui::Theme>,
+    /// The appearance the interface was last styled in; `None` before the first frame.
+    applied_brightness: Option<theme::Brightness>,
     fonts_ready: bool,
     last_time: f64,
     /// When AutoRecover data was last written (monotonic seconds, not wall time).

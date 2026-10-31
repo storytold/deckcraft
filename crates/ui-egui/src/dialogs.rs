@@ -232,6 +232,7 @@ use hyperlink::{
     CurrentLink, HyperlinkSeed, common_click, hyperlink_command, hyperlink_seed_of, hyperlink_should_apply, link_covering, seed_from, seed_of_link,
 };
 pub use language::selected_language;
+pub(crate) use preferences::dark_mode_menu;
 use preferences::restore_preferences;
 pub use zoom::parse_zoom_percent;
 

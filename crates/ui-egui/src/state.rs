@@ -50,7 +50,12 @@ pub enum ViewMode {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
-    pub brightness: theme::Brightness,
+    /// Preferences ▸ Dark appearance. [`crate::SlideApp::brightness`] is what it comes to.
+    pub dark_mode: theme::DarkMode,
+    /// The appearance a `ui.json` from before Dark appearance could follow the system saved
+    /// instead. Read into `dark_mode` by [`UiState::sanitized`]; never written.
+    #[serde(rename = "brightness", skip_serializing)]
+    pub(crate) saved_brightness: Option<theme::Brightness>,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -99,7 +104,8 @@ pub struct UiState {
 impl Default for UiState {
     fn default() -> Self {
         UiState {
-            brightness: theme::Brightness::Light,
+            dark_mode: theme::DarkMode::System,
+            saved_brightness: None,
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,
@@ -159,6 +165,12 @@ impl UiState {
         self.recent.retain(|p| !p.is_empty() && p.len() <= 4096 && !p.contains('\0'));
         self.recent.dedup();
         self.recent.truncate(RECENT_MAX);
+        // Before Dark appearance could follow the system, `ui.json` saved light or dark. Light was
+        // the default, so it doesn't say anyone chose it: it becomes Use system setting. Dark was
+        // always a choice and stays on.
+        if self.saved_brightness.take() == Some(theme::Brightness::Dark) {
+            self.dark_mode = theme::DarkMode::On;
+        }
         self
     }
 }
