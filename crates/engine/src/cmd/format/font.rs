@@ -122,9 +122,19 @@ pub(super) fn color(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// After a font colour is set on `r`: a linked run keeps it (`link_keeps_color`), taking an
 /// inherited link (from `inherited_links`) as its own first.
-fn keep_link_colour(inherited: &std::collections::HashMap<ShapeId, Vec<Option<Hyperlink>>>, at: Option<(ShapeId, usize)>, r: &mut RunProps) {
-    if r.link.is_none() {
-        r.link = at.and_then(|(id, pi)| inherited.get(&id).and_then(|v| v.get(pi)).cloned().flatten());
+fn keep_link_colour(
+    inherited: &std::collections::HashMap<ShapeId, Vec<Option<(Hyperlink, Option<String>)>>>,
+    at: Option<(ShapeId, usize)>,
+    r: &mut RunProps,
+) {
+    if r.link.is_none()
+        && let Some((link, underline)) = at.and_then(|(id, pi)| inherited.get(&id).and_then(|v| v.get(pi)).cloned().flatten())
+    {
+        r.link = Some(link);
+        // As the run's own link it would be underlined `sng`; keep the underline it showed.
+        if r.underline.is_none() {
+            r.underline = underline;
+        }
     }
     if r.link.is_some() {
         r.link_keeps_color = Some(true);
@@ -132,8 +142,8 @@ fn keep_link_colour(inherited: &std::collections::HashMap<ShapeId, Vec<Option<Hy
 }
 
 /// For each shape whose text is being formatted, the link each paragraph gives runs that set
-/// none (from the paragraph's `defRPr` or the list style), by paragraph.
-fn inherited_links(st: &crate::DocState) -> std::collections::HashMap<ShapeId, Vec<Option<Hyperlink>>> {
+/// none (from the paragraph's `defRPr` or the list style) and the underline it shows, by paragraph.
+fn inherited_links(st: &crate::DocState) -> std::collections::HashMap<ShapeId, Vec<Option<(Hyperlink, Option<String>)>>> {
     let ids: Vec<ShapeId> = match &st.selection.text {
         Some(t) if !t.notes && t.cell.is_none() => vec![t.shape],
         Some(_) => vec![],
@@ -144,7 +154,15 @@ fn inherited_links(st: &crate::DocState) -> std::collections::HashMap<ShapeId, V
         .filter_map(|id| {
             let sh = st.shape(id)?;
             let body = sh.text.as_ref()?;
-            Some((id, body.paragraphs.iter().map(|p| resolve::run(&ctx, sh, p, &RunProps::default()).link).collect()))
+            let links = body
+                .paragraphs
+                .iter()
+                .map(|p| {
+                    let r = resolve::run(&ctx, sh, p, &RunProps::default());
+                    r.link.map(|l| (l, r.underline))
+                })
+                .collect();
+            Some((id, links))
         })
         .collect()
 }

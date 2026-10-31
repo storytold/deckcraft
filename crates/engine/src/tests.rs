@@ -1524,6 +1524,7 @@ fn font_color_on_linked_text_keeps_the_colour() {
             r.props = deckcraft_model::RunProps::default();
         }
         p.def_props.link = link;
+        p.def_props.underline = Some("dbl".into());
         Ok(())
     })
     .unwrap();
@@ -1532,6 +1533,9 @@ fn font_color_on_linked_text_keeps_the_colour() {
     s.execute("format.color", &json!({"color": "#FF0000"})).unwrap();
     let runs = resolved(&s);
     assert!(runs.iter().all(|(_, l, f, own)| *l && own.is_some() && f == own), "{runs:?}");
+    // The paragraph's double underline stays when its link becomes the run's own.
+    let sh = s.doc().unwrap().current_slide().unwrap().shapes.iter().find(|x| x.id == id).cloned().unwrap();
+    assert!(sh.text.unwrap().paragraphs[0].runs.iter().all(|r| r.props.underline.as_deref() == Some("dbl")));
     // The Font dialog's colour sticks the same way.
     s.edit(|doc, _| {
         let sh = deckcraft_model::find_shape_mut(&mut std::sync::Arc::make_mut(&mut doc.slides[0]).shapes, id).unwrap();

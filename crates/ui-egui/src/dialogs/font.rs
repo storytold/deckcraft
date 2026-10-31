@@ -147,13 +147,11 @@ pub(super) fn font_dialog(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bo
             "caps": d.get("caps", "none"),
             "spacing": spacing,
         });
+        // Only a colour the user changed: resending the seeded one would recolour a mixed
+        // selection and make linked text keep that colour instead of the hyperlink colour.
         let color = d.get("color", "");
         let seed = d.get("colorSeed", "");
-        if color == seed {
-            if let Some(c) = d.params.get("color").filter(|v| !v.is_null()) {
-                params["color"] = c.clone();
-            }
-        } else if !color.trim().is_empty() {
+        if color != seed && !color.trim().is_empty() {
             params["color"] = json!(color.trim());
         }
         let _ = app.run("format.fontDialog", params);
