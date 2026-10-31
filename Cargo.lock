@@ -1218,6 +1218,7 @@ dependencies = [
  "deckcraft-engine",
  "deckcraft-geom",
  "deckcraft-model",
+ "deckcraft-text",
  "image",
  "log",
  "quick-xml 0.41.0",
