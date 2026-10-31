@@ -127,6 +127,8 @@ if has appimage; then
   fi
   APPDIR="$WORK/DeckCraft.AppDir"
   cp -R "$STAGE" "$APPDIR"
+  # Preserve the Adwaita MIT runtime notice in the AppImage.
+  install -Dm644 "$ROOT/NOTICE" "$APPDIR/usr/share/doc/deckcraft/NOTICE"
   ln -s usr/bin/deckcraft "$APPDIR/AppRun"
   cp "$HERE/$APP_ID.desktop" "$APPDIR/$APP_ID.desktop"
   cp "$ROOT/assets/app-icon/hicolor/256x256/apps/$APP_ID.png" "$APPDIR/$APP_ID.png"
