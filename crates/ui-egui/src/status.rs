@@ -55,7 +55,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
         );
         right.spacing_mut().item_spacing.x = 4.0;
-        if small_icon(&mut right, Icon::FitSmall, "Fit slide to current window", false).clicked() {
+        if small_icon(&mut right, Icon::FitSmall, crate::tl!("Fit slide to current window"), false).clicked() {
             app.ui.zoom = None;
         }
         let pct = (app.canvas_scale * 100.0).round();
@@ -64,7 +64,7 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
         if lbl.clicked() {
             let _ = app.run("view.zoomDialog", json!({}));
         }
-        if small_icon(&mut right, Icon::ZoomIn, "Zoom In", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomIn, crate::tl!("Zoom In"), false).clicked() {
             let _ = app.run("view.zoomIn", json!({}));
         }
         // Slider 10%–400% (log scale).
@@ -84,31 +84,31 @@ pub fn status_bar(app: &mut SlideApp, ui: &mut Ui) {
             z = zp / 100.0;
             app.ui.zoom = Some(z);
         }
-        if small_icon(&mut right, Icon::ZoomOut, "Zoom Out", false).clicked() {
+        if small_icon(&mut right, Icon::ZoomOut, crate::tl!("Zoom Out"), false).clicked() {
             let _ = app.run("view.zoomOut", json!({}));
         }
         right.add_space(8.0);
         let view = app.ui.view;
-        if view_icon(&mut right, Icon::ViewShowSmall, "Slide Show", false).clicked() {
+        if view_icon(&mut right, Icon::ViewShowSmall, crate::tl!("Slide Show"), false).clicked() {
             let i = app.session.active().map(|d| d.selection.slide).unwrap_or(0);
             app.start_show(i, false);
         }
-        if view_icon(&mut right, Icon::ViewReadingSmall, "Reading View", view == ViewMode::Reading).clicked() {
+        if view_icon(&mut right, Icon::ViewReadingSmall, crate::tl!("Reading View"), view == ViewMode::Reading).clicked() {
             let _ = app.run("view.reading", json!({}));
         }
-        if view_icon(&mut right, Icon::ViewSorterSmall, "Slide Sorter", view == ViewMode::Sorter).clicked() {
+        if view_icon(&mut right, Icon::ViewSorterSmall, crate::tl!("Slide Sorter"), view == ViewMode::Sorter).clicked() {
             app.ui.view = ViewMode::Sorter;
         }
-        if view_icon(&mut right, Icon::ViewNormalSmall, "Normal", view == ViewMode::Normal).clicked() {
+        if view_icon(&mut right, Icon::ViewNormalSmall, crate::tl!("Normal"), view == ViewMode::Normal).clicked() {
             app.ui.view = ViewMode::Normal;
         }
         right.add_space(8.0);
         let c_on = app.ui.pane.as_deref() == Some("comments");
-        if labeled(&mut right, Icon::CommentsSmall, "Comments", c_on).clicked() {
+        if labeled(&mut right, Icon::CommentsSmall, crate::tl!("Comments"), c_on).clicked() {
             let _ = app.run("view.pane", json!({"pane": "comments", "toggle": true}));
         }
         let n_on = app.ui.notes;
-        if labeled(&mut right, Icon::NotesSmall, "Notes", n_on).clicked() {
+        if labeled(&mut right, Icon::NotesSmall, crate::tl!("Notes"), n_on).clicked() {
             app.ui.notes = !n_on;
         }
         let _ = Stroke::NONE;
@@ -215,7 +215,7 @@ pub fn notes_pane(app: &mut SlideApp, ui: &mut Ui) {
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     crate::notes::editor(ui, &mut draft, &look, |e| {
-                        e.id(id).hint_text("Click to add notes").frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
+                        e.id(id).hint_text(crate::tl!("Click to add notes")).frame(egui::Frame::NONE).desired_width(f32::INFINITY).desired_rows(2)
                     })
                 })
                 .inner;

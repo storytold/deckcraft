@@ -27,12 +27,15 @@ impl Default for QatItem {
 }
 
 impl QatItem {
+    /// Construct a new toolbar item with the specified command id, display label, and icon.
     pub fn new(id: &str, label: &str, icon: Icon) -> Self {
         QatItem { id: id.into(), params: Value::Null, label: label.into(), icon: icon.name().into() }
     }
+    /// Resolve the icon enum for this toolbar item.
     fn icon(&self) -> Icon {
         Icon::from_name(&self.icon).unwrap_or(Icon::More)
     }
+    /// Check whether this item matches a given command id and parameters.
     fn same(&self, id: &str, params: &Value) -> bool {
         self.id == id && (self.params == *params || (self.params.is_null() && params.as_object().is_some_and(|o| o.is_empty())))
     }
@@ -89,6 +92,7 @@ pub fn command(app: &mut SlideApp, p: &Value) -> Result<Value, String> {
     serde_json::to_value(&app.ui.qat).map_err(|e| e.to_string())
 }
 
+/// Execute the action associated with a Quick Access Toolbar button.
 fn run(app: &mut SlideApp, q: &QatItem) {
     match q.id.as_str() {
         "file.save" => app.save(),
@@ -120,15 +124,17 @@ pub fn run_index(app: &mut SlideApp, index: usize) -> bool {
     true
 }
 
+/// Build the tooltip text for a Quick Access Toolbar button, appending its shortcut if present.
 fn tip(q: &QatItem, index: usize, mac: bool) -> String {
     let sc =
         deckcraft_engine::find_command(&q.id).and_then(|c| c.shortcut).or_else(|| crate::UI_COMMANDS.iter().find(|c| c.0 == q.id).and_then(|c| c.2));
     let qat_sc = if !mac && index < 9 { Some(format!("Alt+{}", index + 1)) } else { None };
+    let label = crate::i18n::t(&q.label);
     match (sc, qat_sc) {
-        (Some(s), Some(qsc)) => format!("{} ({}, {})", q.label, crate::ribbon::pretty_shortcut(s), qsc),
-        (Some(s), None) => format!("{} ({})", q.label, crate::ribbon::pretty_shortcut(s)),
-        (None, Some(qsc)) => format!("{} ({})", q.label, qsc),
-        (None, None) => q.label.clone(),
+        (Some(s), Some(qsc)) => format!("{} ({}, {})", label, crate::ribbon::pretty_shortcut(s), qsc),
+        (Some(s), None) => format!("{} ({})", label, crate::ribbon::pretty_shortcut(s)),
+        (None, Some(qsc)) => format!("{} ({})", label, qsc),
+        (None, None) => label.to_string(),
     }
 }
 
@@ -144,18 +150,18 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             run(app, q);
         }
         r.context_menu(|ui| {
-            if ui.button("Remove from Quick Access Toolbar").clicked() {
+            if ui.button(crate::tl!("Remove from Quick Access Toolbar")).clicked() {
                 let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 ui.close();
             }
         });
     }
-    let r = crate::widgets::icon_toggle(ui, Icon::ChevronDown, "Customize Quick Access Toolbar", true, false);
+    let r = crate::widgets::icon_toggle(ui, Icon::ChevronDown, crate::tl!("Customize Quick Access Toolbar"), true, false);
     egui::Popup::menu(&r).show(|ui| {
-        ui.label(egui::RichText::new("Customize Quick Access Toolbar").strong());
+        ui.label(egui::RichText::new(crate::tl!("Customize Quick Access Toolbar")).strong());
         for c in common() {
             let mut on = app.ui.qat.iter().any(|q| q.same(&c.id, &Value::Null));
-            if ui.checkbox(&mut on, &c.label).changed() {
+            if ui.checkbox(&mut on, crate::i18n::t(&c.label)).changed() {
                 let key = if on { "add" } else { "remove" };
                 let _ = command(app, &json!({key: c.id}));
             }
@@ -165,14 +171,14 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.separator();
             for q in extra {
                 let mut on = true;
-                if ui.checkbox(&mut on, &q.label).changed() {
+                if ui.checkbox(&mut on, crate::i18n::t(&q.label)).changed() {
                     let _ = command(app, &json!({"remove": q.id, "params": q.params}));
                 }
             }
         }
         ui.separator();
-        ui.label(egui::RichText::new("Right-click any ribbon button to add it.").weak());
-        if ui.button("Reset to Defaults").clicked() {
+        ui.label(egui::RichText::new(crate::tl!("Right-click any ribbon button to add it.")).weak());
+        if ui.button(crate::tl!("Reset to Defaults")).clicked() {
             let _ = command(app, &json!({"reset": true}));
             ui.close();
         }
@@ -184,7 +190,7 @@ pub fn ribbon_menu(app: &mut SlideApp, r: &egui::Response, icon: Icon, label: &s
     r.context_menu(|ui| {
         let has = app.ui.qat.iter().any(|q| q.same(id, p));
         let text = if has { "Remove from Quick Access Toolbar" } else { "Add to Quick Access Toolbar" };
-        if ui.button(text).clicked() {
+        if ui.button(crate::i18n::t(text)).clicked() {
             let label = label.replace('\n', " ");
             let key = if has { "remove" } else { "add" };
             let _ = command(app, &json!({key: id, "params": p, "label": label, "icon": icon.name()}));

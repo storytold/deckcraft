@@ -66,7 +66,7 @@ pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
 
 pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    if ui.button("+ New Comment").clicked() {
+    if ui.button(crate::tl!("+ New Comment")).clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("comment"));
     }
     ui.separator();
@@ -76,7 +76,7 @@ pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
         .map(|st| st.doc.slides.iter().enumerate().filter(|(_, sl)| !sl.comments.is_empty()).map(|(i, sl)| (i, sl.comments.clone())).collect())
         .unwrap_or_default();
     if threads.is_empty() {
-        ui.label(egui::RichText::new("No comments.").color(t.text_dim));
+        ui.label(egui::RichText::new(crate::tl!("No comments.")).color(t.text_dim));
         return;
     }
     let focus = app.ui.comment_focus;

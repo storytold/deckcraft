@@ -47,11 +47,11 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
                 ui.close();
             }
             ui.separator();
-            if ui.button("Insert Table…").clicked() {
+            if ui.button(crate::tl!("Insert Table…")).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("table"));
                 ui.close();
             }
-            if ui.button("Draw Table").clicked() {
+            if ui.button(crate::tl!("Draw Table")).clicked() {
                 app.session.set_tool(deckcraft_engine::ToolKind::Shape { preset: deckcraft_engine::tools::DRAW_TABLE.into() });
                 ui.close();
             }
@@ -100,7 +100,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             let has_sel = app.session.active().is_some_and(|s| !s.selection.shapes.is_empty());
-            if ui.add_enabled(has_sel, egui::Button::new("Action Settings…")).clicked() {
+            if ui.add_enabled(has_sel, egui::Button::new(crate::tl!("Action Settings…"))).clicked() {
                 app.dialog = Some(crate::dialogs::Dialog::new("action"));
             }
         });
@@ -138,7 +138,7 @@ pub fn table_grid_picker(ui: &mut Ui) -> Option<(usize, usize)> {
     let id = ui.scope_id().with("tgrid");
     let mut hover: (usize, usize) = ui.data_mut(|d| d.get_temp(id).unwrap_or((0, 0)));
     let cell = 16.0;
-    let label = if hover.0 > 0 { format!("{}x{} Table", hover.1, hover.0) } else { "Insert Table".into() };
+    let label = if hover.0 > 0 { format!("{}x{} {}", hover.1, hover.0, crate::tl!("Table")) } else { crate::tl!("Insert Table").to_string() };
     ui.label(label);
     let (rect, resp) = ui.allocate_exact_size(vec2(10.0 * (cell + 2.0), 8.0 * (cell + 2.0)), Sense::click());
     if let Some(p) = resp.hover_pos() {

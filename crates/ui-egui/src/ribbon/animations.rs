@@ -64,7 +64,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             for (cls, label) in
                 [(AnimClass::Entrance, "Entrance"), (AnimClass::Emphasis, "Emphasis"), (AnimClass::Exit, "Exit"), (AnimClass::Path, "Motion Paths")]
             {
-                ui.label(egui::RichText::new(label).font(theme::bold(12.0)));
+                ui.label(egui::RichText::new(crate::tl!(label)).font(theme::bold(12.0)));
                 ui.horizontal_wrapped(|ui| {
                     for a in deckcraft_model::anim::ANIMATIONS.iter().filter(|a| a.2 == cls) {
                         let (r, resp) = ui.allocate_exact_size(vec2(56.0, 54.0), Sense::click());
@@ -93,7 +93,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
             }
             ui.separator();
             for &(id, on) in &build_rows {
-                let label = if id == "byParagraph" { "By Paragraph" } else { "As One Object" };
+                let label = if id == "byParagraph" { crate::tl!("By Paragraph") } else { crate::tl!("As One Object") };
                 if ui.selectable_label(on, label).clicked() {
                     run(app, "animation.options", json!({"textBuild": id}));
                     ui.close();
@@ -130,7 +130,7 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::AnimationPane, "Animation\nPane", "view.pane", json!({"pane": "animation"}));
         let r = big_button(ui, Icon::Trigger, "Trigger", cur.is_some());
         egui::Popup::menu(&r).show(|ui| {
-            if ui.button("On Click of… (none)").clicked() {
+            if ui.button(crate::tl!("On Click of… (none)")).clicked() {
                 run(app, "animation.timing", json!({"trigger": null}));
             }
             let shapes: Vec<(u32, String)> =
@@ -158,14 +158,18 @@ pub(super) fn animations(app: &mut SlideApp, ui: &mut Ui) {
     group(ui, |ui| {
         rows(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.label("Start:");
+                ui.label(crate::tl!("Start:"));
                 let s = cur.as_ref().map(|c| match c.start {
-                    deckcraft_model::AnimStart::OnClick => "On Click",
-                    deckcraft_model::AnimStart::WithPrevious => "With Previous",
-                    deckcraft_model::AnimStart::AfterPrevious => "After Previous",
+                    deckcraft_model::AnimStart::OnClick => crate::tl!("On Click"),
+                    deckcraft_model::AnimStart::WithPrevious => crate::tl!("With Previous"),
+                    deckcraft_model::AnimStart::AfterPrevious => crate::tl!("After Previous"),
                 });
                 dropdown(ui, "astart", s.unwrap_or(""), 112.0, cur.is_some(), |ui| {
-                    for (l, v) in [("On Click", "onClick"), ("With Previous", "withPrevious"), ("After Previous", "afterPrevious")] {
+                    for (l, v) in [
+                        (crate::tl!("On Click"), "onClick"),
+                        (crate::tl!("With Previous"), "withPrevious"),
+                        (crate::tl!("After Previous"), "afterPrevious"),
+                    ] {
                         if ui.button(l).clicked() {
                             run(app, "animation.timing", json!({"start": v}));
                             ui.close();

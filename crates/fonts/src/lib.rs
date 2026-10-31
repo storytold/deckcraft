@@ -12,6 +12,9 @@ mod fallback;
 mod fontdb;
 pub mod script;
 mod shape;
+mod ui_fallback;
+
+pub use ui_fallback::{SystemUiFont, is_cjk, system_cjk_ui_font, system_cjk_ui_font_for, ui_needs_system_cjk, ui_uncovered_cjk};
 
 pub use fallback::{bundled_families, covers_cluster, is_emoji_cluster, ligature_carets};
 pub use fontdb::{

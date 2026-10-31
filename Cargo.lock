@@ -1263,6 +1263,7 @@ dependencies = [
 name = "deckcraft-ui-egui"
 version = "0.13.1"
 dependencies = [
+ "craft-i18n",
  "craft-ui",
  "craft-update",
  "deckcraft-anim",
@@ -1280,6 +1281,7 @@ dependencies = [
  "serde",
  "serde_json",
  "skrifa 0.47.0",
+ "sys-locale",
  "toml",
  "web-time",
 ]

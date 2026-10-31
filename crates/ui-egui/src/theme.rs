@@ -223,6 +223,29 @@ pub fn font_definitions(extra: &[std::sync::Arc<deckcraft_fonts::FontFace>]) -> 
             }
         }
     }
+    // The embedded faces leave interface characters without a glyph (e.g. a build without craft-fonts
+    // or with fonts lacking characters the catalogs use): an installed CJK font after them,
+    // so Korean/Chinese/Japanese menus don't show boxes.
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let lang = crate::i18n::current();
+        let need_cjk = lang.uses_cjk() || cfg!(target_os = "windows");
+        let hans = lang.prefers_hans();
+        let korean = if lang.uses_cjk() { lang.prefers_korean() } else { cfg!(target_os = "windows") };
+        if need_cjk && let Some(f) = system_cjk_font(hans, korean) {
+            let name = format!("system-cjk-{}", f.family);
+            if !defs.font_data.contains_key(&name) {
+                let mut data = FontData::from_static(&f.bytes);
+                data.index = f.index;
+                defs.font_data.insert(name.clone(), std::sync::Arc::new(data));
+                for list in defs.families.values_mut() {
+                    if !list.contains(&name) {
+                        list.push(name.clone());
+                    }
+                }
+            }
+        }
+    }
     add_fallback_faces(&mut defs, extra);
     // The Japanese interface face (the first one when Inter isn't embedded) hints its en and em
     // dashes, bars thinner than a pixel, down to nothing, so they drew as gaps in interface text;
@@ -251,6 +274,23 @@ pub fn add_fallback_faces(defs: &mut FontDefinitions, faces: &[std::sync::Arc<de
             list.push(name.clone());
         }
     }
+}
+
+/// The installed CJK interface font for a Chinese (`hans`), Korean, or other CJK interface.
+#[cfg(not(target_arch = "wasm32"))]
+fn system_cjk_font(hans: bool, korean: bool) -> Option<&'static deckcraft_fonts::SystemUiFont> {
+    static ZH: std::sync::OnceLock<Option<deckcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
+    static OTHER: std::sync::OnceLock<Option<deckcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
+    static KO: std::sync::OnceLock<Option<deckcraft_fonts::SystemUiFont>> = std::sync::OnceLock::new();
+    (if hans {
+        &ZH
+    } else if korean {
+        &KO
+    } else {
+        &OTHER
+    })
+    .get_or_init(|| deckcraft_fonts::system_cjk_ui_font_for(hans, korean, &[]))
+    .as_ref()
 }
 
 pub fn bold(size: f32) -> egui::FontId {
