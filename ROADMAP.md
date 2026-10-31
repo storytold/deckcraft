@@ -296,7 +296,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-31 | minor | Progress log: Find and Replace and the Outline/RTF export skip hidden slides and shapes unless `includeHidden`. Scores and milestone names unchanged |
+| 2026-10-31 | minor | Progress log: Find and Replace skip hidden slides and shapes unless `includeHidden`; the Outline/RTF export skips hidden slides only and may still read text of hidden shapes on visible slides. Scores and milestone names unchanged |
 | 2026-10-25 | trivial | Progress log: Windows shortcut icon survives updates (#1114). Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: selecting a range of table cells by dragging. Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: measurement units in centimetres (#1326). Scores unchanged |
