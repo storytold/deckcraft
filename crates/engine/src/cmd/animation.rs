@@ -355,6 +355,7 @@ fn paragraph_targets(s: &Session, p: &Value, ids: &[ShapeId]) -> Result<Option<V
         (Some(Value::Array(a)), _) => Some(
             a.iter().map(|v| v.as_u64().ok_or_else(|| bad("animation", format!("`paragraphs` has an invalid index: {v}")))).collect::<Result<_>>()?,
         ),
+        (Some(v), _) if !v.is_null() => return Err(bad("animation", format!("`paragraphs` must be an array of indices: {v}"))),
         (_, Some(v)) if !v.is_null() => Some(vec![v.as_u64().ok_or_else(|| bad("animation", format!("`paragraph` is not an index: {v}")))?]),
         _ => None,
     };
@@ -1027,6 +1028,8 @@ mod tests {
         assert_eq!(effects(&mut s), vec![(tb, Some(2), "fade".into(), "onClick".into())]);
         assert!(s.execute("animation.add", &json!({"effect": "fade", "ids": [tb], "paragraphs": [7]})).is_err());
         assert!(s.execute("animation.add", &json!({"effect": "fade", "ids": [tb], "paragraphs": []})).is_err());
+        assert!(s.execute("animation.add", &json!({"effect": "fade", "ids": [tb], "paragraphs": 2})).is_err());
+        assert!(s.execute("animation.add", &json!({"effect": "fade", "ids": [tb], "paragraphs": "1"})).is_err());
         s.execute("animation.add", &json!({"effect": "fly", "ids": [tb], "paragraph": 0})).unwrap();
         s.execute("animation.add", &json!({"effect": "zoom", "ids": [tb], "paragraphs": [1, 1]})).unwrap();
         let e = effects(&mut s);
