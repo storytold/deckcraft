@@ -1454,9 +1454,9 @@ fn underlines_sit_at_the_font_underline_in_their_style() {
 
 #[test]
 fn no_break_after_a_zero_width_space_or_before_an_em_dash() {
-    let (allowed, _) = break_opportunities("ab\u{200B}cd", false);
+    let (allowed, _) = break_opportunities("ab\u{200B}cd", false, true);
     assert!(!allowed[3], "PowerPoint does not break after a zero-width space");
-    let (allowed, _) = break_opportunities("ab\u{2014}cd", false);
+    let (allowed, _) = break_opportunities("ab\u{2014}cd", false, true);
     assert!(!allowed[2] && allowed[3], "an em dash ends a line, never starts one");
 }
 
@@ -1806,6 +1806,63 @@ fn empty_plain_paragraphs_and_soft_breaks_have_no_bullet_preview() {
     let l = lay(&p, &sh, 600.0, 300.0);
     assert_eq!(l.lines.len(), 2);
     assert!(l.empty_bullets.is_empty(), "a soft line break is not a new list item");
+}
+
+#[test]
+fn east_asian_line_breaking_off_relaxes_the_non_starter_rule() {
+    // Unicode offers no break before a small kana or the prolonged sound mark at all; the strict
+    // Japanese rule (`eaLnBrk` on, PowerPoint's default) keeps it that way, so relaxing it means
+    // adding the opportunity — 禁則処理なし lets a line start with one.
+    for c in ['っ', 'ゃ', 'ー', 'ッ', 'ャ', 'ヶ', 'ｧ', 'ｰ'] {
+        let text = format!("漢{c}漢");
+        let (on, _) = break_opportunities(&text, false, true);
+        let (off, _) = break_opportunities(&text, false, false);
+        assert!(!on[1], "eaLnBrk on: no line starts at {c:?}");
+        assert!(off[1], "eaLnBrk off: a line may start at {c:?}");
+    }
+    // The other break rules are untouched by the setting.
+    let (allowed, _) = break_opportunities("ab\u{200B}cd", false, false);
+    assert!(!allowed[3], "no break after a zero-width space either way");
+    let (allowed, _) = break_opportunities("ab\u{2014}cd", false, false);
+    assert!(!allowed[2] && allowed[3], "an em dash ends a line, never starts one");
+    // A non-starter right after a zero-width space keeps that prohibition, and one inside a
+    // Latin word still needs `latinLnBrk`: relaxing 禁則 lifts only the non-starter rule.
+    let (allowed, _) = break_opportunities("漢\u{200B}っ漢", false, false);
+    assert!(!allowed[2], "no break after a zero-width space, even before a non-starter");
+    let (allowed, _) = break_opportunities("漢/っ漢", false, false);
+    assert!(!allowed[2], "no break after a slash without latinLnBrk, even before a non-starter");
+    let (allowed, _) = break_opportunities("漢/っ漢", true, false);
+    assert!(allowed[2], "latinLnBrk lets the break stand before a non-starter too");
+}
+
+#[test]
+fn east_asian_line_breaking_off_keeps_the_unicode_prohibitions_that_are_not_the_non_starter_rule() {
+    // Relaxing 禁則 must lift only the rule that keeps a non-starter off the start of a line
+    // (LB21, and LB16 before a non-starter). The same position can be prohibited for another
+    // reason — an opening bracket ends no line (LB14), a word joiner binds (LB11), a no-break
+    // space binds (LB12) — and those prohibitions still hold with `eaLnBrk` off.
+    for text in ["漢「ッ」", "漢（ッ）", "漢\u{2060}ッ", "漢\u{00A0}ッ", "漢\u{202F}ッ"] {
+        let (on, _) = break_opportunities(text, false, true);
+        let (off, _) = break_opportunities(text, false, false);
+        assert!(!on[2] && !off[2], "the break before the non-starter stays prohibited: {text:?}");
+    }
+    // With nothing else binding the position, the same non-starter may start a line when 禁則 is
+    // off: the setting has not stopped working.
+    let (allowed, _) = break_opportunities("漢ッ", false, false);
+    assert!(allowed[1], "with 禁則 off a line may start at a small kana");
+}
+
+#[test]
+fn east_asian_line_breaking_keeps_the_default_layout() {
+    // The default (`eaLnBrk` absent) wraps exactly as before: a non-starter stays on the line it
+    // belongs to and never starts the next one.
+    let text = "漢っ漢ゃ漢ー漢";
+    let w = one_line("漢っ") + 0.5;
+    let lines = wrapped(text, w, |_| {});
+    assert!(lines.len() >= 2, "{lines:?}");
+    for line in &lines {
+        assert!(!line.starts_with(['っ', 'ゃ', 'ー']), "no line starts with a non-starter: {lines:?}");
+    }
 }
 
 /// A run of `text` at `size` points.

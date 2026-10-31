@@ -83,9 +83,11 @@ fn is_cj_nonstarter(c: char) -> bool {
 }
 
 /// Break opportunities: allowed[i] = a line may start at char i. Unicode line breaking, then
-/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/` or `\`, and
-/// Korean breaks only between words.
-pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, Vec<bool>) {
+/// PowerPoint's differences: without `latinLnBrk` a word doesn't break after `/` or `\`, Korean
+/// breaks only between words, and without `eaLnBrk` (East Asian line breaking, the default) the
+/// strict Japanese rule that keeps a small kana or the prolonged sound mark off the start of a
+/// line is relaxed.
+pub(crate) fn break_opportunities(text: &str, latin_break: bool, east_asian_break: bool) -> (Vec<bool>, Vec<bool>) {
     let n = text.chars().count();
     let mut allowed = vec![false; n + 1];
     let mut mandatory = vec![false; n + 1];
@@ -107,19 +109,56 @@ pub(crate) fn break_opportunities(text: &str, latin_break: bool) -> (Vec<bool>, 
         }
     }
     let chars: Vec<char> = text.chars().collect();
+    // Relaxing 禁則 (`eaLnBrk="0"`) lifts only the Unicode rule that keeps a non-starter off the
+    // start of a line (LB21, and LB16 before a non-starter), never a rule that binds the position
+    // for another reason: an opening bracket still ends no line (LB14), and U+2060 or a no-break
+    // space still holds (LB11, LB12). Rerun the algorithm on a copy where each non-starter is an
+    // ordinary kana — one char for one char, so char indices map back — and accept a break before
+    // a non-starter only where that relaxed run allows it.
+    let mut relaxed_allowed = vec![false; n + 1];
+    if !east_asian_break && chars.iter().any(|c| is_cj_nonstarter(*c)) {
+        let relaxed: String = chars.iter().map(|c| if is_cj_nonstarter(*c) { 'あ' } else { *c }).collect();
+        let mut char_of_byte = std::collections::HashMap::new();
+        for (ci, (b, _)) in relaxed.char_indices().enumerate() {
+            char_of_byte.insert(b, ci);
+        }
+        char_of_byte.insert(relaxed.len(), n);
+        for (b, _) in unicode_linebreak::linebreaks(&relaxed) {
+            if let Some(&ci) = char_of_byte.get(&b)
+                && let Some(a) = relaxed_allowed.get_mut(ci)
+            {
+                *a = true;
+            }
+        }
+    }
     for (i, w) in chars.windows(2).enumerate() {
         let (prev, next) = (w[0], w[1]);
         // PowerPoint never breaks after a zero-width space, nor before an em dash (only after it).
-        let keep = if (is_hangul(prev) && is_hangul(next)) || prev == '\u{200B}' || next == '\u{2014}' || is_cj_nonstarter(next) {
-            false
-        } else {
-            latin_break || !matches!(prev, '/' | '\\') || next.is_whitespace()
-        };
+        let other_prohibition = (is_hangul(prev) && is_hangul(next)) || prev == '\u{200B}' || next == '\u{2014}';
+        let latin_allowed = latin_break || !matches!(prev, '/' | '\\') || next.is_whitespace();
+        let keep = if other_prohibition || (east_asian_break && is_cj_nonstarter(next)) { false } else { latin_allowed };
+        let mandatory_here = mandatory.get(i + 1).copied().unwrap_or(false);
         if !keep
-            && !mandatory.get(i + 1).copied().unwrap_or(false)
+            && !mandatory_here
             && let Some(a) = allowed.get_mut(i + 1)
         {
             *a = false;
+        }
+        // With East Asian line breaking off (`eaLnBrk="0"`, 禁則処理なし) a line may start with a
+        // small kana or the prolonged sound mark. Unicode offers no break before them at all, so
+        // relaxing 禁則 means adding the opportunity, not keeping one — but only where no *other*
+        // rule forbids the break (after a zero-width space, before an em dash, or inside a Latin
+        // word without `latinLnBrk`) and where the relaxed run above still allows it (an opening
+        // bracket, U+2060 or a no-break space keeps its Unicode prohibition).
+        if !east_asian_break
+            && is_cj_nonstarter(next)
+            && !other_prohibition
+            && latin_allowed
+            && !mandatory_here
+            && relaxed_allowed.get(i + 1).copied().unwrap_or(false)
+            && let Some(a) = allowed.get_mut(i + 1)
+        {
+            *a = true;
         }
     }
     (allowed, mandatory)
@@ -146,7 +185,12 @@ pub(crate) struct BreakParams<'a> {
 pub(crate) fn break_lines(p: &ParaShaped, params: &BreakParams) -> Vec<RawLine> {
     let BreakParams { first_w, rest_w, wrap, tab_stops, default_tab, x0_first, x0_rest } = *params;
     let text: String = p.cells.iter().map(|c| c.ch).collect();
-    let (allowed, _) = break_opportunities(&text, p.props.latin_line_break.unwrap_or(false));
+    let (allowed, _) = break_opportunities(
+        &text,
+        p.props.latin_line_break.unwrap_or(false),
+        // `eaLnBrk` absent means on (PowerPoint's default): only an explicit off relaxes 禁則.
+        p.props.east_asian_line_break.unwrap_or(true),
+    );
     let hang = p.props.hanging_punct.unwrap_or(false);
     let n = p.cells.len();
     let mut lines = vec![];
