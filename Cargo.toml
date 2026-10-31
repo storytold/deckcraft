@@ -54,10 +54,10 @@ unicode-linebreak = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 
 # text / rendering / formats
-skrifa = "0.47"
-harfrust = "0.13"
-vello_cpu = "0.2"
-vello_common = { version = "0.2", default-features = false }
+skrifa = "0.49"
+harfrust = "0.15"
+vello_cpu = "0.3"
+vello_common = { version = "0.3", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif", "tiff", "bmp"] }
 craft-media = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false }
 craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0", default-features = false, features = ["write", "write-simple-text"] }
@@ -65,8 +65,8 @@ craft-pdf = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f
 craft-update = { git = "https://github.com/storytold/craft-libs", version = "=0.1.0", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", features = ["egui"] }
 craft-ui = { git = "https://github.com/storytold/craft-libs", rev = "c5a1cbfb5f9049f9270955caffb5bee5997aebf7", version = "=0.1.0" }
 i_overlay = "9"
-quick-xml = "0.41"
-zip = { version = "3", default-features = false, features = ["deflate"] }
+quick-xml = "0.42"
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # ui
 egui = { version = "0.37", default-features = false }
