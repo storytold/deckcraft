@@ -13,6 +13,27 @@ thread_local! {
     pub(crate) static LAYOUT_PASSES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
+/// The (`fontScale`, `lnSpcReduction`) pairs shrink on overflow tries, largest text first. These
+/// are the only ones PowerPoint 16 for Windows saves (it takes the first that fits): the scale
+/// falls in 7.5 % steps to a floor of 25 %, and the line spacing is reduced by 10 % at first and
+/// by 20 % from there on, so a file holds nothing in between.
+pub const SHRINK_STEPS: [(f64, f64); 14] = [
+    (1.0, 0.0),
+    (1.0, 0.1),
+    (0.925, 0.1),
+    (0.925, 0.2),
+    (0.85, 0.1),
+    (0.85, 0.2),
+    (0.775, 0.2),
+    (0.7, 0.2),
+    (0.625, 0.2),
+    (0.55, 0.2),
+    (0.475, 0.2),
+    (0.4, 0.2),
+    (0.325, 0.2),
+    (0.25, 0.2),
+];
+
 /// Lay out a shape's text body.
 pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLayout {
     let bp = resolve::body(ctx, shape);
@@ -38,30 +59,29 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
         && l.overflow
         && !saved
     {
-        // Text that overflows even at the smallest scale gets that scale: every larger one
-        // overflows too, so searching would only lay it out a dozen more times (seconds for a
+        // Text that overflows even at the smallest step gets that step: every larger one
+        // overflows too, so searching would only lay it out a few more times (seconds for a
         // body of tens of thousands of paragraphs, on every redraw of the slide).
-        let smallest = layout_scaled(ctx, shape, body, &bp, opts, 0.1, 0.2);
+        let (font_scale, line_reduction) = SHRINK_STEPS[SHRINK_STEPS.len() - 1];
+        let smallest = layout_scaled(ctx, shape, body, &bp, opts, font_scale, line_reduction);
         if smallest.overflow {
             return smallest;
         }
-        // Binary search the largest scale that fits (steps like 90%, 80%… with line reduction).
-        let (mut lo, mut hi) = (0.1_f64, scale0);
-        let mut best = Some(smallest);
-        for _ in 0..12 {
-            let mid = (lo + hi) / 2.0;
-            let red: f64 = ((1.0 - mid) * 0.8_f64).min(0.2).max(reduce0);
-            let t = layout_scaled(ctx, shape, body, &bp, opts, mid, red);
+        // Binary search the first step that fits; `lo` overflows, `hi` fits.
+        let (mut lo, mut hi) = (0, SHRINK_STEPS.len() - 1);
+        let mut best = smallest;
+        while hi - lo > 1 {
+            let mid = (lo + hi) / 2;
+            let (font_scale, line_reduction) = SHRINK_STEPS[mid];
+            let t = layout_scaled(ctx, shape, body, &bp, opts, font_scale, line_reduction);
             if t.overflow {
-                hi = mid;
-            } else {
                 lo = mid;
-                best = Some(t);
+            } else {
+                hi = mid;
+                best = t;
             }
         }
-        if let Some(b) = best {
-            l = b;
-        }
+        l = best;
     }
     l
 }

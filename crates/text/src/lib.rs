@@ -49,9 +49,9 @@ use autonum::chinese_num;
 use breaking::{LINE_PITCH, break_opportunities, measure_str};
 #[cfg(test)]
 pub(crate) use layout::LAYOUT_PASSES;
-pub use layout::layout;
 #[cfg(test)]
 use layout::layout_scaled;
+pub use layout::{SHRINK_STEPS, layout};
 pub use run::{Dash, Deco, DecoLine, GlyphRun, RunEffects, TextShadow, UPRIGHT_CENTRE};
 #[cfg(test)]
 use shape::{SUB_SUPER, caps_char, is_upright, shaping_features};
