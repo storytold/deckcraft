@@ -71,6 +71,112 @@ pub fn write_file(path: &str, _bytes: &[u8]) -> Result<(), String> {
     Err(format!("{path}: saving to a path is not available in the browser"))
 }
 
+/// Create the folder `path` (and its parents) inside the automation write root; one that exists is
+/// left as it is. A file of that name is an error.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn create_folder(path: &str) -> Result<(), String> {
+    crate::file_access::check_write(path)?;
+    let dir = std::path::Path::new(path);
+    if dir.exists() && !dir.is_dir() {
+        return Err(format!("{path} is not a folder"));
+    }
+    std::fs::create_dir_all(dir).map_err(|e| format!("{path}: cannot create the folder: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn create_folder(path: &str) -> Result<(), String> {
+    Err(format!("{path}: saving to a path is not available in the browser"))
+}
+
+/// Remove the plain files in folder `path` whose names `matches` says are ours, inside the
+/// automation write root (each one is checked). A folder that isn't there has nothing to remove.
+/// Answers how many were removed.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_files(path: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    let entries = match std::fs::read_dir(path) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(format!("{path}: {err}")),
+    };
+    let mut removed = 0;
+    for e in entries {
+        // An entry that can't be read is an error, not a file skipped, so no earlier frame stays.
+        let e = e.map_err(|err| format!("{path}: {err}"))?;
+        let name = e.file_name();
+        if matches(&name.to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_file()) {
+            let file = e.path();
+            let file = file.to_string_lossy();
+            crate::file_access::check_write(&file)?;
+            std::fs::remove_file(&*file).map_err(|err| format!("{file}: {err}"))?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn remove_files(_path: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    Ok(0)
+}
+
+/// Move the files directly in folder `from` whose names `matches` into folder `to`, keeping their
+/// names; both folders must be inside the automation write root and on one file system, as a
+/// staging folder inside `to` is. Returns how many moved.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn move_files(from: &str, to: &str, matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    let entries = std::fs::read_dir(from).map_err(|err| format!("{from}: {err}"))?;
+    let mut moved = 0;
+    for e in entries {
+        // An entry that can't be read is an error, not a file skipped, so no frame is left behind.
+        let e = e.map_err(|err| format!("{from}: {err}"))?;
+        let name = e.file_name();
+        if matches(&name.to_string_lossy()) && e.file_type().is_ok_and(|t| t.is_file()) {
+            let (src, dst) = (e.path(), std::path::Path::new(to).join(&name));
+            let (src, dst) = (src.to_string_lossy(), dst.to_string_lossy());
+            crate::file_access::check_write(&src)?;
+            crate::file_access::check_write(&dst)?;
+            std::fs::rename(&*src, &*dst).map_err(|err| format!("{dst}: {err}"))?;
+            moved += 1;
+        }
+    }
+    Ok(moved)
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn move_files(_from: &str, _to: &str, _matches: &dyn Fn(&str) -> bool) -> Result<usize, String> {
+    Ok(0)
+}
+
+/// Remove the folder at `path` if it is there and empty. A folder that is gone, or still holds
+/// something, is left as it is and counts as done: this is cleanup, not part of the result.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn remove_empty_folder(path: &str) -> Result<(), String> {
+    crate::file_access::check_write(path)?;
+    match std::fs::remove_dir(path) {
+        Err(err) if !matches!(err.kind(), std::io::ErrorKind::NotFound | std::io::ErrorKind::DirectoryNotEmpty) => Err(format!("{path}: {err}")),
+        _ => Ok(()),
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn remove_empty_folder(_path: &str) -> Result<(), String> {
+    Ok(())
+}
+
+/// Write `bytes` straight to `path` inside the automation write root: no temporary sibling and no
+/// sync, for the many generated files of a frame sequence, which are rebuilt rather than precious.
+/// The folder must exist ([`create_folder`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn write_file_direct(path: &str, bytes: &[u8]) -> Result<(), String> {
+    crate::file_access::check_write(path)?;
+    std::fs::write(path, bytes).map_err(|e| format!("{path}: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn write_file_direct(path: &str, _bytes: &[u8]) -> Result<(), String> {
+    Err(format!("{path}: saving to a path is not available in the browser"))
+}
+
 /// The size in bytes of the file at `path`; `None` when it can't be read (or is outside the
 /// automation read root, so File › Info doesn't reveal files the agent may not read).
 #[cfg(not(target_arch = "wasm32"))]
@@ -119,5 +225,18 @@ mod tests {
 
         let _ = std::fs::remove_file(&test_file);
         let _ = std::fs::remove_dir(&tmp_dir);
+    }
+
+    /// A missing folder has nothing to remove; a folder that can't be read is an error, not
+    /// zero files, so old frames are not left in place silently.
+    #[test]
+    fn remove_files_reports_a_folder_it_cannot_read() {
+        let missing = std::env::temp_dir().join(format!("deckcraft_io_missing_{}", std::process::id()));
+        assert_eq!(remove_files(missing.to_str().unwrap(), &|_| true), Ok(0));
+        let file = std::env::temp_dir().join(format!("deckcraft_io_not_a_folder_{}", std::process::id()));
+        std::fs::write(&file, b"x").unwrap();
+        let res = remove_files(file.to_str().unwrap(), &|_| true);
+        let _ = std::fs::remove_file(&file);
+        assert!(res.is_err(), "{res:?}");
     }
 }

@@ -13,6 +13,7 @@ pub mod connect;
 pub mod drawtable;
 pub mod file_access;
 pub mod fonts;
+pub mod frames_export;
 pub mod gif_export;
 pub mod guard;
 pub mod icons;

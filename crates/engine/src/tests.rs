@@ -5970,6 +5970,196 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A scratch folder for the frame-sequence export tests, empty.
+fn frames_dir(name: &str) -> std::path::PathBuf {
+    let dir = std::env::temp_dir().join(format!("deckcraft-frames-{}-{name}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// Two slides: slide 0 holds a rectangle that fades in on click (500 ms), slide 1 is blank and
+/// comes in with a 700 ms fade. Returns the session and the rectangle's id.
+fn frames_deck() -> (Session, u64) {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 200]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("shape.fill", &json!({"ids": [id], "color": "#2040E0"})).unwrap();
+    s.execute("animation.add", &json!({"ids": [id], "effect": "fade", "class": "entrance", "start": "onClick", "duration": 500})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("transition.set", &json!({"kind": "fade", "duration": 700, "index": 1})).unwrap();
+    (s, id)
+}
+
+fn png_files(dir: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    v.sort();
+    v
+}
+
+/// Hidden slides are skipped unless `includeHidden`, and a folder that isn't there yet is created.
+/// `slide` narrows a frame export to that slide, as it narrows a PNG export.
+#[test]
+fn frames_export_of_one_slide_takes_the_slide_parameter() {
+    let (mut s, _) = frames_deck();
+    let dir = frames_dir("one-slide");
+    let r = s
+        .execute(
+            "file.export",
+            &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerSlide": 1, "width": 320, "slide": 1}),
+        )
+        .unwrap();
+    assert_eq!(r["slides"].as_array().map(Vec::len), Some(1), "{r}");
+    assert_eq!(r["slides"][0]["index"], 1, "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+    // A `slide` that is not an index is refused before anything is written.
+    for slide in [json!(-1), json!(1.5), json!("1")] {
+        let bad = frames_dir("bad-slide");
+        let r = s.execute("file.export", &json!({"format": "frames", "path": bad.to_string_lossy(), "fps": 10, "width": 320, "slide": slide}));
+        assert!(r.is_err(), "slide {slide} gave {r:?}");
+        assert!(!bad.exists(), "slide {slide} wrote frames");
+    }
+}
+
+#[test]
+fn frames_export_skips_hidden_slides_and_creates_the_folder() {
+    let (mut s, _) = frames_deck();
+    s.execute("slide.hide", &json!({"index": 0, "hidden": true})).unwrap();
+    let dir = frames_dir("hidden").join("deeper").join("still");
+    assert!(!dir.exists());
+    let p = json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerSlide": 2, "width": 320});
+    let r = s.execute("file.export", &p).unwrap();
+    assert_eq!(r["frames"], 20, "{r}");
+    assert_eq!(r["slides"], json!([{"index": 1, "from": 1, "to": 20}]), "{r}");
+    assert!(dir.is_dir());
+    assert_eq!(png_files(&dir).len(), 20);
+    let mut p2 = p.clone();
+    p2["includeHidden"] = json!(true);
+    let r = s.execute("file.export", &p2).unwrap();
+    assert_eq!(r["frames"], 62, "{r}");
+    let _ = std::fs::remove_dir_all(dir.parent().unwrap().parent().unwrap());
+}
+
+/// HH4: the outline export (PowerPoint's outline view) holds titles and body text only: footer,
+/// date and slide-number placeholders are not body lines.
+#[test]
+fn outline_export_skips_footer_date_and_slide_number() {
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "Agenda", "body": "First point\nSecond point"})).unwrap();
+    s.execute(
+        "design.headerFooter",
+        &json!({"footer": true, "footerText": "Company Confidential", "slideNumber": true, "date": true, "dateText": "1 May 2026"}),
+    )
+    .unwrap();
+    let dir = std::env::temp_dir().join(format!("deckcraft-outline-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.md");
+    s.execute("file.export", &json!({"path": path.to_string_lossy(), "format": "outline"})).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(text.contains("Agenda") && text.contains("First point") && text.contains("Second point"), "{text:?}");
+    assert!(!text.contains("Company Confidential"), "footer text is not a body line: {text:?}");
+    assert!(!text.contains("‹#›"), "the slide-number field is not a body line: {text:?}");
+    assert!(!text.contains("1 May 2026"), "the date is not a body line: {text:?}");
+}
+
+/// The state before the first click is held for `secondsPerStep`; after an automatic first step
+/// the click step that follows is preceded by that pause, and an automatic step is not.
+#[test]
+fn frames_export_holds_the_pre_click_state_and_pauses_before_click_steps() {
+    let frames = |first: &str| {
+        let mut s = session();
+        let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 300, 200]})).unwrap()["id"].as_u64().unwrap();
+        let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 100, 600, 200]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("animation.add", &json!({"ids": [a], "effect": "fade", "class": "entrance", "start": first, "duration": 500})).unwrap();
+        s.execute("animation.add", &json!({"ids": [b], "effect": "fade", "class": "entrance", "start": "onClick", "duration": 500})).unwrap();
+        let dir = frames_dir(first);
+        let r = s
+            .execute(
+                "file.export",
+                &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 160, "slides": [0]}),
+            )
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        r["frames"].as_u64().unwrap()
+    };
+    // Click, click: 10 pre-click + 5 + 10 + 5 + 20 hold.
+    assert_eq!(frames("onClick"), 50);
+    // Automatic, click: no pre-click hold, 5 + 10 (pause before the click step) + 5 + 20.
+    assert_eq!(frames("afterPrevious"), 40);
+}
+
+/// `file.export {format: "frames"}` writes one PNG per video frame: slide 0's fade step (5 frames
+/// at 10 fps for 500 ms) after the 1 s hold of its state before the click (10), then its 2 s hold
+/// (20), the 700 ms fade into slide 1 (7), and slide 1's 2 s hold (20): 62 frames, numbered from 1, mapped back to the slides by the answer.
+#[test]
+fn frames_export_counts_build_steps_holds_and_transitions() {
+    let (mut s, _) = frames_deck();
+    let dir = frames_dir("count");
+    let r = s
+        .execute(
+            "file.export",
+            &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 320}),
+        )
+        .unwrap();
+    assert_eq!(r["frames"], 62, "{r}");
+    assert_eq!(r["fps"], 10, "{r}");
+    assert_eq!((r["width"].as_u64(), r["height"].as_u64()), (Some(320), Some(180)), "{r}");
+    assert!((r["seconds"].as_f64().unwrap() - 6.2).abs() < 1e-9, "{r}");
+    assert_eq!(r["folder"], json!(dir.to_string_lossy()), "{r}");
+    assert_eq!(r["slides"], json!([{"index": 0, "from": 1, "to": 35}, {"index": 1, "from": 36, "to": 62}]), "{r}");
+    let files = png_files(&dir);
+    assert_eq!(files.len(), 62);
+    assert_eq!(files.first().map(String::as_str), Some("frame-000001.png"));
+    assert_eq!(files.last().map(String::as_str), Some("frame-000062.png"));
+    // Without transitions the fade's 7 frames go away; a slide without animations is one still.
+    let dir2 = frames_dir("cut");
+    let r = s
+        .execute(
+            "file.export",
+            &json!({"format": "frames", "path": dir2.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 320, "transitions": false}),
+        )
+        .unwrap();
+    assert_eq!(r["frames"], 55, "{r}");
+    assert_eq!(r["slides"], json!([{"index": 0, "from": 1, "to": 35}, {"index": 1, "from": 36, "to": 55}]), "{r}");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&dir2);
+}
+
+/// Frames are the show's frames: half-way through the fade the rectangle is translucent (the frame
+/// differs from the settled one), and the settled frame is exactly what `render_slide` draws.
+#[test]
+fn frames_export_draws_the_build_and_settles_on_the_plain_slide() {
+    let (mut s, _) = frames_deck();
+    let dir = frames_dir("pixels");
+    s.execute(
+        "file.export",
+        &json!({"format": "frames", "path": dir.to_string_lossy(), "fps": 10, "secondsPerStep": 1, "secondsPerSlide": 2, "width": 320}),
+    )
+    .unwrap();
+    let frame = |n: usize| std::fs::read(dir.join(format!("frame-{n:06}.png"))).unwrap();
+    let doc = &s.doc().unwrap().doc;
+    let settled = deckcraft_render::render_slide(
+        doc,
+        0,
+        &deckcraft_render::RenderOpts { scale: 320.0 / doc.slide_size.width, size: Some((320, 180)), ..Default::default() },
+    );
+    assert_eq!(frame(35), settled.to_png(), "the hold frame is the slide with its builds done");
+    assert_ne!(frame(13), frame(35), "200 ms into the fade the rectangle is still translucent");
+    assert_ne!(frame(1), frame(35), "before the click the rectangle is hidden");
+    // The transition's first frame is still slide 0, its last one nearly slide 1.
+    assert_eq!(frame(10), frame(1), "the state before the click is held");
+    assert_eq!(frame(36), frame(35));
+    let blank = deckcraft_render::render_slide(
+        doc,
+        1,
+        &deckcraft_render::RenderOpts { scale: 320.0 / doc.slide_size.width, size: Some((320, 180)), ..Default::default() },
+    );
+    assert_eq!(frame(62), blank.to_png());
+    assert_ne!(frame(39), frame(35));
+    assert_ne!(frame(39), frame(62));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();

@@ -4,10 +4,29 @@
 use std::collections::{BTreeMap, HashMap};
 
 use deckcraft_model::text::{Action, Hyperlink};
-use deckcraft_model::{Presentation, SlideId};
+use deckcraft_model::{Presentation, ShapeId, SlideId};
 
-use crate::Timeline;
 use crate::interact::SlideRun;
+use crate::{AnimState, StepStamp, Timeline, TriggerPlay};
+
+/// What one shape looks like at one moment of the show: its own state and, for by-paragraph text
+/// builds, the state of each animated paragraph relative to the shape's (paragraph index, state).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShapeFrame {
+    pub state: AnimState,
+    pub paras: Vec<(usize, AnimState)>,
+}
+
+/// Shape `id` of timeline `tl` when `step` main steps are done and step `step` has been playing
+/// for `t` seconds, with the triggered sequences at `plays` applied in the order of `stamps`
+/// ([`Timeline::state_ordered`]); its paragraphs follow [`Timeline::state`]. The slide show and
+/// the frame-sequence export draw every frame from this.
+pub fn state_for(tl: &Timeline, id: ShapeId, step: usize, t: f64, plays: &[TriggerPlay], stamps: &[StepStamp]) -> ShapeFrame {
+    ShapeFrame {
+        state: tl.state_ordered(id, None, step, t, plays, stamps),
+        paras: tl.paragraph_targets(id).into_iter().map(|p| (p, tl.state(id, Some(p), step, t))).collect(),
+    }
+}
 
 /// What the UI should do after a navigation call.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
