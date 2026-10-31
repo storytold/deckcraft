@@ -11,10 +11,12 @@ fn stdout() -> Box<dyn Write> {
     #[cfg(unix)]
     {
         use std::os::fd::AsFd as _;
-        if let Ok(fd) = std::io::stdout().as_fd().try_clone_to_owned() {
-            return Box::new(std::io::LineWriter::new(std::fs::File::from(fd)));
+        match std::io::stdout().as_fd().try_clone_to_owned() {
+            Ok(fd) => Box::new(std::io::LineWriter::new(std::fs::File::from(fd))),
+            Err(e) => Box::new(deckcraft_cli::Unwritable::new(&e)),
         }
     }
+    #[cfg(not(unix))]
     Box::new(std::io::stdout())
 }
 

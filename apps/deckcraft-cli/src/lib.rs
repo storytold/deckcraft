@@ -18,6 +18,29 @@ use cli::Cli;
 use error::CliError;
 use io::Io;
 
+/// A stdout that could not be opened: every write fails, so a command reports it and exits 1
+/// instead of printing nothing and succeeding.
+pub struct Unwritable {
+    kind: std::io::ErrorKind,
+    reason: String,
+}
+
+impl Unwritable {
+    pub fn new(cause: &std::io::Error) -> Self {
+        Unwritable { kind: cause.kind(), reason: cause.to_string() }
+    }
+}
+
+impl Write for Unwritable {
+    fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(self.kind, self.reason.clone()))
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
 /// Run the CLI with `args` (the program name first): results go to `out`, errors and progress to
 /// `err`. Returns the exit status: 0 success, 1 a command failed, 2 usage error.
 pub fn run<I, T>(args: I, out: &mut dyn Write, err: &mut dyn Write) -> u8
@@ -117,6 +140,14 @@ mod tests {
             assert_eq!(code, 1, "{args:?}");
             assert!(String::from_utf8_lossy(&err).contains("can't write to stdout"), "{args:?}");
         }
+    }
+
+    #[test]
+    fn a_stdout_that_could_not_be_opened_fails_the_command() {
+        let mut out = Unwritable::new(&std::io::Error::from(std::io::ErrorKind::Other));
+        let mut err = Vec::new();
+        assert_eq!(run(["deckcraft-cli", "links"], &mut out, &mut err), 1);
+        assert!(String::from_utf8_lossy(&err).contains("can't write to stdout"));
     }
 
     #[test]
