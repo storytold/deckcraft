@@ -138,7 +138,9 @@ fn command_file_read_errors_name_the_path_and_utf8_line() {
         }
         assert!(!save.exists());
     }
-    assert!(stderr(&cli(&["run", "--cmd-file"])).contains("--cmd-file needs a file"));
+    let o = cli(&["run", "--cmd-file"]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(stderr(&o).contains("a value is required for '--cmd-file <FILE>'"));
     std::fs::remove_dir_all(dir).unwrap();
 }
 
@@ -163,21 +165,30 @@ fn inline_commands_keep_their_existing_syntax_and_errors() {
     let titles = inspected_titles(&out);
     assert_eq!(titles.len(), 3);
     assert_eq!(titles[2], "Inline = #");
-    assert!(stderr(&cli(&["run", "--cmd", "slide.new={"])).starts_with("deckcraft-cli: slide.new: bad JSON:"));
+    assert!(stderr(&cli(&["run", "--cmd", "slide.new={"])).starts_with("error: slide.new: bad JSON:"));
     assert!(stderr(&cli(&["run", "--cmd", "no.such.command"])).contains("unknown command `no.such.command`"));
 }
 
 #[test]
-fn an_unknown_subcommand_is_named_before_the_overview() {
-    for args in [vec!["frobnicate"], vec!["help", "frobnicate"], vec!["--info", "--help"]] {
-        let err = stderr(&cli(&args));
-        assert!(err.contains("unknown subcommand `") && err.contains("\n\ndeckcraft-cli works on"), "{args:?}: {err}");
+fn an_unknown_subcommand_is_a_usage_error() {
+    for args in [vec!["frobnicate"], vec!["help", "frobnicate"]] {
+        let o = cli(&args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}");
+        let err = stderr(&o);
+        assert!(err.starts_with("error: unrecognized subcommand 'frobnicate'"), "{args:?}: {err}");
+        assert!(o.stdout.is_empty());
     }
+    let o = cli(&["--info", "--help"]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(stderr(&o).contains("unexpected argument '--info'"));
 }
 
 #[test]
-fn no_subcommand_shows_the_overview_and_fails() {
-    assert!(stderr(&cli(&[])).starts_with("deckcraft-cli works on"));
+fn no_subcommand_shows_the_usage_and_fails() {
+    let o = cli(&[]);
+    assert_eq!(o.status.code(), Some(2));
+    let err = stderr(&o);
+    assert!(err.contains("Usage: deckcraft-cli") && err.contains("render-transition"), "{err}");
 }
 
 #[test]
@@ -187,7 +198,12 @@ fn help_lists_every_subcommand_with_a_run_example() {
         for sub in SUBCOMMANDS {
             assert!(out.contains(&format!("\n  {sub} ")), "{flag} lacks {sub}: {out}");
         }
+        assert!(!out.contains("\n  version "), "{flag} lists the hidden version");
+    }
+    for flag in ["help", "--help"] {
+        let out = stdout(&cli(&[flag]));
         assert!(out.contains("deckcraft-cli run --cmd 'slide.new={\"title\":\"Q3 results\"}' --save q3.deckcraft"), "{out}");
+        assert!(out.contains("Exit status:\n  0  success\n  1  a command failed\n  2  usage error"), "{out}");
     }
 }
 
@@ -198,17 +214,54 @@ fn every_subcommand_answers_help_and_does_nothing_else() {
     for sub in SUBCOMMANDS {
         for args in [vec![sub, "--help"], vec![sub, "-h", "out.png"], vec!["help", sub]] {
             let o = Command::new(env!("CARGO_BIN_EXE_deckcraft-cli")).current_dir(&dir).args(&args).output().unwrap();
-            assert!(stdout(&o).starts_with(&format!("usage: deckcraft-cli {sub}")), "{args:?}");
+            assert!(stdout(&o).contains(&format!("Usage: deckcraft-cli {sub}")), "{args:?}");
         }
     }
     assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "help wrote nothing");
     std::fs::remove_dir_all(&dir).unwrap();
-    for args in [["help", "version"], ["--version", "--help"]] {
-        assert!(stdout(&cli(&args)).starts_with("usage: deckcraft-cli --version"), "{args:?}");
+}
+
+#[test]
+fn version_is_a_flag_everywhere_and_a_hidden_subcommand() {
+    let expected = format!("deckcraft-cli {}\n", env!("CARGO_PKG_VERSION"));
+    for args in [vec!["--version"], vec!["-V"], vec!["version"]] {
+        assert_eq!(stdout(&cli(&args)), expected, "{args:?}");
     }
-    for args in [["help", "help"], ["help", "--help"]] {
-        assert!(stdout(&cli(&args)).starts_with("deckcraft-cli works on"), "{args:?}");
+    for args in [vec!["run", "--version"], vec!["mcp", "-V"]] {
+        assert!(stdout(&cli(&args)).ends_with(&format!(" {}\n", env!("CARGO_PKG_VERSION"))), "{args:?}");
     }
+}
+
+#[test]
+fn strict_parsing_exits_2_before_any_work() {
+    let dir = command_file_dir("strict");
+    let out = dir.join("out.png");
+    let saved = dir.join("saved.deckcraft");
+    let (o, s) = (out.to_string_lossy().into_owned(), saved.to_string_lossy().into_owned());
+    for args in [
+        vec!["render", "--sample", "--scael", "2", &o],
+        vec!["render", "--sample", "--scale", "1", "--scale", "2", &o],
+        vec!["render", "--sample", "--scale", "fast", &o],
+        vec!["render", "--sample", "--slide", "--all", &o],
+        vec!["run", "--sample", "--cmd", "slide.new", "--save", &s, "--bogus"],
+        vec!["run", "--sample", "--save", &s, "--save", &s],
+        vec!["run", "--sample", "--export-params", "{}", "--save", &s],
+        vec!["bench", "--sample", "--runs", "0"],
+    ] {
+        let o = cli(&args);
+        assert_eq!(o.status.code(), Some(2), "{args:?}: {}", String::from_utf8_lossy(&o.stderr));
+        assert!(o.stdout.is_empty() && String::from_utf8_lossy(&o.stderr).starts_with("error:"), "{args:?}");
+    }
+    assert!(!out.exists() && !saved.exists(), "a usage error wrote a file");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn failures_exit_1_not_2() {
+    let o = cli(&["run", "--cmd", "no.such.command"]);
+    assert_eq!(o.status.code(), Some(1));
+    assert!(stderr(&o).starts_with("error: unknown command `no.such.command`"));
+    assert_eq!(cli(&["info", "/definitely/not/here.pptx"]).status.code(), Some(1));
 }
 
 #[test]

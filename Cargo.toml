@@ -41,6 +41,7 @@ deckcraft-opus = { path = "crates/opus" }
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }
 thiserror = "2"
+clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
