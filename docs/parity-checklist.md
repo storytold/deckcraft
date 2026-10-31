@@ -2,6 +2,8 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
+> **Last updated:** 2026-10-31 · Clipboard row re-assessed: D unchanged for engine operations; native OS clipboard integration remains tracked by #1419/#1620.
+
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
 
@@ -226,10 +228,16 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Draw | Ink pens, highlighter, eraser | P1 | P |
 | Draw | Ink to shape / text | P2 | P |
 | Undo & clipboard | Unlimited undo/redo | P0 | D |
-| Undo & clipboard | Cut, copy, paste shapes and slides | P0 | D |
+| Undo & clipboard | Cut, copy, paste shapes and slides (publication unified, #1620; desktop OS clipboard feature tracked by #1419) | P0 | D |
 | Undo & clipboard | Paste special (keep formatting, picture, text only) | P1 | D |
 | Automation (✱) | Every command scriptable (CLI, control channel, MCP; remote reply IDs, envelopes and framing validated, #718) | P0 | D |
 | Automation (✱) | Headless rendering and conversion | P0 | D |
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |
 | Platforms (✱) | BSD build | P2 | P |
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-10-31 | trivial | Copy/Cut publication unified; engine clipboard row remains D, native OS clipboard integration remains tracked by #1419/#1620. Summary scores unchanged |

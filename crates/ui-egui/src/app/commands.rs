@@ -25,11 +25,9 @@ impl SlideApp {
         };
         match &r {
             // Copy and Cut from the ribbon, menus, the slide's context menu or the control channel
-            // put the text on the system clipboard, as Ctrl+C and Ctrl+X do (#431).
+            // publish the same rich text or object marker as the keyboard (#431, #1620).
             Ok(v) if matches!(id, "edit.copy" | "edit.cut") => {
-                if let Some(t) = v.get("text").and_then(Value::as_str) {
-                    self.pending_copy = Some(t.to_string());
-                }
+                self.pending_copy = super::CopiedContent::from_result(v, !self.session.clipboard.slides.is_empty());
             }
             Ok(_) => {}
             Err(e) => self.set_status(e.clone()),

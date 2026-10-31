@@ -296,8 +296,8 @@ pub struct SlideApp {
     print_previews: app::files::PrintPreviews,
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,
-    /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
-    pending_copy: Option<String>,
+    /// Copy/Cut payload for the system clipboard, handed over by the UI pass.
+    pending_copy: Option<app::CopiedContent>,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
     capture: capture::Capture,
     styled: bool,

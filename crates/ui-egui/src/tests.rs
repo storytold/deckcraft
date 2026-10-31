@@ -1174,6 +1174,166 @@ fn step_app(services: Services) -> egui_kittest::Harness<'static, SlideApp> {
     h
 }
 
+fn clipboard_text(h: &egui_kittest::Harness<'_, SlideApp>) -> Option<String> {
+    h.output().platform_output.commands.iter().find_map(|c| match c {
+        egui::OutputCommand::CopyText(t) => Some(t.clone()),
+        _ => None,
+    })
+}
+
+/// Menu/control Copy and Cut need the same marker as semantic keyboard Copy (#1620).
+#[test]
+fn copy_commands_publish_the_textless_object_marker() {
+    for command in ["edit.copy", "edit.cut"] {
+        let mut h = step_app(Services::default());
+        h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 50, 50]})).unwrap();
+        let before = h.state().session.doc().unwrap().shapes().len();
+        h.state_mut().run(command, json!({})).unwrap();
+        h.run_steps(1);
+        assert_eq!(clipboard_text(&h).as_deref(), Some(OBJECTS_MARKER), "{command}");
+        h.event(egui::Event::Paste(OBJECTS_MARKER.to_string()));
+        h.run_steps(1);
+        let st = h.state().session.doc().unwrap();
+        assert_eq!(st.shapes().len(), before + usize::from(command == "edit.copy"));
+        assert!(!st.shapes().last().unwrap().text_box, "paste the rectangle, not marker text");
+    }
+}
+
+#[test]
+fn copy_commands_publish_html_once_and_fall_back_to_plain_text() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    for command in ["edit.copy", "edit.cut"] {
+        for accepted in [true, false] {
+            let seen = Rc::new(RefCell::new(Vec::new()));
+            let record = seen.clone();
+            let services = Services {
+                clipboard_set_html: Some(Box::new(move |html, plain| {
+                    record.borrow_mut().push((html.to_string(), plain.to_string()));
+                    accepted
+                })),
+                ..Default::default()
+            };
+            let mut h = step_app(services);
+            h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "text": "COPY B"})).unwrap();
+            h.state_mut().session.execute("format.bold", &json!({"on": true})).unwrap();
+            h.state_mut().run(command, json!({})).unwrap();
+            h.run_steps(1);
+            let offers = seen.borrow();
+            assert_eq!(offers.len(), 1, "{command}: offer rich text once");
+            assert!(offers[0].0.contains("<b>"));
+            assert_eq!(offers[0].1, "COPY B");
+            assert_eq!(clipboard_text(&h), (!accepted).then(|| "COPY B".to_string()));
+            drop(offers);
+            h.run_steps(1);
+            assert_eq!(seen.borrow().len(), 1, "do not republish on a later frame");
+            assert_eq!(clipboard_text(&h), None);
+        }
+    }
+}
+
+/// An earlier plain/marker output must not overwrite a later direct HTML write at frame end.
+#[test]
+fn copy_publication_uses_the_last_payload_in_the_pass() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let record = seen.clone();
+    let services = Services {
+        clipboard_set_html: Some(Box::new(move |_, plain| {
+            record.borrow_mut().push(plain.to_string());
+            true
+        })),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let a = h.state_mut().session.execute("shape.insert", &json!({"preset": "rect"})).unwrap()["id"].clone();
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "ellipse", "text": "COPY B"})).unwrap();
+    h.state_mut().session.execute("edit.select", &json!({"ids": [a]})).unwrap();
+    h.input_mut().events.extend([
+        egui::Event::Copy,
+        egui::Event::Key { key: egui::Key::Tab, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::NONE },
+        egui::Event::Copy,
+    ]);
+    h.run_steps(1);
+    assert_eq!(seen.borrow().as_slice(), ["COPY B"]);
+    assert_eq!(clipboard_text(&h), None, "a queued marker would overwrite the later HTML");
+}
+
+/// A backend/control source can deliver command-key events instead of semantic Copy/Cut.
+#[test]
+fn copy_shortcut_fallback_publishes_the_new_selection() {
+    for (command, key) in [("edit.copy", egui::Key::C), ("edit.cut", egui::Key::X)] {
+        let mut h = step_app(Services::default());
+        h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "text": "COPY A"})).unwrap();
+        h.state_mut().run("edit.copy", json!({})).unwrap();
+        h.run_steps(1);
+        assert_eq!(clipboard_text(&h).as_deref(), Some("COPY A"));
+        h.state_mut().session.execute("shape.insert", &json!({"preset": "ellipse", "text": "COPY B"})).unwrap();
+        // Harness::event/key_press step each queued event separately. Inject the raw batch
+        // directly so the assertion observes this frame's clipboard output, not a key release.
+        for pressed in [true, false] {
+            h.input_mut().events.push(egui::Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND,
+            });
+        }
+        h.run_steps(1);
+        assert_eq!(clipboard_text(&h).as_deref(), Some("COPY B"), "{command} must replace stale A");
+        h.event(egui::Event::Paste("COPY B".to_string()));
+        h.run_steps(1);
+        let st = h.state().session.doc().unwrap();
+        let pasted = st.shapes().last().unwrap();
+        assert_eq!(pasted.text.as_ref().unwrap().text(), "COPY B");
+        assert_eq!(pasted.geom, deckcraft_model::Geom::preset("ellipse"));
+    }
+}
+
+#[test]
+fn semantic_and_raw_cut_in_one_batch_execute_once() {
+    for semantic_first in [true, false] {
+        let mut h = step_app(Services::default());
+        h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "text": "CUT ONCE"})).unwrap();
+        let before = h.state().session.doc().unwrap().history.undo.len();
+        let raw = egui::Event::Key {
+            key: egui::Key::X,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND,
+        };
+        for event in if semantic_first { [egui::Event::Cut, raw] } else { [raw, egui::Event::Cut] } {
+            h.input_mut().events.push(event);
+        }
+        h.run_steps(1);
+        assert_eq!(clipboard_text(&h).as_deref(), Some("CUT ONCE"));
+        assert_eq!(h.state().session.clipboard.plain, "CUT ONCE");
+        assert_eq!(h.state().session.doc().unwrap().history.undo.len(), before + 1);
+        h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
+        assert!(h.state().session.doc().unwrap().shapes().iter().any(|sh| sh.text.as_ref().is_some_and(|t| t.text() == "CUT ONCE")));
+    }
+}
+
+#[test]
+fn copy_shortcut_fallback_leaves_focused_notes_to_the_text_field() {
+    let mut h = step_app(Services::default());
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "text": "OBJECT"})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+    let before = h.state().session.doc().unwrap().shapes().len();
+    let notes = egui::Id::unique("notes_edit");
+    h.ctx.memory_mut(|m| m.request_focus(notes));
+    h.run_steps(1);
+    assert!(h.ctx.text_edit_focused());
+    h.key_press_modifiers(egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND, egui::Key::X);
+    h.run_steps(1);
+    assert_eq!(h.state().session.doc().unwrap().shapes().len(), before, "do not cut the selected slide object");
+    assert_eq!(h.state().session.clipboard.plain, "OBJECT");
+    assert_eq!(clipboard_text(&h), None);
+}
+
 /// Copy of a bold selection offers HTML; paste of Pages-like HTML keeps the bold.
 #[test]
 fn copy_offers_html_and_paste_keeps_bold() {
