@@ -378,10 +378,9 @@ fn title_bar_export_opens_the_export_dialog() {
     assert_eq!(harness.state().dialog.as_ref().map(|d| d.id.as_str()), Some("export"));
 }
 
-/// #53: Ctrl+V did nothing for an image-only clipboard: egui-winit sends no Paste event for it and
-/// swallows the key press, so only the V release reaches the app.
+/// Native PNG transfers may finish after key release; never race them with a synchronous read.
 #[test]
-fn ctrl_v_pastes_an_image_when_no_paste_event_arrives() {
+fn ctrl_v_waits_for_native_image_delivery_after_release() {
     let session = Session::with_new();
     let png = {
         let d = session.active().unwrap();
@@ -412,9 +411,12 @@ fn ctrl_v_pastes_an_image_when_no_paste_event_arrives() {
     harness.event(egui::Event::Key { key: egui::Key::V, physical_key: None, pressed: false, repeat: false, modifiers: egui::Modifiers::NONE });
     harness.run_steps(2);
     assert_eq!(pictures(harness.state()), 0);
-    // What egui-winit sends for Ctrl+V with only an image on the clipboard: the release alone.
+    // A delayed native image must not be guessed from the release alone.
     harness.event(v(false));
-    harness.run_steps(2);
+    harness.run_steps(8);
+    assert_eq!(pictures(harness.state()), 0);
+    harness.event(egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::new([1, 1], vec![egui::Color32::RED]))));
+    harness.run_steps(3);
     assert_eq!(pictures(harness.state()), 1);
 }
 

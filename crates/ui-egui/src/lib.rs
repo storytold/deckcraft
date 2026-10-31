@@ -19,6 +19,7 @@ pub mod backstage;
 pub mod canvas;
 pub mod capture;
 pub mod control;
+pub mod desktop_menu;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
@@ -115,6 +116,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("view.tab", "Ribbon Tab", None, "{tab}"),
     ("view.collapseRibbon", "Collapse the Ribbon", Some("Cmd+F1"), "{}"),
     ("view.dark", "Dark Mode", None, "{on?: bool}"),
+    ("view.theme", "Appearance", None, "{mode: system|light|dark}"),
     ("view.grayscale", "Grayscale", None, "{on?: bool}"),
     ("view.newWindow", "New Window", None, "{on?: bool, slide?: index, delta?: int}"),
     ("show.start", "Slide Show", Some("F5"), "{from?: index, custom?: name}"),
@@ -213,6 +215,34 @@ struct InputTarget {
     opening: Option<(egui::Id, u64)>,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum DesktopClipboard {
+    Copy,
+    Cut,
+    Paste,
+}
+
+impl DesktopClipboard {
+    pub(crate) fn matches(self, event: &egui::Event) -> bool {
+        matches!(
+            (self, event),
+            (Self::Copy, egui::Event::Copy) | (Self::Cut, egui::Event::Cut) | (Self::Paste, egui::Event::Paste(_) | egui::Event::PasteImage(_))
+        )
+    }
+}
+
+struct DesktopClipboardRequest {
+    kind: DesktopClipboard,
+    document: u64,
+    revision: u64,
+    selection: deckcraft_engine::Selection,
+    viewport: egui::ViewportId,
+    focus: Option<egui::Id>,
+    cursor: Option<egui::text::CCursorRange>,
+    arrived: bool,
+    rejected: bool,
+}
+
 pub struct SlideApp {
     /// Shape Fill's last colour (a command colour parameter): the button applies it again. Accent 1 until one is picked.
     pub last_fill: serde_json::Value,
@@ -297,10 +327,14 @@ pub struct SlideApp {
     updates_rt: updates_ui::Runtime,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
     pending_copy: Option<String>,
+    /// Native-menu paste waits for the toolkit's text/image event before legacy fallback.
+    desktop_clipboard: Vec<DesktopClipboardRequest>,
     /// Bounded screenshot completion slots for the control channel (egui 0.37 callbacks).
     capture: capture::Capture,
     styled: bool,
     restyle: bool,
+    /// Portal appearance supplied by the host, without transport dependencies in the UI.
+    desktop_dark: Option<bool>,
     fonts_ready: bool,
     last_time: f64,
     /// When AutoRecover data was last written (monotonic seconds, not wall time).
@@ -322,8 +356,6 @@ pub struct SlideApp {
     pub sorter: sorter::State,
     /// The slide thumbnail pane was the last thing clicked, so ⌘A selects slides, not shapes.
     pub(crate) slides_focused: bool,
-    /// A V key press or a Paste event arrived since the last V release (see `keyboard`).
-    v_seen: bool,
     /// Which recent paths exist on disk, probed once per path per session (a dead network share
     /// must not stall every frame). Not persisted.
     recent_checked: HashMap<String, bool>,

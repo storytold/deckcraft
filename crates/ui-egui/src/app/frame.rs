@@ -4,6 +4,16 @@ impl SlideApp {
     /// Style, fonts and zoom setup. Runs in a real UI pass, not from `run_logic`, because
     /// `set_fonts`/`set_visuals` only take effect for the pass that lays out the UI.
     pub(super) fn ui_setup(&mut self, ctx: &egui::Context) -> bool {
+        if self.ui.system_theme {
+            let dark = self.desktop_dark.or_else(|| ctx.system_theme().map(|theme| theme == egui::Theme::Dark));
+            if let Some(dark) = dark {
+                let brightness = if dark { theme::Brightness::Dark } else { theme::Brightness::Light };
+                if brightness != self.ui.brightness {
+                    self.ui.brightness = brightness;
+                    self.restyle = true;
+                }
+            }
+        }
         let scale = self.ui.ui_scale.clamp(0.5, 3.0);
         if (ctx.zoom_factor() - scale).abs() > 1e-3 {
             ctx.set_zoom_factor(scale);
