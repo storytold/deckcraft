@@ -7,7 +7,7 @@ use deckcraft_model::text::TextBody;
 use deckcraft_model::{LayoutId, LayoutType, Presentation, Section, SlideId, defaults};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, has_doc, has_slide, ok, opt_usize_param, str_param, usize_param};
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, bool_param, cmd, has_doc, has_slide, ok, opt_usize_param, str_param};
 use crate::{Result, Session, Target};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -21,39 +21,39 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             new
         ),
-        cmd!("slide.duplicate", "Duplicate Slide", ["Insert"], None, "{index?}", has_slide, duplicate),
-        cmd!("slide.delete", "Delete Slide", ["Edit"], None, "{index?, ids?: [slide id]}", has_slide, delete),
+        cmd!("slide.duplicate", "Duplicate Slide", ["Insert"], None, "{index? (0-based)}", has_slide, duplicate),
+        cmd!("slide.delete", "Delete Slide", ["Edit"], None, "{index? (0-based), ids?: [slide id]}", has_slide, delete),
         cmd!(
             "slide.move",
             "Move Slide",
             [],
             None,
-            "{from?: index, ids?: [slide id], to: index (counted without the moved slides)}",
+            "{from?: index (0-based), ids?: [slide id], to: index (0-based, counted without the moved slides)}",
             has_slide,
             move_slide
         ),
-        cmd!(noundo "slide.go", "Go to Slide", [], None, "{index} | {id}", has_slide, go),
+        cmd!(noundo "slide.go", "Go to Slide", [], None, "{index (0-based)} | {id}", has_slide, go),
         cmd!(noundo "slide.next", "Next Slide", [], Some("PageDown"), "{}", has_slide, next),
         cmd!(noundo "slide.previous", "Previous Slide", [], Some("PageUp"), "{}", has_slide, prev),
         cmd!(noundo "slide.first", "First Slide", [], Some("Home"), "{}", has_slide, first),
         cmd!(noundo "slide.last", "Last Slide", [], Some("End"), "{}", has_slide, last),
         cmd!(noundo "slide.selectRange", "Select Slide Range", [], None, "{to: index, from?: index (default the current slide), add?: bool (keep the slides already selected)}", has_slide, select_range),
-        cmd!(noundo "slide.selectSlides", "Select Slides", [], None, "{ids?: [slide id], indices?: [index], add?: bool}", has_slide, select_slides),
-        cmd!("slide.hide", "Hide Slide", ["Slide Show", "Set Up"], None, "{index?, hidden?: bool}", has_slide, hide),
-        cmd!("slide.layout", "Layout", ["Home", "Slides"], None, "{layout: name or kind, index?}", has_slide, set_layout),
-        cmd!("slide.reset", "Reset", ["Home", "Slides"], None, "{index?}", has_slide, reset),
+        cmd!(noundo "slide.selectSlides", "Select Slides", [], None, "{ids?: [slide id], indices?: [index (0-based)], add?: bool}", has_slide, select_slides),
+        cmd!("slide.hide", "Hide Slide", ["Slide Show", "Set Up"], None, "{index? (0-based), hidden?: bool}", has_slide, hide),
+        cmd!("slide.layout", "Layout", ["Home", "Slides"], None, "{layout: name or kind, index? (0-based)}", has_slide, set_layout),
+        cmd!("slide.reset", "Reset", ["Home", "Slides"], None, "{index? (0-based)}", has_slide, reset),
         cmd!(
             "slide.notes",
             "Notes",
             ["View"],
             None,
-            "{text | body: formatted notes (as in slide.inspect's notesBody), index?} (text as typed: untouched notes keep their formatting)",
+            "{text | body: formatted notes (as in slide.inspect's notesBody), index? (0-based)} (text as typed: untouched notes keep their formatting)",
             has_slide,
             notes
         ),
-        cmd!("slide.rename", "Rename Slide", [], None, "{name, index?}", has_slide, rename),
-        cmd!("section.add", "Add Section", ["Home", "Slides", "Section"], None, "{name?, at?: slide index}", has_slide, section_add),
-        cmd!("section.rename", "Rename Section", ["Home", "Slides", "Section"], None, "{index, name}", has_slide, section_rename),
+        cmd!("slide.rename", "Rename Slide", [], None, "{name, index? (0-based)}", has_slide, rename),
+        cmd!("section.add", "Add Section", ["Home", "Slides", "Section"], None, "{name?, at?: slide index (0-based)}", has_slide, section_add),
+        cmd!("section.rename", "Rename Section", ["Home", "Slides", "Section"], None, "{index (0-based), name}", has_slide, section_rename),
         cmd!(
             "section.remove",
             "Remove Section",
@@ -64,7 +64,7 @@ pub fn specs() -> Vec<CommandSpec> {
             section_remove
         ),
         cmd!("section.removeAll", "Remove All Sections", ["Home", "Slides", "Section"], None, "{}", has_slide, section_remove_all),
-        cmd!("section.move", "Move Section", [], None, "{index, to}", has_slide, section_move),
+        cmd!("section.move", "Move Section", [], None, "{index, to} (0-based; to is the final index)", has_slide, section_move),
         cmd!(
             "slide.fromOutline",
             "Slides from Outline…",
@@ -141,7 +141,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
             }
             sh.text = Some(body);
         }
-        let at = usize_param(p, "at").unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
+        let at = super::opt_usize_param(p, "at", "slide.new")?.unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
         let id = slide.id;
         // Inherit the section of the slide before.
         let section = at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|prev| doc.section_of(prev.id));
@@ -187,18 +187,19 @@ fn body_placeholder(shapes: &mut [deckcraft_model::Shape]) -> Option<&mut deckcr
     shapes.get_mut(best)
 }
 
-fn index_of(s: &Session, p: &Value) -> Result<usize> {
+/// The slide `index` names (the current one by default), or `cmd`'s error for one past the end.
+fn index_of(s: &Session, p: &Value, cmd: &str) -> Result<usize> {
     let st = s.doc()?;
     let i = opt_usize_param(p, "index", "slide")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
-        return Err(bad("slide", format!("no slide {i}")));
+        return Err(super::no_slide(cmd, i, st.doc.slides.len()));
     }
     Ok(i)
 }
 
 fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
     let indices: Vec<usize> = match opt_usize_param(p, "index", "slide.duplicate")? {
-        Some(i) => vec![i],
+        Some(_) => vec![index_of(s, p, "slide.duplicate")?],
         None => {
             let st = s.doc()?;
             let mut v: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
@@ -251,7 +252,7 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(a) = p.get("ids").and_then(Value::as_array) {
             a.iter().filter_map(Value::as_u64).filter_map(|v| u32::try_from(v).ok()).map(SlideId).collect()
         } else if let Some(i) = opt_usize_param(p, "index", "slide.delete")? {
-            st.doc.slides.get(i).map(|x| vec![x.id]).unwrap_or_default()
+            vec![st.doc.slides.get(i).ok_or_else(|| super::no_slide("slide.delete", i, st.doc.slides.len()))?.id]
         } else if !st.selection.slides.is_empty() {
             st.selection.slides.clone()
         } else {
@@ -277,24 +278,28 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Moves one slide (`from`, else the current slide) or several (`ids`) to `to`, in one undo step.
 /// `to` counts in the deck without the moved slides; they land there as one run, in the order
-/// they had, join the section of the slide before them, and stay selected.
+/// they had, join the section of the slide before them, and stay selected. An index past the end
+/// is refused, never clamped.
 fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = p.get("ids").filter(|v| !v.is_null());
     let from = match ids {
         None => opt_usize_param(p, "from", "slide.move")?.unwrap_or(s.doc()?.selection.slide),
         Some(_) => 0,
     };
-    let to = usize_param(p, "to").ok_or_else(|| bad("slide.move", "missing `to`"))?;
+    let to = opt_usize_param(p, "to", "slide.move")?.ok_or_else(|| bad("slide.move", "missing `to`"))?;
     s.edit(|doc, sel| {
+        let n = doc.slides.len();
         let moving: HashSet<SlideId> = match ids {
             Some(v) => slide_ids_param(v, doc, "slide.move")?,
             None => {
-                let id = doc.slides.get(from).map(|x| x.id).ok_or_else(|| bad("slide.move", format!("no slide {from}")))?;
+                let id = doc.slides.get(from).map(|x| x.id).ok_or_else(|| super::no_slide("slide.move", from, n))?;
                 HashSet::from([id])
             }
         };
         let (block, mut rest): (Vec<_>, Vec<_>) = std::mem::take(&mut doc.slides).into_iter().partition(|x| moving.contains(&x.id));
-        let to = to.min(rest.len());
+        if to > rest.len() {
+            return Err(super::no_slide("slide.move", to, rest.len() + 1));
+        }
         let tail = rest.split_off(to);
         let moved: Vec<SlideId> = block.iter().map(|x| x.id).collect();
         rest.extend(block);
@@ -359,7 +364,7 @@ fn go_to(s: &mut Session, i: usize) -> Result<Value> {
 }
 
 fn go(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = match (usize_param(p, "index"), p.get("id").and_then(Value::as_u64)) {
+    let i = match (super::opt_usize_param(p, "index", "slide.go")?, p.get("id").and_then(Value::as_u64)) {
         (Some(i), _) => i,
         (None, Some(id)) => s
             .doc()?
@@ -368,8 +373,9 @@ fn go(s: &mut Session, p: &Value) -> Result<Value> {
             .ok_or_else(|| bad("slide.go", "no such slide"))?,
         _ => return Err(bad("slide.go", "missing `index`")),
     };
-    if i >= s.doc()?.doc.slides.len() {
-        return Err(bad("slide.go", format!("no slide {i}")));
+    let n = s.doc()?.doc.slides.len();
+    if i >= n {
+        return Err(super::no_slide("slide.go", i, n));
     }
     go_to(s, i)
 }
@@ -398,8 +404,18 @@ fn select_slides(s: &mut Session, p: &Value) -> Result<Value> {
             .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(Value::as_u64).filter_map(|x| u32::try_from(x).ok()).map(SlideId).collect())
             .unwrap_or_default();
-        if let Some(a) = p.get("indices").and_then(Value::as_array) {
-            v.extend(a.iter().filter_map(Value::as_u64).filter_map(|i| st.doc.slides.get(i as usize)).map(|x| x.id));
+        let indices = match p.get("indices") {
+            None | Some(Value::Null) => None,
+            Some(Value::Array(a)) => Some(a),
+            Some(v) => return Err(bad("slide.selectSlides", format!("`indices` is a list of 0-based slide indices, not {v}"))),
+        };
+        if let Some(a) = indices {
+            for x in a {
+                let i = x.as_u64().and_then(|i| usize::try_from(i).ok()).ok_or_else(|| {
+                    bad("slide.selectSlides", format!("each entry of `indices` must be a non-negative integer (a 0-based index), not {x}"))
+                })?;
+                v.push(st.doc.slides.get(i).ok_or_else(|| super::no_slide("slide.selectSlides", i, st.doc.slides.len()))?.id);
+            }
         }
         v
     };
@@ -428,7 +444,7 @@ fn select_slides(s: &mut Session, p: &Value) -> Result<Value> {
 /// slide, as in PowerPoint), else at the current slide.
 /// With `add` the slides already selected stay selected (Ctrl+Shift-click).
 fn select_range(s: &mut Session, p: &Value) -> Result<Value> {
-    let to = usize_param(p, "to").ok_or_else(|| bad("slide.selectRange", "missing `to`"))?;
+    let to = opt_usize_param(p, "to", "slide.selectRange")?.ok_or_else(|| bad("slide.selectRange", "missing `to`"))?;
     let given = opt_usize_param(p, "from", "slide.selectRange")?;
     let add = bool_or(p, "add", false);
     let (from, count) = {
@@ -438,8 +454,8 @@ fn select_range(s: &mut Session, p: &Value) -> Result<Value> {
         let anchor = sel.range_anchor.filter(|(_, end)| Some(*end) == current).and_then(|(a, _)| st.doc.slide_index(a));
         (given.or(anchor).unwrap_or(sel.slide), st.doc.slides.len())
     };
-    if to >= count || from >= count {
-        return Err(bad("slide.selectRange", "no such slide"));
+    if let Some(i) = [from, to].into_iter().find(|i| *i >= count) {
+        return Err(super::no_slide("slide.selectRange", i, count));
     }
     let (a, b) = (from.min(to), from.max(to));
     s.select(|doc, sel| {
@@ -465,7 +481,7 @@ fn select_range(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn hide(s: &mut Session, p: &Value) -> Result<Value> {
     let targets: Vec<usize> = match opt_usize_param(p, "index", "slide.hide")? {
-        Some(i) => vec![i],
+        Some(_) => vec![index_of(s, p, "slide.hide")?],
         None => {
             let st = s.doc()?;
             let v: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
@@ -534,7 +550,7 @@ pub fn apply_layout(doc: &mut Presentation, index: usize, layout: LayoutId) -> R
 fn set_layout(s: &mut Session, p: &Value) -> Result<Value> {
     let key = p.get("layout").cloned().ok_or_else(|| bad("slide.layout", "missing `layout`"))?;
     let targets: Vec<usize> = match opt_usize_param(p, "index", "slide.layout")? {
-        Some(i) => vec![i],
+        Some(_) => vec![index_of(s, p, "slide.layout")?],
         None => {
             let st = s.doc()?;
             let v: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
@@ -554,7 +570,7 @@ fn set_layout(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn reset(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = index_of(s, p)?;
+    let i = index_of(s, p, "slide.reset")?;
     s.edit(|doc, sel| {
         let layout = doc.slides.get(i).map(|x| x.layout).unwrap_or_default();
         apply_layout(doc, i, layout)?;
@@ -588,7 +604,7 @@ fn reset(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn notes(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = index_of(s, p)?;
+    let i = index_of(s, p, "slide.notes")?;
     // Formatted notes as a whole (the notes editors), or text: then only what was retyped
     // changes, so bold, levels and bullets around it survive.
     let body = match p.get("body") {
@@ -610,7 +626,7 @@ fn notes(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn rename(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = index_of(s, p)?;
+    let i = index_of(s, p, "slide.rename")?;
     let name = str_param(p, "name").unwrap_or("").to_string();
     s.edit(|doc, _| {
         if let Some(sl) = doc.slides.get_mut(i) {
@@ -647,10 +663,11 @@ fn section_add(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_rename(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.rename", "missing `index`"))?;
+    let i = super::opt_usize_param(p, "index", "section.rename")?.ok_or_else(|| bad("section.rename", "missing `index`"))?;
     let name = str_param(p, "name").unwrap_or("").to_string();
     s.edit(|doc, _| {
-        let sec = doc.sections.get_mut(i).ok_or_else(|| bad("section.rename", "no such section"))?;
+        let n = doc.sections.len();
+        let sec = doc.sections.get_mut(i).ok_or_else(|| bad("section.rename", super::out_of_range("section", i, n)))?;
         sec.name = name;
         Ok(())
     })?;
@@ -658,11 +675,11 @@ fn section_rename(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn section_remove(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.remove", "missing `index`"))?;
+    let i = super::opt_usize_param(p, "index", "section.remove")?.ok_or_else(|| bad("section.remove", "missing `index`"))?;
     let with_slides = bool_or(p, "slides", false);
     s.edit(|doc, sel| {
         if i >= doc.sections.len() {
-            return Err(bad("section.remove", "no such section"));
+            return Err(bad("section.remove", super::out_of_range("section", i, doc.sections.len())));
         }
         let sec = doc.sections.remove(i);
         if with_slides {
@@ -689,14 +706,15 @@ fn section_remove_all(s: &mut Session, _p: &Value) -> Result<Value> {
 }
 
 fn section_move(s: &mut Session, p: &Value) -> Result<Value> {
-    let i = usize_param(p, "index").ok_or_else(|| bad("section.move", "missing `index`"))?;
-    let to = usize_param(p, "to").ok_or_else(|| bad("section.move", "missing `to`"))?;
+    let i = super::opt_usize_param(p, "index", "section.move")?.ok_or_else(|| bad("section.move", "missing `index`"))?;
+    let to = super::opt_usize_param(p, "to", "section.move")?.ok_or_else(|| bad("section.move", "missing `to`"))?;
     s.edit(|doc, _| {
-        if i >= doc.sections.len() {
-            return Err(bad("section.move", "no such section"));
+        // `to` is the final index, so it has the same range as `index`: refused, never clamped.
+        let n = doc.sections.len();
+        if let Some(j) = [i, to].into_iter().find(|j| *j >= n) {
+            return Err(bad("section.move", super::out_of_range("section", j, n)));
         }
         let sec = doc.sections.remove(i);
-        let to = to.min(doc.sections.len());
         doc.sections.insert(to, sec);
         // Reorder slides to follow sections.
         let order: Vec<SlideId> = doc.sections.iter().flat_map(|x| x.slides.iter().copied()).collect();
@@ -799,7 +817,12 @@ mod tests {
         assert_eq!(selected(&s), (2, vec![ids[0], ids[2]]));
 
         let (mut s, ids) = deck(6);
-        s.execute("slide.move", &json!({"ids": [ids[1], ids[3]], "to": 1000})).expect("past the end clamps");
+        // Past the end is refused, as everywhere else; the last place counted without the moved
+        // slides is the end.
+        let before = order(&s);
+        assert!(s.execute("slide.move", &json!({"ids": [ids[1], ids[3]], "to": 5})).is_err(), "past the end is refused");
+        assert_eq!(order(&s), before);
+        s.execute("slide.move", &json!({"ids": [ids[1], ids[3]], "to": 4})).expect("to the end");
         assert_eq!(order(&s), [ids[0], ids[2], ids[4], ids[5], ids[1], ids[3]]);
         assert_eq!(selected(&s), (4, vec![ids[1], ids[3]]));
     }
@@ -894,6 +917,28 @@ mod tests {
         assert_eq!(got, want.iter().map(|(l, t)| (*l, t.to_string())).collect::<Vec<_>>());
     }
 
+    /// Indices count from 0 while the editor counts from 1: an index past the end names the
+    /// valid range so an agent can correct itself.
+    #[test]
+    fn go_past_the_end_names_the_valid_indices() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("new slide");
+        let err = s.execute("slide.go", &json!({"index": 2})).expect_err("past the end").to_string();
+        assert!(err.contains("no slide at index 2; indices run 0 through 1"), "{err}");
+        assert_eq!(s.doc().expect("doc").selection.slide, 1);
+    }
+
+    #[test]
+    fn move_past_the_end_is_refused_not_clamped() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("new slide");
+        let before: Vec<_> = s.doc().expect("doc").doc.slides.iter().map(|x| x.id).collect();
+        let err = s.execute("slide.move", &json!({"from": 0, "to": 2})).expect_err("past the end").to_string();
+        assert!(err.contains("indices run 0 through 1"), "{err}");
+        let after: Vec<_> = s.doc().expect("doc").doc.slides.iter().map(|x| x.id).collect();
+        assert_eq!(before, after);
+    }
+
     fn deck_of(n: usize) -> Session {
         let mut s = Session::with_new();
         while s.doc().expect("doc").doc.slides.len() < n {
@@ -937,7 +982,8 @@ mod tests {
     #[test]
     fn select_range_rejects_out_of_range_slides() {
         let mut s = deck_of(3);
-        assert!(s.execute("slide.selectRange", &json!({"to": 3})).is_err());
+        let e = s.execute("slide.selectRange", &json!({"to": 3})).unwrap_err().to_string();
+        assert!(e.contains("indices run 0 through 2"), "{e}");
         assert!(s.execute("slide.selectRange", &json!({"from": 9, "to": 1})).is_err());
         assert!(s.execute("slide.selectRange", &json!({})).is_err());
     }
