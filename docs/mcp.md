@@ -104,13 +104,13 @@ id, …}` so the title or body can be set without an inspect. Shape ids are uniq
 presentation: a shape or text command given an id on another slide edits it there, makes that
 slide current and answers `{"changed": 1, "onSlides": [4], "currentSlide": 4}`; the read-only
 lookups (`shape.inspect`, `text.get`, `shape.sites`) find it anywhere, move nothing, and
-`shape.inspect` and `text.get` answer the `slide` index it is on. These work on the current slide:
-`shape.connect` refuses an id on another slide, saying where the shape is and the `slide.go` that
-gets there, and `text.edit` (the text cursor), `smartArt.*`, `arrange.group` and `edit.delete`
-refuse it too; `arrange.distribute` and the order commands (`arrange.bringToFront`…) succeed but
-leave it where it is, and `arrange.align` moves it but measures the alignment from the current
-slide, so `slide.go` first. `arrange.nudge`, `arrange.rotate*` and `arrange.flip*`
-edit a shape on any slide like the other shape commands. `comment.add` and the other comment edits
+`shape.inspect` and `text.get` answer the `slide` index it is on. These work on the current slide
+and refuse an id on another slide, saying where the shape is and the `slide.go` that gets there:
+`text.edit` (the text cursor), `edit.delete`, `shape.connect`, `smartArt.*` and the arrange
+commands that act on several shapes together (`arrange.align`, `arrange.distribute`,
+`arrange.group`, `arrange.ungroup` and the order commands such as `arrange.bringToFront`).
+`arrange.nudge`, `arrange.rotate*` and `arrange.flip*` edit a shape on any slide like the other
+shape commands. `comment.add` and the other comment edits
 act on the current slide, except `comment.delete {all: true}`, which clears the comments on every
 slide; `comment.list`, `comment.next` and `comment.prev` take `slide`. `batch` items and `run_command` may name a tool (`add_shape`,
 `add_text_box`, `go_to_slide`…) instead of a command, with the tool's arguments as `params`; a

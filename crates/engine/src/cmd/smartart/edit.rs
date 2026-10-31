@@ -38,6 +38,10 @@ fn target_group(s: &Session, p: &Value, cmd: &str) -> Result<ShapeId> {
     let st = s.doc()?;
     let shapes = current_shapes(&st.doc, &st.selection).ok_or_else(|| bad(cmd, "no slide"))?;
     let ids = targets(s, p)?;
+    // A SmartArt graphic on another slide is refused saying where it is, as shape.connect does.
+    if let Some(&id) = ids.iter().find(|id| deckcraft_model::find_shape(shapes, **id).is_none() && st.shape_anywhere(**id).is_some()) {
+        return Err(crate::cmd::no_such_shape(&st.doc, &st.selection, id, cmd));
+    }
     ids.iter().find_map(|id| diagram_group(shapes, *id)).map(|g| g.id).ok_or_else(|| bad(cmd, not_smartart(shapes, &ids)))
 }
 

@@ -28,9 +28,9 @@ inspect_slide to read back ids, boxes and text → render_slide to look at the r
 images: export {path, format: \"png\", slide} and view the file). Shape ids are unique in the presentation: a shape or text command given an id on another slide edits it \
 there, makes that slide current and says so in its answer ({changed, onSlides, currentSlide}); the read-only lookups \
 (shape.inspect, text.get, shape.sites) find it anywhere and move nothing; shape.inspect and text.get answer its `slide`. These \
-work on the current slide, so slide.go first: text.edit, shape.connect, smartArt.*, arrange.group and edit.delete refuse an id on another \
-slide, arrange.distribute and the order commands (arrange.bringToFront…) leave it where it is, and arrange.align moves it but \
-measures from the current slide. arrange.nudge, rotate and flip edit a shape on any slide. comment.add and the other comment \
+work on the current slide and refuse an id on another slide, naming its slide (slide.go first): text.edit, edit.delete, \
+shape.connect, smartArt.* and the arrange commands that act on several shapes together (align, distribute, group, ungroup and \
+the order commands such as arrange.bringToFront). arrange.nudge, rotate and flip edit a shape on any slide. comment.add and the other comment \
 edits act on the current slide, except comment.delete {all: true}, which clears every slide's comments; comment.list, \
 comment.next and comment.prev take `slide`. An inserted shape is selected; run_command edit.select {ids:[…]} selects others. format.* acts on \
 the selected text or shapes (format.languageAll on all the text in the presentation); shape.fill, shape.line and the other shape commands whose parameters list `ids` act on \
