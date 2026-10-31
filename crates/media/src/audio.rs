@@ -169,6 +169,11 @@ fn contained<T>(f: impl FnOnce() -> Result<T>) -> Result<T> {
 const MAX_DEMUX_ERRORS: u32 = 64;
 
 fn decode_symphonia(bytes: &Bytes, ext: &str) -> Result<Pcm> {
+    decode_symphonia_capped(bytes, ext, MAX_PCM_SAMPLES)
+}
+
+/// [`decode_symphonia`] failing once more than `max_samples` samples have been decoded.
+fn decode_symphonia_capped(bytes: &Bytes, ext: &str, max_samples: usize) -> Result<Pcm> {
     let mss = MediaSourceStream::new(Box::new(Cursor::new(Shared(bytes.clone()))), MediaSourceStreamOptions::default());
     let mut hint = Hint::new();
     match ext {
@@ -242,6 +247,9 @@ fn decode_symphonia(bytes: &Bytes, ext: &str) -> Result<Pcm> {
                 }
                 if let Some(b) = buf.as_mut() {
                     b.copy_interleaved_ref(decoded);
+                    if b.samples().len() > max_samples.saturating_sub(out.len()) {
+                        return Err(MediaError::Unsupported("audio this long".into()));
+                    }
                     out.extend_from_slice(b.samples());
                 }
             }
@@ -275,6 +283,48 @@ pub(crate) fn probe_symphonia(bytes: &Bytes, ext: &str) -> Option<(String, u32, 
     let p = &t.codec_params;
     let name = codecs.get_codec(p.codec).map(|d| d.short_name.to_string()).unwrap_or_else(|| "unknown".into());
     Some((name, p.sample_rate.unwrap_or(0), p.channels.map(|c| c.count() as u16).unwrap_or(0), p.n_frames))
+}
+
+/// Length in milliseconds of the first decodable track, summed from its packet durations: the
+/// file is demuxed but not decoded. `None` when the demuxer reports no durations.
+pub(crate) fn demux_duration_ms(bytes: &Bytes, ext: &str) -> Option<u64> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mss = MediaSourceStream::new(Box::new(Cursor::new(Shared(bytes.clone()))), MediaSourceStreamOptions::default());
+        let mut hint = Hint::new();
+        if ext != "unknown" {
+            hint.with_extension(ext);
+        }
+        let opts = FormatOptions { enable_gapless: true, ..Default::default() };
+        let mut format = symphonia::default::get_probe().format(&hint, mss, &opts, &MetadataOptions::default()).ok()?.format;
+        let t = format.tracks().iter().find(|t| t.codec_params.codec != CODEC_TYPE_NULL)?;
+        let (id, tb) = (t.id, t.codec_params.time_base?);
+        let mut ticks = 0u64;
+        let mut errors = 0u32;
+        loop {
+            match format.next_packet() {
+                Ok(p) => {
+                    errors = 0;
+                    if p.track_id() == id {
+                        ticks = ticks.saturating_add(p.dur);
+                    }
+                }
+                Err(SymError::DecodeError(_)) => {
+                    errors += 1;
+                    if errors > MAX_DEMUX_ERRORS {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        if ticks == 0 {
+            return None;
+        }
+        let t = tb.calc_time(ticks);
+        Some(t.seconds.saturating_mul(1000).saturating_add((t.frac * 1000.0).round() as u64))
+    }))
+    .ok()
+    .flatten()
 }
 
 /// Interleaved PCM resampled (linear) to `rate`.
@@ -311,6 +361,21 @@ mod tests {
         assert_eq!(r.frames(), 200);
         assert!((r.duration() - 1.0).abs() < 1e-9);
         assert!((r.at(101, 0) - 0.505).abs() < 1e-3);
+    }
+
+    /// A sample cap makes a long decode fail instead of growing without bound.
+    #[test]
+    fn decode_past_the_sample_cap_is_an_error() {
+        let b: Bytes = std::sync::Arc::new(std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tone.aac")).unwrap_or_default());
+        assert!(decode_symphonia_capped(&b, "aac", usize::MAX).is_ok());
+        assert!(decode_symphonia_capped(&b, "aac", 1000).is_err());
+    }
+
+    #[test]
+    fn demux_duration_matches_decoded_length() {
+        let b: Bytes = std::sync::Arc::new(std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tone.aac")).unwrap_or_default());
+        let ms = demux_duration_ms(&b, "aac").unwrap_or(0) as i64;
+        assert!((ms - 500).abs() <= 60, "{ms} ms");
     }
 
     #[test]
