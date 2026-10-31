@@ -215,6 +215,20 @@ fn clipboard_copy_paste_shapes_and_slides() {
 }
 
 #[test]
+fn copied_shapes_paste_as_shapes_while_a_text_box_is_being_edited() {
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [10, 10, 50, 50]})).unwrap();
+    s.execute("edit.copy", &json!({})).unwrap();
+    let r = s.execute("insert.textBox", &json!({"text": "Hello"})).unwrap();
+    let id = r["id"].as_u64().unwrap();
+    s.execute("text.edit", &json!({"id": id})).unwrap();
+    let before = s.doc().unwrap().current_slide().unwrap().shapes.len();
+    s.execute("edit.paste", &json!({})).unwrap();
+    assert_eq!(s.doc().unwrap().current_slide().unwrap().shapes.len(), before + 1);
+    assert!(s.doc().unwrap().selection.text.is_none());
+}
+
+#[test]
 fn pasted_shapes_get_the_next_automatic_name() {
     let mut s = session();
     let names = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
