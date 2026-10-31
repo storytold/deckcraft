@@ -56,4 +56,8 @@ pub struct Services {
     pub clipboard_set_html: Option<Box<dyn FnMut(&str, &str) -> bool>>,
     /// Audio output for media playback (cpal on desktop); without one media plays silently.
     pub audio_out: Option<Box<dyn deckcraft_media::AudioOut>>,
+    /// How many displays are connected, when the host can tell. With exactly one, a slide show
+    /// starts without the Presenter View window, as PowerPoint does: it would sit under the
+    /// full-screen show, and a covered window's swapchain can hold up every show frame (#1567).
+    pub display_count: Option<Box<dyn FnMut() -> Option<usize>>>,
 }
