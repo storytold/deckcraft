@@ -127,7 +127,7 @@ pub fn tool_definitions() -> Vec<Value> {
                     "perPage": {"type": "integer", "enum": [1, 2, 3, 4, 6, 9], "description": "PDF handouts: slides per page (default 6)"},
                     "dpi": num("PDF: raster resolution of slide artwork, 36-600 (default 200)"),
                     "slides": {"type": "array", "items": {"type": "integer", "minimum": 0}, "description": "PDF and GIF: slide indices to export, in order (default all)"},
-                    "includeHidden": boolean("PDF and GIF: include hidden slides (default false)"),
+                    "includeHidden": boolean("PDF, GIF and outline/RTF: include hidden slides (default false)"),
                     "textLayer": boolean("PDF: invisible text layer for search, select and copy (default true)"),
                     "frame": boolean("PDF notes/handouts: thin frame around each slide (default true)"),
                     "paper": {"type": "string", "enum": ["letter", "a4", "legal", "a3"], "description": "PDF notes/handouts: paper size (default letter)"},

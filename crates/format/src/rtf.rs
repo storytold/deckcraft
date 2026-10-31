@@ -51,10 +51,14 @@ fn runs(out: &mut String, p: &Paragraph) {
     }
 }
 
-/// The presentation's outline (slide titles and body text) as RTF.
-pub fn slides_to_rtf(p: &Presentation) -> String {
+/// The presentation's outline (slide titles and body text) as RTF. Hidden slides are skipped
+/// unless `include_hidden`, as `slides_to_outline` does.
+pub fn slides_to_rtf(p: &Presentation, include_hidden: bool) -> String {
     let mut out = String::from("{\\rtf1\\ansi\\ansicpg1252\\deff0\\uc1{\\fonttbl{\\f0\\fswiss Liberation Sans;}}\n");
     for s in &p.slides {
+        if !include_hidden && s.hidden {
+            continue;
+        }
         let title = s.shapes.iter().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())).and_then(|sh| sh.text.as_ref());
         out.push_str("\\pard\\outlinelevel0\\sb240\\b\\fs32 ");
         // The title stays one outline paragraph (a `\par` would start another slide on re-import),
@@ -437,10 +441,10 @@ mod tests {
         let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
         let outline = "Plan {Q3}\n\tGrow — fast 😀\n\t\tEurope\\Asia\nCafé résumé\n\tDone\n";
         crate::outline_to_slides(&mut p, outline);
-        let rtf = slides_to_rtf(&p);
+        let rtf = slides_to_rtf(&p, true);
         assert!(sniff_rtf(rtf.as_bytes()));
         assert!(rtf.contains("\\outlinelevel2") && rtf.contains("Plan \\{Q3\\}"), "{rtf}");
-        assert_eq!(rtf_to_outline(&rtf), crate::slides_to_outline(&p));
+        assert_eq!(rtf_to_outline(&rtf), crate::slides_to_outline(&p, true));
     }
 
     /// A title with two paragraphs: the plain outline keeps both, the RTF export kept only the first.
@@ -451,9 +455,20 @@ mod tests {
         let slide = std::sync::Arc::make_mut(&mut p.slides[0]);
         let title = slide.shapes.iter_mut().find(|sh| sh.ph_type().is_some_and(|k| k.is_title())).and_then(|sh| sh.text.as_mut()).unwrap();
         title.paragraphs.push(Paragraph::new("Second line"));
-        let rtf = slides_to_rtf(&p);
+        let rtf = slides_to_rtf(&p, true);
         assert!(rtf.contains("First line\\line Second line\\b0\\par"), "{rtf}");
-        assert_eq!(rtf_to_outline(&rtf), crate::slides_to_outline(&p));
+        assert_eq!(rtf_to_outline(&rtf), crate::slides_to_outline(&p, true));
+    }
+
+    /// As the plain outline: a hidden slide is skipped unless `include_hidden`.
+    #[test]
+    fn rtf_skips_hidden_slides_unless_included() {
+        let mut p = deckcraft_model::defaults::blank_presentation(deckcraft_model::defaults::WIDE, Default::default(), false);
+        crate::outline_to_slides(&mut p, "Shown\n\tVisible\nHidden\n\tSecret\n");
+        std::sync::Arc::make_mut(&mut p.slides[1]).hidden = true;
+        let rtf = slides_to_rtf(&p, false);
+        assert!(rtf.contains("Shown") && !rtf.contains("Secret"), "{rtf}");
+        assert!(slides_to_rtf(&p, true).contains("Secret"));
     }
 
     #[test]

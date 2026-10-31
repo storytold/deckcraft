@@ -16,7 +16,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Find",
             ["Home", "Editing"],
             None,
-            "{text, matchCase?: bool, wholeWords?: bool} → [{slide, shape (null = notes), cell?: [row, col], para, start, end}] (char offsets in the paragraph)",
+            "{text, matchCase?: bool, wholeWords?: bool, includeHidden?: bool} → [{slide, shape (null = notes), cell?: [row, col], para, start, end}] (char offsets in the paragraph; includeHidden: search hidden slides and hidden shapes too — default false: the search sees what a reader of the show sees)",
             has_doc,
             find
         ),
@@ -25,7 +25,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Replace",
             ["Home", "Editing"],
             None,
-            "{text, with, matchCase?, wholeWords?, at?: a text.find match (replace just that one; default: replace all)} → {replaced}",
+            "{text, with, matchCase?, wholeWords?, includeHidden?, at?: a text.find match (replace just that one; default: replace all)} → {replaced}",
             has_doc,
             replace
         ),
@@ -40,12 +40,17 @@ struct Loc {
 }
 
 /// Visit every text body on a slide: shapes depth-first (groups, table cells), then the notes.
-fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody)) {
-    fn rec(shapes: &mut [Shape], depth: usize, f: &mut dyn FnMut(Loc, &mut TextBody)) {
+/// Hidden slides are the caller's skip; hidden shapes are skipped here unless `include_hidden`
+/// (the notes body is never hidden).
+fn bodies(slide: &mut Slide, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut TextBody)) {
+    fn rec(shapes: &mut [Shape], depth: usize, include_hidden: bool, f: &mut dyn FnMut(Loc, &mut TextBody)) {
         if depth > 64 {
             return;
         }
         for sh in shapes {
+            if !include_hidden && sh.hidden {
+                continue;
+            }
             let id = Some(u64::from(sh.id.0));
             if let Some(t) = &mut sh.text {
                 f(Loc { shape: id, cell: None }, t);
@@ -58,12 +63,12 @@ fn bodies(slide: &mut Slide, f: &mut dyn FnMut(Loc, &mut TextBody)) {
                         }
                     }
                 }
-                ShapeKind::Group { children, .. } => rec(children, depth + 1, f),
+                ShapeKind::Group { children, .. } => rec(children, depth + 1, include_hidden, f),
                 _ => {}
             }
         }
     }
-    rec(&mut slide.shapes, 0, f);
+    rec(&mut slide.shapes, 0, include_hidden, f);
     f(Loc { shape: None, cell: None }, &mut slide.notes);
 }
 
@@ -143,11 +148,15 @@ fn splice(p: &mut Paragraph, a: usize, b: usize, with: &str) {
 
 fn find(s: &mut Session, p: &Value) -> Result<Value> {
     let o = Opts::from(p, "text.find")?;
+    let include_hidden = bool_or(p, "includeHidden", false);
     let st = s.doc()?;
     let mut out = vec![];
     for (i, sl) in st.doc.slides.iter().enumerate() {
+        if !include_hidden && sl.hidden {
+            continue;
+        }
         let mut sl = (**sl).clone();
-        bodies(&mut sl, &mut |loc, t| {
+        bodies(&mut sl, include_hidden, &mut |loc, t| {
             for (pi, para) in t.paragraphs.iter().enumerate() {
                 for (a, b) in para_matches(para, &o) {
                     out.push(json!({"slide": i, "shape": loc.shape, "cell": loc.cell.map(|(r, c)| [r, c]), "para": pi, "start": a, "end": b}));
@@ -161,6 +170,7 @@ fn find(s: &mut Session, p: &Value) -> Result<Value> {
 fn replace(s: &mut Session, p: &Value) -> Result<Value> {
     let o = Opts::from(p, "text.replace")?;
     let with = str_param(p, "with").unwrap_or("").to_string();
+    let include_hidden = bool_or(p, "includeHidden", false);
     let at = p.get("at").filter(|v| v.is_object()).map(|v| -> Result<(usize, Loc, usize, usize)> {
         let n = |k: &str| v.get(k).and_then(Value::as_u64).map(|x| x as usize).ok_or_else(|| bad("text.replace", format!("`at` needs `{k}`")));
         let cell = v.get("cell").and_then(Value::as_array).and_then(|c| Some((c.first()?.as_u64()? as usize, c.get(1)?.as_u64()? as usize)));
@@ -170,12 +180,12 @@ fn replace(s: &mut Session, p: &Value) -> Result<Value> {
     let count = s.edit(|doc, _| {
         let mut count = 0;
         for (i, slp) in doc.slides.iter_mut().enumerate() {
-            if at.is_some_and(|a| a.0 != i) {
+            if at.is_some_and(|a| a.0 != i) || (!include_hidden && slp.hidden) {
                 continue;
             }
             let mut sl = (**slp).clone();
             let mut changed = 0;
-            bodies(&mut sl, &mut |loc, t| {
+            bodies(&mut sl, include_hidden, &mut |loc, t| {
                 if at.is_some_and(|a| a.1 != loc) {
                     return;
                 }

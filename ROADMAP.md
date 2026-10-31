@@ -137,6 +137,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-10-31 | Find and Replace see what a reader of the show sees: hidden slides and hidden shapes are searched (and replaced) only with `includeHidden`, as the PDF and GIF exports already skip them |
+| 2026-10-31 | Export ▸ Outline/RTF: a hidden slide is skipped unless `includeHidden` — the outline is what the show reads out; a file save keeps hidden slides, as `pptx` does |
 | 2026-10-25 | Windows installer: the Start menu shortcut takes the icon embedded in `deckcraft.exe` instead of an MSI `<Icon>`, so a taskbar pin keeps its icon after an update (#1114); a pin that already lost it has to be unpinned and pinned again once |
 | 2026-10-24 | AutoFormat as you type: a paragraph that starts with `*`, `-`, `--`, `>`, `<>`, `1.`, `1)`, `I.`, `i.`, `A.`, `a.` or `a)` and a space or tab becomes a bulleted or numbered list in that style; Backspace right after puts the typed text back, and Tools ▸ AutoCorrect and `text.autocorrect {lists}` turn it off |
 | 2026-10-24 | Tables: while the caret is in a cell, dragging into another cell selects that range of cells (shaded, merged cells taken in whole), and Shift+arrow grows or shrinks it; formatting applies to the selected cells only, and Delete clears their text and keeps the table |
@@ -294,6 +296,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-31 | minor | Progress log: Find and Replace and the Outline/RTF export skip hidden slides and shapes unless `includeHidden`. Scores and milestone names unchanged |
 | 2026-10-25 | trivial | Progress log: Windows shortcut icon survives updates (#1114). Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: selecting a range of table cells by dragging. Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: measurement units in centimetres (#1326). Scores unchanged |

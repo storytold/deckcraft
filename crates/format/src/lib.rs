@@ -637,9 +637,14 @@ pub fn markdown_to_slides(p: &mut Presentation, text: &str) -> usize {
 }
 
 /// The deck as outline text (titles unindented, body paragraphs tab-indented by level).
-pub fn slides_to_outline(p: &Presentation) -> String {
+/// Hidden slides are skipped unless `include_hidden`: the outline is what the show reads out,
+/// not the file's full content (a file save keeps hidden slides, as `pptx` does).
+pub fn slides_to_outline(p: &Presentation, include_hidden: bool) -> String {
     let mut out = String::new();
     for s in &p.slides {
+        if !include_hidden && s.hidden {
+            continue;
+        }
         // One line per title: a newline would start another slide on re-import.
         out.push_str(&s.title().replace('\n', " "));
         out.push('\n');
@@ -1029,8 +1034,21 @@ mod tests {
         let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
         let n = outline_to_slides(&mut p, "Intro\n\tPoint one\n\t\tSub point\nSecond\n\tMore");
         assert_eq!(n, 2);
-        let o = slides_to_outline(&p);
+        let o = slides_to_outline(&p, true);
         assert!(o.contains("Intro\n\tPoint one\n\t\tSub point\nSecond"), "{o}");
+    }
+
+    /// The outline is what the show reads out: a hidden slide is skipped unless `include_hidden`.
+    #[test]
+    fn outline_skips_hidden_slides_unless_included() {
+        let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+        assert_eq!(outline_to_slides(&mut p, "Shown\n\tVisible point\nHidden\n\tSecret point"), 2);
+        Arc::make_mut(&mut p.slides[1]).hidden = true;
+        let o = slides_to_outline(&p, false);
+        assert!(o.contains("Shown"), "{o}");
+        assert!(!o.contains("Secret"), "{o}");
+        let o = slides_to_outline(&p, true);
+        assert!(o.contains("Shown") && o.contains("Secret"), "{o}");
     }
 
     #[test]
@@ -1038,7 +1056,7 @@ mod tests {
         let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
         let n = outline_to_slides(&mut p, "-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\n- Bullets\n\t- Point\n\t• Other");
         assert_eq!(n, 2);
-        let o = slides_to_outline(&p);
+        let o = slides_to_outline(&p, true);
         assert!(o.contains("-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\nBullets\n\tPoint\n\tOther"), "{o}");
     }
 
@@ -1048,7 +1066,7 @@ mod tests {
         assert_eq!(outline_to_slides(&mut p, "Intro\n\tPoint one\nSecond\n\tMore"), 2);
         let title = Arc::make_mut(&mut p.slides[0]).shapes.iter_mut().find(|s| s.ph_type().is_some_and(|k| k.is_title())).expect("title placeholder");
         title.text = Some(TextBody::from_text("Line one\nLine two"));
-        let o = slides_to_outline(&p);
+        let o = slides_to_outline(&p, true);
         assert_eq!(o, "Line one Line two\n\tPoint one\nSecond\n\tMore\n");
         let mut q = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
         assert_eq!(outline_to_slides(&mut q, &o), 2);
@@ -1096,7 +1114,7 @@ mod tests {
         s.shapes.push(tbl);
         p.slides = vec![std::sync::Arc::new(s)];
 
-        let out = slides_to_outline(&p);
+        let out = slides_to_outline(&p, true);
         assert!(out.contains("Text box body"), "{out}");
         assert!(out.contains("Cell A1\tCell B1"), "{out}");
         assert!(out.contains("Cell A2\tCell B2"), "{out}");
@@ -1123,7 +1141,7 @@ fn outline_table_rows_are_indented_and_do_not_become_slides() {
     s.shapes.push(tbl);
     p.slides = vec![std::sync::Arc::new(s)];
 
-    let out = slides_to_outline(&p);
+    let out = slides_to_outline(&p, true);
     let mut q = defaults::new_presentation(None);
     q.slides.clear();
     assert_eq!(outline_to_slides(&mut q, &out), 1, "table rows became slides: {out:?}");

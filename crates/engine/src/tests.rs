@@ -4778,6 +4778,45 @@ fn find_and_replace_across_shapes_and_notes() {
     assert_eq!(s.execute("text.find", &q).unwrap().as_array().unwrap().len(), n - 1);
 }
 
+/// Find and Replace see what a reader of the show sees: hidden slides and hidden shapes are
+/// searched only with `includeHidden`. The notes are never hidden.
+#[test]
+fn find_and_replace_skip_hidden_content_unless_included() {
+    let mut s = session();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "shown here"})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 300, 200, 100], "text": "veiled shape"})).unwrap();
+    let sh =
+        s.doc().unwrap().doc.slides[0].shapes.iter().find(|x| x.text.as_ref().is_some_and(|t| t.text() == "veiled shape")).map(|x| x.id.0).unwrap();
+    s.execute("shape.visible", &json!({"ids": [sh], "visible": false})).unwrap();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100], "text": "veiled slide"})).unwrap();
+    s.execute("slide.hide", &json!({"index": 1})).unwrap();
+
+    let q = json!({"text": "veiled"});
+    let found = s.execute("text.find", &q).unwrap();
+    assert!(found.as_array().unwrap().is_empty(), "{found}");
+    let all = s.execute("text.find", &json!({"text": "veiled", "includeHidden": true})).unwrap();
+    let hits = all.as_array().unwrap();
+    assert_eq!(hits.len(), 2, "{all}");
+    assert!(hits.iter().any(|h| h["slide"].as_u64() == Some(0)), "{all}");
+    assert!(hits.iter().any(|h| h["slide"].as_u64() == Some(1)), "{all}");
+
+    assert!(s.execute("text.replace", &json!({"text": "veiled", "with": "open"})).is_err(), "nothing is in sight to replace");
+    let r = s.execute("text.replace", &json!({"text": "veiled", "with": "open", "includeHidden": true})).unwrap();
+    assert_eq!(r["replaced"].as_u64(), Some(2));
+    let texts = s
+        .doc()
+        .unwrap()
+        .doc
+        .slides
+        .iter()
+        .flat_map(|sl| sl.shapes.iter().filter_map(|x| x.text.as_ref()).map(|t| t.text()))
+        .collect::<Vec<_>>()
+        .join("|");
+    assert!(texts.contains("open shape") && texts.contains("open slide"), "{texts}");
+    assert!(!texts.contains("veiled"), "{texts}");
+}
+
 /// Find and Replace count a line break as one character, so offsets agree with the editor and no
 /// match spans the break.
 #[test]
