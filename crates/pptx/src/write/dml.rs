@@ -1,7 +1,9 @@
 //! DrawingML writing: colours, fills, lines, effects, transforms and text.
 
 use deckcraft_geom::{Xfrm, pt_to_emu};
-use deckcraft_model::style::{ColorBase, ColorRef, Compound, Dash, Effects, Fill, GradientShape, Line, LineCap, LineJoin, PictureFill, PictureMode};
+use deckcraft_model::style::{
+    ColorBase, ColorRef, Compound, Dash, Effects, Fill, GradientFlip, GradientShape, Line, LineAlign, LineCap, LineJoin, PictureFill, PictureMode,
+};
 use deckcraft_model::text::{
     Action, AutoFit, BodyProps, Bullet, Caps, Hyperlink, ListStyle, ParaProps, Paragraph, RunKind, RunProps, Spacing, Strike, TextBody,
 };
@@ -208,6 +210,7 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
                 LineCap::Flat => "flat",
             }),
         )
+        .o("algn", l.align.map(LineAlign::xml))
         .o("cmpd", l.compound.map(Compound::xml));
     w.open(tag, a);
     if let Some(f) = &l.fill {
@@ -233,7 +236,10 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
     match l.join {
         Some(LineJoin::Round) => w.empty0("a:round"),
         Some(LineJoin::Bevel) => w.empty0("a:bevel"),
-        Some(LineJoin::Miter) => w.empty0("a:miter"),
+        Some(LineJoin::Miter) => {
+            let limit = l.miter_limit.filter(|limit| *limit <= i32::MAX as u32);
+            w.empty("a:miter", A::new().o("lim", limit));
+        }
         None => {}
     }
     for (t, e) in [("a:headEnd", &l.head), ("a:tailEnd", &l.tail)] {
@@ -279,7 +285,7 @@ fn shadow(w: &mut W, tag: &str, s: &deckcraft_model::style::Shadow) {
 }
 
 fn gradient(w: &mut W, g: &deckcraft_model::style::Gradient) {
-    w.open("a:gradFill", A::new().a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
+    w.open("a:gradFill", A::new().o("flip", g.flip.map(GradientFlip::xml)).a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
     // No stops: no `a:gsLst`, so the gradient keeps taking them from its style's fill.
     let mut stops = g.stops.clone();
     if stops.len() == 1 {
@@ -533,8 +539,11 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
         || p.space_after.is_some()
         || p.bullet.is_some()
         || p.bullet_font.is_some()
+        || p.bullet_font_follow_text.is_some()
         || p.bullet_color.is_some()
+        || p.bullet_color_follow_text.is_some()
         || p.bullet_size.is_some()
+        || p.bullet_size_follow_text.is_some()
         || p.tabs.is_some()
         || def.is_some();
     if !has_kids {
@@ -551,15 +560,21 @@ pub fn ppr(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, level: Option<u8>, p:
     if let Some(s) = &p.space_after {
         spacing(w, "a:spcAft", s);
     }
-    if let Some(c) = &p.bullet_color {
+    if p.bullet_color.is_none() && p.bullet_color_follow_text == Some(true) {
+        w.empty0("a:buClrTx");
+    } else if let Some(c) = &p.bullet_color {
         w.open0("a:buClr");
         color(w, c);
         w.close("a:buClr");
     }
-    if let Some(s) = p.bullet_size {
+    if p.bullet_size.is_none() && p.bullet_size_follow_text == Some(true) {
+        w.empty0("a:buSzTx");
+    } else if let Some(s) = p.bullet_size {
         w.val("a:buSzPct", pct(s.clamp(0.25, 4.0)));
     }
-    if let Some(f) = &p.bullet_font {
+    if p.bullet_font.is_none() && p.bullet_font_follow_text == Some(true) {
+        w.empty0("a:buFontTx");
+    } else if let Some(f) = &p.bullet_font {
         w.empty("a:buFont", A::new().a("typeface", f));
     }
     match &p.bullet {

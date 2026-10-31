@@ -108,7 +108,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Align Cell Text",
             ["Table Layout", "Alignment"],
             None,
-            "{anchor: top|middle|bottom, cells?, id?}",
+            "{anchor?: top|middle|bottom (vertical; top when neither anchor nor align is given), align?: left|center|right|justify (horizontal, applied to every paragraph of the cells), cells?, id?}",
             has_selection,
             cell_align
         ),
@@ -535,18 +535,43 @@ fn cell_margins(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn cell_align(s: &mut Session, p: &Value) -> Result<Value> {
-    use deckcraft_model::text::Anchor;
-    let a = match str_param(p, "anchor").unwrap_or("top") {
-        "middle" | "center" | "ctr" => Anchor::Middle,
-        "bottom" | "b" => Anchor::Bottom,
-        "top" | "t" => Anchor::Top,
-        o => return Err(bad("table.cellAlign", format!("unknown anchor {o:?}; one of top, middle, bottom"))),
+    use deckcraft_model::text::{Align, Anchor};
+    // A value that is not a string is refused, not taken as absent.
+    for k in ["align", "anchor"] {
+        if p.get(k).is_some_and(|v| !v.is_null() && !v.is_string()) {
+            return Err(bad("table.cellAlign", format!("`{k}` is a name such as {}", if k == "align" { "left or center" } else { "top or middle" })));
+        }
+    }
+    // Without `align`, the vertical anchor is the whole command (top when not given).
+    let align = match str_param(p, "align") {
+        None => None,
+        Some("left" | "l") => Some(Align::Left),
+        Some("center" | "centre" | "ctr") => Some(Align::Center),
+        Some("right" | "r") => Some(Align::Right),
+        Some("justify" | "just") => Some(Align::Justify),
+        Some(o) => return Err(bad("table.cellAlign", format!("unknown align {o:?}; one of left, center, right, justify"))),
+    };
+    let anchor = match (str_param(p, "anchor"), align) {
+        (None, Some(_)) => None,
+        (a, _) => Some(match a.unwrap_or("top") {
+            "middle" | "center" | "ctr" => Anchor::Middle,
+            "bottom" | "b" => Anchor::Bottom,
+            "top" | "t" => Anchor::Top,
+            o => return Err(bad("table.cellAlign", format!("unknown anchor {o:?}; one of top, middle, bottom"))),
+        }),
     };
     let targets = target_cells(s, p)?;
     with_table(s, p, "table.cellAlign", move |t| {
         for (r, c) in targets(t) {
             if let Some(cell) = t.cell_mut(r, c) {
-                cell.anchor = Some(a);
+                if anchor.is_some() {
+                    cell.anchor = anchor;
+                }
+                if let Some(a) = align {
+                    for para in &mut cell.text.paragraphs {
+                        para.props.align = Some(a);
+                    }
+                }
             }
         }
         Ok(())

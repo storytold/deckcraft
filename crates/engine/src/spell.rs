@@ -356,7 +356,14 @@ impl Dictionary {
     }
 
     /// Is `word` spelt correctly? Capitalised and upper-case forms of a lower-case word pass.
+    /// Words longer than 100 characters are not checked (they pass).
     pub fn check(&self, word: &str) -> bool {
+        // Compound splitting tries every split point, so checking costs O(n²) in the word's
+        // length: a 100,000-character "word" took seconds per check under a compounding
+        // dictionary, on every edit (#1175).
+        if word.chars().nth(MAX_CHECK_CHARS).is_some() {
+            return true;
+        }
         if word.contains('\u{2019}') {
             return self.check(&word.replace('\u{2019}', "'"));
         }
@@ -394,12 +401,18 @@ impl Dictionary {
             return vec![];
         }
         let cap = word.chars().next().is_some_and(char::is_uppercase);
-        let lower = if cap && word.chars().skip(1).all(|c| !c.is_uppercase()) { word.to_lowercase() } else { word.to_string() };
+        let upper = word.chars().count() > 1 && word.chars().any(char::is_uppercase) && !word.chars().any(char::is_lowercase);
+        let lower = if upper || (cap && word.chars().skip(1).all(|c| !c.is_uppercase())) { word.to_lowercase() } else { word.to_string() };
         let w: Vec<char> = lower.chars().collect();
         let mut out: Vec<String> = vec![];
         let mut seen = HashSet::new();
         let mut push = |s: String, out: &mut Vec<String>| {
-            if s != lower && seen.insert(s.to_lowercase()) && s.split(' ').all(|p| self.suggestible(p)) {
+            if s == lower {
+                return;
+            }
+            // Checked in capitals, so a KEEPCASE entry ("NASA") is offered for an all-caps word.
+            let s = if upper { s.to_uppercase() } else { s };
+            if seen.insert(s.to_lowercase()) && s.split(' ').all(|p| self.suggestible(p)) {
                 out.push(s);
             }
         };
@@ -443,7 +456,7 @@ impl Dictionary {
             push(format!("{} {}", s(&w[..i]), s(&w[i..])), &mut out);
         }
         out.truncate(n);
-        if cap {
+        if cap && !upper {
             out = out.into_iter().map(|x| capitalise(&x)).collect();
         }
         out
@@ -552,6 +565,9 @@ pub fn find_in(dirs: &[PathBuf], lang: &str) -> Option<(PathBuf, PathBuf)> {
 
 /// Longest word `Dictionary::suggest` generates corrections for.
 const MAX_SUGGEST_CHARS: usize = 64;
+
+/// Longest word `Dictionary::check` checks, as Hunspell's word length limit.
+const MAX_CHECK_CHARS: usize = 100;
 
 type Cache = Mutex<HashMap<String, Option<Arc<Dictionary>>>>;
 
@@ -841,6 +857,28 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         assert!(d.suggest("foto", 5).contains(&"photo".to_string()));
         assert!(d.suggest("Slidse", 5).contains(&"Slides".to_string()));
         assert!(d.suggest("workingslides", 5).contains(&"working slides".to_string()));
+    }
+
+    /// #1175: compound splitting is quadratic in the word's length, so a word longer than
+    /// `MAX_CHECK_CHARS` is not checked; shorter ones still are.
+    #[test]
+    fn a_word_longer_than_the_check_limit_is_not_checked() {
+        let d = Dictionary::parse(b"COMPOUNDFLAG X\nCOMPOUNDMIN 3\n", b"2\nfoot/X\nball/X\n".as_slice());
+        assert!(d.check("footballfoot"), "a compound is checked");
+        let under: String = "footb".repeat(MAX_CHECK_CHARS / 5);
+        assert_eq!(under.chars().count(), MAX_CHECK_CHARS);
+        assert!(!d.check(&under), "a word at the limit is still checked");
+        // Unchecked, not seconds of compound splitting.
+        assert!(d.check(&"footb".repeat(20_000)));
+        assert!(d.check(&format!("{under}x")));
+    }
+
+    #[test]
+    fn all_caps_words_get_uppercase_suggestions() {
+        let d = d();
+        assert!(d.suggest("SLDE", 5).contains(&"SLIDE".to_string()));
+        assert!(d.suggest("FOTO", 5).contains(&"PHOTO".to_string()));
+        assert!(d.suggest("NSSA", 5).contains(&"NASA".to_string()));
     }
 
     #[test]

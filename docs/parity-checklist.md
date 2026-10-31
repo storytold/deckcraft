@@ -36,7 +36,7 @@ The summary between `<!-- SUMMARY -->
 | Automation (✱) | 100% |
 | Platforms (✱) | 67% |
 
-Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows and Linux, #53), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
+Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layout, Chart Design), Export to PDF (slides, notes pages, handouts; text layer, links, bookmarks; vector artwork pending), Format Shape pane, Font, size, bold, italic, underline, strikethrough (only Regular/Bold/Italic faces, #69), Edit chart data, Crop (and crop to shape, aspect ratio), Paste image from clipboard (fails on Windows, #1414; Linux not re-checked), Audio/video playback in the show (WMA/WMV not decodable yet), Animation pane (reorder, timing), Presenter view (notes, next slide, timer), macOS, Windows, Linux builds.
 
 ## Rows
 
@@ -187,7 +187,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Pictures | Picture styles and borders | P1 | D |
 | Pictures | Change / reset picture | P1 | D |
 | Pictures | Compress pictures | P2 | D |
-| Pictures | Paste image from clipboard (fails on Windows and Linux, #53) | P0 | P |
+| Pictures | Paste image from clipboard (fails on Windows, #1414; Linux not re-checked) | P0 | P |
 | Pictures | Insert screenshot | P2 | M |
 | Media | Insert audio (any common format) | P0 | D |
 | Media | Insert video | P1 | D |

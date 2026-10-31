@@ -7,7 +7,7 @@ use deckcraft_media::MediaInfo;
 use deckcraft_model::{MediaId, MediaItem, Presentation, Shape, ShapeKind, defaults};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, always, bad, base64_decode, base64_encode, bool_or, cmd, f64_or, has_doc, ok, str_param, usize_param};
+use super::{CommandSpec, always, bad, base64_decode, base64_encode, bool_or, cmd, f64_or, has_doc, ok, opt_usize_param, str_param, usize_param};
 use crate::{DocState, EngineError, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -395,6 +395,10 @@ pub fn parse_slide_range(text: &str, count: usize) -> Result<Vec<usize>> {
             Some((a, b)) => (a.trim(), b.trim()),
             None => (part, part),
         };
+        let digits = |s: &str| !s.is_empty() && s.bytes().all(|c| c.is_ascii_digit());
+        if !digits(a) || !digits(b) {
+            return Err(invalid());
+        }
         let (a, b) = (a.parse::<usize>().map_err(|_| invalid())?, b.parse::<usize>().map_err(|_| invalid())?);
         let (lo, hi) = (a.min(b), a.max(b));
         if lo == 0 || hi > count {
@@ -536,7 +540,7 @@ fn picture_bytes(img: &deckcraft_render::Image, format: &str, scale: f64) -> Vec
 
 fn render(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "slide", "file.render")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
         return Err(bad("file.render", format!("no slide {i}")));
     }
@@ -547,7 +551,7 @@ fn render(s: &mut Session, p: &Value) -> Result<Value> {
 /// The colour the slide is drawn with at one point: what the Eyedropper takes.
 fn color_at(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.doc()?;
-    let i = usize_param(p, "slide").unwrap_or(st.selection.slide);
+    let i = opt_usize_param(p, "slide", "slide.colorAt")?.unwrap_or(st.selection.slide);
     if i >= st.doc.slides.len() {
         return Err(bad("slide.colorAt", format!("no slide {i}")));
     }
@@ -578,7 +582,7 @@ fn export(s: &mut Session, p: &Value) -> Result<Value> {
     }
     match format.as_str() {
         "png" | "jpeg" | "jpg" => {
-            let slides: Vec<usize> = match usize_param(p, "slide") {
+            let slides: Vec<usize> = match opt_usize_param(p, "slide", "file.export")? {
                 Some(i) => vec![i],
                 None if bool_or(p, "all", false) => (0..st.doc.slides.len()).collect(),
                 None => vec![st.selection.slide],
@@ -763,7 +767,14 @@ mod color_at_tests;
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-    use super::write_file;
+    use super::{parse_slide_range, write_file};
+
+    #[test]
+    fn slide_range_rejects_plus_sign() {
+        assert!(parse_slide_range("+2", 3).is_err());
+        assert!(parse_slide_range("+1-+3", 3).is_err());
+        assert_eq!(parse_slide_range("1-3", 3).unwrap(), vec![0, 1, 2]);
+    }
 
     fn scratch(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("deckcraft-write-file-{}-{name}", std::process::id()));

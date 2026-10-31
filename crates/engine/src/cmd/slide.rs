@@ -1,5 +1,6 @@
 //! Slides: new, duplicate, delete, move, layout, reset, hide, notes, sections, navigation.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use deckcraft_model::text::TextBody;
@@ -22,7 +23,15 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("slide.duplicate", "Duplicate Slide", ["Insert"], None, "{index?}", has_slide, duplicate),
         cmd!("slide.delete", "Delete Slide", ["Edit"], None, "{index?, ids?: [slide id]}", has_slide, delete),
-        cmd!("slide.move", "Move Slide", [], None, "{from?: index, to: index}", has_slide, move_slide),
+        cmd!(
+            "slide.move",
+            "Move Slide",
+            [],
+            None,
+            "{from?: index, ids?: [slide id], to: index (counted without the moved slides)}",
+            has_slide,
+            move_slide
+        ),
         cmd!(noundo "slide.go", "Go to Slide", [], None, "{index} | {id}", has_slide, go),
         cmd!(noundo "slide.next", "Next Slide", [], Some("PageDown"), "{}", has_slide, next),
         cmd!(noundo "slide.previous", "Previous Slide", [], Some("PageUp"), "{}", has_slide, prev),
@@ -266,34 +275,73 @@ fn delete(s: &mut Session, p: &Value) -> Result<Value> {
     })
 }
 
+/// Moves one slide (`from`, else the current slide) or several (`ids`) to `to`, in one undo step.
+/// `to` counts in the deck without the moved slides; they land there as one run, in the order
+/// they had, join the section of the slide before them, and stay selected.
 fn move_slide(s: &mut Session, p: &Value) -> Result<Value> {
-    let from = opt_usize_param(p, "from", "slide.move")?.unwrap_or(s.doc()?.selection.slide);
+    let ids = p.get("ids").filter(|v| !v.is_null());
+    let from = match ids {
+        None => opt_usize_param(p, "from", "slide.move")?.unwrap_or(s.doc()?.selection.slide),
+        Some(_) => 0,
+    };
     let to = usize_param(p, "to").ok_or_else(|| bad("slide.move", "missing `to`"))?;
     s.edit(|doc, sel| {
-        if from >= doc.slides.len() {
-            return Err(bad("slide.move", format!("no slide {from}")));
-        }
-        let sl = doc.slides.remove(from);
-        let to = to.min(doc.slides.len());
-        let id = sl.id;
-        doc.slides.insert(to, sl);
-        // Keep sections consistent with order: move the id into the section of its new neighbour.
-        if !doc.sections.is_empty() {
-            for sec in &mut doc.sections {
-                sec.slides.retain(|x| *x != id);
+        let moving: HashSet<SlideId> = match ids {
+            Some(v) => slide_ids_param(v, doc, "slide.move")?,
+            None => {
+                let id = doc.slides.get(from).map(|x| x.id).ok_or_else(|| bad("slide.move", format!("no slide {from}")))?;
+                HashSet::from([id])
             }
-            let neighbour = to.checked_sub(1).and_then(|i| doc.slides.get(i)).map(|x| x.id);
-            let si = neighbour.and_then(|n| doc.section_of(n)).unwrap_or(0);
-            let order: Vec<SlideId> = doc.slides.iter().map(|x| x.id).collect();
-            if let Some(sec) = doc.sections.get_mut(si) {
-                sec.slides.push(id);
-                sec.slides.sort_by_key(|x| order.iter().position(|o| o == x).unwrap_or(usize::MAX));
-            }
-        }
+        };
+        let (block, mut rest): (Vec<_>, Vec<_>) = std::mem::take(&mut doc.slides).into_iter().partition(|x| moving.contains(&x.id));
+        let to = to.min(rest.len());
+        let tail = rest.split_off(to);
+        let moved: Vec<SlideId> = block.iter().map(|x| x.id).collect();
+        rest.extend(block);
+        rest.extend(tail);
+        doc.slides = rest;
+        reassign_sections(doc, &moved, to);
         sel.slide = to;
-        sel.slides = vec![id];
-        Ok(json!({"index": to}))
+        sel.slides = moved;
+        sel.shapes.clear();
+        sel.text = None;
+        Ok(json!({"index": to, "moved": moving.len()}))
     })
+}
+
+/// The slides an `ids` param names: a non-empty list of ids of slides in `doc` (repeats fold).
+/// The first id that is not a slide of `doc` is an error, so the set never outgrows the deck.
+fn slide_ids_param(v: &Value, doc: &Presentation, cmd: &str) -> Result<HashSet<SlideId>> {
+    let a = v.as_array().ok_or_else(|| bad(cmd, "`ids` must be a list of slide ids"))?;
+    let known: HashSet<SlideId> = doc.slides.iter().map(|x| x.id).collect();
+    let mut out = HashSet::new();
+    for x in a {
+        let id = x.as_u64().and_then(|n| u32::try_from(n).ok()).map(SlideId).filter(|id| known.contains(id));
+        out.insert(id.ok_or_else(|| bad(cmd, format!("no slide with id {x}")))?);
+    }
+    if out.is_empty() {
+        return Err(bad(cmd, "`ids` is empty"));
+    }
+    Ok(out)
+}
+
+/// Keeps sections in step after `moved` landed as a run at `at`: the run joins the section of
+/// the slide just before it (the first section when it opens the deck), in document order.
+fn reassign_sections(doc: &mut Presentation, moved: &[SlideId], at: usize) {
+    if doc.sections.is_empty() {
+        return;
+    }
+    let moving: HashSet<SlideId> = moved.iter().copied().collect();
+    for sec in &mut doc.sections {
+        sec.slides.retain(|x| !moving.contains(x));
+    }
+    let neighbour = at.checked_sub(1).and_then(|i| doc.slides.get(i)).map(|x| x.id);
+    let si = neighbour.and_then(|n| doc.section_of(n)).unwrap_or(0);
+    let order: HashMap<SlideId, usize> = doc.slides.iter().enumerate().map(|(i, x)| (x.id, i)).collect();
+    if let Some(sec) = doc.sections.get_mut(si) {
+        sec.slides.extend_from_slice(moved);
+        sec.slides.sort_by_key(|x| order.get(x).copied().unwrap_or(usize::MAX));
+    }
 }
 
 fn go_to(s: &mut Session, i: usize) -> Result<Value> {
@@ -708,6 +756,111 @@ mod tests {
                 assert_eq!(s.doc().expect("doc").doc.slides.len(), 3, "{cmd} {p}");
             }
         }
+    }
+
+    /// A deck of `n` slides and its slide ids, in order.
+    fn deck(n: usize) -> (Session, Vec<u32>) {
+        let mut s = Session::with_new();
+        while s.doc().expect("doc").doc.slides.len() < n {
+            s.execute("slide.new", &json!({})).expect("new slide");
+        }
+        let ids = order(&s);
+        (s, ids)
+    }
+
+    fn order(s: &Session) -> Vec<u32> {
+        s.doc().expect("doc").doc.slides.iter().map(|x| x.id.0).collect()
+    }
+
+    fn selected(s: &Session) -> (usize, Vec<u32>) {
+        let sel = &s.doc().expect("doc").selection;
+        (sel.slide, sel.slides.iter().map(|x| x.0).collect())
+    }
+
+    #[test]
+    fn move_from_to_moves_one_slide() {
+        let (mut s, ids) = deck(4);
+        s.execute("slide.move", &json!({"from": 3, "to": 0})).expect("move");
+        assert_eq!(order(&s), [ids[3], ids[0], ids[1], ids[2]]);
+        assert_eq!(selected(&s), (0, vec![ids[3]]));
+    }
+
+    #[test]
+    fn move_ids_lands_them_as_one_run_in_deck_order() {
+        let (mut s, ids) = deck(6);
+        // Listed backwards: they still land in the order they had.
+        s.execute("slide.move", &json!({"ids": [ids[4], ids[1]], "to": 0})).expect("to the front");
+        assert_eq!(order(&s), [ids[1], ids[4], ids[0], ids[2], ids[3], ids[5]]);
+        assert_eq!(selected(&s), (0, vec![ids[1], ids[4]]), "the moved slides stay selected");
+
+        let (mut s, ids) = deck(6);
+        s.execute("slide.move", &json!({"ids": [ids[0], ids[2]], "to": 2})).expect("to the middle");
+        assert_eq!(order(&s), [ids[1], ids[3], ids[0], ids[2], ids[4], ids[5]]);
+        assert_eq!(selected(&s), (2, vec![ids[0], ids[2]]));
+
+        let (mut s, ids) = deck(6);
+        s.execute("slide.move", &json!({"ids": [ids[1], ids[3]], "to": 1000})).expect("past the end clamps");
+        assert_eq!(order(&s), [ids[0], ids[2], ids[4], ids[5], ids[1], ids[3]]);
+        assert_eq!(selected(&s), (4, vec![ids[1], ids[3]]));
+    }
+
+    #[test]
+    fn moving_several_slides_is_one_undo_step() {
+        let (mut s, ids) = deck(5);
+        s.execute("slide.selectSlides", &json!({"ids": [ids[0], ids[3]]})).expect("select");
+        let before = selected(&s);
+        s.execute("slide.move", &json!({"ids": [ids[0], ids[3]], "to": 3})).expect("move");
+        let after = order(&s);
+        assert_eq!(after, [ids[1], ids[2], ids[4], ids[0], ids[3]]);
+        s.execute("edit.undo", &json!({})).expect("undo");
+        assert_eq!(order(&s), ids);
+        assert_eq!(selected(&s), before);
+        s.execute("edit.redo", &json!({})).expect("redo");
+        assert_eq!(order(&s), after);
+    }
+
+    #[test]
+    fn moved_slides_join_the_section_before_them() {
+        let (mut s, ids) = deck(5);
+        s.execute("section.add", &json!({"name": "A", "at": 0})).expect("A");
+        s.execute("section.add", &json!({"name": "B", "at": 3})).expect("B");
+        // A = 0,1,2; B = 3,4. Move 0 and 1 to the end: B gets them, A keeps only slide 2.
+        s.execute("slide.move", &json!({"ids": [ids[0], ids[1]], "to": 3})).expect("move");
+        let sections =
+            |s: &Session| -> Vec<Vec<u32>> { s.doc().expect("doc").doc.sections.iter().map(|x| x.slides.iter().map(|id| id.0).collect()).collect() };
+        assert_eq!(sections(&s), [vec![ids[2]], vec![ids[3], ids[4], ids[0], ids[1]]]);
+        // Move the whole of A away: A stays, empty; the run at the front joins the first section.
+        s.execute("slide.move", &json!({"ids": [ids[2]], "to": 4})).expect("empty A");
+        assert_eq!(sections(&s), [vec![], vec![ids[3], ids[4], ids[0], ids[1], ids[2]]]);
+        s.execute("slide.move", &json!({"ids": [ids[0], ids[1]], "to": 0})).expect("to the front");
+        assert_eq!(sections(&s), [vec![ids[0], ids[1]], vec![ids[3], ids[4], ids[2]]]);
+        let all: Vec<u32> = sections(&s).concat();
+        assert_eq!(all, order(&s), "sections follow slide order");
+    }
+
+    #[test]
+    fn bad_ids_are_rejected_and_change_nothing() {
+        let (mut s, ids) = deck(3);
+        let lots_of_unknown: Vec<u64> = (1_000_000..1_100_000).collect();
+        for p in [
+            json!({"ids": [], "to": 0}),
+            json!({"ids": [ids[0], 999_999], "to": 0}),
+            json!({"ids": [-1], "to": 0}),
+            json!({"ids": ["1"], "to": 0}),
+            json!({"ids": [1.5], "to": 0}),
+            json!({"ids": [u64::MAX], "to": 0}),
+            json!({"ids": ids[0], "to": 0}),
+            json!({"ids": lots_of_unknown, "to": 0}),
+            json!({"ids": [ids[1]]}),
+        ] {
+            assert!(s.execute("slide.move", &p).is_err(), "slide.move must reject {p}");
+            assert_eq!(order(&s), ids, "{p}");
+        }
+        // Repeats fold into one.
+        let repeated = vec![ids[2]; 100_000];
+        s.execute("slide.move", &json!({"ids": repeated, "to": 0})).expect("repeats");
+        assert_eq!(order(&s), [ids[2], ids[0], ids[1]]);
+        assert_eq!(selected(&s), (0, vec![ids[2]]));
     }
 
     #[test]

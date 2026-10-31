@@ -54,8 +54,8 @@ because it mostly follows from hardware use.
 ## Performance
 
 Nothing is measured against PowerPoint yet: no benchmark of open time, render time per slide,
-show frame rate or memory exists in `xtask`. Known: slides rasterize on the CPU, Morph aligns
-outlines every frame (#67, fix open), and the decoders run in software.
+show frame rate or memory exists in `xtask`. Known: slides rasterize on the CPU, Morph's outline
+alignment runs once per transition (#67), and the decoders run in software.
 
 ## Estimates
 

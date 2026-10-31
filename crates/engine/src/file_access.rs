@@ -35,8 +35,8 @@ pub enum Access {
 /// The folders automation may read and write; a root left out grants no access of its kind.
 #[derive(Debug)]
 pub struct AutomationRoots {
-    read: Option<Root>,
-    write: Option<Root>,
+    read: Vec<Root>,
+    write: Vec<Root>,
 }
 
 #[derive(Debug)]
@@ -62,46 +62,47 @@ impl Root {
 }
 
 impl AutomationRoots {
-    /// The roots `read` and `write`, which must be existing folders; `None` when neither is given
+    /// The read and write roots, which must be existing folders; `None` when both are empty
     /// (nothing is confined then).
-    pub fn new(read: Option<&Path>, write: Option<&Path>) -> Result<Option<Arc<Self>>, String> {
-        if read.is_none() && write.is_none() {
+    pub fn new(read: &[PathBuf], write: &[PathBuf]) -> Result<Option<Arc<Self>>, String> {
+        if read.is_empty() && write.is_empty() {
             return Ok(None);
         }
-        let read = read.map(|p| Root::open(p, Access::Read)).transpose()?;
-        let write = write.map(|p| Root::open(p, Access::Write)).transpose()?;
+        let read = read.iter().map(|p| Root::open(p, Access::Read)).collect::<Result<_, _>>()?;
+        let write = write.iter().map(|p| Root::open(p, Access::Write)).collect::<Result<_, _>>()?;
         Ok(Some(Arc::new(Self { read, write })))
     }
 
-    /// The read root, absolute with its links followed.
-    pub fn read_root(&self) -> Option<&Path> {
-        self.read.as_ref().map(|r| r.shown.as_path())
+    /// The read roots, absolute with their links followed.
+    pub fn read_roots(&self) -> impl Iterator<Item = &Path> {
+        self.read.iter().map(|r| r.shown.as_path())
     }
 
-    /// The write root, absolute with its links followed.
-    pub fn write_root(&self) -> Option<&Path> {
-        self.write.as_ref().map(|r| r.shown.as_path())
+    /// The write roots, absolute with their links followed.
+    pub fn write_roots(&self) -> impl Iterator<Item = &Path> {
+        self.write.iter().map(|r| r.shown.as_path())
     }
 
     /// May the file or folder at `path` be read (or written)? `Err` says why not.
     pub fn check(&self, path: &str, access: Access) -> Result<(), String> {
-        let root = match access {
-            Access::Read => self.read.as_ref(),
-            Access::Write => self.write.as_ref(),
+        let roots = match access {
+            Access::Read => &self.read,
+            Access::Write => &self.write,
         };
-        let Some(Root { resolved: folder, shown }) = root else {
+        if roots.is_empty() {
             return match access {
                 Access::Read => Err(format!("automation filesystem access is not granted: read authority is absent: {path}")),
                 Access::Write => Err(format!("automation filesystem access is not granted: write authority is absent: {path}")),
             };
-        };
-        if inside(&resolve(path)?, folder) {
+        }
+        let resolved = resolve(path)?;
+        if roots.iter().any(|root| inside(&resolved, &root.resolved)) {
             return Ok(());
         }
-        let root = shown.display();
+        let roots = roots.iter().map(|root| root.shown.display().to_string()).collect::<Vec<_>>().join(", ");
         match access {
-            Access::Read => Err(format!("automation path rejected: outside the read root {root}: {path}")),
-            Access::Write => Err(format!("automation path rejected: outside the write root {root}: {path}")),
+            Access::Read => Err(format!("automation path rejected: outside the read roots {roots}: {path}")),
+            Access::Write => Err(format!("automation path rejected: outside the write roots {roots}: {path}")),
         }
     }
 }
@@ -276,7 +277,7 @@ mod tests {
         }
         std::fs::write(base.join("in/a.deckcraft"), "x").unwrap();
         std::fs::write(base.join("outside/secret.deckcraft"), "x").unwrap();
-        let roots = AutomationRoots::new(Some(&base.join("in")), Some(&base.join("out"))).unwrap().unwrap();
+        let roots = AutomationRoots::new(&[base.join("in")], &[base.join("out")]).unwrap().unwrap();
         (base, roots)
     }
 
@@ -297,6 +298,17 @@ mod tests {
         let e = roots.check(&s(base.join("in/a.deckcraft")), Access::Write).unwrap_err();
         assert!(e.contains("outside the write root"), "{e}");
         assert!(roots.check(&s(base.join("out/x.png")), Access::Read).unwrap_err().contains("outside the read root"));
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[test]
+    fn any_configured_root_grants_access() {
+        let (base, _) = folders("multiple");
+        let roots = AutomationRoots::new(&[base.join("in"), base.join("in2")], &[base.join("out"), base.join("outside")]).unwrap().unwrap();
+        assert_eq!(roots.check(&s(base.join("in/a.deckcraft")), Access::Read), Ok(()));
+        assert_eq!(roots.check(&s(base.join("in2/b.deckcraft")), Access::Read), Ok(()));
+        assert_eq!(roots.check(&s(base.join("out/new.deckcraft")), Access::Write), Ok(()));
+        assert_eq!(roots.check(&s(base.join("outside/new.deckcraft")), Access::Write), Ok(()));
         let _ = std::fs::remove_dir_all(base);
     }
 
@@ -336,18 +348,18 @@ mod tests {
     #[test]
     fn a_missing_root_is_an_error_and_none_is_no_confinement() {
         let (base, _) = folders("missing");
-        let e = AutomationRoots::new(Some(&base.join("nope")), None).unwrap_err();
+        let e = AutomationRoots::new(&[base.join("nope")], &[]).unwrap_err();
         assert!(e.starts_with("cannot open the automation read root"), "{e}");
-        let e = AutomationRoots::new(None, Some(&base.join("in/a.deckcraft"))).unwrap_err();
+        let e = AutomationRoots::new(&[], &[base.join("in/a.deckcraft")]).unwrap_err();
         assert!(
             e.starts_with("cannot open the automation write root")
                 && e.ends_with(&std::io::Error::from(std::io::ErrorKind::NotADirectory).to_string()),
             "{e}"
         );
-        assert!(AutomationRoots::new(Some(Path::new("")), None).unwrap_err().starts_with("cannot open the automation read root ``"));
-        assert!(AutomationRoots::new(None, None).unwrap().is_none());
+        assert!(AutomationRoots::new(&[PathBuf::new()], &[]).unwrap_err().starts_with("cannot open the automation read root ``"));
+        assert!(AutomationRoots::new(&[], &[]).unwrap().is_none());
         // One root alone grants only its own access.
-        let read_only = AutomationRoots::new(Some(&base.join("in")), None).unwrap().unwrap();
+        let read_only = AutomationRoots::new(&[base.join("in")], &[]).unwrap().unwrap();
         let e = read_only.check(&s(base.join("in/x.deckcraft")), Access::Write).unwrap_err();
         assert!(e.contains("write authority is absent"), "{e}");
         let _ = std::fs::remove_dir_all(base);
@@ -384,7 +396,7 @@ mod tests {
         assert_eq!(roots.check(&s(base.join("in/alias/x.deckcraft")), Access::Read), Ok(()));
         // A root given through a link is the folder it leads to.
         assert!(made(&base.join("in"), &base.join("in-link")));
-        let linked = AutomationRoots::new(Some(&base.join("in-link")), None).unwrap().unwrap();
+        let linked = AutomationRoots::new(&[base.join("in-link")], &[]).unwrap().unwrap();
         assert_eq!(linked.check(&s(base.join("in/a.deckcraft")), Access::Read), Ok(()));
         let _ = std::fs::remove_dir_all(base);
     }

@@ -7,8 +7,8 @@ use deckcraft_render::RenderOpts;
 use kurbo::Rect;
 
 use super::{
-    MAX_RASTER_PIXELS, PAPERS, PageLayout, PdfError, PdfOptions, Presentation, export, glyph_text_ranges, handout_boxes, master_text_pieces,
-    master_texts, notes_frames, notes_slide_box, opaque, paper_size, raster_scale, straight,
+    MAX_RASTER_PIXELS, PAPERS, PageLayout, PdfError, PdfOptions, Presentation, export, fill_clear, glyph_text_ranges, handout_boxes,
+    master_text_pieces, master_texts, notes_frames, notes_slide_box, opaque, paper_size, raster_scale, straight,
 };
 use deckcraft_model::text::TextBody;
 
@@ -582,7 +582,20 @@ fn slides_share_one_backdrop_raster_and_keep_their_pixels() {
         deckcraft_render::SlidePart::Content,
         &RenderOpts { scale: scale(&p), threads: 4, ..Default::default() },
     );
-    let straight = expect.to_straight();
+    let mut straight = expect.to_straight();
+    // Fully transparent pixels carry the backdrop colour, not black (#1455).
+    let mut back = deckcraft_render::render_slide_part(
+        &p,
+        0,
+        deckcraft_render::SlidePart::Backdrop,
+        &RenderOpts { scale: scale(&p), threads: 4, ..Default::default() },
+    );
+    opaque(&mut back.pixels);
+    for (px, b) in straight.as_chunks_mut::<4>().0.iter_mut().zip(back.pixels.as_chunks::<4>().0) {
+        if px[3] == 0 {
+            px[..3].copy_from_slice(&b[..3]);
+        }
+    }
     let want_rgb: Vec<u8> = straight.as_chunks::<4>().0.iter().flat_map(|px| px[..3].iter().copied()).collect();
     let want_alpha: Vec<u8> = straight.as_chunks::<4>().0.iter().map(|px| px[3]).collect();
     assert_eq!(rgb, want_rgb, "content colors are straight, not premultiplied");
@@ -632,6 +645,15 @@ fn backdrop_and_content_pixels_convert_per_pixel() {
         }
         assert_eq!((o[3], s[3]), (255, p[3]));
     }
+}
+
+/// Fully transparent content pixels take the backdrop colour (not black) so a smoothing viewer
+/// draws no hairline at the edge of a picture; every other pixel is untouched (#1455).
+#[test]
+fn transparent_content_pixels_take_the_backdrop_colour() {
+    let mut front = vec![0, 0, 0, 0, 10, 20, 30, 255, 5, 5, 5, 1, 0, 0, 0, 0];
+    fill_clear(&mut front, &[255, 250, 240, 255].repeat(4));
+    assert_eq!(front, [255, 250, 240, 0, 10, 20, 30, 255, 5, 5, 5, 1, 255, 250, 240, 0]);
 }
 
 #[test]

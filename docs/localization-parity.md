@@ -1,6 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-27 · **Change:** minor (Turkish partial UI and language switch in Preferences; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-31 · **Change:** minor (Turkish partial UI and language switch in Preferences; previous: minor, opt-in native LXGW WenKai Lite fallback and interface CJK tests; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is English by default, with an interface language switch in Preferences
 offering partial Turkish support (`tr` / Türkçe). Most other strings remain literals in the UI

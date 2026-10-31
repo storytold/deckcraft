@@ -1270,7 +1270,14 @@ impl Chart {
         let mut bins: Vec<Bin> = (0..count).map(|i| Bin { lo: lo + width * i as f64, hi: lo + width * (i + 1) as f64, count: 0 }).collect();
         for x in v {
             // (lo, hi] bins, the first one also holding the minimum.
-            let i = (((x - lo) / width).ceil() as usize).saturating_sub(1).min(count - 1);
+            let mut i = (((x - lo) / width).ceil() as usize).saturating_sub(1).min(count - 1);
+            // The division can round across an edge: settle on the bin whose stored bounds hold x.
+            while i > 0 && x <= bins[i - 1].hi {
+                i -= 1;
+            }
+            while i + 1 < count && x > bins[i].hi {
+                i += 1;
+            }
             if let Some(b) = bins.get_mut(i) {
                 b.count += 1;
             }
@@ -1533,6 +1540,16 @@ mod chartex_tests {
         let mut c = obs(&[0.0, 1.0, 2.1]);
         c.bin_count = Some(7);
         assert_eq!(c.histogram_bins().len(), 7);
+    }
+
+    #[test]
+    fn histogram_value_on_a_bin_edge_counts_in_that_bin() {
+        let mut c = obs(&[0.0, 2.1, 3.0]);
+        c.bin_size = Some(0.3);
+        let bins = c.histogram_bins();
+        let own = bins.iter().find(|b| b.lo < 2.1 && 2.1 <= b.hi).expect("a bin holds 2.1");
+        assert_eq!(own.count, 1, "2.1 must be counted in ({}, {}]", own.lo, own.hi);
+        assert_eq!(bins.iter().map(|b| b.count).sum::<usize>(), 3);
     }
 
     #[test]
