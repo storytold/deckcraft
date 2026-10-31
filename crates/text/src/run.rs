@@ -70,6 +70,22 @@ impl std::fmt::Debug for GlyphRun {
     }
 }
 
+/// Where one equation was drawn: its first character, its left edge and baseline, the size it
+/// was laid out at (autofit applied), and its extent around the baseline. Shape-local points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EquationPlace {
+    pub para: usize,
+    pub ch: usize,
+    pub x: f64,
+    pub baseline: f64,
+    pub size: f64,
+    pub width: f64,
+    pub ascent: f64,
+    pub descent: f64,
+    /// Laid out in display style.
+    pub display: bool,
+}
+
 /// An underline, strikethrough or highlight box.
 #[derive(Clone, Debug)]
 pub struct Deco {

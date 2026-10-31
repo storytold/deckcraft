@@ -1997,9 +1997,10 @@ fn empty_equation_still_has_a_width() {
     assert_eq!(l.lines[0].caret_x.len(), 2);
 }
 
-/// The glyph x positions, in drawing order, of the runs that draw the equation covering `chars`.
-fn equation_glyph_xs(l: &TextLayout, chars: (usize, usize)) -> Vec<f64> {
-    l.runs.iter().filter(|r| r.chars == chars).flat_map(|r| r.glyphs.iter().map(|g| g.1)).collect()
+/// The left edges, in drawing order, of the shapes that draw the equations (an equation is
+/// drawn as outlines and rules, not as the paragraph's glyph runs).
+fn equation_glyph_xs(l: &TextLayout, _chars: (usize, usize)) -> Vec<f64> {
+    l.decos.iter().map(|d| d.rect.x0).collect()
 }
 
 #[test]
@@ -2051,7 +2052,8 @@ fn equation_alone_in_an_rtl_paragraph_sits_at_the_start_edge() {
     assert!((li.extent.1 - l.inner.x1).abs() < 0.5, "{:?} vs {:?}", li.extent, l.inner);
     let xs = equation_glyph_xs(&l, (0, n));
     assert!(!xs.is_empty());
-    assert!(xs.iter().all(|x| *x >= li.extent.0 - 0.5 && *x <= li.extent.1 + 0.5), "{xs:?} in {:?}", li.extent);
+    // Outlines may overhang the advance box by a side bearing.
+    assert!(xs.iter().all(|x| *x >= li.extent.0 - 2.0 && *x <= li.extent.1 + 2.0), "{xs:?} in {:?}", li.extent);
 }
 
 #[test]

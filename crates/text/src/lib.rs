@@ -53,7 +53,7 @@ pub(crate) use layout::LAYOUT_PASSES;
 pub use layout::layout;
 #[cfg(test)]
 use layout::layout_scaled;
-pub use run::{Dash, Deco, DecoLine, GlyphRun, RunEffects, TextShadow, UPRIGHT_CENTRE};
+pub use run::{Dash, Deco, DecoLine, EquationPlace, GlyphRun, RunEffects, TextShadow, UPRIGHT_CENTRE};
 #[cfg(test)]
 use shape::{SUB_SUPER, caps_char, is_upright, shaping_features};
 #[cfg(test)]
@@ -96,6 +96,8 @@ pub struct LineInfo {
 #[derive(Clone, Debug, Default)]
 pub struct TextLayout {
     pub runs: Vec<GlyphRun>,
+    /// Where each equation sits, shape-local (for an editor that goes over it).
+    pub equations: Vec<EquationPlace>,
     /// Empty list markers for the editor only; ordinary rendering and export omit them.
     /// Their space is still reserved so the caret starts where the first character will.
     pub empty_bullets: Vec<GlyphRun>,

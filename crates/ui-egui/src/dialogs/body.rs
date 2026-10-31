@@ -45,7 +45,6 @@ pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         "export" => dlg_export(app, ui, d),
         "replaceFonts" => dlg_replace_fonts(app, ui, d),
         "symbol" => dlg_symbol(app, ui, d),
-        "equation" => dlg_equation(app, ui, d),
         "pasteSpecial" => dlg_paste_special(app, ui, d),
         "find" => find_dialog(app, ui, d),
         "spelling" => dlg_spelling(app, ui, d),
@@ -874,18 +873,6 @@ fn dlg_symbol(app: &mut SlideApp, ui: &mut Ui, _d: &mut Dialog) -> bool {
         });
     }
     let (ok, cancel) = buttons(ui, "Close");
-    ok || cancel
-}
-
-fn dlg_equation(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
-    ui.label("Type an equation in linear form (e.g. a^2+b^2=c^2, x=(-b±√(b^2-4ac))/2a).");
-    let mut v = d.get("eq", "");
-    ui.add(egui::TextEdit::singleline(&mut v).hint_text("Equation").desired_width(340.0).font(theme::font(15.0)));
-    d.fields.insert("eq".into(), v.clone());
-    let (ok, cancel) = buttons(ui, "Insert");
-    if ok && !v.trim().is_empty() {
-        run(app, "insert.equation", json!({"linear": v}));
-    }
     ok || cancel
 }
 

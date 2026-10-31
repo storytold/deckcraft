@@ -3,6 +3,7 @@
 //! use them. The math tree, OMML, linear and LaTeX conversions are equaSHion's
 //! (see [`crate::equashion_bridge`]).
 
+use deckcraft_geom::Point;
 use deckcraft_model::text::{Run, RunKind, RunProps};
 use deckcraft_model::{ShapeId, ShapeKind};
 use serde_json::{Value, json};
@@ -43,9 +44,18 @@ pub fn specs() -> Vec<CommandSpec> {
             "Get Equation",
             [],
             None,
-            "{id?, cell?: [row, col], paragraph?, run?} → {id, cell?, paragraph, run, omml, linear, display, tree}",
+            "{id?, cell?: [row, col], paragraph?, run?} → {id, cell?, paragraph, run, omml, linear, display, tree, rect?: [x,y,w,h], baseline?, size?}: where the equation is drawn, in slide points (a table's cell gives the table's rect only)",
             has_slide,
             get
+        ),
+        cmd!(
+            query "equation.place",
+            "Equation Place",
+            [],
+            None,
+            "{id?, cell?, paragraph?, run?} → {rect: [x,y,w,h], baseline?, size?}: where the equation is drawn, in slide points",
+            has_slide,
+            place
         ),
         cmd!(
             query "equation.fromLinear",
@@ -195,6 +205,34 @@ pub(crate) fn insert_math_box(s: &mut Session, m: &eq::Math, rect: Option<deckcr
     Ok(json!({"id": id, "omml": omml, "linear": linear}))
 }
 
+/// Put a pasted equation where text would go: at the insertion point of the text being edited
+/// (replacing the selected text, with the formatting there), else in a new text box as
+/// Insert > Equation does. One undo step either way.
+pub(crate) fn paste_math(s: &mut Session, m: &eq::Math) -> Result<Value> {
+    if s.doc()?.selection.text.is_none() {
+        return insert_math_box(s, m, None);
+    }
+    let (omml, linear) = run_payload(m);
+    let (text, o) = (linear.clone(), omml.clone());
+    let pos = super::text::edit_text(s, move |body, t| {
+        let (a, b) = t.ordered();
+        let at = deckcraft_model::edit::delete(body, a, b);
+        let props = deckcraft_model::edit::props_at(body, at);
+        let src = deckcraft_model::text::TextBody {
+            paragraphs: vec![deckcraft_model::text::Paragraph {
+                runs: vec![Run { text, props, kind: RunKind::Math { omml: o } }],
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let c = deckcraft_model::edit::insert_body(body, at, &src);
+        t.anchor = c;
+        t.caret = c;
+        c
+    })?;
+    Ok(json!({"caret": [pos.0, pos.1], "omml": omml, "linear": linear}))
+}
+
 /// A table cell (row, column), or `None` for the shape's own text.
 type Cell = Option<(usize, usize)>;
 
@@ -336,6 +374,64 @@ fn get(s: &mut Session, p: &Value) -> Result<Value> {
         o.insert("run".into(), json!(ri));
         if let Some((r, c)) = cell {
             o.insert("cell".into(), json!([r, c]));
+        }
+        if let Some(d) = drawn(s, id, cell, pi, ri) {
+            o.insert("rect".into(), json!(d.rect));
+            if let (Some(b), Some(z)) = (d.baseline, d.size) {
+                o.insert("baseline".into(), json!(b));
+                o.insert("size".into(), json!(z));
+            }
+            if let Some(dp) = d.display {
+                o.insert("displayStyle".into(), json!(dp));
+            }
+        }
+    }
+    Ok(v)
+}
+
+/// Where an equation run is drawn, in slide points: its extent `rect` `[x, y, w, h]`, the
+/// `baseline` y and the `size` it was laid out at. The extent of the whole shape for a table
+/// cell or when the layout cannot say.
+struct Drawn {
+    rect: [f64; 4],
+    baseline: Option<f64>,
+    size: Option<f64>,
+    display: Option<bool>,
+}
+
+fn drawn(s: &Session, id: ShapeId, cell: Cell, pi: usize, ri: usize) -> Option<Drawn> {
+    let st = s.doc().ok()?;
+    let sh = st.shape(id)?;
+    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let aff = x.affine();
+    let whole = {
+        let corners = [aff * Point::new(0.0, 0.0), aff * Point::new(x.w, 0.0), aff * Point::new(x.w, x.h), aff * Point::new(0.0, x.h)];
+        let (x0, x1) = corners.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p.x), a.1.max(p.x)));
+        let (y0, y1) = corners.iter().fold((f64::MAX, f64::MIN), |a, p| (a.0.min(p.y), a.1.max(p.y)));
+        Drawn { rect: [x0, y0, x1 - x0, y1 - y0], baseline: None, size: None, display: None }
+    };
+    if cell.is_some() {
+        return Some(whole);
+    }
+    let body = sh.text.as_ref()?;
+    let at: usize = body.paragraphs.get(pi)?.runs.iter().take(ri).map(|r| r.char_len()).sum();
+    let t = crate::TextSel { shape: id, ..Default::default() };
+    let l = text::layout_for(st, &t)?;
+    let Some(e) = l.equations.iter().find(|e| e.para == pi && e.ch == at) else { return Some(whole) };
+    let (a, b) = (aff * Point::new(e.x, e.baseline - e.ascent), aff * Point::new(e.x + e.width, e.baseline + e.descent));
+    let base = aff * Point::new(e.x, e.baseline);
+    Some(Drawn { rect: [a.x.min(b.x), a.y.min(b.y), (b.x - a.x).abs(), (b.y - a.y).abs()], baseline: Some(base.y), size: Some(e.size), display: Some(e.display) })
+}
+
+fn place(s: &mut Session, p: &Value) -> Result<Value> {
+    let (id, cell, pi, ri) = locate(s, "equation.place", p)?;
+    let d = drawn(s, id, cell, pi, ri).ok_or_else(|| bad("equation.place", "the equation is gone"))?;
+    let mut v = json!({"rect": d.rect});
+    if let (Some(b), Some(z), Some(o)) = (d.baseline, d.size, v.as_object_mut()) {
+        o.insert("baseline".into(), json!(b));
+        o.insert("size".into(), json!(z));
+        if let Some(dp) = d.display {
+            o.insert("displayStyle".into(), json!(dp));
         }
     }
     Ok(v)
@@ -670,5 +766,209 @@ mod tests {
         let runs = &sh.text.unwrap().paragraphs[0].runs;
         assert!(runs.iter().all(|r| r.kind == deckcraft_model::text::RunKind::Text));
         assert_eq!(runs.iter().map(|r| r.text.as_str()).collect::<String>(), "hello");
+    }
+
+    /// The exact text the equaSHion tool put on the clipboard for the quadratic formula.
+    const QUADRATIC_OMML: &str = "<m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\"><m:r><m:t xml:space=\"preserve\">x=</m:t></m:r><m:f><m:num><m:r><m:t xml:space=\"preserve\">−b±</m:t></m:r><m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg></m:deg><m:e><m:sSup><m:e><m:r><m:t xml:space=\"preserve\">b</m:t></m:r></m:e><m:sup><m:r><m:t xml:space=\"preserve\">2</m:t></m:r></m:sup></m:sSup><m:r><m:t xml:space=\"preserve\">−4ac</m:t></m:r></m:e></m:rad></m:num><m:den><m:r><m:t xml:space=\"preserve\">2a</m:t></m:r></m:den></m:f></m:oMath>";
+
+    const QUADRATIC_MATHML: &str = "<math xmlns=\"http://www.w3.org/1998/Math/MathML\" display=\"block\"><mi>x</mi><mo>=</mo><mfrac><mrow><mo>−</mo><mi>b</mi><mo>±</mo><msqrt><msup><mi>b</mi><mn>2</mn></msup><mo>−</mo><mn>4</mn><mi>a</mi><mi>c</mi></msqrt></mrow><mrow><mn>2</mn><mi>a</mi></mrow></mfrac></math>";
+
+    use deckcraft_model::text::RunKind;
+    use serde_json::Value;
+
+    fn shape_count(s: &Session) -> usize {
+        s.doc().unwrap().current_slide().unwrap().shapes.len()
+    }
+
+    /// (all text, number of equation runs) of a shape.
+    fn shape_text(s: &Session, id: u64) -> (String, usize) {
+        let sh = s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().clone();
+        let body = sh.text.unwrap();
+        let mut t = String::new();
+        let mut n = 0;
+        for p in &body.paragraphs {
+            for r in &p.runs {
+                if matches!(r.kind, RunKind::Math { .. }) {
+                    n += 1;
+                } else {
+                    t.push_str(&r.text);
+                }
+            }
+        }
+        (t, n)
+    }
+
+    /// Every equation run on the current slide.
+    fn slide_equations(s: &Session) -> usize {
+        let sl = s.doc().unwrap().current_slide().unwrap().clone();
+        sl.shapes
+            .iter()
+            .filter_map(|sh| sh.text.as_ref())
+            .flat_map(|b| b.paragraphs.iter())
+            .flat_map(|p| p.runs.iter())
+            .filter(|r| matches!(r.kind, RunKind::Math { .. }))
+            .count()
+    }
+
+    fn has_node(v: &Value, kind: &str) -> bool {
+        match v {
+            Value::Object(o) => o.contains_key(kind) || o.values().any(|x| has_node(x, kind)),
+            Value::Array(a) => a.iter().any(|x| has_node(x, kind)),
+            _ => false,
+        }
+    }
+
+    /// A text box holding `text`, being edited with the insertion point at its end.
+    fn editing_box(s: &mut Session, text: &str) -> u64 {
+        let id = s.execute("insert.textBox", &json!({"rect": [100, 100, 400, 60], "text": text})).unwrap()["id"].as_u64().unwrap();
+        s.execute("text.edit", &json!({"id": id, "end": true})).unwrap();
+        id
+    }
+
+    #[test]
+    fn pasting_the_equashion_omml_into_a_text_box_inserts_an_equation_at_the_caret() {
+        let mut s = session();
+        let id = editing_box(&mut s, "Roots: ");
+        let r = s.execute("edit.paste", &json!({"text": QUADRATIC_OMML})).unwrap();
+        assert_eq!(r["pasted"], "equation");
+        assert_eq!(r["format"], "OMML");
+        assert_eq!(shape_text(&s, id), ("Roots: ".to_string(), 1));
+        let g = s.execute("equation.get", &json!({"id": id})).unwrap();
+        assert!(has_node(&g["tree"], "Frac") && has_node(&g["tree"], "Rad") && has_node(&g["tree"], "Script"), "{g}");
+        assert_eq!(g["run"], 1, "after the typed text");
+        assert_eq!(g["display"], false);
+        // The insertion point follows the equation.
+        let t = s.doc().unwrap().selection.text.clone().unwrap();
+        assert_eq!(t.caret, (0, "Roots: ".chars().count() + g["linear"].as_str().unwrap().chars().count()));
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(shape_text(&s, id), ("Roots: ".to_string(), 0), "one undo step");
+        s.execute("edit.redo", &json!({})).unwrap();
+        assert_eq!(shape_text(&s, id).1, 1);
+    }
+
+    #[test]
+    fn pasting_an_equation_with_nothing_edited_makes_an_equation_box() {
+        let mut s = session();
+        let before = shape_count(&s);
+        let r = s.execute("edit.paste", &json!({"text": QUADRATIC_OMML})).unwrap();
+        let id = r["id"].as_u64().unwrap();
+        assert_eq!(shape_count(&s), before + 1);
+        assert_eq!(shape_text(&s, id), (String::new(), 1));
+        let g = s.execute("equation.get", &json!({"id": id})).unwrap();
+        assert!(has_node(&g["tree"], "Frac"), "{g}");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(shape_count(&s), before);
+    }
+
+    #[test]
+    fn pasting_mathml_and_delimited_latex_inserts_equations() {
+        for (text, display, format) in [
+            (QUADRATIC_MATHML, true, "MathML"),
+            ("$x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}$", false, "LaTeX"),
+            ("\\(x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}\\)", false, "LaTeX"),
+            ("$$x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}$$", true, "LaTeX"),
+            ("\\[x=\\frac{-b\\pm\\sqrt{b^2-4ac}}{2a}\\]", true, "LaTeX"),
+        ] {
+            let mut s = session();
+            let id = editing_box(&mut s, "");
+            let r = s.execute("edit.paste", &json!({"text": text})).unwrap();
+            assert_eq!(r["format"], format, "{text}");
+            assert_eq!(shape_text(&s, id), (String::new(), 1), "{text}");
+            let g = s.execute("equation.get", &json!({"id": id})).unwrap();
+            assert!(has_node(&g["tree"], "Frac") && has_node(&g["tree"], "Rad"), "{text}: {g}");
+            assert_eq!(g["display"], display, "{text}");
+            s.execute("edit.undo", &json!({})).unwrap();
+            assert_eq!(shape_text(&s, id), (String::new(), 0), "{text}");
+        }
+    }
+
+    #[test]
+    fn plain_text_paste_and_match_formatting_and_unreadable_equations_stay_text() {
+        for text in ["hello world", "costs $5 and $6", "between $ 5 and 6 $", "a \\frac{1}{2} b", "\\alpha", "<b>bold</b>"] {
+            let mut s = session();
+            let id = editing_box(&mut s, "");
+            s.ui_requests.clear();
+            s.execute("edit.paste", &json!({"text": text})).unwrap();
+            assert_eq!(shape_text(&s, id), (text.to_string(), 0), "{text}");
+            assert!(s.ui_requests.is_empty(), "{text}: {:?}", s.ui_requests);
+        }
+        // Paste and Match Formatting pastes the literal text.
+        for text in [QUADRATIC_OMML, QUADRATIC_MATHML, "$x^2$"] {
+            let mut s = session();
+            let id = editing_box(&mut s, "");
+            s.execute("edit.pasteText", &json!({"text": text})).unwrap();
+            assert_eq!(shape_text(&s, id), (text.to_string(), 0));
+        }
+        // An equation payload that cannot be read pastes as text, with a note why.
+        let long = format!("${}$", "x".repeat(crate::equashion_bridge::MAX_CLIP_LATEX + 1));
+        for text in ["<m:oMath/>", "<math></math>", long.as_str()] {
+            let mut s = session();
+            let id = editing_box(&mut s, "");
+            s.ui_requests.clear();
+            let r = s.execute("edit.paste", &json!({"text": text})).unwrap();
+            assert!(r.get("pasted").is_none(), "{text:.40}");
+            assert_eq!(shape_text(&s, id), (text.to_string(), 0), "{text:.40}");
+            assert!(
+                s.ui_requests.iter().any(|u| matches!(u, UiRequest::Message { text } if text.starts_with("Pasted as text"))),
+                "{text:.40}: {:?}",
+                s.ui_requests
+            );
+        }
+        // Not editing: the text goes into a new text box as before.
+        let mut s = session();
+        let before = shape_count(&s);
+        s.execute("edit.paste", &json!({"text": "<math><mi>x</mi>"})).unwrap();
+        assert_eq!(shape_count(&s), before + 1);
+        assert_eq!(slide_equations(&s), 0);
+    }
+
+    #[test]
+    fn hostile_mathml_and_omml_pastes_never_panic_and_keep_the_text() {
+        const NS: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
+        let deep = format!("<math>{}<mi>x</mi>{}</math>", "<mrow>".repeat(5000), "</mrow>".repeat(5000));
+        let deep_frac = format!("<math>{}<mi>x</mi>{}</math>", "<mfrac><mi>a</mi>".repeat(200), "</mfrac>".repeat(200));
+        let wide = format!("<math>{}</math>", "<mi>x</mi>".repeat(200_000));
+        let deep_omml = format!("<m:oMath xmlns:m=\"{NS}\">{}{}</m:oMath>", "<m:f><m:num>".repeat(5000), "</m:num></m:f>".repeat(5000));
+        let cases = [
+            deep,
+            deep_frac,
+            wide,
+            deep_omml,
+            "<math><mi a=\"1\" a=\"2\">x</mi></math>".into(),
+            "<math><mi>x</mi></math><math><mi>y</mi></math>".into(),
+            "<math xmlns=\"urn:evil\"><mi>x</mi></math>".into(),
+            "<math><mfrac/><mroot/><msubsup/><munderover/><mtable><mtr/></mtable><mfenced/><mmultiscripts/></math>".into(),
+            "<math><mo>(</mo><mo>(</mo><mo>)</mo></math>".into(),
+            "<math><mspace width=\"1e400em\"/></math>".into(),
+            "$\\frac{".into(),
+            format!("${}$", "{".repeat(20_000)),
+        ];
+        for text in &cases {
+            for editing in [false, true] {
+                let mut s = session();
+                let id = if editing { Some(editing_box(&mut s, "")) } else { None };
+                let r = s.execute("edit.paste", &json!({"text": text}));
+                assert!(r.is_ok(), "{:.60}: {r:?}", text);
+                if let Some(id) = id
+                    && shape_text(&s, id).1 == 0
+                {
+                    assert_eq!(shape_text(&s, id).0, *text, "the clipboard is never lost");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn equation_get_says_where_the_equation_is_drawn() {
+        let mut s = session();
+        let r = s.execute("insert.equation", &json!({"linear": "a^2+b^2=c^2", "rect": [100.0, 100.0, 300.0, 50.0]})).unwrap();
+        let id = r["id"].clone();
+        let g = s.execute("equation.get", &json!({"id": id})).unwrap();
+        let rect: Vec<f64> = g["rect"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
+        assert_eq!(rect.len(), 4);
+        // Inside the box it was inserted into, with an extent of its own.
+        assert!(rect[0] >= 99.0 && rect[0] < 400.0, "{rect:?}");
+        assert!(rect[1] >= 99.0 && rect[1] < 150.0, "{rect:?}");
+        assert!(rect[2] > 20.0 && rect[2] <= 301.0 && rect[3] > 5.0, "{rect:?}");
     }
 }

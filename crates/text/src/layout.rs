@@ -706,6 +706,17 @@ fn emit_line_runs(out: &mut TextLayout, p: &ParaShaped, line: &LineInfo, place: 
             let joiners = p.cells.iter().skip(ci + 1).take_while(|c| c.atom.is_none() && c.ch == '\u{2060}').count();
             let base_y = line.baseline - st.baseline * st.size;
             crate::math::emit(m, cx, base_y, st.color, st.alpha, line.para, (ci, ci + 1 + joiners), &mut out.runs, &mut out.decos);
+            out.equations.push(crate::EquationPlace {
+                para: line.para,
+                ch: ci,
+                x: cx,
+                baseline: base_y,
+                size: st.size,
+                width: m.w,
+                ascent: m.asc,
+                descent: m.desc,
+                display: m.display,
+            });
             if let Some(hl) = st.highlight {
                 out.decos.push(Deco { rect: Rect::new(cx, line.top, cx1, line.bottom), color: hl, behind: true, para: line.para, line: DecoLine::Solid, path: None });
             }

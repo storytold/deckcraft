@@ -123,7 +123,7 @@ pub(super) fn insert(app: &mut SlideApp, ui: &mut Ui) {
         big(app, ui, Icon::SlideNumber, "Slide\nNumber", "insert.slideNumber", json!({}));
     });
     group(ui, |ui| {
-        big(app, ui, Icon::Equation, "Equation", "app.dialog", json!({"id": "equation"}));
+        crate::equation_tab::insert_button(app, ui);
         big(app, ui, Icon::Symbol, "Symbol", "app.dialog", json!({"id": "symbol"}));
     });
     group(ui, |ui| {

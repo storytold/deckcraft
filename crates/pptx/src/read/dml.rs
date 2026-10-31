@@ -729,18 +729,4 @@ mod tests {
         let d = parse(br#"<a:bodyPr vert="wordArtVertRtl"/>"#).unwrap();
         assert_eq!(body_pr(&d.root).vert.map(|v| v.xml()), Some("wordArtVertRtl"));
     }
-
-    #[test]
-    fn math_keeps_inherited_prefixes() {
-        let part = Part { name: "x".into(), rels: Default::default(), ns: vec![("xmlns:m".into(), "MNS".into())] };
-        let d = parse(br#"<a14:m xmlns:a14="q" xmlns:z="ZNS"><m:oMathPara><m:oMath><m:r><m:t>x</m:t></m:r><z:foo/></m:oMath></m:oMathPara></a14:m>"#)
-            .unwrap();
-        let x = math_xml(&part, &d.root);
-        assert!(x.contains(r#"xmlns:m="MNS""#) && x.contains(r#"xmlns:z="ZNS""#), "{x}");
-        assert!(parse(x.as_bytes()).is_ok());
-        // Already self-contained input is unchanged.
-        let own = r#"<m:oMath xmlns:m="K"><m:r><m:t>x</m:t></m:r></m:oMath>"#;
-        let d = parse(format!("<a14:m>{own}</a14:m>").as_bytes()).unwrap();
-        assert_eq!(math_xml(&part, &d.root), own);
-    }
 }

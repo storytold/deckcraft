@@ -260,6 +260,10 @@ impl Session {
             }
             ToolKind::Select => {}
         }
+        // A click on an equation in the text being edited edits it, where it sits.
+        if self.equation_in_edited_text(p, tol)? {
+            return Ok(Value::Null);
+        }
         // Clicking inside the text being edited moves the caret / starts a text selection.
         let before = self.text_selection();
         if let Some((shape, pos)) = self.place_caret(p, tol, mods.shift)? {
@@ -392,9 +396,12 @@ impl Session {
                 let on_frame = text
                     && is_text_first(st, id)
                     && st.shape(id).is_some_and(|s| edit_zone(&xfrm_of(&st.doc, &st.selection, s), p, tol) == EditZone::Frame);
-                let enter_text =
-                    (!toggle && !on_frame && ((text && (selected || is_text_first(st, id))) || (table && selected && in_table_cell(st, id, p))))
-                        .then_some((id, p));
+                // An equation under the click edits in place on a plain click, selected or not.
+                let on_equation = text && st.shape(id).is_some_and(|sh| super::hit::math_run_at(st, sh, p).is_some());
+                let enter_text = (!toggle
+                    && !on_frame
+                    && ((text && (selected || is_text_first(st, id) || on_equation)) || (table && selected && in_table_cell(st, id, p))))
+                .then_some((id, p));
                 let ids2 = ids.clone();
                 self.select(|_, sel| {
                     sel.shapes = ids2;
@@ -455,6 +462,11 @@ impl Session {
                     self.execute("guide.move", &json!({"index": index, "pos": pos}))?
                 };
             }
+            Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. })
+                // A click on an equation edits it in place (the editor opens over it).
+                if self.equation_click_edit(id, at) => {
+                    out = json!({"editing": id, "equation": true});
+                }
             Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. })
                 // Plain click on text: caret at the click (in a table, in the clicked cell).
                 if self.edit_text_at(id, at)? => {

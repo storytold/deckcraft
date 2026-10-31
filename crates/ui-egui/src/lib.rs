@@ -20,6 +20,8 @@ pub mod canvas;
 pub mod capture;
 pub mod control;
 pub mod dialogs;
+pub mod equation_editor;
+pub mod equation_tab;
 pub mod doc_window;
 pub mod eyedropper;
 pub mod icons;
@@ -228,6 +230,8 @@ pub struct SlideApp {
     /// Spelling squiggles, checked on a worker thread.
     pub squiggles: squiggles::Squiggles,
     pub dialog: Option<dialogs::Dialog>,
+    /// The equation editor (equaSHion's widget) while the Equation dialog is open.
+    pub(crate) equation: equation_editor::EquationHost,
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,
