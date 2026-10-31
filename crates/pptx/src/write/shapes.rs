@@ -141,10 +141,10 @@ fn cnvpr(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
     }
     w.open("p:cNvPr", a);
     if let Some(h) = &s.click {
-        dml::hyperlink(w, x, o, "a:hlinkClick", h);
+        dml::hyperlink(w, x, o, "a:hlinkClick", h, false);
     }
     if let Some(h) = &s.hover {
-        dml::hyperlink(w, x, o, "a:hlinkHover", h);
+        dml::hyperlink(w, x, o, "a:hlinkHover", h, false);
     }
     if s.decorative {
         w.open0("a:extLst");

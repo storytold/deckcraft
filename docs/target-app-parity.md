@@ -1,6 +1,6 @@
 # DeckCraft vs Microsoft PowerPoint: parity assessment
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (Animations shortfall: preview from the selected effect is in; previous: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (hyperlink colour over the run's colour, `ahyp:hlinkClr`; previous: trivial, Animations shortfall: preview from the selected effect is in; before that: major, community PR wave 2026-10-14: breadth 84% over 191 features (P0 92%, P1 82%, P2 55%) after `cargo xtask parity`; area table and What works today folded to one row or bullet each; 320 engine commands; ready ~55% and stage alpha unchanged; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 The authoritative answer to "how close is DeckCraft to PowerPoint, and how much work is left?".
 [ROADMAP.md](../ROADMAP.md) summarizes it; [gaps.md](gaps.md) itemizes every shortfall;
@@ -227,7 +227,8 @@ Carried from the 2026-10-07 ROADMAP status and updated with what has landed sinc
 - **Text:** in-place editing with caret, selection, keyboard and mouse; every Home-tab font and
   paragraph control; bullets and numbering; levels; autofit; columns; vertical text; date fields in
   their own format (Insert › Date and Time picks the format and language, or inserts the sample as
-  fixed text); hyperlinks drawn in the theme's hyperlink colour and followed in the show.
+  fixed text); hyperlinks drawn in the theme's hyperlink colour whatever the run's colour, unless
+  the link keeps its text colour (`ahyp:hlinkClr`), and followed in the show.
   UAX #9 bidi and Arabic shaping with HarfRust, script font slots with per-cluster fallback,
   `justLow` kashida, bidi caret and selection.
 - **Editing:** select, marquee, move, resize, rotate, adjust; smart guides; nudge; duplicate;
@@ -290,6 +291,7 @@ scored done (16 open issues).
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-22 | trivial | Animations shortfall: preview from the selected effect (Play From) is in. Percentages unchanged |
+| 2026-10-17 | trivial | Hyperlinked text takes the theme's hyperlink colour even when the run sets a colour, unless the link keeps its text colour (`ahyp:hlinkClr val="tx"`, read and written), as measured in PowerPoint 2016 and 365 for Windows. Headline percentages unchanged |
 | 2026-10-16 | trivial | Arrange shortfall: Align to Slide and Align Selected Objects are in the Align menu. Percentages unchanged |
 | 2026-10-14 | minor | Community PR wave folded: one headline breadth row (84% over 191 features after `cargo xtask parity`; duplicate checklist rows removed), one row per feature area with the latest breadth and shortfalls, one Themes / Slide show / Views / Review / Automation bullet each (320 engine commands). SmartArt ready ~35% (Text Pane, 6e40335) moves the area mean to 62.8%; dimension and headline percentages unchanged |
 | 2026-10-13 | minor | Shapes shortfall "text warp" narrowed to adjust handles: the Transform gallery applies a preset |

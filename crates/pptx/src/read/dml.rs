@@ -544,7 +544,10 @@ pub fn rpr(imp: &mut Imp, part: &Part, r: &El) -> RunProps {
             "ea" => p.font_ea = typeface(e),
             "cs" => p.font_cs = typeface(e),
             "sym" => p.font_sym = typeface(e),
-            "hlinkClick" => p.link = hyperlink(imp, part, e),
+            "hlinkClick" => {
+                p.link = hyperlink(imp, part, e);
+                p.link_keeps_color = e.find("hlinkClr").is_some_and(|c| c.attr("val") == Some("tx")).then_some(true);
+            }
             "hlinkMouseOver" => p.hover = hyperlink(imp, part, e),
             _ => {}
         }
