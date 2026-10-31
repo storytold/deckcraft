@@ -253,7 +253,14 @@ fn bring_media(cmd: &str, doc: &mut deckcraft_model::Presentation, media: &[deck
                 doc.media.push(m.clone());
                 doc.next_id = doc.next_id.max(m.id.0);
             }
-            Some(x) if x.data == m.data => {}
+            Some(x) if x.data == m.data && x.link == m.link => {}
+            // A linked item has no bytes, so another deck's linked item under the same id is told
+            // apart by its link and copied under a fresh id with it (`add_media` matches bytes).
+            Some(_) if m.link.is_some() => {
+                let id = MediaId(doc.alloc_id().ok_or_else(|| bad(cmd, NO_ID_SPACE))?);
+                doc.media.push(deckcraft_model::MediaItem { id, ..m.clone() });
+                map.insert(m.id, id);
+            }
             Some(_) => {
                 let id = doc.add_media(&m.name, &m.content_type, m.data.as_ref().clone()).ok_or_else(|| bad(cmd, NO_ID_SPACE))?;
                 map.insert(m.id, id);
