@@ -404,23 +404,31 @@ fn font_edits(p: &Value) -> Result<FontEdits> {
 fn color_command_value(c: &deckcraft_model::ColorRef) -> Value {
     use deckcraft_model::ColorBase;
     let mut o = serde_json::Map::new();
-    for m in &c.mods {
-        if let Some(v) = m.value() {
-            o.insert(m.xml_name().to_string(), json!(v));
-        }
+    // An ordered list, so the order of the transforms and repeated ones such as `[inv, inv]` are kept.
+    if !c.mods.is_empty() {
+        o.insert("mods".into(), json!(c.mods));
     }
+    // `#RRGGBB`, or `#RRGGBBAA` for a color that is not opaque.
+    let hex = |c: &deckcraft_color::Rgba| if c.a == 255 { format!("#{}", c.hex()) } else { format!("#{}{:02X}", c.hex(), c.a) };
     match &c.base {
-        ColorBase::Rgb { rgb } if o.is_empty() => json!(format!("#{}", rgb.hex())),
+        ColorBase::Rgb { rgb } if o.is_empty() => json!(hex(rgb)),
         ColorBase::Rgb { rgb } => {
-            o.insert("rgb".into(), json!(format!("#{}", rgb.hex())));
+            o.insert("rgb".into(), json!(hex(rgb)));
             Value::Object(o)
         }
         ColorBase::Scheme { slot } => {
             o.insert("scheme".into(), json!(slot.xml_name()));
             Value::Object(o)
         }
-        ColorBase::Preset { name } => json!(name),
-        ColorBase::System { last, .. } => json!(format!("#{}", last.hex())),
+        ColorBase::Preset { name } => {
+            o.insert("preset".into(), json!(name));
+            Value::Object(o)
+        }
+        ColorBase::System { name, last } => {
+            o.insert("system".into(), json!(name));
+            o.insert("last".into(), json!(hex(last)));
+            Value::Object(o)
+        }
     }
 }
 

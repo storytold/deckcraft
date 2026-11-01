@@ -377,7 +377,8 @@ pub(crate) fn ok() -> Result<Value> {
 
 /// Parse a colour param: `"#RRGGBB"`, `"accent1"`…, or `{"scheme":"accent2","lumMod":75000}`.
 /// A preset or system colour keeps its base: `{"preset":"red"}`,
-/// `{"system":"windowText","last":"#000000"}`.
+/// `{"system":"windowText","last":"#000000"}`. `"mods"` lists transforms in order:
+/// `{"preset":"red","mods":[{"op":"inv"},{"op":"inv"}]}`.
 pub(crate) fn color_param(p: &Value, key: &str) -> Option<deckcraft_model::ColorRef> {
     let v = p.get(key)?;
     color_value(v)
@@ -416,6 +417,10 @@ pub(crate) fn color_value(v: &Value) -> Option<deckcraft_model::ColorRef> {
                 if let Some(t) = deckcraft_color::ColorTransform::from_xml(k, val.as_i64().and_then(|x| i32::try_from(x).ok())) {
                     c.mods.push(t);
                 }
+            }
+            // `mods` lists transforms in order, repeats included: `[{"op":"inv"},{"op":"lumMod","val":50000}]`.
+            if let Some(list) = o.get("mods") {
+                c.mods.extend(serde_json::from_value::<Vec<deckcraft_color::ColorTransform>>(list.clone()).ok()?);
             }
             Some(c)
         }
@@ -688,5 +693,9 @@ mod tests {
             assert!(color_value(&json!({"preset": name})).is_some(), "{name}");
         }
         assert!(color_value(&json!({"system": "3dDkShadow", "last": "#000000"})).is_some());
+        let listed = color_value(&json!({"preset": "red", "mods": [{"op": "inv"}, {"op": "lumOff", "val": 20_000}, {"op": "inv"}]}));
+        let mods = vec![ColorTransform::Inv, ColorTransform::LumOff(20_000), ColorTransform::Inv];
+        assert_eq!(listed, Some(ColorRef { base: ColorBase::Preset { name: "red".into() }, mods }));
+        assert_eq!(color_value(&json!({"preset": "red", "mods": [{"op": "notATransform"}]})), None);
     }
 }
