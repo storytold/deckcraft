@@ -130,7 +130,7 @@ impl SlideApp {
         }
     }
     fn provider_open(&mut self, host: &Host, command: Command) {
-        let Command::Open { request, resource: _, name, bytes } = command else { return };
+        let Command::Open { request, name, bytes } = command else { return };
         let data = deckcraft_engine::cmd::base64_encode(&bytes);
         match self.run("file.openBytes", json!({"name":name,"data":data})) {
             Ok(_) => {
