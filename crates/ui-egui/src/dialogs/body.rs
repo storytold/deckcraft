@@ -263,7 +263,7 @@ fn dlg_setup_show(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let names: Vec<String> = app.session.active().map(|s| s.doc.custom_shows.iter().map(|c| c.name.clone()).collect()).unwrap_or_default();
     let chosen = d.fields.entry("custom".into()).or_insert_with(|| sh.custom_show.clone().unwrap_or_default()).clone();
     let field = ui.label(tl!("Slides"));
-    let label = if chosen.is_empty() { "All slides".to_string() } else { chosen.clone() };
+    let label = if chosen.is_empty() { tl!("All slides").to_string() } else { chosen.clone() };
     let combo = craft_ui::ComboBox::from_id_salt("setup_custom").selected_text(label).show_ui(ui, |ui| {
         if ui.selectable_label(chosen.is_empty(), tl!("All slides")).clicked() {
             d.fields.insert("custom".into(), String::new());
