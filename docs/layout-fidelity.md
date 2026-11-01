@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.15): selector-bound font rules, shared font groups and local
-fit triggers, extending composite geometry, geographic caches and rich-label layout.
+Updated 2026-11-01 (PPTX.16): local font-reference propagation and child-first rule
+execution, extending shared font groups, geometry, geographic caches and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -705,3 +705,42 @@ explicit failure, not included in that passing count. The ten real-text regressi
 have native counterparts; four representative packages have zero Open XML SDK errors.
 
 Final validation: all eight workspace CI stages pass, including 2,403 tests and doctests.
+
+
+## Local font references and rule traversal (PPTX.16)
+
+Native controls distinguish a displayed local font change from changing the constraint's
+initial value. A default reference retains its original size when a different node fits
+locally. Explicit font equalities propagate in both directions, including scaled references;
+font bounds can tighten connected members. Parent constraint changes retain their existing
+reference behavior. The implementation keeps local font values separate from their prior
+constraint value and solves the connected font equations/bounds in a second bounded pass.
+Unrelated font components are not activated. A regression reproduces unrelated nodes changing
+size before the reachability fix and retains both sizes afterwards.
+
+Children now apply their rules before the enclosing layout, preserving sibling and same-node
+XML order. Numeric endpoints are search limits, not inherited font floors for every child.
+A child that already fits therefore need not be enlarged to a parent's later rule endpoint.
+The search verifies the neighboring upper integer before rounding down, avoiding an extra
+point lost only because binary search ended immediately below an exactly fitting integer.
+Local factor rules evaluate the selected reference size, including a zero initial multiplier.
+
+Ten native default/bound controls use 24pt and 48pt source labels: unspecified sibling fonts
+remain 36pt, default/equality references resolve their factors, and reference inequalities
+alone do not choose the initial size. Explicit rules can subsequently activate those bounds.
+The uncached diagram default is therefore 36pt; cached drawings retain their stored text.
+
+Ten real-text local-reference/order regressions preserve font sizes and geometry through
+export/reimport. The wider native comparison has forty-two controls: thirty-eight match
+font sizes exactly, all painted shape bounds differ by at most 0.75pt, and four scaled
+reverse-reference cases differ by one point in the dependent font. Those four integer-search
+or quantization differences remain open; they are not counted as exact font matches.
+Mapped-composite own-text geometry, native fallback/search policies, automatic geographic
+viewport policy and long rich-label overflow remain separate work. No native outputs or
+user/private assets are included in this change.
+
+Final validation: all eight workspace CI gates pass (2,408 tests including doctests).
+Four representative original packages pass Open XML SDK validation. The final CLI exports
+all 60 original probe pages directly at 3840px width with unchanged input hashes and no
+external converter on PATH. LibreOffice exports the two representative local-reference
+diagrams without their content; those blank outputs are not fidelity passes.

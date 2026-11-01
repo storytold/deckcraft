@@ -487,6 +487,35 @@ fn numeric_rule_fixture(rules: &str, height: &str, long: bool) -> Vec<u8> {
     zip(parts)
 }
 
+fn shared_font_fixture(op: &str, parent: Option<bool>, first: &str, second: &str) -> Vec<u8> {
+    let mut parts = files(&uncached_fixture());
+    let mut constraints = String::new();
+    let mut nodes = String::new();
+    for (i, x) in [10, 120].into_iter().enumerate() {
+        constraints.push_str(&format!(
+            r#"<dgm:constr type="w" for="ch" forName="card{i}" val="40"/><dgm:constr type="h" for="ch" forName="card{i}" val="40"/><dgm:constr type="l" for="ch" forName="card{i}" val="{x}"/><dgm:constr type="t" for="ch" forName="card{i}" val="20"/>"#
+        ));
+        let rule = if i == 0 && parent == Some(false) { r#"<dgm:rule type="primFontSz" val="5"/>"# } else { "" };
+        nodes.push_str(&format!(
+            r#"<dgm:layoutNode name="card{i}" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="ch" ptType="node" st="{}" cnt="1"/><dgm:shape type="rect"/><dgm:constrLst/><dgm:ruleLst>{rule}</dgm:ruleLst></dgm:layoutNode>"#,
+            i + 1
+        ));
+    }
+    let rule = if parent == Some(true) { r#"<dgm:rule type="primFontSz" for="ch" val="5"/>"# } else { "" };
+    let layout = format!(
+        r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:uncached-original" minVer="12.0"><dgm:title val="Original shared font probe"/><dgm:desc val="Separate local triggers from synchronized font changes"/><dgm:catLst><dgm:cat type="process" pri="99"/></dgm:catLst><dgm:layoutNode name="canvas"><dgm:alg type="composite"/><dgm:presOf/><dgm:shape type="none"/><dgm:constrLst>{constraints}<dgm:constr type="primFontSz" for="ch" op="{op}" val="36"/></dgm:constrLst><dgm:ruleLst>{rule}</dgm:ruleLst>{nodes}</dgm:layoutNode></dgm:layoutDef>"#
+    );
+    for (_, bytes) in &mut parts {
+        let Ok(doc) = parse_xml(bytes) else { continue };
+        if doc.root.is("layoutDef") {
+            *bytes = layout.as_bytes().to_vec();
+        } else if doc.root.is("dataModel") {
+            *bytes = String::from_utf8(bytes.clone()).unwrap().replace("Research", first).replace("Build", second).into_bytes();
+        }
+    }
+    zip(parts)
+}
+
 #[test]
 fn shared_font_rules_retain_their_trigger_scope_and_roundtrip_real_text() {
     let long = "Observe changes in the landscape and record every result";
@@ -505,32 +534,7 @@ fn shared_font_rules_retain_their_trigger_scope_and_roundtrip_real_text() {
     .into_iter()
     .enumerate()
     {
-        let mut parts = files(&uncached_fixture());
-        let mut constraints = String::new();
-        let mut nodes = String::new();
-        for (i, x) in [10, 120].into_iter().enumerate() {
-            constraints.push_str(&format!(
-                r#"<dgm:constr type="w" for="ch" forName="card{i}" val="40"/><dgm:constr type="h" for="ch" forName="card{i}" val="40"/><dgm:constr type="l" for="ch" forName="card{i}" val="{x}"/><dgm:constr type="t" for="ch" forName="card{i}" val="20"/>"#
-            ));
-            let rule = if i == 0 && parent == Some(false) { r#"<dgm:rule type="primFontSz" val="5"/>"# } else { "" };
-            nodes.push_str(&format!(
-                r#"<dgm:layoutNode name="card{i}" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="ch" ptType="node" st="{}" cnt="1"/><dgm:shape type="rect"/><dgm:constrLst/><dgm:ruleLst>{rule}</dgm:ruleLst></dgm:layoutNode>"#,
-                i + 1
-            ));
-        }
-        let rule = if parent == Some(true) { r#"<dgm:rule type="primFontSz" for="ch" val="5"/>"# } else { "" };
-        let layout = format!(
-            r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:uncached-original" minVer="12.0"><dgm:title val="Original shared font probe"/><dgm:desc val="Separate local triggers from synchronized font changes"/><dgm:catLst><dgm:cat type="process" pri="99"/></dgm:catLst><dgm:layoutNode name="canvas"><dgm:alg type="composite"/><dgm:presOf/><dgm:shape type="none"/><dgm:constrLst>{constraints}<dgm:constr type="primFontSz" for="ch" op="{op}" val="36"/></dgm:constrLst><dgm:ruleLst>{rule}</dgm:ruleLst>{nodes}</dgm:layoutNode></dgm:layoutDef>"#
-        );
-        for (_, bytes) in &mut parts {
-            let Ok(doc) = parse_xml(bytes) else { continue };
-            if doc.root.is("layoutDef") {
-                *bytes = layout.as_bytes().to_vec();
-            } else if doc.root.is("dataModel") {
-                *bytes = String::from_utf8(bytes.clone()).unwrap().replace("Research", first).replace("Build", second).into_bytes();
-            }
-        }
-        let bytes = zip(parts);
+        let bytes = shared_font_fixture(op, parent, first, second);
         let p = deckcraft_pptx::import(&bytes).unwrap();
         let fonts = |p: &deckcraft_model::Presentation| -> Vec<f64> {
             group(p).children().iter().map(|s| s.text.as_ref().unwrap().paragraphs[0].runs[0].props.size.unwrap()).collect()
@@ -546,6 +550,61 @@ fn shared_font_rules_retain_their_trigger_scope_and_roundtrip_real_text() {
             let dir = std::path::PathBuf::from(dir);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join(format!("shared-font-{index}.pptx")), bytes).unwrap();
+        }
+    }
+}
+
+#[test]
+fn local_reference_fonts_and_parent_order_match_real_text_and_survive_roundtrip() {
+    let long = "Observe changes in the landscape and record every result";
+    for (index, (op, factor, target, parent, first, second, expected)) in [
+        ("none", 1., 0, false, "Observe changes", long, [21., 36.]),
+        ("none", 0.5, 0, false, "Observe changes", long, [21., 18.]),
+        ("none", 0.5, 1, false, "Observe changes", long, [36., 14.]),
+        ("equ", 1., 0, false, "Observe changes", long, [21., 21.]),
+        ("equ", 0.5, 0, false, "Observe changes", long, [21., 11.]),
+        ("equ", 0.5, 1, false, "Observe changes", long, [28., 14.]),
+        ("lte", 0.5, 0, false, "Observe changes", long, [21., 11.]),
+        ("gte", 0.5, 0, false, "Observe changes", long, [21., 36.]),
+        ("none", 1., 0, true, long, "OK", [14., 36.]),
+        ("equ", 1., 0, true, long, "OK", [14., 14.]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut parts = files(&shared_font_fixture("none", None, first, second));
+        for (_, bytes) in &mut parts {
+            let Ok(mut doc) = parse_xml(bytes) else { continue };
+            if !doc.root.is("layoutDef") {
+                continue;
+            }
+            let root = doc.root.elements_mut().find(|e| e.is("layoutNode")).unwrap();
+            let list = root.elements_mut().find(|e| e.is("constrLst")).unwrap();
+            list.elements_mut().find(|e| e.attr("type") == Some("primFontSz")).unwrap().set_attr("forName", "card0");
+            list.children.extend(parse_xml(format!(r#"<root><dgm:constr type="primFontSz" for="ch" forName="card1" refFor="ch" refForName="card0" refType="primFontSz" op="{op}" fact="{factor}"/></root>"#).as_bytes()).unwrap().root.children);
+            if parent {
+                *root.elements_mut().find(|e| e.is("ruleLst")).unwrap() =
+                    parse_xml(br#"<dgm:ruleLst><dgm:rule type="primFontSz" for="ch" forName="card0" val="20"/></dgm:ruleLst>"#).unwrap().root;
+            }
+            let target = format!("card{target}");
+            let node = root.elements_mut().find(|e| e.attr("name") == Some(&target)).unwrap();
+            *node.elements_mut().find(|e| e.is("ruleLst")).unwrap() =
+                parse_xml(br#"<dgm:ruleLst><dgm:rule type="primFontSz" val="5"/></dgm:ruleLst>"#).unwrap().root;
+            *bytes = doc.root.to_xml().into_bytes();
+        }
+        let bytes = zip(parts);
+        let p = deckcraft_pptx::import(&bytes).unwrap();
+        let fonts = |p: &deckcraft_model::Presentation| -> Vec<f64> {
+            group(p).children().iter().map(|s| s.text.as_ref().unwrap().paragraphs[0].runs[0].props.size.unwrap()).collect()
+        };
+        assert_eq!(fonts(&p), expected, "case {index}");
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        assert_eq!(fonts(&back), expected);
+        assert_eq!(geometry(group(&p)), geometry(group(&back)));
+        if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("local-reference-{index}.pptx")), bytes).unwrap();
         }
     }
 }

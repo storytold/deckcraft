@@ -440,6 +440,78 @@ fn shared_font_rules_fit_the_whole_group_but_unrelated_defaults_stay_independent
 }
 
 #[test]
+fn local_font_references_distinguish_defaults_from_bidirectional_equalities() {
+    let data = source();
+    for (op, factor, target, expected) in [
+        ("none", 1., "a", [21., 36.]),
+        ("none", 0.5, "a", [21., 18.]),
+        ("none", 0.5, "b", [36., 14.]),
+        ("equ", 1., "a", [21., 21.]),
+        ("equ", 0.5, "a", [21., 11.]),
+        ("equ", 0.5, "b", [28., 14.]),
+    ] {
+        let rule = "<rule type='primFontSz' val='5'/>";
+        let a = if target == "a" { rule } else { "" };
+        let b = if target == "b" { rule } else { "" };
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='36'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='{op}' fact='{factor}'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst>{a}</ruleLst></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/><ruleLst>{b}</ruleLst></layoutNode></layoutNode>"
+        ));
+        let mut measure =
+            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (p.font.unwrap() - if p.name == "a" { 21. } else { 14. }).max(0.)).collect());
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert_eq!(out.iter().map(|p| p.font.unwrap()).collect::<Vec<_>>(), expected, "{op}/{factor}/{target}");
+    }
+}
+
+#[test]
+fn local_font_factor_rules_use_the_reference_size_and_keep_defaults_separate() {
+    let data = source();
+    for (initial, expected) in [(1., 12.), (0., 1.)] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' val='36'/><constr type='primFontSz' for='ch' refType='primFontSz' fact='{initial}'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' fact='0.25' max='12'/></ruleLst></layoutNode></layoutNode>"
+        ));
+        let mut measure =
+            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if initial == 0. { 1. } else { (p.font.unwrap() - 12.).max(0.) }).collect());
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert_eq!(out[0].font, Some(expected));
+    }
+}
+
+#[test]
+fn local_font_fit_does_not_activate_disconnected_bounds() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='lte' fact='0.5'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='c'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' val='5'/></ruleLst></layoutNode></layoutNode>",
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "c" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert_eq!(out.iter().map(|p| p.font.unwrap()).collect::<Vec<_>>(), [36., 36., 14.]);
+}
+
+#[test]
+fn child_font_rules_run_before_parent_rules_and_font_bounds_do_not_set_defaults() {
+    let data = source();
+    for op in ["none", "equ"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='36'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='{op}'/></constrLst><ruleLst><rule type='primFontSz' for='ch' forName='a' val='20'/></ruleLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='primFontSz' val='5'/></ruleLst></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        let mut measure =
+            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert_eq!(out[0].font, Some(14.));
+        assert_eq!(out[1].font, Some(if op == "none" { 36. } else { 14. }));
+    }
+    for op in ["gte", "lte"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' forName='a' val='24'/><constr type='primFontSz' for='ch' forName='b' refFor='ch' refForName='a' refType='primFontSz' op='{op}' fact='0.5'/></constrLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        assert_eq!(out[0].font, Some(24.));
+        assert_eq!(out[1].font, Some(36.));
+    }
+}
+
+#[test]
 fn parent_size_rules_and_unmapped_inherited_font_rules_do_not_fit_child_text() {
     let data = source();
     let l = layout(

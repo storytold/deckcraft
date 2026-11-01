@@ -1,5 +1,6 @@
 //! Bounded sparse affine solver for diagram references. Unlike fixed-count relaxation,
 //! forward chains and solvable cycles are solved together; contradictions are reported.
+mod local_fonts;
 use super::geometry::{BoxStyle, initial, self_constraints};
 use super::{Data, Instance, MAX_WORK};
 use crate::xml::El;
@@ -188,14 +189,33 @@ pub(super) fn resolve(node: &Instance<'_>, rect: Xfrm, data: &Data<'_>, work: &m
     resolve_adjusted(node, rect, data, work, &HashMap::new())
 }
 
-/// A rule changes a constraint's absolute value or reference multiplier; it does not sever
-/// dependent equations. Node identity distinguishes repeated instances with the same name.
+/// Parent rules change constraint values; local font rules change the displayed font while
+/// retaining the earlier constraint value for default (non-equality) references.
 #[derive(Clone, Copy)]
 pub(super) enum Adjustment {
     Value(f64),
     Factor(f64),
+    LocalFont { value: f64, base: Option<ConstraintValue> },
+}
+#[derive(Clone, Copy)]
+pub(super) enum ConstraintValue {
+    Value(f64),
+    Factor(f64),
+}
+impl Adjustment {
+    pub(super) fn constraint(self) -> Option<ConstraintValue> {
+        match self {
+            Self::Value(v) => Some(ConstraintValue::Value(v)),
+            Self::Factor(v) => Some(ConstraintValue::Factor(v)),
+            Self::LocalFont { base, .. } => base,
+        }
+    }
 }
 pub(super) type Adjustments = HashMap<(usize, String), Adjustment>;
+
+pub(super) fn font_bound(c: &El) -> bool {
+    matches!(c.attr("type"), Some("primFontSz" | "secFontSz")) && matches!(c.attr("op"), Some("gte" | "lte"))
+}
 
 pub(super) fn resolve_adjusted(
     node: &Instance<'_>,
@@ -213,6 +233,11 @@ pub(super) fn resolve_adjusted(
     for owner in (0..entries.len()).rev() {
         let node = entries[owner].node;
         for c in &node.constraints {
+            // Native font bounds participate in local fitting, not initial font selection.
+            // Unconstrained nodes retain the diagram default until a rule is applied.
+            if font_bound(c) {
+                continue;
+            }
             charge(work, entries[owner].end - owner)?;
             let targets = selected(&entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data);
             let refs = selected(&entries, owner, c.attr("refFor").unwrap_or("self"), c.attr("refForName"), c.attr("refPtType"), data);
@@ -224,13 +249,13 @@ pub(super) fn resolve_adjusted(
                         continue;
                     }
                     let mut adjusted = (*c).clone();
-                    if let Some(change) = adjustments.get(&(id(entries[*target].node), property.into())) {
+                    if let Some(change) = adjustments.get(&(id(entries[*target].node), property.into())).and_then(|a| a.constraint()) {
                         match change {
-                            Adjustment::Value(value) => {
+                            ConstraintValue::Value(value) => {
                                 adjusted.set_attr("refType", "none");
                                 adjusted.set_attr("val", &value.to_string());
                             }
-                            Adjustment::Factor(factor) => adjusted.set_attr("fact", &factor.to_string()),
+                            ConstraintValue::Factor(factor) => adjusted.set_attr("fact", &factor.to_string()),
                         }
                     }
                     let row = equation(&entries, owner, *target, reference, &adjusted, property, work)?;
@@ -262,7 +287,7 @@ pub(super) fn resolve_adjusted(
         for ((node, property), change) in adjustments {
             if *node == id(entry.node)
                 && !equations.contains_key(&(i, property.clone()))
-                && let Adjustment::Value(value) = change
+                && let Some(ConstraintValue::Value(value)) = change.constraint()
             {
                 let mut c = El::default();
                 c.set_attr("val", &value.to_string());
@@ -310,6 +335,7 @@ pub(super) fn resolve_adjusted(
             entry.style.set(&property, value, "equ");
         }
     }
+    local_fonts::apply(&mut entries, data, adjustments, work)?;
     Ok(entries.into_iter().map(|e| (id(e.node), e.style)).collect())
 }
 

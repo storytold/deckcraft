@@ -14,7 +14,7 @@ pub(super) struct BoxStyle {
 }
 impl BoxStyle {
     pub(super) fn new(rect: Xfrm) -> Self {
-        Self { rect, font: None, secondary_font: None, min_font: None, margins: [None; 4], extra: [None; 64] }
+        Self { rect, font: Some(36.0), secondary_font: None, min_font: None, margins: [None; 4], extra: [None; 64] }
     }
     pub(super) fn get(&self, property: &str) -> Option<f64> {
         let r = self.rect;
@@ -157,7 +157,7 @@ fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
 #[allow(clippy::too_many_arguments)]
 fn place_inner<'a>(
     node: &Instance<'a>,
-    mut style: BoxStyle,
+    style: BoxStyle,
     data: &Data<'a>,
     out: &mut Vec<Placed<'a>>,
     depth: usize,
@@ -167,12 +167,9 @@ fn place_inner<'a>(
     if depth > 64 || out.len() >= MAX_INSTANCES {
         return Err("diagram geometry budget exceeded");
     }
-    charge(work, 1 + node.rules.len())?;
-    for rule in &node.rules {
-        if rule.attr("type") == Some("primFontSz") {
-            style.min_font = rule.f64("val").filter(|v| *v > 0.0);
-        }
-    }
+    charge(work, 1)?;
+    // Numeric rule endpoints constrain their own search. They are not an inherited
+    // minimum font for every descendant, especially after a child has already fitted.
     if let Some(shape) = node.shape.filter(|s| s.attr("type").is_some_and(|t| !t.is_empty() && t != "none")) {
         let mut rect = style.rect;
         rect.rot += shape.f64("rot").unwrap_or(0.0).clamp(-36000.0, 36000.0);
@@ -313,6 +310,9 @@ pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
     for constraint in
         node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self" && !super::constraints::position(e.attr("type").unwrap_or("")))
     {
+        if super::constraints::font_bound(constraint) {
+            continue;
+        }
         if let Some(value) = constraint_value(constraint, style) {
             style.set(constraint.attr("type").unwrap_or(""), value, constraint.attr("op").unwrap_or("equ"));
         }

@@ -21,7 +21,7 @@ struct Control<'a> {
     members: Vec<usize>,
     property: String,
     rule: &'a El,
-    constraint: Option<&'a El>,
+    constraint: Option<(usize, &'a El)>,
 }
 fn same_selector(a: &El, b: &El) -> bool {
     [("for", "self"), ("forName", ""), ("ptType", "all")]
@@ -50,8 +50,12 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
         }
     }
     let mut out = Vec::new();
-    // XML order is significant: grow a box first, or shrink its text first, as authored.
-    for (owner, entry) in entries.iter().enumerate() {
+    // Children fit before their enclosing layout. Preserve sibling and same-node XML order.
+    let mut owners: Vec<_> = (0..entries.len()).collect();
+    charge(work, owners.len())?;
+    owners.sort_by_key(|&i| (entries[i].end, std::cmp::Reverse(i)));
+    for owner in owners {
+        let entry = &entries[owner];
         for rule in &entry.node.rules {
             charge(work, entry.end - owner)?;
             let ty = rule.attr("type").unwrap_or("");
@@ -89,7 +93,7 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
                     } else {
                         vec![target]
                     };
-                    out.push(Control { target, members, property: property.into(), rule, constraint: binding.map(|(_, c)| c) });
+                    out.push(Control { target, members, property: property.into(), rule, constraint: binding });
                 }
                 if remote && font {
                     break;
@@ -105,6 +109,10 @@ fn control_scope(
     control: &Control<'_>,
     work: &mut usize,
 ) -> Result<HashSet<usize>, &'static str> {
+    if control.rule.attr("for").unwrap_or("self") == "self" && matches!(control.property.as_str(), "primFontSz" | "secFontSz") {
+        charge(work, entries[control.target].end - control.target)?;
+        return Ok((control.target..entries[control.target].end).map(|i| constraints::id(entries[i].node)).collect());
+    }
     let mut scope = HashSet::new();
     // Shared constraints synchronize changes, not the trigger of a local rule. A local
     // short label does not fit a longer sibling on its behalf; a parent rule selects both.
@@ -243,6 +251,7 @@ struct Range {
     start: f64,
     limit: f64,
     is_factor: bool,
+    local_font: bool,
     maximum: Option<f64>,
 }
 impl Range {
@@ -252,13 +261,21 @@ impl Range {
     }
     fn set_value(&self, changes: &mut constraints::Adjustments, value: f64) {
         for key in &self.keys {
-            changes.insert(key.clone(), if self.is_factor { constraints::Adjustment::Factor(value) } else { constraints::Adjustment::Value(value) });
+            let change = if self.local_font {
+                constraints::Adjustment::LocalFont { value, base: changes.get(key).and_then(|a| a.constraint()) }
+            } else if self.is_factor {
+                constraints::Adjustment::Factor(value)
+            } else {
+                constraints::Adjustment::Value(value)
+            };
+            changes.insert(key.clone(), change);
         }
     }
 }
 fn range(
     control: &Control<'_>,
     entries: &[constraints::Entry<'_, '_>],
+    data: &Data<'_>,
     solution: &constraints::Solution,
     changes: &constraints::Adjustments,
 ) -> Result<Option<Range>, &'static str> {
@@ -267,22 +284,34 @@ fn range(
     let key = (constraints::id(entry.node), control.property.clone());
     let Some(current) = constraints::lookup(solution, entry.node).and_then(|s| s.get(&control.property)) else { return Ok(None) };
     let scale = unit(&control.property);
+    let local_font = control.rule.attr("for").unwrap_or("self") == "self" && matches!(control.property.as_str(), "primFontSz" | "secFontSz");
     let (start, limit, is_factor) = if let Some(value) = control.rule.f64("val") {
         (current / scale, value, false)
     } else if let Some(factor) = control.rule.f64("fact") {
-        let Some(c) = control.constraint.filter(|c| c.attr("refType").is_some_and(|t| !matches!(t, "" | "none" | "unknown"))) else {
+        let Some((owner, c)) = control.constraint.filter(|(_, c)| c.attr("refType").is_some_and(|t| !matches!(t, "" | "none" | "unknown"))) else {
             return Err("factor rule has no reference constraint");
         };
-        let start = match changes.get(&key) {
-            Some(Factor(v)) => *v,
-            _ => c.f64("fact").unwrap_or(1.0),
-        };
-        let limit = if let Some(max) = control.rule.f64("max") {
-            if current.abs() > 1e-9 { factor.min(max * scale / current * start) } else { factor }
+        if local_font {
+            let targets = constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data);
+            let refs = constraints::selected(entries, owner, c.attr("refFor").unwrap_or("self"), c.attr("refForName"), c.attr("refPtType"), data);
+            let r =
+                if refs.len() == targets.len() { targets.iter().position(|&i| i == control.target).and_then(|i| refs.get(i)) } else { refs.first() };
+            let reference = r.and_then(|i| constraints::lookup(solution, entries[*i].node)).and_then(|s| s.get(c.attr("refType").unwrap_or("")));
+            let Some(reference) = reference else { return Err("missing local font factor reference") };
+            let limit = (reference * factor).min(control.rule.f64("max").unwrap_or(f64::INFINITY));
+            (current, limit, false)
         } else {
-            factor
-        };
-        (start, limit, true)
+            let start = match changes.get(&key) {
+                Some(Factor(v)) => *v,
+                _ => c.f64("fact").unwrap_or(1.0),
+            };
+            let limit = if let Some(max) = control.rule.f64("max") {
+                if current.abs() > 1e-9 { factor.min(max * scale / current * start) } else { factor }
+            } else {
+                factor
+            };
+            (start, limit, true)
+        }
     } else {
         return Ok(None);
     };
@@ -292,6 +321,7 @@ fn range(
         start,
         limit,
         is_factor,
+        local_font,
         maximum: control.rule.f64("max").map(|v| v * scale),
     }))
 }
@@ -314,7 +344,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             continue;
         }
         let solution = constraints::resolve_adjusted(tree, frame, data, &mut work, &changes)?;
-        let Some(range) = range(control, &entries, &solution, &changes)? else { continue };
+        let Some(range) = range(control, &entries, data, &solution, &changes)? else { continue };
         let (start, limit, is_factor) = (range.start, range.limit, range.is_factor);
         let old: Vec<_> = range.keys.iter().map(|k| (k.clone(), changes.get(k).copied())).collect();
         let selected = choose(prefer_words, |t| {
@@ -368,11 +398,17 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             }
         }
         if prefer_words && !is_factor && start > limit {
-            let rounded = best.floor().max(limit);
-            range.set_value(&mut changes, rounded);
-            if let Some(candidate) = trial(tree, frame, data, &changes, &mut work)? {
-                best = rounded;
-                out = candidate;
+            // Binary search can stop just below an exactly fitting integer. Test the
+            // adjacent upper integer instead of losing a whole point to rounding noise.
+            for rounded in [best.ceil().min(start).max(limit), best.floor().max(limit)] {
+                range.set_value(&mut changes, rounded);
+                if let Some(candidate) = trial(tree, frame, data, &changes, &mut work)?
+                    && score(&candidate, &scope, measure, true, &mut work)? <= 1e-6
+                {
+                    best = rounded;
+                    out = candidate;
+                    break;
+                }
             }
         }
         range.set_value(&mut changes, best);
@@ -385,7 +421,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             continue;
         }
         let Some(change) = changes.get(&range.key).copied() else { continue };
-        let (Value(limit) | Factor(limit)) = change;
+        let (Value(limit) | Factor(limit)) = change else { continue };
         let (mut low, mut high) = (0.0, 1.0);
         let mut best = limit;
         for _ in 0..18 {

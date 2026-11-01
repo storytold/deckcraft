@@ -56,7 +56,7 @@ pub(super) fn search<'a>(
     let mut seen = HashSet::new();
     let mut duplicate = HashSet::new();
     for c in controls {
-        if let Some(r) = range(c, entries, &solution, changes)? {
+        if let Some(r) = range(c, entries, data, &solution, changes)? {
             for key in &r.keys {
                 if !seen.insert(key.clone()) {
                     duplicate.insert(key.clone());

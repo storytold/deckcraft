@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.16 update 2026-11-01:** local font values preserve ordinary defaults while explicit equalities/bounds propagate through connected nodes; child-first rules and diagram font defaults have native controls. Four scaled reverse-reference probes retain a one-point font difference. Mapped composite, viewport and label overflow gaps remain; scores are unchanged.
+
 > **PPTX.15 update 2026-11-01:** font rules now retain selector/constraint ownership and synchronize shared groups without widening local fit triggers. Explicit diagram fonts no longer receive invented text-box autofit. Local reference-font propagation, recursive fallback, map viewport and label overflow remain partial; scores are unchanged.
 
 > **PPTX.14 update 2026-11-01:** composite coordinate ownership, redundant-axis priority and occupied-frame fitting now match native probes; literal column labels wrap to chart width while retaining explicit no-wrap/manual sizing. Complex rule ownership, geographic viewport policy and label overflow remain partial.
