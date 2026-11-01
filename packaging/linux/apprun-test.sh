@@ -61,6 +61,7 @@ grep -Fxq "$expected_exec" "$DESKTOP" || fail "Exec not rewritten: $(grep '^Exec
 grep -q '^TryExec=' "$DESKTOP" && fail "TryExec kept, the entry would be hidden"
 grep -Fxq "Icon=$APP_ID" "$DESKTOP" || fail "Icon line lost"
 grep -Fxq "X-AppImage-Integrate=false" "$DESKTOP" || fail "X-AppImage-Integrate=false missing"
+grep -Fxq "X-AppImage-Generated-By=deckcraft-AppRun" "$DESKTOP" || fail "X-AppImage-Generated-By missing"
 grep -Fxq 'Categories=Office;Presentation;' "$DESKTOP" || fail "metadata lines lost"
 if command -v desktop-file-validate >/dev/null; then
   desktop-file-validate "$DESKTOP" || fail "generated desktop entry is invalid"
@@ -155,5 +156,17 @@ Icon=%s
 rm -f "$am_desktop"
 "$APPDIR/AppRun" >/dev/null || fail "launch after AM removal exited non-zero"
 [[ -f "$DESKTOP" ]] || fail "no desktop entry after the AM launcher was removed"
+
+# 16. Custom unmarked desktop entry is preserved and not overwritten or deleted.
+printf '[Desktop Entry]\nType=Application\nName=MyCustomDeckCraft\nExec=/custom/deckcraft %%F\nIcon=%s\n' "$APP_ID" >"$DESKTOP"
+"$APPDIR/AppRun" >/dev/null || fail "launch with custom entry exited non-zero"
+grep -Fxq "Name=MyCustomDeckCraft" "$DESKTOP" || fail "custom entry was overwritten"
+# Even when an external integrator is detected, custom entry must not be deleted:
+ext_desktop="$XDG_DATA_HOME/applications/appimagekit-deckcraft.desktop"
+printf '[Desktop Entry]\nType=Application\nName=DeckCraft\nExec="%s" %%F\nIcon=%s\n' "$(readlink -f "$APPIMAGE")" "$APP_ID" >"$ext_desktop"
+"$APPDIR/AppRun" >/dev/null || fail "launch with custom entry and external integrator exited non-zero"
+[[ -f "$DESKTOP" ]] || fail "custom entry was deleted by external integrator deduplication"
+grep -Fxq "Name=MyCustomDeckCraft" "$DESKTOP" || fail "custom entry modified"
+rm -f "$ext_desktop" "$DESKTOP"
 
 echo "AppRun test ok"

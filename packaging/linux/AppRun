@@ -73,17 +73,27 @@ integrate() {
       break
     fi
   done
+
+  # If a desktop entry already exists, check whether AppRun created it.
+  # User-customized or externally managed entries lacking this marker are preserved.
+  is_owned=1
+  if [ -f "$apps/$DESK_ID.desktop" ]; then
+    if ! grep -q '^X-AppImage-Generated-By=deckcraft-AppRun' "$apps/$DESK_ID.desktop" 2>/dev/null; then
+      is_owned=0
+    fi
+  fi
+
   if [ "$external" = 1 ]; then
-    if [ -f "$apps/$DESK_ID.desktop" ]; then
+    if [ "$is_owned" = 1 ] && [ -f "$apps/$DESK_ID.desktop" ]; then
       rm -f "$apps/$DESK_ID.desktop" 2>/dev/null || true
       command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$apps" >/dev/null 2>&1
     fi
-  else
+  elif [ "$is_owned" = 1 ]; then
     # Rewrite Exec to this AppImage (the binary is not on the host PATH) and drop
     # TryExec, which would hide the entry; everything else is shipped as packaged.
     tmp="$apps/.$DESK_ID.tmp.$$"
     esc="$(printf '%s' "$appimage" | sed 's/[\\&|]/\\&/g')"
-    if sed -e "s|^Exec=.*|Exec=\"$esc\" %F|" -e '/^TryExec=/d' "$src_desktop" 2>/dev/null >"$tmp"; then
+    if sed -e "s|^Exec=.*|Exec=\"$esc\" %F\nX-AppImage-Generated-By=deckcraft-AppRun|" -e '/^TryExec=/d' "$src_desktop" 2>/dev/null >"$tmp"; then
       if cmp -s "$tmp" "$apps/$DESK_ID.desktop"; then
         rm -f "$tmp"
       else
