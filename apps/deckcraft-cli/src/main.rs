@@ -364,6 +364,7 @@ fn render_transition(args: &[String]) -> Result<(), String> {
     let mut slide: Option<usize> = None;
     let mut ts: Vec<f64> = Vec::new();
     let mut width: Option<f64> = None;
+    let mut threads_opt: Option<u16> = None;
     let mut out = None;
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -381,6 +382,9 @@ fn render_transition(args: &[String]) -> Result<(), String> {
             }
             "--width" => {
                 width = Some(it.next().and_then(|v| v.parse().ok()).filter(|w: &f64| w.is_finite() && *w >= 1.0).ok_or("--width needs pixels")?)
+            }
+            "--threads" => {
+                threads_opt = Some(it.next().and_then(|v| v.parse().ok()).ok_or("--threads needs a number")?);
             }
             other if input.is_none() => input = Some(other.to_string()),
             other => out = Some(other.to_string()),
@@ -401,7 +405,9 @@ fn render_transition(args: &[String]) -> Result<(), String> {
     let Some(sl) = doc.slides.get(i) else { return Err(format!("no slide {i} (the deck has {n})")) };
     let sw = doc.slide_size.width.max(1.0);
     let w = width.unwrap_or(sw * 2.0).min(render::MAX_SIDE as f64);
-    let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+    let default_threads =
+        if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+    let threads = threads_opt.unwrap_or(default_threads);
     let opts = render::RenderOpts { scale: w / sw, threads, ..Default::default() };
     let tr = sl.transition.clone().unwrap_or_default();
     // Render both slides once and composite every frame from them (morph re-renders per frame).

@@ -742,10 +742,10 @@ fn morph_frame_morphs_the_outline_of_a_changed_geometry() {
     assert!(morph_frame(&p, &a, &b, 0.5, &|_| false).paths.is_empty());
 
     // Groups with matching children move as one shape instead of duplicating into two cross-fading groups.
-    let child = |id, name: &str| Shape { id: ShapeId(id), name: name.into(), geom: deckcraft_model::Geom::preset("rect"), ..Default::default() };
+    let child = |id, geom: &str| Shape { id: ShapeId(id), geom: deckcraft_model::Geom::preset(geom), ..Default::default() };
     let group = |id, c1, c2| Shape {
         id: ShapeId(id),
-        kind: deckcraft_model::ShapeKind::Group { children: vec![child(c1, "A"), child(c2, "B")], child: Default::default() },
+        kind: deckcraft_model::ShapeKind::Group { children: vec![child(c1, "rect"), child(c2, "ellipse")], child: Default::default() },
         ..Default::default()
     };
     a.shapes = vec![group(1, 10, 11)];
@@ -759,6 +759,35 @@ fn morph_frame_morphs_the_outline_of_a_changed_geometry() {
     }
     b.shapes = vec![moved];
     assert_eq!(morph_frame(&p, &a, &b, 0.5, &|_| false).shapes.len(), 2, "a moved child cross-fades");
+
+    // Reordered children do not match in content: the groups cross-fade.
+    let reordered = Shape {
+        id: ShapeId(2),
+        kind: deckcraft_model::ShapeKind::Group { children: vec![child(21, "ellipse"), child(20, "rect")], child: Default::default() },
+        ..Default::default()
+    };
+    b.shapes = vec![reordered];
+    assert_eq!(morph_frame(&p, &a, &b, 0.5, &|_| false).shapes.len(), 2, "reordered children cross-fade");
+
+    // Nested groups with matching children move as one.
+    let nested = |id, gid, c1: u32, c2: u32| Shape {
+        id: ShapeId(id),
+        kind: deckcraft_model::ShapeKind::Group { children: vec![child(c1, "rect"), group(gid, c1 + 100, c2 + 100)], child: Default::default() },
+        ..Default::default()
+    };
+    a.shapes = vec![nested(1, 2, 10, 11)];
+    b.shapes = vec![nested(3, 4, 20, 21)];
+    assert_eq!(morph_frame(&p, &a, &b, 0.5, &|_| false).shapes.len(), 1, "matching nested groups move as one");
+
+    // A moved child inside a nested group causes cross-fade.
+    let mut moved_nested = nested(3, 4, 20, 21);
+    if let deckcraft_model::ShapeKind::Group { children, .. } = &mut moved_nested.kind {
+        if let deckcraft_model::ShapeKind::Group { children: sub, .. } = &mut children[1].kind {
+            sub[0].xfrm = Some(deckcraft_model::Xfrm::new(5.0, 5.0, 10.0, 10.0));
+        }
+    }
+    b.shapes = vec![moved_nested];
+    assert_eq!(morph_frame(&p, &a, &b, 0.5, &|_| false).shapes.len(), 2, "a moved nested child cross-fades");
 }
 
 fn pres(n: usize) -> Presentation {

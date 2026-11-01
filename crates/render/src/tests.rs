@@ -1285,6 +1285,49 @@ fn table_cell_text_effects_need_filters() {
     p_dts.default_text_style.levels[0].as_mut().unwrap().run.glow =
         Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 4.0 });
     assert!(needs_filters(&p_dts, &p_dts.slides[0]), "inherited default_text_style glow blurs");
+
+    // Dynamic field with empty saved text in a cell inherits master glow.
+    let mut table_field = Table::new(1, 1, 200.0, 40.0);
+    table_field.rows[0].cells[0].text = TextBody {
+        paragraphs: vec![deckcraft_model::text::Paragraph {
+            runs: vec![deckcraft_model::text::Run {
+                text: String::new(),
+                props: Default::default(),
+                kind: deckcraft_model::text::RunKind::Field { field: "slidenum".into() },
+            }],
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    let shape_field =
+        Shape { id: ShapeId(747), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_field), ..Default::default() };
+    let mut p_field = deck_with(vec![shape_field]);
+    let m_field = std::sync::Arc::make_mut(&mut p_field.masters[0]);
+    m_field.shapes.clear();
+    for l in &mut m_field.layouts {
+        l.shapes.clear();
+    }
+    m_field.other_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 6.0 });
+    assert!(needs_filters(&p_field, &p_field.slides[0]), "dynamic field in cell inherits master glow");
+
+    // Chart shape without text body inherits default_text_style glow for its labels.
+    let chart_shape = Shape {
+        id: ShapeId(748),
+        xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 150.0)),
+        kind: ShapeKind::Chart(Box::new(Chart::default())),
+        ..Default::default()
+    };
+    let mut p_chart = deck_with(vec![chart_shape]);
+    let m_chart = std::sync::Arc::make_mut(&mut p_chart.masters[0]);
+    m_chart.shapes.clear();
+    for l in &mut m_chart.layouts {
+        l.shapes.clear();
+    }
+    assert!(!needs_filters(&p_chart, &p_chart.slides[0]), "plain chart without text glow needs no filters");
+    p_chart.default_text_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 4.0 });
+    assert!(needs_filters(&p_chart, &p_chart.slides[0]), "chart labels inherit default_text_style glow");
 }
 
 #[test]
