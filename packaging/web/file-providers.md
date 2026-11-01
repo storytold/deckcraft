@@ -108,3 +108,9 @@ coalescing, choices, exact captures, cancellation, identity changes, aliases and
 reads. `crates/ui-egui/src/app/provider_files.rs` includes native package round-trip and
 late-edit/failure regressions. They are source fixtures; execution results belong in the PR's
 validation report after running the repository's checks.
+
+Provider saves refuse externally linked media whose bytes are unavailable. The native writer
+otherwise omits these bytes; the browser intentionally has no pathname reader, so this bridge
+does not add one or fetch arbitrary links. Embed the files before saving to a provider. Device
+uses the official serializer unchanged. Resource overwrites invalidate alias revisions, and
+provider commands share the existing synthetic-input admission guard before changing targets.

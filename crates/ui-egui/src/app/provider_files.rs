@@ -66,6 +66,9 @@ impl SlideApp {
             if !matches!(format.as_str(), "deckcraft" | "slidecraft" | "pptx" | "potx" | "ppsx") {
                 return Err("Save requires a presentation package. Use Export for pictures, PDF or text copies.".into());
             }
+            if destination == "provider" && state.doc.media.iter().any(|media| media.link.is_some() && media.data.is_empty()) {
+                return Err("Linked media bytes are unavailable on this host. Embed the linked files before saving to the provider.".into());
+            }
             let bytes = deckcraft_engine::cmd::file::save_bytes(&state.doc, &format).map_err(|error| error.to_string())?;
             Ok((state.revision, bytes))
         });
@@ -113,6 +116,7 @@ impl SlideApp {
                     self.session.set_active(index);
                     if let Some(state) = self.session.active_mut() {
                         state.saved_doc = std::sync::Arc::new((*state.saved_doc).clone());
+                        state.revision = state.revision.wrapping_add(1);
                     }
                 }
             }
@@ -194,5 +198,46 @@ mod tests {
         host.result(request, "saved".into(), "resource-one".into()).unwrap();
         app.provider_tick();
         assert!(app.session.active().unwrap().is_dirty());
+    }
+
+    #[test]
+    fn older_ack_cannot_clean_an_alias_after_another_tab_overwrites_its_resource() {
+        let (mut app, host) = app();
+        let (request, bytes) = save(&mut app, &host);
+        host.result(request, "saved".into(), "shared".into()).unwrap();
+        app.provider_tick();
+        let read = host.request_open("shared").unwrap();
+        host.open(read, "Presentation.deckcraft".into(), bytes).unwrap();
+        app.provider_tick();
+        assert_eq!(app.session.documents().len(), 2);
+        app.session.set_active(0);
+        app.session.execute("slide.new", &json!({})).unwrap();
+        let (old, _) = save(&mut app, &host);
+        app.session.set_active(1);
+        app.session.execute("slide.new", &json!({})).unwrap();
+        let (new, _) = save(&mut app, &host);
+        host.result(new, "saved".into(), "shared".into()).unwrap();
+        app.provider_tick();
+        host.result(old, "saved".into(), "shared".into()).unwrap();
+        app.provider_tick();
+        assert!(app.session.documents()[0].is_dirty());
+    }
+    #[test]
+    fn linked_media_without_bytes_cannot_be_reported_as_a_complete_provider_save() {
+        let (mut app, host) = app();
+        let state = app.session.active_mut().unwrap();
+        let presentation = std::sync::Arc::make_mut(&mut state.doc);
+        let id = presentation.add_media("linked.wav", "audio/wav", vec![]).unwrap();
+        presentation.media.iter_mut().find(|m| m.id == id).unwrap().link = Some("/unavailable/linked.wav".into());
+        assert!(app.choose_provider_save(false, "deckcraft"));
+        let events = host.take_events();
+        let request = events[0].metadata["requestId"].as_str().unwrap();
+        host.resolve_dialog(request, "provider", "Presentation.deckcraft").unwrap();
+        app.provider_tick();
+        let events = host.take_events();
+        assert!(events.iter().any(|event| event.metadata["type"] == "saveFailed"));
+        assert!(!events.iter().any(|event| event.metadata["type"] == "save"));
+        assert!(app.session.active().unwrap().is_dirty());
+        assert!(!host.busy());
     }
 }

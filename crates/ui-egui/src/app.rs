@@ -209,7 +209,6 @@ impl SlideApp {
             log::debug!("ignoring SlideApp::logic for render-only viewport {:?}", ctx.viewport_id());
             return;
         }
-        self.provider_tick();
         self.tick_hidden_show(ctx, web_time::Instant::now());
         // `raw_input_hook` runs before `App::logic`. In a full pass egui has already built
         // `PointerState` and `keys_down` from every injected event, so retracting the events after
@@ -220,6 +219,7 @@ impl SlideApp {
         // (no live `InputState` here), so that pass still drains normally and the next
         // `raw_input_hook` retracts a batch that went stale.
         if !self.synthetic_batch_is_live(ctx) {
+            self.provider_tick();
             self.drain_control(ctx);
             self.poll_opening();
             #[cfg(not(target_arch = "wasm32"))]
