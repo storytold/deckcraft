@@ -33,6 +33,8 @@ pub struct Renderer {
     /// Visits spent on outer-shadow silhouette passes, kept apart so they cannot use up the budget
     /// of the normal drawing that follows.
     shadow_work: usize,
+    /// Whether we are currently rendering an animated transition blend frame.
+    pub(crate) in_blend: bool,
 }
 
 impl Default for Renderer {
@@ -48,6 +50,7 @@ impl Default for Renderer {
             in_shadow_pass: false,
             render_work: 0,
             shadow_work: 0,
+            in_blend: false,
         }
     }
 }
@@ -213,8 +216,12 @@ impl Renderer {
         self.render_work = 0;
         self.shadow_work = 0;
         self.in_shadow_pass = false;
-        let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, old.0) || needs_filters(pres, new.0));
-        let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else { return self.finish(ctx, w, h) };
+        self.in_blend = true;
+        let (mut ctx, w, h, view) = Self::canvas(pres, opts, false);
+        let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else {
+            self.in_blend = false;
+            return self.finish(ctx, w, h);
+        };
         let same_backdrop = co.layout == cn.layout
             && old.0.background == new.0.background
             && old.0.color_map == new.0.color_map
@@ -263,6 +270,7 @@ impl Renderer {
         }
         self.paths.clear();
         self.morphs.sweep();
+        self.in_blend = false;
         self.finish(ctx, w, h)
     }
 
@@ -456,7 +464,8 @@ impl Renderer {
                     if det.is_finite() && det.abs() > 1e-12 {
                         let shift = pre * m * own * m.inverse();
                         ctx.set_transform(Affine::IDENTITY);
-                        ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, Some(blur(sh.blur / 3.0 * k)));
+                        let filter = if self.in_blend || sh.blur <= 0.0 { None } else { Some(blur(sh.blur / 3.0 * k)) };
+                        ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, filter);
                         self.in_shadow_pass = true;
                         for ch in children {
                             self.shape(ctx, f, rctx, ch, shift * gm, depth + 1);
@@ -967,13 +976,8 @@ impl Renderer {
         // PowerPoint's export: the mask is the outline shrunk by 0.85 r, blurred by a third of
         // r, so it's half opaque 0.85 r inside the edge and transparent at the edge itself.
         ctx.set_transform(m);
-        ctx.push_layer(
-            None,
-            Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestIn)),
-            None,
-            None,
-            Some(blur(r / 3.0 * scale_of(m))),
-        );
+        let filter = if self.in_blend || r <= 0.0 { None } else { Some(blur(r / 3.0 * scale_of(m))) };
+        ctx.push_layer(None, Some(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestIn)), None, None, filter);
         ctx.set_paint(peniko::Color::from_rgba8(0, 0, 0, 255));
         ctx.fill_path(outline);
         ctx.push_blend_layer(peniko::BlendMode::new(peniko::Mix::Normal, peniko::Compose::DestOut));
@@ -1003,7 +1007,8 @@ impl Renderer {
             // As PowerPoint draws it (measured on its export): the shadow falls inside along the
             // edges it points to (45 degrees: the bottom and right), blurred by a third of the
             // blur radius.
-            ctx.push_layer(None, None, None, None, Some(blur(sh.blur / 3.0 * scale_of(m))));
+            let filter = if self.in_blend || sh.blur <= 0.0 { None } else { Some(blur(sh.blur / 3.0 * scale_of(m))) };
+            ctx.push_layer(None, None, None, None, filter);
             ctx.set_paint(color(c, 1.0));
             let mut ring = Rect::new(0.0, 0.0, w, h).inflate(w.max(h), w.max(h)).to_path(0.1);
             let mut hole = outline.clone();
@@ -1112,7 +1117,8 @@ impl Renderer {
             let sm = pre * m * own;
             ctx.set_transform(Affine::IDENTITY);
             // Blurred by a third of the blur radius, as PowerPoint's export shows.
-            ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, Some(blur(sh.blur / 3.0 * k)));
+            let filter = if self.in_blend || sh.blur <= 0.0 { None } else { Some(blur(sh.blur / 3.0 * k)) };
+            ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, filter);
             ctx.set_transform(sm);
             match content {
                 // As PowerPoint draws it: the shadow is the picture's own coverage (a logo on a
@@ -1163,7 +1169,8 @@ impl Renderer {
             ctx.set_transform(Affine::IDENTITY);
             // Measured on PowerPoint's export: a glow of radius r is half strength about half of r
             // out from the outline and gone by r.
-            ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, Some(blur(g.radius * 0.17 * k)));
+            let filter = if self.in_blend || g.radius <= 0.0 { None } else { Some(blur(g.radius * 0.17 * k)) };
+            ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, filter);
             ctx.set_transform(m);
             ctx.set_paint(color(c.with_alpha(255), 1.0));
             ctx.set_stroke(kurbo::Stroke::new(g.radius.max(0.0) * 0.95).with_join(kurbo::Join::Round));
@@ -1178,7 +1185,8 @@ impl Renderer {
             // Mirror below the shape, fading out.
             let mm = m * Affine::translate((0.0, 2.0 * h + rf.dist)) * Affine::scale_non_uniform(1.0, -1.0);
             ctx.set_transform(Affine::IDENTITY);
-            ctx.push_layer(None, None, Some(rf.start_alpha.clamp(0.0, 1.0) as f32 * 0.6), None, Some(blur(rf.blur * 0.5 * k)));
+            let filter = if self.in_blend || rf.blur <= 0.0 { None } else { Some(blur(rf.blur * 0.5 * k)) };
+            ctx.push_layer(None, None, Some(rf.start_alpha.clamp(0.0, 1.0) as f32 * 0.6), None, filter);
             ctx.set_transform(mm);
             match content {
                 // A picture reflects its pixels (it has no fill of its own).

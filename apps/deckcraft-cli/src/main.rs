@@ -401,7 +401,8 @@ fn render_transition(args: &[String]) -> Result<(), String> {
     let Some(sl) = doc.slides.get(i) else { return Err(format!("no slide {i} (the deck has {n})")) };
     let sw = doc.slide_size.width.max(1.0);
     let w = width.unwrap_or(sw * 2.0).min(render::MAX_SIDE as f64);
-    let opts = render::RenderOpts { scale: w / sw, ..Default::default() };
+    let threads = if cfg!(target_arch = "wasm32") { 0 } else { std::thread::available_parallelism().map(|n| n.get().min(8) as u16).unwrap_or(0) };
+    let opts = render::RenderOpts { scale: w / sw, threads, ..Default::default() };
     let tr = sl.transition.clone().unwrap_or_default();
     // Render both slides once and composite every frame from them (morph re-renders per frame).
     let prev = i.checked_sub(1);
