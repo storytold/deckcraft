@@ -219,7 +219,7 @@ fn neighbour(s: &mut Session, p: &Value, forward: bool) -> Result<Value> {
     let cmd = if forward { "comment.next" } else { "comment.prev" };
     let (threads, slide, index) = {
         let st = s.doc()?;
-        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), usize_param(p, "index"))
+        (comment_threads(&st.doc), usize_param(p, "slide").unwrap_or(st.selection.slide), super::opt_usize_param(p, "index", cmd)?)
     };
     if threads.is_empty() {
         return Err(bad(cmd, "no comments"));
@@ -810,6 +810,40 @@ mod tests {
         s.execute("slide.go", &json!({"index": 0})).unwrap();
         let here = s.execute("comment.next", &json!({})).unwrap();
         assert_eq!(here["text"], "on first");
+    }
+
+    #[test]
+    fn malformed_comment_navigation_index_does_not_change_selection() {
+        let mut s = Session::with_new();
+        s.execute("comment.add", &json!({"text": "first"})).unwrap();
+        s.execute("shape.insert", &json!({"preset": "rect", "rect": [10.0, 10.0, 40.0, 40.0]})).unwrap();
+        s.execute("slide.new", &json!({})).unwrap();
+        s.execute("comment.add", &json!({"text": "second"})).unwrap();
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let shape = s.doc().unwrap().doc.slides.first().and_then(|slide| slide.shapes.first()).map(|shape| shape.id).unwrap();
+        s.doc_mut().unwrap().selection.shapes = vec![shape];
+
+        for (command, value) in [
+            ("comment.next", json!(-1)),
+            ("comment.next", json!(1.5)),
+            ("comment.next", json!("bad")),
+            ("comment.prev", json!(-1)),
+            ("comment.prev", json!(1.5)),
+            ("comment.prev", json!("bad")),
+        ] {
+            let before = s.doc().unwrap().selection.clone();
+            let error = s.execute(command, &json!({"index": value})).unwrap_err();
+            assert!(error.to_string().contains("valid index"), "{command} {value}: {error}");
+            assert_eq!(s.doc().unwrap().selection, before, "{command} {value}");
+        }
+
+        let zero = s.execute("comment.next", &json!({"slide": 0, "index": 0})).unwrap();
+        assert_eq!(zero["slide"], 1);
+        assert_eq!(zero["index"], 0);
+        s.execute("slide.go", &json!({"index": 0})).unwrap();
+        let omitted = s.execute("comment.next", &json!({})).unwrap();
+        assert_eq!(omitted["slide"], 0);
+        assert_eq!(omitted["index"], 0);
     }
 
     #[test]
