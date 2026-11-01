@@ -1,7 +1,7 @@
 //! Table Design and Table Layout tabs.
 
 use deckcraft_geom::{Affine, Point, Rect};
-use deckcraft_model::{Shape, ShapeKind, Table};
+use deckcraft_model::{Cell, Shape, ShapeKind, Table};
 use serde_json::{Value, json};
 
 use super::{
@@ -24,18 +24,24 @@ pub fn specs() -> Vec<CommandSpec> {
             "rowBelow",
             "table.insertRowBelow"
         )),
-        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colLeft",
-            "table.insertColumnLeft"
-        )),
-        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colRight",
-            "table.insertColumnRight"
-        )),
+        cmd!(
+            "table.insertColumnLeft",
+            "Insert Left",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, keepWidth?: bool (default false, as in PowerPoint: the table grows by the new column and the other widths stay; true: the other columns shrink in proportion so the table keeps its width), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
+            has_selection,
+            |s, p| rows_cols(s, p, "colLeft", "table.insertColumnLeft")
+        ),
+        cmd!(
+            "table.insertColumnRight",
+            "Insert Right",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, keepWidth?: bool (default false, as in PowerPoint: the table grows by the new column and the other widths stay; true: the other columns shrink in proportion so the table keeps its width), id?} the new column takes the width and cell formatting (fill, margins, anchor, text properties) of the column it is inserted beside; a merged row that spans that column grows to span the new one",
+            has_selection,
+            |s, p| rows_cols(s, p, "colRight", "table.insertColumnRight")
+        ),
         cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
             s,
             p,
@@ -315,13 +321,22 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
 
 fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result<Value> {
     let (r, c) = at(s, p, name)?;
+    // Absent: the table grows, as in PowerPoint; present, it must be a bool, so a mistyped value is refused
+    // rather than silently taken as the default.
+    let keep_width = match (op, p.get("keepWidth")) {
+        (_, None) | (_, Some(Value::Null)) => false,
+        (_, Some(Value::Bool(b))) => *b,
+        ("colLeft", Some(_)) => return Err(bad("table.insertColumnLeft", "`keepWidth` must be true or false")),
+        ("colRight", Some(_)) => return Err(bad("table.insertColumnRight", "`keepWidth` must be true or false")),
+        _ => false,
+    };
     let op = op.to_string();
     with_table(s, p, name, move |t| {
         match op.as_str() {
             "rowAbove" => t.insert_row(r),
             "rowBelow" => t.insert_row(r.saturating_add(1)),
-            "colLeft" => t.insert_col(c),
-            "colRight" => t.insert_col(c.saturating_add(1)),
+            "colLeft" => insert_col_like(t, c, c, keep_width),
+            "colRight" => insert_col_like(t, c.saturating_add(1), c, keep_width),
             "delRow" => {
                 if !t.delete_row(r) {
                     return Err(bad(name, "can't delete the last row"));
@@ -335,6 +350,65 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
         }
         Ok(())
     })
+}
+
+/// Insert a column before `at` that looks like column `neighbour` (the one it is inserted beside):
+/// its width, and in every row the neighbour cell's explicit formatting with no text. With
+/// `keep_width` the columns then shrink in proportion so the table keeps its total width;
+/// otherwise (PowerPoint's behaviour) the table grows by the new column and the widths stay.
+fn insert_col_like(t: &mut Table, at: usize, neighbour: usize, keep_width: bool) {
+    let total = t.width();
+    let neighbour = neighbour.min(t.cols.len().saturating_sub(1));
+    let w = t.cols.get(neighbour).copied();
+    let templates: Vec<Option<Cell>> = t.rows.iter().map(|r| r.cells.get(neighbour).cloned()).collect();
+    t.insert_col_beside(at, Some(neighbour));
+    let at = at.min(t.cols.len().saturating_sub(1));
+    if let (Some(w), Some(slot)) = (w, t.cols.get_mut(at)) {
+        *slot = w;
+    }
+    for (row, tpl) in t.rows.iter_mut().zip(templates) {
+        let Some(tpl) = tpl else { continue };
+        // Inserted left of a merge's anchor, the merge now starts at the new cell, which took the
+        // anchor's cell whole, text and formatting (Table::insert_col_beside); the old anchor,
+        // covered now, is the empty cell that gets the neighbour's formatting. Read off the table
+        // as it is now: a span the file lets run past the last column is no merge to the model.
+        let anchor_moved = row.cells.get(at).is_some_and(|c| c.grid_span > 1 && !c.is_covered());
+        if let Some(cell) = row.cells.get_mut(if anchor_moved { at + 1 } else { at }) {
+            copy_cell_format(cell, &tpl);
+        }
+    }
+    let grown = t.width();
+    if keep_width && total > 1e-9 && grown > 1e-9 {
+        let k = total / grown;
+        for cw in &mut t.cols {
+            *cw *= k;
+        }
+    }
+}
+
+/// `dst` takes `src`'s formatting (fill, borders, margins, anchor, text direction and the text
+/// properties of its first paragraph, kept on the end mark of an empty paragraph) and keeps its
+/// own spans and merge cover.
+fn copy_cell_format(dst: &mut Cell, src: &Cell) {
+    dst.fill.clone_from(&src.fill);
+    dst.borders.clone_from(&src.borders);
+    dst.diag_down.clone_from(&src.diag_down);
+    dst.diag_up.clone_from(&src.diag_up);
+    dst.margins = src.margins;
+    dst.anchor = src.anchor;
+    dst.vertical = src.vertical;
+    let para = src.text.paragraphs.first().map(|p0| deckcraft_model::text::Paragraph {
+        level: p0.level,
+        props: p0.props.clone(),
+        runs: vec![],
+        def_props: p0.def_props.clone(),
+        end_props: p0.runs.first().map_or_else(|| p0.end_props.clone(), |r| r.props.clone()),
+    });
+    dst.text = deckcraft_model::text::TextBody {
+        body: src.text.body.clone(),
+        list_style: src.text.list_style.clone(),
+        paragraphs: vec![para.unwrap_or_default()],
+    };
 }
 
 fn merge(s: &mut Session, p: &Value) -> Result<Value> {

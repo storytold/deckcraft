@@ -116,6 +116,12 @@ impl Table {
     }
     /// Insert an empty column before `at`. A merge the new column falls inside grows to cover it.
     pub fn insert_col(&mut self, at: usize) {
+        self.insert_col_beside(at, None);
+    }
+    /// Like [`Table::insert_col`], for a column inserted beside column `neighbour` (as before the
+    /// insertion): a horizontal merge that spans the neighbour also grows over the new column, even when the
+    /// insertion point is at its edge.
+    pub fn insert_col_beside(&mut self, at: usize, neighbour: Option<usize>) {
         let at = at.min(self.cols.len());
         let merges = self.merges();
         let w = self.cols.get(at.saturating_sub(1)).copied().unwrap_or(80.0);
@@ -124,7 +130,13 @@ impl Table {
             let i = at.min(r.cells.len());
             r.cells.insert(i, Cell::new(""));
         }
-        self.set_merges(merges.into_iter().map(|m| m.insert_col(at)));
+        let grows = |m: &Merge| matches!(neighbour, Some(n) if m.gs > 1 && m.c <= n && n < m.c + m.gs && (at == m.c || at == m.c + m.gs));
+        // A merge that grows to the left starts at the new cell, which takes the anchor's text and
+        // formatting; the old anchor becomes a covered, empty cell.
+        for m in merges.iter().filter(|m| grows(m) && at == m.c) {
+            self.move_anchor((m.r, at + 1), (m.r, at));
+        }
+        self.set_merges(merges.into_iter().map(|m| if grows(&m) { Merge { gs: m.gs + 1, ..m } } else { m.insert_col(at) }));
     }
     /// Delete row `at`. Merges through it shrink; a merge anchored on it moves its anchor (and
     /// text) to the next row it covers.
@@ -637,5 +649,25 @@ mod tests {
         }
         assert!(t.split(0, 0));
         assert_eq!(t.cell(0, 0).map(|c| (c.grid_span, c.row_span)), Some((1, 1)));
+    }
+
+    /// A column inserted left of a merge's anchor grows the merge, which now starts at the new
+    /// cell: that cell holds the text, and the old anchor is a covered, empty cell.
+    #[test]
+    fn a_column_inserted_left_of_a_merge_keeps_the_text_in_its_anchor() {
+        let mut t = merged();
+        t.insert_col_beside(1, Some(1));
+        assert_topology(&t);
+        let a = t.cell(1, 1).unwrap();
+        assert_eq!((a.grid_span, a.row_span), (3, 2));
+        assert_eq!(anchor_text(&t, 1, 1), "M");
+        assert!(t.cell(1, 2).unwrap().is_covered());
+        assert_eq!(anchor_text(&t, 1, 2), "");
+        // Right of the merge, the anchor stays where it is.
+        let mut t = merged();
+        t.insert_col_beside(3, Some(2));
+        assert_topology(&t);
+        assert_eq!(t.cell(1, 1).map(|c| c.grid_span), Some(3));
+        assert_eq!(anchor_text(&t, 1, 1), "M");
     }
 }
