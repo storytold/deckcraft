@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.12): joint measured-rule trials, constant map colour intervals,
-cropped projections, rich paragraph and hierarchy-label rendering, with explicit native limits.
+Updated 2026-11-01 (PPTX.13): native container fitting, custom map-stop interoperability,
+and literal-label paragraph inheritance, with explicit native limits.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -564,3 +564,53 @@ Native confirms that conflicting 60pt/red/rotated numeric styling does not chang
 24pt horizontal black replacement. LibreOffice exports the rule diagram blank and the map with
 an unsupported-chart notice; its explicit-level label text is present. These observations are
 kept private and are not substitutes for whole-slide fidelity acceptance.
+
+
+## PPTX.13 — native container fitting and map-stop interoperability (2026-11-01)
+
+Linear layouts now fit the cross-axis extent independently of main-axis packing. Circular
+layouts calculate a separating radius for constrained child rectangles, scale the whole set
+uniformly when it exceeds the parent, then choose the orbit and centre its occupied bounds.
+Font sizes are retained. Pair work is charged to the existing global budget; partial arcs and
+centre nodes use the same geometry. Original regressions cover horizontal/reverse/vertical
+packing, oversized cycles, partial/negative arcs, centre nodes and actual imported text.
+
+Six original private probes open and export natively. At 3840px width, the coloured shape bounds
+in the circular example differ by at most 0.25pt; all six cases stay within 0.75pt. This measures
+shape geometry, not identical glyph rasterisation. A real-text coupled-rule example now respects
+the parent height, but selected width and word breaks still differ. Common-fraction coupled
+search and recursive constraint-priority behaviour remain incomplete.
+
+A native UI-created custom map stop revealed an interoperability discrepancy:
+[MS-ODRAWXML CT_ValueColorPositions](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-odrawxml/f2cae9d3-c8f0-4afc-a293-d3219902efb9)
+lists `min`, `mid`, `max`, while the observed native application writes
+`minPosition`, `midPosition`, `maxPosition`. The short names caused the earlier native open
+failures. Import accepts both spellings, with native names taking precedence; export uses
+native names. Number/percent/extreme values keep their `val` attributes as appropriate.
+Four original numeric/percent/extreme/mid-only probes now open and export in approximately
+one second each; their three painted region colours match the native output exactly.
+
+This is deliberately a documented schema exception. Open XML SDK 3.3.0 flags the Position
+suffix both in our output and in the private native UI-saved control. A native open/export
+pass is not relabelled as a schema-validation pass. No native-produced document, geographic
+asset or screenshot is included upstream.
+
+Literal chart labels now ignore `lstStyle/defPPr`, matching native probes. An explicit level
+on the first paragraph supplies the label-wide list level; without it, paragraphs select
+individual levels. An explicit first-paragraph alignment applies across the label; subsequent
+paragraph alignment and list-level alignment do not replace it. Direct paragraph/run font
+properties still override inherited defaults. Numeric `txPr` bodies retain their existing
+behaviour. Original tests cover first-level selection, later font overrides, explicit false
+run properties, ignored common defaults and alignment. Native probes independently vary these
+attributes, including equivalent expanded/self-closing paragraph tags. Automatic collision,
+paragraph spacing and every chart-kind-specific rule remain outside this acceptance claim.
+
+The final label probes keep font/colour and relative alignment semantics; absolute label
+positions still differ with automatic plot geometry. In four measured cases, glyph positions
+are approximately 6.5–7.5pt higher than native, and long labels can wrap differently. These are
+retained gaps, not pixel-equivalent label passes. LibreOffice 26.8 exports the oversized cycle
+without its diagram and reports the custom map as unsupported; the rich-label text is present.
+
+Final validation: all eight `cargo xtask ci` gates pass (2,394 tests including doctests).
+Thirteen final label probes export directly at 3840px width with unchanged source hashes
+and no external converter on PATH. Private oracle outputs and toolchains remain excluded.

@@ -148,6 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.13: native-validated linear/cycle container fitting; custom map stop interoperability; first-paragraph literal-label inheritance; bounded regression coverage and explicit schema/native discrepancy |
 | 2026-11-01 | PPTX.12: bounded joint trials for connected text rules; native constant-map colour behavior; per-level rich label inheritance and isolated literal bodies with intrinsic bounds; native layout differences remain documented |
 | 2026-11-01 | PPTX.11: interior measured-rule search; native first-row map binding, numeric colour scales and crop-stable projection; complete-body label measurement and styled hierarchy leaves; native interoperability limitations retained |
 | 2026-11-01 | PPTX.10: property-scoped font rules, measured-text reuse and hierarchical secondary text; offline geographic query joins, explicit viewport scopes and styled map labels; PowerPoint/LibreOffice black-box differences recorded |

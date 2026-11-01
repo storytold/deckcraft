@@ -45,23 +45,33 @@ fn paragraph_props(e: &El) -> ParaProps {
 pub(super) fn body(e: &El) -> TextBody {
     let mut body = TextBody { body: e.child("bodyPr").map(super::dml::body_pr).unwrap_or_default(), ..Default::default() };
     let list = e.child("lstStyle");
-    let default = list.and_then(|l| l.child("defPPr"));
+    let literal = e.is("rich");
+    // Native literal chart labels ignore lstStyle/defPPr. Their first paragraph's
+    // explicit alignment applies to the whole label, as does an explicit list level.
+    // Later direct run/default-run properties still override that shared level.
+    let first = e.children_named("p").next().and_then(|p| p.child("pPr"));
+    let shared_level = first.and_then(|p| p.u32("lvl")).filter(|_| literal).map(|v| v.min(8) as u8);
+    let shared_align = first.and_then(|p| p.attr("algn")).and_then(Align::from_xml);
+    let default = list.and_then(|l| l.child("defPPr")).filter(|_| !literal);
     let mut budget = 4096;
     for p in e.children_named("p").take(256) {
         let mut para = Paragraph::default();
         let ppr = p.child("pPr");
         para.level = ppr.and_then(|p| p.u32("lvl")).unwrap_or(0).min(8) as u8;
-        let level_tag = format!("lvl{}pPr", para.level + 1);
+        let level_tag = format!("lvl{}pPr", shared_level.unwrap_or(para.level) + 1);
         let level = list.and_then(|l| l.child(&level_tag));
         para.props = ppr.map(paragraph_props).unwrap_or_default();
         para.def_props = p.path(&["pPr", "defRPr"]).map(label_run_props).unwrap_or_default();
-        // List levels are independent. Level two must not inherit level one's size or
-        // margins; each level inherits the shared default, below explicit paragraph data.
+        // Do not use level one as a fallback for missing levels. Numeric txPr bodies
+        // retain common defaults; literal bodies use the native inheritance above.
         for source in [level, default].into_iter().flatten() {
             para.props.inherit(&paragraph_props(source));
             if let Some(run) = source.child("defRPr") {
                 para.def_props.inherit(&label_run_props(run));
             }
+        }
+        if literal {
+            para.props.align = shared_align;
         }
         para.end_props = p.child("endParaRPr").map(label_run_props).unwrap_or_default();
         for run in p.elements().filter(|e| matches!(e.local(), "r" | "fld" | "br")).take(budget) {
@@ -133,7 +143,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn rich_labels_inherit_their_own_list_level_and_shared_defaults() {
+    fn rich_labels_inherit_levels_but_ignore_common_defaults_and_later_alignment() {
         let xml = crate::xml::parse(
             br#"<rich><bodyPr/><lstStyle>
         <defPPr marR="127000" rtl="1"><defRPr sz="1600" i="1"/></defPPr>
@@ -153,14 +163,33 @@ mod tests {
         assert_eq!(second.runs[0].props.size, Some(22.));
         assert_eq!(second.runs[0].props.bold, Some(false));
         assert_eq!(second.runs[0].props.italic, Some(false));
-        assert_eq!(second.props.align, Some(Align::Right));
+        assert_eq!(second.props.align, None);
         assert_eq!(second.props.margin_left, Some(40.));
         assert_eq!(second.props.margin_right, Some(5.));
-        assert_eq!(second.props.rtl, Some(true));
+        assert_eq!(second.props.rtl, None);
         let third = &text.paragraphs[2];
-        assert_eq!(third.runs[0].props.size, Some(16.));
+        assert_eq!(third.runs[0].props.size, None);
         assert_eq!(third.runs[0].props.bold, None, "level one is not the fallback for other levels");
-        assert_eq!(third.runs[0].props.italic, Some(true));
+        assert_eq!(third.runs[0].props.italic, None);
         assert_eq!(third.props.margin_left, None);
+    }
+
+    #[test]
+    fn literal_first_paragraph_level_and_alignment_apply_across_the_label() {
+        let xml = crate::xml::parse(
+            br#"<rich><bodyPr/><lstStyle>
+            <lvl1pPr><defRPr sz="3000" b="1"/></lvl1pPr>
+            <lvl2pPr><defRPr sz="2200" i="1"/></lvl2pPr></lstStyle>
+            <p><pPr lvl="1" algn="l"/><r><t>First</t></r></p>
+            <p><pPr lvl="0" algn="r"><defRPr sz="4400"/></pPr><r><t>Second</t></r></p>
+            <p><r><rPr i="0"/><t>Third</t></r></p></rich>"#,
+        )
+        .unwrap();
+        let text = body(&xml.root);
+        assert_eq!(text.paragraphs.iter().map(|p| p.runs[0].props.size).collect::<Vec<_>>(), [Some(22.), Some(44.), Some(22.)]);
+        assert!(text.paragraphs.iter().all(|p| p.props.align == Some(Align::Left)));
+        assert!(text.paragraphs.iter().all(|p| p.runs[0].props.bold.is_none()));
+        assert_eq!(text.paragraphs[0].runs[0].props.italic, Some(true));
+        assert_eq!(text.paragraphs[2].runs[0].props.italic, Some(false));
     }
 }

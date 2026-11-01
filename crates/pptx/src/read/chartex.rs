@@ -242,7 +242,9 @@ fn value_colors(series: &El) -> Option<deckcraft_model::geography::ValueColorSca
         return None;
     }
     let stop = |name: &str| {
-        let position = positions.and_then(|p| p.child(name)).and_then(|p| {
+        // Native Office writes minPosition/midPosition/maxPosition, whereas the
+        // published CT_ValueColorPositions schema uses the shorter names. Read both.
+        let position = positions.and_then(|p| p.child(&format!("{name}Position")).or_else(|| p.child(name))).and_then(|p| {
             if p.child("extremeValue").is_some() {
                 Some(ValueColorPosition::Extreme)
             } else if let Some(n) = p.child("number").and_then(|p| p.f64("val")).filter(|n| n.is_finite()) {
@@ -327,4 +329,42 @@ fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography
         }
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use deckcraft_model::geography::ValueColorPosition as Position;
+
+    #[test]
+    fn map_stops_accept_native_names_and_public_schema_aliases() {
+        for suffix in ["Position", ""] {
+            let xml = crate::xml::parse(
+                format!(
+                    r#"<series><valueColorPositions count="3">
+                <min{suffix}><number val="-12.5"/></min{suffix}>
+                <mid{suffix}><percent val="35"/></mid{suffix}>
+                <max{suffix}><extremeValue/></max{suffix}>
+                </valueColorPositions></series>"#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            let scale = value_colors(&xml.root).unwrap();
+            assert!(scale.three_color);
+            assert_eq!(scale.minimum.position, Some(Position::Number(-12.5)));
+            assert_eq!(scale.middle.position, Some(Position::Percent(35.)));
+            assert_eq!(scale.maximum.position, Some(Position::Extreme));
+        }
+        let xml = crate::xml::parse(
+            br#"<series><valueColorPositions>
+            <min><number val="99"/></min><minPosition><number val="7"/></minPosition>
+            <maxPosition><number val="NaN"/></maxPosition>
+            </valueColorPositions></series>"#,
+        )
+        .unwrap();
+        let scale = value_colors(&xml.root).unwrap();
+        assert_eq!(scale.minimum.position, Some(Position::Number(7.)), "native name takes precedence");
+        assert_eq!(scale.maximum.position, None);
+    }
 }

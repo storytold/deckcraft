@@ -205,7 +205,7 @@ fn place_inner<'a>(
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
         pack_linear(node, local, &mut children);
     } else if node.alg == "cycle" {
-        pack_cycle(node, local, &mut children);
+        pack_cycle(node, local, &mut children, work)?;
     }
     let iter: Box<dyn Iterator<Item = usize>> =
         if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
@@ -383,9 +383,9 @@ pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
 // Cycle angles start at twelve o'clock and turn clockwise (ECMA-376 ST_ParameterId).
 // Fit a circle against the actual child extents; an incomplete arc is centred by its
 // occupied bounds, not the centre of the unoccupied remainder of the circle.
-fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) {
+fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle], work: &mut usize) -> Result<(), &'static str> {
     if children.is_empty() {
-        return;
+        return Ok(());
     }
     let center = node.param("ctrShpMap", "none") != "none";
     let orbit = children.len().saturating_sub(usize::from(center)).max(1);
@@ -402,7 +402,23 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) {
             }
         })
         .collect();
-    let bounds = |radius: f64| {
+    // Oversized constrained nodes must shrink together before choosing the orbit. Find
+    // the smallest radius that separates every pair of axis-aligned child rectangles.
+    // Scaling both rectangles and that orbit by the same factor preserves aspect ratios.
+    let mut minimum_radius: f64 = 0.;
+    for (i, (a, (ax, ay))) in children.iter().zip(&units).enumerate() {
+        for (b, (bx, by)) in children.iter().zip(&units).take(i) {
+            charge(work, 1)?;
+            let (dx, dy) = ((ax - bx).abs(), (ay - by).abs());
+            if dx < 1e-9 && dy < 1e-9 {
+                continue;
+            }
+            let x = if dx < 1e-9 { f64::INFINITY } else { (a.rect.w + b.rect.w) / (2. * dx) };
+            let y = if dy < 1e-9 { f64::INFINITY } else { (a.rect.h + b.rect.h) / (2. * dy) };
+            minimum_radius = minimum_radius.max(x.min(y));
+        }
+    }
+    let bounds = |children: &[BoxStyle], radius: f64| {
         let mut extents = (f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY);
         for (child, (x, y)) in children.iter().zip(&units) {
             extents.0 = extents.0.min(x * radius - child.rect.w / 2.);
@@ -412,23 +428,30 @@ fn pack_cycle(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) {
         }
         extents
     };
-    let (mut low, mut high) = (0., style.rect.w.min(style.rect.h) / 2.);
+    let b = bounds(children, minimum_radius);
+    let scale = (style.rect.w / (b.2 - b.0).max(1e-9)).min(style.rect.h / (b.3 - b.1).max(1e-9)).clamp(0., 1.);
+    for child in children.iter_mut() {
+        child.rect.w *= scale;
+        child.rect.h *= scale;
+    }
+    let (mut low, mut high) = (0., (style.rect.w.min(style.rect.h) / 2.).max(minimum_radius * scale));
     for _ in 0..24 {
         let r = (low + high) / 2.;
-        let b = bounds(r);
+        let b = bounds(children, r);
         if b.2 - b.0 <= style.rect.w && b.3 - b.1 <= style.rect.h {
             low = r;
         } else {
             high = r;
         }
     }
-    let b = bounds(low);
+    let b = bounds(children, low);
     let cx = style.rect.x + (style.rect.w - b.0 - b.2) / 2.;
     let cy = style.rect.y + (style.rect.h - b.1 - b.3) / 2.;
     for (child, (x, y)) in children.iter_mut().zip(units) {
         child.rect.x = cx + x * low - child.rect.w / 2.;
         child.rect.y = cy + y * low - child.rect.h / 2.;
     }
+    Ok(())
 }
 
 fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) {
@@ -453,11 +476,13 @@ fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) 
     for child in children {
         let b = &mut child.rect;
         if vertical {
+            b.w = b.w.min(r.w);
             b.h *= scale;
             b.y = r.y + if backwards { r.h - pos - b.h } else { pos };
             b.x = r.x + (r.w - b.w) / 2.0;
             pos += b.h + gap * scale;
         } else {
+            b.h = b.h.min(r.h);
             b.w *= scale;
             b.x = r.x + if backwards { r.w - pos - b.w } else { pos };
             b.y = r.y + (r.h - b.h) / 2.0;
@@ -564,4 +589,20 @@ fn hierarchy(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
         result.push(b);
     }
     result
+}
+
+#[cfg(test)]
+mod cycle_tests {
+    use super::*;
+
+    #[test]
+    fn dense_cycle_pair_search_obeys_the_shared_work_budget() {
+        let xml = crate::xml::parse(b"<layoutNode/>").unwrap();
+        let node = Instance::new(&xml.root);
+        let style = BoxStyle::new(Xfrm::new(0., 0., 800., 400.));
+        let mut children = vec![BoxStyle::new(Xfrm::new(0., 0., 100., 80.)); 1000];
+        let mut work = 0;
+        assert_eq!(pack_cycle(&node, style, &mut children, &mut work), Err("diagram constraint budget exceeded"));
+        assert_eq!(work, MAX_WORK + 1);
+    }
 }

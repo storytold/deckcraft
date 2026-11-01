@@ -496,6 +496,11 @@ fn map_value_color_stops_rebuild_and_change_region_pixels() {
         append(&mut p, c);
         let back = rebuilt(&p);
         assert_eq!(chart(&back).series[0].value_colors, expected);
+        let xml = chart(&back).raw.as_ref().unwrap();
+        for name in ["min", "mid", "max"] {
+            assert!(xml.contains(&format!("<cx:{name}Position>")), "native Office stop name");
+            assert!(!xml.contains(&format!("<cx:{name}>")), "schema-only name fails native open");
+        }
         let image = render_slide(&back, 0, &RenderOpts::default());
         for color in colors {
             let count = image.pixels.chunks_exact(4).filter(|p| p[..3] == [color.r, color.g, color.b]).count();

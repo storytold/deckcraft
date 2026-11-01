@@ -457,3 +457,60 @@ fn constrained_cycle_starts_at_twelve_oclock_and_centres_partial_arc() {
         assert!(top >= -1e-6 && bottom <= 324. + 1e-6);
     }
 }
+
+#[test]
+fn linear_container_fits_both_axes_without_scaling_the_font() {
+    let data = source();
+    for (dir, count, w, h, expected_w, expected_h) in [
+        ("fromL", 1, 80., 160., 80. * 72. / 25.4, 324.),
+        ("fromR", 1, 500., 40., 768., 40. * 72. / 25.4),
+        ("fromL", 3, 150., 160., 256., 324.),
+        ("fromT", 3, 500., 60., 768., 108.),
+        ("fromB", 3, 500., 60., 768., 108.),
+    ] {
+        let l = layout(&format!(
+            r#"<layoutNode><alg type="lin"><param type="linDir" val="{dir}"/></alg>
+            <forEach axis="ch" cnt="{count}"><layoutNode><presOf/><alg type="tx"/><shape type="rect"/>
+            <constrLst><constr type="w" val="{w}"/><constr type="h" val="{h}"/>
+            <constr type="primFontSz" val="18"/></constrLst></layoutNode></forEach></layoutNode>"#
+        ));
+        let shapes = evaluate(&l, &data, Xfrm::new(11., 23., 768., 324.)).unwrap();
+        assert_eq!(shapes.len(), count);
+        for p in shapes {
+            assert!((p.rect.w - expected_w).abs() < 1e-6, "{dir}: {:?}", p.rect);
+            assert!((p.rect.h - expected_h).abs() < 1e-6, "{dir}: {:?}", p.rect);
+            assert!(p.rect.x >= 11. - 1e-6 && p.rect.x + p.rect.w <= 779. + 1e-6);
+            assert!(p.rect.y >= 23. - 1e-6 && p.rect.y + p.rect.h <= 347. + 1e-6);
+            assert_eq!(p.font, Some(18.));
+        }
+    }
+}
+
+#[test]
+fn oversized_cycle_nodes_fit_without_overlap_and_keep_their_aspect_ratio() {
+    let data = source();
+    for span in [30., 180., 360., -180.] {
+        for center in ["none", "fNode"] {
+            let l = layout(&format!(
+                r#"<layoutNode><alg type="cycle"><param type="spanAng" val="{span}"/>
+                <param type="ctrShpMap" val="{center}"/></alg>
+                <forEach axis="ch"><layoutNode><presOf/><alg type="tx"/><shape type="rect"/>
+                <constrLst><constr type="w" val="150"/><constr type="h" val="160"/>
+                <constr type="primFontSz" val="18"/></constrLst></layoutNode></forEach></layoutNode>"#
+            ));
+            let shapes = evaluate(&l, &data, Xfrm::new(0., 0., 768., 324.)).unwrap();
+            assert_eq!(shapes.len(), 3);
+            for (i, a) in shapes.iter().enumerate() {
+                assert!(a.rect.x >= -1e-5 && a.rect.x + a.rect.w <= 768. + 1e-5, "{span}/{center}");
+                assert!(a.rect.y >= -1e-5 && a.rect.y + a.rect.h <= 324. + 1e-5, "{span}/{center}");
+                assert!((a.rect.w / a.rect.h - 150. / 160.).abs() < 1e-6);
+                assert_eq!(a.font, Some(18.));
+                for b in &shapes[..i] {
+                    let overlap_w = (a.rect.x + a.rect.w).min(b.rect.x + b.rect.w) - a.rect.x.max(b.rect.x);
+                    let overlap_h = (a.rect.y + a.rect.h).min(b.rect.y + b.rect.h) - a.rect.y.max(b.rect.y);
+                    assert!(overlap_w <= 1e-4 || overlap_h <= 1e-4, "{span}/{center}: {:?}, {:?}", a.rect, b.rect);
+                }
+            }
+        }
+    }
+}

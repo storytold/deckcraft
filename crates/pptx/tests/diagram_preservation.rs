@@ -488,7 +488,7 @@ fn numeric_rule_fixture(rules: &str, height: &str, long: bool) -> Vec<u8> {
 }
 
 #[test]
-fn coupled_numeric_rules_use_the_imported_text_metrics_and_keep_the_affine_relation() {
+fn coupled_numeric_rules_use_real_text_metrics_then_fit_the_container() {
     let rules = r#"<dgm:rule type="w" val="80"/><dgm:rule type="h" val="160"/>"#;
     let constraints = r#"<dgm:constr type="h" val="40"/><dgm:constr type="l" refType="w"/><dgm:constr type="r" refType="h"/>"#;
     let mut parts = files(&numeric_rule_fixture(rules, constraints, true));
@@ -507,7 +507,11 @@ fn coupled_numeric_rules_use_the_imported_text_metrics_and_keep_the_affine_relat
     assert_eq!(children.len(), 1);
     let rect = children[0].xfrm.unwrap();
     assert!(rect.w > 20. * 72. / 25.4 + 1., "neither independent move is feasible: the actual text must trigger a joint move");
-    assert!((rect.h - 2. * rect.w).abs() < 0.01);
+    // The affine relation constrains rule trials, but the enclosing linear layout
+    // independently fits the final height. Native output also clips it to 324pt.
+    assert!((rect.h - 324.).abs() < 0.01, "{rect:?}");
+    assert!(rect.w <= 80. * 72. / 25.4 + 0.01, "{rect:?}");
+    assert_eq!(children[0].text.as_ref().unwrap().paragraphs[0].runs[0].props.size, Some(36.));
     if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
         let dir = std::path::PathBuf::from(dir);
         std::fs::create_dir_all(&dir).unwrap();

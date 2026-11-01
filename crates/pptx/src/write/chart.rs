@@ -1327,7 +1327,9 @@ fn value_colors(w: &mut W, scale: Option<&deckcraft_model::geography::ValueColor
             ValueColorPosition::Percent(v) if v.is_finite() => ("percent", Some(v)),
             _ => continue,
         };
-        let tag = format!("cx:{name}");
+        // Observed through native UI SaveAs: Office uses the Position suffix even
+        // though MS-ODRAWXML's schema lists min/mid/max. Short names fail native open.
+        let tag = format!("cx:{name}Position");
         w.open0(&tag);
         w.empty(&format!("cx:{kind}"), A::new().o("val", number.map(fmt_num)));
         w.close(&tag);
