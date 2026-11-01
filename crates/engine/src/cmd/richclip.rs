@@ -128,8 +128,20 @@ fn tags(props: &RunProps) -> (String, String) {
 /// Understands `<b>`, `<strong>`, `<i>`, `<em>`, `<u>`, `<br>`, paragraphs, and a `style` that
 /// says bold, italic or underline. Other tags are ignored. The result is capped.
 pub fn html_to_body(html: &str) -> Option<TextBody> {
+    parse_html(html).0
+}
+
+/// Whether a bounded clipboard fragment describes exactly one image without visible text.
+/// The host must still supply the pixels; this never follows an image's `src` URL.
+pub fn html_is_single_image(html: &str) -> bool {
+    let (body, images) = parse_html(html);
+    images == 1 && body.is_none_or(|body| body.text().trim().is_empty())
+}
+
+/// Share bounded HTML tokenization between formatted-text import and image-paste classification.
+fn parse_html(html: &str) -> (Option<TextBody>, usize) {
     if html.len() > MAX_HTML {
-        return None;
+        return (None, 0);
     }
     let bytes = html.as_bytes();
     let mut i = 0;
@@ -140,6 +152,7 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
     let mut paragraphs: Vec<Paragraph> = vec![Paragraph::default()];
     let mut runs = 0usize;
     let mut skip = 0i32;
+    let mut images = 0usize;
     while i < bytes.len() && paragraphs.len() <= MAX_PARAS && runs <= MAX_RUNS {
         if bytes[i] == b'<' {
             let end = bytes[i + 1..].iter().position(|c| *c == b'>').map(|n| i + 1 + n).unwrap_or(bytes.len());
@@ -163,6 +176,9 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
             }
             if skip > 0 {
                 continue;
+            }
+            if !closing && name == "img" && end < bytes.len() {
+                images = images.saturating_add(1);
             }
             if closing {
                 let kind = match tag_kind(&name) {
@@ -226,17 +242,21 @@ pub fn html_to_body(html: &str) -> Option<TextBody> {
         }
         push_run(&mut paragraphs, &mut runs, text, bold > 0, italic > 0, underline > 0);
     }
+    // A truncated fragment cannot establish that no text or other image follows it.
+    if i < bytes.len() {
+        images = 0;
+    }
     while paragraphs.last().is_some_and(Paragraph::is_empty) && paragraphs.len() > 1 {
         paragraphs.pop();
     }
     trim_end_space(&mut paragraphs);
     if paragraphs.iter().all(Paragraph::is_empty) {
-        return None;
+        return (None, images);
     }
     for p in &mut paragraphs {
         p.normalize();
     }
-    Some(TextBody { paragraphs, ..Default::default() })
+    (Some(TextBody { paragraphs, ..Default::default() }), images)
 }
 
 fn tag_kind(name: &str) -> &'static str {
@@ -434,6 +454,38 @@ fn fold(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Image-only classification shares the text importer's caps and skips non-rendered markup.
+    #[test]
+    fn single_image_html_requires_one_image_and_no_visible_text() {
+        for html in [
+            r#"<img src="https://example.org/owned.png">"#,
+            r#"<HTML><HEAD><title>Ignored title</title></HEAD><BODY><!--StartFragment--><a href="https://example.org"><IMG alt="Original image" src="https://example.org/owned.png"></a><!--EndFragment--></BODY></HTML>"#,
+            "<p> \n<img src='owned.png'> </p>",
+            "<script>ignored</script><img src='owned.png'><style>ignored</style>",
+        ] {
+            assert!(html_is_single_image(html), "{html}");
+            assert!(html_to_body(html).is_none_or(|b| b.text().trim().is_empty()));
+        }
+        for html in [
+            "",
+            "ordinary text",
+            "<b>words</b>",
+            "<img",
+            "<img src='one'><img src='two'>",
+            "<img src='one'>caption",
+            "<p>caption</p><img src='one'>",
+            "<script><img src='one'></script>",
+            "<style><img src='one'></style>",
+            "<!-- <img src='one'> -->",
+            "<imginary>",
+            "&lt;img src='one'&gt;",
+        ] {
+            assert!(!html_is_single_image(html), "{html}");
+        }
+        assert!(!html_is_single_image(&format!("<img>{}", " ".repeat(MAX_HTML))));
+        assert!(!html_is_single_image(&format!("<img>{}hidden by the paragraph cap", "<p></p>".repeat(MAX_PARAS + 1))));
+    }
 
     #[test]
     fn style_on_other_tags_ends_at_their_close() {

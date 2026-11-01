@@ -2232,6 +2232,147 @@ fn hidden_full_pass_receives_synthetic_ui_input() {
     assert!(app.synthetic.is_empty());
 }
 
+/// Browser image copies can carry a URL as text beside an image-only HTML fragment and bitmap.
+#[test]
+fn browser_image_with_url_text_pastes_the_bitmap_once() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    let session = Session::with_new();
+    let png = deckcraft_engine::cmd::file::render_png(&session.active().unwrap().doc, 0, 0.1, false).0;
+    let reads = Rc::new(Cell::new(0));
+    let record = reads.clone();
+    let services = Services {
+        clipboard_image: Some(Box::new(move || {
+            record.set(record.get() + 1);
+            Some(png.clone())
+        })),
+        clipboard_html: Some(Box::new(|| {
+            Some(r#"<html><body><!--StartFragment--><a href="https://example.org/source"><img src="https://example.org/owned.png" alt="Original test image"></a><!--EndFragment--></body></html>"#.into())
+        })),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let before = h.state().session.doc().unwrap().shapes().len();
+    h.input_mut().events.push(egui::Event::Paste("https://example.org/owned.png".into()));
+    h.run_steps(1);
+    assert_eq!(reads.get(), 1, "read the bitmap despite the nonempty URL alternative");
+    let st = h.state().session.doc().unwrap();
+    assert_eq!(st.shapes().len(), before + 1);
+    assert!(matches!(st.shapes().last().unwrap().kind, deckcraft_model::ShapeKind::Picture { .. }));
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::V,
+        physical_key: None,
+        pressed: false,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    });
+    h.run_steps(1);
+    assert_eq!(reads.get(), 1, "the V release must not insert the image again");
+    assert_eq!(h.state().session.doc().unwrap().shapes().len(), before + 1);
+    h.state_mut().session.execute("edit.undo", &json!({})).unwrap();
+    assert_eq!(h.state().session.doc().unwrap().shapes().len(), before, "one undo removes the pasted picture");
+}
+
+/// Explicit image events and their text alternatives describe one copy, in either event order.
+#[test]
+fn browser_image_and_text_events_do_not_duplicate_the_picture_or_url() {
+    for image_first in [false, true] {
+        let services = Services {
+            clipboard_image: Some(Box::new(|| panic!("the image event already carries its pixels"))),
+            clipboard_html: Some(Box::new(|| Some(r#"<img src="https://example.org/owned.png">"#.into()))),
+            ..Default::default()
+        };
+        let mut h = step_app(services);
+        let before = h.state().session.doc().unwrap().shapes().len();
+        let image = egui::Event::PasteImage(std::sync::Arc::new(egui::ColorImage::filled([2, 2], egui::Color32::BLUE)));
+        let text = egui::Event::Paste("https://example.org/owned.png".into());
+        h.input_mut().events.extend(if image_first { [image, text] } else { [text, image] });
+        h.run_steps(1);
+        let st = h.state().session.doc().unwrap();
+        assert_eq!(st.shapes().len(), before + 1);
+        assert!(matches!(st.shapes().last().unwrap().kind, deckcraft_model::ShapeKind::Picture { .. }));
+    }
+}
+
+/// Text, internal object markers and unavailable image data retain their normal paste semantics.
+#[test]
+fn browser_image_detection_preserves_text_and_internal_objects() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    for case in ["rich text", "address only", "no bitmap", "object marker", "internal text"] {
+        let reads = Rc::new(Cell::new(0));
+        let record = reads.clone();
+        let services = Services {
+            clipboard_image: Some(Box::new(move || {
+                record.set(record.get() + 1);
+                None
+            })),
+            clipboard_html: Some(Box::new(move || match case {
+                "address only" => None,
+                "rich text" => Some(r#"<p><b>Selected words</b><img src="https://example.org/owned.png"></p>"#.into()),
+                _ => Some(r#"<img src="https://example.org/owned.png">"#.into()),
+            })),
+            ..Default::default()
+        };
+        let mut h = step_app(services);
+        let internal = matches!(case, "object marker" | "internal text");
+        if internal {
+            h.state_mut()
+                .session
+                .execute(
+                    "shape.insert",
+                    &json!({"preset": "ellipse", "text": if case == "internal text" { "https://example.org/owned.png" } else { "" }}),
+                )
+                .unwrap();
+            h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+        }
+        let before = h.state().session.doc().unwrap().shapes().len();
+        let text = match case {
+            "object marker" => OBJECTS_MARKER,
+            "rich text" => "Selected words",
+            _ => "https://example.org/owned.png",
+        };
+        h.input_mut().events.push(egui::Event::Paste(text.into()));
+        h.run_steps(1);
+        assert_eq!(reads.get(), usize::from(case == "no bitmap"), "{case}: only image copies query the host bitmap");
+        let st = h.state().session.doc().unwrap();
+        assert_eq!(st.shapes().len(), before + 1, "{case}");
+        let pasted = st.shapes().last().unwrap();
+        assert!(!matches!(pasted.kind, deckcraft_model::ShapeKind::Picture { .. }), "{case}");
+        if internal {
+            assert_eq!(pasted.geom, deckcraft_model::Geom::preset("ellipse"));
+        } else {
+            assert_eq!(pasted.text.as_ref().unwrap().text(), text);
+        }
+        if case == "rich text" {
+            assert_eq!(pasted.text.as_ref().unwrap().paragraphs[0].runs[0].props.bold, Some(true));
+        }
+    }
+}
+
+/// A stock notes editor owns Paste even when the host could supply a browser image.
+#[test]
+fn browser_image_paste_leaves_focused_notes_to_the_text_field() {
+    let services = Services {
+        clipboard_image: Some(Box::new(|| panic!("focused notes must not query the slide image service"))),
+        clipboard_html: Some(Box::new(|| panic!("focused notes must not query the slide HTML service"))),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let before = h.state().session.doc().unwrap().shapes().len();
+    h.ctx.memory_mut(|m| m.request_focus(egui::Id::unique("notes_edit")));
+    h.run_steps(1);
+    assert!(h.ctx.text_edit_focused());
+    h.input_mut().events.push(egui::Event::Paste("https://example.org/owned.png".into()));
+    h.run_steps(1);
+    assert_eq!(h.state().notes_buf.2.text, "https://example.org/owned.png");
+    h.ctx.memory_mut(|m| m.surrender_focus(egui::Id::unique("notes_edit")));
+    h.run_steps(2);
+    let st = h.state().session.doc().unwrap();
+    assert_eq!(st.shapes().len(), before);
+    assert_eq!(st.doc.slides[0].notes.text(), "https://example.org/owned.png");
+}
+
 /// egui 0.37 carries a clipboard image as `Event::PasteImage`; it inserts once, without
 /// asking the host clipboard service for the same image again.
 #[test]

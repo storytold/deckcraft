@@ -147,13 +147,25 @@ impl SlideApp {
                 egui::Event::Cut => self.publish_clipboard(ctx, true),
                 egui::Event::Paste(text) => {
                     // Our own marker for objects without text: paste what the session copied.
-                    let text = if text == OBJECTS_MARKER { String::new() } else { text };
-                    // A picture (TIFF from Keynote, a screenshot) lands when the paste has no text.
-                    // Text keeps its HTML (bold, italic, underline) when the host can read it.
+                    let object_marker = text == OBJECTS_MARKER;
+                    let text = if object_marker { String::new() } else { text };
+                    // Browsers can publish URL/text alternatives alongside a copied image.
+                    // Prefer its bitmap only for a single-image HTML fragment, retaining rich
+                    // text with inline images and our own object copies as normal pastes.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
+                    let browser_image = !object_marker
+                        && text != self.session.clipboard.plain
+                        && html.as_deref().is_some_and(deckcraft_engine::cmd::html_is_single_image);
+                    if pasted_image_event && browser_image {
+                        continue;
+                    }
                     // egui 0.37 sends `PasteImage` directly; the services fallback stays for
                     // integrations that still send an empty `Paste`. Never insert twice.
-                    let img = if text.is_empty() && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+                    let img = if !object_marker && !pasted_image_event && (text.is_empty() || browser_image) {
+                        self.services.clipboard_image.as_mut().and_then(|f| f())
+                    } else {
+                        None
+                    };
                     let revision = self.session.active().map(|d| d.revision);
                     let r = match img {
                         Some(png) => self
