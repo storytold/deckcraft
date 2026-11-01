@@ -44,6 +44,16 @@ impl SlideApp {
 
     fn run_ui(&mut self, id: &str, p: &Value) -> Result<Value, String> {
         match id {
+            "ui.language" => {
+                let value = p.get("value").and_then(Value::as_str).ok_or("`value` must be \"auto\", \"en\" or \"ja\"")?;
+                let pref = crate::i18n::normalize_pref(value).ok_or_else(|| {
+                    format!("`value` must be \"auto\" or one of {:?}", crate::i18n::Lang::all().map(crate::i18n::Lang::code).collect::<Vec<_>>())
+                })?;
+                self.ui.language = pref.to_string();
+                // The next frame draws in it; tests and the control channel see it at once.
+                crate::i18n::set_current(crate::i18n::Lang::from_pref(pref));
+                return Ok(json!({"language": pref}));
+            }
             "view.normal" => self.ui.view = ViewMode::Normal,
             "view.outline" => self.ui.view = ViewMode::Outline,
             "view.sorter" => self.ui.view = ViewMode::Sorter,
