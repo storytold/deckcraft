@@ -88,7 +88,8 @@ impl SlideApp {
             pending_copy: None,
             capture: capture::Capture::default(),
             styled: false,
-            restyle: true,
+            system_theme: None,
+            applied_brightness: None,
             fonts_ready: false,
             last_time: 0.0,
             last_recovery: 0.0,
@@ -289,6 +290,9 @@ impl SlideApp {
             self.requeue_injected_synthetic();
             return;
         }
+        // `ui` was built before `ui_setup` ran, and a restyle has to reach it in this pass: a change
+        // of the system's appearance may bring no other repaint.
+        ui.reset_style();
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);

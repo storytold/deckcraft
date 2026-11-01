@@ -1,14 +1,55 @@
-//! Design tokens (light, PowerPoint-like; and dark) and fonts for the UI.
+//! Design tokens (light, PowerPoint-like; and dark), the Dark appearance setting, and fonts for
+//! the UI.
 
 use egui::{Color32, CornerRadius, FontData, FontDefinitions, FontFamily, Stroke, Visuals};
 use serde::{Deserialize, Serialize};
 
+/// The appearance the interface is drawn in.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum Brightness {
     #[default]
     Light,
     Dark,
+}
+
+/// Preferences ▸ Dark appearance: follow the operating system's light or dark setting, or always
+/// draw in one of them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DarkMode {
+    /// Use system setting: dark while the system is dark; light while it is light, or when the
+    /// host can't read it.
+    #[default]
+    System,
+    /// Always dark.
+    On,
+    /// Always light.
+    Off,
+}
+
+impl DarkMode {
+    /// Every choice, in the order the menu lists them.
+    pub const ALL: [DarkMode; 3] = [DarkMode::System, DarkMode::On, DarkMode::Off];
+
+    /// What the Dark appearance menu calls this choice.
+    pub fn label(self) -> &'static str {
+        match self {
+            DarkMode::System => "Use system setting",
+            DarkMode::On => "On",
+            DarkMode::Off => "Off",
+        }
+    }
+
+    /// The appearance to draw in, given the system's setting (`None` when it can't be read).
+    pub fn brightness(self, system: Option<egui::Theme>) -> Brightness {
+        match self {
+            DarkMode::On => Brightness::Dark,
+            DarkMode::Off => Brightness::Light,
+            DarkMode::System if system == Some(egui::Theme::Dark) => Brightness::Dark,
+            DarkMode::System => Brightness::Light,
+        }
+    }
 }
 
 /// Every colour the chrome uses.
@@ -130,6 +171,10 @@ impl Tokens {
 
 /// Apply tokens to egui's style.
 pub fn apply(ctx: &egui::Context, t: &Tokens) {
+    // egui keeps a light and a dark style and, left alone, switches between them when the system's
+    // theme changes. DeckCraft chooses for itself (see `DarkMode`), so hold egui to the one styled
+    // here. egui passes the choice on to the window, so the native title bar matches it too.
+    ctx.set_theme(if t.dark { egui::Theme::Dark } else { egui::Theme::Light });
     let mut v = if t.dark { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.chrome;
     v.window_fill = t.card;
@@ -268,6 +313,19 @@ pub fn to_color32(c: deckcraft_color::Rgba) -> Color32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use egui::Theme;
+
+    #[test]
+    fn dark_mode_follows_the_system_only_when_asked_to() {
+        for system in [None, Some(Theme::Light), Some(Theme::Dark)] {
+            assert_eq!(DarkMode::On.brightness(system), Brightness::Dark, "On ignores the system ({system:?})");
+            assert_eq!(DarkMode::Off.brightness(system), Brightness::Light, "Off ignores the system ({system:?})");
+        }
+        assert_eq!(DarkMode::System.brightness(Some(Theme::Dark)), Brightness::Dark);
+        assert_eq!(DarkMode::System.brightness(Some(Theme::Light)), Brightness::Light);
+        assert_eq!(DarkMode::System.brightness(None), Brightness::Light, "light when the system's setting can't be read");
+        assert_eq!(DarkMode::default(), DarkMode::System);
+    }
 
     /// Each character of `text` laid out in the interface fonts at interface sizes, and whether it
     /// has ink (a glyph image).

@@ -620,11 +620,13 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
     );
     harness.run_steps(2);
     let before = harness.state().session.prefs.clone();
-    let dark_before = harness.state().ui.brightness;
+    let dark_before = harness.state().ui.dark_mode;
     let change = |harness: &mut egui_kittest::Harness<'static, SlideApp>| {
         harness.state_mut().run("app.preferences", json!({})).unwrap();
-        harness.run_steps(2);
-        for label in ["Dark appearance", "Show smart guides", "Snap objects to grid"] {
+        // A new window sizes itself over its first frames and takes no pointer clicks meanwhile.
+        harness.run_steps(6);
+        choose_dark_mode(harness, "On");
+        for label in ["Show smart guides", "Snap objects to grid"] {
             harness
                 .query_all_by_role_and_label(egui::accesskit::Role::CheckBox, label)
                 .next()
@@ -632,13 +634,13 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
                 .click_accesskit();
             harness.run_steps(2);
         }
-        assert_ne!(harness.state().ui.brightness, dark_before, "the dialog previews the appearance");
+        assert_eq!(harness.state().brightness(), theme::Brightness::Dark, "the dialog previews the appearance");
         assert_ne!(harness.state().session.prefs.smart_guides, before.smart_guides);
     };
     let unchanged = |harness: &egui_kittest::Harness<'static, SlideApp>, how: &str| {
         let s = harness.state();
         assert!(s.dialog.is_none(), "{how} closes Preferences");
-        assert_eq!(s.ui.brightness, dark_before, "{how} restores the appearance");
+        assert_eq!(s.ui.dark_mode, dark_before, "{how} restores the appearance");
         assert_eq!(s.session.prefs.smart_guides, before.smart_guides, "{how} restores smart guides");
         assert_eq!(s.session.prefs.snap_to_grid, before.snap_to_grid, "{how} restores snap to grid");
     };
@@ -662,9 +664,117 @@ fn preferences_cancel_restores_the_settings_done_keeps_them() {
     harness.run_steps(2);
     let s = harness.state();
     assert!(s.dialog.is_none(), "Done closes Preferences");
-    assert_ne!(s.ui.brightness, dark_before, "Done keeps the appearance");
+    assert_eq!(s.ui.dark_mode, theme::DarkMode::On, "Done keeps the appearance");
     assert_ne!(s.session.prefs.smart_guides, before.smart_guides, "Done keeps smart guides");
     assert_ne!(s.session.prefs.snap_to_grid, before.snap_to_grid, "Done keeps snap to grid");
+}
+
+/// Open the Dark appearance menu and pick `label` (Use system setting, On or Off), with pointer
+/// clicks: only those close the menu again.
+pub(crate) fn choose_dark_mode(harness: &mut egui_kittest::Harness<'_, SlideApp>, label: &str) {
+    harness
+        .query_all_by_role_and_label(egui::accesskit::Role::ComboBox, "Dark appearance")
+        .next()
+        .unwrap_or_else(|| panic!("no Dark appearance menu"))
+        .click();
+    harness.run_steps(2);
+    harness
+        .query_all_by_role_and_label(egui::accesskit::Role::Button, label)
+        .next()
+        .unwrap_or_else(|| panic!("no {label} in the Dark appearance menu"))
+        .click();
+    harness.run_steps(2);
+    assert!(
+        harness.query_all_by_role_and_label(egui::accesskit::Role::Button, "Use system setting").next().is_none(),
+        "the menu closes once {label} is picked"
+    );
+}
+
+/// Whether the interface is styled dark right now.
+fn drawn_dark(harness: &egui_kittest::Harness<'static, SlideApp>) -> bool {
+    theme::Tokens::get(&harness.ctx).dark
+}
+
+/// Use system setting (the default) follows the system's light or dark setting as it changes;
+/// On and Off don't.
+#[test]
+fn dark_appearance_follows_the_system_setting() {
+    let mut harness = harness();
+    harness.run_steps(2);
+    assert_eq!(harness.state().ui.dark_mode, theme::DarkMode::System);
+    assert!(!drawn_dark(&harness), "light while the system's setting is unknown");
+
+    harness.input_mut().system_theme = Some(egui::Theme::Dark);
+    harness.run_steps(2);
+    assert!(drawn_dark(&harness), "the system turned dark");
+    harness.input_mut().system_theme = Some(egui::Theme::Light);
+    harness.run_steps(2);
+    assert!(!drawn_dark(&harness), "the system turned light");
+
+    harness.state_mut().run("view.dark", json!({"mode": "on"})).unwrap();
+    harness.run_steps(2);
+    assert!(drawn_dark(&harness), "On is dark on a light system");
+    harness.state_mut().run("view.dark", json!({"mode": "off"})).unwrap();
+    harness.input_mut().system_theme = Some(egui::Theme::Dark);
+    harness.run_steps(2);
+    assert!(!drawn_dark(&harness), "Off is light on a dark system");
+    harness.state_mut().run("view.dark", json!({"mode": "system"})).unwrap();
+    harness.run_steps(2);
+    assert!(drawn_dark(&harness), "back to following the dark system");
+}
+
+/// A change of the system's setting may bring a single repaint, so the pass that restyles has to
+/// lay the window out in the new style: the root `Ui` is built before the restyle happens.
+#[test]
+fn the_pass_that_restyles_lays_out_in_the_new_style() {
+    let laid_out_dark = std::rc::Rc::new(std::cell::Cell::new(false));
+    let seen = laid_out_dark.clone();
+    let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+        move |ui, app: &mut SlideApp| {
+            app.logic(ui.ctx());
+            app.ui(ui);
+            seen.set(ui.visuals().dark_mode);
+        },
+        SlideApp::new(Session::new(), Services::default()),
+    );
+    harness.run_steps(2);
+    assert!(!laid_out_dark.get());
+    harness.input_mut().system_theme = Some(egui::Theme::Dark);
+    harness.step();
+    assert!(laid_out_dark.get(), "the first pass after the change is already dark");
+}
+
+/// `view.dark`: `mode` picks a Dark appearance choice, `on` picks On or Off, and neither (the
+/// ribbon's Dark Mode button) switches to the appearance not shown now.
+#[test]
+fn view_dark_sets_or_toggles_dark_appearance() {
+    let mut harness = harness();
+    harness.input_mut().system_theme = Some(egui::Theme::Dark);
+    harness.run_steps(3);
+    let app = harness.state_mut();
+    app.run("view.dark", json!({})).unwrap();
+    assert_eq!(app.ui.dark_mode, theme::DarkMode::Off, "toggling a dark system's appearance turns dark off");
+    app.run("view.dark", json!({})).unwrap();
+    assert_eq!(app.ui.dark_mode, theme::DarkMode::On);
+    app.run("view.dark", json!({"on": false})).unwrap();
+    assert_eq!(app.ui.dark_mode, theme::DarkMode::Off);
+    app.run("view.dark", json!({"mode": "system"})).unwrap();
+    assert_eq!(app.ui.dark_mode, theme::DarkMode::System);
+    assert!(app.run("view.dark", json!({"mode": "dim"})).is_err());
+    assert_eq!(app.ui.dark_mode, theme::DarkMode::System, "a bad mode changes nothing");
+}
+
+/// File ▸ Account offers the same Dark appearance menu as Preferences.
+#[test]
+fn account_page_sets_dark_appearance() {
+    let mut harness = harness();
+    harness.run_steps(2);
+    harness.state_mut().run("app.backstage", json!({"page": "account"})).unwrap();
+    harness.run_steps(2);
+    choose_dark_mode(&mut harness, "Off");
+    assert_eq!(harness.state().ui.dark_mode, theme::DarkMode::Off);
+    choose_dark_mode(&mut harness, "Use system setting");
+    assert_eq!(harness.state().ui.dark_mode, theme::DarkMode::System);
 }
 
 /// About dialog: Close and Cancel each close the dialog.

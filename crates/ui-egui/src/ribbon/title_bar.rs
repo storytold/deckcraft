@@ -82,7 +82,7 @@ pub fn title_bar(app: &mut SlideApp, ui: &mut Ui) {
         }
         if icon_toggle(
             &mut right,
-            if app.ui.brightness == theme::Brightness::Dark { Icon::Sparkle } else { Icon::Palette },
+            if app.brightness() == theme::Brightness::Dark { Icon::Sparkle } else { Icon::Palette },
             "Light/Dark appearance",
             true,
             false,

@@ -89,7 +89,7 @@ pub(super) fn view(app: &mut SlideApp, ui: &mut Ui) {
         if big_button_ex(ui, Icon::Grayscale, "Grayscale", true, false, gs).0.clicked() {
             app.ui.grayscale = !gs;
         }
-        let dark = app.ui.brightness == theme::Brightness::Dark;
+        let dark = app.brightness() == theme::Brightness::Dark;
         if big_button_ex(ui, Icon::Palette, "Dark\nMode", true, false, dark).0.clicked() {
             let _ = app.run("view.dark", json!({}));
         }

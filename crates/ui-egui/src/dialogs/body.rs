@@ -11,7 +11,7 @@ use super::hyperlink::{hyperlink_command, hyperlink_seed_of, hyperlink_should_ap
 use super::language::selected_language;
 use super::paragraph::paragraph_dialog;
 use super::photo_album::photo_album_dialog;
-use super::preferences::{preferences_snapshot, restore_preferences};
+use super::preferences::{dark_mode_menu, preferences_snapshot, restore_preferences};
 use super::size_position::size_position_dialog;
 use super::slide_size::{put_slide_dim, slide_dim_points, unit_abbr};
 use super::tabs::tabs_dialog;
@@ -1341,10 +1341,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
     ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
-    let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
-        let _ = app.run("view.dark", json!({"on": dark}));
-    }
+    dark_mode_menu(app, ui);
     // While the pointer holds the slider its value only waits in the dialog: applying it
     // would rescale the slider under the pointer and run it to an end (#767). It applies
     // on release, and at once from the keyboard.

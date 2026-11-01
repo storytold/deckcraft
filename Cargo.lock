@@ -1000,6 +1000,7 @@ dependencies = [
  "log",
  "rfd",
  "serde_json",
+ "windows-registry",
  "winit",
  "winresource",
 ]

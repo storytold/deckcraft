@@ -25,32 +25,37 @@ mod graphics;
 mod logging;
 #[cfg(not(target_arch = "wasm32"))]
 mod pasteboard;
+mod system_theme;
 
 use deckcraft_engine::Session;
 use deckcraft_ui_egui::{Services, SlideApp};
 
-struct App(
-    SlideApp,
+struct App {
+    app: SlideApp,
+    /// The system's light or dark setting, for Dark appearance ▸ Use system setting.
+    system_theme: system_theme::Watcher,
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
-    fmv_macos_events::Inbox,
-);
+    apple_inbox: fmv_macos_events::Inbox,
+}
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         #[cfg(target_os = "macos")]
-        apple_events::poll(&self.1, &mut self.0, ctx);
-        self.0.logic(ctx);
+        apple_events::poll(&self.apple_inbox, &mut self.app, ctx);
+        self.app.logic(ctx);
     }
     /// Forward native raw input to the wrapped application once per pass.
     fn raw_input_hook(&mut self, ctx: &egui::Context, raw: &mut egui::RawInput) {
-        self.0.raw_input_hook(ctx, raw);
+        // In place of winit's report, which some systems lack (see `system_theme`).
+        raw.system_theme = self.system_theme.get();
+        self.app.raw_input_hook(ctx, raw);
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        self.0.ui(ui);
+        self.app.ui(ui);
     }
     fn on_exit(&mut self) {
-        save_prefs(&self.0);
+        save_prefs(&self.app);
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
         // AppKit's Touch Bar support observes that view (KVO), so in the next display cycle
@@ -60,7 +65,7 @@ impl eframe::App for App {
         // nothing after it is needed: the preferences are saved and the log file is unbuffered.
         // `on_exit` only runs once the app exists, never on a failed start. Same as GridCraft #117.
         #[cfg(target_os = "macos")]
-        self.0.cleanup_print_previews();
+        self.app.cleanup_print_previews();
         #[cfg(target_os = "macos")]
         std::process::exit(0);
     }
@@ -295,11 +300,13 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
-            Ok(Box::new(App(
+            let system_theme = system_theme::Watcher::start(cc.egui_ctx.clone());
+            Ok(Box::new(App {
                 app,
+                system_theme,
                 #[cfg(target_os = "macos")]
-                apple_events.connect(&cc.egui_ctx),
-            )))
+                apple_inbox: apple_events.connect(&cc.egui_ctx),
+            }))
         }),
     )
 }
@@ -313,11 +320,12 @@ mod tests {
     #[test]
     fn on_exit_ends_the_process_on_macos() {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
-            let mut app = App(
-                SlideApp::new(Session::new(), Services::default()),
+            let mut app = App {
+                app: SlideApp::new(Session::new(), Services::default()),
+                system_theme: system_theme::Watcher::start(egui::Context::default()),
                 #[cfg(target_os = "macos")]
-                fmv_macos_events::Inbox::default(),
-            );
+                apple_inbox: fmv_macos_events::Inbox::default(),
+            };
             println!("calling on_exit");
             eframe::App::on_exit(&mut app);
             println!("on_exit returned");

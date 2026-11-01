@@ -11,15 +11,17 @@ impl SlideApp {
         if !self.styled {
             theme::install_fonts_with(ctx, &self.ui_fonts.faces);
             self.styled = true;
-            self.restyle = true;
             // Font definitions take effect at the next pass boundary. Do not paint a language
             // or symbol with the old font set while the new set is still pending.
             ctx.request_discard("install interface fonts before layout");
             return false;
         }
-        if self.restyle {
-            theme::apply(ctx, &theme::Tokens::for_brightness(self.ui.brightness));
-            self.restyle = false;
+        // Restyle when Dark appearance changes, or under Use system setting when the system's does.
+        self.system_theme = ctx.system_theme();
+        let brightness = self.brightness();
+        if self.applied_brightness != Some(brightness) {
+            theme::apply(ctx, &theme::Tokens::for_brightness(brightness));
+            self.applied_brightness = Some(brightness);
         }
         self.fonts_ready = true;
         true

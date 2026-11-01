@@ -36,7 +36,7 @@ fn open_options(h: &mut Harness<'_, SlideApp>) {
 }
 
 fn dark(app: &SlideApp) -> bool {
-    app.ui.brightness == Brightness::Dark
+    app.brightness() == Brightness::Dark
 }
 
 /// A checkbox applies as it is toggled and Cancel puts the old value back.
@@ -92,16 +92,15 @@ fn options_cancel_undoes_every_editing_setting() {
     assert_eq!(after.author, before.author, "the name is restored");
 }
 
-/// The appearance toggle and the interface size go back on Cancel, too; Esc acts as Cancel.
+/// The appearance menu and the interface size go back on Cancel, too; Esc acts as Cancel.
 #[test]
 fn options_cancel_puts_the_appearance_and_scale_back() {
     let mut h = harness();
     let (dark_before, scale_before) = (dark(h.state()), h.state().ui.ui_scale);
     open_options(&mut h);
 
-    h.query_by_label("Dark appearance").expect("the checkbox is there").click();
-    h.run_steps(2);
-    assert!(dark(h.state()), "the appearance applies as it is toggled");
+    crate::tests::choose_dark_mode(&mut h, "On");
+    assert!(dark(h.state()), "the appearance applies as it is chosen");
 
     // Clicking the slider's middle sets it near the middle of its range, away from the default.
     interface_size(&h).click();
