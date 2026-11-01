@@ -24,9 +24,11 @@ mod nodes;
 mod paint;
 
 use edit::{
-    add_node, change_colors, change_layout, change_style, demote, from_text, nodes, promote, remove_node, set_nodes, set_picture, to_shapes, to_text,
+    add_node, change_colors, change_layout, change_style, demote, font_size, from_text, nodes, promote, remove_node, set_nodes, set_picture,
+    to_shapes, to_text,
 };
 pub use edit::{insert, selected};
+pub(crate) use edit::{selected_graphics, set_font_size, set_text_color};
 pub use nodes::{add, demote_node, nodes_from_lines, normalize, promote_node, remove};
 pub use paint::{BRICK_CAMERA, is_3d, layout};
 #[cfg(test)]
@@ -218,7 +220,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Change Layout",
             ["SmartArt Design", "Layouts"],
             None,
-            "{id?, kind: list|blockList|hBulletList|process|chevron|verticalProcess|stepUp|cycle|blockCycle|radial|hierarchy|pyramid|invertedPyramid|matrix|titledMatrix|pictureList|pictureCaption|pictureProcess|pictureHList|timeline|venn|target|textCycle|continuousCycle|horizontalHierarchy|gridMatrix|gear|funnel|segmentedCycle|multidirectionalCycle|orgChart|halfCircleOrgChart|cycleMatrix|segmentedPyramid|pie|nameTitleOrgChart|verticalBoxList|trapezoidList|tableList|accentProcess|continuousBlockProcess|bendingProcess|linearVenn|stackedVenn|nestedTarget}",
+            "{id?, kind: list|blockList|hBulletList|process|chevron|verticalProcess|stepUp|cycle|blockCycle|radial|hierarchy|pyramid|invertedPyramid|matrix|titledMatrix|pictureList|pictureCaption|pictureProcess|pictureHList|timeline|venn|target|textCycle|continuousCycle|horizontalHierarchy|gridMatrix|gear|funnel|segmentedCycle|multidirectionalCycle|orgChart|halfCircleOrgChart|cycleMatrix|segmentedPyramid|pie|nameTitleOrgChart|verticalBoxList|trapezoidList|tableList|accentProcess|continuousBlockProcess|bendingProcess|linearVenn|stackedVenn|nestedTarget} → {id, ids: the regenerated shapes}",
             has_selection,
             change_layout
         ),
@@ -259,11 +261,20 @@ pub fn specs() -> Vec<CommandSpec> {
             set_picture
         ),
         cmd!(
+            "smartArt.fontSize",
+            "Font Size",
+            ["SmartArt Design", "Create Graphic"],
+            None,
+            "{id?, size: pt|null} → {id, fontSize} (one size for every node's text, as PowerPoint sizes a graphic's text alike; null sizes it automatically again, all nodes alike; format.size with the graphic selected does the same)",
+            has_selection,
+            font_size
+        ),
+        cmd!(
             "smartArt.style",
             "SmartArt Styles",
             ["SmartArt Design", "SmartArt Styles"],
             None,
-            "{id?, style: flat|subtle|intense|outline|polished|inset|cartoon|powder|brick}",
+            "{id?, style: flat|subtle|intense|outline|polished|inset|cartoon|powder|brick} → {id, ids: the regenerated shapes}",
             has_selection,
             change_style
         ),
@@ -272,7 +283,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Change Colors",
             ["SmartArt Design", "SmartArt Styles"],
             None,
-            "{id?, colors: colorful|range23|range34|range45|range56|accent1|…|accent6|accent1Grad|…|accent6Grad}",
+            "{id?, colors: colorful|range23|range34|range45|range56|accent1|…|accent6|accent1Grad|…|accent6Grad} → {id, ids: the regenerated shapes}",
             has_selection,
             change_colors
         ),
@@ -375,7 +386,7 @@ mod tests {
         let items = layout_items(&d, Xfrm::new(0.0, 0.0, 600.0, 300.0));
         let size = |k: usize| items[k].0.text.as_ref().and_then(|b| b.paragraphs[0].runs[0].props.size).unwrap_or(0.0);
         assert!(size(0) < 20.0 && size(0) >= 20.0 * MIN_SCALE - 0.5, "the tip's long word shrinks: {}", size(0));
-        assert!((size(1) - 20.0).abs() < 1e-9, "short words keep their size");
+        assert!((size(1) - size(0)).abs() < 1e-9, "the other shapes follow: every node's text is sized alike");
     }
 
     #[test]
