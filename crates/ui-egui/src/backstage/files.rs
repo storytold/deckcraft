@@ -157,41 +157,6 @@ fn recent_list(app: &mut SlideApp, ui: &mut Ui, query: &str, limit: usize) {
     }
 }
 
-#[cfg(test)]
-mod provider_tests {
-    use egui::accesskit::Role;
-    use egui_kittest::kittest::Queryable;
-
-    use crate::file_providers::{Host, Resource};
-    use crate::{Services, SlideApp};
-
-    #[test]
-    fn refused_provider_recent_stays_visible_over_backstage_after_the_click_frame() {
-        let host = Host::default();
-        host.set_session("0123456789abcdef0123456789abcdef".into()).unwrap();
-        let connection = host.connect("test".into(), "Test storage".into(), "account".into()).unwrap();
-        host.set_resources(&connection, vec![Resource { id: "one".into(), name: "Blocked.deckcraft".into(), updated_at: String::new() }]).unwrap();
-        for _ in 0..16 {
-            host.request_open("one").unwrap();
-        }
-        let services = Services { file_providers: Some(host), ..Default::default() };
-        let app = SlideApp::new(deckcraft_engine::Session::new(), services);
-        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
-            |ui, app: &mut SlideApp| {
-                app.logic(ui.ctx());
-                app.ui(ui);
-            },
-            app,
-        );
-        harness.run_steps(3);
-        harness.get_by_role_and_label(Role::Button, "Blocked.deckcraft").click();
-        harness.run_steps(2);
-        assert_eq!(harness.state().toast.as_ref().unwrap().text, "too many pending provider reads");
-        harness.run_steps(2);
-        assert!(harness.query_by_label("too many pending provider reads").is_some());
-    }
-}
-
 /// A large square command button (Print, Create PDF, Check for Issues…).
 pub(super) fn square_button(ui: &mut Ui, icon: Icon, label: &str, enabled: bool) -> egui::Response {
     let t = Tokens::get(ui.ctx());
@@ -356,4 +321,39 @@ pub(super) fn open_page(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             recent_list(app, ui, &q, usize::MAX);
         });
     });
+}
+
+#[cfg(test)]
+mod provider_tests {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::Queryable;
+
+    use crate::file_providers::{Host, Resource};
+    use crate::{Services, SlideApp};
+
+    #[test]
+    fn refused_provider_recent_stays_visible_over_backstage_after_the_click_frame() {
+        let host = Host::default();
+        host.set_session("0123456789abcdef0123456789abcdef".into()).unwrap();
+        let connection = host.connect("test".into(), "Test storage".into(), "account".into()).unwrap();
+        host.set_resources(&connection, vec![Resource { id: "one".into(), name: "Blocked.deckcraft".into(), updated_at: String::new() }]).unwrap();
+        for _ in 0..16 {
+            host.request_open("one").unwrap();
+        }
+        let services = Services { file_providers: Some(host), ..Default::default() };
+        let app = SlideApp::new(deckcraft_engine::Session::new(), services);
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        harness.get_by_role_and_label(Role::Button, "Blocked.deckcraft").click();
+        harness.run_steps(2);
+        assert_eq!(harness.state().toast.as_ref().unwrap().text, "too many pending provider reads");
+        harness.run_steps(2);
+        assert!(harness.query_by_label("too many pending provider reads").is_some());
+    }
 }
