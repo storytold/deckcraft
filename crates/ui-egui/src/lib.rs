@@ -22,6 +22,7 @@ pub mod control;
 pub mod dialogs;
 pub mod doc_window;
 pub mod eyedropper;
+pub mod file_providers;
 pub mod icons;
 pub mod media;
 pub mod menus;
@@ -123,7 +124,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "show.presenter",
         "Presenter View",
         None,
-        "{on?: bool} → {on, window} (presenter view, with notes, a clock and the next slide, appears in its own separate window beside the show window when the show starts; window is false in the browser build, which draws it inside the page)",
+        "{on?: bool} → {on, window} (presenter view, with notes, a clock and the next slide, appears in its own separate window beside the show window when the show starts; browser hosts use a popup when available, otherwise window is false and presenter view is drawn inside the page)",
     ),
     ("show.keepCursor", "Keep Mouse Cursor Visible", None, "{on?: bool}"),
     ("show.end", "End Show", None, "{}"),
@@ -214,6 +215,14 @@ struct InputTarget {
     opening: Option<(egui::Id, u64)>,
 }
 
+/// A close confirmed by the user, still waiting for this exact provider save.
+struct ProviderClose {
+    request: String,
+    connection: String,
+    document: u64,
+    revision: Option<u64>,
+}
+
 pub struct SlideApp {
     /// Shape Fill's last colour (a command colour parameter): the button applies it again. Accent 1 until one is picked.
     pub last_fill: serde_json::Value,
@@ -229,6 +238,7 @@ pub struct SlideApp {
     /// Spelling squiggles, checked on a worker thread.
     pub squiggles: squiggles::Squiggles,
     pub dialog: Option<dialogs::Dialog>,
+    provider_close: Option<ProviderClose>,
     /// The word looked up in the Thesaurus pane.
     pub thesaurus_query: String,
     pub show: Option<show::Show>,
