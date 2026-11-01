@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-31 · **Last updated:** 2026-10-31 · **Change:** trivial (Copy/Cut publication unified; OS clipboard feature remains an open desktop integration gap, #1419/#1620) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** trivial (caret-only Copy/Cut preserves the host clipboard; Copy/Cut publication unified; OS clipboard feature remains an open desktop integration gap, #1419/#1620) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -271,7 +271,7 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 - **Estimate:** 1–2 h (bundle openly licensed dictionaries; under 1 h for the AutoFormat option).
 
 ### Desktop clipboard integration
-- **Evidence:** desktop eframe features omit `clipboard`, so egui can paste from an in-memory clipboard while rich-text Copy writes directly to the OS pasteboard (#1620). PR #1419 enables the OS clipboard. Copy/Cut publication is now shared by semantic events, raw shortcuts and UI commands, but that does not replace the missing integration feature.
+- **Evidence:** desktop eframe features omit `clipboard`, so egui can paste from an in-memory clipboard while rich-text Copy writes directly to the OS pasteboard (#1620). PR #1419 enables the OS clipboard. Caret-only Copy/Cut preserves the host clipboard. Copy/Cut publication is shared by semantic events, raw shortcuts and UI commands, but that does not replace the missing integration feature.
 - **Validation:** native macOS Cmd+C/Cmd+V passed on an owned synthetic deck with the OS clipboard feature enabled locally; a released build with #1419, plus external-app and cross-window checks, remains to be verified.
 
 ### Copying text and cell ranges
@@ -372,6 +372,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | trivial | Caret-only Copy/Cut preserves the host clipboard and pending payload; command/shortcut text ranges and dialog focus covered (#1620). Scores unchanged |
 | 2026-10-31 | trivial | Copy/Cut publication unified; OS clipboard feature remains an open desktop integration gap, #1419/#1620 |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |

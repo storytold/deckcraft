@@ -18,6 +18,10 @@ impl SlideApp {
     /// Run a command by id (UI commands here, everything else in the engine). Errors show in the
     /// status bar and are returned.
     pub fn run(&mut self, id: &str, params: Value) -> Result<Value, String> {
+        // A caret-only copy is a no-op, not a textless object. Check before Cut can collapse
+        // a real range, and retain any payload queued by an earlier copy in this UI pass.
+        let publish_copy = matches!(id, "edit.copy" | "edit.cut")
+            && !self.session.active().is_some_and(|d| d.selection.text.as_ref().is_some_and(|t| !t.is_range()));
         let r = if UI_COMMANDS.iter().any(|c| c.0 == id) {
             self.run_ui(id, &params)
         } else {
@@ -26,7 +30,7 @@ impl SlideApp {
         match &r {
             // Copy and Cut from the ribbon, menus, the slide's context menu or the control channel
             // publish the same rich text or object marker as the keyboard (#431, #1620).
-            Ok(v) if matches!(id, "edit.copy" | "edit.cut") => {
+            Ok(v) if publish_copy => {
                 self.pending_copy = super::CopiedContent::from_result(v, !self.session.clipboard.slides.is_empty());
             }
             Ok(_) => {}

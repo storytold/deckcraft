@@ -1174,11 +1174,148 @@ fn step_app(services: Services) -> egui_kittest::Harness<'static, SlideApp> {
     h
 }
 
+/// Plain-text clipboard publication emitted during the most recent UI pass.
 fn clipboard_text(h: &egui_kittest::Harness<'_, SlideApp>) -> Option<String> {
     h.output().platform_output.commands.iter().find_map(|c| match c {
         egui::OutputCommand::CopyText(t) => Some(t.clone()),
         _ => None,
     })
+}
+
+/// A caret copies nothing: preserve external text and never publish a stale object marker.
+#[test]
+fn caret_only_copy_and_cut_leave_the_host_clipboard_untouched() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+    for cut in [false, true] {
+        for entry in ["raw", "semantic", "command"] {
+            let calls = Rc::new(Cell::new(0));
+            let record = calls.clone();
+            let services = Services {
+                clipboard_set_html: Some(Box::new(move |_, _| {
+                    record.set(record.get() + 1);
+                    true
+                })),
+                ..Default::default()
+            };
+            let mut h = step_app(services);
+            let stale = h.state_mut().session.execute("shape.insert", &json!({"preset": "rect"})).unwrap()["id"].clone();
+            h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+            let text = h.state_mut().session.execute("insert.textBox", &json!({"text": "CURRENT TEXT"})).unwrap()["id"].clone();
+            let before = h.state().session.doc().unwrap().shapes().len();
+            h.state_mut().session.execute("text.edit", &json!({"id": text, "at": [0, 0]})).unwrap();
+            let command = if cut { "edit.cut" } else { "edit.copy" };
+            match entry {
+                "raw" => h.input_mut().events.push(egui::Event::Key {
+                    key: if cut { egui::Key::X } else { egui::Key::C },
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND,
+                }),
+                "semantic" => h.input_mut().events.push(if cut { egui::Event::Cut } else { egui::Event::Copy }),
+                _ => {
+                    h.state_mut().run(command, json!({})).unwrap();
+                }
+            }
+            h.run_steps(1);
+            assert_eq!(clipboard_text(&h), None, "{entry} {command}: preserve the host clipboard");
+            assert_eq!(calls.get(), 0, "{entry} {command}: do not offer stale HTML");
+            assert_eq!(h.state().session.clipboard.shapes[0].id.0, stale.as_u64().unwrap() as u32);
+            let st = h.state().session.doc().unwrap();
+            assert_eq!(st.shapes().len(), before, "caret-only Cut must not remove an object");
+            assert_eq!(st.selection.text.as_ref().unwrap().caret, (0, 0));
+            assert_eq!(st.shapes().last().unwrap().text.as_ref().unwrap().text(), "CURRENT TEXT");
+
+            // Selecting a range still publishes text, rather than the text box or old object.
+            h.state_mut().session.execute("text.select", &json!({"anchor": [0, 0], "caret": [0, 7]})).unwrap();
+            h.state_mut().run("edit.copy", json!({})).unwrap();
+            h.run_steps(1);
+            assert_eq!(calls.get(), 1);
+            assert_eq!(h.state().session.clipboard.plain, "CURRENT");
+            assert!(h.state().session.clipboard.shapes.is_empty());
+            h.state_mut().run("edit.cut", json!({})).unwrap();
+            h.run_steps(1);
+            assert_eq!(calls.get(), 2, "publish a real Cut even though it collapses the range");
+            assert_eq!(h.state().session.clipboard.plain, "CURRENT");
+            assert_eq!(h.state().session.doc().unwrap().shapes().last().unwrap().text.as_ref().unwrap().text(), " TEXT");
+        }
+    }
+}
+
+/// A no-op Copy must not discard a real payload queued earlier in the same pass.
+#[test]
+fn caret_only_copy_preserves_an_earlier_pending_copy() {
+    let mut h = step_app(Services::default());
+    let id = h.state_mut().session.execute("insert.textBox", &json!({"text": "QUEUED"})).unwrap()["id"].clone();
+    h.state_mut().run("edit.copy", json!({})).unwrap();
+    h.state_mut().session.execute("text.edit", &json!({"id": id, "at": [0, 0]})).unwrap();
+    h.state_mut().run("edit.copy", json!({})).unwrap();
+    h.run_steps(1);
+    assert_eq!(clipboard_text(&h).as_deref(), Some("QUEUED"));
+}
+
+/// Menu/control and raw shortcuts offer identical HTML and plain-text bytes for a text range.
+#[test]
+fn copy_commands_and_shortcuts_publish_identical_text_range_bytes() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let record = seen.clone();
+    let services = Services {
+        clipboard_set_html: Some(Box::new(move |html, plain| {
+            record.borrow_mut().push((html.to_string(), plain.to_string()));
+            true
+        })),
+        ..Default::default()
+    };
+    let mut h = step_app(services);
+    let id = h.state_mut().session.execute("insert.textBox", &json!({"text": "BEFORE selected AFTER"})).unwrap()["id"].clone();
+    h.state_mut().session.execute("text.edit", &json!({"id": id})).unwrap();
+    h.state_mut().session.execute("text.select", &json!({"anchor": [0, 7], "caret": [0, 15]})).unwrap();
+    h.state_mut().session.execute("format.bold", &json!({"on": true})).unwrap();
+    h.state_mut().run("edit.copy", json!({})).unwrap();
+    h.run_steps(1);
+    h.input_mut().events.push(egui::Event::Key {
+        key: egui::Key::C,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND,
+    });
+    h.run_steps(1);
+    let offers = seen.borrow();
+    assert_eq!(offers.len(), 2);
+    assert_eq!(offers[0], offers[1]);
+    assert_eq!(offers[0].1, "selected");
+    assert!(offers[0].0.contains("<b>"));
+    assert!(h.state().session.clipboard.shapes.is_empty());
+}
+
+/// Clipboard events in a modal text field must stay with the dialog.
+#[test]
+fn clipboard_shortcuts_in_a_dialog_copy_the_field_and_leave_slide_objects() {
+    let mut h = step_app(Services::default());
+    h.state_mut().session.execute("shape.insert", &json!({"preset": "rect", "text": "SLIDE OBJECT"})).unwrap();
+    h.state_mut().session.execute("edit.copy", &json!({})).unwrap();
+    let before = h.state().session.doc().unwrap().shapes().len();
+    let mut dialog = dialogs::Dialog::new("renameShape");
+    dialog.fields.insert("name".into(), "DIALOG TEXT".into());
+    h.state_mut().dialog = Some(dialog);
+    h.run_steps(4);
+    h.get_by_role(egui::Role::TextInput).click();
+    h.run_steps(1);
+    assert!(h.ctx.text_edit_focused());
+    h.key_press_modifiers(egui::Modifiers::MAC_CMD | egui::Modifiers::COMMAND, egui::Key::A);
+    h.run_steps(1);
+    h.input_mut().events.extend([
+        egui::Event::Copy,
+        egui::Event::Key { key: egui::Key::C, physical_key: None, pressed: true, repeat: false, modifiers: egui::Modifiers::COMMAND },
+    ]);
+    h.run_steps(1);
+    assert_eq!(clipboard_text(&h).as_deref(), Some("DIALOG TEXT"));
+    assert_eq!(h.state().session.clipboard.plain, "SLIDE OBJECT");
+    assert_eq!(h.state().session.doc().unwrap().shapes().len(), before);
 }
 
 /// Menu/control Copy and Cut need the same marker as semantic keyboard Copy (#1620).
@@ -1199,6 +1336,7 @@ fn copy_commands_publish_the_textless_object_marker() {
     }
 }
 
+/// A rejected HTML offer falls back to plain text, without replaying on the next frame.
 #[test]
 fn copy_commands_publish_html_once_and_fall_back_to_plain_text() {
     use std::cell::RefCell;
@@ -1292,6 +1430,7 @@ fn copy_shortcut_fallback_publishes_the_new_selection() {
     }
 }
 
+/// Duplicate input representations must create only one Cut and one undo step.
 #[test]
 fn semantic_and_raw_cut_in_one_batch_execute_once() {
     for semantic_first in [true, false] {
@@ -1317,6 +1456,7 @@ fn semantic_and_raw_cut_in_one_batch_execute_once() {
     }
 }
 
+/// A focused stock text field retains clipboard shortcuts instead of cutting slide objects.
 #[test]
 fn copy_shortcut_fallback_leaves_focused_notes_to_the_text_field() {
     let mut h = step_app(Services::default());

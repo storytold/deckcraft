@@ -2,7 +2,7 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
-> **Last updated:** 2026-10-31 · Clipboard row re-assessed: D unchanged for engine operations; native OS clipboard integration remains tracked by #1419/#1620.
+> **Last updated:** 2026-11-01 · Caret-only Copy/Cut preserves the host clipboard; clipboard row re-assessed: D unchanged for engine operations; native OS clipboard integration remains tracked by #1419/#1620.
 
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
@@ -240,4 +240,5 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | trivial | Caret-only Copy/Cut preserves the host clipboard and pending payload; command/shortcut text ranges and dialog focus covered (#1620). Scores unchanged |
 | 2026-10-31 | trivial | Copy/Cut publication unified; engine clipboard row remains D, native OS clipboard integration remains tracked by #1419/#1620. Summary scores unchanged |

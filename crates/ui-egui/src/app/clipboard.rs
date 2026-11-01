@@ -18,6 +18,7 @@ pub(crate) struct CopiedContent {
 }
 
 impl CopiedContent {
+    /// Capture plain text and optional HTML; slide payloads use plain text only.
     pub(super) fn from_result(v: &Value, slides: bool) -> Option<Self> {
         let text = v.get("text")?.as_str()?.to_string();
         let html = if slides { String::new() } else { v.get("html").and_then(Value::as_str).unwrap_or("").to_string() };
