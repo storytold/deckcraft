@@ -24,6 +24,15 @@ fn scale_position(position: Option<deckcraft_model::geography::ValueColorPositio
 }
 fn ramp(value: f64, stops: &[(f64, Rgba)]) -> Rgba {
     let Some(&(low, first)) = stops.first() else { return Rgba::BLACK };
+    if let Some(&(high, last)) = stops.last()
+        && value == low
+        && low == high
+    {
+        // Native maps resolve a constant range at the midpoint of the final interval:
+        // low/high for two colours, middle/high for three (also for zero/negative data).
+        let previous = stops.get(stops.len().saturating_sub(2)).map_or(first, |s| s.1);
+        return crate::chartex::mix(previous, last, 0.5);
+    }
     if value <= low {
         return first;
     }
@@ -285,6 +294,18 @@ mod tests {
         assert_eq!(ramp(0., &[(-1e308, a), (1e308, b)]), Rgba::rgba(130, 120, 20, 150));
         assert_eq!(scale_position(Some(P::Percent(25.)), (-20., 60.), 0.), 0.);
         assert_eq!(scale_position(Some(P::Number(f64::NAN)), (0., 1.), 0.5), 0.5);
+    }
+    #[test]
+    fn constant_maps_use_the_native_final_interval_midpoint() {
+        let low = Rgba::rgb(240, 20, 20);
+        let mid = Rgba::rgb(240, 220, 20);
+        let high = Rgba::rgb(20, 220, 20);
+        for value in [0., 7., -12.] {
+            assert_eq!(ramp(value, &[(value, low), (value, high)]), Rgba::rgb(130, 120, 20));
+            assert_eq!(ramp(value, &[(value, low), (value, mid), (value, high)]), Rgba::rgb(130, 220, 20));
+        }
+        assert_eq!(ramp(6., &[(7., low), (7., high)]), low);
+        assert_eq!(ramp(8., &[(7., low), (7., high)]), high);
     }
     #[test]
     fn data_only_crops_world_projection_without_reprojecting_selected_regions() {

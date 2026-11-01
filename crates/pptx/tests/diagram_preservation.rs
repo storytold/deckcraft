@@ -488,6 +488,34 @@ fn numeric_rule_fixture(rules: &str, height: &str, long: bool) -> Vec<u8> {
 }
 
 #[test]
+fn coupled_numeric_rules_use_the_imported_text_metrics_and_keep_the_affine_relation() {
+    let rules = r#"<dgm:rule type="w" val="80"/><dgm:rule type="h" val="160"/>"#;
+    let constraints = r#"<dgm:constr type="h" val="40"/><dgm:constr type="l" refType="w"/><dgm:constr type="r" refType="h"/>"#;
+    let mut parts = files(&numeric_rule_fixture(rules, constraints, true));
+    for (_, bytes) in &mut parts {
+        if parse_xml(bytes).ok().is_some_and(|d| d.root.is("layoutDef")) {
+            *bytes = String::from_utf8(bytes.clone())
+                .unwrap()
+                .replace(r#"type="w" val="50""#, r#"type="w" val="20""#)
+                .replace(r#"<dgm:forEach axis="ch" ptType="node">"#, r#"<dgm:forEach axis="ch" ptType="node" cnt="1">"#)
+                .into_bytes();
+        }
+    }
+    let bytes = zip(parts);
+    let p = deckcraft_pptx::import(&bytes).unwrap();
+    let ShapeKind::Group { children, .. } = &group(&p).kind else { panic!("diagram group") };
+    assert_eq!(children.len(), 1);
+    let rect = children[0].xfrm.unwrap();
+    assert!(rect.w > 20. * 72. / 25.4 + 1., "neither independent move is feasible: the actual text must trigger a joint move");
+    assert!((rect.h - 2. * rect.w).abs() < 0.01);
+    if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+        let dir = std::path::PathBuf::from(dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("rules-coupled-real-text.pptx"), bytes).unwrap();
+    }
+}
+
+#[test]
 fn numeric_rules_measure_real_fonts_after_import_and_preserve_order_on_roundtrip() {
     let grow = r#"<dgm:rule type="h" val="80"/>"#;
     let shrink = r#"<dgm:rule type="primFontSz" val="12"/>"#;

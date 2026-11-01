@@ -241,28 +241,28 @@ pub(crate) fn point_data_label(
     if spec.hidden == Some(true) {
         return;
     }
-    let mut default_props = spec.style.as_ref().and_then(|b| b.paragraphs.first()).map(|p| p.def_props.clone()).unwrap_or_default();
+    // A literal c:tx/c:rich is a complete text body. Native charts do not blend the
+    // separate txPr of their generated numeric label into that replacement body.
+    let text_style = spec.style.as_ref().filter(|_| spec.text.is_none());
+    let mut default_props = text_style.and_then(|b| b.paragraphs.first()).map(|p| p.def_props.clone()).unwrap_or_default();
     default_props.inherit(&chart.text_props(ChartTextRole::Default));
     default_props.size = default_props.size.or(chart.text_size);
+    let (align, anchor) = (style.align, style.anchor);
     let automatic = label_body(text, style, &default_props);
     let mut body = spec.text.clone().unwrap_or_else(|| automatic.clone());
-    if let Some(explicit) = &spec.style {
+    if let Some(explicit) = text_style {
         body.body.inherit(&explicit.body);
     }
     body.body.inherit(&automatic.body);
-    let mut inherited = spec.style.as_ref().and_then(|b| b.paragraphs.first()).map(|p| p.def_props.clone()).unwrap_or_default();
+    let mut inherited = text_style.and_then(|b| b.paragraphs.first()).map(|p| p.def_props.clone()).unwrap_or_default();
     if let Some(p) = automatic.paragraphs.first().and_then(|p| p.runs.first()) {
         inherited.inherit(&p.props);
     }
     for (i, p) in body.paragraphs.iter_mut().enumerate() {
-        if let Some(style) = spec.style.as_ref().and_then(|b| b.paragraphs.get(i).or_else(|| b.paragraphs.first())) {
-            if spec.text.is_none() {
-                let mut props = style.props.clone();
-                props.inherit(&p.props);
-                p.props = props;
-            } else {
-                p.props.inherit(&style.props);
-            }
+        if let Some(style) = text_style.and_then(|b| b.paragraphs.get(i).or_else(|| b.paragraphs.first())) {
+            let mut props = style.props.clone();
+            props.inherit(&p.props);
+            p.props = props;
         }
         p.props.bullet = Some(Bullet::None);
         if let Some(a) = automatic.paragraphs.first() {
@@ -282,10 +282,19 @@ pub(crate) fn point_data_label(
         &body,
         &deckcraft_text::Opts { rect: Rect::new(0., 0., 1e6, 1e6), fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
     );
-    let h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(r.height());
-    let w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.) + 4.).max(r.width());
-    let center = r.center();
-    r = Rect::new(center.x - w / 2.0, r.y1 - h, center.x + w / 2.0, r.y1);
+    let h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(1.);
+    let w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.) + 4.).max(1.);
+    let x = match align {
+        Align::Left => r.x0,
+        Align::Right => r.x1 - w,
+        _ => r.center().x - w / 2.,
+    };
+    let y = match anchor {
+        Anchor::Top => r.y0,
+        Anchor::Bottom => r.y1 - h,
+        _ => r.center().y - h / 2.,
+    };
+    r = Rect::new(x, y, x + w, y + h);
     match spec.position.as_deref() {
         Some("ctr" | "inBase" | "inEnd") => {
             let mut p = mark.center();

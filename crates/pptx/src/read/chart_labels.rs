@@ -44,16 +44,25 @@ fn paragraph_props(e: &El) -> ParaProps {
 
 pub(super) fn body(e: &El) -> TextBody {
     let mut body = TextBody { body: e.child("bodyPr").map(super::dml::body_pr).unwrap_or_default(), ..Default::default() };
-    let list_default =
-        e.path(&["lstStyle", "lvl1pPr", "defRPr"]).or_else(|| e.path(&["lstStyle", "defPPr", "defRPr"])).map(label_run_props).unwrap_or_default();
+    let list = e.child("lstStyle");
+    let default = list.and_then(|l| l.child("defPPr"));
     let mut budget = 4096;
     for p in e.children_named("p").take(256) {
         let mut para = Paragraph::default();
         let ppr = p.child("pPr");
         para.level = ppr.and_then(|p| p.u32("lvl")).unwrap_or(0).min(8) as u8;
+        let level_tag = format!("lvl{}pPr", para.level + 1);
+        let level = list.and_then(|l| l.child(&level_tag));
         para.props = ppr.map(paragraph_props).unwrap_or_default();
         para.def_props = p.path(&["pPr", "defRPr"]).map(label_run_props).unwrap_or_default();
-        para.def_props.inherit(&list_default);
+        // List levels are independent. Level two must not inherit level one's size or
+        // margins; each level inherits the shared default, below explicit paragraph data.
+        for source in [level, default].into_iter().flatten() {
+            para.props.inherit(&paragraph_props(source));
+            if let Some(run) = source.child("defRPr") {
+                para.def_props.inherit(&label_run_props(run));
+            }
+        }
         para.end_props = p.child("endParaRPr").map(label_run_props).unwrap_or_default();
         for run in p.elements().filter(|e| matches!(e.local(), "r" | "fld" | "br")).take(budget) {
             let mut props = run.child("rPr").map(label_run_props).unwrap_or_default();
@@ -116,5 +125,42 @@ pub(super) fn read(series: &mut Series, labels: Option<&El>, cx: bool) {
         if let Some(i) = e.u32("idx").filter(|i| *i < 100_000) {
             series.point_labels.entry(i as usize).or_default().hidden = Some(true);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rich_labels_inherit_their_own_list_level_and_shared_defaults() {
+        let xml = crate::xml::parse(
+            br#"<rich><bodyPr/><lstStyle>
+        <defPPr marR="127000" rtl="1"><defRPr sz="1600" i="1"/></defPPr>
+        <lvl1pPr marL="254000"><defRPr sz="3000" b="1"/></lvl1pPr>
+        <lvl2pPr marL="508000" algn="r"><defRPr sz="2200"/></lvl2pPr>
+        </lstStyle>
+        <p><r><t>First</t></r></p>
+        <p><pPr lvl="1" marR="63500"><defRPr b="0"/></pPr><r><rPr i="0"/><t>Second</t></r></p>
+        <p><pPr lvl="2"/><r><t>Third</t></r></p></rich>"#,
+        )
+        .unwrap();
+        let text = body(&xml.root);
+        let first = &text.paragraphs[0];
+        assert_eq!(first.runs[0].props.size, Some(30.));
+        assert_eq!(first.props.margin_left, Some(20.));
+        let second = &text.paragraphs[1];
+        assert_eq!(second.runs[0].props.size, Some(22.));
+        assert_eq!(second.runs[0].props.bold, Some(false));
+        assert_eq!(second.runs[0].props.italic, Some(false));
+        assert_eq!(second.props.align, Some(Align::Right));
+        assert_eq!(second.props.margin_left, Some(40.));
+        assert_eq!(second.props.margin_right, Some(5.));
+        assert_eq!(second.props.rtl, Some(true));
+        let third = &text.paragraphs[2];
+        assert_eq!(third.runs[0].props.size, Some(16.));
+        assert_eq!(third.runs[0].props.bold, None, "level one is not the fallback for other levels");
+        assert_eq!(third.runs[0].props.italic, Some(true));
+        assert_eq!(third.props.margin_left, None);
     }
 }

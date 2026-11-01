@@ -1,5 +1,7 @@
 //! Ordered, bounded numeric-rule search driven by measured text overflow.
 //! Rules replace constraint values/factors, then the entire dependent layout is solved again.
+mod coupled;
+
 use super::{Data, Instance, MAX_WORK, Placed, constraints, geometry};
 use crate::xml::El;
 use deckcraft_geom::Xfrm;
@@ -178,6 +180,57 @@ fn choose<'a>(
     Ok(best)
 }
 
+struct Range {
+    key: (usize, String),
+    start: f64,
+    limit: f64,
+    is_factor: bool,
+    maximum: Option<f64>,
+}
+impl Range {
+    fn set(&self, changes: &mut constraints::Adjustments, t: f64) {
+        let value = self.start + (self.limit - self.start) * t;
+        changes.insert(self.key.clone(), if self.is_factor { constraints::Adjustment::Factor(value) } else { constraints::Adjustment::Value(value) });
+    }
+}
+fn range(
+    control: &Control<'_>,
+    entry: &constraints::Entry<'_, '_>,
+    solution: &constraints::Solution,
+    changes: &constraints::Adjustments,
+) -> Result<Option<Range>, &'static str> {
+    use constraints::Adjustment::Factor;
+    let key = (constraints::id(entry.node), control.property.clone());
+    let Some(current) = constraints::lookup(solution, entry.node).and_then(|s| s.get(&control.property)) else { return Ok(None) };
+    let scale = unit(&control.property);
+    let (start, limit, is_factor) = if let Some(value) = control.rule.f64("val") {
+        (current / scale, value, false)
+    } else if let Some(factor) = control.rule.f64("fact") {
+        let Some(c) = control.constraint.filter(|c| c.attr("refType").is_some_and(|t| !matches!(t, "" | "none" | "unknown"))) else {
+            return Err("factor rule has no reference constraint");
+        };
+        let start = match changes.get(&key) {
+            Some(Factor(v)) => *v,
+            _ => c.f64("fact").unwrap_or(1.0),
+        };
+        let limit = if let Some(max) = control.rule.f64("max") {
+            if current.abs() > 1e-9 { factor.min(max * scale / current * start) } else { factor }
+        } else {
+            factor
+        };
+        (start, limit, true)
+    } else {
+        return Ok(None);
+    };
+    Ok((start.is_finite() && limit.is_finite() && (start - limit).abs() >= 1e-9).then_some(Range {
+        key,
+        start,
+        limit,
+        is_factor,
+        maximum: control.rule.f64("max").map(|v| v * scale),
+    }))
+}
+
 pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, measure: &mut Measure<'_>) -> Result<Vec<Placed<'a>>, &'static str> {
     use constraints::Adjustment::{Factor, Value};
     let mut work = 0;
@@ -188,7 +241,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
     let mut grown = Vec::new();
     let mut font_changed = HashSet::new();
     let mut out = placed(tree, frame, data, &changes, &mut work)?;
-    for control in controls {
+    for control in &controls {
         let entry = &entries[control.target];
         let scope = dependent_scope(&entries, data, control.target, &control.property, &mut work)?;
         let prefer_words = matches!(control.property.as_str(), "primFontSz" | "secFontSz");
@@ -196,32 +249,8 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         if before <= 1e-6 {
             continue;
         }
-        let key = (constraints::id(entry.node), control.property.clone());
         let solution = constraints::resolve_adjusted(tree, frame, data, &mut work, &changes)?;
-        let Some(current) = constraints::lookup(&solution, entry.node).and_then(|s| s.get(&control.property)) else { continue };
-        let scale = unit(&control.property);
-        let (start, limit, is_factor) = if let Some(value) = control.rule.f64("val") {
-            (current / scale, value, false)
-        } else if let Some(factor) = control.rule.f64("fact") {
-            let Some(c) = control.constraint.filter(|c| c.attr("refType").is_some_and(|t| !matches!(t, "" | "none" | "unknown"))) else {
-                return Err("factor rule has no reference constraint");
-            };
-            let start = match changes.get(&key) {
-                Some(Factor(v)) => *v,
-                _ => c.f64("fact").unwrap_or(1.0),
-            };
-            let limit = if let Some(max) = control.rule.f64("max") {
-                if current.abs() > 1e-9 { factor.min(max * scale / current * start) } else { factor }
-            } else {
-                factor
-            };
-            (start, limit, true)
-        } else {
-            continue;
-        };
-        if !start.is_finite() || !limit.is_finite() || (start - limit).abs() < 1e-9 {
-            continue;
-        }
+        let Some(Range { key, start, limit, is_factor, .. }) = range(control, entry, &solution, &changes)? else { continue };
         let old = changes.get(&key).copied();
         let selected = choose(prefer_words, |t| {
             let value = start + (limit - start) * t;
@@ -311,5 +340,6 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         }
         changes.insert(key, if is_factor { Factor(best) } else { Value(best) });
     }
+    coupled::search(tree, frame, data, &entries, &controls, measure, &mut changes, &mut out, &mut work)?;
     Ok(out)
 }

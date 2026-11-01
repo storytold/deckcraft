@@ -400,6 +400,43 @@ fn native_text_rule_can_override_a_same_property_bound() {
 }
 
 #[test]
+fn coupled_rules_cross_a_plateau_without_changing_an_unrelated_label() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/>
+        <layoutNode name='a'><alg type='tx'/><shape type='rect'/><constrLst>
+        <constr type='w' val='20'/><constr type='h' val='20'/></constrLst>
+        <ruleLst><rule type='w' val='60'/><rule type='h' val='60'/></ruleLst></layoutNode>
+        <layoutNode name='unrelated'><alg type='tx'/><shape type='rect'/><constrLst>
+        <constr type='w' val='20'/><constr type='primFontSz' val='30'/></constrLst>
+        <ruleLst><rule type='primFontSz' val='8'/></ruleLst></layoutNode></layoutNode>",
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| {
+        Ok(p.iter().map(|p| if p.name == "a" { (40. * 72. / 25.4 - p.rect.w.min(p.rect.h)).max(0.) } else { 0. }).collect())
+    };
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((out[0].rect.w - 40. * 72. / 25.4).abs() < 0.02);
+    assert!((out[0].rect.h - 40. * 72. / 25.4).abs() < 0.02);
+    assert_eq!(out[1].font, Some(30.));
+}
+
+#[test]
+fn coupled_rules_can_move_along_an_equality_when_each_single_move_is_infeasible() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/><layoutNode name='a'><alg type='tx'/><shape type='rect'/>
+        <constrLst><constr type='w' val='20'/><constr type='h' val='40'/>
+        <constr type='l' refType='w'/><constr type='r' refType='h'/></constrLst>
+        <ruleLst><rule type='w' val='40'/><rule type='h' val='80'/></ruleLst>
+        </layoutNode></layoutNode>",
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (90. - p.rect.w).max(0.)).collect());
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((out[0].rect.w - 90.).abs() < 0.02);
+    assert!((out[0].rect.h - 2. * out[0].rect.w).abs() < 1e-6);
+}
+
+#[test]
 fn constrained_cycle_starts_at_twelve_oclock_and_centres_partial_arc() {
     let data = source();
     for span in [180., 360.] {

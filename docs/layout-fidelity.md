@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.11): interior measured-rule trials, native map bindings and colour scales,
+Updated 2026-11-01 (PPTX.12): joint measured-rule trials, constant map colour intervals,
 cropped projections, rich paragraph and hierarchy-label rendering, with explicit native limits.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
@@ -515,3 +515,52 @@ zero errors, including the custom-stop package that stalls native PDF export. Th
 4K probes exported with converter-free PATH and unchanged source hashes; a final six-map rerun
 covers the last viewport correction. These results establish bounded renderer coverage, not
 pixel identity: world auto margins, some projection outlines and hierarchy placement still differ.
+
+
+## PPTX.12 — joint rules and rich-label isolation (2026-11-01)
+
+After the authored single-rule pass, unresolved text can now trigger joint moves of rules whose
+measured dependency scopes overlap. Connected components retain instance identity and deterministic
+traversal. Each candidate re-solves the full affine system, measures actual text, and checks absolute
+maxima after reference factors have moved. Infeasible trials are rejected; invalid measurement and
+resource-limit errors still propagate. The existing global work budget also covers grouping and
+joint trials. Already-fitting independent labels are not changed. Repeated rules for the same
+property retain their ordered policy rather than being treated as independent axes.
+
+Original regressions cover a width/height plateau, equality-linked moves that are individually
+infeasible, preservation of an unrelated font, and an imported real-text example. The native
+real-text probe opens and exports as one intended rounded card, rather than falling back to generic
+blocks. Its native dimensions and word breaks nevertheless differ: the current joint search follows
+the solved affine relation and a common fraction of each authored range. This is not exhaustive
+multidimensional search or a reproduction of every native constraint-priority policy.
+
+Private native map observations cover constant positive, zero and negative data, a single value,
+and automatic two/three-colour scales. Constant ranges select the midpoint of the final colour
+interval (low/high for two stops; middle/high for three), rather than the lowest colour. Render
+regressions include both cases and clipping outside a degenerate range. No boundary assets or
+Office-produced files are shipped. Explicit numeric map-stop positions still time out in a fresh
+native session with a 45-second allowance; the matching automatic three-stop control opens and
+exports normally. This remains a native interoperability gap, not an export pass.
+
+Rich data-label paragraphs now select their corresponding list level before inheriting common
+paragraph defaults, rather than applying level-one formatting to every paragraph. Paragraph and
+run overrides retain priority, including explicit false booleans. Native probes confirm distinct
+30/22/16pt explicit levels and their colours. A `defPPr`-only fallback differs in the tested native
+chart (18pt black instead of its authored default); automatic paragraph alignment/spacing also
+remains under investigation.
+
+A literal `c:tx/c:rich` replacement is now kept separate from the `txPr` used to style generated
+numeric labels. Previously, unused numeric-label font, rotation, margins and spacing could leak
+into the literal body. A render-and-rebuild regression uses deliberately conflicting styles.
+Automatic label bounds now use shaped text dimensions rather than expanding to the initial plot
+placement hint; explicit manual layout still resolves afterwards. Full axis/plot spacing and label
+collision policy are not certified.
+
+Final validation: all eight `cargo xtask ci` stages pass (2,389 tests including doctests).
+Four original probe packages have zero Open XML SDK errors. Eleven final chart/diagram probes
+export directly at 3840px width with no converter on PATH and unchanged source hashes. Seven
+constant-map colour comparisons differ from native by at most one RGB unit per channel.
+Native confirms that conflicting 60pt/red/rotated numeric styling does not change a literal
+24pt horizontal black replacement. LibreOffice exports the rule diagram blank and the map with
+an unsupported-chart notice; its explicit-level label text is present. These observations are
+kept private and are not substitutes for whole-slide fidelity acceptance.

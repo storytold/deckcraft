@@ -238,6 +238,36 @@ fn partial_point_label_style_inherits_series_font_and_body_rotation() {
 }
 
 #[test]
+fn literal_label_body_is_not_reformatted_by_numeric_label_style() {
+    use deckcraft_model::text::Spacing;
+    let mut c = base(ChartType::Column);
+    c.categories = vec!["A".into()];
+    c.y_max = Some(10.);
+    let mut literal = TextBody::from_text("Original label");
+    literal.paragraphs[0].runs[0].props.size = Some(24.);
+    let mut s = Series { values: vec![Some(7.)], ..Default::default() };
+    s.point_labels.insert(0, DataLabel { text: Some(literal), position: Some("ctr".into()), ..Default::default() });
+    c.series.push(s);
+    let mut p = original();
+    append(&mut p, c);
+    let expected = render_slide(&p, 0, &RenderOpts::default());
+    let mut numeric_style = TextBody::from_text("");
+    numeric_style.body.rot = Some(40.);
+    numeric_style.paragraphs[0].def_props.size = Some(60.);
+    numeric_style.paragraphs[0].def_props.fill = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0))));
+    numeric_style.paragraphs[0].props.space_after = Some(Spacing::Pts(70.));
+    numeric_style.paragraphs[0].props.margin_left = Some(80.);
+    let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+    c.series[0].point_labels.get_mut(&0).unwrap().style = Some(numeric_style);
+    let actual = render_slide(&p, 0, &RenderOpts::default());
+    assert!(expected.pixels == actual.pixels, "generated-label font, rotation and spacing must not leak into a literal replacement");
+    let back = rebuilt(&p);
+    let back_image = render_slide(&back, 0, &RenderOpts::default());
+    assert!(expected.pixels == back_image.pixels, "rebuild must retain the distinction");
+    probe(&back, "rich-label-isolated-style.pptx");
+}
+
+#[test]
 fn compressed_geographic_cache_matches_clear_geometry_and_render_after_rebuild() {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use std::io::{Cursor, Read, Write};
