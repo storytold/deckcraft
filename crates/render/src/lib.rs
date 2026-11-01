@@ -23,6 +23,7 @@ mod morph_path;
 mod morph_text;
 mod paint;
 mod pattern;
+mod picture_glow;
 
 mod pathgrad;
 mod placed;
@@ -93,6 +94,9 @@ mod tests;
 
 #[cfg(test)]
 mod tests_wild;
+
+#[cfg(test)]
+mod tests_effect_holes;
 
 #[cfg(test)]
 mod mt_tests {

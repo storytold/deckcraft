@@ -23,7 +23,27 @@ pub fn fill_path(
     alpha: f64,
     pres: &Presentation,
 ) {
-    ctx.set_transform(m);
+    fill_path_in_view(ctx, rctx, fill, ph, path, bounds, m, Affine::IDENTITY, mode, alpha, pres);
+}
+
+/// Keep slide-axis layout decisions in `m`'s original device coordinates; `view` only
+/// maps the resulting paint into another surface (such as a bounded effect mask).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fill_path_in_view(
+    ctx: &mut RenderContext,
+    rctx: &Ctx,
+    fill: &Fill,
+    ph: Option<Rgba>,
+    path: &BezPath,
+    bounds: Rect,
+    m: Affine,
+    view: Affine,
+    mode: FillMode,
+    alpha: f64,
+    pres: &Presentation,
+) {
+    let mapped = view * m;
+    ctx.set_transform(mapped);
     match fill {
         Fill::None | Fill::Group | Fill::Background => {}
         Fill::Solid { color: c } => {
@@ -44,7 +64,7 @@ pub fn fill_path(
                 let on_slide = m.transform_rect_bbox(bounds);
                 let upright = deckcraft_model::style::Gradient { rotate_with_shape: true, ..g.clone() };
                 let paint_path = m * path.clone();
-                fill_path(ctx, rctx, &Fill::Gradient(upright), ph, &paint_path, on_slide, Affine::IDENTITY, mode, alpha, pres);
+                fill_path_in_view(ctx, rctx, &Fill::Gradient(upright), ph, &paint_path, on_slide, Affine::IDENTITY, view, mode, alpha, pres);
                 return;
             }
             // A linear gradient spans its tile rectangle (the shape's box unless `tileRect` moves
@@ -60,7 +80,7 @@ pub fn fill_path(
             if let GradientShape::Path { path: kind, focus } = &g.shape
                 && matches!(kind.as_str(), "rect" | "shape")
             {
-                crate::pathgrad::fill(ctx, kind, *focus, &crate::ramp::expand(&stops), bounds, path, m, alpha);
+                crate::pathgrad::fill(ctx, kind, *focus, &crate::ramp::expand(&stops), bounds, path, mapped, alpha);
                 return;
             }
             // PowerPoint's ramp between stops (linear light, S-shaped), see `ramp`.
@@ -89,20 +109,20 @@ pub fn fill_path(
             if pf.upright && turned && m.determinant().abs() > 1e-12 {
                 let on_slide = m.transform_rect_bbox(bounds);
                 let on_path = m * path.clone();
-                ctx.set_transform(Affine::IDENTITY);
+                ctx.set_transform(view);
                 ctx.push_clip_layer(&on_path);
-                picture(ctx, pres, &resolved(rctx, pf, ph), on_slide, Affine::IDENTITY, None);
+                picture(ctx, pres, &resolved(rctx, pf, ph), on_slide, view, None);
                 ctx.pop_layer();
                 return;
             }
             ctx.push_clip_layer(path);
-            picture(ctx, pres, &resolved(rctx, pf, ph), bounds, m, None);
+            picture(ctx, pres, &resolved(rctx, pf, ph), bounds, mapped, None);
             ctx.pop_layer();
         }
         Fill::Pattern(p) => {
             let fg = rctx.color(&p.fg, ph);
             let bg = rctx.color(&p.bg, ph);
-            crate::pattern::fill(ctx, &p.preset, fg, bg, alpha, path, m);
+            crate::pattern::fill(ctx, &p.preset, fg, bg, alpha, path, mapped);
         }
     }
 }
