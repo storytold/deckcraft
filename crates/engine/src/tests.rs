@@ -215,6 +215,33 @@ fn clipboard_copy_paste_shapes_and_slides() {
 }
 
 #[test]
+fn clipboard_travels_between_sessions_with_its_design() {
+    let mut a = session();
+    a.execute("shape.insert", &json!({"preset": "star5", "rect": [10, 20, 130, 90], "text": "Quelle"})).unwrap();
+    a.execute("edit.selectAll", &json!({})).unwrap();
+    a.execute("edit.copy", &json!({})).unwrap();
+    let blob = crate::clipwire::encode(&a.clipboard).unwrap();
+    let html = crate::clipwire::wrap("<p>Quelle</p>", &blob);
+    assert_eq!(crate::clipwire::blob(&html), Some(blob.as_str()));
+    let copied: Vec<_> = a.clipboard.shapes.clone();
+
+    // A second window pastes what the system clipboard carries: the shapes, not just their words.
+    let mut b = session();
+    let before = b.doc().unwrap().current_slide().unwrap().shapes.len();
+    b.execute("edit.paste", &json!({"text": "Quelle", "html": html})).unwrap();
+    let shapes = &b.doc().unwrap().current_slide().unwrap().shapes;
+    assert_eq!(shapes.len(), before + copied.len());
+    let star = shapes.iter().find(|x| x.text.as_ref().is_some_and(|t| t.text() == "Quelle")).unwrap();
+    assert_eq!(star.geom, copied.iter().find(|x| x.text.is_some()).unwrap().geom);
+
+    // Its own copy comes back unchanged, and a damaged payload is not adopted.
+    let again = b.clipboard.shapes.len();
+    b.execute("edit.paste", &json!({"html": html})).unwrap();
+    assert_eq!(b.clipboard.shapes.len(), again);
+    assert!(crate::clipwire::decode("not base64 !").is_none());
+}
+
+#[test]
 fn pasted_shapes_get_the_next_automatic_name() {
     let mut s = session();
     let names = |s: &Session| s.doc().unwrap().current_slide().unwrap().shapes.iter().map(|x| x.name.clone()).collect::<Vec<_>>();

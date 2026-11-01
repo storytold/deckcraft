@@ -22,11 +22,16 @@ impl SlideApp {
         let cmd = if cut { "edit.cut" } else { "edit.copy" };
         let Ok(v) = self.session.execute(cmd, &json!({})) else { return };
         let text = v.get("text").and_then(Value::as_str).unwrap_or("").to_string();
-        let html = v.get("html").and_then(Value::as_str).unwrap_or("").to_string();
-        if self.session.clipboard.slides.is_empty() && !html.is_empty() && self.services.clipboard_set_html.as_mut().is_some_and(|f| f(&html, &text))
-        {
+        let mut html = v.get("html").and_then(Value::as_str).unwrap_or("").to_string();
+        // Copied shapes and slides ride along inside the HTML, so another DeckCraft window pastes
+        // them with their design (see `deckcraft_engine::clipwire`).
+        if let Some(blob) = deckcraft_engine::clipwire::encode(&self.session.clipboard) {
+            html = deckcraft_engine::clipwire::wrap(&html, &blob);
+        }
+        let text = system_clipboard_text(&text);
+        if !html.is_empty() && self.services.clipboard_set_html.as_mut().is_some_and(|f| f(&html, &text)) {
             return;
         }
-        ctx.copy_text(system_clipboard_text(&text));
+        ctx.copy_text(text);
     }
 }
