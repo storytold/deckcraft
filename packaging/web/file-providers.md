@@ -44,6 +44,9 @@ Never reuse an account namespace for a different account.
    `bytesLength`, the exact captured `documentId`/`revision`, `name`, `resourceId` and request
    identity. Later edits cannot mutate those bytes. Save As never infers overwrite authority
    from a matching filename.
+   Edited speaker notes for the active presentation are committed to their recorded slide
+   before capture. A parked notes draft for an inactive presentation must be finished after
+   activating it; that save fails explicitly without changing the active presentation or draft.
 4. Persist that exact package durably, then call `saveResult(requestId, "saved", resourceId)`.
    Only a matching outstanding request can acknowledge the captured revision. Edits made after
    capture stay dirty, closed document IDs are ignored, and another tab/document is never

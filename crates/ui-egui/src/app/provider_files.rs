@@ -144,6 +144,9 @@ impl SlideApp {
     }
 
     fn provider_mark_saved(&mut self, id: u64, revision: u64) {
+        if self.notes_buf.0 == id && self.notes_buf.2.edited {
+            return;
+        }
         let Some(index) = self.provider_document(id) else { return };
         let back = self.session.active_index();
         self.session.set_active(index);
@@ -156,8 +159,28 @@ impl SlideApp {
             self.session.set_active(back);
         }
     }
+    fn settle_provider_notes(&mut self, doc: u64) -> Result<(), String> {
+        if self.notes_buf.0 != doc || !self.notes_buf.2.edited {
+            return Ok(());
+        }
+        // Commands target the active presentation. Never activate another tab from a callback
+        // or consume the current presentation's unrelated notes draft.
+        if self.session.active().is_none_or(|state| state.uid != doc) {
+            return Err("Activate the presentation and finish its notes before saving it".into());
+        }
+        self.session
+            .execute("slide.notes", &json!({"body":self.notes_buf.2.body,"index":self.notes_buf.1}))
+            .map_err(|error| error.to_string())?;
+        self.notes_buf.2.edited = false;
+        Ok(())
+    }
     fn provider_save(&mut self, host: &Host, command: Command) {
         let Command::Save { request, doc, destination, name, save_as } = command else { return };
+        if let Err(error) = self.settle_provider_notes(doc) {
+            host.failed(&request, &error);
+            self.set_status(error);
+            return;
+        }
         let encoded = self.provider_document(doc).ok_or_else(|| "The presentation was closed before saving".to_string()).and_then(|index| {
             let state = &self.session.documents()[index];
             let format = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
@@ -456,6 +479,107 @@ mod tests {
         assert_eq!(app.session.documents().len(), 2);
         assert!(app.session.active().unwrap().path.is_none());
         assert!(app.ui.recent.is_empty());
+    }
+
+    #[test]
+    fn resolving_a_provider_save_commits_notes_to_their_slide_before_encoding() {
+        for extension in ["deckcraft", "pptx"] {
+            let (mut app, host) = app();
+            app.session.execute("slide.notes", &json!({"index":0,"text":"Original notes"})).unwrap();
+            let document = app.session.active().unwrap().uid;
+            let selected = app.session.active().unwrap().selection.slide;
+            assert_ne!(selected, 0, "the draft belongs to a slide other than the current selection");
+            assert!(app.choose_provider_save(false, extension));
+            let dialog = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
+            let request = dialog.metadata["requestId"].as_str().unwrap().to_string();
+            let mut draft = crate::notes::Draft::new(&app.session.active().unwrap().doc.slides[0].notes);
+            deckcraft_model::edit::replace_text(&mut draft.body, "Notes typed while choosing storage");
+            draft.text = draft.body.text();
+            draft.edited = true;
+            app.notes_buf = (document, 0, draft);
+
+            let name = format!("Notes.{extension}");
+            host.resolve_dialog(&request, "provider", &name).unwrap();
+            app.provider_tick();
+            let event = host.take_events().into_iter().find(|event| event.metadata["type"] == "save").unwrap();
+            let restored = deckcraft_engine::cmd::file::open_presentation(&name, &event.bytes.unwrap()).unwrap();
+            assert_eq!(restored.slides[0].notes.text(), "Notes typed while choosing storage");
+            assert!(restored.slides[selected].notes.text().is_empty());
+            assert_eq!(app.session.active().unwrap().uid, document);
+            assert_eq!(app.session.active().unwrap().selection.slide, selected);
+            assert!(!app.notes_buf.2.edited);
+
+            // Notes typed after capture cannot be covered by the older package's ACK.
+            deckcraft_model::edit::replace_text(&mut app.notes_buf.2.body, "Newer notes after capture");
+            app.notes_buf.2.text = app.notes_buf.2.body.text();
+            app.notes_buf.2.edited = true;
+            host.result(request, "saved".into(), "resource-one".into()).unwrap();
+            app.provider_tick();
+            assert!(app.session.active().unwrap().is_dirty());
+            assert_eq!(host.snapshot()["documents"][0]["dirty"], true);
+            assert!(app.notes_buf.2.edited);
+        }
+    }
+
+    #[test]
+    fn inactive_or_invalid_notes_drafts_fail_without_retargeting_or_discarding_them() {
+        for inactive in [false, true] {
+            let (mut app, host) = app();
+            let document = app.session.active().unwrap().uid;
+            assert!(app.choose_provider_save(false, "deckcraft"));
+            let dialog = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
+            let request = dialog.metadata["requestId"].as_str().unwrap().to_string();
+            let mut draft = crate::notes::Draft::default();
+            deckcraft_model::edit::replace_text(&mut draft.body, "Keep this draft after failure");
+            draft.text = draft.body.text();
+            draft.edited = true;
+            app.notes_buf = (document, if inactive { 0 } else { usize::MAX }, draft);
+            if inactive {
+                app.session.execute("file.new", &json!({})).unwrap();
+            }
+            let active = app.session.active().unwrap().uid;
+            let current = app.session.active().unwrap().doc.clone();
+            let draft = app.notes_buf.clone();
+            host.resolve_dialog(&request, "provider", "Notes.deckcraft").unwrap();
+            app.provider_tick();
+            let events = host.take_events();
+            assert!(events.iter().any(|event| event.metadata["type"] == "saveFailed" && event.metadata["requestId"] == request));
+            assert!(!events.iter().any(|event| event.metadata["type"] == "save"));
+            assert!(host.result(request, "saved".into(), "resource-one".into()).is_err());
+            assert_eq!(app.session.active().unwrap().uid, active);
+            assert!(std::sync::Arc::ptr_eq(&app.session.active().unwrap().doc, &current));
+            assert_eq!(app.notes_buf, draft);
+            assert!(!host.bound(document));
+            assert!(!host.busy());
+        }
+    }
+
+    #[test]
+    fn saving_an_inactive_presentation_preserves_the_active_presentations_notes_draft() {
+        let (mut app, host) = app();
+        app.session.execute("slide.notes", &json!({"index":0,"text":"Notes belonging to the saved presentation"})).unwrap();
+        let document = app.session.active().unwrap().uid;
+        assert!(app.choose_provider_save(false, "deckcraft"));
+        let dialog = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
+        let request = dialog.metadata["requestId"].as_str().unwrap().to_string();
+        app.session.execute("file.new", &json!({})).unwrap();
+        let active = app.session.active().unwrap().uid;
+        let mut draft = crate::notes::Draft::default();
+        deckcraft_model::edit::replace_text(&mut draft.body, "Unrelated active presentation draft");
+        draft.text = draft.body.text();
+        draft.edited = true;
+        app.notes_buf = (active, 0, draft);
+        let draft = app.notes_buf.clone();
+        let current = app.session.active().unwrap().doc.clone();
+        host.resolve_dialog(&request, "provider", "Inactive.deckcraft").unwrap();
+        app.provider_tick();
+        let event = host.take_events().into_iter().find(|event| event.metadata["type"] == "save").unwrap();
+        assert_eq!(event.metadata["documentId"], document.to_string());
+        let restored = deckcraft_engine::cmd::file::open_presentation("Inactive.deckcraft", &event.bytes.unwrap()).unwrap();
+        assert_eq!(restored.slides[0].notes.text(), "Notes belonging to the saved presentation");
+        assert_eq!(app.session.active().unwrap().uid, active);
+        assert!(std::sync::Arc::ptr_eq(&app.session.active().unwrap().doc, &current));
+        assert_eq!(app.notes_buf, draft);
     }
 
     #[test]
