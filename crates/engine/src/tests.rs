@@ -5572,6 +5572,170 @@ fn edit_points_conversion_is_one_undo_step() {
     assert!(preset(&s), "the only step was the conversion");
 }
 
+/// #1621: build overlapping objects with an ordinary quick style on the foreground shape.
+fn no_fill_overlap(s: &mut Session, text: bool) -> (ShapeId, ShapeId) {
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let under = s
+        .execute(
+            if text { "insert.textBox" } else { "shape.insert" },
+            &json!({"preset": "rect", "rect": [100, 300, 300, 60], "text": if text { "UNDERLYING TEXT" } else { "" }}),
+        )
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let over = s.execute("shape.insert", &json!({"preset": "rect", "rect": [80, 270, 350, 140]})).unwrap()["id"].as_u64().unwrap();
+    (ShapeId(under as u32), ShapeId(over as u32))
+}
+
+/// No Fill passes interior clicks through while preserving outline and actual-fill targets.
+#[test]
+fn no_fill_shape_allows_selecting_and_editing_underlying_text() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, true);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    assert!(s.doc().unwrap().shape(over).unwrap().style.is_some(), "the ordinary quick style remains");
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let p = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, p.x, p.y)).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    // The transparent foreground also leaves an already-active text editor's caret alone.
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, p.x + 20.0, p.y)).unwrap();
+    }
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    s.execute("edit.deselect", &json!({})).unwrap();
+    // The rectangle's outline is still a target, and selecting it does not remove its style.
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, 80.0, 330.0)).unwrap();
+    }
+    assert_eq!(s.doc().unwrap().selection.shapes, vec![over]);
+    assert!(s.doc().unwrap().shape(over).unwrap().style.is_some());
+    // A real fill still catches clicks, even with 100% transparency (distinct from No Fill).
+    for transparency in [0.0, 1.0] {
+        s.execute("edit.select", &json!({"ids": [over.0]})).unwrap();
+        s.execute("shape.fill", &json!({"color": "#336699", "transparency": transparency})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over));
+    }
+}
+
+/// Rotation and pointer tolerance must preserve both pass-through interiors and outline hits.
+#[test]
+fn no_fill_shape_hit_testing_respects_rotation_and_pointer_tolerance() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, false);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("shape.rotate", &json!({"deg": 30})).unwrap();
+    let x = s.doc().unwrap().shape(over).unwrap().xfrm.unwrap();
+    let p = x.affine() * deckcraft_geom::Point::new(x.w / 2.0, x.h / 2.0);
+    let edge = x.affine() * deckcraft_geom::Point::new(0.0, x.h / 4.0);
+    for tol in [0.5, 3.0, 8.0] {
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, tol), Some(tools::Hit::Shape { id, .. }) if id == under));
+        assert!(matches!(s.hit_test(edge, tol), Some(tools::Hit::Shape { id, .. }) if id == over));
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(PointerEvent { tol, ..tev(kind, p.x, p.y) }).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    }
+}
+
+/// Style, theme and absent fills follow rendering, with explicit fill taking precedence.
+#[test]
+fn no_fill_hit_testing_resolves_style_and_theme_fills() {
+    use std::sync::Arc;
+    for source in ["style", "theme", "absent"] {
+        let mut s = session();
+        let (under, over) = no_fill_overlap(&mut s, true);
+        {
+            let st = s.doc_mut().unwrap();
+            let doc = Arc::make_mut(&mut st.doc);
+            if source == "theme" {
+                Arc::make_mut(&mut doc.masters[0]).theme.format.fills[0] = model::Fill::None;
+            }
+            let sh = Arc::make_mut(&mut doc.slides[st.selection.slide]).shapes.iter_mut().find(|sh| sh.id == over).unwrap();
+            assert!(sh.fill.is_none(), "the shape has no explicit fill override");
+            if source == "absent" {
+                sh.style = None;
+            } else {
+                sh.style.as_mut().unwrap().fill_ref.0 = if source == "style" { 0 } else { 1 };
+            }
+        }
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let p = deckcraft_geom::Point::new(200.0, 310.0);
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under), "{source}");
+        // An explicit fill takes precedence over the no-fill style/theme.
+        s.execute("edit.select", &json!({"ids": [over.0]})).unwrap();
+        s.execute("shape.fill", &json!({"color": "#336699"})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over), "{source}");
+    }
+}
+
+/// Text on a foreground No Fill shape retains its selection and editing target.
+#[test]
+fn no_fill_text_shapes_keep_their_interior_text_target() {
+    let mut s = session();
+    let (_, over) = no_fill_overlap(&mut s, true);
+    s.execute("text.set", &json!({"id": over.0, "text": "FOREGROUND TEXT"})).unwrap();
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let p = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, text: true }) if id == over));
+    s.pointer(tev(PointerKind::DoubleClick, p.x, p.y)).unwrap();
+    assert_eq!(text_sel(&s).unwrap().shape, over);
+}
+
+/// A locked No Fill shape remains selectable on its outline, but dragging cannot move it.
+#[test]
+fn no_fill_locked_shape_keeps_outline_selection_without_moving() {
+    let mut s = session();
+    let (under, over) = no_fill_overlap(&mut s, true);
+    s.execute("shape.fill", &json!({"none": true})).unwrap();
+    s.execute("shape.lock", &json!({"locked": true})).unwrap();
+    let before = s.doc().unwrap().shape(over).unwrap().xfrm;
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let inside = deckcraft_geom::Point::new(200.0, 310.0);
+    assert!(matches!(s.hit_test(inside, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        s.pointer(tev(kind, inside.x, inside.y)).unwrap();
+    }
+    assert_eq!(text_sel(&s).unwrap().shape, under);
+    s.execute("edit.deselect", &json!({})).unwrap();
+    let edge = deckcraft_geom::Point::new(80.0, 330.0);
+    assert!(matches!(s.hit_test(edge, 3.0), Some(tools::Hit::Shape { id, .. }) if id == over));
+    s.pointer(tev(PointerKind::Down, edge.x, edge.y)).unwrap();
+    s.pointer(tev(PointerKind::Drag, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    s.pointer(tev(PointerKind::Up, edge.x + 40.0, edge.y + 20.0)).unwrap();
+    let st = s.doc().unwrap();
+    assert_eq!(st.selection.shapes, vec![over]);
+    assert_eq!(st.shape(over).unwrap().xfrm, before);
+    assert!(st.shape(over).unwrap().locked);
+}
+
+/// Removing both fill and outline leaves the empty interior transparent to clicks, locked or not.
+#[test]
+fn no_fill_shape_without_text_or_outline_passes_interior_clicks() {
+    for locked in [false, true] {
+        let mut s = session();
+        let (under, _) = no_fill_overlap(&mut s, false);
+        s.execute("shape.fill", &json!({"none": true})).unwrap();
+        s.execute("shape.line", &json!({"none": true})).unwrap();
+        s.execute("shape.lock", &json!({"locked": locked})).unwrap();
+        s.execute("edit.deselect", &json!({})).unwrap();
+        let p = deckcraft_geom::Point::new(200.0, 310.0);
+        assert!(matches!(s.hit_test(p, 3.0), Some(tools::Hit::Shape { id, .. }) if id == under));
+        for kind in [PointerKind::Down, PointerKind::Up] {
+            s.pointer(tev(kind, p.x, p.y)).unwrap();
+        }
+        assert_eq!(s.doc().unwrap().selection.shapes, vec![under]);
+    }
+}
+
 /// #931: while the text of a placeholder is being edited, a shape in front of it still takes a
 /// click (as in PowerPoint); a click on the text where nothing is in front still moves the caret.
 #[test]

@@ -216,6 +216,7 @@ pub(super) fn in_table_cell(st: &crate::DocState, id: ShapeId, p: Point) -> bool
     })
 }
 
+/// Resolve a shape's target at slide point `p`, using its effective fill for interior hits.
 pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) -> Option<Hit> {
     let x = xfrm_of(&st.doc, &st.selection, sh);
     let inv = x.affine().inverse();
@@ -267,8 +268,11 @@ pub(super) fn hit_shape(st: &crate::DocState, sh: &Shape, p: Point, tol: f64) ->
                 return None;
             }
             let has_text = matches!(sh.kind, ShapeKind::Shape) && (sh.text.as_ref().is_some_and(|t| !t.is_empty()) || sh.ph.is_some() || sh.text_box);
-            // Empty interiors of unfilled, text-less shapes don't catch clicks.
-            let filled = !matches!(sh.fill, Some(deckcraft_model::Fill::None)) || sh.style.is_some();
+            // Match rendering: an explicit No Fill overrides the style, and style/theme fills
+            // can themselves be No Fill. Empty, text-less interiors then let clicks through.
+            let fill =
+                cmd::text::ctx_for(&st.doc, &st.selection).map(|ctx| deckcraft_model::resolve::fill(&ctx, sh).0).unwrap_or_else(|| sh.fill.clone());
+            let filled = !matches!(fill, None | Some(deckcraft_model::Fill::None));
             let geo = deckcraft_render::shape_geometry(sh, x.w, x.h);
             let in_geo = {
                 use deckcraft_geom::KurboShape;
