@@ -5,18 +5,18 @@ use super::{Align2, Color32, CornerRadius, Sense, SlideApp, Stroke, Tokens, Ui, 
 pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
     let Ok(v) = app.session.execute("review.revisions", &json!({})) else {
-        ui.label(egui::RichText::new("Compare this presentation with a revised copy from Review › Compare.").color(t.text_dim));
+        ui.label(egui::RichText::new(tl!("Compare this presentation with a revised copy from Review › Compare.")).color(t.text_dim));
         return;
     };
     let changes = v["changes"].as_array().cloned().unwrap_or_default();
     ui.label(egui::RichText::new(format!("Compared with {}", v["name"].as_str().unwrap_or("?"))).color(t.text_dim));
     if v["byPosition"].as_bool() == Some(true) {
-        ui.label(egui::RichText::new("Not a copy of this presentation: slides are matched by position.").size(11.0).color(t.text_faint));
+        ui.label(egui::RichText::new(tl!("Not a copy of this presentation: slides are matched by position.")).size(11.0).color(t.text_faint));
     }
     ui.add_space(4.0);
     if changes.is_empty() {
-        ui.label("No differences left.");
-        if ui.button("End Review").clicked() {
+        ui.label(tl!("No differences left."));
+        if ui.button(tl!("End Review")).clicked() {
             run(app, "review.endCompare", json!({}));
             app.ui.pane = None;
         }
@@ -48,10 +48,10 @@ pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
                     run(app, "slide.go", json!({"index": (slide as usize).min(max)}));
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.small_button("Reject").clicked() {
+                    if ui.small_button(tl!("Reject")).clicked() {
                         run(app, "review.reject", json!({"index": i}));
                     }
-                    if ui.small_button("Accept").clicked() {
+                    if ui.small_button(tl!("Accept")).clicked() {
                         run(app, "review.accept", json!({"index": i}));
                     }
                 });
@@ -66,7 +66,7 @@ pub(super) fn revisions(app: &mut SlideApp, ui: &mut Ui) {
 
 pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    if ui.button("+ New Comment").clicked() {
+    if ui.button(tl!("+ New Comment")).clicked() {
         app.dialog = Some(crate::dialogs::Dialog::new("comment"));
     }
     ui.separator();
@@ -76,7 +76,7 @@ pub(super) fn comments(app: &mut SlideApp, ui: &mut Ui) {
         .map(|st| st.doc.slides.iter().enumerate().filter(|(_, sl)| !sl.comments.is_empty()).map(|(i, sl)| (i, sl.comments.clone())).collect())
         .unwrap_or_default();
     if threads.is_empty() {
-        ui.label(egui::RichText::new("No comments.").color(t.text_dim));
+        ui.label(egui::RichText::new(tl!("No comments.")).color(t.text_dim));
         return;
     }
     let focus = app.ui.comment_focus;
@@ -133,7 +133,7 @@ fn comment_card(app: &mut SlideApp, ui: &mut Ui, slide: usize, index: usize, c: 
             ui.horizontal(|ui| {
                 let id = ui.scope_id().with(("reply", slide, index));
                 let mut txt: String = ui.data_mut(|d| d.get_temp(id).unwrap_or_default());
-                let r = ui.add(egui::TextEdit::singleline(&mut txt).hint_text("Reply…").desired_width(ui.available_width() - 70.0));
+                let r = ui.add(egui::TextEdit::singleline(&mut txt).hint_text(tl!("Reply…")).desired_width(ui.available_width() - 70.0));
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && !txt.trim().is_empty() {
                     focus_comment(app, slide, index);
                     run(app, "comment.reply", json!({"index": index, "text": txt}));
@@ -144,7 +144,7 @@ fn comment_card(app: &mut SlideApp, ui: &mut Ui, slide: usize, index: usize, c: 
                     focus_comment(app, slide, index);
                     run(app, "comment.resolve", json!({"index": index, "resolved": !c.resolved}));
                 }
-                if ui.small_button("🗑").clicked() {
+                if ui.small_button(tl!("🗑")).clicked() {
                     let _ = app.run("slide.go", json!({"index": slide}));
                     let _ = app.run("comment.delete", json!({"index": index}));
                     match app.ui.comment_focus {
