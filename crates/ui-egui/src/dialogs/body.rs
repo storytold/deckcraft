@@ -19,7 +19,7 @@ use super::theme_colors::theme_colors_dialog;
 use super::theme_fonts::theme_fonts_dialog;
 use super::trim::{seconds_text_to_ms, trim_seed};
 use super::zoom::zoom_dialog;
-use super::{Dialog, SlideApp, Tokens, Ui, Value, buttons, check, field, field_of, json, num, theme, vec2};
+use super::{Dialog, SlideApp, Tokens, Ui, Value, buttons, buttons_ex, check, field, field_of, json, num, theme, vec2};
 
 /// Returns true when the dialog should close.
 pub(super) fn body(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
@@ -1340,9 +1340,27 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     if d.params.get("before").is_none() {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
-    ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+    let tr = app.ui.language == crate::UiLanguage::Turkish;
+    ui.label(egui::RichText::new(if tr { "Genel" } else { "General" }).font(theme::bold(13.0)));
+    ui.horizontal(|ui| {
+        ui.label(if tr { "Arayüz dili:" } else { "Interface language:" });
+        let combo = craft_ui::ComboBox::from_id_salt("ui_language").selected_text(app.ui.language.name()).show_ui(ui, |ui| {
+            for lang in [crate::UiLanguage::English, crate::UiLanguage::Turkish] {
+                if ui.selectable_label(app.ui.language == lang, lang.name()).clicked() {
+                    app.ui.language = lang;
+                }
+            }
+        });
+        let shown = app.ui.language.name().to_string();
+        let access = if tr { "Arayüz dili" } else { "Interface language" };
+        combo.response.widget_info(move || {
+            let mut info = egui::WidgetInfo::labeled(egui::Role::ComboBox, true, access);
+            info.current_text_value = Some(shown.clone());
+            info
+        });
+    });
     let mut dark = app.ui.brightness == theme::Brightness::Dark;
-    if ui.checkbox(&mut dark, "Dark appearance").changed() {
+    if ui.checkbox(&mut dark, if tr { "Koyu görünüm" } else { "Dark appearance" }).changed() {
         let _ = app.run("view.dark", json!({"on": dark}));
     }
     // While the pointer holds the slider its value only waits in the dialog: applying it
@@ -1353,7 +1371,7 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     let r = ui.add(egui::Slider::new(&mut scale, 0.75..=1.75));
     // No visible label here (the row is laid out to fit); the accessible name only.
     let enabled = r.enabled();
-    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), "Interface size"));
+    r.widget_info(|| egui::WidgetInfo::slider(enabled, f64::from(scale), if tr { "Arayüz boyutu" } else { "Interface size" }));
     if r.is_pointer_button_down_on() {
         if r.changed() || pending.is_some() {
             d.fields.insert("uiScale".into(), scale.to_string());
@@ -1366,18 +1384,21 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
     }
     // PowerPoint takes the unit from the system's measurement setting; DeckCraft asks here.
     ui.horizontal(|ui| {
-        ui.label("Measurement units:");
+        ui.label(if tr { "Ölçü birimleri:" } else { "Measurement units:" });
         let units = &mut app.session.prefs.units;
-        ui.radio_value(units, deckcraft_geom::Unit::Inches, "Inches");
-        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, "Centimeters");
+        ui.radio_value(units, deckcraft_geom::Unit::Inches, if tr { "İnç" } else { "Inches" });
+        ui.radio_value(units, deckcraft_geom::Unit::Centimeters, if tr { "Santimetre" } else { "Centimeters" });
     });
-    ui.label(egui::RichText::new("Editing").font(theme::bold(13.0)));
-    ui.checkbox(&mut app.session.prefs.smart_guides, "Show smart guides");
-    ui.checkbox(&mut app.session.prefs.snap_to_grid, "Snap objects to grid");
-    ui.checkbox(&mut app.session.prefs.smart_quotes, "Replace straight quotes with smart quotes");
+    ui.label(egui::RichText::new(if tr { "Düzenleme" } else { "Editing" }).font(theme::bold(13.0)));
+    ui.checkbox(&mut app.session.prefs.smart_guides, if tr { "Akıllı kılavuzları göster" } else { "Show smart guides" });
+    ui.checkbox(&mut app.session.prefs.snap_to_grid, if tr { "Nesneleri ızgaraya hizala" } else { "Snap objects to grid" });
+    ui.checkbox(
+        &mut app.session.prefs.smart_quotes,
+        if tr { "Düz tırnakları akıllı tırnaklarla değiştir" } else { "Replace straight quotes with smart quotes" },
+    );
     ui.horizontal(|ui| {
-        ui.checkbox(&mut app.session.prefs.autocorrect, "AutoCorrect as you type");
-        if ui.button("AutoCorrect Options…").clicked() {
+        ui.checkbox(&mut app.session.prefs.autocorrect, if tr { "Yazarken Otomatik Düzelt" } else { "AutoCorrect as you type" });
+        if ui.button(if tr { "Otomatik Düzeltme Seçenekleri…" } else { "AutoCorrect Options…" }).clicked() {
             *d = Dialog::new("autocorrect");
         }
     });
@@ -1385,12 +1406,12 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         return false;
     }
     ui.horizontal(|ui| {
-        let label = ui.label("Your name (comments):");
+        let label = ui.label(if tr { "Adınız (açıklamalar):" } else { "Your name (comments):" });
         // Name the field for assistive technology; a bare text edit next to a label is an
         // unnamed input in egui 0.37's accessibility tree.
         let _ = ui.add(egui::TextEdit::singleline(&mut app.session.prefs.author)).labelled_by(label.id);
     });
-    let (ok, cancel) = buttons(ui, "Done");
+    let (ok, cancel) = buttons_ex(ui, app.ui.language.t("done"), app.ui.language.t("cancel"));
     if cancel {
         restore_preferences(app, d);
     }
