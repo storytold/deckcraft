@@ -143,7 +143,8 @@ const USAGE: &str = "\
 Usage: deckcraft [--control PORT [--control-token TOKEN]] [--sample] [--show] [FILE...]
 
   --control PORT         JSON control server on 127.0.0.1:PORT
-  --control-token TOKEN  the control token (else 256 random bits, written to a
+  --control-token TOKEN  the control token for --control (DECKCRAFT_CONTROL_TOKEN
+                         wins when both are set; else 256 random bits, written to a
                          file only the user can read; clients: DECKCRAFT_CONTROL_TOKEN)
   --sample        open the sample presentation
   --show          start the slide show
@@ -169,7 +170,9 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
     while let Some(a) = args.next() {
         match a.as_str() {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
-            "--control-token" => control_token = args.next(),
+            // `DECKCRAFT_CONTROL_TOKEN` wins: `control_auth::client_token` (the client side)
+            // checks the environment first, so the CLI token only fills an unset environment.
+            "--control-token" if control_token.is_none() => control_token = args.next(),
             "--sample" => sample = true,
             "--show" => show = true,
             "--version" | "-V" => return Startup::Version,

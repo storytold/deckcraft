@@ -262,14 +262,40 @@ fn close_politely(out: &TcpStream, reader: &mut BufReader<TcpStream>, grace: Dur
     }
 }
 
+/// Read a `\n`-terminated line of at most `max` bytes against one deadline: each read waits
+/// only for the time that remains, so a peer sending one byte at a time still ends at the
+/// deadline. `None` when the deadline passes, the peer closes, or the line is not UTF-8.
+fn read_first_line(reader: &mut BufReader<TcpStream>, deadline: Instant, max: usize) -> Option<String> {
+    let mut line: Vec<u8> = Vec::new();
+    while line.len() < max {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || reader.get_ref().set_read_timeout(Some(left)).is_err() {
+            return None;
+        }
+        match reader.fill_buf() {
+            Ok(bytes) if !bytes.is_empty() => {
+                let window = &bytes[..bytes.len().min(max - line.len())];
+                let (done, used) = match window.iter().position(|&b| b == b'\n') {
+                    Some(i) => (true, i + 1),
+                    None => (false, window.len()),
+                };
+                line.extend_from_slice(&window[..used]);
+                reader.consume(used);
+                if done {
+                    return String::from_utf8(line).ok();
+                }
+            }
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Read the connection's first line (at most [`control_auth::MAX_AUTH_LINE`] bytes, within
 /// [`AUTH_TIMEOUT`]) and check the token. `true` when the peer may go on.
 fn authenticate(reader: &mut BufReader<TcpStream>, out: &mut TcpStream, token: &str) -> bool {
-    let _ = out.set_read_timeout(Some(AUTH_TIMEOUT));
-    let mut first = String::new();
-    let read = reader.by_ref().take(control_auth::MAX_AUTH_LINE as u64).read_line(&mut first);
-    let verdict = match read {
-        Ok(n) if n > 0 && first.ends_with('\n') => control_auth::check_first_line(&first, token),
+    let verdict = match read_first_line(reader, Instant::now() + AUTH_TIMEOUT, control_auth::MAX_AUTH_LINE) {
+        Some(first) => control_auth::check_first_line(&first, token),
         _ => Err(json!({"ok": false, "error": "authentication required"})),
     };
     let allowed = verdict.is_ok();
