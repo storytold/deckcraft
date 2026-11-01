@@ -163,7 +163,7 @@ mod tests {
 
     fn save(app: &mut SlideApp, host: &Host) -> (String, Vec<u8>) {
         assert!(app.choose_provider_save(false, "deckcraft"));
-        let dialog = host.take_events().remove(0);
+        let dialog = host.take_events().into_iter().find(|event| event.metadata["type"] == "saveDialog").unwrap();
         let request = dialog.metadata["requestId"].as_str().unwrap().to_string();
         host.resolve_dialog(&request, "provider", "Presentation.deckcraft").unwrap();
         app.provider_tick();
