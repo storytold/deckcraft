@@ -30,6 +30,10 @@ pub fn start() {
         {
             create.instance_descriptor.backends = eframe::wgpu::Backends::GL;
         }
+        // `?host=parent`: a same-origin page framing DeckCraft (such as a Nextcloud app) opens
+        // files in it and stores what it saves (`host`).
+        let bridge = if query_param("host").as_deref() == Some("parent") { crate::host::Bridge::new() } else { None };
+        let app_bridge = bridge.clone();
         let result = eframe::WebRunner::new()
             .start(
                 canvas,
@@ -40,9 +44,19 @@ pub fn start() {
                     }
                     deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
                     let inbox: Inbox = Inbox::default();
-                    let mut app = SlideApp::new(Session::new(), services(inbox.clone(), cc.egui_ctx.clone()));
+                    let mut services = services(inbox.clone(), cc.egui_ctx.clone());
+                    if let Some(bridge) = &app_bridge {
+                        bridge.connect(&mut services, cc.egui_ctx.clone());
+                    }
+                    let mut app = SlideApp::new(Session::new(), services);
                     let q = query();
-                    if !q.contains("blank") {
+                    if let Some(bridge) = &app_bridge {
+                        // The parent sends the file to edit; no sample deck meanwhile.
+                        if let Some(author) = query_param("author") {
+                            crate::host::Bridge::set_author(&mut app, &author);
+                        }
+                        bridge.post_ready();
+                    } else if !q.contains("blank") {
                         if let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                             log::error!("sample deck: {e}");
                         }
@@ -52,10 +66,13 @@ pub fn start() {
                     if q.contains("show") {
                         app.start_show(0, false);
                     }
-                    Ok(Box::new(WebShell { app, inbox }))
+                    Ok(Box::new(WebShell { app, inbox, bridge: app_bridge }))
                 }),
             )
             .await;
+        if let (Err(e), Some(bridge)) = (&result, &bridge) {
+            bridge.post_failed(&format!("{e:?}"));
+        }
         if let Some(el) = document.get_element_by_id(LOADING_ID) {
             match result {
                 Ok(()) => el.remove(),
@@ -69,11 +86,16 @@ fn query() -> String {
     web_sys::window().and_then(|w| w.location().search().ok()).unwrap_or_default()
 }
 
+fn query_param(key: &str) -> Option<String> {
+    web_sys::UrlSearchParams::new_with_str(&query()).ok()?.get(key)
+}
+
 /// Wraps the app to read dropped files asynchronously (browsers can't read them synchronously)
 /// and feed them through the inbox.
 struct WebShell {
     app: SlideApp,
     inbox: Inbox,
+    bridge: Option<crate::host::Bridge>,
 }
 
 impl eframe::App for WebShell {
@@ -111,6 +133,9 @@ impl eframe::App for WebShell {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        if let Some(bridge) = &self.bridge {
+            bridge.sync(&mut self.app);
+        }
     }
 }
 
