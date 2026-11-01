@@ -148,6 +148,36 @@ fn windows_family_names_find_their_faces() {
 }
 
 #[test]
+fn variable_font_instances_answer_to_their_windows_names() {
+    // Windows lists a variable font's named instances other than Regular, Italic, Bold and
+    // Bold Italic as families of their own, and documents name them that way ("Montserrat
+    // ExtraBold"). The bundled Montserrat is variable, so these names found no face and drew
+    // in Inter Regular, even with the family's static files installed (their faces are
+    // skipped as already present).
+    let db = FontDb::with_font_dirs(Vec::new());
+    db.set_system_fallback(false);
+    if !db.is_loaded("Montserrat") {
+        return; // built without craft-fonts
+    }
+    for (name, style, weight, italic) in [
+        ("Montserrat ExtraBold", "Regular", 800.0, false),
+        ("Montserrat SemiBold", "Regular", 600.0, false),
+        ("Montserrat Medium", "Regular", 500.0, false),
+        ("Montserrat Medium", "Italic", 500.0, true),
+        ("Montserrat Thin", "Bold", 100.0, false),
+    ] {
+        assert!(db.has_family(name), "{name}");
+        let f = db.face(name, style);
+        assert_eq!((f.family.as_str(), f.weight, f.italic), ("Montserrat", weight, italic), "{name} {style}");
+        assert_eq!(db.document_face(name, style).family, "Montserrat", "{name}: installed, so not Calibri");
+    }
+    // Regular and Bold are the family itself, not families of their own.
+    assert!(!db.has_family("Montserrat Regular"));
+    assert!(!db.has_family("Montserrat Bold"));
+    assert_eq!(db.face("Montserrat", "Bold").weight, 700.0);
+}
+
+#[test]
 fn faces_without_outlines_are_not_cataloged() {
     // Rename the Semibold's `glyf` table, as in fonts whose glyphs are bitmaps or are stored in
     // Apple's `hvgl` table. The face still maps "A", but its outline is empty. The new tag

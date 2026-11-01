@@ -103,7 +103,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Fill",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color? | none?: true | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill; a group also formats its members",
+            "{color? | none?: true | background?: true (the slide background shows through; shapes and text boxes only) | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill; a group also formats its members",
             has_selection,
             fill
         ),
@@ -121,7 +121,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Effects",
             ["Shape Format", "Shape Styles"],
             None,
-            "{shadow?: none|outer|inner|perspective|{color, blur, dist, dir}, glow?: none|{color, radius}, softEdges?: pt, reflection?: none|tight|half|full, bevel?: none|circle|…, threeD?: {camera?: preset, rotX?, rotY?, rotZ?: deg, z?: pt, bevelTop?, bevelBottom?: none|circle|…, bevelTopW?, bevelTopH?, bevelBottomW?, bevelBottomH?, depth?, contour?: pt, material?, lighting?, reset?: true}, shadowProps?: {color?, transparency?: 0..1, blur?: pt, dist?: pt, dir?: deg}, glowProps?: {color?, transparency?, radius?: pt}, reflectionProps?: {transparency?, size?: 0..1, dist?: pt, blur?: pt}, reset?, ids?} (the *Props keys adjust the current effect, adding a default one when there is none)",
+            "{shadow?: none|outer|inner|perspective|{color, blur, dist, dir}, glow?: none|{color, radius}, softEdges?: pt, reflection?: none|tight|half|full, bevel?: none|circle|…, threeD?: {camera?: preset, rotX?, rotY?, rotZ?: deg, z?: pt, bevelTop?, bevelBottom?: none|circle|…, bevelTopW?, bevelTopH?, bevelBottomW?, bevelBottomH?, depth?, contour?: pt, material?, lighting?, reset?: true}, shadowProps?: {color?, transparency?: 0..1, size?: 0.01..2 (1 = 100%), blur?: pt, dist?: pt, dir?: deg}, glowProps?: {color?, transparency?, radius?: pt}, reflectionProps?: {transparency?, size?: 0..1, dist?: pt, blur?: pt}, reset?, ids?} (the *Props keys adjust the current effect, adding a default one when there is none)",
             has_selection,
             effects
         ),
@@ -165,7 +165,15 @@ pub fn specs() -> Vec<CommandSpec> {
             has_selection,
             picture_adjust
         ),
-        cmd!("picture.reset", "Reset Picture", ["Picture Format", "Adjust"], None, "{ids?}", has_selection, picture_reset),
+        cmd!(
+            "picture.reset",
+            "Reset Picture",
+            ["Picture Format", "Adjust"],
+            None,
+            "{ids?} (discards the picture's formatting: adjustments, artistic effect, crop, transparency, picture-style effects and outline; the frame shape from Change Shape or Crop to Shape, the size and the position stay)",
+            has_selection,
+            picture_reset
+        ),
         cmd!(
             "picture.change",
             "Change Picture",
@@ -252,6 +260,9 @@ fn requested_fill(s: &mut Session, p: &Value) -> Result<Option<Option<Fill>>> {
     }
     if bool_or(p, "none", false) {
         return Ok(Some(Some(Fill::None)));
+    }
+    if bool_or(p, "background", false) {
+        return Ok(Some(Some(Fill::Background)));
     }
     if let Some(c) = color_param(p, "color") {
         return Ok(Some(Some(Fill::solid(c))));
@@ -493,6 +504,103 @@ mod tests {
             expected.mods.push(ColorTransform::Alpha(50000));
             assert_eq!(s.doc().unwrap().shape(*id).unwrap().fill, Some(Fill::solid(expected)));
         }
+    }
+
+    #[test]
+    fn background_fill_shows_the_slide_background_and_survives_a_save() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        s.execute("design.background", &json!({"color": "#0000c8"})).unwrap();
+        let id = ShapeId(s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap()["id"].as_u64().unwrap() as u32);
+        let inside = |s: &mut Session| s.execute("slide.colorAt", &json!({"x": 200, "y": 150})).unwrap()["color"].clone();
+        assert_ne!(inside(&mut s), "0000C8", "a new shape takes the theme's fill");
+        s.execute("shape.fill", &json!({"background": true})).unwrap();
+        assert_eq!(s.doc().unwrap().shape(id).unwrap().fill, Some(Fill::Background));
+        assert_eq!(inside(&mut s), "0000C8", "the slide background shows through the shape");
+        s.execute("edit.undo", &json!({})).unwrap();
+        assert_eq!(s.doc().unwrap().shape(id).unwrap().fill, None, "one undo step returns to the theme's fill");
+        s.execute("edit.redo", &json!({})).unwrap();
+        // Transparency changes a solid or picture fill only.
+        s.execute("shape.fill", &json!({"transparency": 0.5})).unwrap();
+        assert_eq!(s.doc().unwrap().shape(id).unwrap().fill, Some(Fill::Background));
+
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let back = deckcraft_pptx::import(&bytes).unwrap();
+        let filled = back.slides.iter().flat_map(|sl| sl.shapes.iter()).filter(|sh| sh.fill == Some(Fill::Background)).count();
+        assert_eq!(filled, 1, "the shape keeps the background fill after a save and reopen");
+    }
+
+    /// A picture cannot save a slide background fill, so `background` leaves its fill alone.
+    #[test]
+    fn background_fill_skips_pictures() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let shape = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap()["id"].as_u64().unwrap();
+        let png = deckcraft_render::Image { width: 2, height: 2, pixels: [255, 0, 0, 255].repeat(4) }.to_png();
+        let pic = s
+            .execute("insert.picture", &json!({"data": crate::cmd::base64_encode(&png), "name": "red.png", "rect": [400, 100, 100, 100]}))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let fill = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().fill.clone();
+        let err = s.execute("shape.fill", &json!({"background": true, "ids": [pic]})).unwrap_err();
+        assert!(err.to_string().contains("shapes and text boxes"), "{err}");
+        assert_eq!(fill(&s, pic), None);
+
+        s.execute("edit.select", &json!({"ids": [shape, pic]})).unwrap();
+        let group = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+        s.execute("shape.fill", &json!({"color": "#ff0000"})).unwrap();
+        s.execute("shape.fill", &json!({"background": true})).unwrap();
+        assert_eq!(fill(&s, shape), Some(Fill::Background));
+        assert!(matches!(fill(&s, pic), Some(Fill::Solid { .. })), "the picture keeps its fill");
+        assert_eq!(fill(&s, group), None, "the group's own fill is cleared");
+        let bytes = deckcraft_pptx::export(&s.doc().unwrap().doc).unwrap();
+        let back = deckcraft_pptx::import(&bytes).unwrap();
+        let mut filled = 0;
+        for slide in &back.slides {
+            deckcraft_model::walk(&slide.shapes, &mut |sh, _| filled += usize::from(sh.fill == Some(Fill::Background)));
+        }
+        assert_eq!(filled, 1, "the shape keeps the background fill after a save and reopen");
+    }
+
+    /// A picture filled with its group's fill keeps that fill behind its transparent pixels when
+    /// the group's shapes take the slide background fill.
+    #[test]
+    fn background_fill_keeps_the_group_fill_a_picture_uses() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let shape = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 200, 100]})).unwrap()["id"].as_u64().unwrap();
+        let png = deckcraft_render::Image { width: 2, height: 2, pixels: [0, 0, 0, 0].repeat(4) }.to_png();
+        let pic = s
+            .execute("insert.picture", &json!({"data": crate::cmd::base64_encode(&png), "name": "clear.png", "rect": [400, 100, 100, 100]}))
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        s.execute("edit.select", &json!({"ids": [shape, pic]})).unwrap();
+        let group = s.execute("arrange.group", &json!({})).unwrap()["id"].as_u64().unwrap();
+        let red = Some(Fill::solid(ColorRef::rgb(Rgba::rgb(255, 0, 0))));
+        s.edit(|doc, _| {
+            for slide in &mut doc.slides {
+                let slide = std::sync::Arc::make_mut(slide);
+                if let Some(g) = slide.shape_mut(ShapeId(group as u32)) {
+                    g.fill.clone_from(&red);
+                }
+                if let Some(p) = slide.shape_mut(ShapeId(pic as u32)) {
+                    p.fill = Some(Fill::Group);
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        let behind = |s: &mut Session| s.execute("slide.colorAt", &json!({"x": 450, "y": 150})).unwrap()["color"].clone();
+        assert_eq!(behind(&mut s), "FF0000", "the group's fill shows through the picture");
+        s.execute("edit.select", &json!({"ids": [group]})).unwrap();
+        s.execute("shape.fill", &json!({"background": true})).unwrap();
+        let fill = |s: &Session, id: u64| s.doc().unwrap().shape(ShapeId(id as u32)).unwrap().fill.clone();
+        assert_eq!(fill(&s, shape), Some(Fill::Background));
+        assert_eq!(fill(&s, pic), Some(Fill::Group));
+        assert_eq!(fill(&s, group), red, "the group keeps the fill its picture uses");
+        assert_eq!(behind(&mut s), "FF0000", "the group's fill still shows through the picture");
     }
 
     fn rotation(s: &Session) -> f64 {

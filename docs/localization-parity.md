@@ -1,7 +1,6 @@
 # Localization parity with PowerPoint
 
-> **Last reviewed:** 2026-10-29 · **Last updated:** 2026-10-29 · **Change:** minor (Simplified Chinese interface catalog from craft-i18n: 1,093 DeckCraft rows plus shared rows, CJK faces borrowed for the UI's own text; previous: major, interface catalogs from craft-i18n, language setting and German) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-21 · **Change:** minor (one proofing language for the whole presentation; previous: minor, IME composition underlined in table cells; previous: minor, IME composition and CJK interface text, #101; previous: major, created) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** minor (Simplified Chinese interface catalog from craft-i18n: 1,148 DeckCraft rows plus shared rows on 0.13.1, CJK faces borrowed for the UI's own text; previous: major, interface catalogs from craft-i18n, language setting and German) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 DeckCraft's interface is shown in English, German or Simplified Chinese. Strings stay English
 literals in the code and are looked up in the shared
@@ -35,7 +34,7 @@ parity plus native-speaker review.
 | Language | Code | UI strings translated | Dialogs / tooltips / help | Script support (slide text) | Native review | Status | PowerPoint for Mac UI | Hours to full |
 |---|---|---|---|---|---|---|---|---|
 | English | en | ~1,050 / ~1,050 (100%) | yes / yes / no help | full | yes | **full** | yes | 0 |
-| Simplified Chinese (Mandarin) | zh-Hans | 1,093 DeckCraft rows + shared `common.tsv` (partial; dynamic `format!` strings stay English) | partly / yes / no help | native candidate optionally embeds LXGW WenKai Lite via craft-fonts, with existing per-character fallback; other builds use system CJK fonts (Noto CJK remains excluded); UAX #14 breaking; IME composition (#101); no true vertical layout | no | **partial** | yes | 2–4 + review |
+| Simplified Chinese (Mandarin) | zh-Hans | 1,148 DeckCraft rows + shared `common.tsv` (partial; dynamic `format!` strings stay English) | partly / yes / no help | native candidate optionally embeds LXGW WenKai Lite via craft-fonts, with existing per-character fallback; other builds use system CJK fonts (Noto CJK remains excluded); UAX #14 breaking; IME composition (#101); no true vertical layout | no | **partial** | yes | 2–4 + review |
 | Spanish | es | 0 (0%) | no | full (Latin) | no | none | yes (es, es-MX) | 3–5 |
 | Hindi | hi | 0 (0%) | no | Devanagari shaping through HarfRust, untested; no bundled Devanagari font | no | none | **no** (Windows only) | 4–7 |
 | Arabic | ar | 0 (0%) | no | bidi, contextual shaping, kashida justification, RTL bullets and caret (#4); **UI not mirrored**; browser export shows boxes (#81) | no | none | yes | 10–16 (incl. UI mirroring) |
@@ -71,6 +70,7 @@ of every text in the file and the default for new text (`format.languageAll`).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | minor | Simplified Chinese on 0.13.1: upstream refactors keep every existing translation; the new Effects presets, Size & Properties fields, picture styles, print-preview error and command labels are translated (1,148 DeckCraft rows). Still no native review. |
 | 2026-10-29 | minor | Simplified Chinese interface catalog (`zh-hans/deckcraft.tsv` in craft-i18n: 1,093 DeckCraft rows plus shared rows), offered as `zh-hans` and drawn with CJK faces borrowed for the UI's own catalog text. Dynamic strings still assembled with `format!` before drawing stay English until the source uses `tl!`/`fmt`. No native review yet. |
 | 2026-10-28 | major | Interface catalogs from craft-i18n, system language and Preferences › Interface language (#15); German partial (~840 rows) |
 | 2026-10-24 | minor | Local 0.37 candidate adds an opt-in native LXGW WenKai Lite glyph fallback and CJK interface-test coverage. This records local implementation only: managed tests, formatting, clippy, wasm-size and native GUI qualification remain pending. Browser font budget and uniform Chinese typography are unchanged. |

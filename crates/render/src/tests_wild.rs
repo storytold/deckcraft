@@ -186,6 +186,7 @@ fn radial(focus: [f64; 4]) -> Shape {
             stops,
             shape: GradientShape::Path { path: "circle".into(), focus },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: no_line(),
         ..Default::default()
@@ -310,8 +311,13 @@ fn a_pictures_border_lies_outside_the_picture() {
 fn children_filled_with_the_group_fill_show_one_fill_across_the_group() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
     let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(RED) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::rgb(0, 0, 255)) }];
-    let grad =
-        Fill::Gradient(Gradient { tile: [0.0; 4], stops, shape: GradientShape::Linear { angle: 0.0, scaled: false }, rotate_with_shape: true });
+    let grad = Fill::Gradient(Gradient {
+        tile: [0.0; 4],
+        stops,
+        shape: GradientShape::Linear { angle: 0.0, scaled: false },
+        rotate_with_shape: true,
+        flip: None,
+    });
     let child = |id: u32, x: f64| Shape {
         id: ShapeId(id),
         xfrm: Some(Xfrm::new(x, 0.0, 90.0, 100.0)),
@@ -372,7 +378,13 @@ fn a_linear_gradient_spans_its_tile_rect() {
     use deckcraft_model::style::{Gradient, GradientShape, GradientStop};
     // Tile rect the left half of the box: the ramp ends half way and stays black after.
     let stops = vec![GradientStop { pos: 0.0, color: ColorRef::rgb(WHITE) }, GradientStop { pos: 1.0, color: ColorRef::rgb(Rgba::BLACK) }];
-    let g = Gradient { stops, shape: GradientShape::Linear { angle: 0.0, scaled: false }, rotate_with_shape: true, tile: [0.0, 0.0, 0.5, 0.0] };
+    let g = Gradient {
+        stops,
+        shape: GradientShape::Linear { angle: 0.0, scaled: false },
+        rotate_with_shape: true,
+        tile: [0.0, 0.0, 0.5, 0.0],
+        flip: None,
+    };
     let sh = Shape {
         id: ShapeId(20),
         xfrm: Some(Xfrm::new(100.0, 100.0, 400.0, 100.0)),
@@ -502,6 +514,7 @@ fn gradient_lines_and_their_heads_take_the_gradient() {
             shape: GradientShape::Linear { angle, scaled: false },
             rotate_with_shape: true,
             tile: [0.0; 4],
+            flip: None,
         })
     };
     // Left to right along a 20 pt line: red at its start, blue at its end, and the arrowhead at
@@ -656,6 +669,7 @@ fn a_gradient_not_rotating_with_its_shape_keeps_to_the_slide() {
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape,
             tile: [0.0; 4],
+            flip: None,
         };
         // 200 × 100 turned a quarter: it covers 150..250 across and 50..250 down.
         let sh = Shape {

@@ -1,7 +1,7 @@
 //! Slide transitions (`p:transition`) and animations (`p:timing`).
 
 use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
-use deckcraft_model::{Shape, TextBody, find_shape};
+use deckcraft_model::{Shape, ShapeKind, TextBody, find_shape, find_shape_mut};
 
 use super::shapes::IdCtx;
 use super::{Imp, Part, dml};
@@ -94,6 +94,42 @@ fn max_dur(e: &El, depth: usize) -> Option<u32> {
     best
 }
 
+/// Does every behaviour time node (`p:cBhvr/p:cTn`) under the effect node `c` carry `autoRev`?
+fn behaviour_auto_reverses(c: &El) -> bool {
+    let mut behaviours = vec![];
+    c.find_all("cBhvr", &mut behaviours);
+    !behaviours.is_empty() && behaviours.iter().all(|b| b.child("cTn").and_then(|t| t.bool("autoRev")).unwrap_or(false))
+}
+
+/// Volume, mute, Loop until Stopped, Hide While Not Playing and Play Full Screen live in the timing tree
+/// (`p:video`/`p:audio` > `p:cMediaNode`), not on the picture: copy them onto the target's `MediaClip`.
+pub fn media_settings(timing: &El, ctx: &IdCtx, shapes: &mut [Shape]) {
+    let mut nodes = vec![];
+    for tag in ["video", "audio"] {
+        timing.find_all(tag, &mut nodes);
+    }
+    for node in nodes.into_iter().take(10_000) {
+        let Some(cm) = node.child("cMediaNode") else { continue };
+        let Some(id) = cm.path(&["tgtEl", "spTgt"]).and_then(|t| t.u32("spid")).and_then(|f| ctx.lookup(f)) else { continue };
+        let Some(ShapeKind::Media(clip)) = find_shape_mut(shapes, id).map(|s| &mut s.kind) else { continue };
+        if let Some(v) = cm.attr("vol").and_then(|v| v.trim().parse::<f64>().ok()).filter(|v| v.is_finite()) {
+            clip.volume = (v / 100_000.0).clamp(0.0, 1.0);
+        }
+        if cm.bool("mute") == Some(true) {
+            clip.volume = 0.0;
+        }
+        if cm.bool("showWhenStopped") == Some(false) {
+            clip.hide_while_not_playing = true;
+        }
+        if cm.child("cTn").and_then(|c| c.attr("repeatCount")) == Some("indefinite") {
+            clip.loop_play = true;
+        }
+        if node.bool("fullScrn") == Some(true) {
+            clip.full_screen = true;
+        }
+    }
+}
+
 /// Flatten the timing tree into the Animation Pane list.
 pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: &[Shape]) -> Vec<Animation> {
     let _ = (imp, part);
@@ -144,7 +180,9 @@ pub fn animations(imp: &mut Imp, part: &Part, ctx: &IdCtx, timing: &El, shapes: 
             trigger: f.trigger.and_then(|t| ctx.lookup(t)),
             preset_id: Some(preset),
             preset_subtype: Some(sub),
-            auto_reverse: c.bool("autoRev").unwrap_or(false),
+            // PowerPoint's "Auto-reverse" is `autoRev` on the behaviour nodes (`p:cBhvr/p:cTn`); Color Pulse
+            // always writes it there and plays back and forth on its own, so it isn't read as the option.
+            auto_reverse: c.bool("autoRev").unwrap_or(false) || (effect != "colorPulse" && behaviour_auto_reverses(c)),
             // PowerPoint's "Rewind when done playing" is `fill="remove"` on the effect node.
             rewind: c.attr("fill") == Some("remove"),
             smooth_start: c.f64("accel").map(|v| v / 100_000.0).unwrap_or(0.0),

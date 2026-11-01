@@ -515,8 +515,18 @@ pub(crate) fn current_shapes<'a>(doc: &'a deckcraft_model::Presentation, sel: &c
     }
 }
 
-pub(crate) fn current_names(doc: &deckcraft_model::Presentation, sel: &crate::Selection) -> std::collections::HashSet<String> {
-    current_shapes(doc, sel).map(|v| v.iter().map(|s| s.name.clone()).collect()).unwrap_or_default()
+/// Every name on the slide, group members included, and the number of shapes (which exceeds the
+/// number of names when two shapes share one).
+pub(crate) fn current_names(doc: &deckcraft_model::Presentation, sel: &crate::Selection) -> (std::collections::HashSet<String>, usize) {
+    let mut names = std::collections::HashSet::new();
+    let mut count = 0;
+    if let Some(v) = current_shapes(doc, sel) {
+        deckcraft_model::walk(v, &mut |sh, _| {
+            names.insert(sh.name.clone());
+            count += 1;
+        });
+    }
+    (names, count)
 }
 
 /// The command palette runs a command with `{}`. True when the params doc names a value that

@@ -6,7 +6,7 @@ use deckcraft_model::Transition;
 use deckcraft_model::anim::TRANSITIONS;
 use serde_json::{Value, json};
 
-use super::{CommandSpec, NO_ID_SPACE, always, bad, bool_param, cmd, has_slide, ok, str_param, usize_param};
+use super::{CommandSpec, NO_ID_SPACE, always, bad, bool_param, cmd, has_slide, ok, opt_usize_param, str_param};
 use crate::{Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -44,9 +44,9 @@ pub fn specs() -> Vec<CommandSpec> {
     ]
 }
 
-fn slide_indices(s: &Session, p: &Value) -> Result<Vec<usize>> {
+fn slide_indices(s: &Session, p: &Value, cmd: &str) -> Result<Vec<usize>> {
     let st = s.doc()?;
-    if let Some(i) = usize_param(p, "index") {
+    if let Some(i) = opt_usize_param(p, "index", cmd)? {
         return Ok(vec![i]);
     }
     let v: Vec<usize> = st.selection.slides.iter().filter_map(|id| st.doc.slide_index(*id)).collect();
@@ -59,7 +59,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
         TRANSITIONS.iter().find(|t| t.0.eq_ignore_ascii_case(kind)).ok_or_else(|| bad("transition.set", format!("unknown transition `{kind}`")))?;
     let option = str_param(p, "option").map(String::from).or_else(|| info.4.first().map(|o| o.to_string())).unwrap_or_default();
     let duration = p.get("duration").and_then(Value::as_u64).map(|v| v.min(59_000) as u32);
-    let list = slide_indices(s, p)?;
+    let list = slide_indices(s, p, "transition.set")?;
     s.edit(|doc, _| {
         for i in list {
             if let Some(sl) = doc.slides.get_mut(i) {
@@ -83,7 +83,7 @@ fn set(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn options(s: &mut Session, p: &Value) -> Result<Value> {
     let option = str_param(p, "option").ok_or_else(|| bad("transition.options", "missing `option`"))?.to_string();
-    let list = slide_indices(s, p)?;
+    let list = slide_indices(s, p, "transition.options")?;
     s.edit(|doc, _| {
         for i in list {
             if let Some(sl) = doc.slides.get_mut(i)
@@ -98,7 +98,7 @@ fn options(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn timing(s: &mut Session, p: &Value) -> Result<Value> {
-    let list = slide_indices(s, p)?;
+    let list = slide_indices(s, p, "transition.timing")?;
     s.edit(|doc, _| {
         for i in list {
             if let Some(sl) = doc.slides.get_mut(i) {
@@ -127,7 +127,7 @@ fn timing(s: &mut Session, p: &Value) -> Result<Value> {
 
 /// Transitions › Sound: embed an audio file as the slides' transition sound, or `none` to remove it.
 fn sound(s: &mut Session, p: &Value) -> Result<Value> {
-    let list = slide_indices(s, p)?;
+    let list = slide_indices(s, p, "transition.sound")?;
     let looping = bool_param(p, "loop");
     let edit_all = |s: &mut Session, f: &dyn Fn(&mut Transition)| {
         s.edit(|doc, _| {
@@ -214,4 +214,30 @@ fn apply_all(s: &mut Session, _p: &Value) -> Result<Value> {
 
 fn list(_s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(Value::Array(TRANSITIONS.iter().map(|t| json!({"id": t.0, "label": t.1, "category": t.2, "duration": t.3, "options": t.4})).collect()))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use crate::Session;
+
+    #[test]
+    fn invalid_index_params_are_rejected_not_defaulted_to_selection() {
+        let mut s = Session::with_new();
+        while s.doc().expect("doc").doc.slides.len() < 3 {
+            s.execute("slide.new", &json!({})).expect("new slide");
+        }
+        for bad in [json!(-1), json!(1.5)] {
+            for (cmd, p) in [
+                ("transition.set", json!({"kind": "fade", "index": bad})),
+                ("transition.options", json!({"option": "x", "index": bad})),
+                ("transition.timing", json!({"duration": 500, "index": bad})),
+                ("transition.sound", json!({"none": true, "index": bad})),
+            ] {
+                assert!(s.execute(cmd, &p).is_err(), "{cmd} must reject {p}");
+                assert!(s.doc().expect("doc").doc.slides.iter().all(|sl| sl.transition.is_none()), "{cmd} {p}");
+            }
+        }
+    }
 }

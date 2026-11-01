@@ -418,6 +418,8 @@ fn pos_of_char(body: &TextBody, mut n: usize) -> Pos {
 /// keeps its run and paragraph formatting and new text takes the formatting where it lands. Text
 /// that shares nothing with the old text replaces it as plain text.
 pub fn replace_text(body: &mut TextBody, text: &str) {
+    // Normalise line endings first so the common prefix/suffix cannot split a `\r\n` pair.
+    let text = &text.replace("\r\n", "\n").replace('\r', "\n");
     let old: Vec<char> = body.text().chars().collect();
     let new: Vec<char> = text.chars().collect();
     if old == new {
@@ -721,6 +723,22 @@ mod tests {
                 ParaProps { margin_left: Some(36.0), indent: Some(-18.0), bullet: Some(Bullet::Char { char: "•".into() }), ..Default::default() };
         }
         b
+    }
+
+    #[test]
+    fn replace_text_crlf_matches_from_text() {
+        // The kept suffix must not start inside a `\r\n` pair.
+        let mut b = TextBody::from_text("x\ny");
+        replace_text(&mut b, "z\r\ny");
+        assert_eq!(b.text(), "z\ny");
+        // CRLF in the kept prefix, and the same text with CRLF changes nothing.
+        let before = notes();
+        let mut b = before.clone();
+        replace_text(&mut b, "Overview\r\nFirst point\r\nSecond point");
+        assert_eq!(b, before);
+        replace_text(&mut b, "Overview\r\nFirst point\r\nSecond\rpoint");
+        assert_eq!(b.text(), "Overview\nFirst point\nSecond\npoint");
+        assert_eq!(b.paragraphs[0].runs[0].props.bold, Some(true));
     }
 
     #[test]

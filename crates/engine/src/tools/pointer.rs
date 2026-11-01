@@ -455,12 +455,11 @@ impl Session {
                     self.execute("guide.move", &json!({"index": index, "pos": pos}))?
                 };
             }
-            Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. }) => {
+            Some(Drag::Move { moved: false, enter_text: Some((id, at)), .. })
                 // Plain click on text: caret at the click (in a table, in the clicked cell).
-                if self.edit_text_at(id, at)? {
+                if self.edit_text_at(id, at)? => {
                     out = json!({"editing": id});
                 }
-            }
             Some(Drag::Marquee { start, add }) => {
                 let r = Rect::from_points(start, p);
                 self.tool.marquee = None;

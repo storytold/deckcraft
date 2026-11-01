@@ -329,15 +329,26 @@ pub fn parse_path(d: &str) -> Vec<(char, Vec<f64>)> {
             token.clear();
         }
     };
-    for ch in d.chars() {
+    let cs: Vec<char> = d.chars().collect();
+    for (i, &ch) in cs.iter().enumerate() {
         match ch {
+            // An 'E' inside a number followed by a digit (or a sign and a digit) is an exponent,
+            // not the end command.
+            'E' if !token.is_empty() && {
+                let n1 = cs.get(i + 1).copied().unwrap_or(' ');
+                let n2 = cs.get(i + 2).copied().unwrap_or(' ');
+                n1.is_ascii_digit() || ((n1 == '-' || n1 == '+') && n2.is_ascii_digit())
+            } =>
+            {
+                token.push(ch)
+            }
             'M' | 'L' | 'C' | 'Q' | 'Z' | 'm' | 'l' | 'c' | 'q' | 'z' | 'E' => {
                 push_tok(&mut token, &mut nums);
                 flush(cmd, &mut nums, &mut out);
                 cmd = Some(ch.to_ascii_uppercase());
             }
             ' ' | ',' | '\t' | '\n' => push_tok(&mut token, &mut nums),
-            '-' if !token.is_empty() && !token.ends_with('e') => {
+            '-' if !token.is_empty() && !token.ends_with(['e', 'E']) => {
                 push_tok(&mut token, &mut nums);
                 token.push(ch);
             }
@@ -470,6 +481,15 @@ mod tests {
         // Scaled by 1000 (100 → 100000).
         assert_eq!(back[0].w, 100_000.0);
         assert_eq!(back[0].d, "M 0 0 L 100000 0 C 100000 10000 90000 50000 50000 50000 Q 0 50000 0 0 Z");
+    }
+
+    #[test]
+    fn parse_path_uppercase_exponent() {
+        assert_eq!(parse_path("M 1E-5 2 L 3 4"), vec![('M', vec![1e-5, 2.0]), ('L', vec![3.0, 4.0])]);
+        assert_eq!(parse_path("M 1.5E3 2"), vec![('M', vec![1500.0, 2.0])]);
+        assert_eq!(parse_path("M 1e-5 2"), vec![('M', vec![1e-5, 2.0])]);
+        // An 'E' right after a number with no exponent digits is the end command.
+        assert_eq!(parse_path("M 0 0E"), vec![('M', vec![0.0, 0.0]), ('E', vec![])]);
     }
 
     #[test]

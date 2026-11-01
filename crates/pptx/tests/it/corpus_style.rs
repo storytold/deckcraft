@@ -46,6 +46,7 @@ fn gradient(angle: f64) -> Fill {
         shape: GradientShape::Linear { angle, scaled: true },
         rotate_with_shape: true,
         tile: [0.0; 4],
+        flip: None,
     })
 }
 
@@ -116,6 +117,7 @@ fn style_deck() -> Presentation {
         shape: GradientShape::Path { path: "circle".into(), focus: [0.2, 0.2, 0.2, 0.2] },
         rotate_with_shape: false,
         tile: [0.0; 4],
+        flip: None,
     }));
 
     let mut patt = shape(&mut p, "Pattern", 200.0, 260.0, 120.0, 80.0);

@@ -14,6 +14,7 @@ mod animation;
 mod background;
 mod comments;
 mod designer;
+mod effect_presets;
 mod format_shape;
 mod smartart;
 mod thesaurus;
@@ -120,6 +121,9 @@ pub mod thumbs;
 
 #[cfg(test)]
 mod background_tests;
+
+#[cfg(test)]
+mod effect_presets_tests;
 
 #[cfg(test)]
 mod pattern_fill_tests;
@@ -299,6 +303,119 @@ mod tests {
         label.click();
         h.run_steps(2);
         assert!(alpha(&h).is_some_and(|a| (a - 0.6).abs() < 1e-9), "{:?}", alpha(&h));
+    }
+
+    /// Slide background fill is one of the Fill options. It has no Color button or Transparency
+    /// slider of its own.
+    #[test]
+    fn slide_background_fill_is_a_fill_option() {
+        let mut h = fill_pane(None);
+        let fill = |h: &Harness<'_, SlideApp>| h.state().session.active().unwrap().selected_shapes()[0].fill.clone();
+        let undo = h.state().session.active().unwrap().history.undo.len();
+        h.get_by_label("Slide background fill").click();
+        h.run_steps(3);
+        assert_eq!(fill(&h), Some(Fill::Background));
+        assert_eq!(h.state().session.active().unwrap().history.undo.len(), undo + 1, "one undo step");
+        assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+        assert_eq!(color_buttons(&h), 1, "only the line's Color button");
+        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 0);
+        // A shape that already has the background fill shows this option chosen, not Automatic.
+        let h = fill_pane(Some(json!({"background": true})));
+        assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+        let automatic = h.query_all_by_label("Automatic").filter(|n| n.accesskit_node().toggled() == Some(egui::accesskit::Toggled::True)).count();
+        assert_eq!(automatic, 1, "only the line's Automatic is chosen");
+    }
+
+    /// A picture cannot save a slide background fill, so its Fill options leave it out. A group
+    /// that holds a shape keeps the option.
+    #[test]
+    fn a_picture_has_no_slide_background_fill_option() {
+        let pane = |group: bool| {
+            let mut s = Session::with_new();
+            s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+            let png = deckcraft_render::Image { width: 2, height: 2, pixels: [255, 0, 0, 255].repeat(4) }.to_png();
+            let pic =
+                s.execute("insert.picture", &json!({"data": deckcraft_engine::cmd::base64_encode(&png), "name": "red.png"})).unwrap()["id"].clone();
+            if group {
+                let shape = s.execute("shape.insert", &json!({"preset": "rect", "rect": [500.0, 40.0, 120.0, 80.0]})).unwrap()["id"].clone();
+                s.execute("edit.select", &json!({"ids": [pic, shape]})).unwrap();
+                s.execute("arrange.group", &json!({})).unwrap();
+                s.execute("shape.fill", &json!({"color": "#ff0000"})).unwrap();
+            }
+            let mut app = SlideApp::new(s, Services::default());
+            app.ui.pane = Some("format".into());
+            app.ui.format_tab = "fill".into();
+            let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
+            h.run_steps(3);
+            h
+        };
+        let h = pane(false);
+        assert!(h.query_by_label("Pattern fill").is_some(), "the Fill options are shown");
+        assert!(h.query_by_label("Slide background fill").is_none());
+        let mut h = pane(true);
+        h.get_by_label("Slide background fill").click();
+        h.run_steps(3);
+        let st = h.state().session.active().unwrap();
+        let group = st.selected_shapes()[0];
+        let fills: Vec<_> = group.children().iter().map(|m| m.fill.clone()).collect();
+        assert_eq!(fills[1], Some(Fill::Background), "the group's shape takes the fill");
+        assert!(matches!(fills[0], Some(Fill::Solid { .. })), "the picture keeps its fill: {:?}", fills[0]);
+        assert_eq!(group.fill, None, "the group's own fill is cleared");
+        assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 0);
+        assert_eq!(color_buttons(&h), 1, "only the line's Color button");
+    }
+
+    /// A group whose picture uses the group's fill keeps that fill, and still shows Slide
+    /// background fill chosen once its shapes have it.
+    #[test]
+    fn a_group_that_keeps_its_fill_shows_slide_background_fill() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+        let png = deckcraft_render::Image { width: 2, height: 2, pixels: [0, 0, 0, 0].repeat(4) }.to_png();
+        let pic = s.execute("insert.picture", &json!({"data": deckcraft_engine::cmd::base64_encode(&png), "name": "clear.png"})).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        let shape = s.execute("shape.insert", &json!({"preset": "rect", "rect": [500.0, 40.0, 120.0, 80.0]})).unwrap()["id"].as_u64().unwrap();
+        s.execute("edit.select", &json!({"ids": [pic, shape]})).unwrap();
+        s.execute("arrange.group", &json!({})).unwrap();
+        s.execute("shape.fill", &json!({"gradient": {"stops": [[0, "#ff0000"], [1, "#0000ff"]]}})).unwrap();
+        s.edit(|doc, _| {
+            for slide in &mut doc.slides {
+                let slide = std::sync::Arc::make_mut(slide);
+                if let Some(p) = slide.shape_mut(ShapeId(pic as u32)) {
+                    p.fill = Some(Fill::Group);
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+        let mut app = SlideApp::new(s, Services::default());
+        app.ui.pane = Some("format".into());
+        app.ui.format_tab = "fill".into();
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        h.run_steps(3);
+        h.get_by_label("Slide background fill").click();
+        h.run_steps(3);
+        let st = h.state().session.active().unwrap();
+        assert!(matches!(st.selected_shapes()[0].fill, Some(Fill::Gradient(_))), "the group keeps the fill its picture uses");
+        assert_eq!(st.shape(ShapeId(shape as u32)).unwrap().fill, Some(Fill::Background));
+        assert_eq!(h.get_by_label("Slide background fill").accesskit_node().toggled(), Some(egui::accesskit::Toggled::True));
+        assert!(h.query_by_label("Rotate with shape").is_none(), "no editor for the group's kept gradient");
+        assert_eq!(h.query_all_by_role_and_label(egui::accesskit::Role::Slider, "Transparency").count(), 0);
+        assert_eq!(color_buttons(&h), 1, "only the line's Color button");
     }
 }
 
