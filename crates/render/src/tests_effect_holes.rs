@@ -64,11 +64,9 @@ fn draw(shape: &str, effect: Effect) -> Image {
     let p = scene(shape, effect);
     let image = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
     if let Ok(dir) = std::env::var("DECKCRAFT_EFFECT_HOLES_QA") {
-        use std::io::Write as _;
+        // Overwrite, so a QA directory can be reused across runs.
         std::fs::create_dir_all(&dir).unwrap();
-        let path = std::path::Path::new(&dir).join(format!("{shape}-{effect:?}.png"));
-        let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path).unwrap();
-        file.write_all(&image.to_png()).unwrap();
+        std::fs::write(std::path::Path::new(&dir).join(format!("{shape}-{effect:?}.png")), image.to_png()).unwrap();
     }
     image
 }
