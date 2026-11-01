@@ -54,19 +54,25 @@ fn text_has_effects(rctx: &Ctx, s: &Shape) -> bool {
     let fx = |r: &RunProps| r.shadow.as_ref().is_some_and(|s| !s.inner) || r.glow.as_ref().is_some_and(|g| g.radius > 0.0);
     let styled = |l: &ListStyle| l.levels.iter().flatten().any(|lv| fx(&lv.run));
     let body = |t: &deckcraft_model::text::TextBody| {
-        t.paragraphs.iter().any(|p| p.runs.iter().any(|r| fx(&r.props)) || fx(&p.end_props)) || styled(&t.list_style)
+        t.paragraphs.iter().any(|p| p.runs.iter().any(|r| fx(&r.props)) || fx(&p.def_props) || fx(&p.end_props)) || styled(&t.list_style)
     };
     // Table cells carry their own text bodies, whose runs can have shadows and glows too,
-    // or inherit them from the master's other-text style.
+    // or inherit them from the master's other-text style or presentation default text style.
     let in_cells = match &s.kind {
-        deckcraft_model::ShapeKind::Table(t) => {
-            t.rows.iter().flat_map(|r| &r.cells).any(|c| body(&c.text) || (!c.text.is_empty() && styled(&rctx.master.other_style)))
-        }
+        deckcraft_model::ShapeKind::Table(t) => t
+            .rows
+            .iter()
+            .flat_map(|r| &r.cells)
+            .any(|c| body(&c.text) || (!c.text.is_empty() && (styled(&rctx.master.other_style) || styled(&rctx.pres.default_text_style)))),
         _ => false,
     };
     in_cells
         || s.text.as_ref().is_some_and(body)
-        || (s.text.is_some() && (styled(&rctx.master.title_style) || styled(&rctx.master.body_style) || styled(&rctx.master.other_style)))
+        || (s.text.is_some()
+            && (styled(&rctx.master.title_style)
+                || styled(&rctx.master.body_style)
+                || styled(&rctx.master.other_style)
+                || styled(&rctx.pres.default_text_style)))
 }
 
 /// Render slide `index` at `opts.scale` pixels per point. A panic inside the renderer becomes a

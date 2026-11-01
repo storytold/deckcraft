@@ -1260,6 +1260,31 @@ fn table_cell_text_effects_need_filters() {
         t.rows[0].cells[0].text = TextBody::from_text("Inherited");
     }
     assert!(needs_filters(&p_inherited, &p_inherited.slides[0]), "inherited cell text glow blurs");
+
+    // Paragraph def_props glow on cell text.
+    let mut table_def = Table::new(1, 1, 200.0, 40.0);
+    table_def.rows[0].cells[0].text = TextBody::from_text("Def");
+    table_def.rows[0].cells[0].text.paragraphs[0].def_props.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 5.0 });
+    let shape_def =
+        Shape { id: ShapeId(745), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_def), ..Default::default() };
+    let p_def = deck_with(vec![shape_def]);
+    assert!(needs_filters(&p_def, &p_def.slides[0]), "paragraph def_props glow blurs");
+
+    // Presentation default_text_style glow inherited by a non-empty cell.
+    let mut table_dts = Table::new(1, 1, 200.0, 40.0);
+    table_dts.rows[0].cells[0].text = TextBody::from_text("Dts");
+    let shape_dts =
+        Shape { id: ShapeId(746), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_dts), ..Default::default() };
+    let mut p_dts = deck_with(vec![shape_dts]);
+    let m_dts = std::sync::Arc::make_mut(&mut p_dts.masters[0]);
+    m_dts.shapes.clear();
+    for l in &mut m_dts.layouts {
+        l.shapes.clear();
+    }
+    p_dts.default_text_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 4.0 });
+    assert!(needs_filters(&p_dts, &p_dts.slides[0]), "inherited default_text_style glow blurs");
 }
 
 #[test]
