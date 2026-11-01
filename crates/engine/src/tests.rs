@@ -5970,6 +5970,93 @@ fn invalid_slide_index_never_falls_back_to_the_selection_in_export_commands() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// G6: with no sites given, shape.connect joins the sites that face each other along the
+/// dominant direction between the two shapes (a box mostly below leaves from the bottom), not
+/// "the closest pair", which for a diagonal neighbour picked a side site and crossed boxes.
+#[test]
+fn connector_default_sites_follow_the_dominant_direction() {
+    let mut s = session();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [0, 0, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let diag = s.execute("shape.insert", &json!({"preset": "rect", "rect": [150, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": a, "to": diag})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(2), Some(0)), "mostly below: bottom → top, not right → left: {r}");
+    let r = s.execute("shape.connect", &json!({"from": diag, "to": a})).unwrap();
+    assert_eq!((r["fromSite"].as_u64(), r["toSite"].as_u64()), (Some(0), Some(2)), "and back: top → bottom: {r}");
+    // The direction runs between the shapes' centres, not between the means of their sites: a
+    // triangle's sites lie mostly along its base, which pulled the direction sideways and chose
+    // the box's left site for a box that is mostly below.
+    let tri = s.execute("shape.insert", &json!({"preset": "triangle", "rect": [400, 0, 100, 100]})).unwrap()["id"].as_u64().unwrap();
+    let below = s.execute("shape.insert", &json!({"preset": "rect", "rect": [520, 155, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"from": tri, "to": below})).unwrap();
+    assert_eq!(r["toSite"].as_u64(), Some(0), "centre to centre is mostly down: the box's top, not its left: {r}");
+}
+
+/// A size (or colour, bold…) set on a shape before it has any text survives the text that is
+/// then set: text.set keeps the first run's properties, and an empty paragraph keeps them on its
+/// end mark, which is what the agent's format.size then set_text sequence relies on.
+#[test]
+fn text_set_keeps_the_formatting_of_an_empty_shape() {
+    let mut s = session();
+    let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 300, 60]})).unwrap()["id"].as_u64().unwrap();
+    s.execute("format.size", &json!({"size": 30})).unwrap();
+    s.execute("format.bold", &json!({"on": true})).unwrap();
+    s.execute("text.set", &json!({"id": id, "text": "Hello"})).unwrap();
+    let props =
+        |s: &Session| s.doc().unwrap().shape(deckcraft_model::ShapeId(id as u32)).unwrap().text.as_ref().unwrap().paragraphs[0].runs[0].props.clone();
+    let run = props(&s);
+    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "{run:?}");
+    // Emptied and filled again: the empty paragraph's end mark carried the formatting.
+    s.execute("text.set", &json!({"id": id, "text": ""})).unwrap();
+    s.execute("text.set", &json!({"id": id, "text": "Again"})).unwrap();
+    let run = props(&s);
+    assert_eq!((run.size, run.bold), (Some(30.0), Some(true)), "after an empty text.set: {run:?}");
+}
+
+/// HH1: `shape.connect` glues to a shape inside a group, as PowerPoint does: the connector's
+/// end is set to the grouped shape and follows it when the group moves. The glue was dropped at
+/// once (the end stayed `None`) because rerouting only looked at the slide's top-level shapes,
+/// and the sites of a grouped shape were computed in the group's child space.
+#[test]
+fn shape_connect_glues_to_a_shape_inside_a_group() {
+    use deckcraft_model::{ShapeId, ShapeKind};
+    let mut s = session();
+    s.execute("slide.new", &json!({"layout": "blank"})).unwrap();
+    let a = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let b = s.execute("shape.insert", &json!({"preset": "rect", "rect": [10, 200, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let g = s.execute("arrange.group", &json!({"ids": [a, b]})).unwrap()["id"].as_u64().unwrap();
+    let c = s.execute("shape.insert", &json!({"preset": "rect", "rect": [400, 10, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+    let glue = |s: &Session, id: u64| {
+        let st = s.doc().unwrap();
+        match st.shape(ShapeId(id as u32)).unwrap().kind {
+            ShapeKind::Connector { start, end } => (start.map(|(i, _)| i.0 as u64), end.map(|(i, _)| i.0 as u64)),
+            _ => (None, None),
+        }
+    };
+    let near = |p: deckcraft_geom::Point, x: f64, y: f64| (p.x - x).abs() < 1e-6 && (p.y - y).abs() < 1e-6;
+    // A new connector into the group.
+    let r = s.execute("shape.connect", &json!({"from": c, "to": a})).unwrap();
+    let k = r["id"].as_u64().unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "{r}");
+    let (p0, p1) = line_ends(&s, k);
+    assert!(near(p0, 400.0, 35.0), "from C's left site: {p0:?}");
+    assert!(near(p1, 110.0, 35.0), "to A's right site in slide space: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dy": 100})).unwrap();
+    assert_eq!(glue(&s, k), (Some(c), Some(a)), "the glue survives the move");
+    let (_, p1) = line_ends(&s, k);
+    assert!(near(p1, 110.0, 135.0), "the connector follows the grouped shape: {p1:?}");
+    // Re-gluing an existing line with `id`.
+    let l = s.execute("shape.insert", &json!({"preset": "straightConnector1", "rect": [600, 400, 50, 50]})).unwrap()["id"].as_u64().unwrap();
+    let r = s.execute("shape.connect", &json!({"id": l, "from": c, "to": b})).unwrap();
+    assert_eq!(r["id"], l, "{r}");
+    assert_eq!(glue(&s, l), (Some(c), Some(b)), "{r}");
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 110.0, 325.0), "to B's right site (C is mostly to its right) in slide space, B moved with the group: {p1:?}");
+    s.execute("shape.move", &json!({"ids": [g], "dx": 50})).unwrap();
+    assert_eq!(glue(&s, l), (Some(c), Some(b)));
+    let (_, p1) = line_ends(&s, l);
+    assert!(near(p1, 160.0, 325.0), "{p1:?}");
+}
+
 #[test]
 fn highlight_with_an_invalid_colour_is_rejected_and_keeps_the_highlight() {
     let mut s = session();
