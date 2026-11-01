@@ -1928,3 +1928,24 @@ fn a_paragraph_with_its_own_start_at_restarts_the_count_there() {
     // A later paragraph with a new start begins a fresh run.
     check(&[1, 1, 7, 7], &[1, 2, 7, 8]);
 }
+
+/// #1632: when insets are wider than the shape, they scale down proportionally so the text
+/// rectangle stays inside the shape bounds and unwrapped text does not project outside it.
+#[test]
+fn insets_wider_than_the_shape_scale_down_within_the_shape_bounds() {
+    let (p, mut sh) = setup("Collaboration Hub", 14.17, 14.17);
+    sh.ph = None;
+    let bp = &mut sh.text.as_mut().unwrap().body;
+    bp.wrap = Some(false);
+    bp.inset_l = Some(127.5);
+    bp.inset_r = Some(11.33);
+    bp.inset_t = Some(11.33);
+    bp.inset_b = Some(11.33);
+    sh.text.as_mut().unwrap().paragraphs[0].props = deckcraft_model::text::ParaProps { align: Some(Align::Center), ..Default::default() };
+    let l = lay(&p, &sh, 14.17, 14.17);
+    assert_eq!(l.lines.len(), 1);
+    let line = &l.lines[0];
+    let mid = (line.caret_x[0] + *line.caret_x.last().unwrap()) / 2.0;
+    // The text center must remain inside the 14.17 pt wide shape, not pushed ~127.5 pt to the right.
+    assert!((0.0..=14.17).contains(&mid), "line center {mid} should be within [0, 14.17]");
+}
