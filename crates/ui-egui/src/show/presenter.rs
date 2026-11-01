@@ -81,6 +81,12 @@ fn render_preview(doc: &Presentation, n: usize, size: (u32, u32), threads: u16) 
     crate::textures::to_color_image(&deckcraft_render::render_slide(doc, n, &opts), false)
 }
 
+/// Whether Presenter View gets a new native window on root pass `pass`, given the pass that last
+/// drew it: eframe closes an immediate viewport's window on any pass that doesn't draw it.
+pub(super) fn opens_new_window(last: Option<u64>, pass: u64) -> bool {
+    last.is_none_or(|p| p.saturating_add(1) < pass)
+}
+
 /// Render the presenter window and set `keep` false when the user ends or closes the show.
 pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::sync::Arc<Presentation>, now: f64, keep: &mut bool) {
     let cur = show.state.slide;
@@ -146,10 +152,21 @@ pub(super) fn presenter_window(ctx: &egui::Context, show: &mut Show, doc: &std::
     let button = |ui: &mut Ui, s: &str| {
         ui.add(egui::Button::new(egui::RichText::new(s).size(15.0).color(Color32::WHITE)).fill(Color32::from_gray(60)).min_size(vec2(0.0, 30.0)))
     };
+    // The parent's pass: inside the closure, the context reports the presenter's own.
+    let pass = ctx.cumulative_pass_nr();
     ctx.show_viewport_immediate(
         egui::ViewportId::from_hash_of("deckcraft_presenter"),
-        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]),
-        |ui, _| {
+        egui::ViewportBuilder::default().with_title("Presenter View — DeckCraft").with_inner_size([1100.0, 700.0]).with_visible(false),
+        |ui, class| {
+            // Keep the notes out of screen sharing (Zoom, Teams, OBS): eframe paints a new window
+            // before applying commands, so it starts hidden and is shown once protected. Once per
+            // window: every command repaints. Embedded (web, tests), this is the audience's viewport.
+            let new_window = opens_new_window(show.presenter_pass, pass);
+            show.presenter_pass = Some(pass);
+            if new_window && class == egui::ViewportClass::Immediate {
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::ContentProtected(true));
+                ui.ctx().send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            }
             if !keyboard(ui.ctx(), show, doc, now, true) {
                 *keep = false;
             }

@@ -125,6 +125,43 @@ fn the_idle_cursor_hides_only_when_asked() {
     assert!(!show.hides_idle_cursor(13.0), "Reading View never hides it");
 }
 
+/// Presenter View asks its own native window to stay out of screen capture. Embedded (web, tests),
+/// it is drawn in the root viewport, which must stay capturable: the audience shares that one.
+#[test]
+fn embedded_presenter_view_leaves_the_audience_window_capturable() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    let doc = session.active().unwrap().doc.clone();
+    let show = Show::new(&doc, 0, false, true);
+    let mut harness = egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+            let now = ui.input(|i| i.time);
+            presenter_window(ui.ctx(), show, doc, now, keep);
+        },
+        (doc, show, true),
+    );
+    for _ in 0..3 {
+        harness.step();
+        let output = harness.output();
+        let protected =
+            output.viewport_output.values().flat_map(|v| v.commands.iter()).any(|c| matches!(c, egui::ViewportCommand::ContentProtected(_)));
+        assert!(!protected, "an embedded Presenter View must not hide the audience window from capture");
+    }
+}
+
+/// Presenter View's window starts hidden and is shown once protected, so a new window must never
+/// be missed (it would stay hidden), and a kept one must not be re-sent commands (each repaints).
+#[test]
+fn presenter_view_knows_when_its_window_is_new() {
+    use super::presenter::opens_new_window;
+    assert!(opens_new_window(None, 0), "first pass of the show");
+    assert!(opens_new_window(None, 7), "first pass, late in the session");
+    assert!(!opens_new_window(Some(4), 5), "drawn on the previous pass: same window");
+    assert!(!opens_new_window(Some(5), 5), "drawn twice in one pass: same window");
+    assert!(opens_new_window(Some(4), 6), "skipped a pass (closed, reading view, minimized): new window");
+    assert!(!opens_new_window(Some(u64::MAX), u64::MAX), "no overflow at the end of the counter");
+}
+
 /// #1130: the Presenter View's All slides button opens the grid in that window, not on the audience screen.
 #[test]
 fn presenter_all_slides_does_not_cover_the_audience_screen() {

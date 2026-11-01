@@ -73,6 +73,9 @@ pub struct Show {
     pub grid: bool,
     /// The Presenter View's own See All Slides: the grid replaces the slide and notes in that window only; the audience keeps the slide.
     pub presenter_grid: bool,
+    /// The root pass that last drew Presenter View. eframe closes an immediate viewport's window
+    /// on any pass that doesn't draw it, so a gap means the next pass opens a new window.
+    presenter_pass: Option<u64>,
     /// The next click on the slide zooms in there.
     pub zoom_arm: bool,
     zoom: Option<Zoom>,
@@ -236,6 +239,7 @@ impl Show {
             blank: None,
             grid: false,
             presenter_grid: false,
+            presenter_pass: None,
             zoom_arm: false,
             zoom: None,
             thumbs: vec![],
