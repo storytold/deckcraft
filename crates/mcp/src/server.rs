@@ -46,7 +46,7 @@ data: [[…]]} then set_text {id, cell: [r, c], text} and table.style; design.pa
 add_slide answers placeholders {title, body} ids; export {path, format: png|pdf} with slide?|all? for png and \
 slides?: [index] for pdf (default all). Put many commands in one \
 batch (tool names work inside it too); an item with as:\"a\" is referred to by later items as \"$a\" (its id, or its whole answer when it has none), so a \
-diagram is one batch: insert the boxes, connect $a to $b, animate [$a, $b, $ab].";
+diagram is one batch: insert the boxes, connect $a to $b, animate [$a, $b, $ab]. Write \"$$a\" for the literal text \"$a\".";
 
 /// Resource URIs.
 pub const DOC_URI: &str = "deckcraft://document";
