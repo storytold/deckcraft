@@ -93,12 +93,24 @@ impl BoxGeom {
         } else {
             text_rect
         };
-        let inner = Rect::new(
-            r.x0 + bp.inset_l.unwrap_or(7.2),
-            r.y0 + bp.inset_t.unwrap_or(3.6),
-            (r.x1 - bp.inset_r.unwrap_or(7.2)).max(r.x0 + bp.inset_l.unwrap_or(7.2)),
-            (r.y1 - bp.inset_b.unwrap_or(3.6)).max(r.y0 + bp.inset_t.unwrap_or(3.6)),
-        );
+        // Insets wider than the shape scale down proportionally to fit inside it (#1632).
+        let (mut ins_l, mut ins_r) = (bp.inset_l.unwrap_or(7.2), bp.inset_r.unwrap_or(7.2));
+        let (mut ins_t, mut ins_b) = (bp.inset_t.unwrap_or(3.6), bp.inset_b.unwrap_or(3.6));
+        let w = r.width().max(0.0);
+        let total_x = ins_l + ins_r;
+        if ins_l >= 0.0 && ins_r >= 0.0 && total_x > w && total_x > 0.0 {
+            let s = w / total_x;
+            ins_l *= s;
+            ins_r *= s;
+        }
+        let h = r.height().max(0.0);
+        let total_y = ins_t + ins_b;
+        if ins_t >= 0.0 && ins_b >= 0.0 && total_y > h && total_y > 0.0 {
+            let s = h / total_y;
+            ins_t *= s;
+            ins_b *= s;
+        }
+        let inner = Rect::new(r.x0 + ins_l, r.y0 + ins_t, (r.x1 - ins_r).max(r.x0 + ins_l), (r.y1 - ins_b).max(r.y0 + ins_t));
         // Text that follows a WordArt arch or circle is set on one line per paragraph.
         let follow = bp.warp.as_deref().is_some_and(deckcraft_geom::warp::is_follow);
         let wrap = bp.wrap.unwrap_or(true) && !follow && !matches!(bp.autofit, Some(AutoFit::Shape) if shape.text_box && !bp.wrap.unwrap_or(true));
