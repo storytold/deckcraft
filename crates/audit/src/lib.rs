@@ -232,8 +232,11 @@ pub fn audit_bytes(bytes: &[u8]) -> Result<Vec<AuditFinding>, AuditError> {
     // outside the conventional `ppt/slides/` directory: load them so the
     // slide scanners below see them, not just the conventional paths.
     let slides = slide_targets(&parts)?;
+    // One set lookup per target, not a scan of all ZIP entry names per
+    // target: with many slides and many entries the scan is quadratic.
+    let name_set: BTreeSet<&str> = names.iter().map(String::as_str).collect();
     for name in &slides {
-        if !parts.contains_key(name) && name.ends_with(".xml") && names.iter().any(|n| n == name) {
+        if !parts.contains_key(name) && name.ends_with(".xml") && name_set.contains(name.as_str()) {
             let data = read_part(&mut archive, name, &mut total)?;
             parts.insert(name.clone(), data);
         }
