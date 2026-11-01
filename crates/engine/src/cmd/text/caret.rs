@@ -331,7 +331,14 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let cell = p.get("cell").and_then(Value::as_array).and_then(|a| Some((a.first()?.as_u64()? as usize, a.get(1)?.as_u64()? as usize)));
     let inherited = inherited_aligns(s, id);
+    // A placeholder that inherits shrink-on-overflow takes it on its own body, so the new text is fitted.
+    let inherits_shrink = s.doc().ok().and_then(|st| {
+        let ctx = ctx_for(&st.doc, &st.selection)?;
+        Some(matches!(resolve::body(&ctx, st.shape(id)?).autofit, Some(AutoFit::Shrink { .. })))
+    });
+    let inherits_shrink = inherits_shrink.unwrap_or(false);
     edit_shapes(s, &json!({"id": id}), "text.set", |sh| {
+        let in_table = matches!(sh.kind, ShapeKind::Table(_));
         let target = match (&mut sh.kind, cell) {
             (ShapeKind::Table(t), Some((r, c))) => t.cell_mut(r, c).map(|x| &mut x.text),
             (ShapeKind::Table(_), None) => None,
@@ -355,6 +362,13 @@ pub(super) fn set(s: &mut Session, p: &Value) -> Result<Value> {
             }
         }
         body.paragraphs = nb.paragraphs;
+        // Only a shape's text is fitted afterwards (`fit_text_box`), so a table cell keeps its scale.
+        if !in_table {
+            if inherits_shrink && body.body.autofit.is_none() {
+                body.body.autofit = Some(AutoFit::Shrink { font_scale: None, line_reduction: 0.0 });
+            }
+            reset_shrink_scale(&mut body.body);
+        }
         Ok(())
     })?;
     fit_text_box(s, id)?;

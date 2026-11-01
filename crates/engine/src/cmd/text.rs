@@ -161,6 +161,17 @@ fn body_mut<'a>(doc: &'a mut Presentation, sel: &Selection, t: &TextSel) -> Opti
     Some(sh.text.get_or_insert_with(TextBody::default))
 }
 
+/// The saved shrink-on-overflow scale was for the old text: back to 100 % to fit the new text
+/// afresh. A body whose file carried no `fontScale` keeps none.
+fn reset_shrink_scale(body: &mut deckcraft_model::text::BodyProps) {
+    if let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut body.autofit {
+        if font_scale.is_some() {
+            *font_scale = Some(1.0);
+        }
+        *line_reduction = 0.0;
+    }
+}
+
 /// Edit the active text body and selection; refits auto-sizing text boxes afterwards.
 pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut TextSel) -> T) -> Result<T> {
     let t0 = s.doc()?.selection.text.clone().ok_or_else(|| bad("text", NO_TEXT_POINT))?;
@@ -172,12 +183,7 @@ pub(crate) fn edit_text<T>(s: &mut Session, f: impl FnOnce(&mut TextBody, &mut T
         // The saved shrink-on-overflow scale was for the old text: fit the new text afresh. A
         // body whose file carried no `fontScale` keeps none (100 %) here; `fit_shrink_scale`
         // below fills in the computed scale when the new text overflows (#724).
-        if let Some(AutoFit::Shrink { font_scale, line_reduction }) = &mut body.body.autofit {
-            if font_scale.is_some() {
-                *font_scale = Some(1.0);
-            }
-            *line_reduction = 0.0;
-        }
+        reset_shrink_scale(&mut body.body);
         sel.text = Some(t);
         Ok(r)
     })?;
