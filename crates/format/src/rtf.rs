@@ -299,7 +299,8 @@ impl Outline<'_> {
 
     /// A one-character control symbol (`\\`, `\{`, `\~`, ...).
     fn symbol(&mut self, n: u8) {
-        self.i += 1;
+        let c = self.rtf.get(self.i..).and_then(|r| r.chars().next());
+        self.i = advance(self.rtf, self.i, 1);
         if self.st.skip {
             return;
         }
@@ -308,6 +309,7 @@ impl Outline<'_> {
             b'~' => self.line.push('\u{a0}'),
             b'_' => self.line.push('\u{2011}'),
             b'\n' | b'\r' => self.flush(),
+            _ if !n.is_ascii() => self.line.extend(c),
             _ => {}
         }
     }
@@ -417,6 +419,11 @@ mod tests {
         assert_eq!(rtf_to_outline(r"{\rtf1 a\'00bé\par}"), "abé\n");
         assert_eq!(rtf_to_outline("{\\rtf1 a\0b\\par}\0\0"), "ab\n");
         assert_eq!(rtf_to_outline(r"{\rtf1 x\u-70000?y\par}"), "x\u{ee90}y\n");
+    }
+
+    #[test]
+    fn multibyte_control_symbol_keeps_character_and_following_text() {
+        assert_eq!(rtf_to_outline("{\\rtf1 A\\éB\\par}"), "AéB\n");
     }
 
     /// `\\_` is RTF's non-breaking hyphen: a visible character, not markup.
