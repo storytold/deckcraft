@@ -358,6 +358,18 @@ fn outline_roundtrip() {
 }
 
 #[test]
+fn outline_roundtrip_keeps_slide_with_empty_title() {
+    let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+    assert_eq!(outline_to_slides(&mut p, "A\n\tx\nB\n\ty"), 2);
+    let title = Arc::make_mut(&mut p.slides[1]).shapes.iter_mut().find(|s| s.ph_type().is_some_and(|k| k.is_title())).expect("title placeholder");
+    title.text = Some(TextBody::from_text(""));
+    let o = slides_to_outline(&p);
+    let mut q = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+    assert_eq!(outline_to_slides(&mut q, &o), 2, "outline={o:?}");
+    assert_eq!(slides_to_outline(&q), o);
+}
+
+#[test]
 fn outline_keeps_leading_dash_text() {
     let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
     let n = outline_to_slides(&mut p, "-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\n- Bullets\n\t- Point\n\t• Other");

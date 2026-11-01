@@ -559,10 +559,13 @@ pub fn sane_numbers(p: &mut Presentation) {
 /// level (Insert ▸ Slides from Outline, View ▸ Outline copy).
 pub fn outline_to_slides(p: &mut Presentation, text: &str) -> usize {
     let mut slides: OutlineSlides = Vec::new();
+    let mut after_blank = false;
     for raw in text.lines() {
         if raw.trim().is_empty() {
+            after_blank = true;
             continue;
         }
+        let blank_before = std::mem::take(&mut after_blank);
         let tabs = raw.chars().take_while(|c| *c == '\t').count();
         let spaces = raw.chars().take_while(|c| *c == ' ').count() / 2;
         let level = tabs.max(spaces);
@@ -574,6 +577,9 @@ pub fn outline_to_slides(p: &mut Presentation, text: &str) -> usize {
         .to_string();
         if level == 0 {
             slides.push((line, Vec::new()));
+        } else if blank_before && raw.starts_with('\t') {
+            // A blank line then a tab-indented line is how an empty title is exported.
+            slides.push((String::new(), vec![((level - 1).min(8) as u8, line)]));
         } else if let Some((_, body)) = slides.last_mut() {
             body.push(((level - 1).min(8) as u8, line));
         }
