@@ -55,10 +55,12 @@ impl ColorRef {
         };
         deckcraft_color::apply(base, &self.mods)
     }
-    /// Alpha (0–1) from an `alpha` transform, if any.
+    /// Alpha (0–1) from the `alpha`, `alphaMod` and `alphaOff` transforms, applied in order.
     pub fn alpha(&self) -> f64 {
         self.mods.iter().fold(1.0, |a, m| match m {
             ColorTransform::Alpha(v) => (*v as f64 / 100_000.0).clamp(0.0, 1.0),
+            ColorTransform::AlphaMod(v) => (a * *v as f64 / 100_000.0).clamp(0.0, 1.0),
+            ColorTransform::AlphaOff(v) => (a + *v as f64 / 100_000.0).clamp(0.0, 1.0),
             _ => a,
         })
     }
