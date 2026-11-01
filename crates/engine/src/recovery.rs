@@ -260,6 +260,16 @@ mod tests {
     }
 
     #[test]
+    fn instance_identity_is_stable_nonzero_and_json_safe() {
+        let id = instance_id();
+        assert_eq!(instance_id(), id);
+        assert!(id != 0 && id <= UID_MASK);
+        assert_eq!(id & 0xFF_FFFF, 0);
+        let encoded = serde_json::to_value(id).unwrap();
+        assert_eq!(encoded.as_f64().unwrap() as u64, id);
+    }
+
+    #[test]
     fn recovers_unsaved_presentations() {
         let dir = temp("recovery");
         let mut s = Session::new();
