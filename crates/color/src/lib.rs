@@ -1,4 +1,4 @@
-//! `DeckCraft` colour: sRGB colours, theme colour slots and DrawingML-style colour transforms
+//! DeckCraft colour: sRGB colours, theme colour slots and DrawingML-style colour transforms
 //! (tint, shade, luminance modulation/offset, alpha…), so theme-relative colours resolve the way
 //! presentation files expect.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
@@ -31,16 +31,13 @@ impl Rgba {
     pub const WHITE: Rgba = Rgba::rgb(255, 255, 255);
     pub const TRANSPARENT: Rgba = Rgba { r: 0, g: 0, b: 0, a: 0 };
 
-    #[must_use]
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Rgba { r, g, b, a: 255 }
     }
-    #[must_use]
     pub const fn rgba(r: u8, g: u8, b: u8, a: u8) -> Self {
         Rgba { r, g, b, a }
     }
     /// `RRGGBB` or `#RRGGBB` (also `RRGGBBAA`).
-    #[must_use]
     pub fn from_hex(s: &str) -> Option<Self> {
         let s = s.trim();
         let s = s.strip_prefix('#').unwrap_or(s);
@@ -59,19 +56,15 @@ impl Rgba {
         }
     }
     /// `RRGGBB` uppercase (no alpha).
-    #[must_use]
     pub fn hex(&self) -> String {
         format!("{:02X}{:02X}{:02X}", self.r, self.g, self.b)
     }
-    #[must_use]
     pub fn with_alpha(self, a: u8) -> Self {
         Rgba { a, ..self }
     }
-    #[must_use]
     pub fn to_f32(self) -> [f32; 4] {
         [f32::from(self.r) / 255.0, f32::from(self.g) / 255.0, f32::from(self.b) / 255.0, f32::from(self.a) / 255.0]
     }
-    #[must_use]
     pub fn from_f64(red: f64, green: f64, blue: f64, alpha: f64) -> Self {
         let channel = |value: f64| {
             if value.is_finite() { channel_from_f64(value * 255.0) } else { 0 }
@@ -79,7 +72,6 @@ impl Rgba {
         Rgba { r: channel(red), g: channel(green), b: channel(blue), a: channel(alpha) }
     }
     /// Relative luminance (WCAG), 0–1.
-    #[must_use]
     pub fn luminance(self) -> f64 {
         let lin = |c: u8| {
             let v = f64::from(c) / 255.0;
@@ -88,13 +80,11 @@ impl Rgba {
         0.2126 * lin(self.r) + 0.7152 * lin(self.g) + 0.0722 * lin(self.b)
     }
     /// WCAG contrast ratio between two colours (1–21).
-    #[must_use]
     pub fn contrast(self, other: Rgba) -> f64 {
         let (a, b) = (self.luminance(), other.luminance());
         let (hi, lo) = if a > b { (a, b) } else { (b, a) };
         (hi + 0.05) / (lo + 0.05)
     }
-    #[must_use]
     pub fn to_hsl(self) -> (f64, f64, f64) {
         let red = f64::from(self.r) / 255.0;
         let green = f64::from(self.g) / 255.0;
@@ -116,7 +106,6 @@ impl Rgba {
         };
         (hue * 60.0, saturation, lightness)
     }
-    #[must_use]
     pub fn from_hsl(hue: f64, saturation: f64, lightness: f64, alpha: u8) -> Self {
         let hue = ((hue % 360.0) + 360.0) % 360.0 / 360.0;
         let saturation = saturation.clamp(0.0, 1.0);
@@ -147,7 +136,6 @@ impl Rgba {
         Rgba::from_f64(channel(hue + 1.0 / 3.0), channel(hue), channel(hue - 1.0 / 3.0), f64::from(alpha) / 255.0)
     }
     /// Linear interpolation (straight alpha).
-    #[must_use]
     pub fn lerp(self, other: Rgba, amount: f64) -> Rgba {
         let amount = if amount.is_finite() { amount.clamp(0.0, 1.0) } else { 0.0 };
         let interpolate = |start: u8, end: u8| channel_from_f64(f64::from(start) + (f64::from(end) - f64::from(start)) * amount);
@@ -194,7 +182,6 @@ impl SchemeSlot {
         SchemeSlot::Hlink,
         SchemeSlot::FolHlink,
     ];
-    #[must_use]
     pub fn xml_name(self) -> &'static str {
         match self {
             SchemeSlot::Dk1 => "dk1",
@@ -216,7 +203,6 @@ impl SchemeSlot {
             SchemeSlot::PhClr => "phClr",
         }
     }
-    #[must_use]
     pub fn from_xml(s: &str) -> Option<Self> {
         Some(match s {
             "dk1" => SchemeSlot::Dk1,
@@ -239,7 +225,6 @@ impl SchemeSlot {
             _ => return None,
         })
     }
-    #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             SchemeSlot::Dk1 | SchemeSlot::Tx1 => "Text/Background - Dark 1",
@@ -268,7 +253,6 @@ pub struct ColorScheme {
 }
 
 impl ColorScheme {
-    #[must_use]
     pub fn get(&self, slot: SchemeSlot) -> Rgba {
         let index = match slot {
             SchemeSlot::Dk1 | SchemeSlot::Tx1 => 0,
@@ -319,7 +303,6 @@ pub enum ColorTransform {
 }
 
 impl ColorTransform {
-    #[must_use]
     pub fn xml_name(&self) -> &'static str {
         match self {
             ColorTransform::Tint(_) => "tint",
@@ -341,7 +324,6 @@ impl ColorTransform {
             ColorTransform::BlueMod(_) => "blueMod",
         }
     }
-    #[must_use]
     pub fn value(&self) -> Option<i32> {
         match *self {
             ColorTransform::Tint(v)
@@ -361,7 +343,6 @@ impl ColorTransform {
             _ => None,
         }
     }
-    #[must_use]
     pub fn from_xml(name: &str, val: Option<i32>) -> Option<Self> {
         let v = val.unwrap_or(0);
         Some(match name {
@@ -388,7 +369,6 @@ impl ColorTransform {
 }
 
 /// Apply transforms to a base colour.
-#[must_use]
 pub fn apply(base: Rgba, transforms: &[ColorTransform]) -> Rgba {
     let mut color = base;
     for transform in transforms {
@@ -469,7 +449,6 @@ fn map_linear(color: Rgba, map: impl Fn(f64) -> f64) -> Rgba {
 
 /// The colour-picker grid shown under each theme colour: lighter 80/60/40%, darker 25/50%
 /// (for dark colours: lighter 90/75/50/25/10%).
-#[must_use]
 pub fn theme_variants(color: Rgba) -> [(Vec<ColorTransform>, &'static str); 5] {
     let (_, _, lightness) = color.to_hsl();
     if lightness < 0.2 {
@@ -514,7 +493,6 @@ pub const STANDARD_COLORS: [(Rgba, &str); 10] = [
 ];
 
 /// A few CSS-like preset colour names (`prstClr`).
-#[must_use]
 pub fn preset(name: &str) -> Option<Rgba> {
     let channels = match name {
         "black" => (0, 0, 0),
@@ -773,13 +751,11 @@ pub const SYSTEM_NAMES: [&str; 30] = [
 ];
 
 /// Whether `name` is a preset colour name a file may write.
-#[must_use]
 pub fn is_preset_name(name: &str) -> bool {
     PRESET_NAMES.contains(&name)
 }
 
 /// Whether `name` is a system colour name a file may write.
-#[must_use]
 pub fn is_system_name(name: &str) -> bool {
     SYSTEM_NAMES.contains(&name)
 }
