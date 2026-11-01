@@ -12,9 +12,9 @@ pub fn read_file(path: &str) -> Result<Vec<u8>, String> {
     if !meta.is_file() {
         return Err(format!("{path}: not a regular file"));
     }
-    const MAX_FILE_SIZE: u64 = 2 << 30; // 2 GiB
+    const MAX_FILE_SIZE: u64 = 16 << 30; // 16 GiB
     if meta.len() > MAX_FILE_SIZE {
-        return Err(format!("{path}: file size {} exceeds 2 GiB limit", meta.len()));
+        return Err(format!("{path}: file size {} exceeds 16 GiB limit", meta.len()));
     }
     std::fs::read(path).map_err(|e| format!("{path}: {e}"))
 }

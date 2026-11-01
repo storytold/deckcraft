@@ -24,9 +24,9 @@ pub const EXTENSION: &str = "deckcraft";
 /// Format version written into the manifest.
 pub const VERSION: u32 = 1;
 /// Largest entry we will inflate (guards against zip bombs).
-const MAX_ENTRY: u64 = 2 << 30;
+const MAX_ENTRY: u64 = 8 << 30;
 /// All embedded media and chart sidecars together, inflated (#393).
-const MAX_TOTAL_MEDIA: u64 = 4 << 30;
+const MAX_TOTAL_MEDIA: u64 = 16 << 30;
 /// Media items and chart sidecar parts one file may list.
 const MAX_MEDIA_ITEMS: usize = 100_000;
 
@@ -79,12 +79,14 @@ pub fn save(p: &Presentation) -> Result<Vec<u8>> {
                 continue;
             }
             // Already-compressed media is stored, not deflated again.
-            let opts = if is_compressed(&item.content_type) { stored } else { deflate };
+            let large = item.data.len() as u64 >= u32::MAX as u64 / 2;
+            let opts = if is_compressed(&item.content_type) { stored } else { deflate }.large_file(large);
             z.start_file(format!("media/{}", item.id.0), opts).map_err(w)?;
             z.write_all(&item.data).map_err(|e| FormatError::Write(e.to_string()))?;
         }
         for (name, content_type, bytes) in parts {
-            let opts = if is_compressed(&content_type) { stored } else { deflate };
+            let large = bytes.len() as u64 >= u32::MAX as u64 / 2;
+            let opts = if is_compressed(&content_type) { stored } else { deflate }.large_file(large);
             z.start_file(name, opts).map_err(w)?;
             z.write_all(&bytes).map_err(|e| FormatError::Write(e.to_string()))?;
         }
