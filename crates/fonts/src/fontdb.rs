@@ -863,12 +863,21 @@ impl FontDb {
         let _ = on;
     }
 
-    /// Process-wide database: the bundled fonts, then the installed system fonts, cataloged the
-    /// first time a lookup by family name needs them (or ahead of time by
+    /// Process-wide database. With `bundled-fonts-only`, it never scans installed fonts or uses
+    /// them as glyph fallbacks; embedders can then keep generated documents free of system fonts.
+    /// Otherwise installed fonts are cataloged lazily on first lookup (or ahead of time by
     /// [`FontDb::scan_in_background`]).
     pub fn global() -> &'static FontDb {
         static DB: std::sync::OnceLock<FontDb> = std::sync::OnceLock::new();
-        DB.get_or_init(|| FontDb::with_font_dirs(system_font_dirs()))
+        DB.get_or_init(|| {
+            if cfg!(feature = "bundled-fonts-only") {
+                let db = FontDb::with_font_dirs(Vec::new());
+                db.set_system_fallback(false);
+                db
+            } else {
+                FontDb::with_font_dirs(system_font_dirs())
+            }
+        })
     }
 
     pub(crate) fn read_faces(&self) -> std::sync::RwLockReadGuard<'_, Vec<Arc<FontFace>>> {
@@ -1544,5 +1553,20 @@ mod font_dir_tests {
         u.sort();
         u.dedup();
         assert_eq!(u.len(), d.len());
+    }
+}
+
+#[cfg(all(test, feature = "bundled-fonts-only"))]
+mod bundled_only_tests {
+    use super::FontDb;
+
+    #[test]
+    fn global_database_cannot_discover_system_fonts() {
+        let db = FontDb::global();
+        assert!(db.font_dirs.is_empty());
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(!db.sys.lock().unwrap_or_else(|e| e.into_inner()).enabled);
+        assert!(!db.face("an installed but unbundled font", "Regular").family.is_empty());
+        assert!(db.font_dirs.is_empty());
     }
 }

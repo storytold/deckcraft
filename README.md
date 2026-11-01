@@ -120,6 +120,11 @@ Fonts come from [craft-fonts](https://github.com/storytold/craft-fonts): clone i
 (`../craft-fonts`) and local builds pick it up automatically; without it DeckCraft uses your system
 fonts.
 
+Embedders that generate documents under a bundled-font-only policy can enable the
+`deckcraft-fonts/bundled-fonts-only` Cargo feature. It disables installed-font discovery and
+glyph fallback for DeckCraft's shared font database; missing families fall back to the bundled
+open font faces. DeckCraft's own desktop builds leave this feature off.
+
 Each [GitHub release](https://github.com/storytold/deckcraft/releases) has ready-made builds, on Linux as
 an AppImage, a `.deb`, an `.rpm` and a tarball. On Gentoo, the community [::snakebyte
 overlay](https://github.com/switch87/snakebyte-overlay) packages the Linux release as
