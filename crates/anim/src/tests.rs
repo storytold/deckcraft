@@ -1202,6 +1202,52 @@ fn dissolve_out_takes_back_what_dissolve_in_shows() {
 }
 
 #[test]
+fn dissolve_share_is_exact_at_the_ends_monotone_and_symmetric() {
+    use crate::effects::dissolve_share;
+    // Nothing shows at the start and all of it at the end: the shape must not stay part-visible.
+    assert_eq!(dissolve_share(0.0), 0.0);
+    assert_eq!(dissolve_share(1.0), 1.0);
+    // Out of range or not a number clamps to the ends or to nothing.
+    assert_eq!((dissolve_share(-3.0), dissolve_share(7.0)), (0.0, 1.0));
+    assert_eq!((dissolve_share(f64::NEG_INFINITY), dissolve_share(f64::INFINITY)), (0.0, 1.0));
+    let mut last = 0.0;
+    for i in 0..=10_000 {
+        let p = f64::from(i) / 10_000.0;
+        let share = dissolve_share(p);
+        assert!((0.0..=1.0).contains(&share), "p={p}: {share}");
+        assert!(share >= last, "the share never goes back: {last} then {share} at p={p}");
+        // The curve is symmetric about its middle, which is what lets Out mirror In.
+        assert!((share + dissolve_share(1.0 - p) - 1.0).abs() < 1e-12, "p={p}");
+        last = share;
+    }
+}
+
+#[test]
+fn dissolve_out_is_the_mirror_of_dissolve_in_at_every_moment() {
+    let inn = Timeline::new(&slide_with(vec![anim(1, AnimClass::Entrance, "dissolve", AnimStart::OnClick)]), W, H);
+    let out = Timeline::new(&slide_with(vec![anim(1, AnimClass::Exit, "dissolveOut", AnimStart::OnClick)]), W, H);
+    for i in 1..100 {
+        let t = f64::from(i) / 100.0;
+        let (a, b) = (inn.state(ShapeId(1), None, 0, t), out.state(ShapeId(1), None, 0, t));
+        let (a, b) = (a.dissolve.expect("In dissolves"), b.dissolve.expect("Out dissolves"));
+        assert!((a + b - 1.0).abs() < 1e-9, "t={t}: In {a}, Out {b}");
+    }
+}
+
+#[test]
+fn a_dissolve_level_depends_only_on_the_time_asked() {
+    // The same moment gives the same level whenever and however often it is asked, and on a
+    // timeline built again: a paused frame does not move.
+    let build = || Timeline::new(&slide_with(vec![anim(1, AnimClass::Entrance, "dissolve", AnimStart::OnClick)]), W, H);
+    let (a, b) = (build(), build());
+    for t in [0.0, 0.123, 0.5, 0.777, 1.0] {
+        let first = a.state(ShapeId(1), None, 0, t).dissolve;
+        assert_eq!(first, a.state(ShapeId(1), None, 0, t).dissolve, "t={t}");
+        assert_eq!(first, b.state(ShapeId(1), None, 0, t).dissolve, "t={t}");
+    }
+}
+
+#[test]
 fn dissolves_compose_to_the_smaller_share_and_stay_sane() {
     let a = AnimState { dissolve: Some(0.7), ..Default::default() };
     let b = AnimState { dissolve: Some(0.4), ..Default::default() };

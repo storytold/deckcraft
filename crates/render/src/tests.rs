@@ -3118,3 +3118,25 @@ fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
     quad.paths[0].path = path;
     assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }
+
+#[test]
+fn a_dissolve_frame_is_the_same_every_time_it_is_drawn() {
+    // The noise is fixed by the shape and the level alone: a paused frame, a frame drawn again
+    // after others at other levels, and one drawn on another thread are the same pixels.
+    let first = dissolved(Some(0.37), 1.0);
+    let _ = (dissolved(Some(0.8), 1.0), dissolved(Some(0.1), 2.0), dissolved(None, 1.0));
+    assert_eq!(first.pixels, dissolved(Some(0.37), 1.0).pixels);
+    let other = std::thread::spawn(|| dissolved(Some(0.37), 1.0).pixels).join().expect("render thread");
+    assert_eq!(first.pixels, other);
+}
+
+/// The frame of a dissolve half way (the share PowerPoint shows at p = 0.5, which `dissolve_share`
+/// returns): exactly which pixels of the box show, as a count and a hash of the pattern. It changes
+/// only if the noise, its cell size or its seed changes; update both numbers when that is intended.
+#[test]
+fn a_dissolve_half_way_is_the_pinned_pattern() {
+    let on = shown(&dissolved(Some(0.5), 1.0), 1.0);
+    let hash = on.iter().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3));
+    assert_eq!(on.len(), 106_400);
+    assert_eq!((on.iter().filter(|b| **b).count(), hash), (52_345, 0x1e4b_6379_749e_03a6));
+}
