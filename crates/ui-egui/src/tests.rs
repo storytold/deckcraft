@@ -2360,3 +2360,63 @@ fn overdue_visible_logic_does_not_reanchor_a_later_hidden_show() {
     let _ = ctx.run_logic(&raw_at(12.0, true, false), |ctx| app.tick_hidden_show(ctx, visible_anchor + std::time::Duration::from_secs(3)));
     assert_eq!(app.show.as_ref().unwrap().state.slide, 1, "time from the full visible frame is preserved through the logic-only pass");
 }
+
+/// The `ViewportCommand::Title`s one logic tick sends to the window.
+fn sent_titles(app: &mut SlideApp, ctx: &egui::Context) -> Vec<String> {
+    let out = ctx.run_ui(egui::RawInput::default(), |ui| app.logic(ui.ctx()));
+    let titles = out
+        .viewport_output
+        .values()
+        .flat_map(|v| &v.commands)
+        .filter_map(|c| match c {
+            egui::ViewportCommand::Title(t) => Some(t.clone()),
+            _ => None,
+        })
+        .collect();
+    out.drop_without_applying_deltas();
+    titles
+}
+
+/// #1058: the window title names the open presentation, with • while it has unsaved changes, so a
+/// host embedding the web build can tell which file a drop opened. It goes out once per change.
+#[test]
+fn the_window_title_follows_the_dropped_presentation_and_its_changes() {
+    let inbox = Inbox::default();
+    let mut app = SlideApp::new(Session::new(), Services { inbox: Some(inbox.clone()), ..Default::default() });
+    let ctx = egui::Context::default();
+    assert_eq!(sent_titles(&mut app, &ctx), ["DeckCraft"]);
+    assert!(sent_titles(&mut app, &ctx).is_empty(), "an unchanged title is not sent again");
+
+    // The web build's drop: the file arrives through the inbox and opens on the next tick.
+    let mut deck = Session::with_new();
+    let data = deck.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+    let id = app.begin_external_file("drop");
+    let bytes = deckcraft_engine::cmd::base64_decode(&data).unwrap();
+    inbox.lock().unwrap().push(InboxEvent::File(InboxFile { id, name: "Quarterly review.deckcraft".into(), bytes }));
+    assert_eq!(sent_titles(&mut app, &ctx), ["Quarterly review — DeckCraft"]);
+
+    app.session.execute("slide.new", &json!({})).unwrap();
+    assert_eq!(sent_titles(&mut app, &ctx), ["Quarterly review • — DeckCraft"]);
+    assert!(sent_titles(&mut app, &ctx).is_empty());
+
+    // Save As under another name renames it and clears the mark.
+    let dir = std::env::temp_dir().join(format!("deckcraft-title-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("Board update.deckcraft").to_string_lossy().to_string();
+    app.session.execute("file.saveAs", &json!({"path": path})).unwrap();
+    assert_eq!(sent_titles(&mut app, &ctx), ["Board update — DeckCraft"]);
+    let _ = std::fs::remove_dir_all(&dir);
+
+    app.session.execute("file.close", &json!({})).unwrap();
+    assert_eq!(sent_titles(&mut app, &ctx), ["DeckCraft"]);
+}
+
+/// X11 window titles are C strings (a NUL panicked there in a sibling app): a file name sent with a
+/// NUL over the control channel must not carry it into the window title.
+#[test]
+fn the_window_title_drops_nul_characters() {
+    let mut app = SlideApp::new(Session::new(), Services::default());
+    let data = Session::with_new().execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+    app.session.execute("file.openBytes", &json!({"name": "Q3\u{0}deck.deckcraft", "data": data})).unwrap();
+    assert_eq!(app.window_title(), "Q3deck — DeckCraft");
+}
