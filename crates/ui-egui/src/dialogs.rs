@@ -83,7 +83,7 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
     let Some(mut d) = app.dialog.take() else { return };
     let mut open = true;
     let mut close = false;
-    let mut window = egui::Window::new(title(&d.id))
+    let mut window = egui::Window::new(tl!(title(&d.id)))
         .id(egui::Id::unique(("dialog", d.id.clone())))
         .collapsible(false)
         .resizable(false)
@@ -132,12 +132,12 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
     ui.add_space(8.0);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let t = Tokens::get(ui.ctx());
-        if ui.add(egui::Button::new(egui::RichText::new(ok_label).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0))).clicked()
+        if ui.add(egui::Button::new(egui::RichText::new(tl!(ok_label)).color(t.accent_text)).fill(t.accent).min_size(vec2(72.0, 24.0))).clicked()
             || ui.input(|i| i.key_pressed(egui::Key::Enter))
         {
             ok = true;
         }
-        if ui.add(egui::Button::new("Cancel").min_size(vec2(72.0, 24.0))).clicked() {
+        if ui.add(egui::Button::new(tl!("Cancel")).min_size(vec2(72.0, 24.0))).clicked() {
             cancel = true;
         }
     });
@@ -149,7 +149,7 @@ fn buttons(ui: &mut Ui, ok_label: &str) -> (bool, bool) {
 fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
     let mut v = d.get(key, default);
     ui.horizontal(|ui| {
-        let l = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(label));
+        let l = ui.add_sized(vec2(120.0, 20.0), egui::Label::new(tl!(label)));
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(180.0)).labelled_by(l.id);
     });
     d.fields.insert(key.into(), v);
@@ -157,7 +157,7 @@ fn field(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: &str) {
 
 fn check(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, default: bool) -> bool {
     let mut v = d.get(key, if default { "1" } else { "0" }) == "1";
-    ui.checkbox(&mut v, label);
+    ui.checkbox(&mut v, tl!(label));
     d.fields.insert(key.into(), if v { "1".into() } else { "0".into() });
     v
 }
@@ -194,7 +194,7 @@ fn exact_of(d: &Dialog, key: &str) -> Option<f64> {
 fn text_row(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str) {
     let mut v = field_of(d, key);
     ui.horizontal(|ui| {
-        let l = ui.add_sized(vec2(148.0, 20.0), egui::Label::new(label));
+        let l = ui.add_sized(vec2(148.0, 20.0), egui::Label::new(tl!(label)));
         ui.add(egui::TextEdit::singleline(&mut v).desired_width(96.0)).labelled_by(l.id);
     });
     d.fields.insert(key.into(), v);
@@ -261,15 +261,15 @@ fn color_label(v: &Value) -> String {
 /// the caller supplies the visible label.
 fn choice(ui: &mut Ui, d: &mut Dialog, salt: &str, name: &str, key: &str, choices: &[(&str, &str)]) {
     let cur = d.get(key, "");
-    let label = choices.iter().find(|(v, _)| *v == cur).map(|(_, l)| *l).unwrap_or(cur.as_str());
+    let label = choices.iter().find(|(v, _)| *v == cur).map(|(_, l)| tl!(l)).unwrap_or(cur.as_str());
     let combo = craft_ui::ComboBox::from_id_salt(salt).selected_text(label).width(140.0).show_ui(ui, |ui| {
         for (v, l) in choices {
-            if ui.selectable_label(cur == *v, *l).clicked() {
+            if ui.selectable_label(cur == *v, tl!(l)).clicked() {
                 d.fields.insert((*key).into(), (*v).into());
             }
         }
     });
-    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, name));
+    combo.response.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, tl!(name)));
 }
 
 fn labeled_text(ui: &mut Ui, d: &mut Dialog, label: &str, key: &str, width: f32) -> String {
