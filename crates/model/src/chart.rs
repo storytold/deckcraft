@@ -220,6 +220,10 @@ impl Default for Trendline {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Series {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geography: Option<crate::geography::Geography>,
+    pub label_defaults: DataLabel,
+    pub point_labels: std::collections::BTreeMap<usize, DataLabel>,
     pub name: String,
     pub values: Vec<Option<f64>>,
     /// X values for scatter/bubble.
@@ -252,7 +256,72 @@ pub struct Series {
     pub inclusive_quartiles: Option<bool>,
 }
 
+/// Sparse point overrides inherit the series/group label properties.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DataLabel {
+    pub hidden: Option<bool>,
+    pub text: Option<crate::text::TextBody>,
+    pub style: Option<crate::text::TextBody>,
+    pub position: Option<String>,
+    pub layout: Option<ChartLayout>,
+    pub number_format: Option<String>,
+    pub show_value: Option<bool>,
+    pub show_category: Option<bool>,
+    pub show_series: Option<bool>,
+    pub show_percent: Option<bool>,
+    pub show_bubble_size: Option<bool>,
+    pub separator: Option<String>,
+    pub fill: Option<Fill>,
+    pub line: Option<Line>,
+}
+impl DataLabel {
+    pub fn inherit(&mut self, parent: &Self) {
+        if let (Some(child), Some(parent)) = (&mut self.style, &parent.style) {
+            child.body.inherit(&parent.body);
+            if child.paragraphs.is_empty() {
+                child.paragraphs = parent.paragraphs.clone();
+            }
+            for (i, p) in child.paragraphs.iter_mut().enumerate() {
+                if let Some(base) = parent.paragraphs.get(i).or_else(|| parent.paragraphs.first()) {
+                    p.props.inherit(&base.props);
+                    p.def_props.inherit(&base.def_props);
+                    if let Some(run) = base.runs.first() {
+                        p.def_props.inherit(&run.props);
+                    }
+                    for run in &mut p.runs {
+                        run.props.inherit(&p.def_props);
+                    }
+                }
+            }
+        }
+        macro_rules! inherit { ($($field:ident),*) => { $(if self.$field.is_none() { self.$field = parent.$field.clone(); })* }; }
+        inherit!(
+            hidden,
+            text,
+            style,
+            position,
+            layout,
+            number_format,
+            show_value,
+            show_category,
+            show_series,
+            show_percent,
+            show_bubble_size,
+            separator,
+            fill,
+            line
+        );
+    }
+}
+
 impl Series {
+    pub fn label(&self, index: usize) -> DataLabel {
+        let mut label = self.point_labels.get(&index).cloned().unwrap_or_default();
+        label.inherit(&self.label_defaults);
+        label
+    }
+
     pub fn extended_options<'a>(&'a self, chart: &'a Chart) -> &'a ExtendedChartOptions {
         self.extended.as_ref().unwrap_or(&chart.extended)
     }
@@ -936,6 +1005,52 @@ impl Chart {
 
     /// Does series `s` show its data labels? The series' own `c:dLbls/c:showVal` wins — an
     /// explicit `false` hides them even when the chart-wide setting is on (#868).
+    /// Visible label text at a point, including category/series/percentage and custom runs.
+    pub fn point_label(&self, series: &Series, index: usize) -> Option<String> {
+        let label = series.label(index);
+        if label.hidden == Some(true) {
+            return None;
+        }
+        if let Some(text) = label.text {
+            return Some(text.text());
+        }
+        let requested = [label.show_value, label.show_category, label.show_series, label.show_percent, label.show_bubble_size];
+        if !self.series_data_labels(series) && !requested.contains(&Some(true)) && !series.point_labels.contains_key(&index) {
+            return None;
+        }
+        let value = series.values.get(index).copied().flatten()?;
+        if !value.is_finite() {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if label.show_series == Some(true) {
+            parts.push(series.name.clone());
+        }
+        if label.show_category == Some(true) {
+            parts.push(self.categories.get(index).cloned().unwrap_or_default());
+        }
+        if label.show_value.unwrap_or(self.series_data_labels(series)) {
+            parts.push(if let Some(code) = label.number_format.as_deref() {
+                crate::numfmt::format(code, value, self.lang.as_deref())
+            } else {
+                self.data_label(series, value)
+            });
+        }
+        if label.show_percent == Some(true) {
+            let total: f64 = series.values.iter().flatten().filter(|v| v.is_finite()).map(|v| v.max(0.)).sum();
+            if total > 0.0 {
+                let code = label.number_format.as_deref().filter(|s| s.contains('%')).unwrap_or("0%");
+                parts.push(crate::numfmt::format(code, value.max(0.) / total, self.lang.as_deref()));
+            }
+        }
+        if label.show_bubble_size == Some(true)
+            && let Some(size) = series.sizes.get(index).copied().flatten()
+        {
+            parts.push(self.data_label(series, size));
+        }
+        (!parts.is_empty()).then(|| parts.join(label.separator.as_deref().unwrap_or(", ")))
+    }
+
     pub fn series_data_labels(&self, s: &Series) -> bool {
         s.data_labels.unwrap_or(self.data_labels)
     }

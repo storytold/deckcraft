@@ -17,6 +17,7 @@ struct Data {
     categories: Vec<String>,
     /// Outer category levels, innermost first.
     levels: Vec<Vec<String>>,
+    entities: Vec<String>,
     numbers: HashMap<String, (Vec<Option<f64>>, Option<String>)>,
 }
 
@@ -59,7 +60,9 @@ fn data(d: &El, budget: &mut usize) -> Data {
         // The first level is the innermost: a treemap's leaves, a waterfall's categories.
         let Some(lvl) = dim.child("lvl") else { continue };
         let ty = dim.attr("type").unwrap_or("");
-        if dim.is("strDim") || (dim.is("numDim") && ty == "cat") {
+        if dim.is("strDim") && ty == "entityId" {
+            out.entities = points(lvl, budget);
+        } else if dim.is("strDim") || (dim.is("numDim") && ty == "cat") {
             if ty == "cat" || out.categories.is_empty() {
                 out.categories = points(lvl, budget);
                 // Further levels are the hierarchy's parents, innermost first.
@@ -186,8 +189,9 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
                 .collect();
         }
         let name = s.child("tx").and_then(|t| t.find("v")).map(|v| v.text()).unwrap_or_default();
-        c.series.push(Series {
+        let mut series = Series {
             name,
+            geography: s.path(&["layoutPr", "geography"]).map(|g| geography(g, d)),
             values,
             extended: s.child("layoutPr").map(|_| options),
             inclusive_quartiles,
@@ -196,7 +200,9 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
             fill: super::chart::simple_fill(s.child("spPr")),
             line: super::chart::simple_line(s.child("spPr")),
             ..Default::default()
-        });
+        };
+        super::chart_labels::read(&mut series, s.child("dataLabels"), true);
+        c.series.push(series);
     }
     c.kind = kind?;
     c.data_labels = c.series.iter().any(|s| s.data_labels == Some(true));
@@ -224,4 +230,64 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
     c.legend_overlay = ch.child("legend").and_then(|e| e.bool("overlay")) == Some(true);
     c.format.title_overlay = ch.child("title").and_then(|e| e.bool("overlay")) == Some(true);
     Some(c)
+}
+
+fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
+    use deckcraft_model::geography::{GeoRegion, Geography, MAX_GEO_POINTS, decode_ring};
+    let mut map = Geography {
+        projection: g.attr("projectionType").unwrap_or("mercator").into(),
+        attribution: g.attr("attribution").unwrap_or("").into(),
+        regions: vec![],
+    };
+    let Some(clear) = g.path(&["geoCache", "clear"]) else { return map };
+    let mut budget = MAX_GEO_POINTS;
+    let Some(results) = clear.child("geoDataEntityQueryResults") else { return map };
+    for result in results.children_named("geoDataEntityQueryResult").take(4096) {
+        let Some(data) = result.child("geoData") else { continue };
+        let mut region = GeoRegion {
+            entity_id: data.attr("entityId").unwrap_or("").into(),
+            name: data.attr("entityName").unwrap_or("").into(),
+            ..Default::default()
+        };
+        region.point = d
+            .entities
+            .iter()
+            .position(|id| !id.is_empty() && *id == region.entity_id)
+            .or_else(|| d.categories.iter().position(|n| n.trim().eq_ignore_ascii_case(region.name.trim())));
+        if let Some(polys) = data.child("geoPolygons") {
+            for poly in polys.children_named("geoPolygon").take(4096) {
+                let mut encoded = poly.attr("pcaRings").unwrap_or("").split(',');
+                if encoded.next() != Some("0") {
+                    continue;
+                }
+                let mut rings = Vec::new();
+                let mut valid = true;
+                for ring in encoded.take(4096) {
+                    if let Some(points) = decode_ring(ring, &mut budget) {
+                        rings.push(points);
+                    } else {
+                        valid = false;
+                        break;
+                    }
+                }
+                let count: usize = rings.iter().map(Vec::len).sum();
+                if valid && poly.u32("numPoints").is_none_or(|n| n as usize == count) {
+                    region.rings.extend(rings);
+                }
+                if budget == 0 {
+                    break;
+                }
+            }
+        }
+        if let Some(copyrights) = data.child("copyrights") {
+            region.copyrights = copyrights.children_named("copyright").take(64).map(El::text).collect();
+        }
+        if !region.rings.is_empty() {
+            map.regions.push(region);
+        }
+        if budget == 0 {
+            break;
+        }
+    }
+    map
 }

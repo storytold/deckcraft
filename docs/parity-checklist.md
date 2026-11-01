@@ -2,6 +2,8 @@
 
 > **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.
 
+> **PPTX.8 reviewed 2026-11-01:** named diagram equations/bounds, clear-cache geographic boundaries and classic rich point labels now have original regressions. Native label/forward-reference observations pass; native cyclic-layout and synthetic-map behavior differ. Complete rule search, opaque map caches and all chartEx label layouts remain partial. Scores unchanged.
+
 > **Extended rendering 2026-11-01:** MTX font decoding is independently verified; chartEx statistics/visibility and uncached SmartArt layout paths have regressions and schema checks. Fresh chartEx native opening now passes with complete style parts and native scalar encoding; named uncached composite geometry/text defaults are validated. Embedded SVG and bubble semantics now have direct-render checks. Chart and SmartArt scores stay P.
 
 > **Direct-render coverage 2026-11-01:** manual chart rectangles/rotations/strokes, cached SmartArt root transforms, authored fallback selection and six-script font probes are exercised. Direct PowerPoint comparisons cover six cached diagram layouts and the chart/font pages. The earlier native chartEx open/export failure is resolved; chart/SmartArt scores stay partial.

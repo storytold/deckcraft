@@ -16,7 +16,9 @@ use crate::color;
 pub fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {
     let Some(s) = c.series.first() else { return };
     if c.kind == ChartType::RegionMap {
-        region_tiles(ctx, rctx, c, m, area, base, text_col);
+        if !crate::geo_chart::draw(ctx, rctx, c, m, area, base, text_col) {
+            region_tiles(ctx, rctx, c, m, area, base, text_col);
+        }
         return;
     }
     let vals: Vec<f64> = s.values.iter().map(|v| v.unwrap_or(0.0).max(0.0)).collect();
@@ -83,14 +85,13 @@ fn funnel(
 }
 
 /// Mix `a` towards `b` by `t` (0..1).
-fn mix(a: Rgba, b: Rgba, t: f64) -> Rgba {
+pub(crate) fn mix(a: Rgba, b: Rgba, t: f64) -> Rgba {
     let t = t.clamp(0.0, 1.0);
     let f = |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * t).round().clamp(0.0, 255.0) as u8;
     Rgba::rgb(f(a.r, b.r), f(a.g, b.g), f(a.b, b.b))
 }
 
-/// A region map without its geography: the boundaries PowerPoint caches come from an online
-/// map service in an undocumented format and DeckCraft ships no map data, so each region is a
+/// A region map without a usable geographic cache: each region is a
 /// tile in a grid, coloured on the map's value scale, with the scale below and a note saying
 /// the map itself is not drawn.
 fn region_tiles(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) {

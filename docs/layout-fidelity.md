@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01: native chartEx interoperability, uncached composite geometry/text defaults,
-MTX failure caching, tighter bounded font-floor fitting, bubble semantics and embedded SVG rendering.
+Updated 2026-11-01: sparse diagram constraint solving, document-owned geographic polygons,
+rich point labels, and native observations separating successful checks from remaining limits.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -276,7 +276,7 @@ The uncached package passes the SDK validator. Native text observations at multi
 also verify the default line/paragraph spacing and insets.
 
 These paths do **not** establish equivalence to all of PowerPoint's SmartArt layouts.
-Cyclic/descendant reference solving, the complete width/height rule-search policy,
+The complete width/height rule-search policy,
 accent-pyramid variants, automatic text rotation and all 2-D connector shapes are not
 exhaustively modeled or independently certified. Accordingly chart/SmartArt parity scores stay
 partial; a blanket arbitrary-deck replacement claim is not warranted. All implementation/tests
@@ -290,3 +290,66 @@ The two 20-page cases take approximately 5.0 and 4.4 seconds on the validation m
 Visual inspection covers every contact-sheet page and selected full-resolution source comparisons.
 This measures the tested corpus, not every PPTX representation. No private filenames or content
 are distributed upstream. The export process has no LibreOffice executable on its restricted PATH.
+
+
+### Diagram equations, geographic caches and rich data labels (PPTX.8)
+
+The diagram interpreter now compiles named self/child/descendant references into sparse affine
+rows. Reference point-type filters and repeated-node pairing are applied before solving.
+Coordinate expressions account for ancestor offsets; left/right/centre constraints can determine
+extents. Unconstrained geometry remains linked to its container, so a resized composite propagates
+to children. Sparse elimination resolves forward chains and algebraically solvable cycles;
+Dykstra half-space projection handles lower/upper bounds in the equality system's free variables.
+Both operations share the existing work budget. Inconsistent, unbounded and negative-extent
+solutions fail explicitly, retaining the original diagram graph instead of guessing a last iteration.
+
+Tests cover a 24-node reference chain, coupled cycles, named descendants, paired edges, tightening
+bounds, missing references and contradictions, in addition to the existing layout/connector tests.
+Original uncached forward-reference and cycle integration fixtures retain all six shapes and their
+geometry across export/import. Native PowerPoint opens both; the forward-reference fixture uses the
+six-shape custom layout. The cyclic fixture falls back to three generic blocks in the tested native
+version. This is an explicit difference, **not** evidence of cyclic-layout pixel equivalence.
+Text-dependent width/height rule search and every native fallback policy remain unverified.
+
+Region maps now parse `cx:geography/cx:geoCache/cx:clear` entity polygons, decode PCA rings with
+checked integer arithmetic, bind regions to data by entity id/name (not XML order), and draw actual
+boundaries with even-odd holes and dateline wrapping. The document supplies all geometry; no online
+service, map assets or external converter is used. Mercator and Miller projections use their
+spherical formulas; Albers uses 20/50-degree standard parallels and Robinson uses interpolated
+five-degree tabulation. These deterministic projection choices do not reproduce every native
+viewport heuristic. Attribution/copyright strings remain visible. Unchanged imported geography
+keeps its original query/layout XML even through unrelated chart edits.
+
+The original polygon fixture reverses region/data order and has a hole; tests assert value-colour
+assignment, the unpainted hole, dateline width, malformed-input limits and rebuild preservation.
+The public PCA numerical vector supplies an independent decoder check. The package passes SDK
+validation and opens in PowerPoint, but the synthetic non-service geography renders blank there;
+therefore this is **not** a native map visual-parity pass. Opaque provider-specific `binary` caches
+are retained but not decoded; missing/unusable boundaries still display explicitly labelled tiles.
+
+Classic data labels now retain default/point overrides, multiple rich runs/paragraphs, font slots,
+size, bold/italic/underline, baseline/spacing, fill, rotation, delete, manual layout, number formats,
+separator and value/category/series/percent/bubble-size visibility. Column/bar, line, scatter,
+bubble and pie/doughnut labels use the native slide-text renderer. chartEx point visibility and
+text-style structures are read and rebuilt; not every chartEx layout applies all label overrides.
+Export materializes inherited visibility and text rotation where native PowerPoint expects them,
+preventing unwanted series names/legend keys and lost precision. Auto outside labels clear their
+rotated extent; manual positions are preserved. Full leader-line/callout routing, collision
+avoidance and all rich chart title/legend cases remain outside this change.
+
+`geographic_labels` verifies rendered mixed-run colours, rotation/hidden labels, manual position,
+percent precision, geographic holes and forced model rebuilds. Native label observation confirms
+the mixed fonts/colours, rotation, hidden middle label and `8.00` format after correction. Native
+automatic plot spacing still differs. Original and rebuilt layout probes remain pixel-identical.
+
+Final validation passes all eight `cargo xtask ci` stages, including WASM. The expanded direct
+export batch contains 58 pages at 3840 pixels wide; every input hash remains unchanged. These
+are rendering, package and regression checks with the native comparison limits above, not a
+claim that all 58 pages are pixel-identical to PowerPoint.
+
+Format/algorithm references (no vendor visual assets are included):
+- [DrawingML diagram constraints](https://learn.microsoft.com/en-us/dotnet/api/documentformat.openxml.drawing.diagrams.constraint)
+- [chartEx schema and geography cache](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-odrawxml/e2723b0a-9120-42a5-bd11-c252ccb13c1e)
+- [PCA wire algorithm](https://learn.microsoft.com/en-us/bingmaps/rest-services/elevations/point-compression-algorithm)
+- [Geographic ring framing](https://learn.microsoft.com/en-us/bingmaps/spatial-data-services/geodata-api)
+- [Miller projection](https://proj.org/en/stable/operations/projections/mill.html)

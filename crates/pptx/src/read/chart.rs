@@ -177,7 +177,7 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     Some(c)
 }
 
-fn manual_layout(e: Option<&El>) -> Option<ChartLayout> {
+pub(super) fn manual_layout(e: Option<&El>) -> Option<ChartLayout> {
     let e = e?.path(&["layout", "manualLayout"])?;
     if ["x", "y", "w", "h"]
         .into_iter()
@@ -393,6 +393,8 @@ fn read_series(s: &El, g: &El, group: (ChartType, bool, Option<bool>), categorie
             ser.trendlines.push(t);
         }
     }
+    super::chart_labels::read(&mut ser, g.child("dLbls"), false);
+    super::chart_labels::read(&mut ser, s.child("dLbls"), false);
     ser.number_format = label_number_format(s, g);
     for dp in s.children_named("dPt") {
         if let (Some(i), Some(f)) = (dp.child("idx").and_then(|i| i.u32("val")), simple_fill(dp.child("spPr"))) {
@@ -520,34 +522,37 @@ pub(super) fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option
     c.title_size = ch.child("title").and_then(|t| text_size(t.child("tx").and_then(|x| x.child("rich"))).or_else(|| text_size(t.child("txPr"))));
 }
 
-/// A chart label's default/first-run typography. Full rich-text runs remain in raw XML; this
-/// bounded reader covers families (all script slots), size, weight, slant, language and fill.
+/// Run typography shared by chart styles and each rich data-label run.
+pub(super) fn label_run_props(e: &El) -> deckcraft_model::text::RunProps {
+    use deckcraft_model::text::RunProps;
+    let font = |tag: &str| e.child(tag).and_then(|f| f.attr("typeface")).filter(|f| !f.is_empty()).map(|f| f.chars().take(256).collect());
+    RunProps {
+        font: font("latin"),
+        font_ea: font("ea"),
+        font_cs: font("cs"),
+        font_sym: font("sym"),
+        size: e.f64("sz").filter(|s| s.is_finite()).map(|s| (s / 100.0).clamp(1.0, 4000.0)),
+        bold: e.bool("b"),
+        italic: e.bool("i"),
+        underline: e.attr("u").map(str::to_string),
+        baseline: e.f64("baseline").map(|n| (n / 100000.).clamp(-10., 10.)),
+        spacing: e.f64("spc").map(|n| (n / 100.).clamp(-4000., 4000.)),
+        lang: e.attr("lang").map(str::to_string),
+        fill: simple_fill(Some(e)),
+        ..Default::default()
+    }
+}
 fn chart_text_props(e: Option<&El>) -> Option<deckcraft_model::text::RunProps> {
     use deckcraft_model::text::RunProps;
-    fn read(e: &El) -> RunProps {
-        let font = |tag: &str| e.child(tag).and_then(|f| f.attr("typeface")).filter(|f| !f.is_empty()).map(|f| f.chars().take(256).collect());
-        RunProps {
-            font: font("latin"),
-            font_ea: font("ea"),
-            font_cs: font("cs"),
-            font_sym: font("sym"),
-            size: e.f64("sz").filter(|s| s.is_finite()).map(|s| (s / 100.0).clamp(1.0, 4000.0)),
-            bold: e.bool("b"),
-            italic: e.bool("i"),
-            lang: e.attr("lang").map(str::to_string),
-            fill: simple_fill(Some(e)),
-            ..Default::default()
-        }
-    }
     let e = e?;
     let p = e.child("p");
-    let mut props = p.and_then(|p| p.child("r")).and_then(|r| r.child("rPr")).map(read).unwrap_or_default();
+    let mut props = p.and_then(|p| p.child("r")).and_then(|r| r.child("rPr")).map(label_run_props).unwrap_or_default();
     if let Some(default) = p.and_then(|p| p.child("pPr")).and_then(|p| p.child("defRPr")) {
-        props.inherit(&read(default));
+        props.inherit(&label_run_props(default));
     }
     for path in [["lstStyle", "lvl1pPr", "defRPr"], ["lstStyle", "defPPr", "defRPr"]] {
         if let Some(default) = e.path(&path) {
-            props.inherit(&read(default));
+            props.inherit(&label_run_props(default));
         }
     }
     (props != RunProps::default()).then_some(props)

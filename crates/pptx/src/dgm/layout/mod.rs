@@ -1,5 +1,6 @@
 //! Bounded interpreter for DrawingML diagram layout definitions (ISO/IEC 29500 §21.4).
 //! Executes the document's layout tree rather than guessing a template from its display name.
+mod constraints;
 mod data;
 mod geometry;
 #[cfg(test)]

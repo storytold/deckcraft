@@ -2,6 +2,7 @@
 
 pub(crate) mod chart;
 mod chart_data;
+mod chart_labels;
 mod chart_style;
 pub(crate) mod dml;
 mod shapes;

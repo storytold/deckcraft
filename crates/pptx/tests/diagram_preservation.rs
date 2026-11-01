@@ -404,3 +404,61 @@ fn presentation_point_associations_update_only_the_owned_node() {
     updated.nodes[0].title = "No mapped title shape".into();
     assert!(deckcraft_pptx::edit_imported_diagram_text(g, &updated).is_err());
 }
+
+#[test]
+fn uncached_affine_cycle_renders_all_shapes_without_an_external_converter() {
+    let mut parts = files(&uncached_fixture());
+    for (name, bytes) in &mut parts {
+        if name.ends_with("layout1.xml") && name.contains("diagrams/") {
+            let xml = String::from_utf8(bytes.clone()).unwrap();
+            *bytes = xml
+                .replace(
+                    "type=\"w\" for=\"ch\" forName=\"header\" refType=\"w\" fact=\"0.9\"",
+                    "type=\"w\" for=\"ch\" forName=\"header\" refFor=\"ch\" refForName=\"details\" refType=\"w\" fact=\"0.5\" val=\"15\"",
+                )
+                .replace(
+                    "type=\"w\" for=\"ch\" forName=\"details\" refType=\"w\" fact=\"0.9\"",
+                    "type=\"w\" for=\"ch\" forName=\"details\" refFor=\"ch\" refForName=\"header\" refType=\"w\" fact=\"0.5\" val=\"15\"",
+                )
+                .into_bytes();
+        }
+    }
+    let bytes = zip(parts);
+    let p = deckcraft_pptx::import(&bytes).unwrap();
+    let shapes = group(&p).children();
+    assert_eq!(shapes.len(), 6);
+    for shape in shapes {
+        assert!((shape.xfrm.unwrap().w - 30. * 72. / 25.4).abs() < 1e-5);
+    }
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+    assert_eq!(geometry(group(&p)), geometry(group(&back)));
+    if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+        std::fs::write(std::path::PathBuf::from(dir).join("uncached-affine-cycle.pptx"), bytes).unwrap();
+    }
+}
+
+#[test]
+fn uncached_forward_reference_sizes_follow_the_named_sibling() {
+    let mut parts = files(&uncached_fixture());
+    for (name, bytes) in &mut parts {
+        if name.ends_with("layout1.xml") && name.contains("diagrams/") {
+            *bytes = String::from_utf8(bytes.clone())
+                .unwrap()
+                .replace(
+                    "type=\"w\" for=\"ch\" forName=\"header\" refType=\"w\" fact=\"0.9\"",
+                    "type=\"w\" for=\"ch\" forName=\"header\" refFor=\"ch\" refForName=\"details\" refType=\"w\" fact=\"0.8\"",
+                )
+                .into_bytes();
+        }
+    }
+    let bytes = zip(parts);
+    let p = deckcraft_pptx::import(&bytes).unwrap();
+    let shapes = group(&p).children();
+    assert_eq!(shapes.len(), 6);
+    for pair in shapes.chunks_exact(2) {
+        assert!((pair[0].xfrm.unwrap().w - 0.8 * pair[1].xfrm.unwrap().w).abs() < 1e-5);
+    }
+    if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+        std::fs::write(std::path::PathBuf::from(dir).join("forward-reference.pptx"), bytes).unwrap();
+    }
+}

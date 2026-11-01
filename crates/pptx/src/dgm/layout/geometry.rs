@@ -4,18 +4,18 @@ use crate::xml::El;
 use deckcraft_geom::Xfrm;
 
 #[derive(Clone, Copy, PartialEq)]
-struct BoxStyle {
-    rect: Xfrm,
-    font: Option<f64>,
-    min_font: Option<f64>,
-    margins: [Option<f64>; 4],
-    extra: [Option<f64>; 64],
+pub(super) struct BoxStyle {
+    pub(super) rect: Xfrm,
+    pub(super) font: Option<f64>,
+    pub(super) min_font: Option<f64>,
+    pub(super) margins: [Option<f64>; 4],
+    pub(super) extra: [Option<f64>; 64],
 }
 impl BoxStyle {
-    fn new(rect: Xfrm) -> Self {
+    pub(super) fn new(rect: Xfrm) -> Self {
         Self { rect, font: None, min_font: None, margins: [None; 4], extra: [None; 64] }
     }
-    fn get(&self, property: &str) -> Option<f64> {
+    pub(super) fn get(&self, property: &str) -> Option<f64> {
         let r = self.rect;
         Some(match property {
             "diam" => r.w.min(r.h),
@@ -35,7 +35,7 @@ impl BoxStyle {
             _ => return extra_index(property).and_then(|i| self.extra.get(i)).copied().flatten(),
         })
     }
-    fn set(&mut self, property: &str, value: f64, op: &str) {
+    pub(super) fn set(&mut self, property: &str, value: f64, op: &str) {
         if !value.is_finite() || value.abs() > 1e6 {
             return;
         }
@@ -100,15 +100,10 @@ fn extra_index(property: &str) -> Option<usize> {
 }
 
 pub(super) fn place<'a>(node: &Instance<'a>, rect: Xfrm, data: &Data<'a>, out: &mut Vec<Placed<'a>>, depth: usize) -> Result<(), &'static str> {
-    let mut style = BoxStyle::new(rect);
-    self_constraints(node, &mut style);
-    place_inner(node, style, data, out, depth, &[], &mut 0)
-}
-
-#[derive(Clone, Copy)]
-struct Inherited<'a> {
-    constraint: &'a El,
-    reference: BoxStyle,
+    let mut work = 0;
+    let solution = super::constraints::resolve(node, rect, data, &mut work)?;
+    let style = super::constraints::lookup(&solution, node).unwrap_or_else(|| BoxStyle::new(rect));
+    place_inner(node, style, data, out, depth, &solution, &mut work)
 }
 
 fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
@@ -123,21 +118,13 @@ fn place_inner<'a>(
     data: &Data<'a>,
     out: &mut Vec<Placed<'a>>,
     depth: usize,
-    inherited: &[Inherited<'a>],
+    solution: &super::constraints::Solution,
     work: &mut usize,
 ) -> Result<(), &'static str> {
     if depth > 64 || out.len() >= MAX_INSTANCES {
         return Err("diagram geometry budget exceeded");
     }
-    charge(work, 1 + node.rules.len() + node.constraints.len() + inherited.len())?;
-    for inherited in inherited {
-        let c = inherited.constraint;
-        if matches_target(node, c, data)
-            && let Some(value) = constraint_value(c, &inherited.reference)
-        {
-            style.set(c.attr("type").unwrap_or(""), value, c.attr("op").unwrap_or("equ"));
-        }
-    }
+    charge(work, 1 + node.rules.len())?;
     for rule in &node.rules {
         if rule.attr("type") == Some("primFontSz") {
             style.min_font = rule.f64("val").filter(|v| *v > 0.0);
@@ -180,45 +167,20 @@ fn place_inner<'a>(
         return Ok(());
     }
     let local = BoxStyle { rect: Xfrm::new(0.0, 0.0, style.rect.w, style.rect.h), ..style };
-    let mut children: Vec<_> = initial(node, local).into_iter().map(|rect| BoxStyle { rect, ..local }).collect();
-    for (child, bounds) in node.children.iter().zip(&mut children) {
-        charge(work, child.constraints.len())?;
-        self_constraints(child, bounds);
-    }
-    // A bounded relaxation handles forward references (e.g. arrow width depends on node width).
-    for _ in 0..8 {
-        charge(work, children.len())?;
-        let before = children.clone();
-        for constraint in node.constraints.iter().filter(|e| matches!(e.attr("for"), Some("ch" | "des"))) {
-            charge(work, children.len().saturating_mul(2))?;
-            let reference = match constraint.attr("refFor").unwrap_or("self") {
-                "ch" | "des" => node
-                    .children
-                    .iter()
-                    .position(|c| constraint.attr("refForName").is_none_or(|n| n.is_empty() || n == c.name))
-                    .and_then(|i| children.get(i))
-                    .copied()
-                    .unwrap_or(local),
-                _ => local,
-            };
-            let Some(value) = constraint_value(constraint, &reference) else { continue };
-            for (child, bounds) in node.children.iter().zip(children.iter_mut()) {
-                if matches_target(child, constraint, data) {
-                    bounds.set(constraint.attr("type").unwrap_or(""), value, constraint.attr("op").unwrap_or("equ"));
-                }
-            }
-        }
-        if children == before {
-            break;
-        }
-    }
+    let mut children: Vec<_> = node
+        .children
+        .iter()
+        .zip(initial(node, local))
+        .map(|(child, rect)| {
+            let mut resolved = super::constraints::lookup(solution, child).unwrap_or(BoxStyle { rect, ..local });
+            resolved.font = resolved.font.or(local.font);
+            resolved.min_font = resolved.min_font.or(local.min_font);
+            resolved
+        })
+        .collect();
     // Linear placement uses the constrained sizes, including invisible spacing nodes.
     if matches!(node.alg.as_str(), "lin" | "hierChild") {
         pack_linear(node, local, &mut children);
-    }
-    let mut inherited = inherited.to_vec();
-    for constraint in node.constraints.iter().filter(|c| c.attr("for") == Some("des")) {
-        inherited.push(Inherited { constraint, reference: local });
     }
     let iter: Box<dyn Iterator<Item = usize>> =
         if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
@@ -229,7 +191,7 @@ fn place_inner<'a>(
             global.rect.x += style.rect.x;
             global.rect.y += style.rect.y;
             let start = out.len();
-            place_inner(child, global, data, out, depth + 1, &inherited, work)?;
+            place_inner(child, global, data, out, depth + 1, solution, work)?;
             if let Some(range) = ranges.get_mut(i) {
                 *range = start..out.len();
             }
@@ -237,11 +199,6 @@ fn place_inner<'a>(
     }
     pack_composite_extents(node, style, local, &children, &ranges, out, work)?;
     Ok(())
-}
-
-fn matches_target(node: &Instance<'_>, constraint: &El, data: &Data<'_>) -> bool {
-    constraint.attr("forName").is_none_or(|n| n.is_empty() || n == node.name)
-        && constraint.attr("ptType").is_none_or(|t| t == "all" || node.points.iter().any(|i| data.matches(*i, t)))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -300,7 +257,7 @@ fn pack_composite_extents(
     Ok(())
 }
 
-fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
+pub(super) fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
     for constraint in node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self") {
         if let Some(value) = constraint_value(constraint, style) {
             style.set(constraint.attr("type").unwrap_or(""), value, constraint.attr("op").unwrap_or("equ"));
@@ -324,7 +281,7 @@ fn constraint_value(c: &El, reference: &BoxStyle) -> Option<f64> {
     }
 }
 
-fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
+pub(super) fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
     let r = style.rect;
     let count = node.children.len();
     let n = count.max(1) as f64;

@@ -219,3 +219,54 @@ fn forward_user_variable_dependencies_are_not_mistaken_for_convergence() {
     let p = evaluate(&l, &d, frame()).unwrap();
     assert_eq!(p[0].rect.w, 84.0);
 }
+
+#[test]
+fn coupled_cycles_edges_and_descendant_references_solve_together() {
+    let data = source();
+    let layout = layout(
+        r#"<layoutNode name="root"><alg type="composite"/>
+      <layoutNode name="box"><alg type="composite"/><layoutNode name="leaf"><alg type="tx"/><shape type="rect"/></layoutNode></layoutNode>
+      <layoutNode name="other"><alg type="tx"/><shape type="rect"/></layoutNode>
+      <constrLst>
+        <constr type="w" for="ch" forName="box" refFor="ch" refForName="other" refType="w" fact="0.5" val="10"/>
+        <constr type="w" for="ch" forName="other" refFor="ch" refForName="box" refType="w" fact="0.5" val="20"/>
+        <constr type="l" for="des" forName="leaf" val="5"/>
+        <constr type="r" for="des" forName="leaf" refFor="ch" refForName="other" refType="w"/>
+      </constrLst></layoutNode>"#,
+    );
+    let shapes = evaluate(&layout, &data, frame()).unwrap();
+    let other = shapes.iter().find(|s| s.name == "other").unwrap();
+    let leaf = shapes.iter().find(|s| s.name == "leaf").unwrap();
+    assert!((other.rect.w - (100. / 3.) * 72. / 25.4).abs() < 1e-6);
+    assert!((leaf.rect.x - 5. * 72. / 25.4).abs() < 1e-6);
+    assert!((leaf.rect.x + leaf.rect.w - other.rect.w).abs() < 1e-6);
+}
+
+#[test]
+fn longer_than_eight_reference_chain_and_tightening_bounds() {
+    let data = source();
+    let mut xml = String::from("<layoutNode><alg type='composite'/>");
+    for i in 0..24 {
+        xml += &format!("<layoutNode name='n{i}'><alg type='tx'/><shape type='rect'/></layoutNode>");
+    }
+    xml += "<constrLst>";
+    for i in 0..23 {
+        xml += &format!("<constr type='w' for='ch' forName='n{i}' refFor='ch' refForName='n{}' refType='w'/>", i + 1);
+    }
+    xml += "<constr type='w' for='ch' forName='n23' op='gte' val='30'/><constr type='w' for='ch' forName='n23' op='gte' val='40'/><constr type='w' for='ch' forName='n23' op='lte' val='50'/></constrLst></layoutNode>";
+    let layout = layout(&xml);
+    let shapes = evaluate(&layout, &data, frame()).unwrap();
+    assert_eq!(shapes.len(), 24);
+    assert!(shapes.iter().all(|s| (s.rect.w - 50. * 72. / 25.4).abs() < 1e-6));
+}
+
+#[test]
+fn inconsistent_cycles_and_missing_named_references_fail_instead_of_guessing() {
+    let data = source();
+    for reference in ["a", "missing"] {
+        let layout = layout(&format!(
+            "<layoutNode><alg type='composite'/><layoutNode name='a'><shape type='rect'/></layoutNode><constrLst><constr type='w' for='ch' forName='a' refFor='ch' refForName='{reference}' refType='w' val='1'/></constrLst></layoutNode>"
+        ));
+        assert!(evaluate(&layout, &data, frame()).is_err());
+    }
+}

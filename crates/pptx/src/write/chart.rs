@@ -49,7 +49,7 @@ fn sp_pr(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>) {
     sp_pr_tag(w, fill, line, "c:spPr");
 }
 
-fn sp_pr_tag(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>, tag: &str) {
+pub(super) fn sp_pr_tag(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>, tag: &str) {
     if fill.is_none() && line.is_none() {
         return;
     }
@@ -63,7 +63,7 @@ fn sp_pr_tag(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line
     w.close(tag);
 }
 
-fn layout(w: &mut W, layout: Option<&ChartLayout>, plot: bool) {
+pub(super) fn layout(w: &mut W, layout: Option<&ChartLayout>, plot: bool) {
     let Some(l) = layout else { return };
     w.open0("c:layout");
     w.open0("c:manualLayout");
@@ -83,13 +83,16 @@ fn layout(w: &mut W, layout: Option<&ChartLayout>, plot: bool) {
 }
 
 /// The supported text properties, shared by rich title runs and label defaults.
-fn chart_rpr(w: &mut W, tag: &str, p: &deckcraft_model::text::RunProps) {
+pub(super) fn chart_rpr(w: &mut W, tag: &str, p: &deckcraft_model::text::RunProps) {
     w.open(
         tag,
         A::new()
             .o("sz", p.size.filter(|s| s.is_finite()).map(|s| (s.clamp(1.0, 4000.0) * 100.0).round() as i64))
             .o("b", p.bold.map(u8::from))
             .o("i", p.italic.map(u8::from))
+            .o("u", p.underline.as_deref())
+            .o("baseline", p.baseline.filter(|n| n.is_finite()).map(|n| (n.clamp(-10., 10.) * 100000.).round() as i64))
+            .o("spc", p.spacing.filter(|n| n.is_finite()).map(|n| (n.clamp(-4000., 4000.) * 100.).round() as i64))
             .o("lang", p.lang.as_deref()),
     );
     if let Some(fill) = &p.fill {
@@ -311,8 +314,8 @@ fn series(w: &mut W, c: &Chart, s: &Series, i: usize, kind: ChartType, g: Group)
         }
     }
     point_fills(w, s, g);
-    if let Some(d) = s.data_labels {
-        data_labels(w, c, d);
+    if s.data_labels.is_some() || !s.point_labels.is_empty() || s.label_defaults != Default::default() {
+        super::chart_labels::write(w, c, s, false);
     }
     // After labels, before the category and value caches (ECMA-376 series content order).
     if matches!(g, Group::Bar | Group::Line | Group::Area | Group::Scatter) {
@@ -965,6 +968,19 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             }
             w.close("cx:strDim");
         }
+        if let Some(g) = &s.geography {
+            let mut ids = vec![String::new(); c.categories.len().max(s.values.len())];
+            for region in &g.regions {
+                if let Some(i) = region.point
+                    && let Some(id) = ids.get_mut(i)
+                {
+                    *id = region.entity_id.clone();
+                }
+            }
+            w.open("cx:strDim", A::new().a("type", "entityId"));
+            cx_level(&mut w, &ids, None);
+            w.close("cx:strDim");
+        }
         let ty = match c.kind {
             ChartType::Treemap | ChartType::Sunburst => "size",
             ChartType::RegionMap => "colorVal",
@@ -1001,10 +1017,8 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
         sp_pr_tag(&mut w, s.fill.as_ref(), s.line.as_ref(), "cx:spPr");
-        if c.series_data_labels(s) {
-            w.open("cx:dataLabels", A::new().a("pos", if c.kind == ChartType::Funnel { "ctr" } else { "outEnd" }));
-            w.empty("cx:visibility", A::new().a("seriesName", "0").a("categoryName", "0").a("value", "1"));
-            w.close("cx:dataLabels");
+        if c.series_data_labels(s) || !s.point_labels.is_empty() || s.label_defaults != Default::default() {
+            super::chart_labels::write(&mut w, c, s, true);
         }
         w.empty("cx:dataId", A::new().a("val", i));
         match c.kind {
@@ -1061,9 +1075,16 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
                 w.close("cx:layoutPr");
             }
             ChartType::RegionMap => {
-                // The map's geography (projection, region level and the cached boundaries
-                // PowerPoint downloaded) is not modelled: carry it over from the part we read.
-                if let Some(lp) = c.raw.as_deref().and_then(kept_region_layout) {
+                let unchanged = c
+                    .raw
+                    .as_deref()
+                    .and_then(|raw| crate::read::read_chartex_xml(raw.as_bytes()))
+                    .is_some_and(|old| old.series.first().is_some_and(|old| old.geography == s.geography));
+                if unchanged && let Some(lp) = c.raw.as_deref().and_then(kept_region_layout) {
+                    w.raw(&lp);
+                } else if let Some(g) = s.geography.as_ref().filter(|g| !g.regions.is_empty()) {
+                    write_geography(&mut w, g);
+                } else if let Some(lp) = c.raw.as_deref().and_then(kept_region_layout) {
                     w.raw(&lp);
                 }
             }
@@ -1250,4 +1271,71 @@ mod tests {
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
     }
+}
+
+fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
+    w.open0("cx:layoutPr");
+    w.open(
+        "cx:geography",
+        A::new().a("projectionType", &g.projection).a("cultureLanguage", "en-US").a("cultureRegion", "US").a("attribution", &g.attribution),
+    );
+    w.open("cx:geoCache", A::new().a("provider", "DeckCraft"));
+    w.open0("cx:clear");
+    w.open0("cx:geoDataEntityQueryResults");
+    let mut budget = deckcraft_model::geography::MAX_GEO_POINTS;
+    for region in g.regions.iter().take(4096) {
+        let mut rings = Vec::new();
+        for ring in &region.rings {
+            if ring.len() > budget {
+                break;
+            }
+            budget -= ring.len();
+            if let Some(text) = deckcraft_model::geography::encode_ring(ring) {
+                rings.push((text, ring));
+            }
+        }
+        if rings.is_empty() {
+            continue;
+        }
+        let (mut west, mut east, mut north, mut south) = (180f64, -180f64, -90f64, 90f64);
+        for (_, ring) in &rings {
+            for &[x, y] in *ring {
+                west = west.min(x);
+                east = east.max(x);
+                north = north.max(y);
+                south = south.min(y);
+            }
+        }
+        w.open0("cx:geoDataEntityQueryResult");
+        w.empty("cx:geoDataEntityQuery", A::new().a("entityType", "Region").a("entityId", &region.entity_id));
+        w.open(
+            "cx:geoData",
+            A::new()
+                .a("entityName", &region.name)
+                .a("entityId", &region.entity_id)
+                .a("west", west)
+                .a("east", east)
+                .a("north", north)
+                .a("south", south),
+        );
+        w.open0("cx:geoPolygons");
+        let count: usize = rings.iter().map(|(_, r)| r.len()).sum();
+        let encoded = format!("0,{}", rings.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(","));
+        w.empty("cx:geoPolygon", A::new().a("polygonId", &region.entity_id).a("numPoints", count).a("pcaRings", encoded));
+        w.close("cx:geoPolygons");
+        if !region.copyrights.is_empty() {
+            w.open0("cx:copyrights");
+            for text in &region.copyrights {
+                w.elt("cx:copyright", text);
+            }
+            w.close("cx:copyrights");
+        }
+        w.close("cx:geoData");
+        w.close("cx:geoDataEntityQueryResult");
+    }
+    w.close("cx:geoDataEntityQueryResults");
+    w.close("cx:clear");
+    w.close("cx:geoCache");
+    w.close("cx:geography");
+    w.close("cx:layoutPr");
 }

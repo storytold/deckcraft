@@ -111,6 +111,9 @@ plan above.
 
 ## Revision history
 
+PPTX.8 (2026-11-01): direct rendering adds sparse diagram constraints, clear geographic caches
+and rich point labels; provider/native-layout gaps remain documented, and beta scope is unchanged.
+
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-22 | trivial | Beta item 9: Animation Pane ▸ Play From landed, the item keeps effect options (3–6 h) |

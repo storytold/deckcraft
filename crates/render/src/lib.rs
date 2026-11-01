@@ -13,6 +13,7 @@ mod chart;
 mod chartex;
 mod colr;
 mod extrude;
+mod geo_chart;
 mod light;
 
 mod compound;
