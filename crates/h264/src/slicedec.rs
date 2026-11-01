@@ -566,7 +566,7 @@ impl<'a> SliceDecoder<'a> {
         (refs, mvs, false)
     }
 
-    /// Temporal direct mvs (8.4.1.2.4) from the co-located mv and `DistScaleFactor` (clamped
+    /// Temporal direct mvs (8.4.1.2.3) from the co-located mv and `DistScaleFactor` (clamped
     /// to ±1024 in `SliceDecoder`): mvL0 = clip_mv((mvCol · dsf + 128) >> 8), mvL1 =
     /// clip_mv(mvL0 − mvCol), both clipped to the spec's motion-vector range −2^15..2^15−1.
     /// The i32 maths cannot overflow; a truncating `as i16` used to wrap mvL0 past the range,
