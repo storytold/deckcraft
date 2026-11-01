@@ -218,6 +218,45 @@ pub fn effects(ctx: &Ctx, shape: &Shape) -> (Option<Effects>, Option<Rgba>) {
     (None, None)
 }
 
+/// Turn a placeholder into a regular shape that looks the same: what it inherited from its layout
+/// and master placeholders (position, fill, line, effects, style, body properties and the text
+/// style of every outline level, the master's title or body style included) becomes its own, and
+/// `ph` is cleared. A shape that is not a placeholder is left as it is.
+///
+/// Theme references (`+mj-lt`, scheme colours) stay references, so the copy still follows the
+/// destination theme, as PowerPoint's default paste does.
+pub fn detach_placeholder(ctx: &Ctx, shape: &mut Shape) {
+    if shape.ph.is_none() {
+        return;
+    }
+    let (lp, mp) = parents(ctx, shape);
+    let parents = [lp, mp].into_iter().flatten();
+    shape.xfrm = Some(xfrm(ctx, shape));
+    if shape.fill.is_none() && shape.style.is_none() {
+        shape.fill = parents.clone().find_map(|s| s.fill.clone());
+    }
+    if shape.style.is_none() {
+        shape.style = parents.clone().find_map(|s| s.style.clone());
+    }
+    if shape.effects.is_none() {
+        shape.effects = parents.clone().find_map(|s| s.effects.clone());
+    }
+    let mut line = shape.line.clone();
+    for p in parents.filter_map(|s| s.line.as_ref()) {
+        line.get_or_insert_with(Line::default).inherit(p);
+    }
+    shape.line = line;
+    if shape.text.is_some() {
+        let body = body(ctx, shape);
+        let levels: Vec<Option<LevelStyle>> = (0..9).map(|l| Some(level_style(ctx, shape, l))).collect();
+        if let Some(t) = shape.text.as_mut() {
+            t.body = body;
+            t.list_style = ListStyle { levels };
+        }
+    }
+    shape.ph = None;
+}
+
 /// Body properties with defaults filled in.
 pub fn body(ctx: &Ctx, shape: &Shape) -> BodyProps {
     let (lp, mp) = parents(ctx, shape);

@@ -120,6 +120,13 @@ fn copy_inner(s: &mut Session, p: &Value) -> Result<String> {
             })
         })
         .collect();
+    // A placeholder pastes on a slide as a regular shape; it keeps the look it inherited here.
+    let mut shapes = shapes;
+    if st.selection.target == crate::Target::Slides
+        && let Some(ctx) = st.current_slide().and_then(|sl| deckcraft_model::resolve::Ctx::for_slide(&st.doc, sl))
+    {
+        shapes.iter_mut().for_each(|sh| deckcraft_model::resolve::detach_placeholder(&ctx, sh));
+    }
     let mids = crate::media_refs::shapes_media(&shapes);
     let media = st.doc.media.iter().filter(|m| mids.contains(&m.id)).cloned().collect();
     let plain = shapes.iter().filter_map(|x| x.text.as_ref().map(|t| t.text())).collect::<Vec<_>>().join("\n");
@@ -340,7 +347,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
                     x.x += off;
                     x.y += off;
                 }
-                // A pasted placeholder becomes a regular shape keeping its look.
+                // A pasted placeholder becomes a regular shape; copying gave it its look.
                 if sh.ph.is_some() && sel.target == crate::Target::Slides {
                     sh.ph = None;
                 }
@@ -533,6 +540,12 @@ fn duplicate(s: &mut Session, p: &Value) -> Result<Value> {
         let mut copies: Vec<Shape> = list.iter().filter(|x| ids.contains(&x.id)).cloned().collect();
         let sources: Vec<ShapeId> = copies.iter().map(|c| c.id).collect();
         let boxes: Vec<_> = copies.iter().map(|c| xfrm_of(doc, sel, c)).collect();
+        // A duplicated placeholder becomes a regular shape that keeps the look it inherited.
+        if sel.target == crate::Target::Slides
+            && let Some(ctx) = doc.slides.get(sel.slide).and_then(|sl| deckcraft_model::resolve::Ctx::for_slide(doc, sl))
+        {
+            copies.iter_mut().for_each(|c| deckcraft_model::resolve::detach_placeholder(&ctx, c));
+        }
         // Duplicating the copies of the last Duplicate again repeats how far they were moved
         // since (#966); anything else gets the usual offset.
         let (dx, dy) = last

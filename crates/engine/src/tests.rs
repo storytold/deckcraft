@@ -214,6 +214,91 @@ fn clipboard_copy_paste_shapes_and_slides() {
     assert!(s.doc().unwrap().doc.validate().is_empty());
 }
 
+/// The resolved look of every paragraph and run of shape `id` on the current slide: size, font,
+/// colour, bold, bullet, indent, alignment, and the box's insets and anchor.
+fn resolved_look(s: &Session, id: ShapeId) -> String {
+    use deckcraft_model::resolve;
+    let st = s.doc().unwrap();
+    let slide = st.current_slide().unwrap();
+    let ctx = resolve::Ctx::for_slide(&st.doc, slide).unwrap();
+    let sh = st.shape(id).unwrap();
+    let t = sh.text.as_ref().unwrap();
+    let b = resolve::body(&ctx, sh);
+    let mut out = format!("body {:?} {:?} {:?}\n", b.anchor, b.inset_l, b.autofit);
+    for p in &t.paragraphs {
+        let pp = resolve::para(&ctx, sh, p);
+        out += &format!("para {:?} {:?} {:?} {:?}\n", pp.align, pp.margin_left, pp.indent, pp.bullet);
+        for r in &p.runs {
+            let rp = resolve::run(&ctx, sh, p, &r.props);
+            out += &format!("  run {:?} {:?} {:?} {:?}\n", rp.size, rp.font, rp.bold, rp.fill);
+        }
+    }
+    out
+}
+
+/// A placeholder pasted or duplicated on a slide becomes a regular shape, and keeps the look its
+/// layout and master gave it: the title's size and font, the body's bullets and indents. Before,
+/// the copy fell back to the master's other-text style (18 pt, no bullets).
+#[test]
+fn a_pasted_or_duplicated_placeholder_keeps_its_inherited_look() {
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let phs: Vec<ShapeId> = s.doc().unwrap().current_slide().unwrap().shapes.iter().filter(|x| x.ph.is_some()).map(|x| x.id).collect();
+    assert!(phs.len() >= 2, "a title and a body placeholder");
+    for (k, id) in phs.iter().enumerate() {
+        s.execute("text.set", &json!({"id": id.0, "text": format!("Placeholder {k}\nSecond line")})).unwrap();
+    }
+    for id in phs {
+        let want = resolved_look(&s, id);
+        for cmd in ["paste", "duplicate"] {
+            s.execute("selection.select", &json!({"id": id.0})).unwrap();
+            if cmd == "paste" {
+                s.execute("edit.copy", &json!({})).unwrap();
+                s.execute("edit.paste", &json!({})).unwrap();
+            } else {
+                s.execute("edit.duplicate", &json!({})).unwrap();
+            }
+            let copy = s.doc().unwrap().selection.shapes[0];
+            assert_ne!(copy, id);
+            assert!(s.doc().unwrap().shape(copy).unwrap().ph.is_none(), "{cmd}: the copy is a regular shape");
+            assert_eq!(resolved_look(&s, copy), want, "{cmd} of placeholder {}", id.0);
+        }
+    }
+    assert!(s.doc().unwrap().doc.validate().is_empty());
+}
+
+/// The same on every text placeholder of the sample deck (titles, bulleted bodies, subtitles).
+#[test]
+fn sample_placeholders_paste_with_their_look() {
+    let mut s = Session::new();
+    crate::sample::open_sample(&mut s).unwrap();
+    let slides = s.doc().unwrap().doc.slides.len();
+    let mut checked = 0;
+    for i in 0..slides {
+        s.execute("slide.go", &json!({"index": i})).unwrap();
+        let phs: Vec<ShapeId> = s
+            .doc()
+            .unwrap()
+            .current_slide()
+            .unwrap()
+            .shapes
+            .iter()
+            .filter(|x| x.ph.is_some() && x.text.as_ref().is_some_and(|t| !t.is_empty()))
+            .map(|x| x.id)
+            .collect();
+        for id in phs {
+            let want = resolved_look(&s, id);
+            s.execute("selection.select", &json!({"id": id.0})).unwrap();
+            s.execute("edit.copy", &json!({})).unwrap();
+            s.execute("edit.paste", &json!({})).unwrap();
+            let copy = s.doc().unwrap().selection.shapes[0];
+            assert_eq!(resolved_look(&s, copy), want, "slide {i}, placeholder {}", id.0);
+            checked += 1;
+        }
+    }
+    assert!(checked >= 3, "the sample has text placeholders ({checked})");
+}
+
 #[test]
 fn pasted_shapes_get_the_next_automatic_name() {
     let mut s = session();
