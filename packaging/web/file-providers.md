@@ -114,3 +114,7 @@ otherwise omits these bytes; the browser intentionally has no pathname reader, s
 does not add one or fetch arbitrary links. Embed the files before saving to a provider. Device
 uses the official serializer unchanged. Resource overwrites invalidate alias revisions, and
 provider commands share the existing synthetic-input admission guard before changing targets.
+
+## Native UI preview
+
+`cargo run -p deckcraft-ui-egui --example file_providers_preview -- --provider-preview --out target/provider-recents.png` renders the real Open page offscreen with separate device and provider Recent entries. It creates a tiny native local presentation beside the image; provider/account names are synthetic. Omit `--provider-preview` to keep the example disconnected. No desktop window, browser session or storage backend is used.
