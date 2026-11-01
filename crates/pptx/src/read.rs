@@ -452,6 +452,16 @@ pub fn import_checked(bytes: &[u8]) -> Result<(Presentation, Vec<String>), PptxE
 
     inherit_placeholder_geometry(&mut p);
     default_text_anchor(&mut p);
+    for master in &mut p.masters {
+        let master = Arc::make_mut(master);
+        crate::dgm::kept::seal(&mut master.shapes, 0);
+        for layout in &mut master.layouts {
+            crate::dgm::kept::seal(&mut layout.shapes, 0);
+        }
+    }
+    for slide in &mut p.slides {
+        crate::dgm::kept::seal(&mut Arc::make_mut(slide).shapes, 0);
+    }
     p.header_footer = header_footer(&p);
     p.embedded_fonts = read_embedded_fonts(&mut imp, &pres_part, pres_el);
     p.media = std::mem::take(&mut imp.media);

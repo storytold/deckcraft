@@ -25,6 +25,10 @@ pub(super) fn patched(c: &Chart) -> Option<Chart> {
     if back != current {
         return None;
     }
+    // Keep source formulas and synchronize their cells when the embedded workbook is supported.
+    if let Some(out) = super::workbook::synchronize(c, &root) {
+        return Some(out);
+    }
     let chart = root.elements_mut().find(|e| e.is("chart"))?;
     let plot = chart.elements_mut().find(|e| e.is("plotArea"))?;
     let mut order: Vec<_> = plot

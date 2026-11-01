@@ -164,3 +164,26 @@ fn generated_layout_probes_round_trip_and_render() {
         }
     }
 }
+
+#[test]
+fn partial_chart_typography_keeps_the_legacy_base_size() {
+    let mut c = Chart::sample(ChartType::Column);
+    c.text_size = Some(24.0);
+    c.title = None;
+    c.legend = None;
+    c.data_labels = true;
+    for role in [Role::CategoryAxis, Role::ValueAxis, Role::Legend] {
+        c.text_styles.insert(role, RunProps { size: Some(24.0), ..Default::default() });
+    }
+    let mut p = Presentation::default();
+    p.slides.clear();
+    append(
+        &mut p,
+        vec![Shape { id: ShapeId(2000), xfrm: Some(Xfrm::new(20.0, 20.0, 900.0, 480.0)), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }],
+    );
+    let before = render_slide(&p, 0, &RenderOpts::default());
+    let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+    c.text_styles.insert(Role::Default, RunProps { size: Some(24.0), ..Default::default() });
+    let after = render_slide(&p, 0, &RenderOpts::default());
+    assert_eq!(before.pixels, after.pixels);
+}

@@ -364,6 +364,9 @@ pub struct Shape {
     /// On a SmartArt group: the diagram's text outline, from which its shapes are regenerated.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diagram: Option<Diagram>,
+    /// Model ID of a cached diagram presentation shape; used for identity-based text updates.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diagram_node: Option<String>,
 }
 
 /// A SmartArt diagram's data: its layout and its outline of nodes (the Text Pane).
@@ -395,6 +398,17 @@ pub struct Diagram {
     pub style_xml: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub colors_xml: Option<String>,
+    /// Original connected parts, retained only while the imported drawing state matches.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kept: Option<DiagramKept>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct DiagramKept {
+    pub fingerprint: String,
+    /// Root relationship IDs are roles: dm, lo, qs, cs and drawing.
+    pub package: chart::ChartKept,
 }
 
 /// One line of the Text Pane: its text and outline level (0 = top level).
@@ -440,6 +454,7 @@ impl Default for Shape {
             tags: vec![],
             raw_ext: None,
             diagram: None,
+            diagram_node: None,
         }
     }
 }

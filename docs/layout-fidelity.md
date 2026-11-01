@@ -1,5 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
+Updated 2026-10-31: imported diagram graph retention and embedded XLSX cell synchronization.
+
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
 
@@ -44,9 +46,18 @@ combination charts retain secondary-axis bounds, units, number format and visibi
 series order is independent of XML plot-group order, so palette and legend associations survive.
 
 Data-only patches remain restricted to categorical data with unchanged series count; they keep
-unmodeled raw formatting. Structural changes rebuild modeled state. Changed embedded workbooks
-are removed rather than synchronized. Mixed rich-text chart runs, rotations/manual label positions,
-per-point/per-series typography and full advanced-chart parity remain future work.
+unmodeled raw formatting. For embedded XLSX sources with direct, fixed-size, one-dimensional
+A1 ranges, the writer updates the chart caches and source cells transactionally. Series names,
+category labels, numeric values and blanks are supported; cell styles, unrelated cells/formulas,
+other worksheets and unrelated ZIP entries survive. Calculation is requested on the next open;
+DeckCraft does not evaluate spreadsheet formulas. Namespace prefixes are retained.
+
+The nested workbook reader accepts at most 2,048 entries, 8 MiB per entry, 32 MiB total and
+100,000 addressed cells. External/indirect references, resized ranges, formula target cells,
+shared/array formulas, table-backed/protected sheets and signed workbooks are not synchronized.
+Those edits retain the existing stale-workbook removal fallback, rather than publish mismatching
+caches and cells. Structural chart changes rebuild modeled state. Mixed rich-text chart runs,
+rotations/manual label positions, per-point/per-series typography and advanced charts remain open.
 
 ## SmartArt
 
@@ -56,10 +67,20 @@ not ordinary slide `p:pic` children. The writer bounds traversal to 32 levels an
 Unsupported embedded objects warn rather than masquerading as supported nodes.
 Flat generated process constraints also account for non-uniform frame scaling.
 
-This preserves existing cached geometry; it does not implement the full SmartArt constraint
-language. Editing an imported outline can still re-layout it with DeckCraft's simpler algorithms.
-Diagrams without a cached drawing, advanced picture/3-D layouts and complete data-model fidelity
-remain open.
+For imported diagrams with a complete retained graph, the original data model (including point
+and connection IDs), cached drawing, layout, style, colors, media and relationships survive export.
+Parts receive fresh names and internal targets are rewritten without regenerating diagram IDs.
+A fingerprint is sealed after import normalization; edits to the cached geometry invalidate reuse.
+Retained graph traversal is bounded to 512 parts and 64 MiB, sharing the import sidecar budget.
+Native saves externalize diagram payloads into the existing bounded `chart-parts/` ZIP namespace.
+
+Text Pane edits bind by model ID and presentation-point association, never by matching strings.
+Single-line node/title changes update the data model, cached drawing and visible model together,
+preserving geometry and existing run formatting. Duplicate labels remain independent. Missing or
+ambiguous bindings reject the edit without changing the diagram. Undo/redo and native save/reopen
+are tested. Structural/layout/style changes still use DeckCraft's simpler layout algorithms.
+This does not implement the full constraint language: absent drawing caches, complex text
+remapping and independently edited cached shapes remain outside the preservation path.
 
 ## Validation
 
@@ -72,11 +93,22 @@ No generated deck, screenshot or font binary is checked in. Separate regression 
 font isolation/fallback, chart edits and embedded image relationships. Full workspace acceptance
 is `cargo xtask ci`.
 
-Same-engine pixel equality catches save regressions; it is not a PowerPoint reference-render
-comparison. A local PowerPoint for Mac 16.113.3 open/PDF-export smoke check accepted all four
-probe slides without the driver dismissing a repair prompt. It also demonstrated the remaining
-gap: the intentionally synthetic cached diagram's geometry does not match its simple data-model
-layout, so PowerPoint regenerates that diagram and changes its appearance. Chart automatic
-layout/default styling also differs. Native output and screenshots are not distributed.
+`diagram_preservation` adds original synthetic tests for opaque drawing/ID preservation,
+duplicate-label edits, presentation-point bindings, geometry invalidation, command undo/redo and
+native save/reopen. Workbook unit tests inspect both caches and embedded cells, unrelated data,
+namespace handling and rejected formula/conflict cases. `DECKCRAFT_DIAGRAM_OUT` optionally writes
+synthetic probes locally; it is not required by CI.
+
+A local PowerPoint for Mac 16.113.3 black-box check opens and exports the probes without dismissing
+a repair dialog. An original synthetic diagram and its no-op round trip render identically;
+a single-node text edit changes pixels only in that text region. A PowerPoint-saved copy of that
+probe also preserves its presentation-point data through the same operations. All four pages of
+a separately PowerPoint-saved synthetic font/chart/nested-diagram probe render identically before
+and after DeckCraft's no-op PPTX round trip. These are preservation checks against the same native
+renderer, not a claim that DeckCraft's renderer matches PowerPoint on arbitrary files. Generating
+complex layout constraints or altering a diagram's structure remains a separate limitation.
+The synchronized XLSX was also opened in Excel for Mac 16.113.3: the edited name/value,
+unrelated Notes sheet and original formula were read back successfully. Native outputs and
+screenshots are not distributed.
 Continue using a separately validated fallback for presentations requiring unsupported
 layout features or native-Office fidelity.

@@ -115,7 +115,8 @@ fn remap_connectors(shapes: &mut [Shape], ctx: &IdCtx, depth: usize) {
                     *e = e.and_then(|(id, site)| ctx.lookup(id.0).map(|m| (m, site)));
                 }
             }
-            ShapeKind::Group { children, .. } => remap_connectors(children, ctx, depth + 1),
+            // A diagram drawing is a separate ID scope, already resolved on import.
+            ShapeKind::Group { children, .. } if s.diagram.is_none() => remap_connectors(children, ctx, depth + 1),
             _ => {}
         }
     }
@@ -578,7 +579,8 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let dpart = Part::new(imp.pkg, &drawing_rel, &d);
     let tree = d.root.child("spTree")?;
     let mut sub = IdCtx { fresh: true, ..Default::default() };
-    let children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
+    let mut children = sp_tree(imp, &dpart, &mut sub, tree, depth + 1);
+    remap_connectors(&mut children, &sub, 0);
     if children.is_empty() {
         return None;
     }
@@ -598,6 +600,10 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
             }
         }
     }
+    let kept = crate::dgm::kept::capture(imp, part, rel_ids, &drawing_rel, &g);
+    if let Some(d) = &mut g.diagram {
+        d.kept = kept;
+    }
     Some(g)
 }
 
@@ -613,6 +619,7 @@ fn smartart_text_rects(imp: &mut Imp, ctx: &mut IdCtx, tree: &El, shapes: Vec<Sh
     // The same elements `sp_tree` turns into shapes.
     for e in tree.elements().filter(|e| matches!(e.local(), "sp" | "pic" | "grpSp" | "cxnSp" | "graphicFrame")) {
         let Some(mut s) = shapes.next() else { break };
+        s.diagram_node = e.attr("modelId").map(str::to_string);
         let mut text_box = None;
         match (e.local(), &mut s.kind) {
             ("grpSp", ShapeKind::Group { children, .. }) => {
@@ -690,6 +697,7 @@ fn text_on_rect(imp: &mut Imp, ctx: &mut IdCtx, s: &mut Shape, t: Xfrm) -> Optio
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         style,
         text,
+        diagram_node: s.diagram_node.clone(),
         click: s.click.clone(),
         hover: s.hover.clone(),
         ..Default::default()
@@ -748,6 +756,7 @@ fn diagram_outline(imp: &Imp, part: &Part, rel_ids: &El, data: &El) -> Option<de
         layout_xml,
         style_xml: raw("r:qs"),
         colors_xml: raw("r:cs"),
+        kept: None,
     })
 }
 

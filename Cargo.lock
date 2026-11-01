@@ -1223,6 +1223,7 @@ dependencies = [
  "log",
  "quick-xml 0.41.0",
  "serde_json",
+ "sha2",
  "thiserror 2.0.21",
  "zip 3.0.0",
 ]

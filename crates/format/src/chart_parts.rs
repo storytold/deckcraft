@@ -1,4 +1,4 @@
-//! Keep opaque chart payloads out of the JSON manifest and within the media load budget.
+//! Keep opaque chart/diagram payloads out of the JSON manifest and within the media load budget.
 use std::collections::HashSet;
 use std::io::Cursor;
 use std::sync::Arc;
@@ -97,6 +97,11 @@ fn shapes(root: &mut [Shape], visit: &mut impl FnMut(&mut ChartPart) -> Result<(
     let mut pending = vec![root];
     while let Some(shapes) = pending.pop() {
         for shape in shapes {
+            if let Some(kept) = shape.diagram.as_mut().and_then(|d| d.kept.as_mut()) {
+                for part in &mut kept.package.parts {
+                    visit(part)?;
+                }
+            }
             match &mut shape.kind {
                 ShapeKind::Group { children, .. } => pending.push(children),
                 ShapeKind::Chart(chart) => {

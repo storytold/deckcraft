@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+pub(crate) mod kept;
 pub(crate) mod process;
 
 use deckcraft_model::{Diagram, DiagramNode};

@@ -534,6 +534,17 @@ fn write_model(
 fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &deckcraft_model::Diagram, children: &[Shape], child: &Xfrm) {
     use crate::dgm;
     let id = cx.id_for(s);
+    if let Some(ids) = dgm::kept::write(x, o, s) {
+        frame_open(w, x, o, id, s);
+        w.open("a:graphicData", A::new().a("uri", dgm::NS_DGM));
+        w.empty(
+            "dgm:relIds",
+            A::new().a("xmlns:dgm", dgm::NS_DGM).o("r:dm", ids.get("dm")).o("r:lo", ids.get("lo")).o("r:qs", ids.get("qs")).o("r:cs", ids.get("cs")),
+        );
+        w.close("a:graphicData");
+        frame_close(w);
+        return;
+    }
     let n = x.next_diagram();
     let frame = s.xfrm.unwrap_or(*child);
     let name = |kind: &str| format!("ppt/diagrams/{kind}{n}.xml");

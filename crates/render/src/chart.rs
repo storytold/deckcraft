@@ -325,7 +325,7 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     }
     // The file's text sizes when it has them (PowerPoint draws chart text at them); otherwise a size
     // that suits the chart.
-    let base = c.text_props(ChartTextRole::Default).size.unwrap_or_else(|| (h.min(w) / 22.0).clamp(7.0, 18.0));
+    let base = c.text_props(ChartTextRole::Default).size.or(c.text_size).unwrap_or_else(|| (h.min(w) / 22.0).clamp(7.0, 18.0));
     let title_size = c.text_props(ChartTextRole::Title).size.unwrap_or(base * 1.4);
     let mut area = Rect::new(w * 0.04, h * 0.04, w * 0.96, h * 0.96);
     if let Some(t) = &c.title {

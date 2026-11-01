@@ -6,6 +6,7 @@ pub(crate) mod dml;
 mod shapes;
 mod theme;
 mod timing;
+mod workbook;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -211,6 +212,8 @@ impl Exp<'_> {
     }
 
     pub fn chart_rel(&mut self, o: &mut Out, c: &deckcraft_model::Chart) -> String {
+        let prepared = chart_data::patched(c);
+        let c = prepared.as_ref().unwrap_or(c);
         self.n_chart += 1;
         let name = format!("ppt/charts/chart{}.xml", self.n_chart);
         let (xml, preserved) = chart::chart_xml(c);

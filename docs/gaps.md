@@ -1,6 +1,8 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Update 2026-10-31:** data-only categorical chart edits preserve source formatting, line labels render, partial shape locks survive saving, and default flat process SmartArt exports its canvas dimensions. These are bounded fixes; chart and SmartArt parity remain partial. See the evidence and limits below.
+> **Update 2026-10-31:** imported SmartArt graphs and identity-bound Text Pane edits now preserve cached geometry; fixed-size direct XLSX sources synchronize transactionally. Structural diagram changes and unsupported workbook sources remain gaps.
+
+> **Earlier update 2026-10-31:** data-only categorical chart edits preserve source formatting, line labels render, partial shape locks survive saving, and default flat process SmartArt exports its canvas dimensions. These are bounded fixes; chart and SmartArt parity remain partial. See the evidence and limits below.
 
 > **Last reviewed:** 2026-10-30 · **Last updated:** 2026-10-30 · **Change:** minor (slide-show hit testing follows each shape’s own animation state; scale and rotation covered; previous: trivial, AutoFormat lists run independently of Replace text as you type; previous: minor, slide-show click targets follow animated shapes and text links; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
@@ -184,14 +186,16 @@ Detail in [file-format-parity.md](file-format-parity.md).
   neither label. A combo chart's secondary value axis is read and rebuilt (`y2_*`,
   `Series.secondary_axis`), including separate bounds, ticks, number format and text style.
   Plot groups retain logical series order, including data-only edits and equal-type dual-axis charts.
-  An unchanged chart's embedded workbook now survives save (#335); editing the chart still
-  drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
+  An unchanged chart's embedded workbook survives save (#335); data-only edits now synchronize
+  direct fixed-size XLSX source ranges, preserving unrelated cells and sheets. The workbook and other retained chart parts
   also survive `.deckcraft` save/reopen (`crates/engine/tests/it/chart_native.rs`), with binary
   payloads in bounded ZIP entries sharing the media load budget (`crates/format` tests).
   Data-only changes to names, categories and values now patch the imported XML when the series
   count is unchanged, preserving axis fonts, tick units and unrelated sidecars. Unsupported
   changes (including scatter/bubble data and structural/type/style changes) still rebuild the
-  chart and can lose unmodelled formatting. A changed embedded workbook is removed, not updated.
+  chart and can lose unmodelled formatting. Unsupported workbook sources (resized/indirect ranges,
+  formula targets, table-backed/protected sheets and external workbooks) still use the
+  stale-workbook removal fallback; full spreadsheet dependency editing remains open.
   Line labels now render, including per-series overrides and original values on stacked lines;
   Title, legend, category/value axes and axis titles now keep independent font families, size,
   weight, slant, language and fill. Label widths and legend row heights use text shaping.
@@ -213,12 +217,15 @@ Detail in [file-format-parity.md](file-format-parity.md).
   are not rewritten by this fix. Cached diagram shapes now write the same implicit middle text
   anchor as ordinary shapes, so text does not jump to the top when reopened. Nested cached groups
   retain child coordinates/rotation and picture nodes export as diagram picture-filled shapes.
-  These cache-preservation fixes do not implement the diagram constraint engine. Still missing:
+  Complete imported diagram graphs now preserve original point/connection IDs and relationships.
+  Text Pane edits use node/presentation identities and retain cached geometry; ambiguous mappings
+  fail atomically. Native save/reopen and undo/redo are covered. These fixes do not implement the
+  diagram constraint engine. Still missing:
   other generated layouts are simple and have not
   received the same native validation; PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
-  imported diagram's outline redraws it with DeckCraft's layout; a diagram with no cached drawing
+  imported diagram's structure still redraws it with DeckCraft's layout; a diagram with no cached drawing
   isn't drawn.
-- **Impact:** a PowerPoint diagram edited in DeckCraft changes look.
+- **Impact:** structural or unmappable edits to an imported diagram still need explicit relayout or conversion to shapes.
 - **Estimate:** 6–10 h.
 
 ### Animation Pane, effect count and preview
