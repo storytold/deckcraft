@@ -634,13 +634,25 @@ fn print_previews_pages_and_prints_a_pdf() {
     h.state_mut().backstage.as_mut().unwrap().print_range = "1-2".into();
     h.run_steps(2);
     click_on_page(&h, "Print");
-    h.run_steps(2);
-    let url = h.state().pending_urls.first().cloned().unwrap_or_default();
-    // The URL was handed to egui at the end of the frame; check what it pointed at.
-    let printed = std::env::temp_dir().join(format!("{} (print).pdf", h.state().session.active().unwrap().title()));
-    assert!(printed.is_file(), "the PDF to print was written: {url}");
-    assert!(std::fs::read(&printed).unwrap().starts_with(b"%PDF"));
-    let _ = std::fs::remove_file(printed);
+    h.step();
+    let url = h
+        .output()
+        .platform_output
+        .commands
+        .iter()
+        .find_map(|command| match command {
+            egui::OutputCommand::OpenUrl(open) => Some(open.url.as_str()),
+            _ => None,
+        })
+        .expect("Print emits an egui OpenUrl command");
+    assert!(url.contains("deckcraft-print-"), "print preview uses its private directory: {url}");
+    let path = url.strip_prefix("file://").expect("print preview URL is a file URL");
+    #[cfg(windows)]
+    let path = path.strip_prefix('/').unwrap_or(path);
+    let printed = std::path::Path::new(path);
+    assert!(printed.is_file(), "the PDF at the emitted URL was written: {url}");
+    assert!(std::fs::read(printed).unwrap().starts_with(b"%PDF"));
+    let _ = std::fs::remove_dir_all(printed.parent().unwrap());
     let _ = std::fs::remove_dir_all(&dir);
 }
 

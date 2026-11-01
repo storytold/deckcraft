@@ -216,26 +216,37 @@ impl Decoder {
     pub fn configure_avcc(&mut self, avcc: &[u8]) -> Result<()> {
         ensure!(avcc.len() >= 7, "avcC too short");
         ensure!(avcc[0] == 1, "unsupported avcC version {}", avcc[0]);
-        self.nal_length_size = Some((avcc[4] & 3) as usize + 1);
         let mut pos = 5;
-        let read_sets = |pos: &mut usize, count: usize, d: &mut Decoder| -> Result<()> {
+        let mut sets = Vec::new();
+        let read_sets = |pos: &mut usize, count: usize, sets: &mut Vec<(usize, usize)>| -> Result<()> {
             for _ in 0..count {
                 ensure!(*pos + 2 <= avcc.len(), "avcC truncated");
                 let len = u16::from_be_bytes([avcc[*pos], avcc[*pos + 1]]) as usize;
                 *pos += 2;
                 ensure!(*pos + len <= avcc.len(), "avcC truncated");
-                d.handle_nal(&avcc[*pos..*pos + len], 0)?;
+                sets.push((*pos, len));
                 *pos += len;
             }
             Ok(())
         };
         let nsps = (avcc[pos] & 0x1f) as usize;
         pos += 1;
-        read_sets(&mut pos, nsps, self)?;
+        read_sets(&mut pos, nsps, &mut sets)?;
         ensure!(pos < avcc.len(), "avcC truncated");
         let npps = avcc[pos] as usize;
         pos += 1;
-        read_sets(&mut pos, npps, self)
+        read_sets(&mut pos, npps, &mut sets)?;
+        for (i, (start, len)) in sets.iter().enumerate() {
+            let nal = &avcc[*start..*start + *len];
+            let header = nal.first().copied().ok_or_else(|| Error::Invalid("empty avcC parameter set".into()))?;
+            let expected = if i < nsps { nal_type::SPS } else { nal_type::PPS };
+            ensure!(header & 0x1f == expected, "avcC parameter set has NAL type {}, expected {expected}", header & 0x1f);
+        }
+        for (start, len) in sets {
+            self.handle_nal(&avcc[start..start + len], 0)?;
+        }
+        self.nal_length_size = Some((avcc[4] & 3) as usize + 1);
+        Ok(())
     }
 
     /// Length of NAL length prefixes (from avcC), or None for Annex-B input.

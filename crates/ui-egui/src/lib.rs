@@ -293,6 +293,7 @@ pub struct SlideApp {
     /// creating or closing a presentation leaves it.
     pub backstage: Option<backstage::Backstage>,
     pending_urls: Vec<String>,
+    print_previews: app::files::PrintPreviews,
     #[cfg(not(target_arch = "wasm32"))]
     updates_rt: updates_ui::Runtime,
     /// Text for the system clipboard from a Copy or Cut command, handed over on the next frame.
