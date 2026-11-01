@@ -624,17 +624,16 @@ fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
     }
 }
 
-/// Appends an Office Math (a14:m) run: its plain text and its OMML.
-fn push_math_run(para: &mut Paragraph, part: &Part, e: &El) {
+/// Appends an Office Math (a14:m) run: its OMML, kept self-contained; `text` is the equation's
+/// linear form and the run props come from the first `a:rPr` inside an `m:r`.
+fn push_math_run(imp: &mut Imp, para: &mut Paragraph, part: &Part, e: &El) {
     if para.runs.len() < MAX_PARAGRAPH_RUNS {
-        let mut text = String::new();
-        let mut ts = vec![];
-        e.find_all("t", &mut ts);
-        for t in ts {
-            text.push_str(&t.text());
-        }
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
-        para.runs.push(Run { text, props: RunProps::default(), kind: RunKind::Math { omml } });
+        let text = equashioncraft_math::run_text(&equashioncraft_math::from_omml(&omml));
+        let mut rprs = vec![];
+        e.find_all("rPr", &mut rprs);
+        let props = rprs.into_iter().find(|r| r.prefix() == "a").map(|r| rpr(imp, part, r)).unwrap_or_default();
+        para.runs.push(Run { text, props, kind: RunKind::Math { omml } });
     }
 }
 
@@ -664,7 +663,7 @@ pub fn paragraph(imp: &mut Imp, part: &Part, p: &El) -> Paragraph {
                 let text = e.child("t").map(|t| t.text()).unwrap_or_default();
                 para.runs.push(Run { text, props, kind: RunKind::Field { field: e.attr("type").unwrap_or("").to_string() } });
             }
-            "m" => push_math_run(&mut para, part, e),
+            "m" => push_math_run(imp, &mut para, part, e),
             "endParaRPr" => para.end_props = rpr(imp, part, e),
             _ => {}
         }

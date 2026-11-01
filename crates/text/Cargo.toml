@@ -13,6 +13,10 @@ deckcraft-model = { workspace = true }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-fonts = { workspace = true }
+# Equations: the math tree an OMML run is laid out from.
+equashioncraft-math = { workspace = true }
+equashioncraft-layout = { workspace = true, features = ["extra-fonts"] }
+kurbo = { workspace = true }
 unicode-linebreak = { workspace = true }
 unicode-segmentation = { workspace = true }
 unicode-bidi = { workspace = true }

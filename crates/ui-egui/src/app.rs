@@ -50,6 +50,7 @@ impl SlideApp {
             control_rx: None,
             squiggles: Default::default(),
             dialog: None,
+            equation: Default::default(),
             thesaurus_query: String::new(),
             show: None,
             anim_preview: None,
@@ -196,6 +197,14 @@ impl SlideApp {
         } else if !has_doc && (stale || self.backstage.is_none()) {
             self.backstage = Some(backstage::Backstage::new(backstage::Page::Home, key));
         }
+    }
+
+    /// Another app has replaced the shared egui fonts and visuals (OfficeCraft hosts several in
+    /// one window): install this app's again before it draws its next frame.
+    pub fn context_changed(&mut self) {
+        self.styled = false;
+        self.fonts_ready = false;
+        self.restyle = true;
     }
 
     /// Background work, run on every logic call (visible, hidden or `run_logic`).

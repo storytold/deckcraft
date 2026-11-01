@@ -159,6 +159,10 @@ pub(crate) fn draw(ctx: &mut RenderContext, l: &TextLayout, tr: Rect, m: Affine,
         let Some(li) = line_of(l, d.para, y) else { return };
         ctx.set_transform(m * Affine::translate(ps.offset));
         ctx.set_paint(color(d.color, ps.opacity));
+        if let Some(p) = &d.path {
+            ctx.fill_path(&warp_path(p, tol, seg, &|q| mapper.map(li, q)));
+            return;
+        }
         for r in d.pieces() {
             let path = warp_path(&r.to_path(0.1), tol, seg, &|p| mapper.map(li, p));
             ctx.fill_path(&path);

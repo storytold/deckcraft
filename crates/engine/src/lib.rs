@@ -11,6 +11,7 @@ pub mod cmd;
 pub mod compare;
 pub mod connect;
 pub mod drawtable;
+pub mod equashioncraft_bridge;
 pub mod file_access;
 pub mod fonts;
 pub mod gif_export;

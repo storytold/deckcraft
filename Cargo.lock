@@ -1062,6 +1062,7 @@ dependencies = [
  "deckcraft-pptx",
  "deckcraft-render",
  "deckcraft-text",
+ "equashioncraft-math",
  "i_overlay",
  "image",
  "js-sys",
@@ -1218,6 +1219,7 @@ dependencies = [
  "deckcraft-engine",
  "deckcraft-geom",
  "deckcraft-model",
+ "equashioncraft-math",
  "image",
  "log",
  "quick-xml 0.41.0",
@@ -1254,6 +1256,9 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
+ "equashioncraft-layout",
+ "equashioncraft-math",
+ "kurbo",
  "unicode-bidi",
  "unicode-linebreak",
  "unicode-segmentation",
@@ -1276,6 +1281,7 @@ dependencies = [
  "deckcraft-text",
  "egui",
  "egui_kittest",
+ "equashioncraft-egui",
  "log",
  "serde",
  "serde_json",
@@ -1436,6 +1442,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -1638,6 +1645,57 @@ dependencies = [
 name = "epaint_default_fonts"
 version = "0.37.0"
 source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
+
+[[package]]
+name = "equashioncraft-egui"
+version = "0.13.1"
+dependencies = [
+ "eframe",
+ "egui",
+ "egui_kittest",
+ "equashioncraft-layout",
+ "equashioncraft-math",
+ "equashioncraft-render",
+]
+
+[[package]]
+name = "equashioncraft-font"
+version = "0.13.1"
+dependencies = [
+ "harfrust 0.13.3",
+ "kurbo",
+ "log",
+ "skrifa 0.47.0",
+ "unicode-bidi",
+]
+
+[[package]]
+name = "equashioncraft-layout"
+version = "0.13.1"
+dependencies = [
+ "equashioncraft-font",
+ "equashioncraft-math",
+ "kurbo",
+]
+
+[[package]]
+name = "equashioncraft-math"
+version = "0.13.1"
+dependencies = [
+ "quick-xml 0.41.0",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "equashioncraft-render"
+version = "0.13.1"
+dependencies = [
+ "equashioncraft-layout",
+ "equashioncraft-math",
+ "kurbo",
+ "vello_cpu",
+]
 
 [[package]]
 name = "equivalent"

@@ -344,6 +344,10 @@ fn line_extent(p: &ParaShaped, rl: &RawLine) -> (f64, f64, f64) {
             desc = desc.max(d);
             size = size.max(sz);
         }
+        if let Some(m) = c.atom.and_then(|a| p.atoms.get(a)) {
+            asc = asc.max(m.asc + 1.0);
+            desc = desc.max(m.desc + 1.0);
+        }
     }
     if size == 0.0 {
         // PowerPoint sizes an empty line by the mark that ends it: the `a:rPr` of the
@@ -691,6 +695,40 @@ fn emit_line_runs(out: &mut TextLayout, p: &ParaShaped, line: &LineInfo, place: 
         let Some(cell) = p.cells.get(ci) else { continue };
         let Some(st) = p.styles.get(cell.style) else { continue };
         let Some(&(cx, cx1)) = line.edges.get(k) else { continue };
+        if let Some(m) = cell.atom.and_then(|a| p.atoms.get(a)) {
+            // An equation: flush the pending glyph run and draw the atom on the baseline, in the
+            // box this cell was given in visual order (so at any bidi level). The box itself is
+            // never mirrored. Its word joiners follow it in logical order.
+            if let Some(r) = cur.take() {
+                out.runs.push(r);
+            }
+            cur_key = (usize::MAX, usize::MAX, false, false);
+            let joiners = p.cells.iter().skip(ci + 1).take_while(|c| c.atom.is_none() && c.ch == '\u{2060}').count();
+            let base_y = line.baseline - st.baseline * st.size;
+            crate::math::emit(m, cx, base_y, st.color, st.alpha, line.para, (ci, ci + 1 + joiners), &mut out.runs, &mut out.decos);
+            out.equations.push(crate::EquationPlace {
+                para: line.para,
+                ch: ci,
+                x: cx,
+                baseline: base_y,
+                size: st.size,
+                width: m.w,
+                ascent: m.asc,
+                descent: m.desc,
+                display: m.display,
+            });
+            if let Some(hl) = st.highlight {
+                out.decos.push(Deco {
+                    rect: Rect::new(cx, line.top, cx1, line.bottom),
+                    color: hl,
+                    behind: true,
+                    para: line.para,
+                    line: DecoLine::Solid,
+                    path: None,
+                });
+            }
+            continue;
+        }
         let base_y = line.baseline - st.baseline * st.size;
         let size = if st.baseline != 0.0 { st.size * SUB_SUPER } else { st.size };
         let small = st.caps == Caps::Small && cell.ch.is_lowercase();
@@ -765,7 +803,14 @@ fn push_tatweel(r: &mut GlyphRun, face: Option<&Arc<FontFace>>, cell: &Cell, fil
 fn push_cell_decos(out: &mut TextLayout, cell: &Cell, st: &Style, line: &LineInfo, pos: &CellPos) {
     let (cx, cx1) = (pos.cx, pos.cx1);
     if let Some(hl) = st.highlight {
-        out.decos.push(Deco { rect: Rect::new(cx, line.top, cx1, line.bottom), color: hl, behind: true, para: line.para, line: DecoLine::Solid });
+        out.decos.push(Deco {
+            rect: Rect::new(cx, line.top, cx1, line.bottom),
+            color: hl,
+            behind: true,
+            para: line.para,
+            line: DecoLine::Solid,
+            path: None,
+        });
     }
     if cell.ch.is_whitespace() && st.underline.is_none() {
         return;
@@ -781,6 +826,7 @@ fn push_cell_decos(out: &mut TextLayout, cell: &Cell, st: &Style, line: &LineInf
                 behind: false,
                 para: line.para,
                 line: kind,
+                path: None,
             });
         }
     }
@@ -789,7 +835,14 @@ fn push_cell_decos(out: &mut TextLayout, cell: &Cell, st: &Style, line: &LineInf
         let k = st.size / st.face.upem.max(1.0);
         let t = (st.face.strikeout.1 * k).max(0.5);
         let sy = line.baseline - st.face.strikeout.0 * k;
-        out.decos.push(Deco { rect: Rect::new(cx, sy, cx1, sy + t), color: st.color, behind: false, para: line.para, line: DecoLine::Solid });
+        out.decos.push(Deco {
+            rect: Rect::new(cx, sy, cx1, sy + t),
+            color: st.color,
+            behind: false,
+            para: line.para,
+            line: DecoLine::Solid,
+            path: None,
+        });
         if sk == Strike::Double {
             out.decos.push(Deco {
                 rect: Rect::new(cx, sy - t * 2.0, cx1, sy - t),
@@ -797,6 +850,7 @@ fn push_cell_decos(out: &mut TextLayout, cell: &Cell, st: &Style, line: &LineInf
                 behind: false,
                 para: line.para,
                 line: DecoLine::Solid,
+                path: None,
             });
         }
     }
@@ -810,6 +864,8 @@ fn merge_decos(v: Vec<Deco>) -> Vec<Deco> {
             last.color == d.color
                 && last.behind == d.behind
                 && last.line == d.line
+                && last.path.is_none()
+                && d.path.is_none()
                 && (last.rect.y0 - d.rect.y0).abs() < 0.01
                 && (last.rect.y1 - d.rect.y1).abs() < 0.01
                 && (last.rect.x1 - d.rect.x0).abs() < 0.5

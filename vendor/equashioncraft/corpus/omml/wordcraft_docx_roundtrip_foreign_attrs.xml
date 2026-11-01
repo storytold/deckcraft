@@ -1,0 +1,1 @@
+<m:oMath xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" xmlns:p="urn:p" xmlns:q="urn:q" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><m:r xsi:type="foo" p:val="1" q:val="2"><p:ext/><m:t>x</m:t></m:r></m:oMath>

@@ -173,6 +173,11 @@ pub(crate) fn glyph_place(run: &deckcraft_text::GlyphRun, gid: u32, x: f64, y: f
 /// Fill an underline, strikethrough or highlight with the current paint and transform: its box,
 /// its dashes, or its zigzag stroked.
 pub(crate) fn fill_deco(ctx: &mut RenderContext, d: &deckcraft_text::Deco) {
+    // Equation radicals, brackets and big operators are shapes, not boxes.
+    if let Some(p) = &d.path {
+        ctx.fill_path(p);
+        return;
+    }
     if let Some((pts, w)) = d.wave() {
         let mut path = BezPath::new();
         for (i, p) in pts.iter().enumerate() {

@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*", "apps/*", "xtask"]
+members = ["crates/*", "apps/*", "xtask", "vendor/equashioncraft/crates/*"]
 default-members = ["crates/*", "apps/deckcraft", "apps/deckcraft-cli"]
 
 [workspace.package]
@@ -37,6 +37,14 @@ deckcraft-isobmff = { path = "crates/isobmff" }
 deckcraft-matroska = { path = "crates/matroska" }
 deckcraft-ogg = { path = "crates/ogg" }
 deckcraft-opus = { path = "crates/opus" }
+
+# equations: EquaSHionCraft, vendored from the equaSHion editor (rev fed687c), MIT OR Apache-2.0.
+# The vendor/ tree keeps upstream's crate layout: crates/{math,font,layout,render,egui} + assets/fonts.
+equashioncraft-math = { path = "vendor/equashioncraft/crates/math" }
+equashioncraft-font = { path = "vendor/equashioncraft/crates/font", default-features = false }
+equashioncraft-layout = { path = "vendor/equashioncraft/crates/layout", default-features = false }
+equashioncraft-render = { path = "vendor/equashioncraft/crates/render", default-features = false }
+equashioncraft-egui = { path = "vendor/equashioncraft/crates/egui" }
 
 # foundation
 kurbo = { version = "0.13", features = ["serde"] }

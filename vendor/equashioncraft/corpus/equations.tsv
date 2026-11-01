@@ -1,0 +1,45 @@
+# id	linear	display (1 = display style, 0 = inline)
+frac_simple	\frac{a}{b}	0
+frac_nested	\frac{1}{1+\frac{1}{x}}	1
+frac_nested_inline	\frac{a}{\frac{b}{c}}	0
+cfrac	a_0+\cfrac{1}{a_1+\cfrac{1}{a_2+\cfrac{1}{a_3}}}	1
+sqrt	\sqrt{x^2+y^2}	0
+sqrt_degree	\sqrt[3]{x+1}	0
+sqrt_nested	\sqrt{1+\sqrt{1+\sqrt{x}}}	1
+script_sup	x^2	0
+script_sub	a_n	0
+script_both	x_i^2	0
+script_nested	e^{-x^{2}}	0
+sum_display	\sum_{i=1}^{n} i^2	1
+sum_inline	\sum_{i=1}^{n} i^2	0
+prod_display	\prod_{k=1}^{n} k	1
+int_display	\int_0^1 x^2\,dx	1
+int_inline	\int_0^1 x^2\,dx	0
+oint	\oint_C f\,dz	1
+lim_display	\lim_{x\to0}\frac{\sin x}{x}=1	1
+lim_inline	\lim_{n\to\infty}\left(1+\frac{1}{n}\right)^n=e	0
+pmatrix	\begin{pmatrix}a&b\\c&d\end{pmatrix}	1
+bmatrix	\begin{bmatrix}1&0&0\\0&1&0\\0&0&1\end{bmatrix}	1
+cases	|x|=\begin{cases}x&x\geq0\\-x&x<0\end{cases}	1
+accent_hat	\hat{x}+\hat{y}	0
+accent_vec	\vec{v}\cdot\vec{w}	0
+accent_bar	\bar{z}z=|z|^2	0
+overline	\overline{AB}	0
+overbrace	\overbrace{a+b+c}^{3}	1
+underbrace	\underbrace{x+x+x+x}_{n}	1
+overrightarrow	\overrightarrow{AB}	0
+quadratic	x=\frac{-b\pm\sqrt{b^2-4ac}}{2a}	1
+euler	e^{i\pi}+1=0	1
+maxwell_gauss	\nabla\cdot E=\frac{\rho}{\varepsilon_0}	1
+maxwell_faraday	\nabla\times E=-\frac{\partial B}{\partial t}	1
+maxwell_ampere	\nabla\times B=\mu_0J+\mu_0\varepsilon_0\frac{\partial E}{\partial t}	1
+binom	\binom{n}{k}=\frac{n!}{k!(n-k)!}	1
+delims_tall	\left[\frac{a}{b}\right]+\left\{\frac{c}{d}\right\}	1
+floor_ceil	⌊x⌋+⌈y⌉	0
+abs_tall	\left|\frac{a}{b}\right|	0
+angle	⟨u,v⟩	0
+greek	\alpha+\beta=\gamma	0
+func	\sin^2\theta+\cos^2\theta=1	0
+boxed	\boxed{E=mc^2}	0
+wide_matrix	\begin{matrix}a_0&a_1&a_2&a_3&a_4&a_5&a_6&a_7&a_8&a_9&a_{10}&a_{11}&a_{12}&a_{13}&a_{14}&a_{15}&a_{16}&a_{17}&a_{18}&a_{19}\end{matrix}	1
+long_wrap	(a+b)^{6}=a^{6}+6a^5b+15a^4b^2+20a^3b^3+15a^2b^4+6ab^5+b^{6}+c^{6}+6c^5d+15c^4d^2+20c^3d^3+15c^2d^4+6cd^5+d^{6}	0

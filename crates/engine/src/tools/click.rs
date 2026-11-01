@@ -1,4 +1,4 @@
-use super::hit::{EditZone, edit_zone, edited_box, shape_in_front, text_member_at, text_pos};
+use super::hit::{EditZone, edit_zone, edited_box, equation_dialog, math_run_at, shape_in_front, text_member_at, text_pos};
 use super::{Drag, Hit, Point, Result, Session, ShapeId, ShapeKind, TextSel, ToolKind, Value, cmd, json, xfrm_of};
 
 impl Session {
@@ -20,6 +20,10 @@ impl Session {
         if matches!(self.tool.drag, Some(Drag::Move { moved: false, .. })) {
             self.tool.drag = None;
         }
+        // A double-click on an equation in the text being edited opens the equation editor.
+        if self.equation_in_edited_text(p, tol)? {
+            return Ok(Value::Null);
+        }
         // In the text being edited: select the word double-clicked.
         if self.place_caret(p, tol, false)?.is_some() {
             return self.execute("text.selectWord", &json!({}));
@@ -30,6 +34,23 @@ impl Session {
                 let Some(sh) = st.shape(id).cloned() else { return Ok(Value::Null) };
                 match &sh.kind {
                     ShapeKind::Table(_) | ShapeKind::Shape | ShapeKind::Connector { .. } if !sh.is_line() => {
+                        // A cell holding nothing but one equation opens the equation editor, and so
+                        // does an equation in a shape's text.
+                        if let ShapeKind::Table(t) = &sh.kind {
+                            if let Some(f) = cmd::table::table_frame(st, &sh)
+                                && let Some(cell) = f.cell_at(f.local(p))
+                                && let Some(body) = t.cell(cell.0, cell.1).map(|c| &c.text)
+                                && let [para] = body.paragraphs.as_slice()
+                                && let [run] = para.runs.as_slice()
+                                && matches!(run.kind, deckcraft_model::text::RunKind::Math { .. })
+                            {
+                                self.ui_requests.push(equation_dialog(id, Some(cell), 0, 0));
+                                return Ok(Value::Null);
+                            }
+                        } else if let Some((pi, ri)) = math_run_at(st, &sh, p) {
+                            self.ui_requests.push(equation_dialog(id, None, pi, ri));
+                            return Ok(Value::Null);
+                        }
                         // Caret at the double-click (in a table, in the clicked cell), then select
                         // the word there.
                         if !self.edit_text_at(id, p)? {
@@ -177,6 +198,37 @@ impl Session {
             }
         })?;
         Ok(Some((t.shape, pos)))
+    }
+
+    /// A plain click at `at` on an equation of shape `id`'s text requests the equation editor on
+    /// it. Returns whether it did.
+    pub(super) fn equation_click_edit(&mut self, id: ShapeId, at: Point) -> bool {
+        let Ok(st) = self.doc() else { return false };
+        let Some(sh) = st.shape(id) else { return false };
+        let Some((pi, ri)) = math_run_at(st, sh, at) else { return false };
+        self.ui_requests.push(equation_dialog(id, None, pi, ri));
+        true
+    }
+
+    /// A click or double-click on an equation of the text being edited (a text box, not a table
+    /// cell) opens the equation editor on it, where it sits. Returns whether it did.
+    pub(super) fn equation_in_edited_text(&mut self, p: Point, tol: f64) -> Result<bool> {
+        let st = self.doc()?;
+        let Some(t) = st.selection.text.clone().filter(|t| !t.notes && t.cell.is_none()) else { return Ok(false) };
+        let Some(sh) = st.shape(t.shape) else { return Ok(false) };
+        if !xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p)
+            || shape_in_front(st, st.shapes(), t.shape, p, tol, 0)
+            || matches!(
+                self.hit_test(p, tol),
+                Some(Hit::Resize { .. } | Hit::Rotate { .. } | Hit::Adjust { .. } | Hit::Warp { .. } | Hit::Frame { .. })
+            )
+        {
+            return Ok(false);
+        }
+        let Some((pi, ri)) = math_run_at(st, sh, p) else { return Ok(false) };
+        let id = sh.id;
+        self.ui_requests.push(equation_dialog(id, None, pi, ri));
+        Ok(true)
     }
 
     /// Start editing shape `id`'s text with the caret at slide point `p`; for a table, in the cell
