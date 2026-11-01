@@ -242,6 +242,8 @@ impl SlideApp {
             "app.reuseSlidesDialog" => self.pick_and_reuse(p.get("keepFormatting").and_then(Value::as_bool).unwrap_or(false)),
             "app.insertVideoDialog" => self.pick_and_insert("video", "insert.video"),
             "app.saveAsDialog" => self.save_as_dialog("deckcraft"),
+            "app.saveSlidesAsDialog" => self.save_slides_as_dialog(json!({})),
+            "app.splitDialog" => self.dialog = Some(dialogs::Dialog::new("splitPresentation")),
             "app.exportDialog" => self.dialog = Some(dialogs::Dialog::new("export")),
             "app.pasteSpecial" => self.dialog = Some(dialogs::Dialog::new("pasteSpecial")),
             "app.browseThemeDialog" => {

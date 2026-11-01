@@ -79,6 +79,21 @@ pub fn file_len(path: &str) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.len())
 }
 
+/// Whether `a` and `b` name the same file: compared after resolving links and `..` when both exist,
+/// as written otherwise.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn same_file(a: &str, b: &str) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn same_file(a: &str, b: &str) -> bool {
+    a == b
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn file_len(_path: &str) -> Option<u64> {
     None

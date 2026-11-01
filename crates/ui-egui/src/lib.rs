@@ -148,6 +148,8 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.reuseSlidesDialog", "Reuse Slides…", None, "{keepFormatting?: bool}"),
     ("app.insertVideoDialog", "Video from File…", None, "{}"),
     ("app.saveAsDialog", "Save As…", None, "{}"),
+    ("app.saveSlidesAsDialog", "Save Selected Slides As…", None, "{}"),
+    ("app.splitDialog", "Split Presentation…", None, "{}"),
     ("app.exportDialog", "Export…", None, "{}"),
     ("app.browseThemeDialog", "Browse for Themes…", None, "{}"),
     ("app.compareDialog", "Compare…", None, "{}"),

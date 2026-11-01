@@ -483,7 +483,7 @@ fn write_file(path: &str, bytes: &[u8]) -> Result<()> {
 fn save(s: &mut Session, p: &Value) -> Result<Value> {
     let path = str_param(p, "path").map(String::from).or_else(|| s.active().and_then(|d| d.path.clone()));
     let Some(path) = path else {
-        s.ui_requests.push(crate::UiRequest::PickFile { purpose: "saveAs".into() });
+        s.ui_requests.push(crate::UiRequest::PickFile { purpose: "saveAs".into(), params: json!({}) });
         return Ok(json!({"needsPath": true}));
     };
     let format = str_param(p, "format").unwrap_or(format_for_path(&path));
@@ -495,7 +495,7 @@ fn save(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn save_as(s: &mut Session, p: &Value) -> Result<Value> {
     if str_param(p, "path").is_none() {
-        s.ui_requests.push(crate::UiRequest::PickFile { purpose: "saveAs".into() });
+        s.ui_requests.push(crate::UiRequest::PickFile { purpose: "saveAs".into(), params: json!({}) });
         return Ok(json!({"needsPath": true}));
     }
     save(s, p)
