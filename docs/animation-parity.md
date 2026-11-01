@@ -1,6 +1,6 @@
 # Transitions and animations: parity with PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-29 · **Change:** minor (going back in the show reverses the left slide's transition, #1531; previous: minor, Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-29 · **Change:** minor (Dissolve In and Out show the shape through fixed noise instead of fading; previous: minor, going back in the show reverses the left slide's transition, #1531; previous: minor, Animation Pane ▸ Play From plays from the selected effect; previous: community PR wave 2026-10-14: interactive-deck triggers, canvas preview, the Animation Pane timeline, repeat and bounce end round-trip; duplicated rows and headers folded; previous: major, transitions measured frame by frame against PowerPoint for Windows' video export) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Transitions and animations are what make a deck a presentation, and the part of PowerPoint people
 notice first when it's missing. Scores roll up into [target-app-parity.md](target-app-parity.md)
@@ -58,6 +58,12 @@ perspective-correct subdivided meshes.
 | Motion paths | 64 presets + custom | 40 + Custom Path (Lines, Arcs, Turns, Loops, Basic shapes such as stars, heart, moon, teardrop; Lines & Curves such as zigzag, waves, S curves, spirals, bounces; Special such as figure 8, bean, peanut, neutron) | Remaining ~24 presets (some Basic shapes, Lines & Curves variants) |
 | Media (Play, Pause, Stop) | 3 (+ Seek) | 3 | Seek, bookmarks as triggers |
 
+Dissolve In and Out show the shape through noise fixed in slide space, as PowerPoint draws them
+(measured on its video export at 1080p and 4K): about 2 x 1.4 pt blobs that never go again once
+shown, and an S-shaped share over the effect's whole duration (nothing before a tenth of the way,
+all by nine tenths). Random Bars, Blinds, Checkerboard and Wheel entrances still play as plain
+fades, and a by-paragraph build of text dissolves as a fade.
+
 By how often people use them, the effects present cover nearly all real decks (Appear, Fade, Fly
 In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85% of use; by count,
 ~34%.
@@ -95,6 +101,7 @@ In, Wipe, Zoom, Float In, Grow/Shrink, Pulse, Spin, motion lines): weighted, ~85
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-29 | minor | Going back in the show plays the transition of the slide being left, reversed, instead of the previous slide's entrance transition (#1531); new row in the transition features. Scores unchanged |
+| 2026-10-25 | minor | Dissolve In and Out: a noise mask fixed in slide space and PowerPoint's S-shaped reveal, in place of a fade. Counts unchanged |
 | 2026-10-22 | minor | Animation Pane ▸ Play From: with an effect selected, the preview starts at that effect on the play-all clock; the row says yes and the estimate drops to ~14–26 h |
 | 2026-10-15 | trivial | PPTX interactive sequences preserve later On Click effects and one click per paragraph; no change to playback or feature scores |
 | 2026-10-16 | trivial | PPTX paragraph builds edited in PowerPoint keep their clicks; sub-points save With Previous of their parent (#844) |

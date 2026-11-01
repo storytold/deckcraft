@@ -13,13 +13,25 @@ pub struct ShapeState {
     pub clip: Option<[f64; 4]>,
     /// Colour override for emphasis effects (fill).
     pub tint: Option<Rgba>,
+    /// Dissolve effects: the share (0..1) of the shape that shows, through noise fixed in slide space.
+    pub dissolve: Option<f64>,
     /// Per-paragraph states of by-paragraph text builds (paragraph index, state).
     pub paras: Vec<(usize, ParaState)>,
 }
 
 impl Default for ShapeState {
     fn default() -> Self {
-        ShapeState { visible: true, opacity: 1.0, offset: Vec2::ZERO, scale: (1.0, 1.0), rotate: 0.0, clip: None, tint: None, paras: vec![] }
+        ShapeState {
+            visible: true,
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: (1.0, 1.0),
+            rotate: 0.0,
+            clip: None,
+            tint: None,
+            dissolve: None,
+            paras: vec![],
+        }
     }
 }
 
