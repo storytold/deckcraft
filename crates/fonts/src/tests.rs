@@ -319,9 +319,9 @@ fn wrap_eot(font: &[u8], version: u32) -> Vec<u8> {
 #[test]
 fn embedded_open_type_yields_the_font() {
     let font = epaint_default_fonts::UBUNTU_LIGHT;
-    assert_eq!(embedded_sfnt(font), Some(font));
-    assert_eq!(embedded_sfnt(&wrap_eot(font, 0x0002_0001)), Some(font));
-    assert_eq!(embedded_sfnt(&wrap_eot(font, 0x0001_0000)), Some(font));
+    assert_eq!(embedded_sfnt(font).as_deref(), Some(font));
+    assert_eq!(embedded_sfnt(&wrap_eot(font, 0x0002_0001)).as_deref(), Some(font));
+    assert_eq!(embedded_sfnt(&wrap_eot(font, 0x0001_0000)).as_deref(), Some(font));
     assert!(embedded_sfnt(b"not a font file").is_none());
     assert!(embedded_sfnt(&wrap_eot(b"hello world!!", 0x0002_0002)).is_none());
     let mut truncated = wrap_eot(font, 0x0002_0001);
