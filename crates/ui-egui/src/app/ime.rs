@@ -24,6 +24,13 @@ impl SlideApp {
         for r in &self.ui.recent {
             self.ui_fonts.note(ctx, r);
         }
+        let lang = crate::i18n::current();
+        if self.catalog_noted != Some(lang) {
+            for text in lang.catalog_text() {
+                self.ui_fonts.note(ctx, text);
+            }
+            self.catalog_noted = Some(lang);
+        }
         if let Some(st) = self.session.active() {
             self.ui_fonts.note_doc(ctx, st);
         }

@@ -20,6 +20,12 @@ deckcraft-engine = { workspace = true }
 deckcraft-media = { workspace = true }
 egui = { workspace = true, features = ["default_fonts", "monochrome_emoji_fonts"] }
 craft-ui = { workspace = true }
+# Interface translations: lookup, fallback, plurals and system-locale matching over the craft-i18n
+# catalogs that `build.rs` embeds from `CRAFT_I18N_DIR` (storytold/craft-i18n, pinned in
+# `craft-i18n.rev`). Same craft-libs rev as craft-ui, so the lockfile resolves it once.
+craft-i18n = { workspace = true }
+# The system's preferred interface languages. Native: OS APIs; wasm: the browser's languages (`js`).
+sys-locale = { version = "0.3", features = ["js"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }

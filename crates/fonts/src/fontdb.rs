@@ -377,7 +377,7 @@ fn name(font: &skrifa::FontRef<'_>, ids: &[StringId]) -> Option<String> {
 }
 
 /// A face's family and style names (the default instance's style for a variable font).
-fn face_names(f: &skrifa::FontRef<'_>) -> Option<(String, String)> {
+pub(crate) fn face_names(f: &skrifa::FontRef<'_>) -> Option<(String, String)> {
     let family = name(f, &[StringId::TYPOGRAPHIC_FAMILY_NAME, StringId::FAMILY_NAME])?;
     let style = name(f, &[StringId::TYPOGRAPHIC_SUBFAMILY_NAME, StringId::SUBFAMILY_NAME]).unwrap_or_else(|| "Regular".into());
     Some((family, style))

@@ -37,18 +37,18 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     ui.label(RichText::new(&title).font(theme::font(24.0)).color(t.accent));
     match &path {
         Some(p) => dim(ui, p),
-        None => dim(ui, "Not saved yet"),
+        None => dim(ui, crate::tl!("Not saved yet")),
     }
     if let Some(p) = &path {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Copy path").clicked() {
+            if ui.button(crate::tl!("Copy path")).clicked() {
                 ui.ctx().copy_text(p.clone());
                 app.set_status("Copied the path");
             }
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(dir) = std::path::Path::new(p).parent().and_then(std::path::Path::to_str)
-                && ui.button("Open file location").clicked()
+                && ui.button(crate::tl!("Open file location")).clicked()
             {
                 app.open_url(&format!("file:///{}", dir.replace('\\', "/").trim_start_matches('/')));
             }
@@ -61,25 +61,25 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
             if task(
                 ui,
                 Icon::Accessibility,
-                "Check for Issues",
-                "Inspect Presentation",
-                "Before you share it, check the presentation for things people with disabilities might find hard to read.",
+                crate::tl!("Check for Issues"),
+                crate::tl!("Inspect Presentation"),
+                crate::tl!("Before you share it, check the presentation for things people with disabilities might find hard to read."),
                 true,
             ) {
                 let _ = app.run("app.dialog", json!({"id": "accessibility"}));
             }
             let (detail, can_revert) = match (dirty, path.is_some()) {
-                (false, _) => ("There are no unsaved changes.", false),
-                (true, true) => ("This presentation has unsaved changes. Revert goes back to the saved file.", true),
-                (true, false) => ("This presentation has never been saved.", false),
+                (false, _) => (crate::tl!("There are no unsaved changes."), false),
+                (true, true) => (crate::tl!("This presentation has unsaved changes. Revert goes back to the saved file."), true),
+                (true, false) => (crate::tl!("This presentation has never been saved."), false),
             };
-            if task(ui, Icon::ResetSlide, "Revert", "Manage Presentation", detail, can_revert) {
+            if task(ui, Icon::ResetSlide, crate::tl!("Revert"), crate::tl!("Manage Presentation"), detail, can_revert) {
                 let _ = app.run("file.revert", json!({}));
             }
         });
         ui.add_space(30.0);
         ui.vertical(|ui| {
-            heading(ui, "Properties");
+            heading(ui, crate::tl!("Properties"));
             let props = v.get("properties").cloned().unwrap_or_default();
             let size = v.get("bytes").and_then(Value::as_u64).map(format_bytes);
             egui::Grid::new("backstage_props").num_columns(2).spacing(vec2(18.0, 7.0)).show(ui, |ui| {
@@ -89,16 +89,17 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     ui.end_row();
                 };
                 if let Some(s) = size {
-                    row(ui, "Size", s);
+                    row(ui, crate::tl!("Size"), s);
                 }
-                row(ui, "Slides", v.get("slides").and_then(Value::as_u64).unwrap_or(0).to_string());
-                row(ui, "Hidden slides", v.get("hiddenSlides").and_then(Value::as_u64).unwrap_or(0).to_string());
+                row(ui, crate::tl!("Slides"), v.get("slides").and_then(Value::as_u64).unwrap_or(0).to_string());
+                row(ui, crate::tl!("Hidden slides"), v.get("hiddenSlides").and_then(Value::as_u64).unwrap_or(0).to_string());
                 for (i, (key, label, hint)) in PROPERTIES.iter().enumerate() {
                     let saved = props.get(*key).and_then(Value::as_str).unwrap_or("").to_string();
                     let Some(draft) = bs.props.get_mut(i) else { continue };
-                    let l = ui.label(RichText::new(*label).color(t.text_dim));
+                    let l = ui.label(RichText::new(crate::i18n::t(label)).color(t.text_dim));
                     let id = ui.make_persistent_id(("backstage_prop", *key));
-                    let resp = ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(*hint).desired_width(300.0)).labelled_by(l.id);
+                    let resp =
+                        ui.add(egui::TextEdit::singleline(draft).id(id).hint_text(crate::i18n::t(hint)).desired_width(300.0)).labelled_by(l.id);
                     if resp.lost_focus() && *draft != saved {
                         // Commit first: a click on another field takes the focus before this one is drawn.
                         let mut p = serde_json::Map::new();
@@ -111,7 +112,7 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
                     }
                     ui.end_row();
                 }
-                row(ui, "Location", path.clone().unwrap_or_else(|| "Not saved yet".into()));
+                row(ui, crate::tl!("Location"), path.clone().unwrap_or_else(|| crate::tl!("Not saved yet").into()));
             });
         });
     });
@@ -150,26 +151,26 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     let t = Tokens::get(ui.ctx());
     let (title, path) = app.session.active().map(|d| (d.title(), d.path.clone())).unwrap_or_default();
     ui.label(RichText::new(&title).font(theme::font(15.0)).color(t.text));
-    dim(ui, path.as_deref().unwrap_or("Not saved yet"));
+    dim(ui, path.as_deref().unwrap_or_else(|| crate::tl!("Not saved yet")));
     ui.add_space(14.0);
     let current = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type).map_or(SAVE_TYPES[0].1, |s| s.1);
     ui.horizontal(|ui| {
         craft_ui::ComboBox::from_id_salt("backstage_save_type")
             .width(340.0)
-            .selected_text(current)
+            .selected_text(crate::i18n::t(current))
             .show_ui(ui, |ui| {
                 for (id, label, _) in SAVE_TYPES {
-                    if ui.selectable_label(bs.file_type == id, label).clicked() {
+                    if ui.selectable_label(bs.file_type == id, crate::i18n::t(label)).clicked() {
                         bs.file_type = id;
                     }
                 }
             })
             .response
-            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Save as type"));
+            .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::tl!("Save as type")));
         let web = app.services.pick_save.is_none();
-        let label = if web { "Download" } else { "Save" };
+        let label = if web { crate::tl!("Download") } else { crate::tl!("Save") };
         let save = ui.add(egui::Button::new(RichText::new(label).color(t.accent_text)).fill(t.accent).min_size(vec2(84.0, 26.0)));
-        if save.on_hover_text(if web { "Download the file" } else { "Choose where to save" }).clicked() {
+        if save.on_hover_text(if web { crate::tl!("Download the file") } else { crate::tl!("Choose where to save") }).clicked() {
             let fmt = bs.file_type;
             let done = if matches!(fmt, "pptx" | "deckcraft") {
                 let before = app.session.active().map(|d| (d.path.clone(), d.is_dirty()));
@@ -185,7 +186,7 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     });
     ui.add_space(8.0);
     if let Some((_, _, detail)) = SAVE_TYPES.iter().find(|s| s.0 == bs.file_type) {
-        dim(ui, detail);
+        dim(ui, crate::i18n::t(detail));
     }
 }
 
@@ -196,47 +197,47 @@ pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
     ui.horizontal_top(|ui| {
         ui.vertical(|ui| {
             ui.set_width(340.0);
-            heading(ui, "Appearance");
+            heading(ui, crate::tl!("Appearance"));
             let dark = app.ui.brightness == theme::Brightness::Dark;
             craft_ui::ComboBox::from_id_salt("backstage_appearance")
                 .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
+                .selected_text(if dark { crate::tl!("Dark") } else { crate::tl!("Light") })
                 .show_ui(ui, |ui| {
-                    for (on, label) in [(false, "Light"), (true, "Dark")] {
+                    for (on, label) in [(false, crate::tl!("Light")), (true, crate::tl!("Dark"))] {
                         if ui.selectable_label(dark == on, label).clicked() {
                             let _ = app.run("view.dark", json!({"on": on}));
                         }
                     }
                 })
                 .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
+                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, crate::tl!("Appearance")));
             ui.add_space(16.0);
-            heading(ui, "User Information");
-            dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
+            heading(ui, crate::tl!("User Information"));
+            dim(ui, crate::tl!("DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device."));
         });
         ui.add_space(40.0);
         ui.vertical(|ui| {
-            heading(ui, "Product Information");
+            heading(ui, crate::tl!("Product Information"));
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
                 crate::dialogs::paint_logo(ui.painter(), r);
                 ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
             });
             dim(ui, &crate::dialogs::version_line());
-            dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
+            dim(ui, crate::tl!("Open source under MIT OR Apache-2.0. Not affiliated with Microsoft."));
             ui.add_space(14.0);
             if task(
                 ui,
                 Icon::Help,
-                "About DeckCraft",
-                "About DeckCraft",
-                "The version, the people and models who built it, and where to find us.",
+                crate::tl!("About DeckCraft"),
+                crate::tl!("About DeckCraft"),
+                crate::tl!("The version, the people and models who built it, and where to find us."),
                 true,
             ) {
                 let _ = app.run("app.about", json!({}));
             }
-            ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
+            ui.hyperlink_to(crate::tl!("Join our community on Discord"), deckcraft_engine::links::DISCORD);
+            ui.hyperlink_to(crate::tl!("Source on GitHub"), deckcraft_engine::links::GITHUB);
         });
     });
 }

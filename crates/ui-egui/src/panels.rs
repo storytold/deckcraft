@@ -41,16 +41,16 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
         .show(ui, |ui| {
             app.ui.pane_width = ui.available_width() + 20.0;
             let title = match pane.as_str() {
-                "format" => "Format Shape",
-                "background" => "Format Background",
-                "animation" => "Animation Pane",
-                "selection" => "Selection",
-                "comments" => "Comments",
-                "designer" => "Design Ideas",
-                "smartart" => "Text Pane",
-                "thesaurus" => "Thesaurus",
-                "revisions" => "Revisions",
-                _ => "Pane",
+                "format" => crate::tl!("Format Shape"),
+                "background" => crate::tl!("Format Background"),
+                "animation" => crate::tl!("Animation Pane"),
+                "selection" => crate::tl!("Selection"),
+                "comments" => crate::tl!("Comments"),
+                "designer" => crate::tl!("Design Ideas"),
+                "smartart" => crate::tl!("Text Pane"),
+                "thesaurus" => crate::tl!("Thesaurus"),
+                "revisions" => crate::tl!("Revisions"),
+                _ => crate::tl!("Pane"),
             };
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(title).font(theme::bold(16.0)));
