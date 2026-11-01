@@ -141,7 +141,7 @@ fn new(s: &mut Session, p: &Value) -> Result<Value> {
             }
             sh.text = Some(body);
         }
-        let at = usize_param(p, "at").unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
+        let at = opt_usize_param(p, "at", "slide.new")?.unwrap_or(if doc.slides.is_empty() { 0 } else { sel.slide + 1 }).min(doc.slides.len());
         let id = slide.id;
         // Inherit the section of the slide before.
         let section = at.checked_sub(1).and_then(|i| doc.slides.get(i)).and_then(|prev| doc.section_of(prev.id));
@@ -751,6 +751,7 @@ mod tests {
                 ("slide.duplicate", json!({"index": bad})),
                 ("slide.move", json!({"from": bad, "to": 0})),
                 ("section.add", json!({"at": bad})),
+                ("slide.new", json!({"at": bad})),
             ] {
                 assert!(s.execute(cmd, &p).is_err(), "{cmd} must reject {p}");
                 assert_eq!(s.doc().expect("doc").doc.slides.len(), 3, "{cmd} {p}");
