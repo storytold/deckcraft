@@ -178,4 +178,10 @@ fn the_russian_catalog_translates_core_labels() {
     assert_eq!(tr(russian, "New\nSlide"), "Создать\nслайд");
     assert_eq!(fmt(tr(russian, "Slide {n} of {total}"), &[("n", "1"), ("total", "8")]), "Слайд 1 из 8");
     assert_eq!(lang_from_tag("ru-SK"), Some(russian));
+    // Russian has three plural forms: 1 and 21 take one, 2 to 4 another, 5 to 20 a third.
+    let count = |n| russian.i18n().trn(russian.lang, n, "{n} presentation", "{n} presentations").replace("{n}", &n.to_string());
+    assert_eq!(count(1), "1 презентация");
+    assert_eq!(count(2), "2 презентации");
+    assert_eq!(count(5), "5 презентаций");
+    assert_eq!(count(21), "21 презентация");
 }
