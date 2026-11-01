@@ -29,6 +29,32 @@ impl FontSet {
     pub fn script(&self, script: &str) -> Option<&str> {
         self.scripts.iter().find(|f| f.script.eq_ignore_ascii_case(script) && !f.typeface.is_empty()).map(|f| f.typeface.as_str())
     }
+
+    /// DrawingML uses locale-specific composite scripts for East Asian theme fonts. Unicode
+    /// classifies Han as `Hani`, which alone cannot distinguish Chinese, Japanese and Korean.
+    /// An explicit BCP 47 script wins over the region; an unknown language keeps the original
+    /// script instead of guessing that all Han text is Simplified Chinese.
+    pub fn script_for_language(&self, script: &str, language: Option<&str>) -> Option<&str> {
+        let lang = language.unwrap_or("").replace('_', "-").to_ascii_lowercase();
+        let mut parts = lang.split('-');
+        let language = parts.next().unwrap_or("");
+        let rest: Vec<_> = parts.collect();
+        let mapped = match script {
+            "Hira" | "Kana" => Some("Jpan"),
+            "Hani" | "Bopo" => match language {
+                "ja" => Some("Jpan"),
+                "ko" => Some("Hang"),
+                "zh" if rest.contains(&"hant") => Some("Hant"),
+                "zh" if rest.contains(&"hans") => Some("Hans"),
+                "zh" if rest.iter().any(|r| matches!(*r, "tw" | "hk" | "mo")) => Some("Hant"),
+                "zh" => Some("Hans"),
+                _ if script == "Bopo" => Some("Hant"),
+                _ => None,
+            },
+            _ => None,
+        };
+        mapped.and_then(|s| self.script(s)).or_else(|| self.script(script))
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -347,4 +373,38 @@ pub fn builtin_format_schemes() -> Vec<FormatScheme> {
     plain.effects = vec![Effects::default(), Effects::default(), Effects::default()];
 
     vec![default_format(), soft, crisp, lift, glow_scheme, plain]
+}
+
+#[cfg(test)]
+mod locale_fonts {
+    use super::{FontSet, ScriptFont};
+    #[test]
+    fn composite_east_asian_scripts_follow_language_and_explicit_script() {
+        let fonts = FontSet {
+            scripts: ["Hans", "Hant", "Jpan", "Hang", "Hani", "Arab"]
+                .into_iter()
+                .map(|s| ScriptFont { script: s.into(), typeface: format!("Example {s}") })
+                .collect(),
+            ..Default::default()
+        };
+        for (script, language, expected) in [
+            ("Hani", "zh-CN", "Hans"),
+            ("Hani", "zh-SG", "Hans"),
+            ("Hani", "zh-TW", "Hant"),
+            ("Hani", "zh-HK", "Hant"),
+            ("Hani", "zh-Hans-TW", "Hans"),
+            ("Hani", "zh-Hant-CN", "Hant"),
+            ("Hani", "JA_jp", "Jpan"),
+            ("Kana", "", "Jpan"),
+            ("Hani", "ko-KR", "Hang"),
+            ("Hani", "en-US", "Hani"),
+            ("Arab", "zh-CN", "Arab"),
+            ("Bopo", "", "Hant"),
+        ] {
+            assert_eq!(fonts.script_for_language(script, Some(language)), Some(format!("Example {expected}").as_str()));
+        }
+        assert_eq!(fonts.script_for_language("Hani", None), Some("Example Hani"));
+        let only_han = FontSet { scripts: vec![ScriptFont { script: "Hani".into(), typeface: "Example Han".into() }], ..Default::default() };
+        assert_eq!(only_han.script_for_language("Hani", Some("ja-JP")), Some("Example Han"));
+    }
 }

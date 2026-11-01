@@ -552,29 +552,15 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     dw.close("dsp:nvGrpSpPr");
     dw.empty0("dsp:grpSpPr");
     let (sx, sy) = (frame.w / child.w.max(1e-6), frame.h / child.h.max(1e-6));
-    let mut k = 0;
-    let mut flat = vec![];
-    walk(children, &mut |c, _| {
-        if matches!(c.kind, ShapeKind::Shape) {
-            flat.push(c.clone());
-        }
-    });
-    for mut c in flat.into_iter().take(10_000) {
+    let mut count = 0;
+    for c in children {
+        let mut c = c.clone();
+        // Only the top-level children are in the diagram's child coordinate system. Nested
+        // groups keep their own transforms and child spaces; flattening them loses both.
         if let Some(xf) = &mut c.xfrm {
             *xf = Xfrm { x: (xf.x - child.x) * sx, y: (xf.y - child.y) * sy, w: xf.w * sx, h: xf.h * sy, ..*xf };
         }
-        k += 1;
-        dw.open("dsp:sp", A::new().a("modelId", format!("{{{:08X}-5D1A-4C0A-9E5B-{k:012X}}}", s.id.0)));
-        dw.open0("dsp:nvSpPr");
-        dw.empty("dsp:cNvPr", A::new().a("id", 0).a("name", ""));
-        dw.empty0("dsp:cNvSpPr");
-        dw.close("dsp:nvSpPr");
-        sp_pr_tag(&mut dw, x, &mut dout, &c, true, "dsp:spPr");
-        if let Some(st) = &c.style {
-            style_tag(&mut dw, st, "dsp:style");
-        }
-        shape_text_body(&mut dw, x, &mut dout, "dsp:txBody", &c, false);
-        dw.close("dsp:sp");
+        drawing_shape(&mut dw, x, &mut dout, &c, s.id.0, &mut count, 0);
     }
     dw.close("dsp:spTree");
     dw.close("dsp:drawing");
@@ -591,7 +577,7 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     x.pkg.rels(&data, &mout.rels);
     let dm = rel(o, "diagramData", &data);
     let layout = name("layout");
-    let process = dgm::process::parts(d, children, child);
+    let process = dgm::process::parts(d, children, child, &frame);
     let lo_xml = process
         .as_ref()
         .map(|p| p.layout.clone())
@@ -625,6 +611,60 @@ fn diagram(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, d: &dec
     w.empty("dgm:relIds", A::new().a("xmlns:dgm", dgm::NS_DGM).a("r:dm", dm).a("r:lo", lo).a("r:qs", qs).a("r:cs", cs));
     w.close("a:graphicData");
     frame_close(w);
+}
+
+/// Cached diagram drawings admit shapes and groups. Pictures use a shape's DrawingML fill;
+/// keeping groups preserves their transforms instead of applying the root scale to every leaf.
+fn drawing_shape(w: &mut W, x: &mut Exp, o: &mut Out, s: &Shape, seed: u32, count: &mut u32, depth: usize) {
+    if depth > 32 || *count >= 10_000 {
+        return;
+    }
+    *count += 1;
+    let id = *count;
+    if let ShapeKind::Group { children, child } = &s.kind {
+        w.open0("dsp:grpSp");
+        w.open0("dsp:nvGrpSpPr");
+        w.empty("dsp:cNvPr", A::new().a("id", id).a("name", &s.name));
+        w.empty0("dsp:cNvGrpSpPr");
+        w.close("dsp:nvGrpSpPr");
+        w.open0("dsp:grpSpPr");
+        dml::xfrm(w, "a:xfrm", &s.xfrm.unwrap_or(*child), Some(child));
+        if let Some(fill) = &s.fill {
+            dml::fill(w, x, o, fill);
+        }
+        if let Some(effects) = &s.effects {
+            dml::effects(w, effects);
+        }
+        w.close("dsp:grpSpPr");
+        for child in children {
+            drawing_shape(w, x, o, child, seed, count, depth + 1);
+        }
+        w.close("dsp:grpSp");
+        return;
+    }
+    let mut shape = s.clone();
+    match &s.kind {
+        ShapeKind::Shape | ShapeKind::Connector { .. } => {}
+        ShapeKind::Picture { fill } => {
+            shape.kind = ShapeKind::Shape;
+            shape.fill = Some(Fill::Picture(fill.clone()));
+        }
+        _ => {
+            log::warn!("pptx: unsupported object in cached diagram drawing");
+            return;
+        }
+    }
+    w.open("dsp:sp", A::new().a("modelId", format!("{{{seed:08X}-5D1A-4C0A-9E5B-{id:012X}}}")));
+    w.open0("dsp:nvSpPr");
+    w.empty("dsp:cNvPr", A::new().a("id", id).a("name", &s.name));
+    w.empty0("dsp:cNvSpPr");
+    w.close("dsp:nvSpPr");
+    sp_pr_tag(w, x, o, &shape, true, "dsp:spPr");
+    if let Some(style) = &shape.style {
+        style_tag(w, style, "dsp:style");
+    }
+    shape_text_body(w, x, o, "dsp:txBody", &shape, false);
+    w.close("dsp:sp");
 }
 
 fn ink_shape(st: &deckcraft_model::InkStroke, i: usize) -> Option<Shape> {

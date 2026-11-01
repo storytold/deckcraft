@@ -27,10 +27,28 @@ pub(super) fn patched(c: &Chart) -> Option<Chart> {
     }
     let chart = root.elements_mut().find(|e| e.is("chart"))?;
     let plot = chart.elements_mut().find(|e| e.is("plotArea"))?;
+    let mut order: Vec<_> = plot
+        .elements()
+        .filter(|g| g.local().ends_with("Chart"))
+        .flat_map(|g| g.children_named("ser"))
+        .take(c.series.len() + 1)
+        .enumerate()
+        .map(|(physical, s)| {
+            (s.child_val("order").or_else(|| s.child_val("idx")).and_then(|v| v.parse::<usize>().ok()).unwrap_or(physical), physical)
+        })
+        .collect();
+    if order.len() != c.series.len() {
+        return None;
+    }
+    order.sort_by_key(|(logical, _)| *logical);
+    let mut positions = vec![0; order.len()];
+    for (logical, (_, physical)) in order.into_iter().enumerate() {
+        positions[physical] = logical;
+    }
     let mut index = 0;
     for group in plot.elements_mut().filter(|g| g.local().ends_with("Chart")) {
         for ser in group.elements_mut().filter(|s| s.is("ser")) {
-            let s = c.series.get(index)?;
+            let s = c.series.get(*positions.get(index)?)?;
             // Categorical series only: x/y/bubble data need their own coupled update.
             if ser.child("val").is_none() || ser.child("cat").is_none() {
                 return None;

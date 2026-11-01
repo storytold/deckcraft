@@ -297,6 +297,10 @@ pub(super) fn fonts_used(s: &mut Session, _: &Value) -> Result<Value> {
     Ok(json!(v))
 }
 
+pub(super) fn fonts_inspect(s: &mut Session, _: &Value) -> Result<Value> {
+    Ok(crate::fonts::inspect_fonts(&s.doc()?.doc))
+}
+
 pub(super) fn replace_font(s: &mut Session, p: &Value) -> Result<Value> {
     let from = str_param(p, "from").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad("font.replace", "missing `from`"))?.to_string();
     let to = str_param(p, "to").map(str::trim).filter(|x| !x.is_empty()).ok_or_else(|| bad("font.replace", "missing `to`"))?.to_string();
@@ -344,6 +348,23 @@ mod replace_font_tests {
         s.execute("edit.undo", &json!({})).unwrap();
         s.execute("edit.undo", &json!({})).unwrap();
         assert!(fonts(&mut s).iter().any(|f| f == "Comic Neue"));
+    }
+
+    #[test]
+    fn replacement_includes_chart_script_fonts() {
+        use deckcraft_model::chart::ChartTextRole;
+        use deckcraft_model::text::RunProps;
+        use deckcraft_model::{Chart, Shape, ShapeKind, defaults};
+        let mut doc = defaults::new_presentation(None);
+        let mut chart = Chart::default();
+        chart.text_styles.insert(
+            ChartTextRole::Legend,
+            RunProps { font: Some("Example Missing".into()), font_ea: Some("Example Missing".into()), ..Default::default() },
+        );
+        std::sync::Arc::make_mut(&mut doc.slides[0]).shapes.push(Shape { kind: ShapeKind::Chart(Box::new(chart)), ..Default::default() });
+        assert_eq!(crate::fonts::replace_font(&mut doc, "example missing", "Inter"), 2);
+        let ShapeKind::Chart(c) = &doc.slides[0].shapes.last().unwrap().kind else { panic!("chart") };
+        assert_eq!(c.text_props(ChartTextRole::Legend).font_ea.as_deref(), Some("Inter"));
     }
 
     #[test]

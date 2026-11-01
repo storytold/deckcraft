@@ -2,10 +2,10 @@
 
 use deckcraft_color::{ColorTransform, Rgba, SchemeSlot};
 use deckcraft_model::Shape;
-use deckcraft_model::chart::{Chart, ChartType, TrendlineType, axis_scale};
+use deckcraft_model::chart::{Chart, ChartTextRole, ChartType, TrendlineType, axis_scale};
 use deckcraft_model::resolve::Ctx;
 use deckcraft_model::style::{ColorRef, Fill};
-use deckcraft_model::text::{Align, Anchor, Bullet, TextBody};
+use deckcraft_model::text::{Align, Anchor, Bullet, RunProps, TextBody};
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use vello_cpu::RenderContext;
 
@@ -156,6 +156,10 @@ pub(crate) struct LabelStyle {
 }
 
 pub(crate) fn label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, r: Rect, style: LabelStyle) {
+    styled_label(ctx, rctx, m, text, r, style, &RunProps::default());
+}
+
+fn label_body(text: &str, style: LabelStyle, props: &RunProps) -> TextBody {
     let LabelStyle { size, align, anchor, col, bold } = style;
     let mut body = TextBody::from_text(text);
     body.body.inset_l = Some(0.0);
@@ -170,11 +174,15 @@ pub(crate) fn label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, 
         p.props.margin_left = Some(0.0);
         p.props.indent = Some(0.0);
         for run in &mut p.runs {
-            run.props.size = Some(size);
-            run.props.bold = Some(bold);
-            run.props.fill = Some(Fill::solid(ColorRef::rgb(col)));
+            run.props = props.clone();
+            run.props.inherit(&RunProps { size: Some(size), bold: Some(bold), fill: Some(Fill::solid(ColorRef::rgb(col))), ..Default::default() });
         }
     }
+    body
+}
+
+fn styled_label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, r: Rect, style: LabelStyle, props: &RunProps) {
+    let body = label_body(text, style, props);
     let tmp = Shape { text: Some(body.clone()), ..Default::default() };
     crate::draw_text(
         ctx,
@@ -184,6 +192,24 @@ pub(crate) fn label(ctx: &mut RenderContext, rctx: &Ctx, m: Affine, text: &str, 
         m,
         &deckcraft_text::Opts { rect: r, fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: false },
     );
+}
+
+/// Measure with the exact body/style used for drawing, including CJK, fallback and shaping.
+fn label_width(ctx: &Ctx, text: &str, size: f64, props: &RunProps) -> f64 {
+    let body = label_body(text, LabelStyle { size, align: Align::Left, anchor: Anchor::Top, col: Rgba::BLACK, bold: false }, props);
+    let shape = Shape { text: Some(body.clone()), ..Default::default() };
+    deckcraft_text::layout(
+        ctx,
+        &shape,
+        &body,
+        &deckcraft_text::Opts {
+            rect: Rect::new(0.0, 0.0, 1_000_000.0, 1_000_000.0),
+            fields: &deckcraft_text::NoFields,
+            prompt_color: None,
+            no_shrink: true,
+        },
+    )
+    .content_width
 }
 
 fn fmt_num(v: f64) -> String {
@@ -299,17 +325,18 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     }
     // The file's text sizes when it has them (PowerPoint draws chart text at them); otherwise a size
     // that suits the chart.
-    let base = c.text_size.unwrap_or_else(|| (h.min(w) / 22.0).clamp(7.0, 18.0));
-    let title_size = c.title_size.unwrap_or(base * 1.4);
+    let base = c.text_props(ChartTextRole::Default).size.unwrap_or_else(|| (h.min(w) / 22.0).clamp(7.0, 18.0));
+    let title_size = c.text_props(ChartTextRole::Title).size.unwrap_or(base * 1.4);
     let mut area = Rect::new(w * 0.04, h * 0.04, w * 0.96, h * 0.96);
     if let Some(t) = &c.title {
-        label(
+        styled_label(
             ctx,
             rctx,
             m,
             t,
             Rect::new(0.0, area.y0, w, area.y0 + title_size * 1.3),
             LabelStyle { size: title_size, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
+            &c.text_props(ChartTextRole::Title),
         );
         area.y0 += title_size * 1.7;
     }
@@ -356,10 +383,22 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let primary_ticks: Vec<f64> = ticks((min, max, step)).map(|k| log.map_or(k, |(b, _)| b.powf(k))).collect();
     let label_w = |sec: bool, sc: (f64, f64, f64)| {
         let vals: Vec<f64> = if sec { ticks(sc).collect() } else { primary_ticks.clone() };
-        vals.iter().map(|v| c.axis_label(sec, *v).chars().count()).max().unwrap_or(1) as f64 * base * 0.55 + base * 0.6
+        vals.iter()
+            .map(|v| {
+                label_width(
+                    rctx,
+                    &c.axis_label(sec, *v),
+                    base,
+                    &c.text_props(if sec { ChartTextRole::SecondaryValueAxis } else { ChartTextRole::ValueAxis }),
+                )
+            })
+            .fold(0.0_f64, f64::max)
+            + base * 0.6
     };
     let gutter = if horiz {
-        base * 4.5
+        let measured =
+            c.categories.iter().map(|n| label_width(rctx, n, base, &c.text_props(ChartTextRole::CategoryAxis))).fold(0.0_f64, f64::max) + base * 0.6;
+        clamp_soft(measured, base * 1.5, area.width() * 0.4)
     } else if c.y_hidden {
         base * 0.5
     } else {
@@ -530,22 +569,48 @@ fn draw_legend(ctx: &mut RenderContext, draw: &LegendDraw<'_, '_>, mut area: Rec
     let rctx = draw.rctx;
     let c = draw.chart;
     let m = draw.transform;
-    let legend_items = draw.items;
-    let base = draw.base;
-    let text_col = draw.text_color;
-    let width = draw.width;
-    let Some(pos) = c.legend.as_ref().filter(|_| !legend_items.is_empty()) else { return area };
+    let props = c.text_props(ChartTextRole::Legend);
+    let base = props.size.unwrap_or(draw.base).clamp(1.0, 4000.0);
+    let Some(pos) = c.legend.as_ref().filter(|_| !draw.items.is_empty()) else { return area };
     let vertical = matches!(pos.as_str(), "l" | "r" | "tr");
-    let item_ws: Vec<f64> = legend_items.iter().map(|(n, _, _)| n.chars().count() as f64 * base * 0.55 + base * 1.6).collect();
-    let size = if vertical {
-        (item_ws.iter().copied().fold(0.0, f64::max).min(width * 0.4), legend_items.len() as f64 * base * 1.5)
-    } else {
-        (item_ws.iter().sum::<f64>().min(width * 0.9), base * 1.4)
-    };
-    let (origin, plot_area) = legend_layout(pos, size, area, base, c.legend_overlay);
+    let max_width = (draw.width * if vertical { 0.4 } else { 0.9 }).max(base * 2.0);
+    let mut labels = Vec::new();
+    let (mut x, mut y, mut row_height, mut used_width) = (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
+    for (name, _, _) in draw.items {
+        let text_width = label_width(rctx, name, base, &props).min((max_width - base * 1.6).max(1.0));
+        let mut body =
+            label_body(name, LabelStyle { size: base, align: Align::Left, anchor: Anchor::Middle, col: draw.text_color, bold: false }, &props);
+        body.body.wrap = Some(true);
+        let shape = Shape { text: Some(body.clone()), ..Default::default() };
+        let height = deckcraft_text::layout(
+            rctx,
+            &shape,
+            &body,
+            &deckcraft_text::Opts {
+                rect: Rect::new(0.0, 0.0, text_width, 1_000_000.0),
+                fields: &deckcraft_text::NoFields,
+                prompt_color: None,
+                no_shrink: true,
+            },
+        )
+        .content_height
+        .max(base * 1.3);
+        let width = text_width + base * 1.6;
+        if x > 0.0 && (vertical || x + width > max_width) {
+            y += row_height;
+            x = 0.0;
+            row_height = 0.0;
+        }
+        labels.push((Point::new(x, y), text_width, height, body));
+        row_height = row_height.max(height + base * 0.2);
+        x += width;
+        used_width = used_width.max(x);
+    }
+    let (origin, plot_area) = legend_layout(pos, (used_width, y + row_height), area, base, c.legend_overlay);
     area = plot_area;
-    let (mut x, mut y) = (origin.x, origin.y);
-    for (name, paint, outline) in legend_items {
+    for ((_, paint, outline), (offset, tw, height, body)) in draw.items.iter().zip(labels) {
+        let x = origin.x + offset.x;
+        let y = origin.y + offset.y;
         let key = Rect::new(x, y + base * 0.3, x + base * 0.7, y + base);
         fill_with(ctx, paint, key, m);
         if let Some((oc, ow)) = outline.filter(|o| o.1 > 0.0) {
@@ -554,20 +619,20 @@ fn draw_legend(ctx: &mut RenderContext, draw: &LegendDraw<'_, '_>, mut area: Rec
             ctx.set_stroke(kurbo::Stroke::new(ow.min(base * 0.2)));
             ctx.stroke_path(&key.to_path(0.1));
         }
-        let tw = name.chars().count() as f64 * base * 0.55 + base;
-        label(
+        let shape = Shape { text: Some(body.clone()), ..Default::default() };
+        crate::draw_text(
             ctx,
             rctx,
+            &shape,
+            &body,
             m,
-            name,
-            Rect::new(x + base, y, x + base + tw, y + base * 1.3),
-            LabelStyle { size: base, align: Align::Left, anchor: Anchor::Middle, col: text_col, bold: false },
+            &deckcraft_text::Opts {
+                rect: Rect::new(x + base, y, x + base + tw, y + height),
+                fields: &deckcraft_text::NoFields,
+                prompt_color: None,
+                no_shrink: true,
+            },
         );
-        if vertical {
-            y += base * 1.5;
-        } else {
-            x += tw + base * 0.6;
-        }
     }
     area
 }
@@ -676,24 +741,26 @@ fn draw_gridlines(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
         if horiz {
             g.move_to((pos, plot.y0));
             g.line_to((pos, plot.y1));
-            label(
+            styled_label(
                 ctx,
                 rctx,
                 m,
                 &text,
                 Rect::new(pos - 30.0, plot.y1 + 2.0, pos + 30.0, plot.y1 + base * 1.5),
                 LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
+                &c.text_props(ChartTextRole::ValueAxis),
             );
         } else {
             g.move_to((plot.x0, pos));
             g.line_to((plot.x1, pos));
-            label(
+            styled_label(
                 ctx,
                 rctx,
                 m,
                 &text,
                 Rect::new(area.x0, pos - base, plot.x0 - base * 0.4, pos + base),
                 LabelStyle { size: base, align: Align::Right, anchor: Anchor::Middle, col: text_col, bold: false },
+                &c.text_props(ChartTextRole::ValueAxis),
             );
         }
         if c.gridlines {
@@ -707,13 +774,14 @@ fn draw_gridlines(ctx: &mut RenderContext, draw: &GridlineDrawing<'_, '_>) {
     if let Some(sc) = second.filter(|_| !c.y2_hidden) {
         for v in ticks(sc) {
             let pos = to_axis(true, v);
-            label(
+            styled_label(
                 ctx,
                 rctx,
                 m,
                 &c.axis_label(true, v),
                 Rect::new(plot.x1 + base * 0.4, pos - base, area.x1, pos + base),
                 LabelStyle { size: base, align: Align::Left, anchor: Anchor::Middle, col: text_col, bold: false },
+                &c.text_props(ChartTextRole::SecondaryValueAxis),
             );
         }
     }
@@ -743,44 +811,47 @@ fn draw_category_labels(ctx: &mut RenderContext, draw: &CategoryLabelDrawing<'_,
     let band = draw.band;
     let slot = draw.slot;
     let xscale = draw.xscale;
-    let base = draw.base;
+    let base = c.text_props(ChartTextRole::CategoryAxis).size.unwrap_or(draw.base).clamp(1.0, 4000.0);
     let text_col = draw.text_color;
     let ticks = axis_ticks;
     if let Some(sc) = xscale {
         for v in ticks(sc) {
             let pos = plot.x0 + (v - sc.0) / positive_span(sc.1 - sc.0) * plot.width();
-            label(
+            styled_label(
                 ctx,
                 rctx,
                 m,
                 &fmt_num(v),
                 Rect::new(pos - 30.0, plot.y1 + 3.0, pos + 30.0, plot.y1 + base * 1.6),
                 LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
+                &c.text_props(ChartTextRole::CategoryAxis),
             );
         }
     }
     // Category labels: wrapped onto two lines when they don't fit their band (long date ranges).
-    let wraps = !horiz && c.categories.iter().any(|n| n.chars().count() as f64 * base * 0.5 > band);
+    let wraps = !horiz && c.categories.iter().any(|n| label_width(rctx, n, base, &c.text_props(ChartTextRole::CategoryAxis)) > band);
     for (i, name) in c.categories.iter().enumerate().filter(|_| xscale.is_none()) {
         let mid = if horiz { plot.y0 + band * (slot(i) + 0.5) } else { plot.x0 + band * (slot(i) + 0.5) };
         if horiz {
-            label(
+            styled_label(
                 ctx,
                 rctx,
                 m,
                 name,
                 Rect::new(area.x0, mid - base, plot.x0 - base * 0.4, mid + base),
                 LabelStyle { size: base, align: Align::Right, anchor: Anchor::Middle, col: text_col, bold: false },
+                &c.text_props(ChartTextRole::CategoryAxis),
             );
         } else {
             let text = if wraps { split_label(name) } else { name.clone() };
-            label(
+            styled_label(
                 ctx,
                 rctx,
                 m,
                 &text,
                 Rect::new(mid - band / 2.0, plot.y1 + 3.0, mid + band / 2.0, plot.y1 + base * if wraps { 2.8 } else { 1.6 }),
                 LabelStyle { size: base, align: Align::Center, anchor: Anchor::Top, col: text_col, bold: false },
+                &c.text_props(ChartTextRole::CategoryAxis),
             );
         }
     }
@@ -804,23 +875,37 @@ fn draw_axis_titles(ctx: &mut RenderContext, rctx: &Ctx, draw: &AxisTitleDrawing
     // On a horizontal bar chart the category axis is the left one.
     let (left_title, bottom_title) =
         if horiz { (c.axis_titles.0.as_deref(), c.axis_titles.1.as_deref()) } else { (c.axis_titles.1.as_deref(), c.axis_titles.0.as_deref()) };
-    let band_h = base * 1.6;
+    let bottom_role = if horiz { ChartTextRole::ValueTitle } else { ChartTextRole::CategoryTitle };
+    let left_role = if horiz { ChartTextRole::CategoryTitle } else { ChartTextRole::ValueTitle };
+    let bottom_size = c.text_props(bottom_role).size.unwrap_or(base).clamp(1.0, 4000.0);
+    let left_size = c.text_props(left_role).size.unwrap_or(base).clamp(1.0, 4000.0);
     if let Some(t) = bottom_title.filter(|t| !t.is_empty()) {
+        let band_h = bottom_size * 1.6;
         let r = Rect::new(area.x0, area.y1 - band_h, area.x1, area.y1);
-        label(ctx, rctx, m, t, r, LabelStyle { size: base, align: Align::Center, anchor: Anchor::Bottom, col: text_col, bold: true });
+        styled_label(
+            ctx,
+            rctx,
+            m,
+            t,
+            r,
+            LabelStyle { size: base, align: Align::Center, anchor: Anchor::Bottom, col: text_col, bold: true },
+            &c.text_props(bottom_role),
+        );
         area.y1 -= band_h + base * 0.3;
     }
     if let Some(t) = left_title.filter(|t| !t.is_empty()) {
+        let band_h = left_size * 1.6;
         let (cx, cy) = (area.x0 + band_h / 2.0, (area.y0 + area.y1) / 2.0);
         let turned = m * Affine::translate((cx, cy)) * Affine::rotate(-std::f64::consts::FRAC_PI_2);
         let half = area.height() / 2.0;
-        label(
+        styled_label(
             ctx,
             rctx,
             turned,
             t,
             Rect::new(-half, -band_h / 2.0, half, band_h / 2.0),
             LabelStyle { size: base, align: Align::Center, anchor: Anchor::Middle, col: text_col, bold: true },
+            &c.text_props(left_role),
         );
         area.x0 += band_h + base * 0.3;
     }
@@ -874,6 +959,7 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
     let base = draw.base;
     let err_marks = &mut draw.error_marks;
     let mut acc = vec![0.0; ncat];
+    let mut labels = vec![];
     for (si, s) in c.series.iter().enumerate() {
         let kind = c.series_kind(s);
         if kind.is_bar_like() || kind == ChartType::Stock {
@@ -885,7 +971,6 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
         let col = if area_kind { series_fill(rctx, c, si, Some(s)) } else { series_line(rctx, c, si, s) };
         let series_stats = s.error_bars.as_ref().map(|_| deckcraft_model::chart::SeriesStats::of(&s.values));
         let mut pts = vec![];
-        let mut labels = vec![];
         for i in 0..ncat {
             let Some(v) = s.values.get(i).copied().flatten() else { continue };
             let v = if stacked {
@@ -942,17 +1027,27 @@ fn draw_lines(ctx: &mut RenderContext, draw: &mut LineDrawing<'_, '_>) {
                 ctx.fill_path(&kurbo::Circle::new(*q, 3.5).to_path(0.1));
             }
         }
-        for (q, text) in labels {
-            label(
-                ctx,
-                rctx,
-                m,
-                &text,
-                Rect::new(q.x - 40.0, q.y - base * 1.6 - 4.0, q.x + 40.0, q.y - 4.0),
-                LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: draw.text_color, bold: false },
-            );
-        }
     }
+    // Later area series must not paint over earlier series' labels.
+    for (q, text) in labels {
+        label(
+            ctx,
+            rctx,
+            m,
+            &text,
+            point_label_rect(q, base, plot),
+            LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Bottom, col: draw.text_color, bold: false },
+        );
+    }
+}
+
+fn point_label_rect(q: Point, base: f64, plot: Rect) -> Rect {
+    let width = 80.0_f64.min(plot.width().max(0.0));
+    let height = (base * 1.6).min(plot.height().max(0.0));
+    let x = clamp_soft(q.x - width / 2.0, plot.x0, plot.x1 - width);
+    let above = q.y - height - 4.0;
+    let y = clamp_soft(if above >= plot.y0 { above } else { q.y + 4.0 }, plot.y0, plot.y1 - height);
+    Rect::new(x, y, x + width, y + height)
 }
 
 fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f64, f64, f64, bool)> {
@@ -1498,5 +1593,34 @@ mod tests {
         c.kind = ChartType::Scatter;
         c.series[0].trendlines[0].kind = TrendlineType::Linear;
         assert_eq!(forecast_pad(&c), (0.0, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod typography_tests {
+    use super::*;
+
+    #[test]
+    fn point_labels_stay_inside_the_plot_at_its_edges() {
+        let plot = Rect::new(0.0, 0.0, 200.0, 100.0);
+        for point in [Point::new(0.0, 0.0), Point::new(200.0, 100.0), Point::new(100.0, 50.0)] {
+            let rect = point_label_rect(point, 18.0, plot);
+            assert!(rect.x0 >= plot.x0 && rect.x1 <= plot.x1 && rect.y0 >= plot.y0 && rect.y1 <= plot.y1);
+        }
+        assert!(point_label_rect(Point::new(100.0, 0.0), 18.0, plot).y0 > 0.0);
+    }
+    #[test]
+    fn label_measurement_uses_proportional_glyphs_and_explicit_size() {
+        let p = deckcraft_model::Presentation::default();
+        let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+        let props = RunProps { font: Some("Inter".into()), size: Some(20.0), ..Default::default() };
+        let narrow = label_width(&ctx, "IIII", 10.0, &props);
+        let wide = label_width(&ctx, "WWWW", 10.0, &props);
+        assert!(wide > narrow * 1.5, "equal character counts must not imply equal widths");
+        let large = RunProps { size: Some(40.0), ..props.clone() };
+        assert!((label_width(&ctx, "WWWW", 10.0, &large) / wide - 2.0).abs() < 0.01);
+        let body = label_body("Example", LabelStyle { size: 10.0, align: Align::Left, anchor: Anchor::Top, col: Rgba::BLACK, bold: false }, &props);
+        assert_eq!(body.paragraphs[0].runs[0].props.font.as_deref(), Some("Inter"));
+        assert_eq!(body.paragraphs[0].runs[0].props.size, Some(20.0));
     }
 }

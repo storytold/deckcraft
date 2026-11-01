@@ -181,8 +181,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   `c:stockChart`, and combo charts start as columns with a line. Trendlines round-trip
   (`corpus_charts.rs`) and are drawn: linear, exponential, logarithmic, polynomial, power and
   moving average, with forecast and the equation and R² label. A moving average is drawn with
-  neither label. A combo chart's secondary value axis is read (`y2_*`,
-  `Series.secondary_axis`) and is not written back when the chart is rebuilt.
+  neither label. A combo chart's secondary value axis is read and rebuilt (`y2_*`,
+  `Series.secondary_axis`), including separate bounds, ticks, number format and text style.
+  Plot groups retain logical series order, including data-only edits and equal-type dual-axis charts.
   An unchanged chart's embedded workbook now survives save (#335); editing the chart still
   drops it rather than writing a stale spreadsheet. The workbook and other retained chart parts
   also survive `.deckcraft` save/reopen (`crates/engine/tests/it/chart_native.rs`), with binary
@@ -192,7 +193,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
   changes (including scatter/bubble data and structural/type/style changes) still rebuild the
   chart and can lose unmodelled formatting. A changed embedded workbook is removed, not updated.
   Line labels now render, including per-series overrides and original values on stacked lines;
-  precise label placement and complete chart typography remain open.
+  Title, legend, category/value axes and axis titles now keep independent font families, size,
+  weight, slant, language and fill. Label widths and legend row heights use text shaping.
+  Mixed rich-text runs, rotated/manual chart labels, per-point/per-series label typography and
+  complete chart typography remain open. See [layout fidelity](layout-fidelity.md).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
 
@@ -207,7 +211,9 @@ Detail in [file-format-parity.md](file-format-parity.md).
   arrows and font size from its canvas geometry instead of a fixed 65 pt template; it was checked
   by opening generated PPTX files in PowerPoint for Mac 16.113.3. Imported/custom definitions
   are not rewritten by this fix. Cached diagram shapes now write the same implicit middle text
-  anchor as ordinary shapes, so text does not jump to the top when reopened. Still missing:
+  anchor as ordinary shapes, so text does not jump to the top when reopened. Nested cached groups
+  retain child coordinates/rotation and picture nodes export as diagram picture-filled shapes.
+  These cache-preservation fixes do not implement the diagram constraint engine. Still missing:
   other generated layouts are simple and have not
   received the same native validation; PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
   imported diagram's outline redraws it with DeckCraft's layout; a diagram with no cached drawing

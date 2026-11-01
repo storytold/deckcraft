@@ -1948,3 +1948,48 @@ fn a_paragraph_with_its_own_start_at_restarts_the_count_there() {
     // A later paragraph with a new start begins a fresh run.
     check(&[1, 1, 7, 7], &[1, 2, 7, 8]);
 }
+
+#[test]
+fn locale_theme_font_selection_and_diagnostics_use_the_same_faces() {
+    use deckcraft_model::theme::ScriptFont;
+    let (mut p, mut sh) = setup("中文 ABC", 500.0, 300.0);
+    let master = Arc::make_mut(&mut p.masters[0]);
+    master.theme.fonts.minor.ea.clear();
+    master.theme.fonts.minor.scripts = vec![ScriptFont { script: "Hans".into(), typeface: "Qqq Missing Chinese".into() }];
+    let run = &mut sh.text.as_mut().unwrap().paragraphs[0].runs[0];
+    run.props.font = Some("Inter".into());
+    run.props.font_ea = Some("+mn-ea".into());
+    run.props.lang = Some("zh-CN".into());
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let uses = super::font_usage(&ctx, &sh, sh.text.as_ref().unwrap());
+    let han = uses.iter().find(|u| u.start == 0).unwrap();
+    assert_eq!(han.requested[0], "Qqq Missing Chinese");
+    assert!(matches!(han.reason, "family_unavailable" | "missing_glyph"));
+    let l = lay(&p, &sh, 500.0, 300.0);
+    let rendered = l.runs.iter().find(|r| r.cells.iter().any(|(_, c)| *c == '中')).unwrap();
+    assert_eq!(han.actual.id(), rendered.face.id());
+    assert!(super::requested_fonts(&ctx, &sh, sh.text.as_ref().unwrap()).contains(&"Qqq Missing Chinese".into()));
+    // Explicit slot fonts take precedence; an unused theme family is not reported missing.
+    sh.text.as_mut().unwrap().paragraphs[0].runs[0].props.font_ea = Some("Inter".into());
+    assert!(!super::requested_fonts(&ctx, &sh, sh.text.as_ref().unwrap()).contains(&"Qqq Missing Chinese".into()));
+}
+
+#[test]
+fn embedded_font_precedes_installed_names_without_changing_another_document() {
+    let db = FontDb::global();
+    let original = db.face("Inter", "Regular");
+    let (mut p, mut sh) = setup("\u{E000}", 400.0, 200.0);
+    let bytes = include_bytes!("../../render/tests/fixtures/colr-squares.ttf").to_vec();
+    let id = p.add_media("font.fntdata", "application/x-fontdata", bytes).unwrap();
+    p.embedded_fonts.push(deckcraft_model::EmbeddedFont { typeface: "Inter".into(), regular: Some(id), ..Default::default() });
+    sh.text.as_mut().unwrap().paragraphs[0].runs[0].props.font = Some("Inter".into());
+    let ctx = Ctx::for_slide(&p, &p.slides[0]).unwrap();
+    let usage = super::font_usage(&ctx, &sh, sh.text.as_ref().unwrap());
+    assert!(usage[0].actual.embedded);
+    assert_eq!(usage[0].reason, "embedded");
+    assert_eq!(usage[0].actual.sha256().len(), 64);
+    assert_ne!(usage[0].actual.sha256(), original.sha256());
+    assert_eq!(db.face("Inter", "Regular").id(), original.id());
+    let same = super::font_usage(&ctx, &sh, sh.text.as_ref().unwrap());
+    assert_eq!(same[0].actual.id(), usage[0].actual.id(), "cached face reused across inspections");
+}

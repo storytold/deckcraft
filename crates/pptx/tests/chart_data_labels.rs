@@ -204,3 +204,75 @@ fn chart_options_data_labels_on_overrides_series_off() {
     assert!(c.series.iter().all(|x| c.series_data_labels(x)), "every series shows its labels");
     let _ = std::fs::remove_file(path);
 }
+
+#[test]
+fn distinct_chart_typography_survives_structural_rebuild() {
+    use deckcraft_model::chart::ChartTextRole;
+    let mut p = reimport(&bar_chart_pptx(), |xml| {
+        let props = |font: &str, size: u32| {
+            format!(
+                r#"<c:txPr><a:bodyPr/><a:p><a:pPr><a:defRPr sz="{size}" lang="zh-TW" b="1"><a:latin typeface="{font}"/><a:ea typeface="Example CJK"/></a:defRPr></a:pPr></a:p></c:txPr>"#
+            )
+        };
+        xml.replace("</c:catAx>", &format!("{}</c:catAx>", props("Example Category", 1100)))
+            .replace("</c:valAx>", &format!("{}</c:valAx>", props("Example Value", 1500)))
+            .replace("</c:legend>", &format!("{}</c:legend>", props("Example Legend", 2100)))
+    });
+    let before = chart_of(&p).clone();
+    assert_eq!(before.text_props(ChartTextRole::CategoryAxis).size, Some(11.0));
+    assert_eq!(before.text_props(ChartTextRole::ValueAxis).size, Some(15.0));
+    assert_eq!(before.text_props(ChartTextRole::Legend).font.as_deref(), Some("Example Legend"));
+    let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+    c.series.push(c.series[0].clone()); // force the rebuild path, not raw XML reuse or a data-only patch
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+    for role in [ChartTextRole::CategoryAxis, ChartTextRole::ValueAxis, ChartTextRole::Legend] {
+        let props = chart_of(&back).text_props(role);
+        assert_eq!(props, before.text_props(role), "{role:?}");
+    }
+}
+
+#[test]
+fn rebuilt_combo_chart_keeps_secondary_axis_and_distinct_typography() {
+    use deckcraft_model::chart::ChartTextRole;
+    use deckcraft_model::text::RunProps;
+    let mut p = deckcraft_pptx::import(&bar_chart_pptx()).unwrap();
+    let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut p.slides[0]).shapes[0].kind else { panic!("chart") };
+    c.kind = ChartType::Combo;
+    c.raw = None;
+    c.series[0].kind = Some(ChartType::Column);
+    c.series[1].kind = Some(ChartType::Line);
+    c.series[1].secondary_axis = true;
+    c.y_min = Some(0.0);
+    c.y_max = Some(10.0);
+    c.y_major = Some(2.0);
+    c.y2_min = Some(100.0);
+    c.y2_max = Some(1000.0);
+    c.y2_major = Some(100.0);
+    c.y2_format = Some("0.0".into());
+    c.text_styles
+        .insert(ChartTextRole::SecondaryValueAxis, RunProps { font: Some("Example Right Axis".into()), size: Some(17.0), ..Default::default() });
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+    let c = chart_of(&back);
+    assert_eq!((c.y_min, c.y_max, c.y_major), (Some(0.0), Some(10.0), Some(2.0)));
+    assert_eq!((c.y2_min, c.y2_max, c.y2_major), (Some(100.0), Some(1000.0), Some(100.0)));
+    assert!(c.series.iter().find(|s| s.name == "Series 2").unwrap().secondary_axis);
+    assert!(!c.series.iter().find(|s| s.name == "Series 1").unwrap().secondary_axis);
+    assert_eq!(c.text_props(ChartTextRole::SecondaryValueAxis).font.as_deref(), Some("Example Right Axis"));
+    assert_eq!(c.series.iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), vec!["Series 1", "Series 2", "Series 3"]);
+
+    // Changing values must still patch the correct series when XML plot groups interleave them.
+    let mut edited = back.clone();
+    let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut edited.slides[0]).shapes[0].kind else { panic!("chart") };
+    c.series[1].values[0] = Some(777.0);
+    let patched = deckcraft_pptx::import(&deckcraft_pptx::export(&edited).unwrap()).unwrap();
+    assert_eq!(chart_of(&patched).series[1].values[0], Some(777.0));
+    assert_eq!(chart_of(&patched).series[2].values, chart_of(&back).series[2].values);
+
+    // Equal plot types can still belong to different value axes.
+    let ShapeKind::Chart(c) = &mut Arc::make_mut(&mut edited.slides[0]).shapes[0].kind else { panic!("chart") };
+    c.series[1].kind = Some(ChartType::Column);
+    let same_type = deckcraft_pptx::import(&deckcraft_pptx::export(&edited).unwrap()).unwrap();
+    assert_eq!(chart_of(&same_type).kind, ChartType::Combo);
+    assert!(chart_of(&same_type).series[1].secondary_axis);
+    assert_eq!(chart_of(&same_type).y2_max, Some(1000.0));
+}

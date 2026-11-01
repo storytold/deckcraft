@@ -314,6 +314,20 @@ impl ErrorBars {
     }
 }
 
+/// Independently formatted chart text. The default role is the chart-space text style.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartTextRole {
+    Default,
+    Title,
+    Legend,
+    CategoryAxis,
+    ValueAxis,
+    SecondaryValueAxis,
+    CategoryTitle,
+    ValueTitle,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Chart {
@@ -331,6 +345,9 @@ pub struct Chart {
     /// Title text size in points (its rich text or `c:txPr`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title_size: Option<f64>,
+    /// Per-element DrawingML text properties; absent properties inherit from the default role.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub text_styles: std::collections::BTreeMap<ChartTextRole, crate::text::RunProps>,
     pub data_labels: bool,
     pub gridlines: bool,
     /// `c:minorGridlines` on the value axis: five to a major unit, between the major ones.
@@ -452,6 +469,7 @@ impl Default for Chart {
             legend_overlay: false,
             text_size: None,
             title_size: None,
+            text_styles: Default::default(),
             data_labels: false,
             gridlines: true,
             minor_gridlines: false,
@@ -491,6 +509,33 @@ impl Default for Chart {
 }
 
 impl Chart {
+    /// Apply the existing chart-wide colour command to all independently formatted labels.
+    pub fn set_text_color(&mut self, color: Option<ColorRef>) {
+        self.text_color = color.clone();
+        if !self.text_styles.is_empty() {
+            self.text_styles.entry(ChartTextRole::Default).or_default();
+            for props in self.text_styles.values_mut() {
+                props.fill = color.clone().map(Fill::solid);
+            }
+        }
+    }
+
+    pub fn text_props(&self, role: ChartTextRole) -> crate::text::RunProps {
+        let mut props = self.text_styles.get(&role).cloned().unwrap_or_default();
+        if let Some(base) = self.text_styles.get(&ChartTextRole::Default) {
+            props.inherit(base);
+        }
+        // Legacy/native decks without per-element styles retain their existing appearance.
+        if self.text_styles.is_empty() {
+            props.size = if role == ChartTextRole::Title { self.title_size } else { self.text_size };
+            props.fill = self.text_color.clone().map(Fill::solid);
+        }
+        if props.lang.is_none() {
+            props.lang = self.lang.clone();
+        }
+        props
+    }
+
     fn sample_treemap_sunburst(kind: ChartType) -> Self {
         let mut c = Chart {
             kind,

@@ -6069,3 +6069,20 @@ fn master_body_placeholder_format_keeps_per_level_formatting() {
     assert_eq!((level(&s, 0).run.size, level(&s, 1).run.size), (Some(28.0), Some(24.0)));
     assert_eq!(shown(&s), vec![Some(28.0), Some(24.0)]);
 }
+
+#[test]
+fn font_inspection_reports_actual_faces_without_leaking_text_or_paths() {
+    let mut s = Session::with_new();
+    s.execute("file.openBytes", &json!({"name": "a.pptx", "data": deck_in_font("Qqq Nonexistent Sans")})).unwrap();
+    let before = s.doc().unwrap().doc.clone();
+    let report = s.execute("font.inspect", &json!({})).unwrap();
+    let rows = report.as_array().unwrap();
+    assert!(!rows.is_empty());
+    let row = rows.iter().find(|r| r["requested"][0] == "Qqq Nonexistent Sans").unwrap();
+    assert_eq!(row["reason"], "family_unavailable");
+    assert_ne!(row["actual"], "Qqq Nonexistent Sans");
+    assert_eq!(row["start"], 0);
+    assert_eq!(row["end"], 5);
+    assert!(!report.to_string().contains("Hello"));
+    assert_eq!(s.doc().unwrap().doc, before);
+}

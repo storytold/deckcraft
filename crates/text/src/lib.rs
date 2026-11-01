@@ -36,6 +36,7 @@ use unicode_segmentation::UnicodeSegmentation;
 
 mod autonum;
 mod breaking;
+mod font_usage;
 mod layout;
 mod run;
 mod shape;
@@ -47,6 +48,7 @@ pub use autonum::autonum;
 use autonum::chinese_num;
 #[cfg(test)]
 use breaking::{LINE_PITCH, break_opportunities, measure_str};
+pub use font_usage::{FontUse, font_usage, requested_fonts};
 #[cfg(test)]
 pub(crate) use layout::LAYOUT_PASSES;
 pub use layout::layout;

@@ -44,6 +44,7 @@ thiserror = "2"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
 log = "0.4"
+sha2 = { version = "0.10", default-features = false }
 proptest = "1"
 rayon = "1"
 unicode-bidi = "0.3"

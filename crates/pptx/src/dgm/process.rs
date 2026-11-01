@@ -12,7 +12,7 @@ pub(crate) struct Parts {
 }
 
 /// Imported/custom layouts and hierarchical processes keep their existing export path.
-pub(crate) fn parts(d: &Diagram, children: &[Shape], child: &Xfrm) -> Option<Parts> {
+pub(crate) fn parts(d: &Diagram, children: &[Shape], child: &Xfrm, frame: &Xfrm) -> Option<Parts> {
     if d.kind != "process"
         || !d.style.is_empty()
         || d.layout_xml.is_some()
@@ -20,8 +20,7 @@ pub(crate) fn parts(d: &Diagram, children: &[Shape], child: &Xfrm) -> Option<Par
         || d.colors_xml.is_some()
         || d.nodes.is_empty()
         || d.nodes.iter().any(|n| n.level != 0)
-        || !child.w.is_finite()
-        || child.w <= 0.0
+        || [child.w, child.h, frame.w, frame.h].iter().any(|v| !v.is_finite() || *v <= 0.0)
     {
         return None;
     }
@@ -58,7 +57,12 @@ pub(crate) fn parts(d: &Diagram, children: &[Shape], child: &Xfrm) -> Option<Par
         ("w", "gapAfter", (gap - aw) / 2.0),
     ] {
         let mut w = W::frag();
-        w.empty("dgm:constr", A::new().a("type", typ).a("for", "ch").a("forName", name).a("refType", "w").a("fact", size / child.w));
+        // Every constraint references parent width; heights must use the vertical frame scale.
+        let fact = if typ == "h" { size / child.h * frame.h / frame.w } else { size / child.w };
+        if !fact.is_finite() {
+            return None;
+        }
+        w.empty("dgm:constr", A::new().a("type", typ).a("for", "ch").a("forName", name).a("refType", "w").a("fact", fact));
         constraints.children.push(Node::El(crate::xml::parse(&w.finish()).ok()?.root));
     }
     let mut w = W::frag();
@@ -135,7 +139,7 @@ mod tests {
                     });
                 }
             }
-            let p = parts(&d, &children, &child).expect("process");
+            let p = parts(&d, &children, &child, &child).expect("process");
             let root = crate::xml::parse(&p.layout).expect("layout").root;
             let constraints = root.child("layoutNode").unwrap().child("constrLst").unwrap();
             let h = constraints.elements().find(|e| e.attr("type") == Some("h") && e.attr("forName") == Some("node")).unwrap();
@@ -145,8 +149,16 @@ mod tests {
             assert_eq!(font.f64("val"), Some(size));
             assert!(String::from_utf8(p.layout).unwrap().contains("rightArrow"));
             assert!(String::from_utf8(p.colors).unwrap().contains("processArrow"));
+            let stretched = Xfrm::new(0.0, 0.0, width * 0.8, height * 1.5);
+            let p = parts(&d, &children, &child, &stretched).unwrap();
+            let root = crate::xml::parse(&p.layout).unwrap().root;
+            let constraints = root.child("layoutNode").unwrap().child("constrLst").unwrap();
+            for (kind, expected) in [("w", nw * 0.8), ("h", nh * 1.5)] {
+                let constraint = constraints.elements().find(|e| e.attr("type") == Some(kind) && e.attr("forName") == Some("node")).unwrap();
+                assert!((constraint.f64("fact").unwrap() * stretched.w - expected).abs() < 1e-9);
+            }
             let custom = Diagram { layout_xml: Some("custom".into()), ..d };
-            assert!(parts(&custom, &children, &child).is_none(), "never rewrite an imported layout");
+            assert!(parts(&custom, &children, &child, &child).is_none(), "never rewrite an imported layout");
         }
     }
 }

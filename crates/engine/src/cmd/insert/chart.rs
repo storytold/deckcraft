@@ -189,7 +189,7 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
     };
     with_chart(s, p, "chart.options", |c| {
         if let Some(t) = &text_color {
-            c.text_color = t.clone();
+            c.set_text_color(t.clone());
         }
         apply_bin_options(c, bin_count, bin_size);
         apply_subtotals_and_bars(c, p, subtotals.as_deref());

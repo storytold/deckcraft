@@ -1,6 +1,6 @@
 //! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`.
 
-use deckcraft_model::chart::{Chart, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::xml::El;
@@ -125,6 +125,7 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     c.plot_fill = simple_fill(pa.child("spPr"));
 
     let mut kinds: Vec<ChartType> = vec![];
+    let mut ordered_series = Vec::new();
     // The value axis the first plot group uses is the primary one; a group on another value axis
     // (a combo chart's line on the right) is on the secondary axis.
     let val_map: std::collections::HashMap<&str, bool> =
@@ -145,15 +146,19 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
         let secondary = val_axis.is_some() && val_axis != primary_val;
         for s in g.children_named("ser").take(1000) {
             let ser = read_series(s, g, (kind, secondary, group_labels), &mut c.categories, &mut budget);
-            c.series.push(ser);
+            let order = s.child_val("order").or_else(|| s.child_val("idx")).and_then(|v| v.parse::<usize>().ok()).unwrap_or(ordered_series.len());
+            ordered_series.push((order, ser));
         }
     }
+    // Plot groups may interleave logical series. Preserve legend/palette order across a save.
+    ordered_series.sort_by_key(|(order, _)| *order);
+    c.series = ordered_series.into_iter().map(|(_, series)| series).collect();
     // `autoTitleDeleted val="0"` without `c:title`: PowerPoint and LibreOffice draw the series name as the title of a single-series chart.
     if ch.child("title").is_none() && ch.child("autoTitleDeleted").and_then(|a| a.bool("val")) == Some(false) && c.series.len() == 1 {
         c.title = c.series.first().map(|s| s.name.clone()).filter(|n| !n.is_empty());
     }
     let first = *kinds.first()?;
-    c.kind = if kinds.iter().any(|k| *k != first) { ChartType::Combo } else { first };
+    c.kind = if kinds.iter().any(|k| *k != first) || c.series.iter().any(|s| s.secondary_axis) { ChartType::Combo } else { first };
     if c.kind != ChartType::Combo {
         for s in &mut c.series {
             s.kind = None;
@@ -384,6 +389,9 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
             c.y2_major = num(a, "majorUnit");
             c.y2_format = format_code(a);
             c.y2_hidden = deleted(a);
+            if let Some(props) = chart_text_props(a.child("txPr")) {
+                c.text_styles.insert(ChartTextRole::SecondaryValueAxis, props);
+            }
         }
     }
     let cat_ax = pa.child("catAx").or_else(|| pa.child("dateAx")).or_else(|| pa.children_named("valAx").find(|a| !vertical(a)));
@@ -408,6 +416,30 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
 
 /// Text sizes and colours as the file sets them.
 fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_ax: Option<&El>) {
+    use ChartTextRole::*;
+    for (role, element) in [
+        (Default, root.child("txPr")),
+        (Legend, ch.child("legend").and_then(|e| e.child("txPr"))),
+        (CategoryAxis, cat_ax.and_then(|e| e.child("txPr"))),
+        (ValueAxis, val_ax.and_then(|e| e.child("txPr"))),
+    ] {
+        if let Some(props) = chart_text_props(element) {
+            c.text_styles.insert(role, props);
+        }
+    }
+    for (role, title) in
+        [(Title, ch.child("title")), (CategoryTitle, cat_ax.and_then(|e| e.child("title"))), (ValueTitle, val_ax.and_then(|e| e.child("title")))]
+    {
+        if let Some(t) = title {
+            let mut props = chart_text_props(t.path(&["tx", "rich"])).unwrap_or_default();
+            if let Some(parent) = chart_text_props(t.child("txPr")) {
+                props.inherit(&parent);
+            }
+            if props != deckcraft_model::text::RunProps::default() {
+                c.text_styles.insert(role, props);
+            }
+        }
+    }
     // Text sizes as the file sets them (PowerPoint draws chart text at these sizes, not scaled to
     // the chart): the axes' and legend's, else the whole chart's; the title's own.
     let chart_size = text_size(root.child("txPr"));
@@ -415,6 +447,39 @@ fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_
     // Text colour likewise: the axes' and legend's, else the whole chart's.
     c.text_color = [val_ax, cat_ax, ch.child("legend"), Some(root)].into_iter().flatten().find_map(|e| text_color(e.child("txPr")));
     c.title_size = ch.child("title").and_then(|t| text_size(t.child("tx").and_then(|x| x.child("rich"))).or_else(|| text_size(t.child("txPr"))));
+}
+
+/// A chart label's default/first-run typography. Full rich-text runs remain in raw XML; this
+/// bounded reader covers families (all script slots), size, weight, slant, language and fill.
+fn chart_text_props(e: Option<&El>) -> Option<deckcraft_model::text::RunProps> {
+    use deckcraft_model::text::RunProps;
+    fn read(e: &El) -> RunProps {
+        let font = |tag: &str| e.child(tag).and_then(|f| f.attr("typeface")).filter(|f| !f.is_empty()).map(|f| f.chars().take(256).collect());
+        RunProps {
+            font: font("latin"),
+            font_ea: font("ea"),
+            font_cs: font("cs"),
+            font_sym: font("sym"),
+            size: e.f64("sz").filter(|s| s.is_finite()).map(|s| (s / 100.0).clamp(1.0, 4000.0)),
+            bold: e.bool("b"),
+            italic: e.bool("i"),
+            lang: e.attr("lang").map(str::to_string),
+            fill: simple_fill(Some(e)),
+            ..Default::default()
+        }
+    }
+    let e = e?;
+    let p = e.child("p");
+    let mut props = p.and_then(|p| p.child("r")).and_then(|r| r.child("rPr")).map(read).unwrap_or_default();
+    if let Some(default) = p.and_then(|p| p.child("pPr")).and_then(|p| p.child("defRPr")) {
+        props.inherit(&read(default));
+    }
+    for path in [["lstStyle", "lvl1pPr", "defRPr"], ["lstStyle", "defPPr", "defRPr"]] {
+        if let Some(default) = e.path(&path) {
+            props.inherit(&read(default));
+        }
+    }
+    (props != RunProps::default()).then_some(props)
 }
 
 fn trend_num(e: &El, k: &str) -> Option<f64> {

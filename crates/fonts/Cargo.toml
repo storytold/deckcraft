@@ -14,5 +14,6 @@ skrifa = { workspace = true }
 harfrust = { workspace = true }
 unicode-bidi = { workspace = true }
 log = { workspace = true }
+sha2 = { workspace = true }
 # Last-resort face only (Ubuntu Light); no UI code.
 epaint_default_fonts = "0.37"
