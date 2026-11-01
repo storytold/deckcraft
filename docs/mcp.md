@@ -5,7 +5,10 @@ headless engine (no window); with `--connect PORT` it drives a running DeckCraft
 `--control PORT`, so an agent and a person can work on the same deck. `--sample` opens the sample
 deck. Stdio request frames are limited to 16 MiB including the newline; oversized frames receive a
 JSON-RPC error and are drained so the next request can still be handled. Invalid UTF-8 frames receive
-a parse error.
+a parse error. The app's control channel requires a token (see [control protocol](control-protocol.md)):
+`DECKCRAFT_CONTROL_TOKEN` if set, else the file the app wrote for the port
+(`$XDG_RUNTIME_DIR/deckcraft/control-<port>.token`), so the bridge works for the same user on the
+same machine without setup and for anyone else refuses with `the app refused the control token`.
 
 Connected mode accepts only newline-terminated replies of at most 16 MiB (including the newline),
 with the current request's numeric `id`, a boolean `ok`, and either `result` on success or a string
@@ -17,7 +20,8 @@ to a file or use a smaller scale when necessary.
 
 Regression coverage for #718 lives in `crates/mcp/src/backend.rs`: synthetic loopback peers test
 reply correlation, envelopes, framing, the size cap and buffered unsolicited bytes, alongside the
-lost-reply and reconnect tests.
+lost-reply and reconnect tests and the auth handshake (a refused token is
+`PermissionDenied` and the bridge never sends a request without one).
 
 ```json
 {

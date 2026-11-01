@@ -24,14 +24,22 @@ pub trait Backend {
 /// A running DeckCraft app, reached through its loopback control port.
 pub struct Remote {
     addr: String,
+    token: String,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
 }
 
 impl Remote {
-    /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening.
+    /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening. The app
+    /// requires a token (#777): `DECKCRAFT_CONTROL_TOKEN`, else the file the app wrote for this port.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        let token = crate::control_auth::client_token(addr).map_err(|e| std::io::Error::new(std::io::ErrorKind::PermissionDenied, e))?;
+        Self::connect_with_token(addr, token)
+    }
+
+    /// Like [`Remote::connect`] with a token the caller already has.
+    pub fn connect_with_token(addr: &str, token: String) -> std::io::Result<Self> {
+        let mut r = Self { addr: addr.to_string(), token, conn: None, next_id: 1 };
         r.reconnect()?;
         Ok(r)
     }
@@ -50,13 +58,34 @@ impl Remote {
                     // The app answers within 60 s (its own timeout); leave headroom.
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
                     let read = s.try_clone()?;
-                    self.conn = Some((BufReader::new(read), s));
+                    let mut conn = (BufReader::new(read), s);
+                    Self::authenticate(&mut conn, &self.token)?;
+                    self.conn = Some(conn);
                     return Ok(());
                 }
                 Err(e) => last = e,
             }
         }
         Err(last)
+    }
+
+    /// The handshake every connection starts with: the app closes one that doesn't send the token first.
+    fn authenticate(conn: &mut (BufReader<TcpStream>, TcpStream), token: &str) -> std::io::Result<()> {
+        let (reader, writer) = conn;
+        writer.write_all(crate::control_auth::auth_line(0, token).as_bytes())?;
+        writer.write_all(b"\n")?;
+        writer.flush()?;
+        let mut reply = String::new();
+        let n = std::io::Read::take(reader, 64 * 1024).read_line(&mut reply)?;
+        let ok = n > 0 && serde_json::from_str::<Value>(reply.trim()).ok().and_then(|v| v.get("ok").and_then(Value::as_bool)) == Some(true);
+        if ok {
+            Ok(())
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "the app refused the control token (is DECKCRAFT_CONTROL_TOKEN or the app's token file for this port out of date?)",
+            ))
+        }
     }
 
     /// Write one request line. A failure here means the app never got a complete line, so retrying is safe.
@@ -155,6 +184,19 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    const TEST_TOKEN: &str = "test-token-0123456789";
+
+    /// The handshake a test peer answers before serving its scripted replies, as the app does.
+    fn answer_auth(stream: &TcpStream) {
+        let mut line = String::new();
+        BufReader::new(stream).read_line(&mut line).expect("auth line");
+        let auth = serde_json::from_str::<Value>(&line).expect("auth JSON");
+        assert_eq!(auth["method"], "auth");
+        assert_eq!(auth["params"]["token"], TEST_TOKEN);
+        let mut w = stream;
+        w.write_all(b"{\"id\":0,\"ok\":true,\"result\":{\"authenticated\":true}}\n").expect("auth reply");
+    }
+
     fn reply_once(reply: Vec<u8>) -> (Remote, std::thread::JoinHandle<()>) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
         let addr = listener.local_addr().expect("addr").to_string();
@@ -162,13 +204,14 @@ mod tests {
             let (mut stream, _) = listener.accept().expect("accept");
             stream.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
             stream.set_write_timeout(Some(Duration::from_secs(5))).expect("write timeout");
+            answer_auth(&stream);
             let mut line = String::new();
             BufReader::new(&stream).read_line(&mut line).expect("request");
             assert_eq!(serde_json::from_str::<Value>(&line).expect("JSON")["id"], 1);
             // An oversized reply may be rejected before the peer finishes writing it.
             let _ = stream.write_all(&reply);
         });
-        (Remote::connect(&addr).expect("connect"), peer)
+        (Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect"), peer)
     }
 
     #[test]
@@ -261,6 +304,7 @@ mod tests {
         let peer = std::thread::spawn(move || {
             let (mut first, _) = listener.accept().expect("first connection");
             first.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+            answer_auth(&first);
             let mut line = String::new();
             BufReader::new(&first).read_line(&mut line).expect("initial request");
             // Even a stale frame whose ID happens to match must not answer a new request.
@@ -272,12 +316,13 @@ mod tests {
             if !sent_on_stale {
                 let (mut fresh, _) = listener.accept().expect("fresh connection");
                 fresh.set_read_timeout(Some(Duration::from_secs(5))).expect("timeout");
+                answer_auth(&fresh);
                 BufReader::new(&fresh).read_line(&mut line).expect("fresh request");
                 fresh.write_all(b"{\"id\":2,\"ok\":false,\"error\":\"rejected\"}\n").expect("actual reply");
             }
             sent_on_stale
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect");
         assert_eq!(remote.call("document.inspect", json!({})), Ok(json!("first")));
         // Force the stale frame into BufReader, where a socket-only peek cannot see it.
         assert!(!remote.conn.as_mut().expect("connection").0.fill_buf().expect("buffer").is_empty());
@@ -295,6 +340,7 @@ mod tests {
         let count = Arc::clone(&executed);
         std::thread::spawn(move || {
             for stream in listener.incoming().flatten() {
+                answer_auth(&stream);
                 let mut reader = BufReader::new(&stream);
                 let mut line = String::new();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -308,7 +354,7 @@ mod tests {
                 // The first request is executed, then the connection drops without a reply.
             }
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect");
         let err = remote.call("engine.execute", json!({})).expect_err("lost reply must be an error");
         assert!(err.contains("may or may not have run"), "{err}");
         assert_eq!(executed.load(Ordering::SeqCst), 1, "the command must not be replayed");
@@ -328,12 +374,15 @@ mod tests {
             let mut first = true;
             for stream in listener.incoming().flatten() {
                 if first {
-                    // The app restarts: the first connection closes before any request arrives.
+                    // The app restarts: the first connection completes the handshake, then closes
+                    // before any request arrives.
                     first = false;
+                    answer_auth(&stream);
                     drop(stream);
                     let _ = closed_tx.send(());
                     continue;
                 }
+                answer_auth(&stream);
                 let mut reader = BufReader::new(&stream);
                 let mut line = String::new();
                 if reader.read_line(&mut line).unwrap_or(0) == 0 {
@@ -344,7 +393,7 @@ mod tests {
                 let _ = w.write_all(b"{\"id\":1,\"ok\":true,\"result\":null}\n");
             }
         });
-        let mut remote = Remote::connect(&addr).expect("connect");
+        let mut remote = Remote::connect_with_token(&addr, TEST_TOKEN.into()).expect("connect");
         closed_rx.recv().expect("server closed the first connection");
         std::thread::sleep(Duration::from_millis(200));
         assert!(remote.call("engine.execute", json!({})).is_ok(), "a request that never left must be sent on a fresh connection");

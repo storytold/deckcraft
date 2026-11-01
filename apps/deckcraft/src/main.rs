@@ -140,9 +140,11 @@ fn services() -> Services {
 const APP_ID: &str = "ai.storyteller.deckcraft";
 
 const USAGE: &str = "\
-Usage: deckcraft [--control PORT] [--sample] [--show] [FILE...]
+Usage: deckcraft [--control PORT [--control-token TOKEN]] [--sample] [--show] [FILE...]
 
-  --control PORT  JSON control server on 127.0.0.1:PORT
+  --control PORT         JSON control server on 127.0.0.1:PORT
+  --control-token TOKEN  the control token (else 256 random bits, written to a
+                         file only the user can read; clients: DECKCRAFT_CONTROL_TOKEN)
   --sample        open the sample presentation
   --show          start the slide show
   --help, -h      print this help and exit
@@ -154,7 +156,7 @@ A PowerPoint Show (.ppsx) given last starts its slide show.
 enum Startup {
     Help,
     Version,
-    Run { control_port: Option<u16>, files: Vec<String>, sample: bool, show: bool },
+    Run { control_port: Option<u16>, control_token: Option<String>, files: Vec<String>, sample: bool, show: bool },
 }
 
 /// `--help` and `--version` leave before the window and the log file.
@@ -162,10 +164,12 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
     let mut files = Vec::new();
     let mut sample = false;
     let mut show = false;
+    let mut control_token: Option<String> = std::env::var("DECKCRAFT_CONTROL_TOKEN").ok();
     let mut args = args.into_iter();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
+            "--control-token" => control_token = args.next(),
             "--sample" => sample = true,
             "--show" => show = true,
             "--version" | "-V" => return Startup::Version,
@@ -175,7 +179,7 @@ fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>
             _ => files.push(a),
         }
     }
-    Startup::Run { control_port, files, sample, show }
+    Startup::Run { control_port, control_token, files, sample, show }
 }
 
 fn app_icon() -> Option<egui::IconData> {
@@ -196,7 +200,7 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
-    let (control_port, files, sample, show) =
+    let (control_port, control_token, files, sample, show) =
         match startup(std::env::var("DECKCRAFT_CONTROL_PORT").ok().and_then(|p| p.parse().ok()), std::env::args().skip(1)) {
             Startup::Help => {
                 print!("{USAGE}");
@@ -206,7 +210,7 @@ fn main() -> eframe::Result {
                 println!("deckcraft {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
             }
-            Startup::Run { control_port, files, sample, show } => (control_port, files, sample, show),
+            Startup::Run { control_port, control_token, files, sample, show } => (control_port, control_token, files, sample, show),
         };
     log::info!("DeckCraft {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
     // The log file lives under the settings directory; opened after the arguments, so `--help` and
@@ -282,8 +286,10 @@ fn main() -> eframe::Result {
             }
             app.integrated_titlebar = cfg!(target_os = "macos");
             if let Some(port) = control_port {
-                let rx = control_server::start(port, cc.egui_ctx.clone());
-                app = app.with_control(rx);
+                match control_server::start(port, control_token.clone(), cc.egui_ctx.clone()) {
+                    Ok(rx) => app = app.with_control(rx),
+                    Err(e) => log::error!("control server failed to start on 127.0.0.1:{port}: {e}"),
+                }
             }
             if sample && let Err(e) = deckcraft_engine::sample::open_sample(&mut app.session) {
                 log::error!("sample: {e}");
@@ -343,7 +349,7 @@ mod tests {
         assert!(matches!(startup(None, ["--version".to_string()]), Startup::Version));
         let launch = startup(Some(9), ["--sample".to_string(), "--control".to_string(), "4242".to_string(), "talk.pptx".to_string()]);
         assert!(matches!(launch, Startup::Run { .. }));
-        if let Startup::Run { control_port, files, sample, show } = launch {
+        if let Startup::Run { control_port, files, sample, show, .. } = launch {
             assert_eq!(control_port, Some(4242));
             assert_eq!(files, ["talk.pptx".to_string()]);
             assert!(sample);

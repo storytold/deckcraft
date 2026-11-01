@@ -1,3 +1,5 @@
+/// The control server's tests: auth handshakes, refusals, limits, idle connections, and the
+/// pipelined/rejected paths, against a real listener.
 use super::*;
 
 /// A failed accept is followed by a wait before the next one, so a listener that keeps
@@ -26,15 +28,38 @@ fn small() -> Limits {
 }
 
 fn server(limits: Limits) -> (SocketAddr, Receiver<ControlRequest>) {
+    server_with(limits, "test-token-0123456789")
+}
+
+fn server_with(limits: Limits, token: &str) -> (SocketAddr, Receiver<ControlRequest>) {
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();
-    (addr, serve_listener(l, limits, egui::Context::default()))
+    (addr, serve_listener(l, limits, token.into(), egui::Context::default()))
 }
 
 fn client(addr: SocketAddr) -> (BufReader<TcpStream>, TcpStream) {
+    client_with(addr, "test-token-0123456789")
+}
+
+/// Connect and authenticate first, as [`crate::control_auth`] requires.
+fn client_with(addr: SocketAddr, token: &str) -> (BufReader<TcpStream>, TcpStream) {
     let s = TcpStream::connect(addr).unwrap();
     s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-    (BufReader::new(s.try_clone().unwrap()), s)
+    let read = s.try_clone().unwrap();
+    let mut writer = s.try_clone().unwrap();
+    writer.write_all(format!("{}\n", serde_json::json!({"id": 0, "method": "auth", "params": {"token": token}})).as_bytes()).unwrap();
+    let mut hello = String::new();
+    BufReader::new(read.try_clone().unwrap()).read_line(&mut hello).unwrap();
+    (BufReader::new(read), writer)
+}
+
+/// Connect without the auth handshake: a refusal (busy, or an unauthenticated line) arrives
+/// before or instead of one, and [`client_with`] would swallow it as the auth reply.
+fn raw_client(addr: SocketAddr) -> (BufReader<TcpStream>, TcpStream) {
+    let s = TcpStream::connect(addr).unwrap();
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let read = s.try_clone().unwrap();
+    (BufReader::new(read), s)
 }
 
 fn reply(r: &mut BufReader<TcpStream>) -> Option<Value> {
@@ -65,6 +90,47 @@ fn request_round_trip() {
     assert_eq!(v["result"], "ui.inspect");
 }
 
+/// A connection that doesn't authenticate first gets one refusal and nothing is dispatched.
+#[test]
+fn a_connection_without_a_token_is_refused() {
+    let (addr, rx) = server(small());
+    let (mut r, mut w) = raw_client(addr);
+    // The first line is a request, not the auth handshake: refused before it is read.
+    w.write_all(b"{\"id\":1,\"method\":\"ui.inspect\"}\n").unwrap();
+    w.write_all(b"{\"id\":2,\"method\":\"engine.execute\",\"params\":{\"command\":\"slide.new\"}}\n").unwrap();
+    let replies = replies_until_closed(&mut r);
+    assert_eq!(replies.len(), 1, "{replies:?}");
+    assert_eq!(replies[0]["error"], "authentication required");
+    assert!(rx.try_recv().is_err(), "an unauthenticated request was dispatched");
+}
+
+/// A wrong token is refused the same way as a missing one.
+#[test]
+fn a_wrong_token_is_refused() {
+    let (addr, rx) = server(small());
+    let (mut r, mut w) = raw_client(addr);
+    // `auth_line` carries no newline; the server refuses an unterminated first line.
+    w.write_all(format!("{}\n", control_auth::auth_line(0, "wrong-token-012345678")).as_bytes()).unwrap();
+    let refused = reply(&mut r).unwrap();
+    assert_eq!(refused["error"], "authentication required");
+    // The refusal closed the connection: nothing serves requests after a wrong token.
+    assert!(reply(&mut r).is_none());
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(rx.try_recv().is_err(), "a request behind a wrong token was dispatched");
+}
+
+/// The right token authenticates and the connection serves requests after it.
+#[test]
+fn the_right_token_authenticates() {
+    let (addr, rx) = server(small());
+    ui(rx);
+    let (mut r, mut w) = client(addr);
+    writeln!(w, r#"{{"id":3,"method":"ui.inspect"}}"#).unwrap();
+    let v = reply(&mut r).unwrap();
+    assert_eq!(v["id"], 3);
+    assert_eq!(v["result"], "ui.inspect");
+}
+
 /// Every reply line until the server closes the connection.
 fn replies_until_closed(r: &mut BufReader<TcpStream>) -> Vec<Value> {
     std::iter::from_fn(|| reply(r)).collect()
@@ -78,7 +144,7 @@ fn an_http_request_closes_the_connection_before_its_body_is_dispatched() {
     let (mut r, mut w) = client(addr);
     w.write_all(
         b"POST / HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: text/plain\r\n\r\n\
-              {\"id\":1,\"method\":\"engine.execute\",\"params\":{\"command\":\"slide.new\"}}\n",
+          {\"id\":1,\"method\":\"engine.execute\",\"params\":{\"command\":\"slide.new\"}}\n",
     )
     .unwrap();
     let replies = replies_until_closed(&mut r);
@@ -140,7 +206,7 @@ fn a_pipelined_peer_refused_as_busy_still_reads_why() {
     writeln!(hw, r#"{{"id":1,"method":"m"}}"#).unwrap();
     assert!(reply(&mut hr).is_some());
     for _ in 0..50 {
-        let (mut r, mut w) = client(addr);
+        let (mut r, mut w) = raw_client(addr);
         let _ = w.write_all(b"{\"id\":2,\"method\":\"m\"}\n");
         let replies = replies_until_closed(&mut r);
         assert_eq!(replies.len(), 1, "{replies:?}");
@@ -159,9 +225,9 @@ fn silent_refused_peers_do_not_delay_the_next_refusal() {
     writeln!(hw, r#"{{"id":1,"method":"m"}}"#).unwrap();
     assert!(reply(&mut hr).is_some());
     // Twenty drains of 250 ms each, one after another, would take five seconds.
-    let silent: Vec<_> = (0..MAX_REFUSING + 4).map(|_| client(addr)).collect();
+    let silent: Vec<_> = (0..MAX_REFUSING + 4).map(|_| raw_client(addr)).collect();
     let start = Instant::now();
-    let (mut r, _w) = client(addr);
+    let (mut r, _w) = raw_client(addr);
     let refused = reply(&mut r).unwrap();
     assert!(refused["error"].as_str().unwrap_or_default().starts_with("busy"), "{refused}");
     assert!(start.elapsed() < Duration::from_secs(1), "refused after {:?}", start.elapsed());
@@ -224,7 +290,7 @@ fn connection_limit_refuses_then_frees_slot() {
     // Make sure both are being served before the third arrives.
     writeln!(bw, r#"{{"id":1,"method":"m"}}"#).unwrap();
     assert!(reply(&mut br).is_some());
-    let (mut cr, _cw) = client(addr);
+    let (mut cr, _cw) = raw_client(addr);
     let v = reply(&mut cr).unwrap();
     assert!(v["error"].as_str().unwrap().starts_with("busy"));
     drop(a);
