@@ -53,7 +53,7 @@ fn rewrite_manifest(bytes: &[u8], edit: impl FnOnce(&mut Value)) -> Vec<u8> {
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let f = z.by_index(i).unwrap();
-        if f.name() == "presentation.json" {
+        if f.name().unwrap() == "presentation.json" {
             out.start_file("presentation.json", zip::write::SimpleFileOptions::default()).unwrap();
             out.write_all(&serde_json::to_vec(&json).unwrap()).unwrap();
         } else {
@@ -120,7 +120,7 @@ fn chart_payloads_in_every_shape_owner_get_distinct_entries() {
     p.handout_master = Some(Arc::new(Master { shapes, ..Default::default() }));
     let bytes = save(&p).unwrap();
     let z = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
-    assert_eq!(z.file_names().filter(|name| name.starts_with("chart-parts/")).count(), 5);
+    assert_eq!(z.file_names().filter(|name| name.as_ref().is_ok_and(|name| name.starts_with("chart-parts/"))).count(), 5);
     assert_eq!(load(&bytes).unwrap(), p);
 }
 
@@ -131,11 +131,11 @@ fn missing_or_corrupt_chart_payload_is_reported() {
     let mut z = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
     let mut json: Value = serde_json::from_slice(&read_entry(&mut z, "presentation.json").unwrap()).unwrap();
     let name = part_json(&mut json).unwrap()["nativeEntry"].as_str().unwrap().to_owned();
-    let start = z.by_name(&name).unwrap().data_start() as usize;
+    let start = z.by_name(&name).unwrap().data_start().unwrap() as usize;
     let mut out = zip::ZipWriter::new(Cursor::new(Vec::new()));
     for i in 0..z.len() {
         let f = z.by_index(i).unwrap();
-        if f.name() != name {
+        if f.name().unwrap() != name {
             out.raw_copy_file(f).unwrap();
         }
     }
@@ -200,7 +200,7 @@ fn corrupt_chart_members_stop_before_reusing_the_inflation_budget() {
     let mut bytes = save(&with_two_parts()).unwrap();
     let offsets: Vec<_> = {
         let mut z = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
-        (0..2).map(|i| z.by_name(&format!("chart-parts/{i}")).unwrap().data_start() as usize).collect()
+        (0..2).map(|i| z.by_name(&format!("chart-parts/{i}")).unwrap().data_start().unwrap() as usize).collect()
     };
     for offset in offsets {
         bytes[offset] ^= 0xff;
@@ -227,7 +227,7 @@ fn duplicate_physical_zip_names_are_indexed_and_inflated_once() {
     }
     assert_eq!(replaced, 2);
     let z = zip::ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
-    assert_eq!(z.file_names().filter(|n| n.starts_with("chart-parts/")).count(), 1);
+    assert_eq!(z.file_names().filter(|n| n.as_ref().is_ok_and(|n| n.starts_with("chart-parts/"))).count(), 1);
     let (q, damaged) = load_within(&bytes, Budget { total: 10, items: 2 }).unwrap();
     assert_eq!(damaged.len(), 1, "the second reference is missing, not inflated again");
     let ShapeKind::Group { children, .. } = &q.slides[0].shapes[0].kind else { panic!("group") };

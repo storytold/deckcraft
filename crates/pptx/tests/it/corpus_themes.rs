@@ -19,7 +19,7 @@ fn repack(bytes: &[u8], parts: &[(&str, String)]) -> Vec<u8> {
     let opts = zip::write::SimpleFileOptions::default();
     for i in 0..z.len() {
         let mut f = z.by_index(i).expect("entry");
-        let name = f.name().to_string();
+        let name = f.name().unwrap().to_string();
         if parts.iter().any(|(n, _)| *n == name) {
             continue;
         }
@@ -238,8 +238,12 @@ fn themes_masters_and_layouts_survive_a_round_trip() {
     // A second save keeps the same theme and master parts.
     let names = |bytes: &[u8]| {
         let z = zip::ZipArchive::new(Cursor::new(bytes)).expect("zip");
-        let mut v: Vec<String> =
-            z.file_names().filter(|n| n.contains("theme") || n.contains("slideMaster") || n.contains("slideLayout")).map(str::to_string).collect();
+        let mut v: Vec<String> = z
+            .file_names()
+            .filter_map(|n| n.ok())
+            .filter(|n| n.contains("theme") || n.contains("slideMaster") || n.contains("slideLayout"))
+            .map(|n| n.into_owned())
+            .collect();
         v.sort();
         v
     };
