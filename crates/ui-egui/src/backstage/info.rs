@@ -1,5 +1,5 @@
 use super::files::task;
-use super::{Backstage, Icon, Outcome, Page, RichText, Sense, SlideApp, Tokens, Ui, Value, dim, heading, json, theme, vec2};
+use super::{Backstage, Icon, Outcome, Page, RichText, SlideApp, Tokens, Ui, Value, dim, heading, json, theme, vec2};
 
 /// Save As and Change File Type: (id for [`SlideApp::export_as`], label, detail).
 pub const SAVE_TYPES: [(&str, &str, &str); 7] = [
@@ -189,54 +189,41 @@ pub(super) fn save_as(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage, out: 
     }
 }
 
-/// Account: the interface's appearance and what DeckCraft is. DeckCraft has no accounts, so
-/// there is nothing to sign in to.
+/// Account: product information and the About window. DeckCraft has no accounts, so there is
+/// nothing to sign in to.
 pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
-    ui.horizontal_top(|ui| {
-        ui.vertical(|ui| {
-            ui.set_width(340.0);
-            heading(ui, "Appearance");
-            let dark = app.ui.brightness == theme::Brightness::Dark;
-            craft_ui::ComboBox::from_id_salt("backstage_appearance")
-                .width(260.0)
-                .selected_text(if dark { "Dark" } else { "Light" })
-                .show_ui(ui, |ui| {
-                    for (on, label) in [(false, "Light"), (true, "Dark")] {
-                        if ui.selectable_label(dark == on, label).clicked() {
-                            let _ = app.run("view.dark", json!({"on": on}));
-                        }
-                    }
-                })
-                .response
-                .widget_info(|| egui::WidgetInfo::labeled(egui::Role::ComboBox, true, "Appearance"));
-            ui.add_space(16.0);
-            heading(ui, "User Information");
-            dim(ui, "DeckCraft has no accounts: there is nothing to sign in to, and your presentations stay on your device.");
-        });
-        ui.add_space(40.0);
-        ui.vertical(|ui| {
-            heading(ui, "Product Information");
-            ui.horizontal(|ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
-                crate::dialogs::paint_logo(ui.painter(), r);
-                ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
-            });
-            dim(ui, &crate::dialogs::version_line());
-            dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");
-            ui.add_space(14.0);
-            if task(
-                ui,
-                Icon::Help,
-                "About DeckCraft",
-                "About DeckCraft",
-                "The version, the people and models who built it, and where to find us.",
-                true,
-            ) {
-                let _ = app.run("app.about", json!({}));
-            }
-            ui.hyperlink_to("Join our community on Discord", deckcraft_engine::links::DISCORD);
-            ui.hyperlink_to("Source on GitHub", deckcraft_engine::links::GITHUB);
-        });
+    heading(ui, "Product Information");
+    ui.label(RichText::new("DeckCraft").font(theme::bold(16.0)).color(t.text));
+    ui.add_space(8.0);
+    egui::Grid::new("backstage_account").num_columns(2).spacing(vec2(18.0, 8.0)).show(ui, |ui| {
+        for (label, value) in
+            [("Version", env!("CARGO_PKG_VERSION").to_string()), ("Platform", platform()), ("Licence", env!("CARGO_PKG_LICENSE").to_string())]
+        {
+            ui.label(RichText::new(label).color(t.text_dim));
+            ui.label(value);
+            ui.end_row();
+        }
     });
+    ui.add_space(18.0);
+    ui.horizontal(|ui| {
+        if task(ui, Icon::Help, "About DeckCraft", "About DeckCraft", "Version, contributors and the AI models that helped", true) {
+            let _ = app.run("app.about", json!({}));
+        }
+    });
+}
+
+/// The platform the app was built for, e.g. "macOS (aarch64)"; the web build reports "Web".
+fn platform() -> String {
+    let os = match std::env::consts::OS {
+        "macos" => "macOS",
+        "windows" => "Windows",
+        "linux" => "Linux",
+        "freebsd" => "FreeBSD",
+        "openbsd" => "OpenBSD",
+        "netbsd" => "NetBSD",
+        _ if cfg!(target_arch = "wasm32") => return "Web".into(),
+        other => other,
+    };
+    format!("{os} ({})", std::env::consts::ARCH)
 }
