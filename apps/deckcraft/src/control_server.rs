@@ -1,6 +1,10 @@
 //! Loopback JSON-lines control server: one request per line, one reply per line.
 //! This is the transport the MCP server (`deckcraft-cli mcp --connect`) wraps.
 //!
+//! The first line of a connection must authenticate with the app's token (#777; see
+//! `deckcraft_mcp::control_auth`). A connection that doesn't, or later sends a line that isn't
+//! JSON, is answered once and closed.
+//!
 //! The server only reads requests: a line that is not a JSON object with a string `method` (an
 //! HTTP request line, a stray `nc`, binary data) gets one error reply and the connection is
 //! closed, so nothing sent after it runs. Every resource a client can hold is bounded
@@ -14,6 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TrySendError, sync_channel};
 use std::time::{Duration, Instant};
 
+use deckcraft_mcp::control_auth;
 use deckcraft_ui_egui::ControlRequest;
 use serde_json::{Value, json};
 
@@ -48,17 +53,32 @@ impl Default for Limits {
     }
 }
 
-pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
-    match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(l) => {
-            log::info!("control server listening on 127.0.0.1:{port}");
-            serve_listener(l, Limits::default(), ctx)
+/// How long a new connection may take to send its token.
+const AUTH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// The secret of this run: the one the user chose (`--control-token`, `DECKCRAFT_CONTROL_TOKEN`),
+/// else 256 random bits from the operating system, written to a file only the user can read.
+fn make_token(port: u16, chosen: Option<String>) -> std::io::Result<String> {
+    if let Some(t) = chosen.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()) {
+        if t.len() < control_auth::MIN_TOKEN_LEN {
+            return Err(std::io::Error::other(format!("the control token must have at least {} characters", control_auth::MIN_TOKEN_LEN)));
         }
-        Err(e) => {
-            log::error!("control server failed to bind 127.0.0.1:{port}: {e}");
-            sync_channel::<ControlRequest>(0).1
-        }
+        eprintln!("deckcraft: control channel on 127.0.0.1:{port} requires the token you set (clients: DECKCRAFT_CONTROL_TOKEN)");
+        return Ok(t);
     }
+    let mut bytes = [0u8; 32];
+    getrandom::fill(&mut bytes).map_err(|e| std::io::Error::other(format!("no random numbers for the control token: {e}")))?;
+    let token = control_auth::hex(&bytes);
+    let path = control_auth::write_token_file(port, &token)?;
+    eprintln!("deckcraft: control channel on 127.0.0.1:{port}; its token is in {} (deckcraft-cli reads it)", path.display());
+    Ok(token)
+}
+
+pub fn start(port: u16, chosen_token: Option<String>, ctx: egui::Context) -> std::io::Result<Receiver<ControlRequest>> {
+    let listener = TcpListener::bind(("127.0.0.1", port))?;
+    let token: Arc<str> = make_token(port, chosen_token)?.into();
+    log::info!("control server listening on 127.0.0.1:{port}");
+    Ok(serve_listener(listener, Limits::default(), token, ctx))
 }
 
 /// How long the accepting thread waits after a failed accept. Accepting can keep failing, for
@@ -79,7 +99,7 @@ fn accepted<T>(incoming: impl Iterator<Item = std::io::Result<T>>, mut wait: imp
 }
 
 /// Accept connections on `listener` under `limits`; requests arrive on the returned receiver.
-fn serve_listener(listener: TcpListener, limits: Limits, ctx: egui::Context) -> Receiver<ControlRequest> {
+fn serve_listener(listener: TcpListener, limits: Limits, token: Arc<str>, ctx: egui::Context) -> Receiver<ControlRequest> {
     let (tx, rx) = sync_channel::<ControlRequest>(limits.queue.max(1));
     let active = Arc::new(AtomicUsize::new(0));
     let refusing = Arc::new(AtomicUsize::new(0));
@@ -95,9 +115,10 @@ fn serve_listener(listener: TcpListener, limits: Limits, ctx: egui::Context) -> 
             let slot = Slot(Arc::clone(&active));
             let tx = tx.clone();
             let ctx = ctx.clone();
+            let token = Arc::clone(&token);
             let spawned = std::thread::Builder::new().name("control-client".into()).spawn(move || {
                 let _slot = slot;
-                serve(stream, &tx, &ctx, limits);
+                serve(stream, &token, &tx, &ctx, limits);
             });
             if spawned.is_err() {
                 log::warn!("control server could not start a client thread");
@@ -241,13 +262,38 @@ fn close_politely(out: &TcpStream, reader: &mut BufReader<TcpStream>, grace: Dur
     }
 }
 
-fn serve(stream: TcpStream, tx: &SyncSender<ControlRequest>, ctx: &egui::Context, limits: Limits) {
+/// Read the connection's first line (at most [`control_auth::MAX_AUTH_LINE`] bytes, within
+/// [`AUTH_TIMEOUT`]) and check the token. `true` when the peer may go on.
+fn authenticate(reader: &mut BufReader<TcpStream>, out: &mut TcpStream, token: &str) -> bool {
+    let _ = out.set_read_timeout(Some(AUTH_TIMEOUT));
+    let mut first = String::new();
+    let read = reader.by_ref().take(control_auth::MAX_AUTH_LINE as u64).read_line(&mut first);
+    let verdict = match read {
+        Ok(n) if n > 0 && first.ends_with('\n') => control_auth::check_first_line(&first, token),
+        _ => Err(json!({"ok": false, "error": "authentication required"})),
+    };
+    let allowed = verdict.is_ok();
+    let reply = verdict.unwrap_or_else(|e| e);
+    let _ = writeln!(out, "{reply}");
+    let _ = out.set_read_timeout(None);
+    allowed
+}
+
+fn serve(stream: TcpStream, token: &str, tx: &SyncSender<ControlRequest>, ctx: &egui::Context, limits: Limits) {
     if stream.set_read_timeout(Some(limits.idle_timeout)).is_err() || stream.set_write_timeout(Some(limits.write_timeout)).is_err() {
         return;
     }
     let Ok(read) = stream.try_clone() else { return };
     let mut out = stream;
     let mut reader = BufReader::new(read);
+    if !authenticate(&mut reader, &mut out, token) {
+        // The refusal was written; drain what the peer pipelined before it read it, or a reset
+        // would discard the refusal the way `close_politely` describes.
+        close_politely(&out, &mut reader, limits.write_timeout);
+        return;
+    }
+    // `authenticate` cleared the read timeout to bound its own line; put the idle timeout back.
+    let _ = out.set_read_timeout(Some(limits.idle_timeout));
     loop {
         let line = match read_line(&mut reader, limits.max_line) {
             Line::Text(t) => t,

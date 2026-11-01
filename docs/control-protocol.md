@@ -3,6 +3,29 @@
 Start the app with `--control <port>`. The server listens on `127.0.0.1` only and speaks JSON
 lines: one request object per line, one reply per line.
 
+## Authentication
+
+Anything on the machine, and a web page that POSTs `text/plain` to `127.0.0.1:7990`, can reach a
+loopback port, so every connection must prove it knows the app's token (see
+`deckcraft_mcp::control_auth`):
+
+- The app makes a token at start (256 random bits from the operating system, kept in memory) and
+  writes it to a file only you can read: `$XDG_RUNTIME_DIR/deckcraft/control-<port>.token` (else
+  `~/.cache/deckcraft/…`; on Windows `%USERPROFILE%\.deckcraft\…`). The folder is made 0700 and the
+  file 0600 on Unix. The path is printed on stderr. The token itself is never printed or logged.
+- Or choose the token yourself: `DECKCRAFT_CONTROL_TOKEN=…` (preferred) or `--control-token …`
+  (visible in the process list), at least 16 characters. The app then writes no file.
+- The first line of a connection must be
+  `{"id":0,"method":"auth","params":{"token":"…"}}`; the reply is
+  `{"id":0,"ok":true,"result":{"authenticated":true}}`. Any other first line (a wrong or missing
+  token, another method, text that isn't JSON such as an HTTP request, no line within 10 s, or
+  one longer than 4 KiB) gets `{"ok":false,"error":"authentication required"}` and the
+  connection is closed. The refusal is the same whatever was wrong, so it tells a stranger
+  nothing. After that, a line that isn't JSON also closes the connection.
+- `deckcraft-cli mcp --connect` and `deckcraft_mcp::Remote` do this themselves: they use
+  `DECKCRAFT_CONTROL_TOKEN` if set, else the token file of that port (so they work for the same
+  user on the same machine without setup). Your own client reads the file or the variable.
+
 A line that is not a JSON object with a string `method` (an HTTP request, text that isn't JSON,
 bytes that aren't UTF-8) gets one error reply and the server closes the connection; nothing sent
 after it runs. Blank lines are skipped.
