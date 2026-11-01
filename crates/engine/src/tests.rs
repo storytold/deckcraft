@@ -1940,6 +1940,24 @@ fn outline_rtf_exports_and_opens_back() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// PowerPoint's outline RTF keeps an empty title and a title starting `- `, through both openers.
+#[test]
+fn outline_rtf_keeps_empty_and_dash_titles_through_file_open_and_open_bytes() {
+    let rtf = r"{\rtf1\ansi{\stylesheet{\s1\li360 heading 1;}{\s2\li1080 heading 2;}}\pard\plain\s1 Roadmap\par\pard\plain\s2 Ship\par\pard\plain\s1 {\f3 \par }\pard\plain\s1 - dash\par}";
+    let titles = |s: &Session| s.doc().unwrap().doc.slides.iter().map(|sl| sl.title()).collect::<Vec<_>>();
+    let dir = std::env::temp_dir().join(format!("deckcraft-rtf-titles-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("deck.rtf");
+    std::fs::write(&path, rtf).unwrap();
+    let mut s = session();
+    s.execute("file.open", &json!({"path": path.to_string_lossy()})).unwrap();
+    assert_eq!(titles(&s), ["Roadmap", "", "- dash"]);
+    let mut s = session();
+    s.execute("file.openBytes", &json!({"name": "deck.rtf", "data": crate::cmd::base64_encode(rtf.as_bytes())})).unwrap();
+    assert_eq!(titles(&s), ["Roadmap", "", "- dash"]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// #725: a layout with a small body placeholder ahead of its content placeholder (as Keynote
 /// exports "Title & Bullets") still gets the body in the content placeholder (`idx="1"`).
 #[test]
