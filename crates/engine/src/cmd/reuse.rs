@@ -13,7 +13,7 @@ use deckcraft_model::text::{Action, Hyperlink, RunProps, TextBody};
 use deckcraft_model::{LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, usize_param};
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, opt_usize_param};
 use crate::{Result, Session, media_refs};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -175,7 +175,7 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("slide.reuse", format!("{name} has no slides to reuse")));
     }
     let keep = bool_or(p, "keepFormatting", false);
-    let at = usize_param(p, "at");
+    let at = opt_usize_param(p, "at", "slide.reuse")?;
     s.edit(|doc, sel| {
         let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
         // Media: what the slides use is copied under fresh ids.
@@ -357,6 +357,22 @@ mod tests {
         let mut want = blobs.clone();
         want.sort();
         assert_eq!(got, want, "every reference resolves to its own copied bytes");
+    }
+
+    #[test]
+    fn invalid_at_is_rejected() {
+        let src = defaults::new_presentation(None);
+        let data = super::super::base64_encode(&deckcraft_format::save(&src).expect("save"));
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({})).expect("new");
+        s.execute("slide.new", &json!({})).expect("new");
+        let count = |s: &Session| s.doc().expect("doc").doc.slides.len();
+        assert_eq!(count(&s), 3);
+        for at in [json!(-1), json!(1.5)] {
+            let r = s.execute("slide.reuse", &json!({"data": data, "name": "src.deckcraft", "slides": [0], "at": at}));
+            assert!(r.is_err(), "at={at} must be rejected");
+            assert_eq!(count(&s), 3, "at={at} must not add slides");
+        }
     }
 
     fn link_to(slide: SlideId) -> Hyperlink {
