@@ -60,7 +60,7 @@ fn text_has_effects(rctx: &Ctx, s: &Shape) -> bool {
     // or inherit them from the master's other-text style.
     let in_cells = match &s.kind {
         deckcraft_model::ShapeKind::Table(t) => {
-            t.rows.iter().flat_map(|r| &r.cells).any(|c| body(&c.text) || (!c.text.paragraphs.is_empty() && styled(&rctx.master.other_style)))
+            t.rows.iter().flat_map(|r| &r.cells).any(|c| body(&c.text) || (!c.text.is_empty() && styled(&rctx.master.other_style)))
         }
         _ => false,
     };

@@ -1241,13 +1241,24 @@ fn table_cell_text_effects_need_filters() {
     assert!(needs_filters(&p, &p.slides[0]), "a glowing cell's text blurs");
 
     // Master other_style glow inherited by a non-empty cell.
-    let mut table_plain = Table::new(1, 1, 200.0, 40.0);
-    table_plain.rows[0].cells[0].text = TextBody::from_text("Inherited");
+    // Clear master and layout shapes to isolate the table cell from master background shapes.
+    let table_plain = Table::new(1, 1, 200.0, 40.0);
     let shape_table =
         Shape { id: ShapeId(744), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_plain), ..Default::default() };
     let mut p_inherited = deck_with(vec![shape_table]);
-    std::sync::Arc::make_mut(&mut p_inherited.masters[0]).other_style.levels[0].as_mut().unwrap().run.glow =
+    let m = std::sync::Arc::make_mut(&mut p_inherited.masters[0]);
+    m.shapes.clear();
+    for l in &mut m.layouts {
+        l.shapes.clear();
+    }
+    m.other_style.levels[0].as_mut().unwrap().run.glow =
         Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 6.0 });
+    // An empty cell has no text paragraphs to inherit the glow.
+    assert!(!needs_filters(&p_inherited, &p_inherited.slides[0]), "empty cell does not need filters");
+    // Once the cell has text, it inherits the glow from master other_style.
+    if let ShapeKind::Table(t) = &mut std::sync::Arc::make_mut(&mut p_inherited.slides[0]).shapes[0].kind {
+        t.rows[0].cells[0].text = TextBody::from_text("Inherited");
+    }
     assert!(needs_filters(&p_inherited, &p_inherited.slides[0]), "inherited cell text glow blurs");
 }
 
