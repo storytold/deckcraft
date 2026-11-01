@@ -107,6 +107,9 @@ pub fn show(app: &mut SlideApp, ctx: &egui::Context) {
         } else if d.id == "themeFonts" {
             ui.set_min_height(280.0);
         }
+        if d.id == "preferences" {
+            preferences::interface_language_row(app, ui, &mut d);
+        }
         close = body(app, ui, &mut d);
     });
     let escape = ctx.input(|i| i.key_pressed(egui::Key::Escape));
