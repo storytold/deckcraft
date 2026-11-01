@@ -13,7 +13,7 @@ use deckcraft_model::text::{Action, Hyperlink, RunProps, TextBody};
 use deckcraft_model::{LayoutId, Master, MasterId, MediaId, Presentation, ShapeId, ShapeKind, Slide, SlideId};
 use serde_json::{Value, json};
 
-use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, usize_param};
+use super::{CommandSpec, NO_ID_SPACE, bad, bool_or, cmd, has_doc, opt_usize_param};
 use crate::{Result, Session, media_refs};
 
 pub fn specs() -> Vec<CommandSpec> {
@@ -160,8 +160,12 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         Some(Value::Array(a)) => {
             let mut v = vec![];
             for x in a {
-                let i = x.as_u64().map(|i| i as usize).filter(|i| *i < n);
-                let i = i.ok_or_else(|| bad("slide.reuse", format!("{name} has {n} slides; {x} isn't one of them (indices count from 0)")))?;
+                let i = match x.as_u64().and_then(|i| usize::try_from(i).ok()) {
+                    Some(i) if i < n => i,
+                    // Past the end of the source deck: name its valid range, as the slide commands do.
+                    Some(i) => return Err(bad("slide.reuse", format!("{name}: {}", super::out_of_range("slide", i, n)))),
+                    None => return Err(bad("slide.reuse", format!("{name}: {x} is not a slide index (indices count from 0)"))),
+                };
                 if !v.contains(&i) {
                     v.push(i);
                 }
@@ -175,7 +179,8 @@ fn reuse(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("slide.reuse", format!("{name} has no slides to reuse")));
     }
     let keep = bool_or(p, "keepFormatting", false);
-    let at = usize_param(p, "at");
+    // An insertion position: past the end lands at the end, but one that is not an index is refused.
+    let at = opt_usize_param(p, "at", "slide.reuse")?;
     s.edit(|doc, sel| {
         let at = at.unwrap_or(sel.slide + 1).min(doc.slides.len());
         // Media: what the slides use is copied under fresh ids.
@@ -459,5 +464,13 @@ mod tests {
         let titles: Vec<String> = s.doc().expect("doc").doc.slides.iter().map(|x| x.title()).collect();
         assert!(titles.iter().any(|t| t == "Alpha") && titles.iter().any(|t| t == "Gamma"));
         assert!(!titles.iter().any(|t| t == "Beta"), "a slide that was not picked stays out");
+        let n = s.doc().expect("doc").doc.slides.len();
+        for at in [json!(-1), json!(1.5)] {
+            assert!(s.execute("slide.reuse", &json!({"data": data, "name": "src.deckcraft", "at": at})).is_err(), "at {at}");
+        }
+        assert_eq!(s.doc().expect("doc").doc.slides.len(), n, "a refused `at` inserts nothing");
+        // A slide past the end of the source names the source's valid range.
+        let e = s.execute("slide.reuse", &json!({"data": data, "name": "src.deckcraft", "slides": [99]})).expect_err("past the end").to_string();
+        assert!(e.contains(&format!("no slide at index 99; indices run 0 through {last}")), "{e}");
     }
 }
