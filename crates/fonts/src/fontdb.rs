@@ -30,12 +30,15 @@ pub fn bundled() -> Vec<&'static [u8]> {
 /// Open substitutes for families documents often ask for but we can't ship (metric-compatible
 /// where one exists), tried in order after the family itself.
 pub fn substitutes(family: &str) -> &'static [&'static str] {
-    match family.to_ascii_lowercase().as_str() {
+    let f = family.to_ascii_lowercase();
+    if is_monospace_family(&f) {
+        return &["Liberation Mono", "Courier New", "Menlo", "Courier", "DejaVu Sans Mono"];
+    }
+    match f.as_str() {
         "calibri" | "calibri light" => &["Carlito", "Liberation Sans", "Arial", "Inter"],
         "cambria" | "cambria math" => &["Caladea", "Liberation Serif", "Times New Roman", "Merriweather"],
         "arial" | "helvetica" | "helvetica neue" | "arial nova" => &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"],
         "times new roman" | "times" => &["Liberation Serif", "Times New Roman", "Times", "Merriweather"],
-        "courier new" | "courier" | "consolas" | "menlo" => &["Liberation Mono", "Courier New", "Menlo", "Courier"],
         "aptos" | "aptos display" | "aptos narrow" | "segoe ui" | "segoe ui light" | "segoe ui semibold" | "tahoma" | "verdana" => {
             &["Inter", "Helvetica Neue", "Arial", "Liberation Sans"]
         }
@@ -52,12 +55,77 @@ pub fn substitutes(family: &str) -> &'static [&'static str] {
     }
 }
 
+/// Families that are monospaced: when not installed, documents keep a monospaced substitute
+/// ([`substitutes`]) so code blocks and columns stay aligned instead of falling back to
+/// proportional Calibri.
+pub fn is_monospace_family(family: &str) -> bool {
+    let f = family.to_ascii_lowercase();
+    let s = f.trim();
+    if matches!(
+        s,
+        "courier new"
+            | "courier"
+            | "cousine"
+            | "consolas"
+            | "menlo"
+            | "monaco"
+            | "source code pro"
+            | "jetbrains mono"
+            | "cascadia code"
+            | "cascadia code pl"
+            | "cascadia mono"
+            | "cascadia mono pl"
+            | "fira code"
+            | "fira mono"
+            | "inconsolata"
+            | "dejavu sans mono"
+            | "sf mono"
+            | "roboto mono"
+            | "hack"
+            | "ubuntu mono"
+            | "pt mono"
+            | "liberation mono"
+            | "andale mono"
+            | "lucida console"
+            | "lucida sans typewriter"
+            | "fixedsys"
+            | "terminal"
+            | "monospace"
+            | "iosevka"
+            | "monolisa"
+            | "envy code r"
+            | "hasklig"
+    ) {
+        return true;
+    }
+    s.starts_with("courier")
+        || s.starts_with("consolas")
+        || s.starts_with("inconsolata")
+        || s.starts_with("iosevka")
+        || s.ends_with(" mono")
+        || s.ends_with(" code")
+        || s.ends_with(" console")
+        || s.ends_with(" typewriter")
+        || s.ends_with(" monospace")
+        || s.split_whitespace().any(|w| w == "mono" || w == "terminal" || w == "monospace")
+}
+
 /// Families whose open substitutes ([`substitutes`]) keep their metrics, so text drawn with
 /// them breaks into the same lines.
 fn has_metric_twin(family: &str) -> bool {
     matches!(
         family.to_ascii_lowercase().as_str(),
-        "calibri" | "calibri light" | "cambria" | "cambria math" | "arial" | "helvetica" | "times new roman" | "times" | "courier new" | "courier"
+        "calibri"
+            | "calibri light"
+            | "cambria"
+            | "cambria math"
+            | "arial"
+            | "helvetica"
+            | "times new roman"
+            | "times"
+            | "courier new"
+            | "courier"
+            | "cousine"
     )
 }
 
@@ -1080,6 +1148,7 @@ impl FontDb {
     /// when it is installed or bundled, or a metric-compatible stand-in (Carlito for Calibri,
     /// Liberation Sans for Arial…), or the family PowerPoint maps it to (Liberation Sans as Arial,
     /// see `office_twin`); any other missing family is drawn in Calibri (or Carlito).
+    /// Monospaced families keep a monospaced substitute instead of falling back to Calibri.
     /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
         if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
@@ -1087,6 +1156,9 @@ impl FontDb {
         }
         if let Some(twin) = office_twin(family) {
             return self.face(twin, style);
+        }
+        if is_monospace_family(family) {
+            return self.face(family, style);
         }
         self.face(MISSING_FONT_FAMILY, style)
     }

@@ -216,9 +216,13 @@ fn missing_document_fonts_are_drawn_in_calibri() {
         assert_eq!(f.family, db.face(MISSING_FONT_FAMILY, "Bold").family, "{missing:?}");
     }
     // PowerPoint's own twins and Windows' substitutes, when the font itself is missing.
-    for (missing, twin) in
-        [("Liberation Sans", "Arial"), ("Liberation Serif", "Times New Roman"), ("Arial CE", "Arial"), ("Times New Roman CYR", "Times New Roman")]
-    {
+    for (missing, twin) in [
+        ("Liberation Sans", "Arial"),
+        ("Liberation Serif", "Times New Roman"),
+        ("Arial CE", "Arial"),
+        ("Times New Roman CYR", "Times New Roman"),
+        ("Courier New CE", "Courier New"),
+    ] {
         if !db.has_family(missing) {
             assert_eq!(db.document_face(missing, "Regular").family, db.face(twin, "Regular").family, "{missing}");
         }
@@ -237,6 +241,73 @@ fn office_fonts_have_substitutes() {
     assert!(substitutes("Times New Roman").contains(&"Liberation Serif"));
     assert!(substitutes("Aptos").contains(&"Inter"));
     assert!(substitutes("zzz").is_empty());
+
+    for mono in [
+        "Courier New",
+        "Cousine",
+        "Consolas",
+        "Menlo",
+        "Monaco",
+        "Source Code Pro",
+        "JetBrains Mono",
+        "Cascadia Code",
+        "Cascadia Code PL",
+        "Cascadia Mono",
+        "Fira Code",
+        "Inconsolata",
+        "DejaVu Sans Mono",
+        "Roboto Mono",
+        "Hack",
+        "Ubuntu Mono",
+        "Custom Monospace",
+        "Fantasque Sans Mono",
+    ] {
+        assert!(substitutes(mono).contains(&"Liberation Mono"), "{mono} should have Liberation Mono substitute");
+        assert!(is_monospace_family(mono), "{mono} should be recognized as monospace");
+    }
+
+    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monoton", "Monotype Baskerville", "Code Pro", "zzz"] {
+        assert!(!is_monospace_family(prop), "{prop} should not be recognized as monospace");
+    }
+
+    // Explicit checks requested in review: Consolas, Courier New, Fira Code, Monotype Corsiva, Monoton,
+    // and ensuring proportional families maintain their unchanged substitutes.
+    assert!(is_monospace_family("Consolas"));
+    assert!(is_monospace_family("Courier New"));
+    assert!(is_monospace_family("Fira Code"));
+    assert!(!is_monospace_family("Monotype Corsiva"));
+    assert!(!is_monospace_family("Monoton"));
+
+    assert_eq!(substitutes("Calibri"), &["Carlito", "Liberation Sans", "Arial", "Inter"]);
+    assert_eq!(substitutes("Arial"), &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"]);
+    assert_eq!(substitutes("Times New Roman"), &["Liberation Serif", "Times New Roman", "Times", "Merriweather"]);
+    assert_eq!(substitutes("Georgia"), &["Merriweather", "Liberation Serif", "Georgia"]);
+    assert!(substitutes("Monotype Corsiva").is_empty());
+    assert!(substitutes("Monoton").is_empty());
+}
+
+#[test]
+fn missing_monospace_fonts_keep_monospace_fallback() {
+    let db = FontDb::global();
+    let mono_sub = db.face("Unavailable JetBrains Mono", "Regular").family.clone();
+    let calibri_target = db.face(MISSING_FONT_FAMILY, "Regular").family.clone();
+
+    assert!(is_monospace_family(&mono_sub), "substitute {mono_sub} must be monospace");
+
+    // Cousine is metric-compatible with Courier New / Liberation Mono and must not fall back to Calibri.
+    if !db.has_family("Cousine") {
+        assert_eq!(db.document_face("Cousine", "Regular").family, mono_sub);
+    }
+
+    // Monospace fonts missing from the system must resolve to a monospace substitute.
+    for mono in ["Unavailable JetBrains Mono", "Custom App Code", "Unknown Space Mono", "Mock Terminal Font"] {
+        let f = db.document_face(mono, "Regular");
+        assert_eq!(f.family, mono_sub, "{mono}");
+        assert!(is_monospace_family(&f.family), "{mono} must resolve to a monospace family");
+        if mono_sub != calibri_target {
+            assert_ne!(f.family, calibri_target, "{mono} must not fall back to Calibri");
+        }
+    }
 }
 
 #[test]
