@@ -26,8 +26,12 @@ byte-identical to upstream after reversing the `equashioncraft` → `equashion` 
 - `crates/math/src/edit.rs` (`Cmd::Leaf`): advance the caret by the inserted node's unit count,
   not 1, so a typed function word (`\max`) leaves the caret after the whole word. Covered by
   `typing_a_function_word_leaves_the_caret_after_the_whole_word`.
+- `crates/math/src/edit.rs`: new `Editor::replace_math`, which replaces the whole tree as one
+  undoable edit (`set_math` loads a new equation and clears the history). Covered by
+  `replacing_the_whole_equation_is_one_undo_step`.
 - `crates/egui/src/gallery.rs` (`builtins_ui`): apply a ready-made equation through
-  `replace_equation`, so it is an undoable edit that Esc can discard.
+  `replace_equation`, so it is an undoable edit that Esc can discard and Ctrl+Z undoes. Covered
+  by `a_ready_made_equation_undoes_with_ctrl_z`.
 
 ## Not changed
 

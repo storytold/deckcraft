@@ -963,3 +963,15 @@ fn lcm_template_has_a_place_for_each_argument() {
     e.type_str("6");
     assert_eq!(e.latex(), "\\operatorname{lcm}\\left(4,6\\right)");
 }
+
+#[test]
+fn replacing_the_whole_equation_is_one_undo_step() {
+    let mut e = typed("a+b");
+    e.replace_math(from_linear("x^2"));
+    assert_eq!(lin(&e), "x^2");
+    assert!(e.caret().path.is_empty() && e.caret().pos == 1, "the caret goes to the end of the top row");
+    assert!(e.undo(), "Ctrl+Z brings the old tree back");
+    assert_eq!(lin(&e), "a+b");
+    assert!(e.redo());
+    assert_eq!(lin(&e), "x^2");
+}

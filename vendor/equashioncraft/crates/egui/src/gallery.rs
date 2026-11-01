@@ -39,13 +39,13 @@ impl EquationEditor {
     }
 
     /// Replace the whole equation (a ready-made one) and keep typing in the canvas. Unlike
-    /// [`EquationEditor::set_math`] this is an edit: Esc would discard it.
+    /// [`EquationEditor::set_math`] this is an edit: Esc would discard it and Ctrl+Z undoes it.
     pub fn replace_equation(&mut self, ui: &Ui, m: Math) {
         let (para, jc) = (self.ed.math().para, self.ed.math().jc.clone());
         let mut m = m;
         m.para = para;
         m.jc = jc;
-        self.ed.set_math(m);
+        self.ed.replace_math(m);
         self.wants_canvas = true;
         let id = self.canvas_id();
         ui.memory_mut(|mem| mem.request_focus(id));

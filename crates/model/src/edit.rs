@@ -88,6 +88,16 @@ fn snap_math(body: &TextBody, p: Pos, forward: bool) -> Pos {
     }
 }
 
+/// Move `at` to the near edge of the equation it lands inside: its start when moving forward,
+/// its end when moving backward. Word motion treats an equation as a word of its own, so a word
+/// stop inside one stops at the boundary the move crossed instead of selecting into it.
+fn snap_math_near(body: &TextBody, p: Pos, forward: bool) -> Pos {
+    match body.paragraphs.get(p.0).and_then(|para| math_span(para, p.1)) {
+        Some((a, b)) => (p.0, if forward { a } else { b }),
+        None => p,
+    }
+}
+
 /// The explicit run properties in effect at `pos` (the run before the caret, or the end mark).
 pub fn props_at(body: &TextBody, pos: Pos) -> RunProps {
     let (pi, ch) = clamp(body, pos);
@@ -354,7 +364,7 @@ pub fn word_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
             None => (pi, 0),
         }
     };
-    snap_math(body, to, forward)
+    snap_math_near(body, to, forward)
 }
 
 /// Ctrl+Up: the start of the paragraph, or of the previous one when already there.
@@ -927,5 +937,14 @@ mod tests {
         let b = with_math();
         assert_eq!(word_move(&b, (0, 7), false), (0, 2));
         assert_eq!(word_move(&b, (0, 2), true), (0, 7));
+    }
+
+    #[test]
+    fn word_move_stops_at_the_near_edge_of_an_equation() {
+        // "ab" + Math("x=1/2") + "cd" reads as one word "abx", so the word stop after "ab"
+        // falls inside the equation: stop at its start, never select into it.
+        assert_eq!(word_move(&with_math(), (0, 0), true), (0, 2));
+        // The word stop before "cd" is the equation's end, which is already a boundary.
+        assert_eq!(word_move(&with_math(), (0, 9), false), (0, 7));
     }
 }

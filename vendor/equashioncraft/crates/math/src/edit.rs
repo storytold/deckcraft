@@ -555,6 +555,21 @@ impl Editor {
         *self = Editor::new(m);
     }
 
+    /// Replace the whole equation as one undoable edit (the caret goes to the end). Unlike
+    /// [`Editor::set_math`], which loads an equation and starts a fresh history, Ctrl+Z brings
+    /// the previous tree back.
+    pub fn replace_math(&mut self, m: Math) {
+        self.tracked(|e| {
+            e.math = m;
+            e.caret = Caret::default();
+            e.caret.pos = units(&e.math.body);
+            e.anchor = None;
+            e.expect_brace = false;
+            e.brace_depth = 0;
+            e.deg_typed = false;
+        });
+    }
+
     /// The equation as LaTeX (see [`crate::to_latex`]).
     pub fn latex(&self) -> String {
         crate::to_latex(&self.math)

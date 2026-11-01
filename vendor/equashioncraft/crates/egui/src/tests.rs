@@ -600,6 +600,28 @@ fn a_ready_made_equation_replaces_the_equation() {
     assert_eq!(h.state().linear(), "e^(iπ)+1=0");
 }
 
+/// A ready-made equation is one undoable edit: Esc would discard it and Ctrl+Z brings the
+/// previous equation back.
+#[test]
+fn a_ready_made_equation_undoes_with_ctrl_z() {
+    let mut h = Harness::builder().with_size(vec2(500.0, 700.0)).build_ui_state(
+        |ui, ed: &mut EquationEditor| {
+            ed.show(ui);
+            ed.builtins_ui(ui);
+        },
+        EquationEditor::with_linear("x+1").show_palette(false).id_salt("builtin-undo"),
+    );
+    h.run();
+    h.get_by_label("Euler's identity").click();
+    h.run();
+    assert_eq!(h.state().linear(), "e^(iπ)+1=0");
+    assert!(h.state().is_dirty(), "the replacement is unsaved work Esc would discard");
+    h.key_press_modifiers(Modifiers::COMMAND, Key::Z);
+    h.run();
+    assert_eq!(h.state().linear(), "x+1", "Ctrl+Z undoes the replacement");
+    assert!(!h.state().is_dirty());
+}
+
 /// Inline mode is only the equation: it sizes itself to what was typed and has no palette.
 #[test]
 fn inline_mode_is_sized_to_the_equation() {
