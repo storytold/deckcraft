@@ -2067,3 +2067,12 @@ fn default_durations_match_powerpoint() {
         assert_eq!(a.4, ms, "{effect}");
     }
 }
+
+/// Show media controls is PowerPoint's `p14:showMediaCtrls` extension inside `p:showPr`.
+#[test]
+fn hidden_media_controls_survive_save_and_reopen() {
+    let mut p = Presentation::default();
+    p.show.show_media_controls = false;
+    assert!(!round(&p).show.show_media_controls);
+    assert!(round(&Presentation::default()).show.show_media_controls);
+}
