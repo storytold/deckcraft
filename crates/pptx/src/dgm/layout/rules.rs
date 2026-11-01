@@ -61,8 +61,23 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
 }
 // Reference-linked text nodes must be measured together. A short source label must not
 // suppress a font rule while a longer dependent label still overflows.
-fn dependent_scope(entries: &[constraints::Entry<'_, '_>], data: &Data<'_>, target: usize, work: &mut usize) -> Result<HashSet<usize>, &'static str> {
-    let mut affected: HashSet<usize> = (target..entries[target].end).collect();
+fn dependent_scope(
+    entries: &[constraints::Entry<'_, '_>],
+    data: &Data<'_>,
+    target: usize,
+    property: &str,
+    work: &mut usize,
+) -> Result<HashSet<usize>, &'static str> {
+    let mut affected: HashSet<(usize, String)> = HashSet::new();
+    let mut add = |target: usize, property: &str| {
+        for i in target..entries[target].end {
+            affected.insert((i, property.into()));
+            if property == "primFontSz" {
+                affected.insert((i, "secFontSz".into()));
+            }
+        }
+    };
+    add(target, if matches!(property, "primFontSz" | "secFontSz") { property } else { "*" });
     for _ in 0..entries.len() {
         let before = affected.len();
         for (owner, entry) in entries.iter().enumerate() {
@@ -75,8 +90,15 @@ fn dependent_scope(entries: &[constraints::Entry<'_, '_>], data: &Data<'_>, targ
                 let targets = constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data);
                 for (i, t) in targets.iter().enumerate() {
                     let r = if refs.len() == targets.len() { refs.get(i) } else { refs.first() };
-                    if r.is_some_and(|r| affected.contains(r)) {
-                        affected.extend(*t..entries[*t].end);
+                    if r.is_some_and(|r| affected.contains(&(*r, "*".into())) || affected.contains(&(*r, c.attr("refType").unwrap_or("").into()))) {
+                        let ty = c.attr("type").unwrap_or("");
+                        let ty = if matches!(ty, "primFontSz" | "secFontSz") { ty } else { "*" };
+                        for i in *t..entries[*t].end {
+                            affected.insert((i, ty.into()));
+                            if ty == "primFontSz" {
+                                affected.insert((i, "secFontSz".into()));
+                            }
+                        }
                     }
                 }
             }
@@ -85,7 +107,7 @@ fn dependent_scope(entries: &[constraints::Entry<'_, '_>], data: &Data<'_>, targ
             break;
         }
     }
-    Ok(affected.into_iter().map(|i| constraints::id(entries[i].node)).collect())
+    Ok(affected.into_iter().map(|(i, _)| constraints::id(entries[i].node)).collect())
 }
 fn placed<'a>(
     tree: &Instance<'a>,
@@ -121,7 +143,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
     let mut out = placed(tree, frame, data, &changes, &mut work)?;
     for control in controls {
         let entry = &entries[control.target];
-        let scope = dependent_scope(&entries, data, control.target, &mut work)?;
+        let scope = dependent_scope(&entries, data, control.target, &control.property, &mut work)?;
         let prefer_words = matches!(control.property.as_str(), "primFontSz" | "secFontSz");
         let before = score(&out, &scope, measure, prefer_words, &mut work)?;
         if before <= 1e-6 {

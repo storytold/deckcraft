@@ -18,6 +18,7 @@ pub(crate) struct Placed<'a> {
     pub node_key: usize,
     pub shape: Option<&'a El>,
     pub points: Vec<&'a El>,
+    pub point_levels: Vec<usize>,
     pub name: String,
     pub style: String,
     pub rect: Xfrm,
@@ -38,6 +39,7 @@ struct Instance<'a> {
     alg: String,
     params: HashMap<String, String>,
     points: Vec<usize>,
+    point_levels: Vec<usize>,
     children: Vec<Instance<'a>>,
     constraints: Vec<&'a El>,
     rules: Vec<&'a El>,
@@ -52,6 +54,7 @@ impl<'a> Instance<'a> {
             alg: "composite".into(),
             params: HashMap::new(),
             points: vec![],
+            point_levels: vec![],
             children: vec![],
             constraints: vec![],
             rules: vec![],
@@ -148,6 +151,16 @@ impl<'a> Compiler<'a> {
         }
         let mut node = Instance::new(e);
         self.body(e, &mut node, &mut context, depth + 1)?;
+        for &point in &node.points {
+            let level = self.data.depth(point);
+            self.work = self.work.saturating_add(level + 1);
+            self.tick(depth)?;
+            node.point_levels.push(level);
+        }
+        let min = node.point_levels.iter().copied().min().unwrap_or(0);
+        for level in &mut node.point_levels {
+            *level -= min;
+        }
         Ok(node)
     }
     fn body(&mut self, e: &'a El, node: &mut Instance<'a>, context: &mut Context, depth: usize) -> Result<(), &'static str> {

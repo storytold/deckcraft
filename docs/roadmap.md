@@ -150,3 +150,8 @@ text layer, notes and handouts. It does not advance vector-PDF or printing parit
 
 PPTX.9 (2026-11-01): measured diagram numeric-rule search, cycle extent fitting, observed raw-DEFLATE
 geographic caches and extended label typography. Remaining native/provider gaps are explicit.
+
+PPTX.10 (2026-11-01): hierarchical secondary text, property-scoped font fitting, measurement reuse,
+offline geographic joins, data/world scopes and map label typography implemented. Intermediate
+administrative viewport selection, duplicate-row aggregation and native cyclic fallback remain
+explicit gaps. PowerPoint and LibreOffice comparisons are detailed in layout-fidelity.md.

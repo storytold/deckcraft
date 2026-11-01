@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.10 update 2026-11-01:** hierarchical diagram text, property-scoped font rules, offline geographic query joins, explicit data/world scopes and styled map labels have regression coverage. Native cyclic-layout fallback and intermediate/automatic viewport policies remain partial; scores are unchanged.
+
 > **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.
 
 > **PPTX.9 reviewed 2026-11-01:** ordered measured diagram rules, circular placement, raw-DEFLATE geographic caches and funnel label typography have regressions. Native rule ordering and projection/fill observations inform the implementation. All provider/search/viewport policies remain partial; scores unchanged.

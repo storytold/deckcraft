@@ -117,6 +117,7 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
     c.legend = ch.child("legend").map(|l| l.attr("pos").unwrap_or("t").to_string());
     let mut kind = None;
     let mut output_budget = MAX_CHARTEX_POINTS;
+    let mut geo_budget = deckcraft_model::geography::MAX_GEO_POINTS;
     let mut categories_set = false;
     for s in region.children_named("series").take(1000) {
         let layout = s.attr("layoutId").unwrap_or("");
@@ -191,7 +192,7 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
         let name = s.child("tx").and_then(|t| t.find("v")).map(|v| v.text()).unwrap_or_default();
         let mut series = Series {
             name,
-            geography: s.path(&["layoutPr", "geography"]).map(|g| geography(g, d)),
+            geography: s.path(&["layoutPr", "geography"]).map(|g| geography(g, d, &mut geo_budget)),
             values,
             extended: s.child("layoutPr").map(|_| options),
             inclusive_quartiles,
@@ -232,13 +233,17 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
     Some(c)
 }
 
-fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
-    use deckcraft_model::geography::{GeoRegion, Geography, MAX_GEO_POINTS, decode_ring};
+fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography::Geography {
+    use deckcraft_model::geography::{GeoRegion, Geography, decode_ring};
     let mut map = Geography {
         projection: g.attr("projectionType").unwrap_or("").into(),
+        viewed_region: g.attr("viewedRegionType").unwrap_or("").into(),
         attribution: g.attr("attribution").unwrap_or("").into(),
         regions: vec![],
     };
+    if *budget < 3 {
+        return map;
+    }
     let decoded;
     let clear = if let Some(clear) = g.path(&["geoCache", "clear"]) {
         clear
@@ -248,7 +253,7 @@ fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
         let Some(doc) = decoded.as_ref() else { return map };
         &doc.root
     };
-    let mut budget = MAX_GEO_POINTS;
+    let bindings = super::geo_binding::resolve(clear, &d.categories, &d.levels, &d.entities);
     let Some(results) = clear.child("geoDataEntityQueryResults") else { return map };
     for result in results.children_named("geoDataEntityQueryResult").take(4096) {
         let Some(data) = result.child("geoData") else { continue };
@@ -257,11 +262,7 @@ fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
             name: data.attr("entityName").unwrap_or("").into(),
             ..Default::default()
         };
-        region.point = d
-            .entities
-            .iter()
-            .position(|id| !id.is_empty() && *id == region.entity_id)
-            .or_else(|| d.categories.iter().position(|n| n.trim().eq_ignore_ascii_case(region.name.trim())));
+        region.point = bindings.get(&region.entity_id).copied();
         if let Some(polys) = data.child("geoPolygons") {
             for poly in polys.children_named("geoPolygon").take(deckcraft_model::geography::MAX_GEO_RINGS) {
                 let mut encoded = poly.attr("pcaRings").unwrap_or("").split(',');
@@ -271,7 +272,7 @@ fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
                 let mut rings = Vec::new();
                 let mut valid = true;
                 for ring in encoded.take(4096) {
-                    if let Some(points) = decode_ring(ring, &mut budget) {
+                    if let Some(points) = decode_ring(ring, budget) {
                         rings.push(points);
                     } else {
                         valid = false;
@@ -282,7 +283,7 @@ fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
                 if valid && poly.u32("numPoints").is_none_or(|n| n as usize == count) {
                     region.rings.extend(rings);
                 }
-                if budget == 0 {
+                if *budget == 0 {
                     break;
                 }
             }
@@ -293,7 +294,7 @@ fn geography(g: &El, d: &Data) -> deckcraft_model::geography::Geography {
         if !region.rings.is_empty() {
             map.regions.push(region);
         }
-        if budget == 0 {
+        if *budget == 0 {
             break;
         }
     }

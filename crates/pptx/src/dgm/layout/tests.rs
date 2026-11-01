@@ -349,6 +349,23 @@ fn reference_constraint_ignores_absolute_value_instead_of_adding_an_offset() {
 }
 
 #[test]
+fn font_rule_does_not_shrink_to_floor_because_of_an_unrelated_geometry_dependency() {
+    let data = source();
+    let layout = layout(
+        r#"<layoutNode><alg type="composite"/>
+      <layoutNode name="a"><alg type="tx"/><shape type="rect"/></layoutNode>
+      <layoutNode name="b"><alg type="tx"/><shape type="rect"/></layoutNode>
+      <constrLst><constr type="primFontSz" for="ch" val="36"/>
+      <constr type="w" for="ch" forName="b" refFor="ch" refForName="a" refType="w"/></constrLst>
+      <ruleLst><rule type="primFontSz" for="ch" forName="a" val="8"/></ruleLst></layoutNode>"#,
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 24.).max(0.) } else { 50. }).collect());
+    let shapes = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((shapes[0].font.unwrap() - 24.).abs() <= 1.);
+    assert_eq!(shapes[1].font, Some(36.));
+}
+
+#[test]
 fn constrained_cycle_starts_at_twelve_oclock_and_centres_partial_arc() {
     let data = source();
     for span in [180., 360.] {

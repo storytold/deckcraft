@@ -703,9 +703,13 @@ pub(super) fn diagram_text_layout(
     text_color: Option<&deckcraft_model::style::ColorRef>,
 ) {
     use deckcraft_model::text::{Align, Anchor, Spacing};
+    // bulletEnabled is a layout variable used by choose/if, not a rendering switch.
+    // Native text layout defaults to bullets on child data points (start level two).
+    let bullet_layout = p.params.contains_key("stBulletLvl") || p.point_levels.iter().any(|level| *level > 0);
     body.body.anchor = Some(match p.params.get("txAnchorVert").map(String::as_str) {
         Some("t") => Anchor::Top,
         Some("b") => Anchor::Bottom,
+        None if bullet_layout => Anchor::Top,
         _ => Anchor::Middle,
     });
     body.body.wrap = Some(true);
@@ -718,21 +722,32 @@ pub(super) fn diagram_text_layout(
     let requested = p.font.unwrap_or(18.0);
     let font = requested.max(p.min_font.unwrap_or(1.0));
     body.body.min_autofit_scale = p.min_font.map(|min| (min / font).clamp(0.1, 1.0));
+    let mut levels = p.points.iter().enumerate().flat_map(|(i, point)| {
+        let count = point.child("t").map(|t| t.children_named("p").count()).unwrap_or(0);
+        std::iter::repeat_n(p.point_levels.get(i).copied().unwrap_or(0), count)
+    });
+    let bullet_level = p.params.get("stBulletLvl").and_then(|v| v.parse::<usize>().ok()).unwrap_or(2);
     for paragraph in &mut body.paragraphs {
+        let level = levels.next().unwrap_or(0);
         let align = match p.params.get("parTxLTRAlign").map(String::as_str) {
             Some("l") => Align::Left,
             Some("r") => Align::Right,
+            None if bullet_layout => Align::Left,
             _ => Align::Center,
         };
         paragraph.props.align = paragraph.props.align.or(Some(align));
         // Diagram text defaults differ from an ordinary text box. Explicit point/paragraph
         // formatting wins. Measured against native rendering at several font sizes.
         paragraph.props.line_spacing = paragraph.props.line_spacing.or(Some(Spacing::Pct(0.9)));
-        paragraph.props.space_after = paragraph.props.space_after.or(Some(Spacing::Pct(0.35)));
-        if p.params.get("stBulletLvl").is_some_and(|v| v == "1") {
+        if level.saturating_add(1) >= bullet_level {
             paragraph.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
+            let indent_level = level.saturating_add(2).saturating_sub(bullet_level).clamp(1, 8);
+            paragraph.level = paragraph.level.max(indent_level as u8);
+            paragraph.props.margin_left = paragraph.props.margin_left.or(Some(indent_level as f64 * 9.));
+            paragraph.props.indent = paragraph.props.indent.or(Some(-9.));
         }
         let secondary = paragraph.props.bullet.as_ref().is_some_and(|b| !matches!(b, deckcraft_model::text::Bullet::None));
+        paragraph.props.space_after = paragraph.props.space_after.or(Some(Spacing::Pct(if secondary { 0.15 } else { 0.35 })));
         let paragraph_font = if secondary { p.secondary_font.unwrap_or(font * 0.78) } else { font };
         for run in &mut paragraph.runs {
             run.props.size = Some(paragraph_font);

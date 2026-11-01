@@ -69,23 +69,51 @@ fn text_rect(s: &Shape, rect: Xfrm) -> Rect {
     }
     Rect::new(0.0, 0.0, rect.w, rect.h)
 }
-fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words: bool) -> Result<Vec<f64>, &'static str> {
+#[derive(PartialEq)]
+struct MeasureKey {
+    size: [f64; 2],
+    fonts: [Option<f64>; 3],
+    margins: [f64; 4],
+    rotation: f64,
+}
+impl From<&Placed<'_>> for MeasureKey {
+    fn from(p: &Placed<'_>) -> Self {
+        Self { size: [p.rect.w, p.rect.h], fonts: [p.font, p.secondary_font, p.min_font], margins: p.margins, rotation: p.text_rotation }
+    }
+}
+// A rule often changes just one of hundreds of labels. Keep one measured result per shape,
+// not all search candidates, and bound total shaped text independently of the solver budget.
+#[derive(Default)]
+struct Measurements {
+    last: Vec<Option<(MeasureKey, [f64; 2])>>,
+    bytes: usize,
+}
+fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words: bool, cache: &mut Measurements) -> Result<Vec<f64>, &'static str> {
     if source.len() != placed.len() {
         return Err("diagram rule shape binding changed");
     }
     let mut scores = Vec::with_capacity(placed.len());
-    for (source, p) in source.iter().zip(placed) {
+    cache.last.resize_with(placed.len(), || None);
+    for ((source, p), cached) in source.iter().zip(placed).zip(&mut cache.last) {
         if source.name != p.name {
             return Err("diagram rule shape order changed");
         }
-        if p.points.iter().filter_map(|pt| pt.child("t")).map(|t| t.text().len()).sum::<usize>() > 65536 {
-            return Err("diagram rule text budget exceeded");
+        let key = MeasureKey::from(p);
+        if let Some((_, score)) = cached.as_ref().filter(|(old, _)| *old == key) {
+            scores.push(score[usize::from(prefer_words)]);
+            continue;
         }
         let s = adjusted(source, p);
         let Some(body) = &s.text else {
             scores.push(0.0);
+            *cached = Some((key, [0.0; 2]));
             continue;
         };
+        let bytes = body.paragraphs.iter().flat_map(|p| &p.runs).map(|r| r.text.len()).sum::<usize>();
+        cache.bytes = cache.bytes.saturating_add(bytes);
+        if bytes > 65536 || cache.bytes > 32 * 1024 * 1024 {
+            return Err("diagram rule text budget exceeded");
+        }
         let result = deckcraft_text::layout(
             ctx,
             &s,
@@ -94,11 +122,10 @@ fn measure(ctx: &Ctx<'_>, source: &[Shape], placed: &[Placed<'_>], prefer_words:
         );
         let w = result.inner.width().max(0.0);
         let h = result.inner.height().max(0.0);
-        scores.push(
-            ((result.content_width - w - 0.01).max(0.0) / w.max(1.0))
-                + ((result.content_height - h - 0.01).max(0.0) / h.max(1.0))
-                + if prefer_words { result.forced_line_breaks(body) as f64 } else { 0.0 },
-        );
+        let overflow = (result.content_width - w - 0.01).max(0.0) / w.max(1.0) + (result.content_height - h - 0.01).max(0.0) / h.max(1.0);
+        let score = [overflow, overflow + result.forced_line_breaks(body) as f64];
+        scores.push(score[usize::from(prefer_words)]);
+        *cached = Some((key, score));
     }
     Ok(scores)
 }
@@ -123,7 +150,8 @@ fn relayout(ctx: &Ctx<'_>, shape: &mut Shape) -> Result<(), &'static str> {
         return Ok(());
     };
     let ShapeKind::Group { children, child } = &shape.kind else { return Ok(()) };
-    let mut callback = |placed: &[Placed<'_>], prefer_words: bool| measure(ctx, children, placed, prefer_words);
+    let mut cache = Measurements::default();
+    let mut callback = |placed: &[Placed<'_>], prefer_words: bool| measure(ctx, children, placed, prefer_words, &mut cache);
     let placed = evaluate_measured(&layout.root, &data.root, *child, Some(&mut callback))?;
     let updated: Vec<_> = children.iter().zip(&placed).map(|(s, p)| adjusted(s, p)).collect();
     if updated.len() != children.len() {
@@ -131,4 +159,51 @@ fn relayout(ctx: &Ctx<'_>, shape: &mut Shape) -> Result<(), &'static str> {
     }
     shape.kind = ShapeKind::Group { children: updated, child: *child };
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn measured_text_is_reused_for_translation_but_not_width_or_font_changes() {
+        let pres = Presentation { slides: vec![Arc::new(deckcraft_model::Slide::default())], ..Default::default() };
+        let ctx = Ctx::for_slide(&pres, &pres.slides[0]).unwrap();
+        let source = vec![Shape {
+            name: "probe".into(),
+            geom: Geom::preset("rect"),
+            text: Some(deckcraft_model::text::TextBody::from_text("LongUnbreakableWord and several other words")),
+            ..Default::default()
+        }];
+        let mut placed = vec![Placed {
+            node_key: 1,
+            shape: None,
+            points: vec![],
+            point_levels: vec![],
+            name: "probe".into(),
+            style: String::new(),
+            rect: Xfrm::new(0., 0., 70., 40.),
+            font: Some(32.),
+            secondary_font: None,
+            min_font: None,
+            margins: [0.; 4],
+            text_rotation: 0.,
+            connector: false,
+            params: Default::default(),
+            endpoints: None,
+        }];
+        let mut cache = Measurements::default();
+        let overflow = measure(&ctx, &source, &placed, false, &mut cache).unwrap();
+        let bytes = cache.bytes;
+        placed[0].rect.x = 500.;
+        let words = measure(&ctx, &source, &placed, true, &mut cache).unwrap();
+        assert_eq!(cache.bytes, bytes, "moving a shape or requesting word breaks does not reshape text");
+        assert!(words[0] >= overflow[0] && overflow[0] > 0.);
+        placed[0].rect.w = 600.;
+        placed[0].rect.h = 400.;
+        assert_eq!(measure(&ctx, &source, &placed, true, &mut cache).unwrap(), vec![0.]);
+        assert_eq!(cache.bytes, bytes * 2);
+        placed[0].font = Some(24.);
+        measure(&ctx, &source, &placed, true, &mut cache).unwrap();
+        assert_eq!(cache.bytes, bytes * 3);
+    }
 }

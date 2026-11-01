@@ -488,3 +488,8 @@ no global parity claim or score increase.
 PPTX.9 (2026-11-01): measured rule ordering, distinct primary/secondary fonts, reference-linked
 fit decisions, circular placement and observed compressed map caches close bounded cases.
 Provider hierarchy, all native viewport/search policies and remaining chartEx labels stay partial.
+
+PPTX.10 (2026-11-01): hierarchical secondary text, property-scoped font fitting, measurement reuse,
+offline geographic joins, data/world scopes and map label typography implemented. Intermediate
+administrative viewport selection, duplicate-row aggregation and native cyclic fallback remain
+explicit gaps. PowerPoint and LibreOffice comparisons are detailed in layout-fidelity.md.

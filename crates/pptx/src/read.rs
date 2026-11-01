@@ -5,6 +5,7 @@ mod chart_labels;
 mod chartex;
 mod diagram_rules;
 pub(crate) mod dml;
+mod geo_binding;
 mod geo_cache;
 mod shapes;
 mod theme;

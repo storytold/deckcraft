@@ -1279,6 +1279,7 @@ fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
         "cx:geography",
         A::new()
             .o("projectionType", (!g.projection.is_empty()).then_some(&g.projection))
+            .o("viewedRegionType", (!g.viewed_region.is_empty()).then_some(&g.viewed_region))
             .a("cultureLanguage", "en-US")
             .a("cultureRegion", "US")
             .a("attribution", &g.attribution),

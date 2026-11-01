@@ -64,6 +64,7 @@ fn geographic_polygons_survive_rebuild_match_ids_and_render_holes() {
     c.categories = vec!["Category A".into(), "Category B".into()];
     let geography = Geography {
         projection: "mercator".into(),
+        viewed_region: "dataOnly".into(),
         attribution: "Original synthetic geography".into(),
         regions: vec![
             GeoRegion {
@@ -370,4 +371,60 @@ fn generated_labels_import_end_mark_typography_without_literal_runs() {
     assert_eq!(label.style.as_ref().unwrap().paragraphs[0].def_props.size, Some(27.));
     let image = render_slide(&back, 0, &RenderOpts::default());
     assert!(image.pixels.chunks_exact(4).filter(|p| p[0] > 200 && p[1] < 80 && p[2] < 80).count() > 50);
+}
+
+#[test]
+fn map_point_labels_use_typography_hidden_overrides_and_authored_viewport() {
+    let mut c = base(ChartType::RegionMap);
+    c.categories = vec!["West".into(), "Centre".into(), "East".into()];
+    c.data_labels = true;
+    let mut s = Series {
+        values: vec![Some(100.), Some(90.), Some(80.)],
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(220, 220, 220)))),
+        ..Default::default()
+    };
+    for (i, colour) in [Rgba::rgb(255, 0, 0), Rgba::rgb(0, 0, 255), Rgba::rgb(0, 255, 0)].into_iter().enumerate() {
+        let style = TextBody {
+            paragraphs: vec![deckcraft_model::text::Paragraph {
+                def_props: RunProps {
+                    font: Some("Inter".into()),
+                    size: Some(30.),
+                    bold: Some(true),
+                    fill: Some(Fill::solid(ColorRef::rgb(colour))),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        s.point_labels.insert(i, DataLabel { style: Some(style), hidden: (i == 2).then_some(true), ..Default::default() });
+    }
+    s.geography = Some(Geography {
+        viewed_region: "dataOnly".into(),
+        regions: (0..4)
+            .map(|i| {
+                let x = if i == 3 { 140. } else { i as f64 * 12. };
+                GeoRegion {
+                    entity_id: format!("original-{i}"),
+                    name: format!("Synthetic {i}"),
+                    point: (i < 3).then_some(i),
+                    rings: vec![vec![[x, 0.], [x + 10., 0.], [x + 10., 10.], [x, 10.]]],
+                    ..Default::default()
+                }
+            })
+            .collect(),
+        ..Default::default()
+    });
+    c.series.push(s);
+    let mut p = original();
+    append(&mut p, c);
+    let back = rebuilt(&p);
+    assert_eq!(chart(&back).series[0].geography.as_ref().unwrap().viewed_region, "dataOnly");
+    let image = render_slide(&back, 0, &RenderOpts::default());
+    let red = image.pixels.chunks_exact(4).filter(|p| p[0] > 200 && p[1] < 80 && p[2] < 80).count();
+    let blue = image.pixels.chunks_exact(4).filter(|p| p[2] > 200 && p[0] < 80 && p[1] < 80).count();
+    let green = image.pixels.chunks_exact(4).filter(|p| p[1] > 200 && p[0] < 80 && p[2] < 80).count();
+    assert!(red > 100 && blue > 100, "map labels must keep colours: {red}/{blue}");
+    assert_eq!(green, 0, "hidden label must not render");
+    probe(&back, "map-rich-labels.pptx");
 }

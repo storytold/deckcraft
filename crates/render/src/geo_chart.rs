@@ -1,6 +1,6 @@
 //! Offline map rendering from document-owned geographic boundaries.
 use crate::{
-    chart::{LabelStyle, label, series_color},
+    chart::{LabelStyle, label, point_data_label, series_color},
     color,
 };
 use deckcraft_color::Rgba;
@@ -47,9 +47,11 @@ fn project(lon: f64, lat: f64, kind: &str) -> Point {
 }
 
 fn paths(map: &Geography) -> Vec<BezPath> {
+    let included = |r: &&deckcraft_model::geography::GeoRegion| map.viewed_region != "dataOnly" || r.point.is_some();
     let mut longs: Vec<_> = map
         .regions
         .iter()
+        .filter(included)
         .flat_map(|r| &r.rings)
         .flatten()
         .take(deckcraft_model::geography::MAX_GEO_POINTS)
@@ -66,7 +68,7 @@ fn paths(map: &Geography) -> Vec<BezPath> {
             start = b;
         }
     }
-    let world = 360.0 - gap > 300.0;
+    let world = map.viewed_region == "world" || 360.0 - gap > 300.0;
     let centre = if world {
         start = -180.0;
         0.0
@@ -82,6 +84,9 @@ fn paths(map: &Geography) -> Vec<BezPath> {
         .take(4096)
         .map(|region| {
             let mut path = BezPath::new();
+            if !included(&region) {
+                return path;
+            }
             for ring in region.rings.iter().take(deckcraft_model::geography::MAX_GEO_RINGS) {
                 if ring.len() < 3 || ring.len() > budget {
                     continue;
@@ -111,7 +116,17 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     let Some(series) = c.series.first() else { return false };
     let Some(map) = series.geography.as_ref().filter(|g| !g.regions.is_empty()) else { return false };
     let paths = paths(map);
-    let Some(bounds) = paths.iter().filter(|p| !p.elements().is_empty()).map(|p| p.bounding_box()).reduce(|a, b| a.union(b)) else { return false };
+    let Some(mut bounds) = paths.iter().filter(|p| !p.elements().is_empty()).map(|p| p.bounding_box()).reduce(|a, b| a.union(b)) else {
+        return false;
+    };
+    if map.viewed_region == "world" {
+        let kind = if map.projection.is_empty() { "robinson" } else { &map.projection };
+        for lat in (-90..=90).step_by(5) {
+            for lon in (-180..=180).step_by(5) {
+                bounds = bounds.union_pt(project(lon as f64, lat as f64, kind));
+            }
+        }
+    }
     if bounds.width() < 1e-9 || bounds.height() < 1e-9 {
         return false;
     }
@@ -129,6 +144,9 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     let lo = crate::chartex::mix(hi, Rgba::WHITE, 0.85);
     let mut labels = Vec::new();
     for (region, path) in map.regions.iter().zip(paths) {
+        if path.elements().is_empty() {
+            continue;
+        }
         let path = transform * path;
         let value = region.point.and_then(|i| series.values.get(i)).copied().flatten().filter(|v| v.is_finite());
         let t = value.map(|v| if max > min { (v - min) / (max - min) } else { 0.5 });
@@ -145,31 +163,36 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
         ctx.set_stroke(kurbo::Stroke::new(0.7));
         ctx.set_paint(color(Rgba::WHITE, 1.0));
         ctx.stroke_path(&path);
-        if c.series_data_labels(series) {
+        let point_label = region.point.and_then(|i| c.point_label(series, i));
+        if point_label.is_some() || (region.point.is_none() && c.series_data_labels(series)) {
             let bounds = path.bounding_box();
             let p = bounds.center();
             // Never put a label in a hole or outside a concave region.
             if path.winding(p) % 2 != 0 && bounds.width() > base * 3.0 && bounds.height() > base * 1.5 {
-                let text = value.map_or_else(|| region.name.clone(), |v| format!("{}\n{}", region.name, c.data_label(series, v)));
-                labels.push((text, Rect::new(p.x - base * 5.0, p.y - base * 1.4, p.x + base * 5.0, p.y + base * 1.4), t.is_some_and(|v| v > 0.55)));
+                let text = point_label.unwrap_or_else(|| region.name.clone());
+                labels.push((
+                    text,
+                    Rect::new(p.x - base * 5.0, p.y - base * 1.4, p.x + base * 5.0, p.y + base * 1.4),
+                    t.is_some_and(|v| v > 0.55),
+                    region.point,
+                    bounds,
+                ));
             }
         }
     }
-    for (text, r, dark) in labels {
-        label(
-            ctx,
-            rctx,
-            m,
-            &text,
-            r,
-            LabelStyle {
-                size: base * 0.85,
-                align: Align::Center,
-                anchor: Anchor::Middle,
-                col: if dark { Rgba::WHITE } else { text_col },
-                bold: false,
-            },
-        );
+    for (text, r, dark, index, mark) in labels {
+        let style = LabelStyle {
+            size: base * 0.85,
+            align: Align::Center,
+            anchor: Anchor::Middle,
+            col: if dark { Rgba::WHITE } else { text_col },
+            bold: false,
+        };
+        if let Some(i) = index {
+            point_data_label(ctx, rctx, m, &text, r, style, (c, series, i, mark, (area.x1, area.y1)));
+        } else {
+            label(ctx, rctx, m, &text, r, style);
+        }
     }
     let mut attribution = vec![map.attribution.clone()];
     for region in &map.regions {
@@ -224,5 +247,23 @@ mod tests {
         let p = paths(&map);
         assert!(p[0].bounding_box().width() < 0.3);
         assert!(p[1].bounding_box().width() < 0.3);
+    }
+    #[test]
+    fn data_only_scope_excludes_unbound_background_without_mutating_cache() {
+        use deckcraft_model::geography::GeoRegion;
+        let map = Geography {
+            viewed_region: "dataOnly".into(),
+            regions: vec![
+                GeoRegion { point: Some(0), rings: vec![vec![[10., 10.], [11., 10.], [11., 11.]]], ..Default::default() },
+                GeoRegion { rings: vec![vec![[100., 40.], [120., 40.], [120., 60.]]], ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let p = paths(&map);
+        assert!(!p[0].elements().is_empty() && p[1].elements().is_empty());
+        assert_eq!(map.regions[1].rings[0].len(), 3);
+        let mut world = map.clone();
+        world.viewed_region = "world".into();
+        assert!(paths(&world).iter().all(|p| !p.elements().is_empty()));
     }
 }

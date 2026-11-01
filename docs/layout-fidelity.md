@@ -412,3 +412,47 @@ performance/success observation, not a claim of pixel equivalence for every prob
 
 PPTX.9 final validation: all eight `cargo xtask ci` gates pass, including the complete workspace
 tests and WASM. All native observations above use original probes; native outputs stay private.
+
+
+### Hierarchical text and geographic joins (PPTX.10)
+
+Diagram font-rule dependencies now track the changed property: a width reference does not
+make an unrelated overflowing label force another label to its minimum font size. Measurements
+cache one result per shape, reusing translation-only candidates and both overflow/word-break
+scores. A separate 32 MiB cumulative shaped-text budget bounds expensive glyph work. Data-point
+hierarchy now survives into text layout: `stBulletLvl=2` leaves parent text primary and bullets
+children using `secFontSz`. Native child text is bulleted by default; `bulletEnabled` is a
+layout variable for authored conditions, not an unconditional rendering switch. Original
+native probes verify 24pt primary and 14pt secondary text for start levels 1 and 2,
+left/top list alignment, hanging indents and secondary paragraph spacing. Paragraph
+indent level alone remains insufficient to turn primary text into secondary text.
+
+Geographic clear/decoded caches join location queries through latitude/longitude and entity
+type to entity ids. Category parent levels disambiguate duplicate place names, explicit ids win,
+and ambiguous names/conflicting duplicate data rows are not silently matched to the first cache
+entry. This is offline cached lookup, not online geocoding. The point budget is shared across
+chart series. The authored `viewedRegionType` survives rebuild; `dataOnly` excludes unbound
+background regions, and `world` retains a world extent even for sparse cached boundaries.
+Intermediate administrative viewport selection, uncached geocoding, and automatic aggregation
+of duplicate data rows remain unsupported. No bundled geography or network service is added.
+
+Map data labels now use the common typography/visibility renderer, with numeric point font,
+color and hidden overrides tested through forced rebuild and pixel assertions. Classic chart
+labels support literal mixed runs; chartEx's public `CT_DataLabel` provides `txPr` styling, not
+classic `c:tx/c:rich` replacement text. This distinction is retained rather than inventing
+schema-invalid extended-label content. Other chartEx layout/callout heuristics remain partial.
+
+Independent black-box comparison used PowerPoint 16.113.3 and LibreOffice 26.8.0.3 on original
+probes. PowerPoint renders the acyclic named-reference layout, but three mutual-reference
+variants (free, bounded, anchored) fall back to its generic three blocks. DeckCraft instead
+solves supported consistent affine cycles; this is a documented compatibility difference,
+not a visual-parity pass. LibreOffice produces no SmartArt text/geometry for the uncached
+circle, ordered-text-rule and named-reference probes; map and funnel probes show its unsupported
+chart-type message. An exported PDF alone is therefore not evidence of successful rendering.
+Private native outputs are never included upstream.
+
+PPTX.10 final validation: all eight `cargo xtask ci` stages and 2,376 tests pass. Fourteen
+original/private probes export directly at 3840px width in 5.112 seconds locally, with unchanged
+source hashes and no external document converter on PATH. Hierarchical list alignment and map
+label visibility/colors were visually inspected after the final rebuild. These timings and
+checks do not certify arbitrary-deck pixel equality.

@@ -523,3 +523,39 @@ fn numeric_rules_measure_real_fonts_after_import_and_preserve_order_on_roundtrip
         std::fs::write(dir.join("rules-font-first.pptx"), b_bytes).unwrap();
     }
 }
+
+#[test]
+fn diagram_bullet_start_uses_data_hierarchy_and_secondary_font_not_paragraph_index() {
+    for (start, enabled) in [(1, true), (2, true), (2, false)] {
+        let mut parts = files(&numeric_rule_fixture("", r#"<dgm:constr type="h" val="80"/>"#, false));
+        for (name, bytes) in &mut parts {
+            if name.ends_with("layout1.xml") && name.contains("diagrams/") {
+                *bytes = String::from_utf8(bytes.clone()).unwrap()
+                    .replace("<dgm:alg type=\"tx\"/>", &format!("<dgm:varLst><dgm:bulletEnabled val=\"{}\"/></dgm:varLst><dgm:alg type=\"tx\"><dgm:param type=\"stBulletLvl\" val=\"{start}\"/></dgm:alg>", u8::from(enabled)))
+                    .replace("<dgm:presOf axis=\"self\"/>", "<dgm:presOf axis=\"desOrSelf\" ptType=\"node\"/>")
+                    .replace("type=\"primFontSz\" val=\"36\"", "type=\"primFontSz\" val=\"24\"/><dgm:constr type=\"secFontSz\" val=\"14\"")
+                    .into_bytes();
+            }
+        }
+        let bytes = zip(parts);
+        let p = deckcraft_pptx::import(&bytes).unwrap();
+        for s in group(&p).children() {
+            let body = s.text.as_ref().unwrap();
+            assert_eq!(body.paragraphs.len(), 3);
+            assert_eq!(body.body.anchor, Some(deckcraft_model::text::Anchor::Top));
+            for (i, p) in body.paragraphs.iter().enumerate() {
+                assert_eq!(p.props.align, Some(deckcraft_model::text::Align::Left));
+                let bullet = start == 1 || i > 0;
+                if bullet {
+                    let depth = usize::from(i > 0);
+                    assert_eq!(p.props.margin_left, Some((depth + 2 - start) as f64 * 9.));
+                    assert_eq!(p.props.indent, Some(-9.));
+                }
+                assert_eq!(p.props.bullet.as_ref().is_some_and(|b| !matches!(b, deckcraft_model::text::Bullet::None)), bullet);
+                assert!(p.runs.iter().all(|r| r.props.size == Some(if bullet { 14. } else { 24. })));
+            }
+        }
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        assert_eq!(group(&back).children()[0].text, group(&p).children()[0].text);
+    }
+}

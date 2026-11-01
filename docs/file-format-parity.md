@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.10 update 2026-11-01:** hierarchical diagram text, property-scoped font rules, offline geographic query joins, explicit data/world scopes and styled map labels have regression coverage. Native cyclic-layout fallback and intermediate/automatic viewport policies remain partial; scores are unchanged.
+
 > **PPTX.9 update 2026-11-01:** measured SmartArt numeric rules, circular placement, observed DEFLATE map caches and funnel label typography are implemented. Remaining native/provider differences are detailed in [layout fidelity](layout-fidelity.md).
 
 > **Update 2026-11-01:** raw/EOT-wrapped MTX fonts decode; chartEx statistical/display settings and uncached diagram layout execution are covered by original regressions. Fresh chartEx opening is fixed; uncached named-composite geometry and text defaults have native evidence. SVG sources render with their raster fallback retained; bubble size/sign semantics survive rebuilds. Full automatic-layout/rich-label parity remains partial. See [scope and evidence](layout-fidelity.md).

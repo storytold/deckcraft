@@ -148,6 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.10: property-scoped font rules, measured-text reuse and hierarchical secondary text; offline geographic query joins, explicit viewport scopes and styled map labels; PowerPoint/LibreOffice black-box differences recorded |
 | 2026-11-01 | PPTX.9: font-measured ordered SmartArt rules, distinct font constraints and reference-linked fitting; corrected reference/value semantics and circular placement; bounded raw-DEFLATE geographic caches and native world projection/fill fixes; funnel rich-label typography. Native/provider gaps remain explicit |
 | 2026-11-01 | PPTX.8: bounded sparse diagram equations and half-space bounds; geographic clear-cache polygons/holes/dateline rendering; rich classic point labels with native visibility/rotation corrections. Original tests and native observations retain explicit limits for cyclic-layout fallback and provider map caches |
 | 2026-11-01 | PPTX.7: embedded SVG pictures render in-process with bounded XML/output, retained raster fallback and media remapping; bubble area/width/scale/sign semantics and disconnected glyphs have pixel regressions and native checks |

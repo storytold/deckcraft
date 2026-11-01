@@ -10,6 +10,8 @@ const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01
 #[serde(default, rename_all = "camelCase")]
 pub struct Geography {
     pub projection: String,
+    /// Authored viewport scope, e.g. `dataOnly` or `world`; empty means automatic.
+    pub viewed_region: String,
     pub attribution: String,
     pub regions: Vec<GeoRegion>,
 }
