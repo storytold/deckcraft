@@ -25,7 +25,12 @@ use presenter::{NOTES_DEFAULT, PresenterTimer};
 #[cfg(test)]
 use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_notes, presenter_window, wall_clock};
 #[cfg(test)]
-use render::{below_playing_video, next_rect, render_frame, start_prefetch};
+use presenter::{
+    STRIP_AHEAD, STRIP_GAP, STRIP_LABEL_H, STRIP_MAX_CELLS, strip_band_height, strip_drag_first, strip_first_at, strip_first_for, strip_layout,
+    strip_thumb_rect,
+};
+#[cfg(test)]
+use render::{below_playing_video, current_rect, next_rect, render_frame, start_prefetch};
 use render::{render_backdrop, render_threads};
 #[cfg(test)]
 use ui::transition_layers;
@@ -90,6 +95,18 @@ pub struct Show {
     timer: PresenterTimer,
     /// Speaker-notes size in presenter view, in points.
     notes_px: f32,
+    /// The slide strip along the bottom of presenter view.
+    pub strip: bool,
+    /// First slide in the strip, and the slide it was last lined up for: it follows the show
+    /// (previous slide first) until its scrollbar moves it.
+    strip_first: usize,
+    strip_for: Option<usize>,
+    strip_thumbs: Vec<(usize, TextureHandle)>,
+    /// Where the strip drew each slide last frame, in presenter-window points.
+    strip_cells: Vec<(usize, Rect)>,
+    strip_track: Option<Rect>,
+    /// While the strip's scrollbar is held: where the pointer holds the thumb, from its left edge.
+    strip_grab: Option<f32>,
     timings: Vec<(usize, f64)>,
     last_move: f64,
     /// The last trackpad flick or mouse-wheel notch, so one gesture turns one page.
@@ -209,7 +226,7 @@ pub(crate) fn viewport_visible(ctx: &egui::Context) -> bool {
 
 impl Show {
     /// Initialise show state at the requested slide with reading/presenter modes; an out-of-range
-    /// slide starts an ended show.
+    /// slide starts an ended show. Its slide strip starts on; the app sets it from the saved setting.
     pub fn new(doc: &Presentation, from: usize, reading: bool, presenter: bool) -> Self {
         Show {
             instance: 0,
@@ -248,6 +265,13 @@ impl Show {
             show_start: 0.0,
             timer: PresenterTimer::start(0.0),
             notes_px: NOTES_DEFAULT,
+            strip: true,
+            strip_first: 0,
+            strip_for: None,
+            strip_thumbs: vec![],
+            strip_cells: vec![],
+            strip_track: None,
+            strip_grab: None,
             timings: vec![],
             last_move: 0.0,
             last_swipe: f64::NEG_INFINITY,

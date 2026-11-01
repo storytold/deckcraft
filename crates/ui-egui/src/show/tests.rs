@@ -1238,3 +1238,230 @@ fn a_preview_of_an_edited_presentation_is_rendered_again() {
     let tex = harness.state().1.next_tex.as_ref().map(|(d, k, _)| (std::sync::Arc::ptr_eq(d, &edited), *k));
     assert_eq!(tex, Some((true, 1)), "the preview comes from the edited presentation");
 }
+
+/// Wide, narrow, very tall, very wide and NaN slide shapes: the strip always fits the previous
+/// slide, the current one and five more inside its band, numbers above the scrollbar.
+#[test]
+fn the_slide_strip_fits_the_previous_and_current_slides_and_five_ahead() {
+    for (w, aspect) in [(1068.0, 16.0 / 9.0), (500.0, 16.0 / 9.0), (1068.0, 72.0 / 4032.0), (1068.0, 20.0), (1068.0, f32::NAN)] {
+        let band = Rect::from_min_size(pos2(16.0, 500.0), vec2(w, 130.0));
+        let (cell, visible, track) = strip_layout(band, aspect, 40);
+        assert!((STRIP_AHEAD + 2..=STRIP_MAX_CELLS).contains(&visible), "{w} × {aspect}: {visible} thumbnails");
+        assert!(cell.x.is_finite() && cell.y.is_finite() && cell.x > 0.0 && cell.y > 0.0);
+        let right = band.min.x + visible as f32 * (cell.x + STRIP_GAP) - STRIP_GAP;
+        assert!(right <= band.max.x + 0.5, "{w} × {aspect}: the thumbnails stay in the band");
+        assert!(band.min.y + cell.y + STRIP_LABEL_H <= track.min.y + 0.5, "the numbers stay above the scrollbar");
+    }
+    let band = Rect::from_min_size(pos2(0.0, 0.0), vec2(1000.0, 130.0));
+    assert_eq!(strip_layout(band, 16.0 / 9.0, 3).1, 3);
+    assert_eq!(strip_layout(band, 16.0 / 9.0, 0).1, 0);
+}
+
+/// Turning the strip on and off resized the current slide although there was room for it.
+#[test]
+fn the_current_slide_keeps_its_size_when_the_strip_has_room() {
+    let doc = deckcraft_engine::Session::with_new().active().unwrap().doc.clone();
+    // Presenter view at 1100 × 700: the left column under the buttons.
+    let left = Rect::from_min_max(pos2(16.0, 128.0), pos2(678.0, 684.0));
+    let off = current_rect(left, left.max.y, &doc);
+    let strip_top = left.max.y - strip_band_height(left.height()) - 12.0;
+    assert_eq!(current_rect(left, strip_top, &doc), off, "room above the strip: same size");
+    let tight = current_rect(left, left.min.y + 200.0, &doc);
+    assert!(tight.height() < off.height() && tight.max.y <= left.min.y + 200.5, "no room: it shrinks to stay clear of the strip");
+    let none = current_rect(left, f32::NAN, &doc);
+    assert!(none.width().is_finite() && none.height().is_finite());
+}
+
+/// The strip lines up on the previous slide, and its scrollbar maps both ends of the track to
+/// both ends of the deck, round-trips through the thumb and ignores NaN.
+#[test]
+fn the_strip_scrollbar_reaches_both_ends_of_the_deck() {
+    assert_eq!(strip_first_for(0, 20, 7), 0);
+    assert_eq!(strip_first_for(5, 20, 7), 4, "the previous slide comes first");
+    assert_eq!(strip_first_for(19, 20, 7), 13, "the strip stays full at the end");
+    assert_eq!(strip_first_for(2, 4, 7), 0);
+    let track = Rect::from_min_size(pos2(10.0, 0.0), vec2(500.0, 12.0));
+    assert_eq!(strip_first_at(track, 20, 7, 0.0), 0);
+    assert_eq!(strip_first_at(track, 20, 7, 1000.0), 13);
+    assert_eq!(strip_first_at(track, 20, 7, f32::NAN), 0);
+    assert_eq!(strip_first_at(track, 5, 7, 400.0), 0);
+    for first in 0..=13 {
+        let t = strip_thumb_rect(track, 20, 7, first);
+        assert!(track.expand(0.01).contains_rect(t));
+        assert_eq!(strip_first_at(track, 20, 7, t.center().x), first, "pressing the thumb's centre keeps it where it is");
+    }
+    assert_eq!(strip_thumb_rect(track, 3, 3, 0), track);
+}
+
+/// Pressing the scrollbar thumb away from its centre made the strip jump before any drag (PR
+/// review). A press on the thumb leaves it where it is, a drag moves it by the pointer's
+/// travel, and a press on the track off the thumb still brings the thumb there.
+#[test]
+fn grabbing_the_strip_thumb_off_centre_does_not_move_it() {
+    let track = Rect::from_min_size(pos2(10.0, 0.0), vec2(500.0, 12.0));
+    let (n, visible) = (20, 7);
+    for first in [0, 6, 13] {
+        let thumb = strip_thumb_rect(track, n, visible, first);
+        for x in [thumb.min.x + 1.0, thumb.center().x, thumb.max.x - 1.0] {
+            let mut grab = None;
+            assert_eq!(strip_drag_first(track, n, visible, first, &mut grab, x), first, "press at {x} on the thumb at {first}");
+        }
+    }
+    let thumb = strip_thumb_rect(track, n, visible, 0);
+    let step = (track.width() - thumb.width()) / 13.0;
+    let x0 = thumb.min.x + 2.0;
+    let mut grab = None;
+    assert_eq!(strip_drag_first(track, n, visible, 0, &mut grab, x0), 0);
+    assert_eq!(strip_drag_first(track, n, visible, 0, &mut grab, x0 + 5.0 * step), 5, "the thumb follows the pointer's travel");
+    assert_eq!(strip_drag_first(track, n, visible, 5, &mut grab, x0 + 100.0 * step), 13);
+    let mut grab = None;
+    assert_eq!(strip_drag_first(track, n, visible, 0, &mut grab, track.max.x - 1.0), 13, "a press off the thumb centres it there");
+}
+
+/// The same in presenter view: a click near the thumb's right edge leaves the strip as it was.
+#[test]
+fn a_press_on_the_strip_thumb_leaves_the_strip_alone() {
+    let mut h = presenter_harness(16);
+    h.run_steps(4);
+    let s = &h.state().1;
+    let (track, visible) = (s.strip_track.unwrap(), s.strip_cells.len());
+    let thumb = strip_thumb_rect(track, 16, visible, 0);
+    assert!(thumb.width() > 20.0, "the thumb is wide enough to press off its centre");
+    strip_click_at(&mut h, pos2(thumb.max.x - 3.0, thumb.center().y));
+    assert_eq!(h.state().1.strip_cells.first().map(|c| c.0), Some(0), "the strip did not jump");
+    assert_eq!(h.state().1.strip_grab, None, "letting go ends the grab");
+}
+
+/// Presenter view alone (no audience window) on a deck of `slides` blank slides, from the first.
+fn presenter_harness(slides: usize) -> egui_kittest::Harness<'static, (std::sync::Arc<Presentation>, Show, bool)> {
+    let mut session = deckcraft_engine::Session::with_new();
+    for _ in 1..slides {
+        session.execute("slide.new", &json!({})).unwrap();
+    }
+    let doc = session.active().unwrap().doc.clone();
+    let show = Show::new(&doc, 0, false, true);
+    egui_kittest::Harness::builder().with_size(vec2(1100.0, 700.0)).build_ui_state(
+        |ui, (doc, show, keep): &mut (std::sync::Arc<Presentation>, Show, bool)| {
+            let now = ui.input(|i| i.time);
+            presenter_window(ui.ctx(), show, doc, now, keep);
+        },
+        (doc, show, true),
+    )
+}
+
+/// A real primary click at `p`: move, press, release, then let the presenter act on it.
+fn strip_click_at(h: &mut egui_kittest::Harness<'static, (std::sync::Arc<Presentation>, Show, bool)>, p: Pos2) {
+    h.event(egui::Event::PointerMoved(p));
+    h.run_steps(1);
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton { pos: p, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE });
+        h.run_steps(1);
+    }
+    h.run_steps(2);
+}
+
+/// Centre of slide `slide`'s thumbnail as the strip last drew it.
+fn strip_cell(show: &Show, slide: usize) -> Pos2 {
+    show.strip_cells.iter().find(|(i, _)| *i == slide).map(|(_, r)| r.center()).unwrap_or_else(|| panic!("slide {slide} is not in the strip"))
+}
+
+/// Clicks on a thumbnail and on the scrollbar in a 16-slide deck: the show goes to the clicked
+/// slide, scrolling leaves the show where it is, and the strip follows the show again after.
+#[test]
+fn the_presenter_strip_goes_to_a_clicked_slide_and_scrolls_through_the_deck() {
+    let mut h = presenter_harness(16);
+    h.run_steps(6);
+    let shown: Vec<usize> = h.state().1.strip_cells.iter().map(|c| c.0).collect();
+    assert!(h.state().1.strip, "the strip is on by default");
+    assert_eq!(shown.first(), Some(&0));
+    assert!(shown.len() > STRIP_AHEAD, "the current slide and at least {STRIP_AHEAD} after it: {shown:?}");
+
+    let p = strip_cell(&h.state().1, 3);
+    strip_click_at(&mut h, p);
+    assert_eq!(h.state().1.state.slide, 3, "a click goes to that slide");
+    assert_eq!(h.state().1.strip_cells.first().map(|c| c.0), Some(2), "the strip lines up with the previous slide first");
+
+    let bar = h.state().1.strip_track.unwrap();
+    strip_click_at(&mut h, pos2(bar.max.x - 2.0, bar.center().y));
+    let s = &h.state().1;
+    assert_eq!(s.strip_cells.last().map(|c| c.0), Some(15), "the scrollbar reaches the last slide");
+    assert_eq!(s.state.slide, 3, "scrolling the strip does not move the show");
+
+    strip_click_at(&mut h, pos2(bar.min.x + 2.0, bar.center().y));
+    assert_eq!(h.state().1.strip_cells.first().map(|c| c.0), Some(0), "and back to the first");
+
+    strip_click_at(&mut h, pos2(bar.max.x - 2.0, bar.center().y));
+    let p = strip_cell(&h.state().1, 15);
+    strip_click_at(&mut h, p);
+    assert_eq!(h.state().1.state.slide, 15);
+    h.key_press(egui::Key::Home);
+    h.run_steps(2);
+    assert_eq!(h.state().1.strip_cells.first().map(|c| c.0), Some(0), "the strip follows the show again");
+}
+
+/// The Slide strip button in presenter view hides the strip and brings it back.
+#[test]
+fn the_presenter_strip_can_be_turned_off_and_back_on() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut h = presenter_harness(4);
+    h.run_steps(4);
+    h.get_by_label("Slide strip on").click();
+    h.run_steps(2);
+    assert!(!h.state().1.strip);
+    assert!(h.state().1.strip_cells.is_empty() && h.state().1.strip_track.is_none(), "no strip is drawn");
+    h.get_by_label("Slide strip").click();
+    h.run_steps(2);
+    assert!(h.state().1.strip);
+    assert!(!h.state().1.strip_cells.is_empty());
+}
+
+/// A strip thumbnail clicked while See All Slides covers the audience window (G there) closes
+/// that grid, as a pick in the grid does, so the audience sees the slide the presenter chose.
+#[test]
+fn a_strip_click_closes_see_all_slides() {
+    let mut h = presenter_harness(6);
+    h.run_steps(4);
+    h.state_mut().1.grid = true;
+    h.run_steps(2);
+    let p = strip_cell(&h.state().1, 4);
+    strip_click_at(&mut h, p);
+    assert_eq!(h.state().1.state.slide, 4);
+    assert!(!h.state().1.grid, "the grid no longer covers the slide");
+}
+
+/// All slides in presenter view fills that window, strip included, and reports no strip cells;
+/// a pick in that grid brings the strip back, lined up on the chosen slide.
+#[test]
+fn the_presenter_grid_covers_the_strip_until_a_slide_is_picked() {
+    use egui_kittest::kittest::Queryable;
+
+    let mut h = presenter_harness(10);
+    h.run_steps(4);
+    assert!(!h.state().1.strip_cells.is_empty());
+    h.get_by_label("All slides").click();
+    h.run_steps(2);
+    assert!(h.state().1.presenter_grid);
+    assert!(h.state().1.strip_cells.is_empty() && h.state().1.strip_track.is_none(), "the grid covers the strip");
+    h.key_press(egui::Key::Escape);
+    h.run_steps(2);
+    assert!(!h.state().1.presenter_grid);
+    assert!(h.state().1.strip, "the strip setting is untouched");
+    assert_eq!(h.state().1.strip_cells.first().map(|c| c.0), Some(0), "the strip is back");
+}
+
+/// `show.presenterStrip` sets and toggles the strip, new shows start with the saved setting,
+/// and a running show follows it.
+#[test]
+fn the_strip_setting_is_a_command_and_outlasts_the_show() {
+    let mut session = deckcraft_engine::Session::with_new();
+    session.execute("slide.new", &json!({})).unwrap();
+    let mut app = SlideApp::new(session, crate::Services::default());
+    assert!(app.ui.presenter_strip, "on by default");
+    app.run("show.presenterStrip", json!({"on": false})).unwrap();
+    assert!(!app.ui.presenter_strip);
+    app.start_show(0, false);
+    assert!(!app.show.as_ref().unwrap().strip, "a new show starts without it");
+    app.run("show.presenterStrip", json!({})).unwrap();
+    assert!(app.ui.presenter_strip && app.show.as_ref().unwrap().strip, "no `on` toggles it, in the running show too");
+}

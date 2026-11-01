@@ -94,6 +94,10 @@ pub fn ui(app: &mut SlideApp, ui: &mut Ui) {
     draw_pen_and_hints(ui, &mut show, &f, &painter, pointing);
     draw_bars(ui, &mut show, &f, &painter, &mut out);
     draw_extras(&mut show, &f, &painter, &mut out);
+    if show.presenter && !show.reading {
+        // The strip's toggle in presenter view is remembered for the next show.
+        app.ui.presenter_strip = show.strip;
+    }
     finish(app, show, &f, out.keep);
 }
 
