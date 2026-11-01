@@ -93,7 +93,7 @@ impl SlideApp {
             || document.interaction.is_some()
             || document.composition.is_some()
             || (self.notes_buf.0 == close.document && self.notes_buf.2.edited)
-            || ctx.wants_keyboard_input()
+            || ctx.egui_wants_keyboard_input()
             || ctx.will_discard()
         {
             return;
