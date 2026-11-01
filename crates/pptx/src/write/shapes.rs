@@ -405,7 +405,9 @@ pub fn shape(w: &mut W, x: &mut Exp, o: &mut Out, cx: &mut Ctx, s: &Shape, depth
                 // The kept workbook belongs to the `chartEx` part; the fallback has none.
                 plain.kept = Default::default();
             }
-            let rid = x.chart_rel(o, &plain);
+            let text_color_explicit =
+                if plain.raw.is_none() { chart_text_defaults(&mut plain, s.xfrm.unwrap_or_default()) } else { plain.text_color.is_some() };
+            let rid = x.chart_rel(o, &plain, text_color_explicit);
             frame_open(w, x, o, id, s);
             w.open("a:graphicData", A::new().a("uri", "http://schemas.openxmlformats.org/drawingml/2006/chart"));
             w.empty("c:chart", A::new().a("xmlns:c", crate::opc::NS_C).a("r:id", rid));
@@ -670,6 +672,20 @@ fn sp(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape, math: bool) {
         }
     }
     w.close("p:sp");
+}
+
+/// Writes the text colour and sizes DeckCraft draws a chart in when the chart has none of its own
+/// (without them PowerPoint falls back to black text at 10 pt): the theme's text at 65 %, and a
+/// size scaled to the frame, as `render::chart` picks it.
+fn chart_text_defaults(c: &mut deckcraft_model::Chart, xf: deckcraft_geom::Xfrm) -> bool {
+    use deckcraft_color::ColorTransform;
+    use deckcraft_model::{ColorRef, SchemeSlot};
+    let text_color_explicit = c.text_color.is_some();
+    c.text_color.get_or_insert_with(|| ColorRef::scheme(SchemeSlot::Tx1).with(ColorTransform::LumMod(65000)).with(ColorTransform::LumOff(35000)));
+    let base = c.text_size.unwrap_or_else(|| (xf.w.min(xf.h) / 22.0).clamp(7.0, 18.0));
+    c.text_size = Some(base);
+    c.title_size.get_or_insert(base * 1.4);
+    text_color_explicit
 }
 
 fn frame_open(w: &mut W, x: &mut Exp, o: &mut Out, id: u32, s: &Shape) {
@@ -1002,6 +1018,32 @@ pub fn tree_header(w: &mut W) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A chart without text styling gets DeckCraft's drawn colour and frame-scaled sizes, so
+    /// PowerPoint does not fall back to black 10 pt text; its own values are kept.
+    #[test]
+    fn chart_text_defaults_fill_only_the_gaps() {
+        let mut c = deckcraft_model::Chart::sample(deckcraft_model::chart::ChartType::Column);
+        assert!(!chart_text_defaults(&mut c, Xfrm { w: 440.0, h: 220.0, ..Default::default() }));
+        assert!(c.text_color.is_some());
+        assert_eq!((c.text_size, c.title_size), (Some(10.0), Some(14.0)));
+        let mut c = deckcraft_model::Chart::sample(deckcraft_model::chart::ChartType::Column);
+        c.text_size = Some(12.0);
+        assert!(!chart_text_defaults(&mut c, Xfrm { w: 440.0, h: 220.0, ..Default::default() }));
+        assert_eq!((c.text_size, c.title_size), (Some(12.0), Some(12.0 * 1.4)));
+    }
+
+    #[test]
+    fn chart_shape_defaults_keep_pie_labels_white() {
+        let mut c = deckcraft_model::Chart::sample(deckcraft_model::chart::ChartType::Pie);
+        c.data_labels = true;
+        let text_color_explicit = chart_text_defaults(&mut c, Xfrm { w: 440.0, h: 220.0, ..Default::default() });
+        let xml = String::from_utf8(super::super::chart::chart_xml_with_text_color_explicit(&c, text_color_explicit).0).unwrap();
+        let labels = xml.split("<c:dLbls>").nth(1).unwrap_or_default().split("</c:dLbls>").next().unwrap_or_default();
+        assert!(labels.contains("<a:srgbClr val=\"FFFFFF\""), "{labels}");
+        let chart_text = xml.rsplit("<c:txPr>").next().unwrap_or_default();
+        assert!(chart_text.contains("<a:schemeClr val=\"tx1\"><a:lumMod val=\"65000\""), "{chart_text}");
+    }
 
     /// PowerPoint asks to repair a `star5` whose guide list lacks `hf`/`vf` (found black-box).
     #[test]
