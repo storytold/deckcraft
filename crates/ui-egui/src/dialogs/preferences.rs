@@ -21,8 +21,10 @@ pub(super) fn restore_preferences(app: &mut SlideApp, d: &Dialog) {
     if let Some(scale) = before.get("uiScale").and_then(Value::as_f64) {
         app.ui.ui_scale = scale as f32;
     }
+    // Put the saved value back as it was, even a code this build doesn't offer (a newer build's
+    // language): `app.language` would refuse it and leave the language picked in the dialog.
     if let Some(language) = before.get("language").and_then(Value::as_str) {
-        let _ = app.run("app.language", json!({ "language": language }));
+        app.ui.language = language.to_string();
     }
     if let Some(prefs) = before.get("prefs").and_then(|p| serde_json::from_value(p.clone()).ok()) {
         app.session.prefs = prefs;

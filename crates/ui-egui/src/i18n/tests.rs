@@ -144,6 +144,16 @@ fn preferences_cancel_restores_the_language() {
     h.run_steps(3);
     assert!(h.state().dialog.is_none());
     assert_eq!(h.state().ui.language, AUTO);
+
+    // A saved code this build doesn't offer survives a Cancel too.
+    h.state_mut().ui.language = "xx".into();
+    h.state_mut().run("app.preferences", json!({})).unwrap();
+    h.run_steps(3);
+    h.state_mut().run("app.language", json!({"language": "de"})).unwrap();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::Button, "Cancel").click();
+    h.run_steps(3);
+    assert_eq!(h.state().ui.language, "xx");
 }
 
 /// The catalogs `build.rs` embedded parse without a problem, and every embedded locale is offered.
