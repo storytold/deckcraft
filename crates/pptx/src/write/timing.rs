@@ -1,12 +1,12 @@
 //! Transitions and the animation timing tree.
 
-use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, TextBuild, Transition, build_filled, paragraph_build_roles};
+use deckcraft_model::anim::{AnimClass, AnimStart, Animation, BuildRole, KeptSequence, TextBuild, Transition, build_filled, paragraph_build_roles};
 use deckcraft_model::{Shape, ShapeId, ShapeKind, find_shape};
 
 use super::shapes::IdMap;
 use super::{Exp, Out};
 use crate::opc::{NS_MC, NS_P14, NS_P15, NS_P159};
-use crate::xml::{A, W};
+use crate::xml::{A, El, W};
 
 pub fn transition(w: &mut W, x: &mut Exp, o: &mut Out, t: &Transition) {
     let adv_click = (!t.advance_on_click).then_some("0");
@@ -577,9 +577,41 @@ fn click_pars(w: &mut W, x: &mut Exp, ids: &mut Ids, clicks: &Groups, interactiv
     }
 }
 
-/// Write `p:timing` for a slide's animations.
-pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idmap: &IdMap) {
+/// The kept sequences ([`KeptSequence`]) with their shapes' file ids, and their build entries; one
+/// naming a shape the slide no longer has is left out.
+fn kept_with_file_ids(kept: &[KeptSequence], idmap: &IdMap) -> (Vec<El>, Vec<El>) {
+    let mut to_file = |id: u32| idmap.get(ShapeId(id));
+    let parse = |xml: &str| crate::xml::parse(xml.as_bytes()).ok().map(|d| d.root);
+    let (mut seqs, mut builds) = (vec![], vec![]);
+    for k in kept.iter().take(1000) {
+        let Some(mut seq) = parse(&k.xml).filter(|s| s.is("seq")) else { continue };
+        if !seq.map_attr(None, "spid", &mut to_file) {
+            log::warn!("pptx: a kept animation sequence names a deleted shape and was left out");
+            continue;
+        }
+        seqs.push(seq);
+        // Two sequences on the same shape both carry its build entry; it is written once, or each
+        // reload would hand both copies to both sequences and the copies would multiply.
+        for mut b in k.builds.iter().filter_map(|b| parse(b)) {
+            if b.map_attr(None, "spid", &mut to_file) && !builds.contains(&b) {
+                builds.push(b);
+            }
+        }
+    }
+    (seqs, builds)
+}
+
+/// Write `p:timing` for a slide's animations and the sequences kept verbatim from its file.
+pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], kept: &[KeptSequence], shapes: &[Shape], idmap: &IdMap) {
+    let (kept, kept_builds) = kept_with_file_ids(kept, idmap);
     let mut grp_count: std::collections::HashMap<u32, u32> = Default::default();
+    // Groups (`grpId`) the kept builds use stay theirs.
+    for b in &kept_builds {
+        if let (Some(spid), Some(g)) = (b.u32("spid"), b.u32("grpId")) {
+            let c = grp_count.entry(spid).or_insert(0);
+            *c = (*c).max(g.saturating_add(1));
+        }
+    }
     let mut main: Vec<Eff> = vec![];
     let mut triggered: Vec<(u32, Vec<Eff>)> = vec![];
     let mut bld: Vec<(u32, u32, bool)> = vec![];
@@ -648,7 +680,7 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
             None => main.extend(effs),
         }
     }
-    if main.is_empty() && triggered.is_empty() {
+    if main.is_empty() && triggered.is_empty() && kept.is_empty() {
         return;
     }
     let mut ids = Ids(0);
@@ -719,14 +751,28 @@ pub fn timing(w: &mut W, x: &mut Exp, anims: &[Animation], shapes: &[Shape], idm
         w.close("p:nextCondLst");
         w.close("p:seq");
     }
+    for mut seq in kept {
+        // Time-node ids continue after ours; a condition naming a node (`p:tn`) follows it.
+        let mut renumbered = std::collections::HashMap::new();
+        seq.map_attr(Some("cTn"), "id", &mut |old| {
+            let id = ids.next();
+            renumbered.insert(old, id);
+            Some(id)
+        });
+        seq.map_attr(Some("tn"), "val", &mut |old| Some(renumbered.get(&old).copied().unwrap_or(old)));
+        w.raw(&seq.to_xml());
+    }
     w.close("p:childTnLst");
     w.close("p:cTn");
     w.close("p:par");
     w.close("p:tnLst");
-    if !bld.is_empty() {
+    if !bld.is_empty() || !kept_builds.is_empty() {
         w.open0("p:bldLst");
         for (spid, grp, build_p) in bld {
             w.empty("p:bldP", A::new().a("spid", spid).a("grpId", grp).o("build", build_p.then_some("p")).t("animBg", !build_p));
+        }
+        for b in &kept_builds {
+            w.raw(&b.to_xml());
         }
         w.close("p:bldLst");
     }

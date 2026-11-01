@@ -288,6 +288,52 @@ pub fn paragraph_build_roles(text: &crate::text::TextBody) -> Vec<BuildRole> {
         .collect()
 }
 
+/// An animation sequence the model has no trigger for, kept verbatim so a save writes it back: an
+/// interactive sequence that a media bookmark starts (`onMediaBookmark`, #362). `xml` is the
+/// `p:seq` element and `builds` its `p:bldLst` entries, with every `spid` a model shape id.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct KeptSequence {
+    pub xml: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub builds: Vec<String>,
+}
+
+impl KeptSequence {
+    /// Give the sequence and its builds new shape ids (a duplicated, pasted or reused slide). False,
+    /// leaving it as it was, when it names a shape `map` has no id for.
+    pub fn remap_shapes(&mut self, map: &dyn Fn(ShapeId) -> Option<ShapeId>) -> bool {
+        let Some(xml) = remap_spids(&self.xml, map) else { return false };
+        let Some(builds) = self.builds.iter().map(|b| remap_spids(b, map)).collect::<Option<Vec<_>>>() else { return false };
+        self.xml = xml;
+        self.builds = builds;
+        true
+    }
+}
+
+/// `xml` with the value of every `spid` attribute passed through `map`; None when one is not a
+/// number or `map` has no id for it.
+fn remap_spids(xml: &str, map: &dyn Fn(ShapeId) -> Option<ShapeId>) -> Option<String> {
+    const KEY: &str = "spid=\"";
+    let mut out = String::with_capacity(xml.len());
+    let mut rest = xml;
+    while let Some(i) = rest.find(KEY) {
+        let (head, tail) = rest.split_at(i + KEY.len());
+        out.push_str(head);
+        // An attribute named exactly `spid` follows whitespace.
+        if !rest[..i].ends_with(|c: char| c.is_ascii_whitespace()) {
+            rest = tail;
+            continue;
+        }
+        let end = tail.find('"')?;
+        let id = tail[..end].trim().parse::<u32>().ok()?;
+        out.push_str(&map(ShapeId(id))?.0.to_string());
+        rest = &tail[end..];
+    }
+    out.push_str(rest);
+    Some(out)
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Animation {

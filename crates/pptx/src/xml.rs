@@ -165,6 +165,26 @@ impl El {
     pub fn child_val(&self, local: &str) -> Option<&str> {
         self.child(local).and_then(|c| c.attr("val"))
     }
+    /// Rewrite the numeric attribute `attr` of this element and its descendants (only of elements
+    /// named `elem`, when given) through `f`. False, with the tree partly rewritten, when `f` has no
+    /// value for one or one is not a number.
+    pub fn map_attr(&mut self, elem: Option<&str>, attr: &str, f: &mut dyn FnMut(u32) -> Option<u32>) -> bool {
+        fn rec(e: &mut El, elem: Option<&str>, attr: &str, f: &mut dyn FnMut(u32) -> Option<u32>, depth: usize) -> bool {
+            if depth > MAX_DEPTH {
+                return false;
+            }
+            if elem.is_none_or(|n| e.is(n))
+                && let Some(a) = e.attrs.iter_mut().find(|(k, _)| k == attr)
+            {
+                match a.1.trim().parse::<u32>().ok().and_then(&mut *f) {
+                    Some(v) => a.1 = v.to_string(),
+                    None => return false,
+                }
+            }
+            e.elements_mut().all(|c| rec(c, elem, attr, f, depth + 1))
+        }
+        rec(self, elem, attr, f, 0)
+    }
     /// Serialize to a string (no XML declaration).
     pub fn to_xml(&self) -> String {
         let mut s = String::new();
