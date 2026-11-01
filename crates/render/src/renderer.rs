@@ -33,6 +33,31 @@ pub struct Renderer {
     /// Visits spent on outer-shadow silhouette passes, kept apart so they cannot use up the budget
     /// of the normal drawing that follows.
     shadow_work: usize,
+    /// Picture-glow pixels retained by this frame; bounded independently of source images.
+    glow_pixels: usize,
+}
+
+#[cfg(test)]
+mod glow_budget_tests {
+    use super::*;
+
+    #[test]
+    fn picture_glow_budget_resets_at_every_frame_entry() {
+        let pres = Presentation::default();
+        let slide = &pres.slides[0];
+        let opts = RenderOpts { scale: 0.05, ..Default::default() };
+        let mut renderer = Renderer::default();
+        for entry in 0..4 {
+            renderer.glow_pixels = super::super::picture_glow::FRAME_PIXELS + 1;
+            match entry {
+                0 => renderer.slide(&pres, slide, 0, &opts),
+                1 => renderer.slide_part(&pres, slide, 0, SlidePart::Content, &opts),
+                2 => renderer.blend(&pres, (slide, 0), (slide, 0), 0.5, &[], &[], &[], &opts),
+                _ => renderer.layout(&pres, 0, None, &opts),
+            };
+            assert_eq!(renderer.glow_pixels, 0, "entry {entry} clears an exhausted prior frame");
+        }
+    }
 }
 
 impl Default for Renderer {
@@ -48,6 +73,7 @@ impl Default for Renderer {
             in_shadow_pass: false,
             render_work: 0,
             shadow_work: 0,
+            glow_pixels: 0,
         }
     }
 }
@@ -99,8 +125,12 @@ struct FxSource<'a> {
     geo: &'a Geometry,
     fill: &'a Option<Fill>,
     fill_alpha: Option<f64>,
+    fill_ph: Option<Rgba>,
     outline: Option<Caster<'a>>,
     content: Option<&'a deckcraft_model::style::PictureFill>,
+    picture_fill: bool,
+    picture_background: bool,
+    gif_time: Option<f64>,
     m: Affine,
     w: f64,
     h: f64,
@@ -163,6 +193,7 @@ impl Renderer {
     pub(crate) fn slide(&mut self, pres: &Presentation, slide: &Slide, index: usize, opts: &RenderOpts) -> Image {
         self.render_work = 0;
         self.shadow_work = 0;
+        self.glow_pixels = 0;
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
         let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
@@ -178,6 +209,7 @@ impl Renderer {
     pub(crate) fn slide_part(&mut self, pres: &Presentation, slide: &Slide, index: usize, part: SlidePart, opts: &RenderOpts) -> Image {
         self.render_work = 0;
         self.shadow_work = 0;
+        self.glow_pixels = 0;
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, slide));
         let f = Frame { pres, opts, fields: Self::fields(pres, index, opts) };
@@ -212,6 +244,7 @@ impl Renderer {
         let mix = if mix.is_finite() { mix.clamp(0.0, 1.0) } else { 1.0 };
         self.render_work = 0;
         self.shadow_work = 0;
+        self.glow_pixels = 0;
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, old.0) || needs_filters(pres, new.0));
         let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else { return self.finish(ctx, w, h) };
@@ -260,6 +293,7 @@ impl Renderer {
     pub(crate) fn layout(&mut self, pres: &Presentation, mi: usize, li: Option<usize>, opts: &RenderOpts) -> Image {
         self.render_work = 0;
         self.shadow_work = 0;
+        self.glow_pixels = 0;
         self.in_shadow_pass = false;
         let (w, h) = output_size(pres, opts);
         let mut ctx = RenderContext::new_with(w, h, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
@@ -672,7 +706,26 @@ impl Renderer {
                 let outside = if border_outside(is_pic, effects.as_ref()) { outside_line(line, lw) } else { None };
                 Caster { line: outside.map_or(std::borrow::Cow::Borrowed(line), std::borrow::Cow::Owned), ph: line_ph, alpha: a, base, rel }
             });
-            self.effects_below(ctx, rctx, e, fx_ph, FxSource { geo, fill, fill_alpha, outline, content: content.as_ref(), m, w, h });
+            self.effects_below(
+                ctx,
+                rctx,
+                e,
+                fx_ph,
+                FxSource {
+                    geo,
+                    fill,
+                    fill_alpha,
+                    fill_ph,
+                    outline,
+                    content: content.as_ref(),
+                    picture_fill: !is_pic,
+                    picture_background: is_pic && s.fill.as_ref().is_some_and(|f| !f.is_none()),
+                    gif_time: is_pic.then(|| d.f.opts.gif_times.iter().find(|g| g.0 == s.id).map(|g| g.1)).flatten(),
+                    m,
+                    w,
+                    h,
+                },
+            );
         }
     }
 
@@ -1082,8 +1135,92 @@ impl Renderer {
         }
     }
 
+    /// Rasterize the picture's actual coverage, not its frame, and grow alpha without
+    /// accumulating translucent samples. The surrounding layer supplies glow opacity/blur.
+    fn paint_picture_glow(&mut self, ctx: &mut RenderContext, rctx: &Ctx, src: &FxSource, plan: &super::picture_glow::Plan, color: Rgba) {
+        let Some(pf) = src.content else { return };
+        let mut mask = RenderContext::new_with(plan.width, plan.height, vello_cpu::RenderSettings { num_threads: 0, ..Default::default() });
+        let bounds = Rect::new(0.0, 0.0, src.w, src.h);
+        let c = src.m.as_coeffs();
+        let upright = src.picture_fill
+            && pf.upright
+            && src.m.determinant().abs() > 1e-12
+            && (c[1].abs() > 1e-9 || c[2].abs() > 1e-9 || c[0] < 0.0 || c[3] < 0.0);
+        let device_to_mask = plan.to_mask * src.m.inverse();
+        if src.picture_background
+            && let Some(fill) = src.fill
+        {
+            for sp in src.geo.paths.iter().filter(|sp| sp.fill != FillMode::None) {
+                let path = &sp.path;
+                mask.set_transform(plan.to_mask);
+                mask.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+                match (fill, &self.bg) {
+                    (Fill::Background, Some((bg, ph, view))) => {
+                        let slide = Rect::new(0.0, 0.0, rctx.pres.slide_size.width, rctx.pres.slide_size.height);
+                        let path = (view.inverse() * src.m) * path.clone();
+                        paint::fill_path_in_view(&mut mask, rctx, bg, *ph, &path, slide, *view, device_to_mask, sp.fill, 1.0, rctx.pres);
+                    }
+                    (Fill::Group, _) => {
+                        if let Some((fill, gm, bounds)) = &self.group_fill
+                            && gm.determinant().abs() > 1e-12
+                        {
+                            let path = (gm.inverse() * src.m) * path.clone();
+                            paint::fill_path_in_view(&mut mask, rctx, fill, None, &path, *bounds, *gm, device_to_mask, sp.fill, 1.0, rctx.pres);
+                        }
+                    }
+                    _ => paint::fill_path_in_view(&mut mask, rctx, fill, src.fill_ph, path, bounds, src.m, device_to_mask, sp.fill, 1.0, rctx.pres),
+                }
+            }
+        }
+        let mut paint_path = |path: &BezPath, even_odd: bool| {
+            // A picture-backed background leaves its image-pixel transform installed.
+            mask.set_transform(plan.to_mask);
+            mask.set_fill_rule(if even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+            mask.push_clip_layer(path);
+            if upright {
+                paint::picture(&mut mask, rctx.pres, pf, src.m.transform_rect_bbox(bounds), device_to_mask, src.gif_time);
+            } else {
+                paint::picture(&mut mask, rctx.pres, pf, bounds, plan.to_mask, src.gif_time);
+            }
+            mask.pop_layer();
+        };
+        if src.picture_fill {
+            // A picture fill is painted per filled subpath, as in fill_geometry.
+            for sp in src.geo.paths.iter().filter(|sp| sp.fill != FillMode::None) {
+                paint_path(&sp.path, sp.even_odd);
+            }
+        } else {
+            // A picture's foreground is painted once through the merged outline, as in draw_fill.
+            // Repeating it per subpath would accumulate translucent coverage where paths overlap.
+            paint_path(&src.geo.outline(), false);
+        }
+        let coverage = self.finish(mask, plan.width, plan.height);
+        if let Some(pm) = plan.tint(coverage, color) {
+            ctx.set_transform(plan.to_device);
+            ctx.set_paint(vello_cpu::Image {
+                image: vello_cpu::ImageSource::Pixmap(pm),
+                sampler: peniko::ImageSampler { quality: peniko::ImageQuality::High, ..Default::default() },
+            });
+            ctx.fill_rect(&Rect::new(0.0, 0.0, f64::from(plan.width), f64::from(plan.height)));
+        }
+    }
+
     fn effects_below(&mut self, ctx: &mut RenderContext, rctx: &Ctx, e: &Effects, ph: Option<Rgba>, src: FxSource) {
-        let FxSource { geo, fill, fill_alpha, outline, content, m, w, h } = src;
+        let picture_source = FxSource {
+            outline: None,
+            geo: src.geo,
+            fill: src.fill,
+            fill_alpha: src.fill_alpha,
+            fill_ph: src.fill_ph,
+            content: src.content,
+            picture_fill: src.picture_fill,
+            picture_background: src.picture_background,
+            gif_time: src.gif_time,
+            m: src.m,
+            w: src.w,
+            h: src.h,
+        };
+        let FxSource { geo, fill, fill_alpha, fill_ph: _, outline, content, picture_fill: _, picture_background: _, gif_time: _, m, w, h } = src;
         let silhouette = {
             let mut p = BezPath::new();
             for sp in &geo.paths {
@@ -1152,31 +1289,59 @@ impl Renderer {
         // A shape with no fill and no line (a text box) draws nothing to glow around: its text's
         // own glow is all PowerPoint shows, not a halo round the box.
         let glows = fill_alpha.is_some() || content.is_some() || outline.is_some();
-        if let Some(g) = e.glow.as_ref().filter(|_| glows) {
+        if let Some(g) =
+            e.glow.as_ref().filter(|g| glows && g.radius.is_finite() && g.radius > 0.0 && k.is_finite() && k > 0.0 && rctx.color(&g.color, ph).a != 0)
+        {
             let c = rctx.color(&g.color, ph);
+            let remaining = super::picture_glow::FRAME_PIXELS.saturating_sub(self.glow_pixels);
+            let plan = content.and_then(|_| {
+                super::picture_glow::Plan::new(
+                    m,
+                    Rect::new(0.0, 0.0, w, h),
+                    Rect::new(0.0, 0.0, f64::from(ctx.width()), f64::from(ctx.height())),
+                    g.radius,
+                    remaining,
+                )
+            });
             ctx.set_transform(Affine::IDENTITY);
-            // Measured on PowerPoint's export: a glow of radius r is half strength about half of r
-            // out from the outline and gone by r.
-            ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, Some(blur(g.radius * 0.17 * k)));
-            ctx.set_transform(m);
-            ctx.set_paint(color(c.with_alpha(255), 1.0));
-            ctx.set_stroke(kurbo::Stroke::new(g.radius.max(0.0) * 0.95).with_join(kurbo::Join::Round));
-            ctx.stroke_path(&silhouette);
-            // A shape without a fill (an outline, a frame) glows along its line only (#225).
-            if fill_alpha.is_some() || content.is_some() {
-                // Per subpath under its own fill rule, as in the shadow above: the
-                // merged silhouette filled NonZero fills an even-odd hole (#1596).
-                // When no subpath takes part the silhouette is the outline fallback.
-                let mut filled_any = false;
-                for sp in geo.paths.iter().filter(|sp| sp.fill != FillMode::None || fill.is_none()) {
-                    ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
-                    ctx.fill_path(&sp.path);
-                    filled_any = true;
+            let sigma = plan.as_ref().map_or(g.radius * 0.17 * k, |p| p.blur_sigma);
+            ctx.push_layer(None, None, Some((c.a as f32) / 255.0), None, Some(blur(sigma)));
+            if content.is_some() {
+                if let Some(plan) = plan {
+                    self.glow_pixels = self.glow_pixels.saturating_add(plan.pixels());
+                    self.paint_picture_glow(ctx, rctx, &picture_source, &plan, c);
+                } else if remaining < super::picture_glow::MIN_PIXELS && self.glow_pixels <= super::picture_glow::FRAME_PIXELS {
+                    log::warn!("picture glow raster budget exhausted; remaining picture glows are omitted");
+                    self.glow_pixels = super::picture_glow::FRAME_PIXELS + 1;
                 }
-                if !filled_any {
-                    ctx.fill_path(&silhouette);
+                // The border still glows even if the picture's interior is transparent.
+                if outline.is_some() {
+                    ctx.set_transform(m);
+                    ctx.set_paint(color(c.with_alpha(255), 1.0));
+                    ctx.set_stroke(kurbo::Stroke::new(g.radius.max(0.0) * 0.95).with_join(kurbo::Join::Round));
+                    ctx.stroke_path(&silhouette);
                 }
-                ctx.set_fill_rule(peniko::Fill::NonZero);
+            } else {
+                ctx.set_transform(m);
+                ctx.set_paint(color(c.with_alpha(255), 1.0));
+                ctx.set_stroke(kurbo::Stroke::new(g.radius.max(0.0) * 0.95).with_join(kurbo::Join::Round));
+                ctx.stroke_path(&silhouette);
+                // A shape without a fill (an outline, a frame) glows along its line only (#225).
+                if fill_alpha.is_some() || content.is_some() {
+                    // Per subpath under its own fill rule, as in the shadow above: the
+                    // merged silhouette filled NonZero fills an even-odd hole (#1596).
+                    // When no subpath takes part the silhouette is the outline fallback.
+                    let mut filled_any = false;
+                    for sp in geo.paths.iter().filter(|sp| sp.fill != FillMode::None || fill.is_none()) {
+                        ctx.set_fill_rule(if sp.even_odd { peniko::Fill::EvenOdd } else { peniko::Fill::NonZero });
+                        ctx.fill_path(&sp.path);
+                        filled_any = true;
+                    }
+                    if !filled_any {
+                        ctx.fill_path(&silhouette);
+                    }
+                    ctx.set_fill_rule(peniko::Fill::NonZero);
+                }
             }
             ctx.pop_layer();
         }
