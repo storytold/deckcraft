@@ -46,9 +46,11 @@ config works across the suite) keep the agent to the folders you give it:
 - Every file a command writes must lie inside the **write root**: `save_presentation`, `export`
   (every format, and every slide of an image export), `file.save`, `file.saveAs`, `file.export`,
   and `render_slide` with a `path`, plus the `.saving` temporary file a save goes through.
-- Read and write access are separate. Give the same folder twice for both; a root left out grants
-  none of its access (with only `--automation-read-root`, nothing can be written to disk). Without
-  either flag nothing changes.
+- The write root itself, and a folder, are not files to write: a save's `.saving` temporary file
+  sits next to its destination, and next to the root it would be outside it.
+- Read and write access are separate. Give the same folder twice for both. With one root given, the
+  access the other would grant is denied (with only `--automation-read-root`, nothing can be written
+  to disk); without either flag, files are not confined.
 - A path is made absolute against the server's working directory, then its links are followed: a
   file (or folder) link that leads out of a root is outside it. For a file that doesn't exist yet,
   its nearest existing folder's links are followed and the rest must be plain names, so `..` below a

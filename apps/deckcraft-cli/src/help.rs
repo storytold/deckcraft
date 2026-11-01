@@ -134,9 +134,10 @@ window, or with --connect PORT (or host:port) on the DeckCraft app started with 
 --sample opens the sample presentation.
 
 --automation-read-root DIR and --automation-write-root DIR confine every file the agent's commands read
-(open, pictures, audio, video) and write (save, export, PDF) to those folders, links followed; a root left
-out grants none of its access. They run the in-process server, so they conflict with --connect (a running
-app is not confined by them).",
+(open, pictures, audio, video) and write (save, export, PDF) to those folders, links followed. With one
+root given, the access the other would grant is denied; with neither, files are not confined. The write
+root itself and a folder are not files to write. They run the in-process server, so they conflict with
+--connect (a running app is not confined by them).",
     },
     Subcommand {
         name: "bench",
