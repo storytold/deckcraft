@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01: direct chart layout rendering, cached-diagram coordinates and cross-renderer probes.
+Updated 2026-11-01: MTX decoding, chartEx statistics/visibility, and bounded uncached-diagram layout execution.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -14,8 +14,10 @@ East Asian/complex-script run fonts still precede theme script fonts.
 
 Valid embedded TrueType/OpenType/EOT faces precede installed names inside their owning
 presentation. They never replace the global family database. The cache is bounded to 16 source
-files and 64 MiB of source bytes (individual sources at most 40 MiB); callers may retain faces.
-MicroType Express subsets remain preserved but cannot be drawn. Synthetic bold/italic follows
+files and 64 MiB of retained source plus decoded bytes (individual source/decoded fonts at most
+40 MiB); callers may retain faces. Raw and EOT-wrapped MicroType Express TrueType subsets now
+decode to sfnt before face selection. Over-budget entries are used without cache retention.
+Synthetic bold/italic follows
 the face actually selected, including glyph fallback.
 
 `font.inspect {}` is a read-only engine/control command, with no undo or journal entry. It returns
@@ -32,8 +34,8 @@ segments for slide shape text, table cells, and representative chart labels:
   depend on the final frame. Saved field values are inspected, not live field expansions.
 
 Reports omit document text and local file paths, but font family metadata can itself be private;
-inspect reports before sharing them. Bullet glyphs, SmartArt layout-engine text that has no cached
-shape, and all specialized chart labels are not covered by this first diagnostic command.
+inspect reports before sharing them. Bullet glyphs and every specialized chart-label case are not covered by this first diagnostic
+command. Successfully evaluated uncached SmartArt text becomes ordinary modeled text.
 `font.used`/missing-font checks use script-aware requested families. `font.replace` also visits
 modeled chart text roles.
 
@@ -96,9 +98,10 @@ Single-line node/title changes update the data model, cached drawing and visible
 preserving geometry and existing run formatting. Duplicate labels remain independent. Missing or
 ambiguous bindings reject the edit without changing the diagram. Undo/redo and native save/reopen
 are tested. Structural/layout/style changes still use DeckCraft's simpler layout algorithms.
-This does not implement the full constraint language: absent drawing caches with no authored
-fallback, complex text remapping and independently edited cached shapes remain outside the
-preservation path.
+When neither a cached drawing nor an authored fallback is available, the bounded layout
+interpreter described below now constructs shapes from the layout definition. Complex text
+remapping and independently edited cached shapes remain outside the identity-preserving edit
+path. No-cache diagrams retain their data graph rather than fabricating a new graph.
 
 ## Validation
 
@@ -144,9 +147,9 @@ must not be interpreted as proof that DeckCraft generates all SmartArt constrain
 
 | Case | Verified result | Remaining condition |
 |---|---|---|
-| Cached complex diagram, including scaled/nonzero child coordinates | Direct image rendering and retained text/geometry | Arbitrary constraint regeneration without cache is not implemented |
-| Missing diagram cache with an authored AlternateContent branch | Uses the authored fallback instead of an empty diagram | A file with neither representation cannot be reconstructed exactly |
-| Named available/embedded sfnt and uncompressed EOT faces, six script probes | Faces selected and shaped; no missing glyphs in the probes | Missing font binaries and MicroType Express subsets cannot be made equivalent by substitution |
+| Cached complex diagram, including scaled/nonzero child coordinates | Direct image rendering and retained text/geometry | Uncached layout execution now exists; full native visual equivalence is not established |
+| Missing diagram cache with an authored AlternateContent branch | Uses the authored fallback instead of an empty diagram | Without either representation, the bounded layout interpreter is used; see its limits below |
+| Named available/embedded sfnt and uncompressed EOT faces, six script probes | Faces selected and shaped; no missing glyphs in the probes | Missing font binaries still require substitution; MTX subsets are now decoded |
 | Manual dual-axis chart with rotated labels and styled gridlines | Direct renderer respects bounds, strokes and per-role typography | Automatic label spacing and every rich/per-point label case are not pixel-certified |
 | Nine chart-type render matrix | Owned import/render tests pass | Fresh chartEx native-open/export failed in the local PowerPoint check; this is a failed check, not a pass or an untested feature |
 
@@ -155,3 +158,71 @@ application connection, so the local chartEx failure is not yet attributed solel
 It remains an explicit interoperability investigation. No Office-generated files or screenshots
 are shipped. A consumer can use direct rendering for the validated representations above; an
 arbitrary-deck replacement claim requires the remaining named cases to pass too.
+
+## Extended rendering implementation and independent checks
+
+### MicroType Express
+
+`crates/fonts/src/mtx/` is an original, safe-Rust implementation derived from the public
+[W3C MTX submission](https://www.w3.org/submissions/MTX/), with EOT wrapping per the
+[public EOT format](https://www.w3.org/submissions/EOT/). It restores adaptive LZCOMP streams,
+compact TrueType contours/composites, split push instructions, CVT, HDMX and VDMX tables, `loca`,
+`maxp` instruction limits and sfnt checksums. It never executes font hint programs. There is no
+external font decoder, subprocess or converter in the production path.
+
+Independent local encoding used Google's Apache-2.0 sfntly, revision
+`a56f5782f209771aa226063757d57e6b5c948478`. Four permitted craft-fonts faces (Poppins, Liberation
+Sans, BIZUDMincho and Noto Sans Arabic) total 19,323 glyphs: reconstructed contours, coordinates,
+flags, advances and CVT agree with the source. Push encodings can differ while decoded hint
+instructions agree. The PPTX integration oracle compares raw MTX and EOT-wrapped MTX against the
+uncompressed embedded face: the tested Liberation Sans page is pixel-identical after round trip.
+VDMX compression is covered by original synthetic vectors; sfntly does not exercise that path.
+
+Regular tests include an independently encoded original byte vector, original triangle/composite
+contours, device metrics, truncation and hostile-input smoke. Optional ignored tests
+`independent_encoder_oracle` and
+`microtype_embedded_font_matches_uncompressed_render_and_roundtrip` accept local font paths through
+`MTX_ORACLE_INPUT`, `MTX_ORACLE_OUTPUT` and `MTX_ORACLE_SOURCE`; no font binaries are checked in.
+
+### chartEx
+
+Histogram interval closure, underflow/overflow buckets and categorical aggregation; Pareto
+cumulative sums; independent box-series quartiles, mean markers/lines, inner points and outliers;
+waterfall connector visibility; and treemap parent-label modes now affect rendering and survive
+model rebuilds. The writer distinguishes element-text scalars (`axisId`, `binCount`, `binSize`)
+from attribute scalars (`subtotals/idx/@val`). The reader also accepts legacy scalar encodings.
+
+The original histogram, Pareto, box, waterfall and treemap probes pass the independent Open XML
+SDK 3.3.0 validator (Microsoft365 schema mode). Integration tests check independent series settings,
+statistical boundaries, rebuilt XML and changed pixels. This is schema and rendering evidence;
+it does not override the failed native PowerPoint chartEx open/export check above. Region-map
+geographic boundaries, every rich data-label layout and every automatic Office spacing rule are
+not added by this change.
+
+### Diagrams with no drawing cache
+
+`crates/pptx/src/dgm/layout/` executes layout nodes, ordered data axes, range selection, conditional
+branches, variables, recursive `forEach` references, presentation mappings, named constraints and
+font rules. It includes linear, cycle, snake, hierarchy, composite, space, text, connector and
+pyramid placement paths. Millimetre lengths, degree rotations, preset adjustments, hidden geometry,
+text anchors/bullets and subtree font constraints are interpreted. Transition connectors attach
+to the data nodes' boundaries; line/bent/curved routes and arrow ends are modeled. Snake layouts
+respect flow/growth/breakpoint/continuation settings. Hierarchies allocate space by subtree demand.
+A font-rule floor prevents autofit from silently shrinking below the declared minimum.
+
+The layout compiler and geometry resolver have independent 200,000-operation budgets, at most
+10,000 instances and 64 recursive levels; ordered data has at most 16,000 points and 32,000
+connections. Over-limit graphs and selectors are rejected rather than silently truncated. Unknown
+algorithms, unresolved iterator references and exhausted budgets refuse evaluation and preserve
+the source/preview path. Source data/layout/style/color graphs remain intact on unchanged export.
+The integration fixture has no drawing member, dangling relationship or alternate picture: it
+executes a custom nested layout and preserves graph IDs, geometry and exact pixels on round trip.
+
+These paths do **not** establish equivalence to all of PowerPoint's SmartArt layouts. In the local
+PowerPoint for Mac 16.113.3 check, the custom uncached nested-card probe opens but renders as three
+bullet blocks instead of the specified six-shape layout. The exported package passes the SDK
+validator. The discrepancy remains a failed cross-renderer check. Cyclic/descendant reference
+solving, the complete width/height rule-search policy, accent-pyramid variants, automatic text
+rotation and all 2-D connector shapes are not exhaustively modeled or independently certified.
+Accordingly chart/SmartArt parity scores stay partial; a blanket arbitrary-deck replacement claim
+is not warranted. All implementation/tests above run without LibreOffice.

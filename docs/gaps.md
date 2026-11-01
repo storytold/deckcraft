@@ -3,8 +3,9 @@
 > **Update 2026-11-01:** direct rendering now covers manual chart layouts, rotated chart text,
 > explicit axis/grid strokes, cached SmartArt root coordinates and authored missing-cache
 > fallbacks. Six-script/embedded-font and six-layout cached-diagram probes were compared with
-> PowerPoint. Native chartEx export remains a concrete failed check; full no-cache SmartArt
-> constraints and MicroType Express decoding remain unimplemented. See [coverage](layout-fidelity.md).
+> PowerPoint. MTX decoding, chartEx statistics/visibility and bounded no-cache SmartArt execution
+> are now implemented and tested. Native chartEx opening and the uncached custom-diagram visual
+> comparison remain failed interoperability checks. See [coverage](layout-fidelity.md).
 
 > **Update 2026-10-31:** imported SmartArt graphs and identity-bound Text Pane edits now preserve cached geometry; fixed-size direct XLSX sources synchronize transactionally. Structural diagram changes and unsupported workbook sources remain gaps.
 
@@ -158,11 +159,6 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 10–16 h (render the timeline frame by frame, which the GIF can then reuse for
   transitions and builds; an H.264 encoder is the hard part, FilmCraft has one to copy).
 
-### Embedded MicroType Express font subsets aren't drawn
-- **Evidence:** `p:embeddedFontLst` is read and written. A raw TrueType/OpenType face, or one inside an Embedded OpenType wrapper, is loaded and used to draw. A MicroType Express subset (`application/x-fontdata` with neither form) is kept and written back, and the text still uses a stand-in.
-- **Impact:** decks that embed a MicroType subset reflow until that face is installed.
-- **Estimate:** 3–5 h.
-
 ## Features
 
 ### Font weights beyond Regular, Bold and Italic (#69)
@@ -205,7 +201,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
   Line labels now render, including per-series overrides and original values on stacked lines;
   Title, legend, category/value axes and axis titles now keep independent font families, size,
   weight, slant, language and fill. Label widths and legend row heights use text shaping.
-  Mixed rich-text runs, per-point/per-series label typography, chartEx offsets and complete
+  Histogram bounds/closure and aggregation, box-series statistics/visibility, waterfall connector
+  visibility and treemap parent labels now survive rebuild and change pixels. The original
+  probes pass independent Open XML SDK validation. Mixed rich-text runs, per-point/per-series
+  label typography, chartEx offsets and complete
   native chartEx interoperability remain open. Manual layouts and body rotations now render;
   explicit axes/gridlines retain line width/dashes/paint. A fresh native chartEx probe did not
   finish opening/exporting, so advanced-chart parity is not marked complete. See [layout fidelity](layout-fidelity.md).
@@ -227,12 +226,14 @@ Detail in [file-format-parity.md](file-format-parity.md).
   retain child coordinates/rotation and picture nodes export as diagram picture-filled shapes.
   Complete imported diagram graphs now preserve original point/connection IDs and relationships.
   Text Pane edits use node/presentation identities and retain cached geometry; ambiguous mappings
-  fail atomically. Native save/reopen and undo/redo are covered. These fixes do not implement the
-  diagram constraint engine. Still missing:
+  fail atomically. Native save/reopen and undo/redo are covered. A bounded layout interpreter now
+  renders uncached definitions (axes, conditions, recursive iterators, constraints, connectors,
+  font rules and ten placement families); generated graphs survive round trip. Still missing:
   other generated layouts are simple and have not
   received the same native validation; PowerPoint has ~200 layouts, picture layouts and 3-D styles; editing an
-  imported diagram's structure still redraws it with DeckCraft's layout; a diagram with no cached drawing
-  isn't drawn.
+  imported diagram's structure still redraws it with DeckCraft's layout; the full rule-search and
+  constraint language is incomplete. The custom uncached nested-card fixture renders differently
+  in PowerPoint despite schema-valid export, so native layout parity is not claimed.
 - **Impact:** structural or unmappable edits to an imported diagram still need explicit relayout or conversion to shapes.
 - **Estimate:** 6–10 h.
 

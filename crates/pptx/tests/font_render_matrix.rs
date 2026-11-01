@@ -106,3 +106,35 @@ fn unavailable_font_is_reported_instead_of_silently_claiming_fidelity() {
         report.as_array().unwrap().iter().any(|row| row["requested"][0] == "Synthetic Missing Family 9817" && row["actual"] != row["requested"][0])
     );
 }
+
+#[test]
+#[ignore = "requires MTX_ORACLE_SOURCE and MTX_ORACLE_INPUT: local fonts, never repository assets"]
+fn microtype_embedded_font_matches_uncompressed_render_and_roundtrip() {
+    let source = std::fs::read(std::env::var("MTX_ORACLE_SOURCE").unwrap()).unwrap();
+    let compressed = std::fs::read(std::env::var("MTX_ORACLE_INPUT").unwrap()).unwrap();
+    let mut base = probe();
+    let slide = Arc::make_mut(&mut base.slides[0]);
+    slide.shapes.truncate(1);
+    let run = &mut slide.shapes[0].text.as_mut().unwrap().paragraphs[0].runs[0];
+    run.text = "MTX: office ffi ABC xyz 0123456789 Áéö / مرحبا بالعالم / 日本語".into();
+    run.props.font = Some("Local MTX Probe".into());
+    run.props.font_ea = Some("Local MTX Probe".into());
+    run.props.font_cs = Some("Local MTX Probe".into());
+    run.props.italic = Some(false);
+    let with_font = |font: Vec<u8>| {
+        let mut p = base.clone();
+        let id = p.add_media("original-font.fntdata", "application/x-fontdata", font).unwrap();
+        p.embedded_fonts.push(EmbeddedFont { typeface: "Local MTX Probe".into(), regular: Some(id), ..Default::default() });
+        p
+    };
+    let expected = render_slide(&with_font(source), 0, &RenderOpts::default());
+    for bytes in [compressed.clone(), eot(&compressed)] {
+        let p = with_font(bytes);
+        let exported = deckcraft_pptx::export(&p).unwrap();
+        let back = deckcraft_pptx::import(&exported).unwrap();
+        let actual = render_slide(&back, 0, &RenderOpts::default());
+        assert_eq!(expected.pixels, actual.pixels, "compressed embedding changed final slide pixels");
+        let report = deckcraft_engine::fonts::inspect_fonts(&back);
+        assert!(report.as_array().unwrap().iter().any(|row| row["embedded"] == true));
+    }
+}

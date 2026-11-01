@@ -249,13 +249,15 @@ pub(crate) fn capture(imp: &mut Imp, part: &Part, ids: &El, drawing: &str, shape
             external: false,
         });
     }
-    package.rels.push(ChartRel {
-        id: "drawing".into(),
-        rel_type: super::RT_DRAWING.into(),
-        target: drawing.into(),
-        part: drawing.into(),
-        external: false,
-    });
+    if !drawing.is_empty() {
+        package.rels.push(ChartRel {
+            id: "drawing".into(),
+            rel_type: super::RT_DRAWING.into(),
+            target: drawing.into(),
+            part: drawing.into(),
+            external: false,
+        });
+    }
     let mut pending: Vec<_> = package.rels.iter().map(|r| r.part.clone()).collect();
     let mut seen = HashSet::new();
     let mut bytes = 0usize;
@@ -307,6 +309,16 @@ fn replace_drawing_id(el: &mut El, id: &str, depth: usize) {
     }
 }
 
+fn remove_drawing_reference(el: &mut El, depth: usize) {
+    if depth > crate::xml::MAX_DEPTH {
+        return;
+    }
+    el.children.retain(|n| !matches!(n,crate::xml::Node::El(e) if e.is("dataModelExt")));
+    for c in el.elements_mut() {
+        remove_drawing_reference(c, depth + 1);
+    }
+}
+
 /// Validate first, then publish under fresh names; no retained part can overwrite a slide.
 pub(crate) fn write(x: &mut crate::write::Exp, out: &mut crate::write::Out, s: &Shape) -> Option<HashMap<String, String>> {
     let kept = s.diagram.as_ref()?.kept.as_ref()?;
@@ -322,7 +334,11 @@ pub(crate) fn write(x: &mut crate::write::Exp, out: &mut crate::write::Out, s: &
         }
     }
     let mut roots = HashMap::new();
-    for role in ["dm", "lo", "qs", "cs", "drawing"] {
+    let roles: Vec<_> = ["dm", "lo", "qs", "cs", "drawing"]
+        .into_iter()
+        .filter(|role| *role != "drawing" || kept.package.rels.iter().any(|r| r.id == "drawing"))
+        .collect();
+    for &role in &roles {
         let rel = kept.package.rels.iter().find(|r| r.id == role && !r.external)?;
         let root = originals.get(&opc::norm(&rel.part))?;
         if root.name.ends_with(".rels") {
@@ -349,12 +365,16 @@ pub(crate) fn write(x: &mut crate::write::Exp, out: &mut crate::write::Out, s: &
         names.insert(opc::norm(&p.name), format!("ppt/diagrams/preserved{n}_{i}.{ext}"));
     }
     let mut ids = HashMap::new();
-    for role in ["dm", "lo", "qs", "cs", "drawing"] {
+    for &role in &roles {
         let rel = roots.get(role)?;
         let target = names.get(&opc::norm(&rel.part))?;
         ids.insert(role.to_string(), out.rels.add_new(&rel.rel_type, &opc::relative(&out.name, target), false));
     }
-    replace_drawing_id(&mut data, ids.get("drawing")?, 0);
+    if let Some(id) = ids.get("drawing") {
+        replace_drawing_id(&mut data, id, 0);
+    } else {
+        remove_drawing_reference(&mut data, 0);
+    }
     for p in kept.package.parts.iter().filter(|p| !p.name.ends_with(".rels")) {
         let key = opc::norm(&p.name);
         let name = names.get(&key)?;

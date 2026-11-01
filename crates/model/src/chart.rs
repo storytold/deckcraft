@@ -245,6 +245,17 @@ pub struct Series {
     /// `c:errBars` on the values (y bars; a bar chart's run along its value axis).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_bars: Option<ErrorBars>,
+    /// chartEx options belong to a series; absence inherits the chart-wide defaults.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extended: Option<ExtendedChartOptions>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inclusive_quartiles: Option<bool>,
+}
+
+impl Series {
+    pub fn extended_options<'a>(&'a self, chart: &'a Chart) -> &'a ExtendedChartOptions {
+        self.extended.as_ref().unwrap_or(&chart.extended)
+    }
 }
 
 /// Error bars (`c:errBars`): how far each point's bar reaches below and above it.
@@ -486,6 +497,8 @@ pub struct Chart {
     /// A histogram's bin width (`cx:binSize`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bin_size: Option<f64>,
+    /// Extended chart layout options, independent of the original XML sidecar.
+    pub extended: ExtendedChartOptions,
     /// Original chart XML part kept for round-trip of unmodelled options.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub raw: Option<String>,
@@ -583,8 +596,43 @@ impl Default for Chart {
             up_down_bars: false,
             bin_count: None,
             bin_size: None,
+            extended: ExtendedChartOptions::default(),
             raw: None,
             kept: ChartKept::default(),
+        }
+    }
+}
+
+/// Statistical and hierarchy options used by Office's chartEx layouts.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ExtendedChartOptions {
+    pub bin_closed_left: bool,
+    pub underflow: Option<f64>,
+    pub overflow: Option<f64>,
+    /// Aggregate observations by category rather than numerical intervals.
+    pub aggregation: bool,
+    pub mean_marker: bool,
+    pub mean_line: bool,
+    pub inner_points: bool,
+    pub outliers: bool,
+    pub connector_lines: bool,
+    /// Treemap parent labels: banner, overlapping or none.
+    pub parent_labels: Option<String>,
+}
+impl Default for ExtendedChartOptions {
+    fn default() -> Self {
+        Self {
+            bin_closed_left: false,
+            underflow: None,
+            overflow: None,
+            aggregation: false,
+            mean_marker: true,
+            mean_line: false,
+            inner_points: false,
+            outliers: true,
+            connector_lines: true,
+            parent_labels: None,
         }
     }
 }
@@ -1356,6 +1404,7 @@ pub struct BoxStats {
     pub high: f64,
     pub mean: f64,
     pub outliers: Vec<f64>,
+    pub inside: Vec<f64>,
 }
 
 impl Chart {
@@ -1372,9 +1421,17 @@ impl Chart {
             return vec![];
         }
         v.sort_by(f64::total_cmp);
-        let (lo, hi) = (v[0], v[v.len() - 1]);
+        let lower = self.extended.underflow.filter(|n| n.is_finite());
+        let upper = self.extended.overflow.filter(|n| n.is_finite() && lower.is_none_or(|l| *n > l));
+        let left = self.extended.bin_closed_left;
+        let under = lower.map_or(0, |l| v.iter().filter(|x| if left { **x < l } else { **x <= l }).count());
+        let over = upper.map_or(0, |u| v.iter().filter(|x| if left { **x >= u } else { **x > u }).count());
+        let lo = lower.unwrap_or(v[0]);
+        let hi = upper.unwrap_or(v[v.len() - 1]).max(lo);
+        let end = v.len().saturating_sub(over);
+        v = v.get(under..end).unwrap_or_default().to_vec();
         let span = hi - lo;
-        let n = v.len() as f64;
+        let n = v.len().max(1) as f64;
         let width = if let Some(w) = self.bin_size.filter(|w| w.is_finite() && *w > 0.0) {
             w
         } else if let Some(k) = self.bin_count.filter(|k| *k > 0) {
@@ -1396,17 +1453,29 @@ impl Chart {
         let mut bins: Vec<Bin> = (0..count).map(|i| Bin { lo: lo + width * i as f64, hi: lo + width * (i + 1) as f64, count: 0 }).collect();
         for x in v {
             // (lo, hi] bins, the first one also holding the minimum.
-            let mut i = (((x - lo) / width).ceil() as usize).saturating_sub(1).min(count - 1);
+            let mut i =
+                if left { ((x - lo) / width).floor() as usize } else { (((x - lo) / width).ceil() as usize).saturating_sub(1) }.min(count - 1);
             // The division can round across an edge: settle on the bin whose stored bounds hold x.
-            while i > 0 && x <= bins[i - 1].hi {
+            while i > 0 && if left { x < bins[i - 1].hi } else { x <= bins[i - 1].hi } {
                 i -= 1;
             }
-            while i + 1 < count && x > bins[i].hi {
+            while i + 1 < count && if left { x >= bins[i].hi } else { x > bins[i].hi } {
                 i += 1;
             }
             if let Some(b) = bins.get_mut(i) {
                 b.count += 1;
             }
+        }
+        if let Some(upper) = upper
+            && let Some(last) = bins.last_mut()
+        {
+            last.hi = upper;
+        }
+        if let Some(lower) = lower {
+            bins.insert(0, Bin { lo: f64::NEG_INFINITY, hi: lower, count: under });
+        }
+        if let Some(upper) = upper {
+            bins.push(Bin { lo: upper, hi: f64::INFINITY, count: over });
         }
         bins
     }
@@ -1415,22 +1484,47 @@ impl Chart {
     /// touching columns, labelled by bin range. A Pareto sorts the bins by count and adds the
     /// cumulative percentage as a line on a 0–100 % secondary axis.
     pub fn histogram_view(&self) -> Chart {
-        let mut bins = self.histogram_bins();
         let pareto = self.kind == ChartType::Pareto;
-        if pareto {
-            bins.sort_by_key(|b| std::cmp::Reverse(b.count));
-        }
         let fmt = |v: f64| {
             let r = (v * 100.0).round() / 100.0;
             if (r - r.round()).abs() < 1e-9 { format!("{}", r.round() as i64) } else { format!("{r}") }
         };
-        let first_lo = bins.iter().map(|b| b.lo).fold(f64::INFINITY, f64::min);
+        let mut entries: Vec<(String, f64)> = Vec::new();
+        if self.extended.aggregation {
+            let mut indices = std::collections::HashMap::new();
+            if let Some(series) = self.series.first() {
+                for (i, value) in series.values.iter().enumerate() {
+                    let Some(value) = value.filter(|v| v.is_finite()) else { continue };
+                    let category = self.categories.get(i).cloned().unwrap_or_default();
+                    let index = *indices.entry(category.clone()).or_insert_with(|| {
+                        entries.push((category, 0.0));
+                        entries.len() - 1
+                    });
+                    if let Some(entry) = entries.get_mut(index) {
+                        entry.1 += value;
+                    }
+                }
+            }
+        } else {
+            let bins = self.histogram_bins();
+            let left = self.extended.bin_closed_left;
+            for (i, b) in bins.iter().enumerate() {
+                let label = if b.lo.is_infinite() {
+                    format!("{} {}", if left { "<" } else { "≤" }, fmt(b.hi))
+                } else if b.hi.is_infinite() {
+                    format!("{} {}", if left { "≥" } else { ">" }, fmt(b.lo))
+                } else {
+                    format!("{}{}, {}{}", if left || i == 0 { "[" } else { "(" }, fmt(b.lo), fmt(b.hi), if left { ")" } else { "]" })
+                };
+                entries.push((label, b.count as f64));
+            }
+        }
+        if pareto {
+            entries.sort_by(|a, b| b.1.total_cmp(&a.1));
+        }
         let mut v = Chart {
             kind: if pareto { ChartType::Combo } else { ChartType::Column },
-            categories: bins
-                .iter()
-                .map(|b| if b.lo <= first_lo { format!("[{}, {}]", fmt(b.lo), fmt(b.hi)) } else { format!("({}, {}]", fmt(b.lo), fmt(b.hi)) })
-                .collect(),
+            categories: entries.iter().map(|(label, _)| label.clone()).collect(),
             series: vec![],
             gap_width: 0.0,
             raw: None,
@@ -1441,20 +1535,20 @@ impl Chart {
         let base = self.series.first().cloned().unwrap_or_default();
         v.series.push(Series {
             name,
-            values: bins.iter().map(|b| Some(b.count as f64)).collect(),
+            values: entries.iter().map(|(_, value)| Some(*value)).collect(),
             kind: pareto.then_some(ChartType::Column),
             number_format: None,
             ..base
         });
         if pareto {
-            let total = bins.iter().map(|b| b.count).sum::<usize>().max(1) as f64;
+            let total = entries.iter().map(|(_, value)| *value).sum::<f64>().max(f64::EPSILON);
             let mut run = 0.0;
             v.series.push(Series {
                 name: "Cumulative %".into(),
-                values: bins
+                values: entries
                     .iter()
-                    .map(|b| {
-                        run += b.count as f64;
+                    .map(|(_, value)| {
+                        run += value;
                         Some(run / total)
                     })
                     .collect(),
@@ -1499,7 +1593,7 @@ impl Chart {
                             .filter_map(|(_, v)| *v)
                             .filter(|v| v.is_finite())
                             .collect();
-                        box_stats_by(pts, self.inclusive_quartiles)
+                        box_stats_by(pts, s.inclusive_quartiles.unwrap_or(self.inclusive_quartiles))
                     })
                     .collect()
             })
@@ -1555,7 +1649,7 @@ pub fn box_stats_by(mut pts: Vec<f64>, inclusive: bool) -> Option<BoxStats> {
     let high = inside.last().copied().unwrap_or(q3).max(q3);
     let mean = pts.iter().sum::<f64>() / pts.len() as f64;
     let outliers = pts.iter().copied().filter(|v| *v < lo_fence || *v > hi_fence).collect();
-    Some(BoxStats { low, q1, median, q3, high, mean, outliers })
+    Some(BoxStats { low, q1, median, q3, high, mean, outliers, inside })
 }
 
 /// A node of a treemap or sunburst hierarchy: its label, the total of the leaves under it, and
@@ -1740,5 +1834,42 @@ mod chartex_tests {
         assert_eq!(groups, vec!["Group A".to_string(), "Group B".to_string()]);
         assert_eq!(stats.len(), 2);
         assert!(stats.iter().all(|s| s.len() == 2 && s.iter().all(Option::is_some)));
+    }
+}
+
+#[cfg(test)]
+mod extended_tests {
+    use super::*;
+    fn observed() -> Chart {
+        Chart {
+            kind: ChartType::Histogram,
+            bin_size: Some(2.0),
+            series: vec![Series { values: [0.0, 2.0, 3.0, 4.0, 6.0, 8.0, 10.0].into_iter().map(Some).collect(), ..Default::default() }],
+            ..Default::default()
+        }
+    }
+    #[test]
+    fn boundary_buckets_respect_open_and_closed_sides_without_losing_observations() {
+        let mut c = observed();
+        c.extended.underflow = Some(2.0);
+        c.extended.overflow = Some(8.0);
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).collect::<Vec<_>>(), [2, 2, 1, 1, 1]);
+        c.extended.bin_closed_left = true;
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).collect::<Vec<_>>(), [1, 2, 1, 1, 2]);
+        assert_eq!(c.histogram_view().categories, ["< 2", "[2, 4)", "[4, 6)", "[6, 8)", "≥ 8"]);
+        c.extended.underflow = Some(20.0);
+        c.extended.overflow = Some(30.0);
+        assert_eq!(c.histogram_bins().iter().map(|b| b.count).sum::<usize>(), 7);
+    }
+    #[test]
+    fn categorical_pareto_aggregates_sorts_and_accumulates_actual_values() {
+        let mut c = observed();
+        c.kind = ChartType::Pareto;
+        c.extended.aggregation = true;
+        c.categories = ["A", "B", "A", "C", "B", "C", "A"].map(str::to_string).to_vec();
+        let view = c.histogram_view();
+        assert_eq!(view.categories, ["A", "C", "B"]);
+        assert_eq!(view.series[0].values, [Some(13.0), Some(12.0), Some(8.0)]);
+        assert_eq!(view.series[1].values.last(), Some(&Some(1.0)));
     }
 }

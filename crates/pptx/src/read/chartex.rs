@@ -149,20 +149,48 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
                 output_budget = output_budget.saturating_sub(lvl.len());
             }
         }
+        let mut options = deckcraft_model::chart::ExtendedChartOptions::default();
+        let mut inclusive_quartiles = None;
         if let Some(st) = s.child("layoutPr").and_then(|l| l.child("statistics")) {
-            c.inclusive_quartiles = st.attr("quartileMethod") == Some("inclusive");
+            inclusive_quartiles = Some(st.attr("quartileMethod") == Some("inclusive"));
         }
         if let Some(b) = s.child("layoutPr").and_then(|l| l.child("binning")) {
-            c.bin_count = b.child("binCount").and_then(|n| n.u32("val")).filter(|n| *n > 0);
-            c.bin_size = b.child("binSize").and_then(|n| n.attr("val")).and_then(|v| v.parse::<f64>().ok()).filter(|v| v.is_finite() && *v > 0.0);
+            options.bin_closed_left = b.attr("intervalClosed") == Some("l");
+            options.underflow = b.f64("underflow");
+            options.overflow = b.f64("overflow");
+            c.bin_count = b.child("binCount").and_then(|n| n.text().trim().parse().ok().or_else(|| n.u32("val"))).filter(|n| *n > 0);
+            c.bin_size =
+                b.child("binSize").and_then(|n| n.text().trim().parse::<f64>().ok().or_else(|| n.f64("val"))).filter(|v| v.is_finite() && *v > 0.0);
+        }
+        if let Some(lp) = s.child("layoutPr") {
+            options.aggregation |= lp.child("aggregation").is_some();
+            options.parent_labels = lp.child("parentLabelLayout").and_then(|e| e.attr("val")).map(str::to_string);
+            if let Some(v) = lp.child("visibility") {
+                options.mean_marker = v.bool("meanMarker").unwrap_or(options.mean_marker);
+                options.mean_line = v.bool("meanLine").unwrap_or(options.mean_line);
+                options.inner_points = v.bool("nonoutliers").unwrap_or(options.inner_points);
+                options.outliers = v.bool("outliers").unwrap_or(options.outliers);
+                options.connector_lines = v.bool("connectorLines").unwrap_or(options.connector_lines);
+            }
+        }
+        if c.series.is_empty() {
+            c.extended = options.clone();
+            c.inclusive_quartiles = inclusive_quartiles.unwrap_or(false);
         }
         if let Some(st) = s.child("layoutPr").and_then(|l| l.child("subtotals")) {
-            c.subtotals = st.children_named("idx").filter_map(|i| i.u32("val")).map(|i| i as usize).take(MAX_POINTS).collect();
+            c.subtotals = st
+                .children_named("idx")
+                .filter_map(|i| i.text().trim().parse::<u32>().ok().or_else(|| i.u32("val")))
+                .map(|i| i as usize)
+                .take(MAX_POINTS)
+                .collect();
         }
         let name = s.child("tx").and_then(|t| t.find("v")).map(|v| v.text()).unwrap_or_default();
         c.series.push(Series {
             name,
             values,
+            extended: s.child("layoutPr").map(|_| options),
+            inclusive_quartiles,
             data_labels: s.child("dataLabels").map(|l| l.bool("hidden") != Some(true)),
             number_format: format,
             fill: super::chart::simple_fill(s.child("spPr")),

@@ -41,12 +41,13 @@ pub fn layout(ctx: &Ctx, shape: &Shape, body: &TextBody, opts: &Opts) -> TextLay
         // Text that overflows even at the smallest scale gets that scale: every larger one
         // overflows too, so searching would only lay it out a dozen more times (seconds for a
         // body of tens of thousands of paragraphs, on every redraw of the slide).
-        let smallest = layout_scaled(ctx, shape, body, &bp, opts, 0.1, 0.2);
+        let floor = bp.min_autofit_scale.filter(|v| v.is_finite()).unwrap_or(0.1).clamp(0.1, 1.0);
+        let smallest = layout_scaled(ctx, shape, body, &bp, opts, floor, 0.2);
         if smallest.overflow {
             return smallest;
         }
         // Binary search the largest scale that fits (steps like 90%, 80%… with line reduction).
-        let (mut lo, mut hi) = (0.1_f64, scale0);
+        let (mut lo, mut hi) = (floor, scale0);
         let mut best = Some(smallest);
         for _ in 0..12 {
             let mid = (lo + hi) / 2.0;

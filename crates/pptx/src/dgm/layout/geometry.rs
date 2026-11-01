@@ -1,0 +1,476 @@
+//! Algorithm geometry and reference constraints. All dimensions are in presentation points.
+use super::{Data, Instance, MAX_INSTANCES, MAX_WORK, Placed};
+use crate::xml::El;
+use deckcraft_geom::Xfrm;
+
+#[derive(Clone, Copy, PartialEq)]
+struct BoxStyle {
+    rect: Xfrm,
+    font: Option<f64>,
+    min_font: Option<f64>,
+    margins: [f64; 4],
+    extra: [Option<f64>; 64],
+}
+impl BoxStyle {
+    fn new(rect: Xfrm) -> Self {
+        Self { rect, font: None, min_font: None, margins: [3.6; 4], extra: [None; 64] }
+    }
+    fn get(&self, property: &str) -> Option<f64> {
+        let r = self.rect;
+        Some(match property {
+            "diam" => r.w.min(r.h),
+            "w" => r.w,
+            "h" => r.h,
+            "l" => r.x,
+            "t" => r.y,
+            "r" => r.x + r.w,
+            "b" => r.y + r.h,
+            "ctrX" => r.x + r.w / 2.0,
+            "ctrY" => r.y + r.h / 2.0,
+            "primFontSz" | "secFontSz" => self.font.unwrap_or(18.0),
+            "lMarg" => self.margins[0],
+            "tMarg" => self.margins[1],
+            "rMarg" => self.margins[2],
+            "bMarg" => self.margins[3],
+            _ => return extra_index(property).and_then(|i| self.extra.get(i)).copied().flatten(),
+        })
+    }
+    fn set(&mut self, property: &str, value: f64, op: &str) {
+        if !value.is_finite() || value.abs() > 1e6 {
+            return;
+        }
+        let old = self.get(property).unwrap_or(value);
+        let v = match op {
+            "gte" => old.max(value),
+            "lte" => old.min(value),
+            _ => value,
+        };
+        match property {
+            "diam" => {
+                self.rect.w = v.max(0.0);
+                self.rect.h = v.max(0.0);
+            }
+            "w" => self.rect.w = v.max(0.0),
+            "h" => self.rect.h = v.max(0.0),
+            "l" => self.rect.x = v,
+            "t" => self.rect.y = v,
+            "r" => self.rect.x = v - self.rect.w,
+            "b" => self.rect.y = v - self.rect.h,
+            "ctrX" => self.rect.x = v - self.rect.w / 2.0,
+            "ctrY" => self.rect.y = v - self.rect.h / 2.0,
+            "primFontSz" | "secFontSz" => self.font = Some(v.clamp(1.0, 400.0)),
+            "lMarg" => self.margins[0] = v.max(0.0),
+            "tMarg" => self.margins[1] = v.max(0.0),
+            "rMarg" => self.margins[2] = v.max(0.0),
+            "bMarg" => self.margins[3] = v.max(0.0),
+            _ => {
+                if let Some(i) = extra_index(property)
+                    && let Some(extra) = self.extra.get_mut(i)
+                {
+                    *extra = Some(v);
+                }
+            }
+        }
+    }
+}
+
+fn extra_index(property: &str) -> Option<usize> {
+    const EXTRA: &[&str] = &[
+        "sp",
+        "sibSp",
+        "secSibSp",
+        "begPad",
+        "endPad",
+        "alignOff",
+        "begMarg",
+        "endMarg",
+        "bendDist",
+        "connDist",
+        "pyraAcctRatio",
+        "stemThick",
+        "wArH",
+        "hArH",
+    ];
+    EXTRA.iter().position(|p| *p == property).or_else(|| {
+        property.strip_prefix("user").and_then(|v| {
+            let b = v.as_bytes();
+            if b.len() == 1 && b[0].is_ascii_uppercase() { Some(20 + (b[0] - b'A') as usize) } else { None }
+        })
+    })
+}
+
+pub(super) fn place<'a>(node: &Instance<'a>, rect: Xfrm, data: &Data<'a>, out: &mut Vec<Placed<'a>>, depth: usize) -> Result<(), &'static str> {
+    let mut style = BoxStyle::new(rect);
+    self_constraints(node, &mut style);
+    place_inner(node, style, data, out, depth, &[], &mut 0)
+}
+
+#[derive(Clone, Copy)]
+struct Inherited<'a> {
+    constraint: &'a El,
+    reference: BoxStyle,
+}
+
+fn charge(work: &mut usize, amount: usize) -> Result<(), &'static str> {
+    *work = work.saturating_add(amount);
+    if *work > MAX_WORK { Err("diagram constraint budget exceeded") } else { Ok(()) }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn place_inner<'a>(
+    node: &Instance<'a>,
+    mut style: BoxStyle,
+    data: &Data<'a>,
+    out: &mut Vec<Placed<'a>>,
+    depth: usize,
+    inherited: &[Inherited<'a>],
+    work: &mut usize,
+) -> Result<(), &'static str> {
+    if depth > 64 || out.len() >= MAX_INSTANCES {
+        return Err("diagram geometry budget exceeded");
+    }
+    charge(work, 1 + node.rules.len() + node.constraints.len() + inherited.len())?;
+    for inherited in inherited {
+        let c = inherited.constraint;
+        if matches_target(node, c, data)
+            && let Some(value) = constraint_value(c, &inherited.reference)
+        {
+            style.set(c.attr("type").unwrap_or(""), value, c.attr("op").unwrap_or("equ"));
+        }
+    }
+    for rule in &node.rules {
+        if rule.attr("type") == Some("primFontSz") {
+            style.min_font = rule.f64("val").filter(|v| *v > 0.0);
+        }
+    }
+    if let Some(shape) = node.shape.filter(|s| s.attr("type").is_some_and(|t| !t.is_empty() && t != "none")) {
+        let mut rect = style.rect;
+        rect.rot += shape.f64("rot").unwrap_or(0.0).clamp(-36000.0, 36000.0);
+        out.push(Placed {
+            shape: Some(shape),
+            points: node.points.iter().filter_map(|i| data.points.get(*i).copied()).collect(),
+            name: node.name.clone(),
+            style: node.style.clone(),
+            rect,
+            font: style.font,
+            min_font: style.min_font,
+            margins: style.margins,
+            text_rotation: node.number("txRot", 0.0),
+            connector: node.alg == "conn" || shape.attr("type") == Some("conn"),
+            params: node.params.clone(),
+            endpoints: node.points.iter().find_map(|i| data.endpoints(*i)),
+        });
+    } else if node.alg == "tx" && !node.points.is_empty() {
+        out.push(Placed {
+            shape: None,
+            points: node.points.iter().filter_map(|i| data.points.get(*i).copied()).collect(),
+            name: node.name.clone(),
+            style: node.style.clone(),
+            rect: style.rect,
+            font: style.font,
+            min_font: style.min_font,
+            margins: style.margins,
+            text_rotation: node.number("txRot", 0.0),
+            connector: false,
+            params: node.params.clone(),
+            endpoints: None,
+        });
+    }
+    if node.children.is_empty() {
+        return Ok(());
+    }
+    let local = BoxStyle { rect: Xfrm::new(0.0, 0.0, style.rect.w, style.rect.h), ..style };
+    let mut children: Vec<_> = initial(node, local).into_iter().map(|rect| BoxStyle { rect, ..local }).collect();
+    for (child, bounds) in node.children.iter().zip(&mut children) {
+        charge(work, child.constraints.len())?;
+        self_constraints(child, bounds);
+    }
+    // A bounded relaxation handles forward references (e.g. arrow width depends on node width).
+    for _ in 0..8 {
+        charge(work, children.len())?;
+        let before = children.clone();
+        for constraint in node.constraints.iter().filter(|e| matches!(e.attr("for"), Some("ch" | "des"))) {
+            charge(work, children.len().saturating_mul(2))?;
+            let reference = match constraint.attr("refFor").unwrap_or("self") {
+                "ch" | "des" => node
+                    .children
+                    .iter()
+                    .position(|c| constraint.attr("refForName").is_none_or(|n| n.is_empty() || n == c.name))
+                    .and_then(|i| children.get(i))
+                    .copied()
+                    .unwrap_or(local),
+                _ => local,
+            };
+            let Some(value) = constraint_value(constraint, &reference) else { continue };
+            for (child, bounds) in node.children.iter().zip(children.iter_mut()) {
+                if matches_target(child, constraint, data) {
+                    bounds.set(constraint.attr("type").unwrap_or(""), value, constraint.attr("op").unwrap_or("equ"));
+                }
+            }
+        }
+        if children == before {
+            break;
+        }
+    }
+    // Linear placement uses the constrained sizes, including invisible spacing nodes.
+    if matches!(node.alg.as_str(), "lin" | "hierChild") {
+        pack_linear(node, local, &mut children);
+    }
+    let mut inherited = inherited.to_vec();
+    for constraint in node.constraints.iter().filter(|c| c.attr("for") == Some("des")) {
+        inherited.push(Inherited { constraint, reference: local });
+    }
+    let iter: Box<dyn Iterator<Item = usize>> =
+        if node.reverse { Box::new((0..node.children.len()).rev()) } else { Box::new(0..node.children.len()) };
+    for i in iter {
+        if let (Some(child), Some(bounds)) = (node.children.get(i), children.get(i)) {
+            let mut global = *bounds;
+            global.rect.x += style.rect.x;
+            global.rect.y += style.rect.y;
+            place_inner(child, global, data, out, depth + 1, &inherited, work)?;
+        }
+    }
+    Ok(())
+}
+
+fn matches_target(node: &Instance<'_>, constraint: &El, data: &Data<'_>) -> bool {
+    constraint.attr("forName").is_none_or(|n| n.is_empty() || n == node.name)
+        && constraint.attr("ptType").is_none_or(|t| t == "all" || node.points.iter().any(|i| data.matches(*i, t)))
+}
+
+fn self_constraints(node: &Instance<'_>, style: &mut BoxStyle) {
+    for constraint in node.constraints.iter().filter(|e| e.attr("for").unwrap_or("self") == "self") {
+        if let Some(value) = constraint_value(constraint, style) {
+            style.set(constraint.attr("type").unwrap_or(""), value, constraint.attr("op").unwrap_or("equ"));
+        }
+    }
+}
+
+fn constraint_value(c: &El, reference: &BoxStyle) -> Option<f64> {
+    let ty = c.attr("refType").filter(|s| *s != "none").unwrap_or("");
+    // Diagram absolute lengths are millimetres; only font sizes use points.
+    let scale =
+        if matches!(c.attr("type"), Some("primFontSz" | "secFontSz" | "pyraAcctRatio")) || c.attr("type").is_some_and(|s| s.starts_with("user")) {
+            1.0
+        } else {
+            72.0 / 25.4
+        };
+    if ty.is_empty() {
+        c.f64("val").map(|v| v * scale)
+    } else {
+        reference.get(ty).map(|v| v * c.f64("fact").unwrap_or(1.0) + c.f64("val").unwrap_or(0.0) * scale)
+    }
+}
+
+fn initial(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
+    let r = style.rect;
+    let count = node.children.len();
+    let n = count.max(1) as f64;
+    let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
+    let dir = node.param("linDir", default_dir);
+    let vertical = matches!(dir.as_str(), "fromT" | "fromB");
+    let gap = if node.alg == "composite" { 0.0 } else { style.get("sp").or(style.get("sibSp")).unwrap_or(0.0).max(0.0) };
+    let (w, h) = if vertical { (r.w, ((r.h - gap * (n - 1.0)) / n).max(0.0)) } else { (((r.w - gap * (n - 1.0)) / n).max(0.0), r.h) };
+    match node.alg.as_str() {
+        "lin" | "hierChild" => (0..count)
+            .map(|i| {
+                Xfrm::new(r.x + if vertical { 0.0 } else { i as f64 * (w + gap) }, r.y + if vertical { i as f64 * (h + gap) } else { 0.0 }, w, h)
+            })
+            .collect(),
+        "cycle" => {
+            let start = node.number("stAng", 0.0).to_radians();
+            let span = node.number("spanAng", 360.0).to_radians();
+            let center = node.param("ctrShpMap", "none") != "none";
+            let orbit = (count - usize::from(center)).max(1) as f64;
+            let diameter = (r.w.min(r.h) / (1.0 + orbit / std::f64::consts::PI)).min(r.w.min(r.h) * 0.42);
+            (0..count)
+                .map(|i| {
+                    if center && i == 0 {
+                        return Xfrm::new(r.x + r.w / 2.0 - diameter / 2.0, r.y + r.h / 2.0 - diameter / 2.0, diameter, diameter);
+                    }
+                    let angle = start
+                        + (i - usize::from(center)) as f64 * span
+                            / if (span.abs() - std::f64::consts::TAU).abs() < 1e-6 { orbit } else { (orbit - 1.0).max(1.0) };
+                    Xfrm::new(
+                        r.x + r.w / 2.0 + (r.w - diameter) * 0.5 * angle.cos() - diameter / 2.0,
+                        r.y + r.h / 2.0 + (r.h - diameter) * 0.5 * angle.sin() - diameter / 2.0,
+                        diameter,
+                        diameter,
+                    )
+                })
+                .collect()
+        }
+        "snake" => {
+            let aspect = node.number("ar", 1.6).max(0.05);
+            let column = node.param("flowDir", "row") == "col";
+            let primary = if node.param("bkpt", "bal") == "fixed" {
+                (node.number("bkPtFixedVal", 1.0) as usize).clamp(1, count.max(1))
+            } else {
+                let ratio = if column { r.h / r.w.max(0.01) * aspect } else { r.w / r.h.max(0.01) / aspect };
+                ((n * ratio).sqrt().ceil() as usize).clamp(1, count.max(1))
+            };
+            let secondary = count.div_ceil(primary).max(1);
+            let (cols, rows) = if column { (secondary, primary) } else { (primary, secondary) };
+            let (w, h) = (r.w / cols as f64, r.h / rows as f64);
+            let reversed = node.param("contDir", "sameDir") == "revDir";
+            let grow = node.param("grDir", "tL");
+            (0..count)
+                .map(|i| {
+                    let minor = i / primary;
+                    let major = if reversed && minor % 2 == 1 { primary - 1 - i % primary } else { i % primary };
+                    let (mut col, mut row) = if column { (minor, major) } else { (major, minor) };
+                    if grow.ends_with('R') {
+                        col = cols - 1 - col;
+                    }
+                    if grow.starts_with('b') {
+                        row = rows - 1 - row;
+                    }
+                    Xfrm::new(r.x + col as f64 * w, r.y + row as f64 * h, w, h)
+                })
+                .collect()
+        }
+        "pyra" => (0..count)
+            .map(|i| {
+                let width = r.w * (i + 1) as f64 / n;
+                Xfrm::new(r.x + (r.w - width) / 2.0, r.y + i as f64 * r.h / n, width, r.h / n)
+            })
+            .collect(),
+        "hierRoot" => hierarchy(node, style),
+        _ => vec![r; count],
+    }
+}
+
+fn pack_linear(node: &Instance<'_>, style: BoxStyle, children: &mut [BoxStyle]) {
+    let r = style.rect;
+    let default_dir = if node.alg == "hierChild" && node.param("chDir", "horz") == "vert" { "fromT" } else { "fromL" };
+    let dir = node.param("linDir", default_dir);
+    let vertical = matches!(dir.as_str(), "fromT" | "fromB");
+    let backwards = matches!(dir.as_str(), "fromR" | "fromB");
+    let gap = style.get("sp").or(style.get("sibSp")).unwrap_or(0.0).max(0.0);
+    let gaps = gap * children.len().saturating_sub(1) as f64;
+    let sum: f64 = children.iter().map(|b| if vertical { b.rect.h } else { b.rect.w }).sum();
+    let available = if vertical { r.h } else { r.w };
+    let scale = if sum + gaps > available { available / (sum + gaps).max(0.01) } else { 1.0 };
+    let align = node.param(if vertical { "vertAlign" } else { "horzAlign" }, "ctr");
+    let mut pos = if align == "ctr" {
+        (available - (sum + gaps) * scale) / 2.0
+    } else if align == "r" || align == "b" {
+        available - (sum + gaps) * scale
+    } else {
+        0.0
+    };
+    for child in children {
+        let b = &mut child.rect;
+        if vertical {
+            b.h *= scale;
+            b.y = r.y + if backwards { r.h - pos - b.h } else { pos };
+            b.x = r.x + (r.w - b.w) / 2.0;
+            pos += b.h + gap * scale;
+        } else {
+            b.w *= scale;
+            b.x = r.x + if backwards { r.w - pos - b.w } else { pos };
+            b.y = r.y + (r.h - b.h) / 2.0;
+            pos += b.w + gap * scale;
+        }
+    }
+}
+
+/// Resolve transition identities after all node bounds are known. Connectors are kept behind
+/// nodes, and use actual boundary attachment points rather than an arbitrary canvas diagonal.
+pub(super) fn connect(out: &mut [Placed<'_>], data: &Data<'_>) {
+    use std::collections::HashMap;
+    let mut boxes = HashMap::new();
+    for p in out.iter().filter(|p| !p.connector) {
+        for point in &p.points {
+            if let Some(id) = point.attr("modelId") {
+                boxes.entry(id).or_insert(p.rect);
+            }
+        }
+    }
+    for p in out.iter_mut().filter(|p| p.connector) {
+        let Some((a, b)) = p.endpoints else { continue };
+        let lookup = |i: usize| data.points.get(i).and_then(|point| point.attr("modelId")).and_then(|id| boxes.get(id)).copied();
+        let (Some(a), Some(b)) = (lookup(a), lookup(b)) else { continue };
+        let attach = |r: Xfrm, target: Xfrm, key: &str| {
+            let (cx, cy) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
+            let (dx, dy) = (target.x + target.w / 2.0 - cx, target.y + target.h / 2.0 - cy);
+            match p.params.get(key).map(String::as_str).unwrap_or("auto") {
+                "tCtr" | "t" => (cx, r.y),
+                "bCtr" | "b" => (cx, r.y + r.h),
+                "midL" | "lCtr" | "l" => (r.x, cy),
+                "midR" | "rCtr" | "r" => (r.x + r.w, cy),
+                "tL" => (r.x, r.y),
+                "tR" => (r.x + r.w, r.y),
+                "bL" => (r.x, r.y + r.h),
+                "bR" => (r.x + r.w, r.y + r.h),
+                "ctr" => (cx, cy),
+                _ => {
+                    let t = (r.w / 2.0 / dx.abs().max(1e-9)).min(r.h / 2.0 / dy.abs().max(1e-9));
+                    (cx + dx * t, cy + dy * t)
+                }
+            }
+        };
+        let (x1, y1) = attach(a, b, "begPts");
+        let (x2, y2) = attach(b, a, "endPts");
+        p.rect = Xfrm { flip_h: x2 < x1, flip_v: y2 < y1, ..Xfrm::new(x1.min(x2), y1.min(y2), (x2 - x1).abs(), (y2 - y1).abs()) };
+    }
+    out.sort_by_key(|p| !p.connector);
+}
+
+/// Allocate each subtree by its leaf demand. Orientation comes from hierAlign; a forest has
+/// no distinguished first parent. This avoids shrinking deeper branches into equal-width slots.
+fn hierarchy(node: &Instance<'_>, style: BoxStyle) -> Vec<Xfrm> {
+    fn weight(n: &Instance<'_>, depth: usize) -> f64 {
+        if depth > 64 || n.children.is_empty() {
+            return 1.0;
+        }
+        n.children.iter().filter(|c| c.alg != "conn").map(|c| weight(c, depth + 1)).sum::<f64>().max(1.0)
+    }
+    fn levels(n: &Instance<'_>, depth: usize) -> usize {
+        if depth > 64 {
+            return 1;
+        }
+        usize::from(!n.points.is_empty()) + n.children.iter().map(|c| levels(c, depth + 1)).max().unwrap_or(0)
+    }
+    let r = style.rect;
+    let count = node.children.len();
+    let has_parent = node
+        .children
+        .first()
+        .is_some_and(|c| !c.points.is_empty() || c.shape.is_some_and(|s| s.attr("type").is_some_and(|t| t != "none" && !t.is_empty())));
+    let alignment = node.param("hierAlign", "tCtrCh");
+    let horizontal = alignment.starts_with(['l', 'r']);
+    let reverse = alignment.starts_with(['r', 'b']);
+    let gap = style.get("sp").unwrap_or(0.0).max(0.0);
+    let depth = levels(node, 0).max(if has_parent && count > 1 { 2 } else { 1 }) as f64;
+    let parent_len = if has_parent { (if horizontal { r.w } else { r.h }) / depth } else { 0.0 };
+    let start = usize::from(has_parent);
+    let total = node.children.iter().skip(start).map(|c| weight(c, 0)).sum::<f64>().max(1.0);
+    let mut offset = 0.0;
+    let mut result = Vec::with_capacity(count);
+    for (i, child) in node.children.iter().enumerate() {
+        let mut b = if has_parent && i == 0 {
+            if horizontal { Xfrm::new(0.0, 0.0, parent_len, r.h) } else { Xfrm::new(0.0, 0.0, r.w, parent_len) }
+        } else {
+            let fraction = weight(child, 0) / total;
+            let b = if horizontal {
+                Xfrm::new(parent_len + gap, offset * r.h, (r.w - parent_len - gap).max(0.0), r.h * fraction)
+            } else {
+                Xfrm::new(offset * r.w, parent_len + gap, r.w * fraction, (r.h - parent_len - gap).max(0.0))
+            };
+            offset += fraction;
+            b
+        };
+        if reverse {
+            if horizontal {
+                b.x = r.w - b.x - b.w;
+            } else {
+                b.y = r.h - b.y - b.h;
+            }
+        }
+        b.x += r.x;
+        b.y += r.y;
+        result.push(b);
+    }
+    result
+}

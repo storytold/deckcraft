@@ -782,6 +782,7 @@ pub fn embedded_face(source: Arc<Vec<u8>>, family: &str, style: &str) -> Option<
     struct Entry {
         source: Arc<Vec<u8>>,
         faces: Vec<Arc<FontFace>>,
+        retained_bytes: usize,
     }
     static CACHE: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
     if source.len() > 40 << 20 {
@@ -791,9 +792,13 @@ pub fn embedded_face(source: Arc<Vec<u8>>, family: &str, style: &str) -> Option<
     let index = if let Some(i) = cache.iter().position(|e| Arc::ptr_eq(&e.source, &source)) {
         i
     } else {
-        let sfnt = crate::embedded_sfnt(&source)?;
-        let bytes = if sfnt.len() == source.len() { source.clone() } else { Arc::new(sfnt.to_vec()) };
-        let faces = enumerate_faces(&bytes)
+        let sfnt = crate::decode_embedded_sfnt(&source)?;
+        let bytes = match sfnt {
+            std::borrow::Cow::Borrowed(b) if b.len() == source.len() => source.clone(),
+            other => Arc::new(other.into_owned()),
+        };
+        let retained_bytes = source.len() + if Arc::ptr_eq(&source, &bytes) { 0 } else { bytes.len() };
+        let faces: Vec<Arc<FontFace>> = enumerate_faces(&bytes)
             .into_iter()
             .filter_map(|(index, family, style, coords)| {
                 let mut face = make_face(FontBytes::Owned(bytes.clone()), index, family, style, coords)?;
@@ -801,16 +806,25 @@ pub fn embedded_face(source: Arc<Vec<u8>>, family: &str, style: &str) -> Option<
                 Some(Arc::new(face))
             })
             .collect();
-        while !cache.is_empty() && (cache.len() >= 16 || cache.iter().map(|e| e.source.len()).sum::<usize>().saturating_add(source.len()) > 64 << 20)
+        if retained_bytes > 64 << 20 {
+            return choose_embedded(&faces, family, style);
+        }
+        while !cache.is_empty()
+            && (cache.len() >= 16 || cache.iter().map(|e| e.retained_bytes).sum::<usize>().saturating_add(retained_bytes) > 64 << 20)
         {
             cache.remove(0);
         }
-        cache.push(Entry { source, faces });
+        cache.push(Entry { source, faces, retained_bytes });
         cache.len() - 1
     };
     let entry = cache.remove(index);
-    let face = entry
-        .faces
+    let face = choose_embedded(&entry.faces, family, style);
+    cache.push(entry);
+    face
+}
+
+fn choose_embedded(faces: &[Arc<FontFace>], family: &str, style: &str) -> Option<Arc<FontFace>> {
+    faces
         .iter()
         .min_by_key(|f| {
             (
@@ -820,9 +834,7 @@ pub fn embedded_face(source: Arc<Vec<u8>>, family: &str, style: &str) -> Option<
                 (f.weight - style_weight(style)).abs() as u32,
             )
         })
-        .cloned();
-    cache.push(entry);
-    face
+        .cloned()
 }
 
 /// The underline's top edge below the baseline and its thickness, font units, from the `post`

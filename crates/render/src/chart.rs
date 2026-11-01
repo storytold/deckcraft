@@ -1234,7 +1234,7 @@ fn draw_bars(ctx: &mut RenderContext, draw: &BarDrawing<'_, '_>) -> Vec<(f64, f6
                     ctx.set_stroke(kurbo::Stroke::new(ow));
                     ctx.stroke_path(&r.abs().to_path(0.1));
                 }
-                if waterfall && i + 1 < ncat && !horiz {
+                if waterfall && c.extended.connector_lines && i + 1 < ncat && !horiz {
                     let y = to_v(b);
                     let mut j = BezPath::new();
                     j.move_to((r.x1, y));

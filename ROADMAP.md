@@ -132,7 +132,7 @@ Ranked; detail and the full beta plan in [docs/roadmap.md](docs/roadmap.md).
    shows, rotated groups, inherited placeholders, text effects and body layout, theme effects,
    fills, bevels, connectors, tables, charts, animations, media, sections, masters, 3-D models
    and animation bounce end. Still open: a corpus of real decks, #70, #74, EMF+ records,
-   MicroType Express font subsets and SVG. 36–64 h.
+   remaining font fidelity and SVG. 36–64 h.
 3. **Localization:** catalog, system language (#15), zh-Hans, es, fr, de, ja with IME. 27–46 h.
 4. **Output:** vector PDF, printing. 10–16 h.
 5. **Depth that users hit:** font weights (#69), chart data and elements, Animation Pane timeline,
@@ -148,6 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | MTX compressed TrueType fonts now decode in safe Rust, checked against an independent encoder and embedded-font pixel oracle. chartEx statistical/display settings and bounded uncached SmartArt layout execution are modeled and tested; native chartEx open and custom uncached layout parity remain explicit failures, not completed parity |
 | 2026-11-01 | Direct rendering: manual chart rectangles, body rotation, axis/gridline styles and legend spacing; diagram root child coordinates and authored fallback selection. Original multi-script/embedded-font and six-layout diagram probes are compared with PowerPoint. Fresh chartEx native-open remains a failed interoperability check; global parity scores unchanged |
 | 2026-10-31 | Imported SmartArt preserves its original package graph, IDs and geometry through no-op saves and identity-bound Text Pane edits; undo/redo and native save are tested. Categorical chart edits synchronize fixed-size direct XLSX ranges without changing unrelated cells/sheets. Native PowerPoint preservation probes render identically on no-op round trips; structural edits and unsupported spreadsheet sources remain partial |
 | 2026-10-31 | Font selection respects East Asian language/script mappings and document-scoped embedded faces. Read-only `font.inspect` reports actual faces, hashes and fallback reasons. Charts keep separate title/legend/axis typography and rebuilt secondary axes; label widths use text shaping, and logical series order survives plot grouping. Cached SmartArt retains nested transforms and image nodes. Four generated render probes compare exact pixels before/after PPTX round trip; these are not PowerPoint parity claims. See [layout fidelity](docs/layout-fidelity.md) |

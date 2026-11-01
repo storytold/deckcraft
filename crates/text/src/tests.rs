@@ -1993,3 +1993,13 @@ fn embedded_font_precedes_installed_names_without_changing_another_document() {
     let same = super::font_usage(&ctx, &sh, sh.text.as_ref().unwrap());
     assert_eq!(same[0].actual.id(), usage[0].actual.id(), "cached face reused across inspections");
 }
+
+#[test]
+fn diagram_font_floor_prevents_unreadable_autofit() {
+    let (p, mut shape) = setup(&"A long paragraph repeated for constrained diagram text. ".repeat(40), 100.0, 40.0);
+    shape.text.as_mut().unwrap().body.autofit = Some(AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    shape.text.as_mut().unwrap().body.min_autofit_scale = Some(0.7);
+    let result = lay(&p, &shape, 100.0, 40.0);
+    assert_eq!(result.font_scale, 0.7);
+    assert!(result.overflow);
+}

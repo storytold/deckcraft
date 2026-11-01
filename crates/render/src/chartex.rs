@@ -370,6 +370,7 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
         col: &dyn Fn(usize) -> Rgba,
         value_label: Option<&dyn Fn(f64) -> String>,
         depth: usize,
+        parents: &str,
     ) {
         let vals: Vec<f64> = nodes.iter().map(|n| n.value).collect();
         for (i, (n, t)) in nodes.iter().zip(squarify(&vals, r)).enumerate() {
@@ -402,12 +403,16 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
                 continue;
             }
             // A group: its banner, then its children below it.
-            let banner = (base * 1.5).min(t.height() * 0.3);
+            let label_height = (base * 1.5).min(t.height() * 0.3);
+            let banner = if parents == "banner" { label_height } else { 0.0 };
             ctx.set_transform(m);
             ctx.set_paint(color(fill, 1.0));
             ctx.fill_rect(&t);
-            if t.width() > base * 2.0 && banner > base * 0.8 {
-                let head = Rect::new(t.x0 + base * 0.3, t.y0, t.x1 - base * 0.3, t.y0 + banner);
+            let inner = Rect::new(t.x0 + 1.0, t.y0 + banner, t.x1 - 1.0, t.y1 - 1.0);
+            let k = lighten(fill, 0.12 * (depth + 1) as f64);
+            place(ctx, rctx, m, &n.children, inner, base, &|_| k, value_label, depth + 1, parents);
+            if t.width() > base * 2.0 && label_height > base * 0.8 && parents != "none" {
+                let head = Rect::new(t.x0 + base * 0.3, t.y0, t.x1 - base * 0.3, t.y0 + label_height);
                 label(
                     ctx,
                     rctx,
@@ -417,16 +422,14 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
                     crate::chart::LabelStyle { size: base, align: Align::Left, anchor: Anchor::Middle, col: Rgba::WHITE, bold: true },
                 );
             }
-            let inner = Rect::new(t.x0 + 1.0, t.y0 + banner, t.x1 - 1.0, t.y1 - 1.0);
-            let k = lighten(fill, 0.12 * (depth + 1) as f64);
-            place(ctx, rctx, m, &n.children, inner, base, &|_| k, value_label, depth + 1);
+
             ctx.set_transform(m);
             ctx.set_paint(color(Rgba::WHITE, 1.0));
             ctx.set_stroke(kurbo::Stroke::new(2.0));
             ctx.stroke_path(&t.to_path(0.1));
         }
     }
-    place(ctx, rctx, m, &tree, area, base, &|i| series_color(rctx, c, i), value_label, 0);
+    place(ctx, rctx, m, &tree, area, base, &|i| series_color(rctx, c, i), value_label, 0, c.extended.parent_labels.as_deref().unwrap_or("banner"));
 }
 
 /// A multi-level sunburst: the top level as the inner ring, each deeper level in the next ring
@@ -526,13 +529,18 @@ pub fn box_view(c: &Chart) -> (Chart, Boxes) {
     v.kind = ChartType::Column;
     v.categories = groups;
     v.raw = None;
-    let ext = |b: &BoxStats, hi: bool| {
-        let o = b.outliers.iter().copied();
+    let ext = |b: &BoxStats, hi: bool, show_outliers: bool| {
+        let o = b.outliers.iter().copied().filter(|_| show_outliers);
         if hi { o.fold(b.high, f64::max) } else { o.fold(b.low, f64::min) }
     };
-    let lowest = stats.iter().flatten().flatten().map(|b| ext(b, false)).fold(f64::INFINITY, f64::min);
+    let lowest = stats
+        .iter()
+        .zip(&c.series)
+        .flat_map(|(stats, series)| stats.iter().flatten().map(|b| ext(b, false, series.extended_options(c).outliers)))
+        .fold(f64::INFINITY, f64::min);
     for (s, st) in v.series.iter_mut().zip(&stats) {
-        s.values = st.iter().map(|b| b.as_ref().map(|b| ext(b, true))).collect();
+        let outliers = s.extended_options(c).outliers;
+        s.values = st.iter().map(|b| b.as_ref().map(|b| ext(b, true, outliers))).collect();
     }
     if lowest.is_finite() && lowest < 0.0 && v.y_min.is_none() {
         // The frame's values are the highs; below zero the axis must reach the lowest point too.
@@ -563,6 +571,8 @@ pub fn draw_boxes(
     let line = Rgba::rgb(0x40, 0x40, 0x40);
     for (si, per) in b.stats.iter().enumerate() {
         let fill = series_color(rctx, c, si);
+        let options = c.series.get(si).map(|s| s.extended_options(c)).unwrap_or(&c.extended);
+        let mut previous_mean = None;
         for (gi, st) in per.iter().enumerate() {
             let Some(st) = st else { continue };
             let c0 = if horiz { plot.y0 } else { plot.x0 } + band * gi as f64 + (band - group) / 2.0 + w * si as f64;
@@ -596,8 +606,20 @@ pub fn draw_boxes(
             x.line_to((mx.x + r, mx.y + r));
             x.move_to((mx.x - r, mx.y + r));
             x.line_to((mx.x + r, mx.y - r));
-            ctx.stroke_path(&x);
-            for o in &st.outliers {
+            if options.mean_marker {
+                ctx.stroke_path(&x);
+            }
+            if options.mean_line {
+                if let Some(previous) = previous_mean {
+                    let mut path = BezPath::new();
+                    path.move_to(previous);
+                    path.line_to(mx);
+                    ctx.stroke_path(&path);
+                }
+                previous_mean = Some(mx);
+            }
+            let dots = st.outliers.iter().filter(|_| options.outliers).chain(st.inside.iter().filter(|_| options.inner_points));
+            for o in dots {
                 let q = pt(mid, to_v(*o));
                 ctx.set_paint(color(fill, 1.0));
                 ctx.fill_path(&kurbo::Circle::new(q, r).to_path(0.1));

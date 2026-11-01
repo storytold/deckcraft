@@ -974,6 +974,7 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
     };
     let one = !matches!(c.kind, ChartType::BoxWhisker);
     for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { usize::MAX }) {
+        let options = s.extended_options(c);
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
         sp_pr_tag(&mut w, s.fill.as_ref(), s.line.as_ref(), "cx:spPr");
@@ -984,8 +985,9 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
         }
         w.empty("cx:dataId", A::new().a("val", i));
         match c.kind {
-            ChartType::Waterfall if !c.subtotals.is_empty() => {
+            ChartType::Waterfall => {
                 w.open0("cx:layoutPr");
+                w.empty("cx:visibility", A::new().a("connectorLines", u8::from(options.connector_lines)));
                 w.open0("cx:subtotals");
                 for t in &c.subtotals {
                     w.empty("cx:idx", A::new().a("val", t));
@@ -995,19 +997,44 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             }
             ChartType::Histogram | ChartType::Pareto => {
                 w.open0("cx:layoutPr");
-                w.open("cx:binning", A::new().a("intervalClosed", "r"));
-                if let Some(size) = c.bin_size {
-                    w.empty("cx:binSize", A::new().a("val", fmt_num(size)));
-                } else if let Some(n) = c.bin_count {
-                    w.empty("cx:binCount", A::new().a("val", n));
+                if options.aggregation {
+                    w.empty0("cx:aggregation");
+                } else {
+                    w.open(
+                        "cx:binning",
+                        A::new()
+                            .a("intervalClosed", if options.bin_closed_left { "l" } else { "r" })
+                            .o("underflow", options.underflow.filter(|v| v.is_finite()).map(fmt_num))
+                            .o("overflow", options.overflow.filter(|v| v.is_finite()).map(fmt_num)),
+                    );
+                    if let Some(size) = c.bin_size {
+                        w.elt("cx:binSize", &fmt_num(size));
+                    } else if let Some(n) = c.bin_count {
+                        w.elt("cx:binCount", &n.to_string());
+                    }
+                    w.close("cx:binning");
                 }
-                w.close("cx:binning");
                 w.close("cx:layoutPr");
             }
             ChartType::BoxWhisker => {
                 w.open0("cx:layoutPr");
-                w.empty("cx:visibility", A::new().a("meanLine", "0").a("meanMarker", "1").a("nonoutliers", "0").a("outliers", "1"));
-                w.empty("cx:statistics", A::new().a("quartileMethod", if c.inclusive_quartiles { "inclusive" } else { "exclusive" }));
+                w.empty(
+                    "cx:visibility",
+                    A::new()
+                        .a("meanLine", u8::from(options.mean_line))
+                        .a("meanMarker", u8::from(options.mean_marker))
+                        .a("nonoutliers", u8::from(options.inner_points))
+                        .a("outliers", u8::from(options.outliers)),
+                );
+                w.empty(
+                    "cx:statistics",
+                    A::new().a("quartileMethod", if s.inclusive_quartiles.unwrap_or(c.inclusive_quartiles) { "inclusive" } else { "exclusive" }),
+                );
+                w.close("cx:layoutPr");
+            }
+            ChartType::Treemap if options.parent_labels.is_some() => {
+                w.open0("cx:layoutPr");
+                w.empty("cx:parentLabelLayout", A::new().a("val", options.parent_labels.as_deref().unwrap_or("banner")));
                 w.close("cx:layoutPr");
             }
             ChartType::RegionMap => {

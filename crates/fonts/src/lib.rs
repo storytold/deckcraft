@@ -10,6 +10,7 @@
 
 mod fallback;
 mod fontdb;
+mod mtx;
 pub mod script;
 mod shape;
 
@@ -45,10 +46,24 @@ pub fn japanese_fonts() -> impl Iterator<Item = &'static CraftFont> {
 /// (`application/x-fontdata`).
 ///
 /// The part is the font itself, or an Embedded OpenType wrapper around it (the `0x504C` magic
-/// at byte 34, from the W3C Embedded OpenType submission). A MicroType Express subset is neither,
-/// so this returns none; the original part stays in the file for the round trip.
+/// at byte 34, from the W3C Embedded OpenType submission). For compressed parts use
+/// [`decode_embedded_sfnt`], which can return owned, reconstructed font bytes.
 pub fn embedded_sfnt(part: &[u8]) -> Option<&[u8]> {
-    eot_payload(part).or_else(|| sfnt_or_collection(part).then_some(part))
+    eot_payload(part).filter(|font| sfnt_or_collection(font)).or_else(|| sfnt_or_collection(part).then_some(part))
+}
+
+/// Decode an embedded sfnt, EOT-wrapped font or raw MicroType Express subset. Both input and
+/// expanded font sizes are bounded at 40 MiB. Compressed font hints are reconstructed as data;
+/// the decoder does not execute them. The caller keeps the original part for lossless export.
+pub fn decode_embedded_sfnt(part: &[u8]) -> Option<std::borrow::Cow<'_, [u8]>> {
+    if part.len() > 40 << 20 {
+        return None;
+    }
+    if let Some(font) = embedded_sfnt(part) {
+        return Some(std::borrow::Cow::Borrowed(font));
+    }
+    let compressed = eot_payload(part).unwrap_or(part);
+    mtx::decode(compressed).ok().map(std::borrow::Cow::Owned)
 }
 
 fn sfnt_or_collection(b: &[u8]) -> bool {
@@ -75,7 +90,7 @@ fn eot_payload(b: &[u8]) -> Option<&[u8]> {
         return None;
     }
     let font = b.get(eot_size - font_size..eot_size)?;
-    sfnt_or_collection(font).then_some(font)
+    Some(font)
 }
 
 /// Japanese faces in document-fallback order: Mincho (serif) families first, matching the

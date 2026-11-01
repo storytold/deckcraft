@@ -2,6 +2,8 @@
 
 > **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.
 
+> **Extended rendering 2026-11-01:** MTX font decoding is independently verified; chartEx statistics/visibility and uncached SmartArt layout paths have regressions and schema checks. Native chartEx opening and the uncached custom-layout image comparison remain failed; chart and SmartArt scores stay P.
+
 > **Direct-render coverage 2026-11-01:** manual chart rectangles/rotations/strokes, cached SmartArt root transforms, authored fallback selection and six-script font probes are exercised. Direct PowerPoint comparisons cover six cached diagram layouts and the chart/font pages. Native chartEx open/export failed; chart/SmartArt scores stay partial.
 
 > **Additional bounded coverage:** document-scoped fonts, actual-face diagnostics, per-role chart typography, secondary-axis rebuilds and nested SmartArt cached drawings now have synthetic regression tests. Font editing, charts and SmartArt retain their current partial scores; direct fixed-size XLSX ranges now synchronize and imported graph/text preservation is covered. Full rich chart labels, spreadsheet dependency edits and structural diagram relayout remain open.

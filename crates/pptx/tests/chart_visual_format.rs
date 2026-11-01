@@ -43,6 +43,82 @@ fn styled(kind: ChartType) -> Chart {
     c
 }
 
+#[test]
+fn chartex_statistics_and_layout_options_survive_rebuild_and_change_pixels() {
+    use deckcraft_model::chart::ExtendedChartOptions;
+    for kind in [ChartType::Histogram, ChartType::Pareto, ChartType::BoxWhisker, ChartType::Waterfall, ChartType::Treemap] {
+        let mut c = styled(kind);
+        c.extended = match kind {
+            ChartType::Histogram | ChartType::Pareto => {
+                ExtendedChartOptions { underflow: Some(3.0), overflow: Some(7.0), bin_closed_left: true, ..Default::default() }
+            }
+            ChartType::BoxWhisker => {
+                ExtendedChartOptions { mean_marker: false, mean_line: true, inner_points: true, outliers: false, ..Default::default() }
+            }
+            ChartType::Waterfall => ExtendedChartOptions { connector_lines: false, ..Default::default() },
+            _ => ExtendedChartOptions { parent_labels: Some("none".into()), ..Default::default() },
+        };
+        if kind == ChartType::Treemap {
+            c.category_levels = vec![vec!["North".into(), "North".into(), "South".into(), "South".into()]];
+        }
+        let mut p = Presentation::default();
+        p.slides.clear();
+        append(&mut p, c.clone());
+        let saved = deckcraft_pptx::export(&p).unwrap();
+        let back = deckcraft_pptx::import(&saved).unwrap();
+        assert_eq!(chart(&back, 0).extended, c.extended, "{kind:?}");
+        let actual = render_slide(&back, 0, &RenderOpts::default());
+        let mut default = p.clone();
+        let ShapeKind::Chart(ch) = &mut Arc::make_mut(&mut default.slides[0]).shapes[0].kind else { panic!("chart") };
+        ch.extended = Default::default();
+        let baseline = render_slide(&default, 0, &RenderOpts::default());
+        assert_ne!(actual.pixels, baseline.pixels, "{kind:?}: option was retained but not rendered");
+        if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("extended-{kind:?}.pptx")), saved).unwrap();
+            std::fs::write(dir.join(format!("extended-{kind:?}.png")), actual.to_png()).unwrap();
+        }
+    }
+}
+
+#[test]
+fn chartex_scalar_elements_follow_their_distinct_schema_types() {
+    use deckcraft_pptx::parse_xml;
+    use std::io::Read;
+    for kind in [ChartType::Histogram, ChartType::Waterfall] {
+        let mut c = styled(kind);
+        c.bin_count = Some(4);
+        c.subtotals = vec![0, 3];
+        let mut p = Presentation::default();
+        p.slides.clear();
+        append(&mut p, c);
+        let bytes = deckcraft_pptx::export(&p).unwrap();
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let mut found = false;
+        for i in 0..z.len() {
+            let mut entry = z.by_index(i).unwrap();
+            if !entry.name().contains("chartEx") || !entry.name().ends_with(".xml") {
+                continue;
+            }
+            let mut b = Vec::new();
+            entry.read_to_end(&mut b).unwrap();
+            let root = parse_xml(&b).unwrap().root;
+            let tag = if kind == ChartType::Histogram { "binCount" } else { "idx" };
+            let scalar = root.find(tag).unwrap();
+            if kind == ChartType::Histogram {
+                assert_eq!(scalar.text(), "4");
+                assert!(!scalar.has_attr("val"));
+            } else {
+                assert_eq!(scalar.attr("val"), Some("0"));
+                assert!(scalar.text().is_empty());
+            }
+            found = true;
+        }
+        assert!(found);
+    }
+}
+
 fn manual() -> Chart {
     let mut c = styled(ChartType::Combo);
     c.title = Some("Manual plot, colored axes and dashed grid".into());
@@ -272,4 +348,27 @@ fn explicit_axis_title_rotation_is_applied_once_inside_its_manual_rectangle() {
     assert!(bounds.0 < bounds.2, "axis title was not drawn");
     assert!(bounds.2 < 100, "manual left-title rectangle was ignored: {bounds:?}");
     assert!(bounds.3 - bounds.1 > (bounds.2 - bounds.0) * 3, "explicit rotation was applied twice: {bounds:?}");
+}
+
+#[test]
+fn box_chart_series_keep_independent_visibility_and_quartiles() {
+    use deckcraft_model::ShapeKind;
+    let mut c = styled(ChartType::BoxWhisker);
+    assert!(c.series.len() >= 2);
+    c.series[0].extended = Some(deckcraft_model::chart::ExtendedChartOptions { mean_marker: false, outliers: false, ..Default::default() });
+    c.series[1].extended = Some(deckcraft_model::chart::ExtendedChartOptions { inner_points: true, mean_line: true, ..Default::default() });
+    c.series[0].inclusive_quartiles = Some(true);
+    c.series[1].inclusive_quartiles = Some(false);
+    let expected = c.clone();
+    let mut p = Presentation::default();
+    p.slides.clear();
+    append(&mut p, c);
+    let bytes = deckcraft_pptx::export(&p).unwrap();
+    let back = deckcraft_pptx::import(&bytes).unwrap();
+    let got = back.slides.iter().flat_map(|s| &s.shapes).find_map(|s| if let ShapeKind::Chart(c) = &s.kind { Some(c) } else { None }).unwrap();
+    for (a, b) in expected.series.iter().zip(&got.series) {
+        assert_eq!(a.extended, b.extended);
+        assert_eq!(a.inclusive_quartiles, b.inclusive_quartiles);
+    }
+    assert_eq!(expected.box_groups(), got.box_groups());
 }

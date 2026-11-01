@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **Update 2026-11-01:** raw/EOT-wrapped MTX fonts decode; chartEx statistical/display settings and uncached diagram layout execution are covered by original regressions. Native chartEx opening and custom uncached SmartArt visual parity remain unresolved. See [scope and evidence](layout-fidelity.md).
+
 > **Update 2026-10-31:** complete imported diagram graphs and identity-bound text edits; fixed-size embedded XLSX data synchronization. See [scope and validation](layout-fidelity.md).
 
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: seven owned PPTX corpus files, embedded fonts, EMF/WMF clip regions, threaded comments (#70), chart trendlines and workbooks (#335), SmartArt written as a diagram, tags and custom XML kept, picture export DPI; duplicated rows and headers folded; previous: trivial, lines in scaled groups, #233) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -65,7 +67,7 @@ intermediate build that required inline `bytes` cannot read the new referenced r
 | WMV | yes (Windows) | embedded, not playable | |
 | Online video (YouTube embeds) | yes | no | Cloud feature |
 | Embedded OLE objects | yes | kept on round trip (opaque), not insertable or editable | `ShapeKind::Opaque` |
-| Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express subsets are kept and written back, not drawn |
+| Embedded fonts | yes | yes | `p:embeddedFontLst` read and written. TrueType, OpenType and Embedded OpenType faces are used to draw; MicroType Express TrueType subsets are decompressed and drawn |
 | 3-D models (`.glb`) | yes | kept | The model part round-trips (`p:contentPart`, including an `mc:AlternateContent` choice and its fallback picture). Not drawn as a mesh and not inserted from the ribbon |
 
 ## PPTX coverage (PresentationML / DrawingML)
@@ -101,7 +103,7 @@ the round trip even though DeckCraft doesn't model it.
 | Comments: legacy | yes | yes | |
 | Comments: modern threaded (`p188`) | yes | yes | Written next to the flattened legacy part; replies and resolved state round-trip (`threads_and_resolved_round_trip`) |
 | Unknown slide-level elements (`graphicFrame` OLE, extensions, `mc:AlternateContent`) | kept | kept | Rendered as a labelled placeholder with the preview picture when present |
-| Embedded fonts | yes | yes | MicroType Express subsets kept, not drawn |
+| Embedded fonts | yes | yes | MicroType Express TrueType subsets decoded and drawn |
 | Tags (`p:custDataLst`) on the presentation, slides and shapes | yes | yes | Add-ins such as think-cell keep their identity; `tags_survive_round_trip` |
 | Custom XML data, sensitivity label (`docMetadata/LabelInfo.xml`), custom document properties | kept verbatim | yes | SharePoint metadata and the label survive a save; `custom_xml_label_and_custom_properties_survive_save` |
 | VBA | no | no | |
@@ -122,6 +124,7 @@ the round trip even though DeckCraft doesn't model it.
 | Date | Change | Summary |
 |---|---|---|
 | 2026-10-31 | minor | Preserve complete imported diagram packages and identity-bound text edits through native saves. Synchronize fixed-size direct embedded XLSX ranges with chart caches, keeping unrelated cells/sheets. Native preservation checks use only original synthetic probes; outputs stay private |
+| 2026-11-01 | minor | MTX TrueType reconstruction and embedded-font pixel oracle; chartEx bounds/statistics/visibility; bounded uncached SmartArt layout execution and graph retention. Native visual parity remains partial |
 | 2026-11-01 | minor | Manual chart layout/body rotations and full line styles reach rendering and rebuilds; chartEx typography/axis references modeled. Cached diagram root coordinates and authored missing-cache fallback fixed. Direct font/chart/six-layout comparisons added; native chartEx remains a failed check, not claimed parity |
 | 2026-10-31 | minor | Locale-aware East Asian theme fonts, isolated embedded font precedence and actual-face diagnostics; separate chart typography and secondary axes survive structural rebuilds; nested SmartArt cached transforms and picture nodes survive export. Four generated render probes assert pixel equality across DeckCraft export/import, not cross-renderer parity. Remaining limits: [layout fidelity](layout-fidelity.md) |
 | 2026-10-18 | minor | Native chart payloads use referenced ZIP members and share media byte/item limits; old inline sidecars remain readable. Synthetic tests cover multi-megabyte layout, all shape owners, shared budgets, missing/corrupt members and invalid references. Scores and milestone scope unchanged |

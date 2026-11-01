@@ -567,6 +567,176 @@ fn diagram_data(imp: &mut Imp, target: &str) -> Option<deckcraft_model::MediaId>
 
 /// SmartArt: read the pre-drawn shapes of its drawing part as a group.
 fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
+    smartart_cached(imp, part, gd, frame, depth).or_else(|| smartart_layout(imp, part, gd, frame))
+}
+
+fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option<Shape> {
+    use deckcraft_model::style::Line;
+    let ids = gd.child("relIds")?;
+    let dm = part.rels.get(ids.attr("r:dm")?)?;
+    let doc = imp.pkg.xml(&dm.target)?;
+    let data_part = Part::new(imp.pkg, &dm.target, &doc);
+    let diagram = diagram_outline(imp, part, ids, &doc.root)?;
+    let layout = crate::xml::parse(diagram.layout_xml.as_ref()?.as_bytes()).ok()?;
+    let rect = frame.xfrm?;
+    let placed = match crate::dgm::layout::evaluate(&layout.root, &doc.root, Xfrm::new(0.0, 0.0, rect.w, rect.h)) {
+        Ok(p) => p,
+        Err(reason) => {
+            log::warn!("pptx: SmartArt layout could not be evaluated: {reason}");
+            return None;
+        }
+    };
+    let quick = diagram.style_xml.as_deref().and_then(|x| crate::xml::parse(x.as_bytes()).ok());
+    let colors = diagram.colors_xml.as_deref().and_then(|x| crate::xml::parse(x.as_bytes()).ok());
+    let mut counts = std::collections::HashMap::<String, usize>::new();
+    let mut children = Vec::new();
+    for p in placed {
+        let index = counts.entry(p.style.clone()).or_default();
+        let mut s = Shape {
+            id: ShapeId(imp.alloc()),
+            name: p.name.clone(),
+            xfrm: Some(p.rect),
+            geom: Geom::preset(p.shape.and_then(|e| e.attr("type")).unwrap_or("rect")),
+            text_box: p.shape.is_none(),
+            ..Default::default()
+        };
+        if let Some(adjustments) = p.shape.and_then(|shape| shape.child("adjLst"))
+            && let Geom::Preset { adj, .. } = &mut s.geom
+        {
+            for a in adjustments.children_named("adj").take(64) {
+                if let (Some(index), Some(value)) = (a.u32("idx"), a.f64("val"))
+                    && (1..=64).contains(&index)
+                    && value.is_finite()
+                {
+                    adj.resize(adj.len().max(index as usize), 0.0);
+                    if let Some(v) = adj.get_mut(index as usize - 1) {
+                        *v = value * 100000.0;
+                    }
+                }
+            }
+        }
+        if p.connector {
+            s.geom = Geom::preset(match p.params.get("connRout").map(String::as_str) {
+                Some("bend") => "bentConnector3",
+                Some("curve") => "curvedConnector3",
+                _ => "line",
+            });
+        }
+        if let Some(label) = quick.as_ref().and_then(|d| d.root.children_named("styleLbl").find(|e| e.attr("name") == Some(p.style.as_str()))) {
+            s.style = label.child("style").map(style);
+            if let Some(pr) = label.child("spPr") {
+                sp_pr(imp, &data_part, &mut s, pr);
+            }
+        }
+        let label = colors.as_ref().and_then(|d| d.root.children_named("styleLbl").find(|e| e.attr("name") == Some(p.style.as_str())));
+        let color = |name: &str| {
+            label.and_then(|l| l.child(name)).and_then(|l| {
+                let list: Vec<_> = l.elements().filter_map(dml::color_el).collect();
+                if list.is_empty() { None } else { list.get(*index % list.len()).cloned() }
+            })
+        };
+        if let Some(fill) = color("fillClrLst") {
+            s.fill = Some(Fill::Solid { color: fill });
+        }
+        if let Some(line) = color("linClrLst") {
+            s.line = Some(Line { fill: Some(Fill::Solid { color: line }), ..Default::default() });
+        }
+        let text_color = color("txFillClrLst");
+        if p.shape.is_none() || p.shape.is_some_and(|shape| shape.bool("hideGeom") == Some(true)) {
+            s.fill = Some(Fill::None);
+            s.line = Some(Line { fill: Some(Fill::None), ..Default::default() });
+        }
+        if p.connector {
+            use deckcraft_model::style::{ColorRef, LineEnd};
+            s.fill = Some(Fill::None);
+            let line = s.line.get_or_insert_with(|| Line::solid(ColorRef::rgb(deckcraft_color::Rgba::rgb(0x44, 0x44, 0x44)), 1.0));
+            let arrow = || LineEnd { kind: "triangle".into(), w: "med".into(), len: "med".into() };
+            if p.params.get("begSty").is_some_and(|v| v == "arr") {
+                line.head = Some(arrow());
+            }
+            if p.params.get("endSty").is_some_and(|v| v == "arr") {
+                line.tail = Some(arrow());
+            }
+        }
+        let mut body = deckcraft_model::text::TextBody::default();
+        for point in &p.points {
+            if s.diagram_node.is_none() {
+                s.diagram_node = point.attr("modelId").map(str::to_string);
+            }
+            if let Some(pr) = point.child("spPr") {
+                let (fill, line) = (s.fill.clone(), s.line.clone());
+                sp_pr(imp, &data_part, &mut s, pr);
+                s.fill = s.fill.or(fill);
+                s.line = s.line.or(line);
+            }
+            if let Some(tx) = point.child("t") {
+                body.paragraphs.extend(dml::text_body(imp, &data_part, tx).paragraphs);
+            }
+        }
+        if !body.paragraphs.is_empty() {
+            diagram_text_layout(&mut body, &p, text_color.as_ref());
+            s.text = Some(body);
+        }
+        // User point formatting may contain transforms from a stale cache; the layout owns
+        // geometry when no usable drawing exists.
+        s.xfrm = Some(p.rect);
+        *index += 1;
+        children.push(s);
+    }
+    if children.is_empty() {
+        return None;
+    }
+    let mut group = frame.clone();
+    group.kind = ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, rect.w, rect.h) };
+    group.diagram = Some(diagram);
+    let kept = crate::dgm::kept::capture(imp, part, ids, "", &group);
+    if let Some(d) = &mut group.diagram {
+        d.kept = kept;
+    }
+    Some(group)
+}
+
+fn diagram_text_layout(
+    body: &mut deckcraft_model::text::TextBody,
+    p: &crate::dgm::layout::Placed<'_>,
+    text_color: Option<&deckcraft_model::style::ColorRef>,
+) {
+    use deckcraft_model::text::{Align, Anchor};
+    body.body.anchor = Some(match p.params.get("txAnchorVert").map(String::as_str) {
+        Some("t") => Anchor::Top,
+        Some("b") => Anchor::Bottom,
+        _ => Anchor::Middle,
+    });
+    body.body.wrap = Some(true);
+    body.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    body.body.inset_l = Some(p.margins[0]);
+    body.body.inset_t = Some(p.margins[1]);
+    body.body.inset_r = Some(p.margins[2]);
+    body.body.inset_b = Some(p.margins[3]);
+    body.body.rot = Some(p.text_rotation);
+    let requested = p.font.unwrap_or(18.0);
+    let font = requested.max(p.min_font.unwrap_or(1.0));
+    body.body.min_autofit_scale = p.min_font.map(|min| (min / font).clamp(0.1, 1.0));
+    for paragraph in &mut body.paragraphs {
+        let align = match p.params.get("parTxLTRAlign").map(String::as_str) {
+            Some("l") => Align::Left,
+            Some("r") => Align::Right,
+            _ => Align::Center,
+        };
+        paragraph.props.align = paragraph.props.align.or(Some(align));
+        if p.params.get("stBulletLvl").is_some_and(|v| v == "1") {
+            paragraph.props.bullet = Some(deckcraft_model::text::Bullet::Char { char: "•".into() });
+        }
+        for run in &mut paragraph.runs {
+            run.props.size = Some(font);
+            if let Some(c) = text_color {
+                run.props.fill = Some(Fill::Solid { color: c.clone() });
+            }
+        }
+    }
+}
+
+fn smartart_cached(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) -> Option<Shape> {
     if depth > 8 {
         return None;
     }
