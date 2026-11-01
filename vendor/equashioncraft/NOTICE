@@ -1,0 +1,24 @@
+equaSHion
+Copyright (c) 2026 ArtCraft Team and the WordCraft contributors.
+Modified by shuff57, 2026.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+equaSHion is the equation editor extracted from WordCraft (https://github.com/storytold/wordcraft,
+commit dbfe1b1), whose NOTICE and licence files carry the copyright line above. See PROVENANCE.md
+for what was taken and what was changed. No trademarks, names, wordmarks or logos of WordCraft or
+ArtCraft are included or licensed here.
+
+Third-party material
+
+This product bundles third-party material under its own licenses, listed below. The per-file
+list (author, source, license) is in ATTRIBUTION.md.
+
+- Source Serif 4 (assets/fonts/SourceSerif4-*.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-SourceSerif4.txt.
+- Inter (assets/fonts/Inter-Regular.ttf) — SIL Open Font License 1.1. See assets/fonts/OFL-Inter.txt.
+- Geist and Geist Mono (assets/fonts/Geist-Regular.ttf, Geist-SemiBold.ttf, GeistMono-Regular.ttf),
+  used by the web showcase interface only — SIL Open Font License 1.1. See assets/fonts/OFL-Geist.txt.
+- STIX Two Math (assets/fonts/STIXTwoMath-Regular.otf) — SIL Open Font License 1.1. See assets/fonts/OFL-STIXTwoMath.txt.
+
+Rust dependencies (vello_cpu, skrifa, harfrust, kurbo, quick-xml, serde, …) are permissively
+licensed (MIT/Apache-2.0/BSD/ISC/Zlib) and fetched through crates.io.

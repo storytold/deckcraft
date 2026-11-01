@@ -1930,9 +1930,9 @@ fn a_paragraph_with_its_own_start_at_restarts_the_count_there() {
 }
 
 fn math_run(lin: &str) -> Run {
-    let m = equashion_math::from_linear(lin);
-    let mut r = Run::new(equashion_math::run_text(&m));
-    r.kind = deckcraft_model::text::RunKind::Math { omml: equashion_math::to_omml(&m) };
+    let m = equashioncraft_math::from_linear(lin);
+    let mut r = Run::new(equashioncraft_math::run_text(&m));
+    r.kind = deckcraft_model::text::RunKind::Math { omml: equashioncraft_math::to_omml(&m) };
     r
 }
 

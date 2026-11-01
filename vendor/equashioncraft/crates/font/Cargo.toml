@@ -1,0 +1,24 @@
+[package]
+name = "equashioncraft-font"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "EquaSHionCraft fonts: font database (bundled OFL + optional system fonts), metrics, glyph outlines, shaping"
+publish = false
+
+[features]
+default = ["extra-fonts"]
+# Source Serif 4 Bold and Bold Italic, Inter and STIX Two Math. Without it only Source Serif 4
+# Regular and Italic are compiled in (a UI that loads the rest at run time with `add_font`).
+extra-fonts = []
+
+[dependencies]
+kurbo = { workspace = true }
+skrifa = { workspace = true }
+harfrust = { workspace = true }
+unicode-bidi = { workspace = true }
+log = { workspace = true }
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"

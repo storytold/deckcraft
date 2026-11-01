@@ -1,0 +1,20 @@
+[package]
+name = "equashioncraft-layout"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "EquaSHionCraft layout: TeX-style equation layout into a backend-neutral scene, caret geometry"
+publish = false
+
+[features]
+default = ["extra-fonts"]
+extra-fonts = ["equashioncraft-font/extra-fonts"]
+
+[dependencies]
+equashioncraft-math = { workspace = true }
+equashioncraft-font = { workspace = true }
+kurbo = { workspace = true }
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"

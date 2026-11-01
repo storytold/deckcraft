@@ -49,6 +49,13 @@ pub const TABLE: &[(&str, Class)] = &[
     ("color", Class::Layer(0)),
     // WMF/EMF reader (ported from WordCraft).
     ("metafile", Class::Layer(0)),
+    // Equations: EquaSHionCraft, vendored under `vendor/equashioncraft` with upstream's own
+    // crate stack (math -> font/layout -> render -> egui).
+    ("equashioncraft-math", Class::Standalone),
+    ("equashioncraft-font", Class::Standalone),
+    ("equashioncraft-layout", Class::Layer(1)),
+    ("equashioncraft-render", Class::Layer(2)),
+    ("equashioncraft-egui", Class::Layer(6)),
     ("model", Class::Layer(1)),
     ("fonts", Class::Layer(1)),
     ("text", Class::Layer(2)),
@@ -73,7 +80,7 @@ pub const TABLE: &[(&str, Class)] = &[
 pub const DEV_EXCEPTIONS: &[(&str, &str)] = &[("pptx", "engine")];
 
 /// Explicit orderings *within* a layer (earlier may be used by later).
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[];
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["equashioncraft-egui", "ui-egui"]];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));

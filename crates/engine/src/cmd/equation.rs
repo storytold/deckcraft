@@ -1,15 +1,15 @@
 //! Equations: an inline `Math` run holds the OMML (canonical, with `xmlns:m`) and its linear
 //! text. The commands here create, replace and read those runs; the equation editor and agents
-//! use them. The math tree, OMML, linear and LaTeX conversions are equaSHion's
-//! (see [`crate::equashion_bridge`]).
+//! use them. The math tree, OMML, linear and LaTeX conversions are EquaSHionCraft's
+//! (see [`crate::equashioncraft_bridge`]).
 
 use deckcraft_geom::Point;
 use deckcraft_model::text::{Run, RunKind, RunProps};
 use deckcraft_model::{ShapeId, ShapeKind};
 use serde_json::{Value, json};
 
-use super::*;
-use crate::equashion_bridge::{eq, run_payload, to_editor};
+use super::{CommandSpec, always, bad, cmd, has_slide, text, xfrm_of};
+use crate::equashioncraft_bridge::{eq, run_payload, to_editor};
 use crate::{EngineError, Result, Session};
 
 /// Largest OMML document accepted from a parameter.
@@ -420,7 +420,12 @@ fn drawn(s: &Session, id: ShapeId, cell: Cell, pi: usize, ri: usize) -> Option<D
     let Some(e) = l.equations.iter().find(|e| e.para == pi && e.ch == at) else { return Some(whole) };
     let (a, b) = (aff * Point::new(e.x, e.baseline - e.ascent), aff * Point::new(e.x + e.width, e.baseline + e.descent));
     let base = aff * Point::new(e.x, e.baseline);
-    Some(Drawn { rect: [a.x.min(b.x), a.y.min(b.y), (b.x - a.x).abs(), (b.y - a.y).abs()], baseline: Some(base.y), size: Some(e.size), display: Some(e.display) })
+    Some(Drawn {
+        rect: [a.x.min(b.x), a.y.min(b.y), (b.x - a.x).abs(), (b.y - a.y).abs()],
+        baseline: Some(base.y),
+        size: Some(e.size),
+        display: Some(e.display),
+    })
 }
 
 fn place(s: &mut Session, p: &Value) -> Result<Value> {
@@ -768,7 +773,7 @@ mod tests {
         assert_eq!(runs.iter().map(|r| r.text.as_str()).collect::<String>(), "hello");
     }
 
-    /// The exact text the equaSHion tool put on the clipboard for the quadratic formula.
+    /// The exact text the EquaSHionCraft tool put on the clipboard for the quadratic formula.
     const QUADRATIC_OMML: &str = "<m:oMath xmlns:m=\"http://schemas.openxmlformats.org/officeDocument/2006/math\"><m:r><m:t xml:space=\"preserve\">x=</m:t></m:r><m:f><m:num><m:r><m:t xml:space=\"preserve\">−b±</m:t></m:r><m:rad><m:radPr><m:degHide m:val=\"1\"/></m:radPr><m:deg></m:deg><m:e><m:sSup><m:e><m:r><m:t xml:space=\"preserve\">b</m:t></m:r></m:e><m:sup><m:r><m:t xml:space=\"preserve\">2</m:t></m:r></m:sup></m:sSup><m:r><m:t xml:space=\"preserve\">−4ac</m:t></m:r></m:e></m:rad></m:num><m:den><m:r><m:t xml:space=\"preserve\">2a</m:t></m:r></m:den></m:f></m:oMath>";
 
     const QUADRATIC_MATHML: &str = "<math xmlns=\"http://www.w3.org/1998/Math/MathML\" display=\"block\"><mi>x</mi><mo>=</mo><mfrac><mrow><mo>−</mo><mi>b</mi><mo>±</mo><msqrt><msup><mi>b</mi><mn>2</mn></msup><mo>−</mo><mn>4</mn><mi>a</mi><mi>c</mi></msqrt></mrow><mrow><mn>2</mn><mi>a</mi></mrow></mfrac></math>";
@@ -826,7 +831,7 @@ mod tests {
     }
 
     #[test]
-    fn pasting_the_equashion_omml_into_a_text_box_inserts_an_equation_at_the_caret() {
+    fn pasting_the_equashioncraft_omml_into_a_text_box_inserts_an_equation_at_the_caret() {
         let mut s = session();
         let id = editing_box(&mut s, "Roots: ");
         let r = s.execute("edit.paste", &json!({"text": QUADRATIC_OMML})).unwrap();
@@ -900,7 +905,7 @@ mod tests {
             assert_eq!(shape_text(&s, id), (text.to_string(), 0));
         }
         // An equation payload that cannot be read pastes as text, with a note why.
-        let long = format!("${}$", "x".repeat(crate::equashion_bridge::MAX_CLIP_LATEX + 1));
+        let long = format!("${}$", "x".repeat(crate::equashioncraft_bridge::MAX_CLIP_LATEX + 1));
         for text in ["<m:oMath/>", "<math></math>", long.as_str()] {
             let mut s = session();
             let id = editing_box(&mut s, "");

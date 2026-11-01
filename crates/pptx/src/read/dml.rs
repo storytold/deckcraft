@@ -629,7 +629,7 @@ fn push_text_runs(para: &mut Paragraph, props: RunProps, text: &str) {
 fn push_math_run(imp: &mut Imp, para: &mut Paragraph, part: &Part, e: &El) {
     if para.runs.len() < MAX_PARAGRAPH_RUNS {
         let omml = e.elements().map(|c| part.keep_inner(c)).collect::<String>();
-        let text = equashion_math::run_text(&equashion_math::from_omml(&omml));
+        let text = equashioncraft_math::run_text(&equashioncraft_math::from_omml(&omml));
         let mut rprs = vec![];
         e.find_all("rPr", &mut rprs);
         let props = rprs.into_iter().find(|r| r.prefix() == "a").map(|r| rpr(imp, part, r)).unwrap_or_default();

@@ -1,15 +1,15 @@
-//! The presentation's equations and the equaSHion editor's tree, through OMML.
+//! The presentation's equations and the EquaSHionCraft editor's tree, through OMML.
 //!
 //! DeckCraft keeps an equation as an inline `Math` run: its OMML is the equation (kept as
 //! PowerPoint wrote it and written back to PPTX unchanged), and the run text is its linear form.
 //! The equation editor widget, the linear / LaTeX parser and the MathML reader work on
-//! [`equashion_math::Math`]. The two meet in OMML: a run's OMML is read with equaSHion's OMML
+//! [`equashioncraft_math::Math`]. The two meet in OMML: a run's OMML is read with EquaSHionCraft's OMML
 //! import ([`to_editor`]) and the editor's tree is stored with its OMML export
 //! ([`run_payload`]), so an equation crosses over exactly as it would through a saved file and
 //! nothing here duplicates either converter. It lives in the engine (not ui-egui) because the
 //! commands and paste need it too.
 
-pub use equashion_math as eq;
+pub use equashioncraft_math as eq;
 
 /// A stored equation (a `Math` run's OMML) as the editor's tree. OMML import never fails:
 /// unknown elements and properties are kept, so writing the tree back loses nothing.
@@ -32,12 +32,12 @@ pub fn run_payload(m: &eq::Math) -> (String, String) {
 }
 
 /// Presentation MathML (one `<math>` element) as the editor's tree, display from
-/// `display="block"`. `None` when it is not MathML equaSHion reads, or holds nothing.
+/// `display="block"`. `None` when it is not MathML EquaSHionCraft reads, or holds nothing.
 pub fn from_mathml(xml: &str) -> Option<eq::Math> {
     eq::from_mathml(xml).ok().filter(|m| !is_blank(m))
 }
 
-/// LaTeX (or equaSHion's typed linear form) as the editor's tree, read by equaSHion's parser
+/// LaTeX (or EquaSHionCraft's typed linear form) as the editor's tree, read by EquaSHionCraft's parser
 /// (`\frac{a}{b}`, `\sqrt{x}`, `\sum_{i=1}^{n}`, `x^2`). `None` when nothing is left.
 pub fn from_latex(src: &str, display: bool) -> Option<eq::Math> {
     let src = src.trim();
@@ -177,7 +177,7 @@ mod tests {
     const NS_M: &str = "http://schemas.openxmlformats.org/officeDocument/2006/math";
     const NS_A: &str = "http://schemas.openxmlformats.org/drawingml/2006/main";
 
-    /// The equations the round trips are pinned on: (name, equaSHion linear format).
+    /// The equations the round trips are pinned on: (name, EquaSHionCraft linear format).
     const EQUATIONS: &[(&str, &str)] = &[
         ("fraction", "a/b"),
         ("sqrt", "√(x+1)"),
@@ -271,7 +271,7 @@ mod tests {
         assert!(matches!(read("<math></math>"), Some((ClipFormat::MathMl, Err(_)))), "empty");
         let long = format!("${}$", "x".repeat(MAX_CLIP_LATEX + 1));
         assert!(matches!(read(&long), Some((ClipFormat::Latex, Err(_)))));
-        // equaSHion's own MathML and OMML copies read back.
+        // EquaSHionCraft's own MathML and OMML copies read back.
         let src = eq::from_linear("\\sqrt{x}");
         let copied = eq::to_mathml_display(&src, true);
         assert!(matches!(clipboard_equation(&copied), Some((ClipFormat::MathMl, Ok(m))) if m.para && eq::to_linear(&m) == eq::to_linear(&src)));

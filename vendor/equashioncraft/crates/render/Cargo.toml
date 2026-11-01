@@ -1,0 +1,25 @@
+[package]
+name = "equashioncraft-render"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "EquaSHionCraft rendering: equation scenes to RGBA pixels (vello_cpu) and to SVG"
+publish = false
+
+[features]
+default = ["raster", "extra-fonts"]
+extra-fonts = ["equashioncraft-layout/extra-fonts"]
+# RGBA rendering through vello_cpu. SVG output does not need it.
+raster = ["dep:vello_cpu"]
+
+[dependencies]
+equashioncraft-layout = { workspace = true }
+kurbo = { workspace = true }
+vello_cpu = { workspace = true, optional = true }
+
+[dev-dependencies]
+equashioncraft-math = { workspace = true }
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"

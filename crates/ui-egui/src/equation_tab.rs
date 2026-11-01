@@ -1,15 +1,15 @@
 //! The Equation tab, laid out as WordCraft's is: Tools, Symbols, Structures, Equation Options.
 //! Shown while the Equation dialog is open. The galleries, symbol sets, ready-made equations and
-//! the pictures on the buttons are equaSHion's (WordCraft's, exported); everything inserts into
+//! the pictures on the buttons are EquaSHionCraft's (WordCraft's, exported); everything inserts into
 //! the dialog's editor at the caret, so the dialog stays where it is and the ribbon does the
 //! choosing.
 //!
-//! Not in equaSHion's editor yet, so shown but disabled: Unicode / LaTeX input format, Convert,
+//! Not in EquaSHionCraft's editor yet, so shown but disabled: Unicode / LaTeX input format, Convert,
 //! Normal Text and equation numbers.
 
 use egui::{Align2, Color32, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use equashion_egui::equashion_math::{GalleryTemplate, Math, galleries};
-use equashion_egui::EquationEditor;
+use equashioncraft_egui::EquationEditor;
+use equashioncraft_egui::equashioncraft_math::{GalleryTemplate, Math, galleries};
 
 use crate::SlideApp;
 use crate::icons::Icon;
@@ -68,7 +68,7 @@ fn tile(ui: &mut Ui, ed: &mut EquationEditor, tpl: &GalleryTemplate, size: egui:
         ui.painter().rect_stroke(r, 2.0, Stroke::new(1.5, t.accent), StrokeKind::Inside);
     }
     // The template with its empty places drawn as boxes.
-    let face = equashion_egui::equashion_math::Editor::new(tpl.math.clone()).display_math();
+    let face = equashioncraft_egui::equashioncraft_math::Editor::new(tpl.math.clone()).display_math();
     let pt = if size.x > 120.0 { 13.0 } else { 14.0 };
     paint_math(ed, ui, r.shrink(2.0), &format!("tab/{}", tpl.id), &face, pt);
     resp.on_hover_text(&tpl.label).clicked()
@@ -189,7 +189,7 @@ fn symbol_button(ui: &mut Ui, ed: &mut EquationEditor, c: char) -> bool {
     if resp.hovered() {
         ui.painter().rect_stroke(r, 2.0, Stroke::new(1.0, t.accent), StrokeKind::Inside);
     }
-    let face = Math::new(vec![equashion_egui::equashion_math::Node::Text(s.clone())]);
+    let face = Math::new(vec![equashioncraft_egui::equashioncraft_math::Node::Text(s.clone())]);
     paint_math(ed, ui, r, &format!("tab/sym/{}", c as u32), &face, 11.0);
     let tip = galleries().symbol_name(c).map_or_else(|| format!("{s}  U+{:04X}", c as u32), |n| format!("{s}  \\{n}"));
     resp.on_hover_text(tip).clicked()

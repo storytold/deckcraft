@@ -272,7 +272,7 @@ fn paste(s: &mut Session, p: &Value) -> Result<Value> {
         // Text that is exactly one equation (OMML, MathML or delimited LaTeX) pastes as an
         // equation; one that cannot be read pastes as the text it is, with a note why.
         // Paste and Match Formatting (`edit.pasteText`) always pastes the text.
-        match crate::equashion_bridge::clipboard_equation(t) {
+        match crate::equashioncraft_bridge::clipboard_equation(t) {
             Some((format, Ok(m))) => {
                 let mut r = super::equation::paste_math(s, &m)?;
                 if let Some(o) = r.as_object_mut() {

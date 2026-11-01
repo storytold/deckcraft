@@ -1,0 +1,25 @@
+[package]
+name = "equashioncraft-egui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "EquaSHionCraft egui widget: the equation editor (canvas, palette, linear field) with no host types"
+publish = false
+
+[dependencies]
+equashioncraft-math = { workspace = true }
+equashioncraft-layout = { workspace = true, features = ["extra-fonts"] }
+equashioncraft-render = { workspace = true, features = ["raster", "extra-fonts"] }
+egui = { workspace = true }
+
+[dev-dependencies]
+egui_kittest = { workspace = true }
+# The native example only (glow keeps the build small; no wgpu).
+eframe = { workspace = true, features = ["default_fonts", "glow", "x11", "wayland"] }
+
+[[example]]
+name = "widget"
+
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"

@@ -1,4 +1,4 @@
-//! The equation editor: equaSHion's [`EquationEditor`] widget, bare, over the equation where it
+//! The equation editor: EquaSHionCraft's [`EquationEditor`] widget, bare, over the equation where it
 //! sits on the slide.
 //!
 //! It opens from Insert › Equation (a new equation, in the middle of the slide) and from a
@@ -13,7 +13,7 @@
 //! The widget shares the app's `egui::Context` and never touches its fonts, visuals or style: it
 //! draws the equation with its own bundled fonts.
 
-use equashion_egui::EquationEditor;
+use equashioncraft_egui::EquationEditor;
 use serde_json::{Value, json};
 
 use crate::SlideApp;
@@ -82,7 +82,7 @@ fn open(app: &mut SlideApp, params: &Value) -> Open {
     };
     // A ready-made equation from Insert › Equation's arrow: a new equation, started from it.
     if let Some(id) = params.get("builtin").and_then(Value::as_str) {
-        if let Some(b) = equashion_egui::equashion_math::galleries().builtins.iter().find(|b| b.id == id) {
+        if let Some(b) = equashioncraft_egui::equashioncraft_math::galleries().builtins.iter().find(|b| b.id == id) {
             o.widget.set_math(b.math.clone());
         }
         return o;
@@ -213,13 +213,10 @@ pub fn in_place(app: &mut SlideApp, ctx: &egui::Context, d: &mut Dialog) -> bool
     let t = Tokens::get(ctx);
     let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
     let mut response = None;
-    let area = egui::Area::new(egui::Id::unique("deckcraft-equation-in-place"))
-        .order(egui::Order::Foreground)
-        .fixed_pos(top_left)
-        .show(ctx, |ui| {
-            ui.visuals_mut().selection.stroke.color = t.accent;
-            response = Some(o.widget.show(ui));
-        });
+    let area = egui::Area::new(egui::Id::unique("deckcraft-equation-in-place")).order(egui::Order::Foreground).fixed_pos(top_left).show(ctx, |ui| {
+        ui.visuals_mut().selection.stroke.color = t.accent;
+        response = Some(o.widget.show(ui));
+    });
     if response.as_ref().is_some_and(|r| r.changed)
         && let Err(e) = sync(app, &mut o)
     {
@@ -321,11 +318,21 @@ mod tests {
         h.get_by_label("Stacked Fraction").click();
         steps(&mut h, 3);
         let eq = h.state().equation.widget().map(|w| w.math().clone()).unwrap();
-        assert!(matches!(eq.body.first().map(equashion_egui::equashion_math::Node::bare), Some(equashion_egui::equashion_math::Node::Frac { .. })), "{eq:?}");
+        assert!(
+            matches!(
+                eq.body.first().map(equashioncraft_egui::equashioncraft_math::Node::bare),
+                Some(equashioncraft_egui::equashioncraft_math::Node::Frac { .. })
+            ),
+            "{eq:?}"
+        );
         // The symbol strip is on the tab itself: the first set's first symbols.
         h.get_by_label("\u{221e}").click();
         steps(&mut h, 3);
-        assert!(h.state().equation.widget().is_some_and(|w| w.linear().contains('\u{221e}')), "{:?}", h.state().equation.widget().map(|w| w.linear()));
+        assert!(
+            h.state().equation.widget().is_some_and(|w| w.linear().contains('\u{221e}')),
+            "{:?}",
+            h.state().equation.widget().map(|w| w.linear())
+        );
         // Display and Inline switch the equation's flag.
         assert!(!h.state().equation.widget().unwrap().is_display());
         h.get_by_label("Display").click();
@@ -345,7 +352,7 @@ mod tests {
         h.set_size(vec2(1700.0, 860.0));
         h.state_mut().ui.tab = "Insert".into();
         steps(&mut h, 3);
-        let id = equashion_egui::equashion_math::galleries().builtins.first().map(|b| b.id.clone()).expect("a built-in equation");
+        let id = equashioncraft_egui::equashioncraft_math::galleries().builtins.first().map(|b| b.id.clone()).expect("a built-in equation");
         let depth = undo_depth(h.state());
         let mut d = crate::dialogs::Dialog::new("equation");
         d.params = json!({"builtin": id});
@@ -367,7 +374,7 @@ mod tests {
         let fonts_before = h.ctx.fonts(|f| f.definitions().clone());
         let style_before = h.ctx.global_style();
         open_new(&mut h);
-        assert!(h.state().equation.is_open(), "Insert › Equation opens the equaSHion widget");
+        assert!(h.state().equation.is_open(), "Insert › Equation opens the EquaSHionCraft widget");
         assert!(h.query_by_label("Cancel").is_none(), "no dialog buttons: the ribbon does the choosing");
         let canvas = h.state().equation.widget().map(|w| w.canvas_id());
         assert!(canvas.is_some_and(|c| h.ctx.memory(|m| m.has_focus(c))), "typing goes to the widget");

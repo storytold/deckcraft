@@ -1062,7 +1062,7 @@ dependencies = [
  "deckcraft-pptx",
  "deckcraft-render",
  "deckcraft-text",
- "equashion-math",
+ "equashioncraft-math",
  "i_overlay",
  "image",
  "js-sys",
@@ -1219,7 +1219,7 @@ dependencies = [
  "deckcraft-engine",
  "deckcraft-geom",
  "deckcraft-model",
- "equashion-math",
+ "equashioncraft-math",
  "image",
  "log",
  "quick-xml 0.41.0",
@@ -1256,8 +1256,8 @@ dependencies = [
  "deckcraft-fonts",
  "deckcraft-geom",
  "deckcraft-model",
- "equashion-layout",
- "equashion-math",
+ "equashioncraft-layout",
+ "equashioncraft-math",
  "kurbo",
  "unicode-bidi",
  "unicode-linebreak",
@@ -1281,7 +1281,7 @@ dependencies = [
  "deckcraft-text",
  "egui",
  "egui_kittest",
- "equashion-egui",
+ "equashioncraft-egui",
  "log",
  "serde",
  "serde_json",
@@ -1442,6 +1442,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -1646,20 +1647,20 @@ version = "0.37.0"
 source = "git+https://github.com/storytold/egui.git?rev=6d518fc799681571963842f95b55a6b68431b15a#6d518fc799681571963842f95b55a6b68431b15a"
 
 [[package]]
-name = "equashion-egui"
-version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=fed687c6b5af025a1afc3484d6b4b167ff0679dc#fed687c6b5af025a1afc3484d6b4b167ff0679dc"
+name = "equashioncraft-egui"
+version = "0.13.1"
 dependencies = [
+ "eframe",
  "egui",
- "equashion-layout",
- "equashion-math",
- "equashion-render",
+ "egui_kittest",
+ "equashioncraft-layout",
+ "equashioncraft-math",
+ "equashioncraft-render",
 ]
 
 [[package]]
-name = "equashion-font"
-version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=fed687c6b5af025a1afc3484d6b4b167ff0679dc#fed687c6b5af025a1afc3484d6b4b167ff0679dc"
+name = "equashioncraft-font"
+version = "0.13.1"
 dependencies = [
  "harfrust 0.13.3",
  "kurbo",
@@ -1669,31 +1670,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "equashion-layout"
-version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=fed687c6b5af025a1afc3484d6b4b167ff0679dc#fed687c6b5af025a1afc3484d6b4b167ff0679dc"
+name = "equashioncraft-layout"
+version = "0.13.1"
 dependencies = [
- "equashion-font",
- "equashion-math",
+ "equashioncraft-font",
+ "equashioncraft-math",
  "kurbo",
 ]
 
 [[package]]
-name = "equashion-math"
-version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=fed687c6b5af025a1afc3484d6b4b167ff0679dc#fed687c6b5af025a1afc3484d6b4b167ff0679dc"
+name = "equashioncraft-math"
+version = "0.13.1"
 dependencies = [
- "quick-xml 0.38.4",
+ "quick-xml 0.41.0",
  "serde",
  "serde_json",
 ]
 
 [[package]]
-name = "equashion-render"
-version = "0.1.0"
-source = "git+https://github.com/shuff57/equaSHion?rev=fed687c6b5af025a1afc3484d6b4b167ff0679dc#fed687c6b5af025a1afc3484d6b4b167ff0679dc"
+name = "equashioncraft-render"
+version = "0.13.1"
 dependencies = [
- "equashion-layout",
+ "equashioncraft-layout",
+ "equashioncraft-math",
  "kurbo",
  "vello_cpu",
 ]
@@ -3856,15 +3855,6 @@ name = "quick-error"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a993555f31e5a609f617c12db6250dedcac1b0a85076912c436e6fc9b2c8e6a3"
-
-[[package]]
-name = "quick-xml"
-version = "0.38.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b66c2058c55a409d601666cffe35f04333cf1013010882cec174a7467cd4e21c"
-dependencies = [
- "memchr",
-]
 
 [[package]]
 name = "quick-xml"

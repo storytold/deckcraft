@@ -2128,10 +2128,13 @@ fn engine_equation_round_trips_with_props_and_linear_text() {
     let (RunKind::Math { omml: oa }, RunKind::Math { omml: ob }) = (&a.kind, &b.kind) else { panic!("not math: {b:?}") };
     // The run properties now also sit inside each math run (as PowerPoint writes them); the
     // equation itself is the same.
-    assert_eq!(equashion_math::to_linear(&equashion_math::from_omml(oa)), equashion_math::to_linear(&equashion_math::from_omml(ob)));
+    assert_eq!(
+        equashioncraft_math::to_linear(&equashioncraft_math::from_omml(oa)),
+        equashioncraft_math::to_linear(&equashioncraft_math::from_omml(ob))
+    );
     assert!(ob.contains("<m:oMathPara") && ob.contains("<m:f>") && ob.contains("<m:rad>") && ob.contains("sz=\"2800\""), "{ob}");
     assert!(ob.contains("xmlns:m="));
-    assert_eq!(b.text, equashion_math::to_linear(&equashion_math::from_omml(ob)));
+    assert_eq!(b.text, equashioncraft_math::to_linear(&equashioncraft_math::from_omml(ob)));
     assert_eq!(b.text, a.text);
     assert_eq!(b.props.size, Some(28.0));
     assert_eq!(b.props.font, a.props.font);

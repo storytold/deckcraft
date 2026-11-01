@@ -1,7 +1,7 @@
-//! Equations (`equashion_math::Math`) laid out into positioned shapes and rules.
+//! Equations (`equashioncraft_math::Math`) laid out into positioned shapes and rules.
 //!
-//! The layout is equaSHion's ([`equashion_layout`]), the same engine the equation editor draws
-//! with, so what is typed in place is what the slide shows. It runs in equaSHion's bundled
+//! The layout is EquaSHionCraft's ([`equashioncraft_layout`]), the same engine the equation editor draws
+//! with, so what is typed in place is what the slide shows. It runs in EquaSHionCraft's bundled
 //! equation fonts, not the slide's text face: an equation's math faces and the editor's are one.
 //!
 //! The result is a [`MathBox`]: a width, an ascent and a descent around a baseline, plus rules
@@ -14,15 +14,15 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use deckcraft_color::Rgba;
 use deckcraft_geom::Rect;
-use equashion_layout::{DEFAULT_FAMILY, FontDb, MathFonts, Prim, Rgb};
-use equashion_math::{Math, from_omml};
+use equashioncraft_layout::{DEFAULT_FAMILY, FontDb, MathFonts, Prim, Rgb};
+use equashioncraft_math::{Math, from_omml};
 use kurbo::{Affine, BezPath, Shape as _};
 
 use crate::{Deco, GlyphRun};
 
 /// Cached equation layouts.
 const CACHE_MAX: usize = 256;
-/// Slant of a synthetic italic, and stroke of a synthetic bold (em), as equaSHion's renderer.
+/// Slant of a synthetic italic, and stroke of a synthetic bold (em), as EquaSHionCraft's renderer.
 const SYNTH_ITALIC_SKEW: f64 = -0.21;
 const SYNTH_BOLD_STROKE: f64 = 0.03;
 
@@ -57,7 +57,7 @@ impl MathBox {
     }
 }
 
-/// equaSHion's bundled fonts: no system fonts, so an equation lays out the same everywhere.
+/// EquaSHionCraft's bundled fonts: no system fonts, so an equation lays out the same everywhere.
 fn fonts() -> &'static FontDb {
     static DB: LazyLock<FontDb> = LazyLock::new(FontDb::bundled_only);
     &DB
@@ -99,9 +99,9 @@ fn items_of(prims: Vec<Prim>, fonts: &dyn MathFonts) -> Vec<Item> {
 /// Lay out an equation at `size` points (bold when `bold`; `display` for a displayed formula).
 pub(crate) fn layout_math(m: &Math, size: f64, bold: bool, display: bool) -> MathBox {
     let f = fonts();
-    let b = equashion_layout::layout_math(f, m, DEFAULT_FAMILY, size, bold, display);
+    let b = equashioncraft_layout::layout_math(f, m, DEFAULT_FAMILY, size, bold, display);
     let mut prims = Vec::new();
-    equashion_layout::emit(&b, 0.0, 0.0, Rgb::BLACK, &mut prims);
+    equashioncraft_layout::emit(&b, 0.0, 0.0, Rgb::BLACK, &mut prims);
     MathBox { w: b.width(), asc: b.ascent(), desc: b.descent(), display, items: items_of(prims, f) }
 }
 
@@ -149,14 +149,26 @@ pub(crate) fn emit(
 ) {
     for it in &b.items {
         match it {
-            Item::Rule(r) => {
-                decos.push(Deco { rect: Rect::new(x + r.x0, baseline + r.y0, x + r.x1, baseline + r.y1), color, behind: false, para, line: crate::DecoLine::Solid, path: None })
-            }
+            Item::Rule(r) => decos.push(Deco {
+                rect: Rect::new(x + r.x0, baseline + r.y0, x + r.x1, baseline + r.y1),
+                color,
+                behind: false,
+                para,
+                line: crate::DecoLine::Solid,
+                path: None,
+            }),
             Item::Path(p) => {
                 let mut q = p.clone();
                 q.apply_affine(Affine::translate((x, baseline)));
                 let bb = q.bounding_box();
-                decos.push(Deco { rect: Rect::new(bb.x0, bb.y0, bb.x1, bb.y1), color, behind: false, para, line: crate::DecoLine::Solid, path: Some(Arc::new(q)) });
+                decos.push(Deco {
+                    rect: Rect::new(bb.x0, bb.y0, bb.x1, bb.y1),
+                    color,
+                    behind: false,
+                    para,
+                    line: crate::DecoLine::Solid,
+                    path: Some(Arc::new(q)),
+                });
             }
         }
     }
@@ -164,7 +176,7 @@ pub(crate) fn emit(
 
 #[cfg(test)]
 mod tests {
-    use equashion_math::from_linear;
+    use equashioncraft_math::from_linear;
 
     use super::*;
 
@@ -230,12 +242,12 @@ mod tests {
 
     #[test]
     fn all_extents_are_finite_for_every_template() {
-        for t in equashion_math::templates() {
+        for t in equashioncraft_math::templates() {
             let b = layout_math(&t.math, 18.0, false, true);
             assert!(b.w.is_finite() && b.asc.is_finite() && b.desc.is_finite(), "{}", t.id);
             assert!(b.w >= 0.0 && b.asc >= 0.0 && b.desc >= 0.0, "{}", t.id);
         }
-        for t in equashion_math::galleries().templates() {
+        for t in equashioncraft_math::galleries().templates() {
             let b = layout_math(&t.math, 18.0, false, true);
             assert!(b.w.is_finite() && b.asc.is_finite() && b.desc.is_finite(), "{}", t.id);
         }
@@ -243,7 +255,7 @@ mod tests {
 
     #[test]
     fn layout_cache_returns_the_same_box() {
-        let o = equashion_math::to_omml(&from_linear("a^2+b^2"));
+        let o = equashioncraft_math::to_omml(&from_linear("a^2+b^2"));
         let a = layout_math_cached(&o, 24.0, false, false);
         let b = layout_math_cached(&o, 24.0, false, false);
         assert!(Arc::ptr_eq(&a, &b));
