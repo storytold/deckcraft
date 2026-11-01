@@ -165,6 +165,8 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
             values,
             data_labels: s.child("dataLabels").map(|l| l.bool("hidden") != Some(true)),
             number_format: format,
+            fill: super::chart::simple_fill(s.child("spPr")),
+            line: super::chart::simple_line(s.child("spPr")),
             ..Default::default()
         });
     }
@@ -173,5 +175,25 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
     c.vary_colors = matches!(c.kind, ChartType::Funnel | ChartType::Treemap | ChartType::Sunburst | ChartType::Waterfall);
     // Waterfall, histogram and box charts have a value axis with gridlines by default.
     c.gridlines = matches!(c.kind, ChartType::Waterfall | ChartType::Histogram | ChartType::Pareto | ChartType::BoxWhisker);
+    let pa = ch.child("plotArea")?;
+    let cat = pa.children_named("axis").find(|a| a.child("catScaling").is_some());
+    let val = pa.children_named("axis").find(|a| a.child("valScaling").is_some());
+    if let Some(a) = val {
+        let sc = a.child("valScaling");
+        c.y_min = sc.and_then(|s| s.f64("min"));
+        c.y_max = sc.and_then(|s| s.f64("max"));
+        c.y_major = sc.and_then(|s| s.f64("majorUnit")).filter(|v| *v > 0.0);
+        c.y_hidden = a.bool("hidden") == Some(true);
+        c.y_format = a.child("numFmt").and_then(|e| e.attr("formatCode")).map(str::to_string);
+        c.gridlines = a.child("majorGridlines").is_some();
+        c.minor_gridlines = a.child("minorGridlines").is_some();
+    }
+    c.axis_titles = (cat.and_then(|a| a.child("title")).and_then(rich_text), val.and_then(|a| a.child("title")).and_then(rich_text));
+    c.chart_fill = super::chart::simple_fill(root.child("spPr"));
+    c.plot_fill = super::chart::simple_fill(pa.child("spPr"));
+    super::chart::read_text_styles(&mut c, root, ch, val, cat);
+    super::chart::read_format(&mut c, ch, pa, val, cat);
+    c.legend_overlay = ch.child("legend").and_then(|e| e.bool("overlay")) == Some(true);
+    c.format.title_overlay = ch.child("title").and_then(|e| e.bool("overlay")) == Some(true);
     Some(c)
 }

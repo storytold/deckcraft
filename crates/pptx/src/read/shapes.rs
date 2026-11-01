@@ -587,7 +587,12 @@ fn smartart(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape, depth: usize) ->
     let children = smartart_text_rects(imp, &mut sub, tree, children, depth + 1);
     let mut g = frame.clone();
     let x = frame.xfrm.unwrap_or_default();
-    g.kind = ShapeKind::Group { children, child: Xfrm::new(0.0, 0.0, x.w, x.h) };
+    let child = tree
+        .path(&["grpSpPr", "xfrm"])
+        .and_then(|t| dml::xfrm(t).1)
+        .filter(|r| r.is_finite() && r.w > 0.0 && r.h > 0.0)
+        .unwrap_or_else(|| Xfrm::new(0.0, 0.0, x.w, x.h));
+    g.kind = ShapeKind::Group { children, child };
     g.diagram = diagram_outline(imp, part, rel_ids, &data.root);
     // Node pictures, from the blips of the data model's presentation points.
     if let Some(d) = &mut g.diagram {

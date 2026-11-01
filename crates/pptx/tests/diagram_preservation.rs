@@ -83,6 +83,96 @@ fn ids(root: &XmlEl) -> Vec<String> {
 }
 
 #[test]
+fn missing_diagram_cache_uses_the_authored_alternate_vector_branch() {
+    let bytes = fixture();
+    let mut parts = files(&bytes);
+    let fallback = r#"<p:sp><p:nvSpPr><p:cNvPr id="9001" name="Author fallback"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="1270000" y="1270000"/><a:ext cx="3810000" cy="1270000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:solidFill><a:srgbClr val="2856A0"/></a:solidFill></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="2400"/><a:t>Visible authored fallback</a:t></a:r></a:p></p:txBody></p:sp>"#;
+    let mut missing_drawing = None;
+    for (name, bytes) in &mut parts {
+        let Ok(mut doc) = parse_xml(bytes) else { continue };
+        if doc.root.is("drawing") {
+            missing_drawing = Some(name.clone());
+        }
+        if !doc.root.is("sld") {
+            continue;
+        }
+        let mut frames = vec![];
+        doc.root.find_all("graphicFrame", &mut frames);
+        let frame = frames.into_iter().find(|e| e.find("relIds").is_some()).unwrap().to_xml();
+        doc.root.set_attr("xmlns:mc", "http://schemas.openxmlformats.org/markup-compatibility/2006");
+        doc.root.set_attr("xmlns:a14", "http://schemas.microsoft.com/office/drawing/2010/main");
+        let ac = format!(
+            "<mc:AlternateContent><mc:Choice Requires=\"a14\">{frame}</mc:Choice><mc:Fallback>{fallback}</mc:Fallback></mc:AlternateContent>"
+        );
+        *bytes = doc.root.to_xml().replace(&frame, &ac).into_bytes();
+    }
+    let cached = deckcraft_pptx::import(&zip(parts.clone())).unwrap();
+    assert!(cached.slides[0].shapes.iter().any(|s| s.diagram.is_some()));
+    parts.retain(|(n, _)| Some(n) != missing_drawing.as_ref());
+    let missing = zip(parts);
+    let back = deckcraft_pptx::import(&missing).unwrap();
+    assert!(back.slides[0].shapes.iter().any(|s| s.text.as_ref().is_some_and(|t| t.text().contains("Visible authored fallback"))));
+    assert!(!back.slides[0].shapes.iter().any(|s| s.diagram.is_some()));
+}
+
+#[test]
+fn cached_diagram_root_child_coordinates_are_not_assumed_to_equal_the_frame() {
+    let mut parts = files(&fixture());
+    for (_, bytes) in &mut parts {
+        let Ok(mut doc) = parse_xml(bytes) else { continue };
+        if !doc.root.is("drawing") {
+            continue;
+        }
+        let tree = doc.root.elements_mut().find(|e| e.is("spTree")).unwrap();
+        let props = tree.elements_mut().find(|e| e.is("grpSpPr")).unwrap();
+        *props = parse_xml(br#"<dsp:grpSpPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="7620000" cy="3810000"/><a:chOff x="1270000" y="2540000"/><a:chExt cx="15240000" cy="7620000"/></a:xfrm></dsp:grpSpPr>"#).unwrap().root;
+        *bytes = doc.root.to_xml().into_bytes();
+    }
+    let p = deckcraft_pptx::import(&zip(parts)).unwrap();
+    let ShapeKind::Group { child, .. } = &group(&p).kind else { panic!("group") };
+    assert_eq!(*child, deckcraft_geom::Xfrm::new(100.0, 200.0, 1200.0, 600.0));
+    let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+    assert_eq!(group(&p).kind, group(&back).kind);
+}
+
+#[test]
+fn generated_complex_diagram_matrix_renders_cached_shapes() {
+    let mut out = deckcraft_model::Presentation::default();
+    out.slides.clear();
+    for kind in ["hierarchy", "cycle", "radial", "matrix", "pyramid", "pictureProcess"] {
+        let mut s = Session::with_new();
+        s.execute("insert.smartArt", &serde_json::json!({"kind":kind})).unwrap();
+        let lines = if kind == "hierarchy" {
+            vec!["Root", "\tBranch A", "\t\tLeaf 1", "\t\tLeaf 2", "\tBranch B", "\t\tLeaf 3"]
+        } else {
+            vec!["Observe", "Plan", "Build", "Measure", "Review", "Adapt"]
+        };
+        s.execute("smartArt.setNodes", &serde_json::json!({"lines":lines})).unwrap();
+        let p = &s.doc().unwrap().doc;
+        let layout = deckcraft_model::defaults::layout_of_kind(&out, deckcraft_model::LayoutType::Blank).unwrap();
+        let mut slide = deckcraft_model::defaults::new_slide(&mut out, layout).unwrap();
+        // Fresh slide identities; diagrams are the only contributor-original content.
+        slide.shapes = p.slides[0].shapes.iter().filter(|s| s.diagram.is_some()).cloned().collect();
+        out.slides.push(Arc::new(slide));
+    }
+    let bytes = deckcraft_pptx::export(&out).unwrap();
+    let imported = deckcraft_pptx::import(&bytes).unwrap();
+    let dir = std::env::var_os("DECKCRAFT_RENDER_PROBES").map(std::path::PathBuf::from);
+    if let Some(dir) = &dir {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("complex-diagrams.pptx"), &bytes).unwrap();
+    }
+    for (i, slide) in imported.slides.iter().enumerate() {
+        assert!(slide.shapes.iter().any(|s| s.diagram.as_ref().is_some_and(|d| d.kept.is_some())));
+        let img = deckcraft_engine::render::render_slide(&imported, i, &Default::default());
+        assert!(img.pixels.chunks_exact(4).filter(|p| p[0] < 150).count() > 1000);
+        if let Some(dir) = &dir {
+            std::fs::write(dir.join(format!("diagram-{}.png", i + 1)), img.to_png()).unwrap();
+        }
+    }
+}
+
+#[test]
 fn imported_diagram_keeps_ids_drawing_bytes_and_identity_based_text_edits() {
     let bytes = fixture();
     let mut p = deckcraft_pptx::import(&bytes).unwrap();

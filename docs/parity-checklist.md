@@ -2,6 +2,8 @@
 
 > **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.
 
+> **Direct-render coverage 2026-11-01:** manual chart rectangles/rotations/strokes, cached SmartArt root transforms, authored fallback selection and six-script font probes are exercised. Direct PowerPoint comparisons cover six cached diagram layouts and the chart/font pages. Native chartEx open/export failed; chart/SmartArt scores stay partial.
+
 > **Additional bounded coverage:** document-scoped fonts, actual-face diagnostics, per-role chart typography, secondary-axis rebuilds and nested SmartArt cached drawings now have synthetic regression tests. Font editing, charts and SmartArt retain their current partial scores; direct fixed-size XLSX ranges now synchronize and imported graph/text preservation is covered. Full rich chart labels, spreadsheet dependency edits and structural diagram relayout remain open.
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)

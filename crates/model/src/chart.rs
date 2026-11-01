@@ -328,6 +328,84 @@ pub enum ChartTextRole {
     ValueTitle,
 }
 
+/// An explicit chart element rectangle, relative to the complete chart frame. Missing
+/// coordinates retain automatic layout; `factor` positions offset that automatic position.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChartLayout {
+    pub inner: bool,
+    pub x: Option<f64>,
+    pub y: Option<f64>,
+    pub w: Option<f64>,
+    pub h: Option<f64>,
+    pub x_edge: bool,
+    pub y_edge: bool,
+    pub w_edge: bool,
+    pub h_edge: bool,
+}
+
+impl ChartLayout {
+    /// Resolve OOXML factor/edge modes, rejecting hostile or inverted rectangles.
+    pub fn resolve(&self, auto: deckcraft_geom::Rect, width: f64, height: f64) -> deckcraft_geom::Rect {
+        let values = [self.x, self.y, self.w, self.h];
+        if !width.is_finite()
+            || !height.is_finite()
+            || width <= 0.0
+            || height <= 0.0
+            || values.into_iter().flatten().any(|v| !v.is_finite() || v.abs() > 1.0)
+            || self.w.is_some_and(|v| v < 0.0)
+            || self.h.is_some_and(|v| v < 0.0)
+            || (self.x_edge && self.x.is_some_and(|v| v < 0.0))
+            || (self.y_edge && self.y.is_some_and(|v| v < 0.0))
+        {
+            return auto;
+        }
+        let x = self.x.map_or(auto.x0, |v| v * width + if self.x_edge { 0.0 } else { auto.x0 });
+        let y = self.y.map_or(auto.y0, |v| v * height + if self.y_edge { 0.0 } else { auto.y0 });
+        let right = self.w.map_or(x + auto.width(), |v| v * width + if self.w_edge { 0.0 } else { x });
+        let bottom = self.h.map_or(y + auto.height(), |v| v * height + if self.h_edge { 0.0 } else { y });
+        if right <= x || bottom <= y {
+            return auto;
+        }
+        let w = (right - x).min(width);
+        let h = (bottom - y).min(height);
+        let x = x.clamp(0.0, (width - w).max(0.0));
+        let y = y.clamp(0.0, (height - h).max(0.0));
+        deckcraft_geom::Rect::new(x, y, x + w, y + h)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChartLineRole {
+    CategoryAxis,
+    ValueAxis,
+    SecondaryValueAxis,
+    MajorGrid,
+    MinorGrid,
+}
+
+/// Rendering properties which used to survive only in opaque chart XML.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ChartFormat {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plot_layout: Option<ChartLayout>,
+    pub title_overlay: bool,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub layouts: std::collections::BTreeMap<ChartTextRole, ChartLayout>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub lines: std::collections::BTreeMap<ChartLineRole, Line>,
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub bodies: std::collections::BTreeMap<ChartTextRole, crate::text::BodyProps>,
+}
+
+impl ChartFormat {
+    fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Chart {
@@ -348,6 +426,8 @@ pub struct Chart {
     /// Per-element DrawingML text properties; absent properties inherit from the default role.
     #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub text_styles: std::collections::BTreeMap<ChartTextRole, crate::text::RunProps>,
+    #[serde(skip_serializing_if = "ChartFormat::is_empty")]
+    pub format: ChartFormat,
     pub data_labels: bool,
     pub gridlines: bool,
     /// `c:minorGridlines` on the value axis: five to a major unit, between the major ones.
@@ -470,6 +550,7 @@ impl Default for Chart {
             text_size: None,
             title_size: None,
             text_styles: Default::default(),
+            format: Default::default(),
             data_labels: false,
             gridlines: true,
             minor_gridlines: false,

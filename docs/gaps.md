@@ -1,5 +1,11 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **Update 2026-11-01:** direct rendering now covers manual chart layouts, rotated chart text,
+> explicit axis/grid strokes, cached SmartArt root coordinates and authored missing-cache
+> fallbacks. Six-script/embedded-font and six-layout cached-diagram probes were compared with
+> PowerPoint. Native chartEx export remains a concrete failed check; full no-cache SmartArt
+> constraints and MicroType Express decoding remain unimplemented. See [coverage](layout-fidelity.md).
+
 > **Update 2026-10-31:** imported SmartArt graphs and identity-bound Text Pane edits now preserve cached geometry; fixed-size direct XLSX sources synchronize transactionally. Structural diagram changes and unsupported workbook sources remain gaps.
 
 > **Earlier update 2026-10-31:** data-only categorical chart edits preserve source formatting, line labels render, partial shape locks survive saving, and default flat process SmartArt exports its canvas dimensions. These are bounded fixes; chart and SmartArt parity remain partial. See the evidence and limits below.
@@ -199,8 +205,10 @@ Detail in [file-format-parity.md](file-format-parity.md).
   Line labels now render, including per-series overrides and original values on stacked lines;
   Title, legend, category/value axes and axis titles now keep independent font families, size,
   weight, slant, language and fill. Label widths and legend row heights use text shaping.
-  Mixed rich-text runs, rotated/manual chart labels, per-point/per-series label typography and
-  complete chart typography remain open. See [layout fidelity](layout-fidelity.md).
+  Mixed rich-text runs, per-point/per-series label typography, chartEx offsets and complete
+  native chartEx interoperability remain open. Manual layouts and body rotations now render;
+  explicit axes/gridlines retain line width/dashes/paint. A fresh native chartEx probe did not
+  finish opening/exporting, so advanced-chart parity is not marked complete. See [layout fidelity](layout-fidelity.md).
 - **Impact:** most business decks have charts; editing their data is routine.
 - **Estimate:** 12–20 h. Data and elements are **beta blockers** (6–10 h).
 

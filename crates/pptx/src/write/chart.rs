@@ -1,7 +1,7 @@
 //! Chart parts: a `c:chartSpace` with cached categories and values.
 //! An unchanged chart also keeps the embedded workbook and the other parts it points at.
 
-use deckcraft_model::chart::{Chart, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartLayout, ChartLineRole, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::opc::{NS_A, NS_C, NS_R};
@@ -40,32 +40,46 @@ fn simple_fill(w: &mut W, f: &Fill) {
             w.close("a:bgClr");
             w.close("a:pattFill");
         }
-        Fill::Gradient(_) | Fill::Picture(_) | Fill::Group | Fill::Background => {
-            if let Fill::Gradient(g) = f
-                && let Some(s) = g.stops.first()
-            {
-                super::dml::solid(w, &s.color);
-            }
-        }
+        Fill::Gradient(g) => super::dml::gradient(w, g),
+        Fill::Picture(_) | Fill::Group | Fill::Background => {}
     }
 }
 
 fn sp_pr(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>) {
+    sp_pr_tag(w, fill, line, "c:spPr");
+}
+
+fn sp_pr_tag(w: &mut W, fill: Option<&Fill>, line: Option<&deckcraft_model::Line>, tag: &str) {
     if fill.is_none() && line.is_none() {
         return;
     }
-    w.open0("c:spPr");
+    w.open0(tag);
     if let Some(f) = fill {
         simple_fill(w, f);
     }
     if let Some(l) = line {
-        w.open("a:ln", A::new().o("w", l.width.map(super::dml::emu_pos)));
-        if let Some(f) = &l.fill {
-            simple_fill(w, f);
-        }
-        w.close("a:ln");
+        super::dml::line_with_fill(w, "a:ln", l, simple_fill);
     }
-    w.close("c:spPr");
+    w.close(tag);
+}
+
+fn layout(w: &mut W, layout: Option<&ChartLayout>, plot: bool) {
+    let Some(l) = layout else { return };
+    w.open0("c:layout");
+    w.open0("c:manualLayout");
+    if plot {
+        w.val("c:layoutTarget", if l.inner { "inner" } else { "outer" });
+    }
+    for (name, edge) in [("c:xMode", l.x_edge), ("c:yMode", l.y_edge), ("c:wMode", l.w_edge), ("c:hMode", l.h_edge)] {
+        w.val(name, if edge { "edge" } else { "factor" });
+    }
+    for (name, value) in [("c:x", l.x), ("c:y", l.y), ("c:w", l.w), ("c:h", l.h)] {
+        if let Some(value) = value.filter(|v| v.is_finite() && v.abs() <= 1.0) {
+            w.val(name, fmt_num(value));
+        }
+    }
+    w.close("c:manualLayout");
+    w.close("c:layout");
 }
 
 /// The supported text properties, shared by rich title runs and label defaults.
@@ -90,26 +104,30 @@ fn chart_rpr(w: &mut W, tag: &str, p: &deckcraft_model::text::RunProps) {
 }
 
 fn tx_pr(w: &mut W, c: &Chart, role: ChartTextRole) {
+    tx_pr_tag(w, c, role, "c:txPr");
+}
+
+fn tx_pr_tag(w: &mut W, c: &Chart, role: ChartTextRole, tag: &str) {
     let props = c.text_props(role);
-    if props == deckcraft_model::text::RunProps::default() {
+    if props == deckcraft_model::text::RunProps::default() && !c.format.bodies.contains_key(&role) {
         return;
     }
-    w.open0("c:txPr");
-    w.empty0("a:bodyPr");
+    w.open0(tag);
+    super::dml::body_pr(w, &c.format.bodies.get(&role).cloned().unwrap_or_default());
     w.empty0("a:lstStyle");
     w.open0("a:p");
     w.open0("a:pPr");
     chart_rpr(w, "a:defRPr", &props);
     w.close("a:pPr");
     w.close("a:p");
-    w.close("c:txPr");
+    w.close(tag);
 }
 
 fn title(w: &mut W, text: &str, c: &Chart, role: ChartTextRole) {
     w.open0("c:title");
     w.open0("c:tx");
     w.open0("c:rich");
-    w.empty0("a:bodyPr");
+    super::dml::body_pr(w, &c.format.bodies.get(&role).cloned().unwrap_or_default());
     w.empty0("a:lstStyle");
     let props = c.text_props(role);
     for line in text.split('\n') {
@@ -124,7 +142,8 @@ fn title(w: &mut W, text: &str, c: &Chart, role: ChartTextRole) {
     }
     w.close("c:rich");
     w.close("c:tx");
-    w.val("c:overlay", 0);
+    layout(w, c.format.layouts.get(&role), false);
+    w.val("c:overlay", u8::from(role == ChartTextRole::Title && c.format.title_overlay));
     w.close("c:title");
 }
 
@@ -427,6 +446,7 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.val("c:majorTickMark", "out");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
         tx_pr(w, c, ChartTextRole::CategoryAxis);
         w.val("c:crossAx", val_id);
         w.val("c:crosses", if secondary { "max" } else { "autoZero" });
@@ -447,6 +467,7 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
         w.val("c:majorTickMark", "none");
         w.val("c:minorTickMark", "none");
         w.val("c:tickLblPos", "nextTo");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis));
         tx_pr(w, c, ChartTextRole::CategoryAxis);
         w.val("c:crossAx", val_id);
         w.val("c:crosses", if secondary { "max" } else { "autoZero" });
@@ -473,10 +494,14 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
     w.val("c:delete", u8::from(hidden));
     w.val("c:axPos", val_pos);
     if c.gridlines && !secondary {
-        w.empty0("c:majorGridlines");
+        w.open0("c:majorGridlines");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::MajorGrid));
+        w.close("c:majorGridlines");
     }
     if c.minor_gridlines && !secondary {
-        w.empty0("c:minorGridlines");
+        w.open0("c:minorGridlines");
+        sp_pr(w, None, c.format.lines.get(&ChartLineRole::MinorGrid));
+        w.close("c:minorGridlines");
     }
     if let Some(t) = c.axis_titles.1.as_ref().filter(|_| !secondary) {
         title(w, t, c, ChartTextRole::ValueTitle);
@@ -488,6 +513,7 @@ fn axes(w: &mut W, c: &Chart, g: Group, secondary: bool) {
     w.val("c:majorTickMark", "none");
     w.val("c:minorTickMark", "none");
     w.val("c:tickLblPos", "nextTo");
+    sp_pr(w, None, c.format.lines.get(&if secondary { ChartLineRole::SecondaryValueAxis } else { ChartLineRole::ValueAxis }));
     tx_pr(w, c, if secondary { ChartTextRole::SecondaryValueAxis } else { ChartTextRole::ValueAxis });
     w.val("c:crossAx", cat_id);
     w.val("c:crosses", if secondary { "max" } else { "autoZero" });
@@ -656,7 +682,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         None => w.val("c:autoTitleDeleted", 1),
     }
     w.open0("c:plotArea");
-    w.empty0("c:layout");
+    layout(&mut w, c.format.plot_layout.as_ref(), true);
     let indexed: Vec<(usize, &Series)> = c.series.iter().enumerate().collect();
     let main = match c.kind {
         ChartType::Combo => c.series.first().and_then(|s| s.kind).unwrap_or(ChartType::Column),
@@ -730,6 +756,7 @@ pub fn chart_xml(c: &Chart) -> (Vec<u8>, bool) {
         };
         w.open0("c:legend");
         w.val("c:legendPos", p);
+        layout(&mut w, c.format.layouts.get(&ChartTextRole::Legend), false);
         w.val("c:overlay", u8::from(c.legend_overlay));
         tx_pr(&mut w, c, ChartTextRole::Legend);
         w.close("c:legend");
@@ -929,8 +956,9 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
     w.close("cx:chartData");
     w.open0("cx:chart");
     if let Some(t) = &c.title {
-        w.open("cx:title", A::new().a("pos", "t").a("align", "ctr").a("overlay", "0"));
+        w.open("cx:title", A::new().a("pos", "t").a("align", "ctr").a("overlay", u8::from(c.format.title_overlay)));
         cx_text(&mut w, t);
+        tx_pr_tag(&mut w, c, ChartTextRole::Title, "cx:txPr");
         w.close("cx:title");
     }
     w.open0("cx:plotArea");
@@ -948,6 +976,7 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
     for (i, s) in c.series.iter().enumerate().take(if one { 1 } else { usize::MAX }) {
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
+        sp_pr_tag(&mut w, s.fill.as_ref(), s.line.as_ref(), "cx:spPr");
         if c.series_data_labels(s) {
             w.open("cx:dataLabels", A::new().a("pos", if c.kind == ChartType::Funnel { "ctr" } else { "outEnd" }));
             w.empty("cx:visibility", A::new().a("seriesName", "0").a("categoryName", "0").a("value", "1"));
@@ -990,26 +1019,78 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             }
             _ => {}
         }
+        if !matches!(c.kind, ChartType::Treemap | ChartType::Sunburst | ChartType::RegionMap) {
+            w.elt("cx:axisId", "0");
+            if c.kind != ChartType::Funnel {
+                w.elt("cx:axisId", "1");
+            }
+        }
         w.close("cx:series");
     }
     if c.kind == ChartType::Pareto {
         w.open("cx:series", A::new().a("layoutId", "paretoLine").a("ownerIdx", "0").a("uniqueId", "{DC0000FF-0000-4000-8000-000000000000}"));
-        w.empty("cx:axisId", A::new().a("val", "2"));
+        w.elt("cx:axisId", "2");
         w.close("cx:series");
     }
     w.close("cx:plotAreaRegion");
+    chartex_axes(&mut w, c);
+    sp_pr_tag(&mut w, c.plot_fill.as_ref(), None, "cx:spPr");
+    w.close("cx:plotArea");
+    if let Some(pos) = &c.legend {
+        w.open("cx:legend", A::new().a("pos", pos.as_str()).a("align", "ctr").a("overlay", u8::from(c.legend_overlay)));
+        tx_pr_tag(&mut w, c, ChartTextRole::Legend, "cx:txPr");
+        w.close("cx:legend");
+    }
+    w.close("cx:chart");
+    sp_pr_tag(&mut w, c.chart_fill.as_ref(), None, "cx:spPr");
+    tx_pr_tag(&mut w, c, ChartTextRole::Default, "cx:txPr");
+    w.close("cx:chartSpace");
+    w.finish()
+}
+
+fn chartex_axis_title(w: &mut W, c: &Chart, text: Option<&str>, role: ChartTextRole) {
+    if let Some(text) = text {
+        w.open0("cx:title");
+        cx_text(w, text);
+        tx_pr_tag(w, c, role, "cx:txPr");
+        w.close("cx:title");
+    }
+}
+
+fn chartex_axes(w: &mut W, c: &Chart) {
     if !matches!(c.kind, ChartType::Treemap | ChartType::Sunburst | ChartType::RegionMap) {
         w.open("cx:axis", A::new().a("id", "0"));
         w.empty("cx:catScaling", A::new().a("gapWidth", if matches!(c.kind, ChartType::Histogram | ChartType::Pareto) { "0" } else { "0.5" }));
+        chartex_axis_title(w, c, c.axis_titles.0.as_deref(), ChartTextRole::CategoryTitle);
         w.empty0("cx:tickLabels");
+        sp_pr_tag(w, None, c.format.lines.get(&ChartLineRole::CategoryAxis), "cx:spPr");
+        tx_pr_tag(w, c, ChartTextRole::CategoryAxis, "cx:txPr");
         w.close("cx:axis");
         if c.kind != ChartType::Funnel {
-            w.open("cx:axis", A::new().a("id", "1"));
-            w.empty0("cx:valScaling");
-            if c.gridlines {
-                w.empty0("cx:majorGridlines");
+            w.open("cx:axis", A::new().a("id", "1").a("hidden", u8::from(c.y_hidden)));
+            w.empty(
+                "cx:valScaling",
+                A::new()
+                    .o("min", c.y_min.filter(|v| v.is_finite()).map(fmt_num))
+                    .o("max", c.y_max.filter(|v| v.is_finite()).map(fmt_num))
+                    .o("majorUnit", c.y_major.filter(|v| v.is_finite() && *v > 0.0).map(fmt_num)),
+            );
+            chartex_axis_title(w, c, c.axis_titles.1.as_deref(), ChartTextRole::ValueTitle);
+            for (show, tag, role) in
+                [(c.gridlines, "cx:majorGridlines", ChartLineRole::MajorGrid), (c.minor_gridlines, "cx:minorGridlines", ChartLineRole::MinorGrid)]
+            {
+                if show {
+                    w.open0(tag);
+                    sp_pr_tag(w, None, c.format.lines.get(&role), "cx:spPr");
+                    w.close(tag);
+                }
             }
             w.empty0("cx:tickLabels");
+            if let Some(fmt) = c.y_format.as_deref() {
+                w.empty("cx:numFmt", A::new().a("formatCode", fmt).a("sourceLinked", "0"));
+            }
+            sp_pr_tag(w, None, c.format.lines.get(&ChartLineRole::ValueAxis), "cx:spPr");
+            tx_pr_tag(w, c, ChartTextRole::ValueAxis, "cx:txPr");
             w.close("cx:axis");
         }
         if c.kind == ChartType::Pareto {
@@ -1020,13 +1101,6 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
             w.close("cx:axis");
         }
     }
-    w.close("cx:plotArea");
-    if let Some(pos) = &c.legend {
-        w.empty("cx:legend", A::new().a("pos", pos.as_str()).a("align", "ctr").a("overlay", "0"));
-    }
-    w.close("cx:chart");
-    w.close("cx:chartSpace");
-    w.finish()
 }
 
 #[cfg(test)]

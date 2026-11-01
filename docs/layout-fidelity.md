@@ -1,6 +1,6 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-10-31: imported diagram graph retention and embedded XLSX cell synchronization.
+Updated 2026-11-01: direct chart layout rendering, cached-diagram coordinates and cross-renderer probes.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -56,8 +56,22 @@ The nested workbook reader accepts at most 2,048 entries, 8 MiB per entry, 32 Mi
 100,000 addressed cells. External/indirect references, resized ranges, formula target cells,
 shared/array formulas, table-backed/protected sheets and signed workbooks are not synchronized.
 Those edits retain the existing stale-workbook removal fallback, rather than publish mismatching
-caches and cells. Structural chart changes rebuild modeled state. Mixed rich-text chart runs,
-rotations/manual label positions, per-point/per-series typography and advanced charts remain open.
+caches and cells. Structural chart changes rebuild modeled state.
+
+Manual plot rectangles, title/legend/axis-title positions, per-role text-body rotation and explicit
+axis/gridline styles now reach the renderer and survive rebuilds. Factor and edge modes are
+resolved separately with finite, bounded coordinates. Rotated axis titles are rotated once, not
+once by their text body and again by the axis transform. Combo legends group primary-axis series
+before secondary-axis series; line keys and manual horizontal spacing reflect their actual layout.
+The shared DrawingML line writer retains width, caps, joins and dash geometry; gradients retain
+all stops. `layoutTarget` is emitted only for plot areas: putting it on a title/legend can prevent
+PowerPoint from opening the file even though the base schema admits the element.
+
+The chartEx reader/writer now carries per-role fonts and rotation, series paints, numeric bounds,
+number formats and axis/gridline styles into modeled state. Series axis references use element
+text (the chartEx schema), not the ordinary-chart `val` attribute. This closes specific lost-style
+paths, not all advanced chart parity: rich/mixed-run and per-point labels, chartEx offsets and
+complete native chartEx interoperability still need separate coverage.
 
 ## SmartArt
 
@@ -65,7 +79,10 @@ Cached drawings now retain recursive group transforms and child-coordinate syste
 nodes become picture-filled `dsp:sp` shapes, because the diagram shape tree admits shapes/groups,
 not ordinary slide `p:pic` children. The writer bounds traversal to 32 levels and 10,000 nodes.
 Unsupported embedded objects warn rather than masquerading as supported nodes.
-Flat generated process constraints also account for non-uniform frame scaling.
+Flat generated process constraints also account for non-uniform frame scaling. Imported cached
+root `chOff/chExt` coordinates no longer assume the outer graphic-frame dimensions. When an
+AlternateContent diagram choice lacks a usable cached drawing, an authored fallback branch is
+selected if available; a valid cache still takes precedence.
 
 For imported diagrams with a complete retained graph, the original data model (including point
 and connection IDs), cached drawing, layout, style, colors, media and relationships survive export.
@@ -79,8 +96,9 @@ Single-line node/title changes update the data model, cached drawing and visible
 preserving geometry and existing run formatting. Duplicate labels remain independent. Missing or
 ambiguous bindings reject the edit without changing the diagram. Undo/redo and native save/reopen
 are tested. Structural/layout/style changes still use DeckCraft's simpler layout algorithms.
-This does not implement the full constraint language: absent drawing caches, complex text
-remapping and independently edited cached shapes remain outside the preservation path.
+This does not implement the full constraint language: absent drawing caches with no authored
+fallback, complex text remapping and independently edited cached shapes remain outside the
+preservation path.
 
 ## Validation
 
@@ -110,5 +128,30 @@ complex layout constraints or altering a diagram's structure remains a separate 
 The synchronized XLSX was also opened in Excel for Mac 16.113.3: the edited name/value,
 unrelated Notes sheet and original formula were read back successfully. Native outputs and
 screenshots are not distributed.
-Continue using a separately validated fallback for presentations requiring unsupported
-layout features or native-Office fidelity.
+
+The additional tests are `chart_visual_format` (manual rectangles, strokes, title rotation and
+chartEx modeled styles), `font_render_matrix` (Latin ligatures/italic, CJK, Arabic, Thai and
+Devanagari, embedded sfnt/EOT, missing-face reporting), and the cached-layout extensions in
+`diagram_preservation`. Set `DECKCRAFT_RENDER_PROBES` to emit their original probes locally.
+Tests assert rendered coordinates/colors and selected font faces, not merely non-empty XML.
+
+The direct-render validation uses **the same input file** for DeckCraft and PowerPoint. Six
+PowerPoint-saved original synthetic cached diagrams (hierarchy with three levels, cycle, radial,
+matrix, pyramid and picture-process layout) were rendered at 3840x2160 with both renderers and
+visually compared. The manual-layout dual-axis chart and the multilingual font page were also
+opened/exported successfully and compared directly. These cover imported cached drawings; they
+must not be interpreted as proof that DeckCraft generates all SmartArt constraints identically.
+
+| Case | Verified result | Remaining condition |
+|---|---|---|
+| Cached complex diagram, including scaled/nonzero child coordinates | Direct image rendering and retained text/geometry | Arbitrary constraint regeneration without cache is not implemented |
+| Missing diagram cache with an authored AlternateContent branch | Uses the authored fallback instead of an empty diagram | A file with neither representation cannot be reconstructed exactly |
+| Named available/embedded sfnt and uncompressed EOT faces, six script probes | Faces selected and shaped; no missing glyphs in the probes | Missing font binaries and MicroType Express subsets cannot be made equivalent by substitution |
+| Manual dual-axis chart with rotated labels and styled gridlines | Direct renderer respects bounds, strokes and per-role typography | Automatic label spacing and every rich/per-point label case are not pixel-certified |
+| Nine chart-type render matrix | Owned import/render tests pass | Fresh chartEx native-open/export failed in the local PowerPoint check; this is a failed check, not a pass or an untested feature |
+
+A separate black-box attempt to insert Waterfall through PowerPoint's own menu also lost the
+application connection, so the local chartEx failure is not yet attributed solely to emitted XML.
+It remains an explicit interoperability investigation. No Office-generated files or screenshots
+are shipped. A consumer can use direct rendering for the validated representations above; an
+arbitrary-deck replacement claim requires the remaining named cases to pass too.

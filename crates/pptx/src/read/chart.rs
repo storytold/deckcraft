@@ -1,12 +1,12 @@
 //! Chart parts (`c:chartSpace`) → [`Chart`]. The original XML is kept in `Chart.raw`.
 
-use deckcraft_model::chart::{Chart, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
+use deckcraft_model::chart::{Chart, ChartLayout, ChartLineRole, ChartTextRole, ChartType, ErrorBars, Series, Trendline, TrendlineType};
 use deckcraft_model::style::Fill;
 
 use crate::xml::El;
 
 /// Fills of chart parts never reference images we keep; read colour and pattern fills only.
-fn simple_fill(sp: Option<&El>) -> Option<Fill> {
+pub(super) fn simple_fill(sp: Option<&El>) -> Option<Fill> {
     let sp = sp?;
     for e in sp.elements() {
         match e.local() {
@@ -20,9 +20,9 @@ fn simple_fill(sp: Option<&El>) -> Option<Fill> {
     None
 }
 
-fn simple_line(sp: Option<&El>) -> Option<deckcraft_model::Line> {
+pub(super) fn simple_line(sp: Option<&El>) -> Option<deckcraft_model::Line> {
     let ln = sp?.child("ln")?;
-    let mut l = deckcraft_model::Line { width: super::dml::pt(ln, "w"), ..Default::default() };
+    let mut l = super::dml::line_properties(ln);
     l.fill = simple_fill(Some(ln));
     Some(l)
 }
@@ -168,7 +168,73 @@ fn chart_within(root: &El, mut budget: usize) -> Option<Chart> {
     c.lang = root.child_val("lang").map(str::to_string);
     let (val_ax, cat_ax) = read_axes(&mut c, pa, &primary_val);
     read_text_styles(&mut c, root, ch, val_ax, cat_ax);
+    read_format(&mut c, ch, pa, val_ax, cat_ax);
     Some(c)
+}
+
+fn manual_layout(e: Option<&El>) -> Option<ChartLayout> {
+    let e = e?.path(&["layout", "manualLayout"])?;
+    if ["x", "y", "w", "h"]
+        .into_iter()
+        .any(|k| e.child(k).is_some_and(|v| v.f64("val").is_none_or(|n| n.abs() > 1.0 || (matches!(k, "w" | "h") && n < 0.0))))
+    {
+        return None;
+    }
+    let value = |k| e.child(k).and_then(|v| v.f64("val"));
+    Some(ChartLayout {
+        inner: e.child_val("layoutTarget") == Some("inner"),
+        x: value("x"),
+        y: value("y"),
+        w: value("w"),
+        h: value("h"),
+        x_edge: e.child_val("xMode") == Some("edge"),
+        y_edge: e.child_val("yMode") == Some("edge"),
+        w_edge: e.child_val("wMode") == Some("edge"),
+        h_edge: e.child_val("hMode") == Some("edge"),
+    })
+}
+
+pub(super) fn read_format(c: &mut Chart, ch: &El, pa: &El, val: Option<&El>, cat: Option<&El>) {
+    c.format.plot_layout = manual_layout(Some(pa));
+    c.format.title_overlay = ch.path(&["title", "overlay"]).and_then(|e| e.bool("val")) == Some(true);
+    for (role, e) in [
+        (ChartTextRole::Title, ch.child("title")),
+        (ChartTextRole::Legend, ch.child("legend")),
+        (ChartTextRole::CategoryTitle, cat.and_then(|a| a.child("title"))),
+        (ChartTextRole::ValueTitle, val.and_then(|a| a.child("title"))),
+    ] {
+        if let Some(layout) = manual_layout(e) {
+            c.format.layouts.insert(role, layout);
+        }
+        let body = e.and_then(|e| e.path(&["tx", "rich", "bodyPr"]).or_else(|| e.path(&["txPr", "bodyPr"])));
+        if let Some(body) = body {
+            read_body(c, role, body);
+        }
+    }
+    let second = pa.children_named("valAx").find(|a| a.child_val("axPos") == Some("r"));
+    for (role, axis) in [(ChartTextRole::CategoryAxis, cat), (ChartTextRole::ValueAxis, val), (ChartTextRole::SecondaryValueAxis, second)] {
+        if let Some(body) = axis.and_then(|a| a.path(&["txPr", "bodyPr"])) {
+            read_body(c, role, body);
+        }
+    }
+    for (role, e) in [
+        (ChartLineRole::CategoryAxis, cat),
+        (ChartLineRole::ValueAxis, val),
+        (ChartLineRole::SecondaryValueAxis, second),
+        (ChartLineRole::MajorGrid, val.and_then(|a| a.child("majorGridlines"))),
+        (ChartLineRole::MinorGrid, val.and_then(|a| a.child("minorGridlines"))),
+    ] {
+        if let Some(line) = simple_line(e.and_then(|e| e.child("spPr"))) {
+            c.format.lines.insert(role, line);
+        }
+    }
+}
+
+fn read_body(c: &mut Chart, role: ChartTextRole, e: &El) {
+    let body = super::dml::body_pr(e);
+    if body != Default::default() {
+        c.format.bodies.insert(role, body);
+    }
 }
 
 /// A group's value axis: its vertical one when it has two (scatter), else its one.
@@ -415,7 +481,7 @@ fn read_axes<'a>(c: &mut Chart, pa: &'a El, primary_val: &Option<String>) -> (Op
 }
 
 /// Text sizes and colours as the file sets them.
-fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_ax: Option<&El>) {
+pub(super) fn read_text_styles(c: &mut Chart, root: &El, ch: &El, val_ax: Option<&El>, cat_ax: Option<&El>) {
     use ChartTextRole::*;
     for (role, element) in [
         (Default, root.child("txPr")),

@@ -221,6 +221,13 @@ pub fn media_ref(imp: &mut Imp, part: &Part, b: &El) -> Option<deckcraft_model::
 }
 
 pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
+    let mut l = line_properties(ln);
+    l.fill = fill_of(imp, part, ln);
+    l
+}
+
+/// Line geometry without package-dependent picture fills (also used by charts).
+pub(super) fn line_properties(ln: &El) -> Line {
     let mut l = Line { width: pt(ln, "w").map(|w| w.clamp(0.0, 2000.0)), ..Default::default() };
     l.cap = ln.attr("cap").map(|c| match c {
         "rnd" => LineCap::Round,
@@ -229,7 +236,6 @@ pub fn line(imp: &mut Imp, part: &Part, ln: &El) -> Line {
     });
     l.compound = ln.attr("cmpd").map(Compound::from_xml);
     l.align = ln.attr("algn").and_then(LineAlign::from_xml);
-    l.fill = fill_of(imp, part, ln);
     for e in ln.elements() {
         match e.local() {
             "prstDash" => l.dash = Some(Dash::Preset { name: e.attr("val").unwrap_or("solid").to_string() }),

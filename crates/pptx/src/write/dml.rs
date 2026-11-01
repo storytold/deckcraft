@@ -200,6 +200,11 @@ pub fn blip_fill(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, pf: &PictureFil
 }
 
 pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
+    line_with_fill(w, tag, l, |w, f| fill(w, x, o, f));
+}
+
+/// Write line geometry, delegating only its fill to the owning shape/chart writer.
+pub(super) fn line_with_fill(w: &mut W, tag: &str, l: &Line, paint: impl FnOnce(&mut W, &Fill)) {
     let a = A::new()
         .o("w", l.width.map(|v| emu(v.clamp(0.0, 1584.0))))
         .o(
@@ -215,7 +220,7 @@ pub fn line(w: &mut W, x: &mut Exp, o: &mut Out, tag: &str, l: &Line) {
     w.open(tag, a);
     if let Some(f) = &l.fill {
         match f {
-            Fill::None | Fill::Solid { .. } | Fill::Gradient(_) | Fill::Pattern(_) => fill(w, x, o, f),
+            Fill::None | Fill::Solid { .. } | Fill::Gradient(_) | Fill::Pattern(_) => paint(w, f),
             _ => {}
         }
     }
@@ -284,7 +289,7 @@ fn shadow(w: &mut W, tag: &str, s: &deckcraft_model::style::Shadow) {
     w.close(tag);
 }
 
-fn gradient(w: &mut W, g: &deckcraft_model::style::Gradient) {
+pub(super) fn gradient(w: &mut W, g: &deckcraft_model::style::Gradient) {
     w.open("a:gradFill", A::new().o("flip", g.flip.map(GradientFlip::xml)).a("rotWithShape", if g.rotate_with_shape { "1" } else { "0" }));
     // No stops: no `a:gsLst`, so the gradient keeps taking them from its style's fill.
     let mut stops = g.stops.clone();

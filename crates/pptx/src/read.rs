@@ -284,10 +284,10 @@ fn kept_parts(pkg: &Package, pres_path: &str) -> Vec<deckcraft_model::KeptPart> 
 /// understand) so the shape reader can keep the model and its fallback picture. Ink content parts
 /// still fall through to the fallback picture.
 pub fn resolve_mc(el: &mut El, depth: usize) {
-    resolve_mc_rels(el, depth, None);
+    resolve_mc_rels(el, depth, None, None);
 }
 
-fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
+fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>, pkg: Option<&Package>) {
     if depth > crate::xml::MAX_DEPTH {
         return;
     }
@@ -305,7 +305,7 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
                         // Ink content parts are not modelled; prefer their fallback picture.
                         let modelled = !ch.elements().any(|e| e.is("contentPart"))
                             && (!ch.attr("Requires").unwrap_or("").contains("cx1") || chartex_readable(ch));
-                        req_ok && modelled
+                        req_ok && modelled && (ac.child("Fallback").is_none() || diagram_choices_readable(ch, rels, pkg))
                     });
                     let branch = choice.or_else(|| ac.child("Fallback"));
                     if let Some(b) = branch {
@@ -329,14 +329,35 @@ fn resolve_mc_rels(el: &mut El, depth: usize, rels: Option<&Rels>) {
         el.children = out;
     }
     for c in el.elements_mut() {
-        resolve_mc_rels(c, depth + 1, rels);
+        resolve_mc_rels(c, depth + 1, rels, pkg);
     }
+}
+
+/// Prefer the file's own vector/picture fallback when a diagram choice has no usable
+/// cached drawing. Merely recognizing its namespace must not discard the visible branch.
+fn diagram_choices_readable(choice: &El, rels: Option<&Rels>, pkg: Option<&Package>) -> bool {
+    let (Some(rels), Some(pkg)) = (rels, pkg) else { return true };
+    let mut data = vec![];
+    choice.find_all("graphicData", &mut data);
+    data.into_iter().filter(|g| g.attr("uri").is_some_and(|u| u.ends_with("/diagram"))).all(|g| {
+        let drawing = g
+            .child("relIds")
+            .and_then(|ids| rels.get(ids.attr("r:dm").unwrap_or("")))
+            .filter(|r| !r.external)
+            .and_then(|r| pkg.xml(&r.target))
+            .and_then(|d| d.root.find("dataModelExt").and_then(|e| e.attr("relId")).and_then(|id| rels.get(id)).cloned())
+            .filter(|r| !r.external)
+            .and_then(|r| pkg.xml(&r.target));
+        drawing
+            .and_then(|d| d.root.child("spTree").map(|t| t.elements().any(|e| matches!(e.local(), "sp" | "pic" | "grpSp" | "cxnSp"))))
+            .unwrap_or(false)
+    })
 }
 
 fn load(pkg: &Package, name: &str) -> Option<Doc> {
     let mut d = pkg.xml(name)?;
     let rels = pkg.rels(name);
-    resolve_mc_rels(&mut d.root, 0, Some(&rels));
+    resolve_mc_rels(&mut d.root, 0, Some(&rels), Some(pkg));
     Some(d)
 }
 
