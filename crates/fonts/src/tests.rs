@@ -251,6 +251,7 @@ fn office_fonts_have_substitutes() {
         "Source Code Pro",
         "JetBrains Mono",
         "Cascadia Code",
+        "Cascadia Code PL",
         "Cascadia Mono",
         "Fira Code",
         "Inconsolata",
