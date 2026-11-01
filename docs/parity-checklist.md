@@ -2,6 +2,8 @@
 
 > **Generated:** 2026-10-14 (bullets/numbering remain D after empty-line marker review; summary by `cargo xtask parity`; rows re-scored by the 2026-10-14 community PR wave, duplicate Thesaurus, AutoCorrect, Artistic effects and Corrections rows folded; Preview in editor re-scored 2026-10-13; earlier rows re-scored 2026-10-10 against PowerPoint for Mac 16.113.4; video/animated GIF row re-scored 2026-10-11, #171) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
+> **Last updated:** 2026-11-01 · Clipboard-image row re-assessed for #1641: remains P; desktop OS integration (#1419) and Windows/Linux validation remain outstanding. Scores unchanged.
+
 The summary between `<!-- SUMMARY -->
 **Weighted breadth parity: 84%** over 191 features.
 
@@ -187,7 +189,7 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Pictures | Picture styles and borders | P1 | D |
 | Pictures | Change / reset picture | P1 | D |
 | Pictures | Compress pictures | P2 | D |
-| Pictures | Paste image from clipboard (fails on Windows, #1414; Linux not re-checked) | P0 | P |
+| Pictures | Paste image from clipboard (single-image browser HTML uses available pixels, #1641; Windows #1414 and Linux validation remain) | P0 | P |
 | Pictures | Insert screenshot | P2 | M |
 | Media | Insert audio (any common format) | P0 | D |
 | Media | Insert video | P1 | D |
@@ -233,3 +235,9 @@ Open P0 items: Contextual tabs (Shape Format, Picture Format, Table Design/Layou
 | Platforms (✱) | macOS, Windows, Linux builds | P0 | P |
 | Platforms (✱) | Web (WASM) build | P1 | D |
 | Platforms (✱) | BSD build | P2 | P |
+
+## Revision history
+
+| Date | Change | Summary |
+|---|---|---|
+| 2026-11-01 | trivial | Browser-image paste uses available pixels for single-image HTML with text alternatives; internal objects and rich text retained (#1641). Scores unchanged |

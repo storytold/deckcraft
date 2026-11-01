@@ -1,6 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-10-30 · **Change:** minor (slide-show hit testing follows each shape’s own animation state; scale and rotation covered; previous: trivial, AutoFormat lists run independently of Replace text as you type; previous: minor, slide-show click targets follow animated shapes and text links; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-11-01 · **Last updated:** 2026-11-01 · **Change:** trivial (single-image browser HTML can use clipboard pixels beside a text alternative (#1641); scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -161,7 +161,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 3–5 h. **Beta blocker.**
 
 ### Image paste fails on Windows (#1414)
-- **Evidence:** #53 is closed (PR #88 pastes an image-only clipboard as a picture); #1414 (Ctrl+V fails to paste external images on Windows) is open. Linux was not re-checked after #53 closed.
+- **Evidence:** #53 is closed (PR #88 pastes an image-only clipboard as a picture); #1414 (Ctrl+V fails to paste external images on Windows) is open. Linux was not re-checked after #53 closed. The mixed-format browser-image path now uses an available bitmap for single-image HTML even when a text/URL alternative arrives (#1641); native desktop OS clipboard integration still needs #1419. HTML-only remote image URLs are not downloaded, and this does not close the Windows/Linux validation gap.
 - **Impact:** copy-paste of screenshots is a core workflow.
 - **Estimate:** 2–4 h. **Beta blocker.**
 
@@ -368,6 +368,7 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-11-01 | trivial | Browser-image paste uses available pixels for single-image HTML with text alternatives; internal objects and rich text retained (#1641). Scores unchanged |
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |
