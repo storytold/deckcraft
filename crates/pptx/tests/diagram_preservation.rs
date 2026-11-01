@@ -610,6 +610,56 @@ fn local_reference_fonts_and_parent_order_match_real_text_and_survive_roundtrip(
 }
 
 #[test]
+fn composite_shape_and_text_ownership_survive_import_and_export() {
+    for (index, (mapped, fit)) in [(1, false), (2, false), (1, true), (2, true)].into_iter().enumerate() {
+        let mut parts = files(&shared_font_fixture("none", None, "Observe changes", "Build a careful prototype"));
+        for (_, bytes) in &mut parts {
+            let Ok(mut doc) = parse_xml(bytes) else { continue };
+            if !doc.root.is("layoutDef") {
+                continue;
+            }
+            let root = doc.root.elements_mut().find(|e| e.is("layoutNode")).unwrap();
+            *root.elements_mut().find(|e| e.is("presOf")).unwrap() =
+                parse_xml(format!("<dgm:presOf axis='ch' ptType='node' st='{mapped}' cnt='1'/>").as_bytes()).unwrap().root;
+            root.elements_mut().find(|e| e.is("shape")).unwrap().set_attr("type", "rect");
+            if fit {
+                for node in root.elements_mut().filter(|e| e.is("layoutNode")) {
+                    *node.elements_mut().find(|e| e.is("ruleLst")).unwrap() =
+                        parse_xml(b"<dgm:ruleLst><dgm:rule type='primFontSz' val='5'/></dgm:ruleLst>").unwrap().root;
+                }
+            }
+            *bytes = doc.root.to_xml().into_bytes();
+        }
+        let bytes = zip(parts);
+        let p = deckcraft_pptx::import(&bytes).unwrap();
+        let children = group(&p).children();
+        assert_eq!(children.len(), 3);
+        let rect = children[0].xfrm.unwrap();
+        let a = children[1].xfrm.unwrap();
+        let b = children[2].xfrm.unwrap();
+        assert!((rect.x - a.x).abs() < 1e-6);
+        assert!((rect.x + rect.w - b.x - b.w).abs() < 1e-6);
+        let body = children[0].text.as_ref().unwrap();
+        let target = children[mapped].text.as_ref().unwrap();
+        assert_eq!(body.paragraphs[0].runs[0].props.size, target.paragraphs[0].runs[0].props.size);
+        assert_eq!(body.paragraphs[0].runs[0].text, target.paragraphs[0].runs[0].text);
+        let inset = if mapped == 1 { body.body.inset_r } else { body.body.inset_l };
+        assert!(inset.unwrap() > 200., "mapped text must use the target box, not the large outer shape");
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        assert_eq!(geometry(group(&p)), geometry(group(&back)));
+        let back_body = group(&back).children()[0].text.as_ref().unwrap();
+        assert_eq!(body.paragraphs[0].runs[0].props.size, back_body.paragraphs[0].runs[0].props.size);
+        assert!((body.body.inset_l.unwrap() - back_body.body.inset_l.unwrap()).abs() < 0.001);
+        assert!((body.body.inset_r.unwrap() - back_body.body.inset_r.unwrap()).abs() < 0.001);
+        if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("composite-mapped-text-{index}.pptx")), bytes).unwrap();
+        }
+    }
+}
+
+#[test]
 fn ordered_size_rules_ignore_local_edges_and_fit_real_text_to_the_container() {
     let rules = r#"<dgm:rule type="w" val="80"/><dgm:rule type="h" val="160"/>"#;
     let constraints = r#"<dgm:constr type="h" val="40"/><dgm:constr type="l" refType="w"/><dgm:constr type="r" refType="h"/>"#;

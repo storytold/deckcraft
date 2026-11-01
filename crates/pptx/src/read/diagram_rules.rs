@@ -75,10 +75,17 @@ struct MeasureKey {
     fonts: [Option<f64>; 3],
     margins: [f64; 4],
     rotation: f64,
+    text_rect: Option<[f64; 4]>,
 }
 impl From<&Placed<'_>> for MeasureKey {
     fn from(p: &Placed<'_>) -> Self {
-        Self { size: [p.rect.w, p.rect.h], fonts: [p.font, p.secondary_font, p.min_font], margins: p.margins, rotation: p.text_rotation }
+        Self {
+            size: [p.rect.w, p.rect.h],
+            fonts: [p.font, p.secondary_font, p.min_font],
+            margins: p.margins,
+            rotation: p.text_rotation,
+            text_rect: p.text_rect.map(|t| [t.x - p.rect.x, t.y - p.rect.y, t.w, t.h]),
+        }
     }
 }
 // A rule often changes just one of hundreds of labels. Keep one measured result per shape,
@@ -182,6 +189,8 @@ mod tests {
             name: "probe".into(),
             style: String::new(),
             rect: Xfrm::new(0., 0., 70., 40.),
+            text_rect: None,
+            text_enabled: true,
             font: Some(32.),
             secondary_font: None,
             min_font: None,

@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.16): local font-reference propagation and child-first rule
-execution, extending shared font groups, geometry, geographic caches and rich-label layout.
+Updated 2026-11-01 (PPTX.17): occupied composite geometry and mapped text ownership,
+extending local/shared font rules, geographic caches and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -744,3 +744,45 @@ Four representative original packages pass Open XML SDK validation. The final CL
 all 60 original probe pages directly at 3840px width with unchanged input hashes and no
 external converter on PATH. LibreOffice exports the two representative local-reference
 diagrams without their content; those blank outputs are not fidelity passes.
+
+
+## Composite geometry and mapped text ownership (PPTX.17)
+
+An uncached composite's own visible shape encloses the occupied descendant shapes rather
+than painting its entire provisional frame. Nested composites resolve from their children
+outwards. Empty composites have zero occupied geometry; a space algorithm can retain its
+specified frame without inventing a text layout. An explicitly sized root fits within its
+resolved frame, rather than being re-centred in the original graphic-frame dimensions.
+
+The composite's data mapping can point to text laid out by a descendant. Its visible frame
+and text frame are then different. The matched text node owns the font, margins and text
+rectangle; the outer frame must not rewrap that text using its larger width. This ownership
+is retained through rule fitting and export/reimport. Text measurement keys include relative
+mapped rectangles. The default current-point mapping remains distinct from an explicitly
+empty mapping. Missing style labels use the default node label; unknown labels retain the
+default quick style without taking unrelated colour-list entries.
+
+Nineteen original non-rotated controls now match native font sizes. Seventeen have visible
+geometry whose same-colour painted bounds differ by at most 0.25pt at 4K; two intentionally
+empty composite controls remain empty. Painted bounds are measured against both raster
+outputs, so portions hidden by other shapes are not compared with a complete vector box.
+Four real-text controls exercise both mapped children with and without local fitting rules,
+including original-source SDK validation and text/geometry round trips. These are geometry
+and typography checks, not an assertion of identical antialiasing or all text baselines.
+
+Four independent rotation controls expose an additional difference: native rotation changes
+the dimensions of the shape within the allocated footprint and can counter-rotate its text.
+They remain failing controls (up to 59pt painted-bound difference), not acceptance passes.
+Omitting the mapping point type also changes native colour assignment in another control;
+that case is retained as an open selector/style interaction. Scaled reverse-reference font
+rounding, full search/fallback policy, administrative map viewports and long rich-label
+vertical overflow remain open. No global parity score or full-converter-replacement claim
+is made.
+
+The final direct-render batch contains 51 contributor-original pages, all exported at
+3840px width with unchanged source hashes and no converter on PATH. Workspace CI passes
+all eight gates, including 2,412 tests and doctests. All native output remains private;
+this change publishes source, generated-in-test XML and documentation only.
+
+LibreOffice exports the two representative mapped-text diagrams without diagram content
+(zero extracted text and only page-background drawings); these are not fidelity passes.

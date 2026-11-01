@@ -646,6 +646,73 @@ fn root_composite_fits_the_occupied_extent_without_scaling_fonts() {
 }
 
 #[test]
+fn composite_shape_wraps_children_and_mapped_text_follows_its_data_point() {
+    let data = source();
+    let mm = 72. / 25.4;
+    for mapped in [1, 2] {
+        for sized in [false, true] {
+            let size = if sized { "<constr type='w' val='100'/><constr type='h' val='60'/>" } else { "" };
+            let l = layout(&format!(
+                "<layoutNode name='box'><alg type='composite'/><presOf axis='ch' cnt='1' st='{mapped}'/><shape type='rect'/>
+                <constrLst>{size}<constr type='primFontSz' val='48'/>
+                <constr type='w' for='ch' forName='first' val='20'/><constr type='h' for='ch' forName='first' val='40'/>
+                <constr type='l' for='ch' forName='first' val='20'/>
+                <constr type='w' for='ch' forName='second' val='30'/><constr type='h' for='ch' forName='second' val='20'/>
+                <constr type='l' for='ch' forName='second' val='70'/><constr type='t' for='ch' forName='second' val='50'/></constrLst>
+                <forEach axis='ch' cnt='1'><layoutNode name='first'><alg type='tx'/><shape type='roundRect'/><constrLst><constr type='primFontSz' val='24'/></constrLst></layoutNode></forEach>
+                <forEach axis='ch' st='2' cnt='1'><layoutNode name='second'><alg type='tx'/><shape type='roundRect'/><constrLst><constr type='primFontSz' val='36'/></constrLst></layoutNode></forEach>
+                </layoutNode>"
+            ));
+            let out = evaluate(&l, &data, Xfrm::new(96., 151.2, 768., 324.)).unwrap();
+            assert_eq!(out.len(), 3);
+            let (width, height) = if sized { (100. * mm, 60. * mm) } else { (768., 324.) };
+            let root = &out[0];
+            assert!((root.rect.w - 80. * mm).abs() < 1e-6);
+            assert!((root.rect.h - (70. * mm).min(height)).abs() < 1e-6);
+            assert!((root.rect.x - (96. + (width - root.rect.w) / 2.)).abs() < 1e-6);
+            assert!((root.rect.y - (151.2 + (height - root.rect.h) / 2.)).abs() < 1e-6);
+            assert_eq!(root.font, out[mapped].font);
+            assert_eq!(root.points[0].attr("modelId"), out[mapped].points[0].attr("modelId"));
+            let text = root.text_rect.unwrap();
+            assert!(text.x >= out[mapped].rect.x && text.y >= out[mapped].rect.y);
+            assert!(text.w < out[mapped].rect.w && text.h < out[mapped].rect.h);
+        }
+    }
+}
+
+#[test]
+fn explicit_empty_mapping_overrides_default_current_point() {
+    let data = source();
+    for mapping in ["", "<presOf/>", "<presOf axis='none'/>"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='lin'/><forEach axis='ch' cnt='1'><layoutNode>{mapping}<alg type='tx'/><shape type='rect'/></layoutNode></forEach></layoutNode>"
+        ));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        assert_eq!(out[0].points.len(), usize::from(mapping.is_empty()));
+    }
+}
+
+#[test]
+fn empty_composites_have_no_occupied_geometry_or_text_algorithm() {
+    let data = source();
+    for alg in ["composite", "sp"] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='{alg}'/><presOf axis='ch' cnt='1'/><shape type='rect'/><constrLst><constr type='w' val='100'/><constr type='h' val='60'/></constrLst></layoutNode>"
+        ));
+        let out = evaluate(&l, &data, frame()).unwrap();
+        assert_eq!(out.len(), 1);
+        assert!(!out[0].text_enabled);
+        assert_eq!(out[0].rect.w > 0., alg == "sp");
+        assert_eq!(out[0].rect.h > 0., alg == "sp");
+    }
+    let l = layout(
+        "<layoutNode><alg type='composite'/><shape type='rect'/><constrLst><constr type='l' for='ch' forName='visible' val='100'/></constrLst><layoutNode><alg type='composite'/><shape type='rect'/></layoutNode><layoutNode name='visible'><alg type='tx'/><shape type='rect'/><constrLst><constr type='w' val='20'/><constr type='h' val='40'/></constrLst></layoutNode></layoutNode>",
+    );
+    let out = evaluate(&l, &data, frame()).unwrap();
+    assert_eq!(out[0].rect, out[2].rect, "an empty child cannot enlarge the occupied extent");
+}
+
+#[test]
 fn joint_rules_do_not_reintroduce_a_redundant_edge_equation() {
     let data = source();
     let l = layout(

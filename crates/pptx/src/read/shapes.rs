@@ -623,7 +623,12 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
                 _ => "line",
             });
         }
-        if let Some(label) = quick.as_ref().and_then(|d| d.root.children_named("styleLbl").find(|e| e.attr("name") == Some(p.style.as_str()))) {
+        if let Some(label) = quick.as_ref().and_then(|d| {
+            d.root
+                .children_named("styleLbl")
+                .find(|e| e.attr("name") == Some(p.style.as_str()))
+                .or_else(|| d.root.children_named("styleLbl").find(|e| e.attr("name") == Some("node1")))
+        }) {
             s.style = label.child("style").map(style);
             if let Some(pr) = label.child("spPr") {
                 sp_pr(imp, &data_part, &mut s, pr);
@@ -674,7 +679,7 @@ fn smartart_layout(imp: &mut Imp, part: &Part, gd: &El, frame: &Shape) -> Option
                 body.paragraphs.extend(dml::text_body(imp, &data_part, tx).paragraphs);
             }
         }
-        if !body.paragraphs.is_empty() {
+        if p.text_enabled && !body.paragraphs.is_empty() {
             diagram_text_layout(&mut body, &p, text_color.as_ref());
             s.text = Some(body);
         }
@@ -724,6 +729,14 @@ pub(super) fn diagram_text_layout(
     body.body.inset_t = Some(p.margins[1]);
     body.body.inset_r = Some(p.margins[2]);
     body.body.inset_b = Some(p.margins[3]);
+    if let Some(t) = p.text_rect {
+        let geom = Geom::preset(p.shape.and_then(|s| s.attr("type")).unwrap_or("rect"));
+        let area = text_area(&geom, p.rect.w, p.rect.h);
+        body.body.inset_l = Some(p.margins[0] + t.x - p.rect.x - area.x0);
+        body.body.inset_t = Some(p.margins[1] + t.y - p.rect.y - area.y0);
+        body.body.inset_r = Some(p.margins[2] + p.rect.x + area.x1 - t.x - t.w);
+        body.body.inset_b = Some(p.margins[3] + p.rect.y + area.y1 - t.y - t.h);
+    }
     body.body.rot = Some(p.text_rotation);
     let requested = p.font.unwrap_or(18.0);
     let font = requested.max(p.min_font.unwrap_or(1.0));

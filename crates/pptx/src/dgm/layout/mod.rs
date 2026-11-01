@@ -22,6 +22,9 @@ pub(crate) struct Placed<'a> {
     pub name: String,
     pub style: String,
     pub rect: Xfrm,
+    /// A mapped text algorithm can own a different rectangle from its composite shape.
+    pub text_rect: Option<Xfrm>,
+    pub text_enabled: bool,
     pub font: Option<f64>,
     pub secondary_font: Option<f64>,
     pub min_font: Option<f64>,
@@ -49,7 +52,7 @@ impl<'a> Instance<'a> {
     fn new(e: &El) -> Self {
         Self {
             name: e.attr("name").unwrap_or("").into(),
-            style: e.attr("styleLbl").unwrap_or("").into(),
+            style: e.attr("styleLbl").filter(|s| !s.is_empty()).unwrap_or("node1").into(),
             shape: None,
             alg: "composite".into(),
             params: HashMap::new(),
@@ -150,6 +153,7 @@ impl<'a> Compiler<'a> {
             }
         }
         let mut node = Instance::new(e);
+        node.points.push(context.point);
         self.body(e, &mut node, &mut context, depth + 1)?;
         for &point in &node.points {
             let level = self.data.depth(point);

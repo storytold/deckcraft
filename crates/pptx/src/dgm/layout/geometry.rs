@@ -122,14 +122,14 @@ pub(super) fn place_solved<'a>(
     let start = out.len();
     place_inner(node, style, data, out, depth, solution, work)?;
     if depth == 0 && node.alg == "composite" {
-        fit_composite_frame(out.get_mut(start..).unwrap_or(&mut []), rect, work)?;
+        fit_composite_frame(out.get_mut(start..).unwrap_or(&mut []), style.rect, work)?;
     }
     Ok(())
 }
 
 fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) -> Result<(), &'static str> {
     charge(work, out.len() * 2)?;
-    let shapes: Vec<_> = out.iter().filter(|p| !p.connector).collect();
+    let shapes: Vec<_> = out.iter().filter(|p| !p.connector && p.rect.w > 0. && p.rect.h > 0.).collect();
     let left = shapes.iter().map(|p| p.rect.x).fold(f64::INFINITY, f64::min);
     let top = shapes.iter().map(|p| p.rect.y).fold(f64::INFINITY, f64::min);
     let right = shapes.iter().map(|p| p.rect.x + p.rect.w).fold(f64::NEG_INFINITY, f64::max);
@@ -145,6 +145,12 @@ fn fit_composite_frame(out: &mut [Placed<'_>], frame: Xfrm, work: &mut usize) ->
         p.rect.y = y + (p.rect.y - top) * sy;
         p.rect.w *= sx;
         p.rect.h *= sy;
+        if let Some(t) = &mut p.text_rect {
+            t.x = x + (t.x - left) * sx;
+            t.y = y + (t.y - top) * sy;
+            t.w *= sx;
+            t.h *= sy;
+        }
     }
     Ok(())
 }
@@ -168,6 +174,7 @@ fn place_inner<'a>(
         return Err("diagram geometry budget exceeded");
     }
     charge(work, 1)?;
+    let own = out.len();
     // Numeric rule endpoints constrain their own search. They are not an inherited
     // minimum font for every descendant, especially after a child has already fitted.
     if let Some(shape) = node.shape.filter(|s| s.attr("type").is_some_and(|t| !t.is_empty() && t != "none")) {
@@ -181,6 +188,8 @@ fn place_inner<'a>(
             name: node.name.clone(),
             style: node.style.clone(),
             rect,
+            text_rect: None,
+            text_enabled: node.alg == "tx",
             font: style.font,
             secondary_font: style.secondary_font,
             min_font: style.min_font,
@@ -190,7 +199,7 @@ fn place_inner<'a>(
             params: node.params.clone(),
             endpoints: node.points.iter().find_map(|i| data.endpoints(*i)),
         });
-    } else if node.alg == "tx" && !node.points.is_empty() {
+    } else if node.alg == "tx" && node.points.iter().any(|i| data.points.get(*i).is_some_and(|p| p.attr("type") != Some("doc"))) {
         out.push(Placed {
             node_key: super::constraints::id(node),
             shape: None,
@@ -199,6 +208,8 @@ fn place_inner<'a>(
             name: node.name.clone(),
             style: node.style.clone(),
             rect: style.rect,
+            text_rect: None,
+            text_enabled: true,
             font: style.font,
             secondary_font: style.secondary_font,
             min_font: style.min_font,
@@ -210,6 +221,9 @@ fn place_inner<'a>(
         });
     }
     if node.children.is_empty() {
+        if node.alg == "composite" {
+            fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
+        }
         return Ok(());
     }
     let local = BoxStyle { rect: Xfrm::new(0.0, 0.0, style.rect.w, style.rect.h), ..style };
@@ -247,7 +261,60 @@ fn place_inner<'a>(
         }
     }
     pack_composite_extents(node, style, local, &children, &ranges, out, work)?;
+    if node.alg == "composite" && out.get(own).is_some_and(|p| p.node_key == super::constraints::id(node)) {
+        fit_composite_shape(out.get_mut(own..).unwrap_or(&mut []), work)?;
+    }
     Ok(())
+}
+
+fn fit_composite_shape(out: &mut [Placed<'_>], work: &mut usize) -> Result<(), &'static str> {
+    let Some((own, descendants)) = out.split_first_mut() else { return Ok(()) };
+    charge(work, descendants.len())?;
+    let mut bounds: Option<Xfrm> = None;
+    for p in descendants.iter().filter(|p| !p.connector && p.rect.w > 0. && p.rect.h > 0.) {
+        bounds = Some(match bounds {
+            None => p.rect,
+            Some(b) => {
+                let (x, y) = (b.x.min(p.rect.x), b.y.min(p.rect.y));
+                Xfrm::new(x, y, (b.x + b.w).max(p.rect.x + p.rect.w) - x, (b.y + b.h).max(p.rect.y + p.rect.h) - y)
+            }
+        });
+    }
+    if let Some(bounds) = bounds {
+        own.rect = Xfrm { rot: own.rect.rot, ..bounds };
+    } else {
+        own.rect.w = 0.;
+        own.rect.h = 0.;
+    }
+    // The text algorithm for the same data point owns typography and the text box,
+    // even when the composite's visible shape encloses several different points.
+    for p in descendants.iter().filter(|p| p.text_enabled && !p.connector && !p.points.is_empty()) {
+        charge(work, own.points.len().saturating_mul(p.points.len()))?;
+        if own.points.len() != p.points.len() || !own.points.iter().zip(&p.points).all(|(a, b)| std::ptr::eq(*a, *b)) {
+            continue;
+        }
+        own.text_rect = Some(p.text_rect.unwrap_or_else(|| text_box(p)));
+        own.text_enabled = true;
+        own.font = p.font;
+        own.secondary_font = p.secondary_font;
+        own.min_font = p.min_font;
+        own.margins = p.margins;
+        own.text_rotation = p.text_rotation;
+        own.params = p.params.clone();
+        break;
+    }
+    Ok(())
+}
+
+fn text_box(p: &Placed<'_>) -> Xfrm {
+    let rect = p.rect;
+    let area = p
+        .shape
+        .and_then(|s| s.attr("type"))
+        .and_then(|name| deckcraft_geom::preset::build(name, rect.w, rect.h, &[]))
+        .map(|g| g.text_rect)
+        .unwrap_or_else(|| deckcraft_geom::Rect::new(0., 0., rect.w, rect.h));
+    Xfrm::new(rect.x + area.x0, rect.y + area.y0, area.width(), area.height())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -299,6 +366,10 @@ fn pack_composite_extents(
                 for p in out.get_mut(range).unwrap_or(&mut []) {
                     p.rect.x += after.rect.x - before.rect.x;
                     p.rect.y += after.rect.y - before.rect.y;
+                    if let Some(t) = &mut p.text_rect {
+                        t.x += after.rect.x - before.rect.x;
+                        t.y += after.rect.y - before.rect.y;
+                    }
                 }
             }
         }
