@@ -266,9 +266,24 @@ fn office_fonts_have_substitutes() {
         assert!(is_monospace_family(mono), "{mono} should be recognized as monospace");
     }
 
-    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monotype Baskerville", "Code Pro", "zzz"] {
+    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monoton", "Monotype Baskerville", "Code Pro", "zzz"] {
         assert!(!is_monospace_family(prop), "{prop} should not be recognized as monospace");
     }
+
+    // Explicit checks requested in review: Consolas, Courier New, Fira Code, Monotype Corsiva, Monoton,
+    // and ensuring proportional families maintain their unchanged substitutes.
+    assert!(is_monospace_family("Consolas"));
+    assert!(is_monospace_family("Courier New"));
+    assert!(is_monospace_family("Fira Code"));
+    assert!(!is_monospace_family("Monotype Corsiva"));
+    assert!(!is_monospace_family("Monoton"));
+
+    assert_eq!(substitutes("Calibri"), &["Carlito", "Liberation Sans", "Arial", "Inter"]);
+    assert_eq!(substitutes("Arial"), &["Liberation Sans", "Arial", "Helvetica Neue", "Helvetica", "Inter"]);
+    assert_eq!(substitutes("Times New Roman"), &["Liberation Serif", "Times New Roman", "Times", "Merriweather"]);
+    assert_eq!(substitutes("Georgia"), &["Merriweather", "Liberation Serif", "Georgia"]);
+    assert!(substitutes("Monotype Corsiva").is_empty());
+    assert!(substitutes("Monoton").is_empty());
 }
 
 #[test]
