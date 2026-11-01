@@ -363,3 +363,44 @@ fn a_request_already_started_when_the_reply_times_out_reports_an_unknown_outcome
     assert!(v["error"].as_str().unwrap().contains("outcome is unknown"), "{v}");
     ui.join().unwrap();
 }
+
+/// A peer that dribbles the first line one byte at a time still ends at the deadline: the
+/// authentication timeout bounds the whole line, not each read, so a slot is never held
+/// for line-length × timeout.
+#[test]
+fn a_slowloris_first_line_ends_at_the_deadline() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        for b in b"dribble" {
+            stream.write_all(&[*b]).expect("write");
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        std::thread::sleep(Duration::from_millis(400));
+    });
+    let stream = TcpStream::connect(addr).expect("connect");
+    let read = stream.try_clone().expect("clone");
+    let mut reader = BufReader::new(read);
+    let deadline = Instant::now() + Duration::from_millis(800);
+    let line = read_first_line(&mut reader, deadline, control_auth::MAX_AUTH_LINE);
+    peer.join().expect("peer");
+    assert!(line.is_none(), "{line:?}");
+}
+
+#[test]
+fn a_first_line_that_arrives_whole_comes_through() {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().expect("accept");
+        stream.write_all(b"{\"id\":1}\n").expect("write");
+    });
+    let stream = TcpStream::connect(addr).expect("connect");
+    let read = stream.try_clone().expect("clone");
+    let mut reader = BufReader::new(read);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let line = read_first_line(&mut reader, deadline, control_auth::MAX_AUTH_LINE);
+    peer.join().expect("peer");
+    assert_eq!(line.as_deref(), Some("{\"id\":1}\n"));
+}
