@@ -192,6 +192,7 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
         let name = s.child("tx").and_then(|t| t.find("v")).map(|v| v.text()).unwrap_or_default();
         let mut series = Series {
             name,
+            value_colors: value_colors(s),
             geography: s.path(&["layoutPr", "geography"]).map(|g| geography(g, d, &mut geo_budget)),
             values,
             extended: s.child("layoutPr").map(|_| options),
@@ -231,6 +232,33 @@ pub(crate) fn chartex_from(root: &El) -> Option<Chart> {
     c.legend_overlay = ch.child("legend").and_then(|e| e.bool("overlay")) == Some(true);
     c.format.title_overlay = ch.child("title").and_then(|e| e.bool("overlay")) == Some(true);
     Some(c)
+}
+
+fn value_colors(series: &El) -> Option<deckcraft_model::geography::ValueColorScale> {
+    use deckcraft_model::geography::{ValueColorPosition, ValueColorScale, ValueColorStop};
+    let colors = series.child("valueColors");
+    let positions = series.child("valueColorPositions");
+    if colors.is_none() && positions.is_none() {
+        return None;
+    }
+    let stop = |name: &str| {
+        let position = positions.and_then(|p| p.child(name)).and_then(|p| {
+            if p.child("extremeValue").is_some() {
+                Some(ValueColorPosition::Extreme)
+            } else if let Some(n) = p.child("number").and_then(|p| p.f64("val")).filter(|n| n.is_finite()) {
+                Some(ValueColorPosition::Number(n))
+            } else {
+                p.child("percent").and_then(|p| p.f64("val")).filter(|n| n.is_finite()).map(ValueColorPosition::Percent)
+            }
+        });
+        ValueColorStop { color: colors.and_then(|c| c.child(&format!("{name}Color"))).and_then(super::dml::color), position }
+    };
+    Some(ValueColorScale {
+        three_color: positions.and_then(|p| p.u32("count")) == Some(3),
+        minimum: stop("min"),
+        middle: stop("mid"),
+        maximum: stop("max"),
+    })
 }
 
 fn geography(g: &El, d: &Data, budget: &mut usize) -> deckcraft_model::geography::Geography {

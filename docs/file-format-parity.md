@@ -1,5 +1,7 @@
 # File-format parity with PowerPoint
 
+> **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
+
 > **PPTX.10 update 2026-11-01:** hierarchical diagram text, property-scoped font rules, offline geographic query joins, explicit data/world scopes and styled map labels have regression coverage. Native cyclic-layout fallback and intermediate/automatic viewport policies remain partial; scores are unchanged.
 
 > **PPTX.9 update 2026-11-01:** measured SmartArt numeric rules, circular placement, observed DEFLATE map caches and funnel label typography are implemented. Remaining native/provider differences are detailed in [layout fidelity](layout-fidelity.md).

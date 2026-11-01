@@ -254,25 +254,36 @@ pub(crate) fn point_data_label(
     if let Some(p) = automatic.paragraphs.first().and_then(|p| p.runs.first()) {
         inherited.inherit(&p.props);
     }
-    let mut size = 0f64;
-    let mut width = 0f64;
-    for p in &mut body.paragraphs {
+    for (i, p) in body.paragraphs.iter_mut().enumerate() {
+        if let Some(style) = spec.style.as_ref().and_then(|b| b.paragraphs.get(i).or_else(|| b.paragraphs.first())) {
+            if spec.text.is_none() {
+                let mut props = style.props.clone();
+                props.inherit(&p.props);
+                p.props = props;
+            } else {
+                p.props.inherit(&style.props);
+            }
+        }
         p.props.bullet = Some(Bullet::None);
         if let Some(a) = automatic.paragraphs.first() {
             p.props.inherit(&a.props);
         }
         p.def_props.inherit(&inherited);
-        let mut line_width = 0f64;
         for run in &mut p.runs {
             run.props.inherit(&p.def_props);
-            let fs = run.props.size.unwrap_or(12.0);
-            size = size.max(fs);
-            line_width += label_width(rctx, &run.text, fs, &run.props);
         }
-        width = width.max(line_width);
     }
-    let h = (size * 1.35 * body.paragraphs.len().max(1) as f64).max(r.height());
-    let w = (width + 4.0).max(r.width());
+    // Measure the complete body, not each run separately: soft breaks, bidi joining,
+    // superscripts, mixed fonts and paragraph spacing all affect the label's bounds.
+    let shape = Shape { text: Some(body.clone()), ..Default::default() };
+    let measured = deckcraft_text::layout(
+        rctx,
+        &shape,
+        &body,
+        &deckcraft_text::Opts { rect: Rect::new(0., 0., 1e6, 1e6), fields: &deckcraft_text::NoFields, prompt_color: None, no_shrink: true },
+    );
+    let h = (measured.content_height + body.body.inset_t.unwrap_or(0.) + body.body.inset_b.unwrap_or(0.)).max(r.height());
+    let w = (measured.content_width + body.body.inset_l.unwrap_or(0.) + body.body.inset_r.unwrap_or(0.) + 4.).max(r.width());
     let center = r.center();
     r = Rect::new(center.x - w / 2.0, r.y1 - h, center.x + w / 2.0, r.y1);
     match spec.position.as_deref() {
@@ -507,6 +518,9 @@ fn draw_inner(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, frame: ChartFrame<
     let base = c.text_props(ChartTextRole::Default).size.or(c.text_size).unwrap_or_else(|| (h.min(w) / 22.0).clamp(7.0, 18.0));
     let title_size = c.text_props(ChartTextRole::Title).size.unwrap_or(base * 1.4);
     let mut area = Rect::new(w * 0.04, h * 0.04, w * 0.96, h * 0.96);
+    if c.kind == ChartType::RegionMap {
+        area = Rect::new(6., 6., (w - 6.).max(6.), (h - 6.).max(6.));
+    }
     if let Some(t) = &c.title {
         let width = (label_width(rctx, t, title_size, &c.text_props(ChartTextRole::Title)) + title_size * 0.4).min(w);
         let auto = Rect::new((w - width) / 2.0, area.y0, (w + width) / 2.0, area.y0 + title_size * 1.3);

@@ -1,5 +1,7 @@
 # Where DeckCraft falls short of PowerPoint
 
+> **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
+
 > **Update 2026-11-01:** direct rendering now covers manual chart layouts, rotated chart text,
 > explicit axis/grid strokes, cached SmartArt root coordinates and authored missing-cache
 > fallbacks. Six-script/embedded-font and six-layout cached-diagram probes were compared with
@@ -491,5 +493,5 @@ Provider hierarchy, all native viewport/search policies and remaining chartEx la
 
 PPTX.10 (2026-11-01): hierarchical secondary text, property-scoped font fitting, measurement reuse,
 offline geographic joins, data/world scopes and map label typography implemented. Intermediate
-administrative viewport selection, duplicate-row aggregation and native cyclic fallback remain
+administrative viewport selection and native cyclic fallback remain
 explicit gaps. PowerPoint and LibreOffice comparisons are detailed in layout-fidelity.md.

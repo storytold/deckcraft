@@ -99,7 +99,7 @@ fn funnel(
 pub(crate) fn mix(a: Rgba, b: Rgba, t: f64) -> Rgba {
     let t = t.clamp(0.0, 1.0);
     let f = |x: u8, y: u8| (x as f64 + (y as f64 - x as f64) * t).round().clamp(0.0, 255.0) as u8;
-    Rgba::rgb(f(a.r, b.r), f(a.g, b.g), f(a.b, b.b))
+    Rgba::rgba(f(a.r, b.r), f(a.g, b.g), f(a.b, b.b), f(a.a, b.a))
 }
 
 /// A region map without a usable geographic cache: each region is a
@@ -303,12 +303,15 @@ fn treemap(
         }
         let inner = t.inset(-base * 0.3);
         if inner.width() > base && inner.height() > base {
-            label(
+            hierarchy_label(
                 ctx,
                 rctx,
+                c,
                 m,
+                Some(i),
                 &text,
                 inner,
+                area,
                 crate::chart::LabelStyle { size: base, align: Align::Left, anchor: Anchor::Top, col: Rgba::WHITE, bold: false },
             );
         }
@@ -345,16 +348,44 @@ fn sunburst(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rec
             let mid = a0 + sweep / 2.0;
             let rr = (r + hole) / 2.0;
             let lp = Point::new(cen.x + rr * mid.cos(), cen.y + rr * mid.sin());
-            label(
+            hierarchy_label(
                 ctx,
                 rctx,
+                c,
                 m,
+                Some(i),
                 name,
                 Rect::new(lp.x - 50.0, lp.y - base, lp.x + 50.0, lp.y + base),
+                area,
                 crate::chart::LabelStyle { size: base, align: Align::Center, anchor: Anchor::Middle, col: Rgba::WHITE, bold: false },
             );
         }
         a0 = a1;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn hierarchy_label(
+    ctx: &mut RenderContext,
+    rctx: &Ctx,
+    c: &Chart,
+    m: Affine,
+    index: Option<usize>,
+    fallback: &str,
+    rect: Rect,
+    area: Rect,
+    style: crate::chart::LabelStyle,
+) {
+    let Some((series, index)) = c.series.first().zip(index) else {
+        label(ctx, rctx, m, fallback, rect, style);
+        return;
+    };
+    // Absent label configuration keeps the hierarchy's category-name default. Explicit
+    // visibility, sparse point overrides and chartEx txPr use the common rich-text path.
+    let explicit = series.data_labels.is_some() || series.label_defaults != Default::default() || series.point_labels.contains_key(&index);
+    let text = if explicit { c.point_label(series, index) } else { Some(fallback.to_string()) };
+    if let Some(text) = text {
+        point_data_label(ctx, rctx, m, &text, rect, style, (c, series, index, rect, (area.x1, area.y1)));
     }
 }
 
@@ -375,6 +406,7 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
     fn place(
         ctx: &mut RenderContext,
         rctx: &Ctx,
+        c: &Chart,
         m: Affine,
         nodes: &[TreeNode],
         r: Rect,
@@ -403,12 +435,15 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
                 }
                 let inner = t.inset(-base * 0.3);
                 if inner.width() > base && inner.height() > base {
-                    label(
+                    hierarchy_label(
                         ctx,
                         rctx,
+                        c,
                         m,
+                        n.leaf,
                         &text,
                         inner,
+                        r,
                         crate::chart::LabelStyle { size: base * 0.9, align: Align::Left, anchor: Anchor::Top, col: Rgba::WHITE, bold: false },
                     );
                 }
@@ -422,7 +457,7 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
             ctx.fill_rect(&t);
             let inner = Rect::new(t.x0 + 1.0, t.y0 + banner, t.x1 - 1.0, t.y1 - 1.0);
             let k = lighten(fill, 0.12 * (depth + 1) as f64);
-            place(ctx, rctx, m, &n.children, inner, base, &|_| k, value_label, depth + 1, parents);
+            place(ctx, rctx, c, m, &n.children, inner, base, &|_| k, value_label, depth + 1, parents);
             if t.width() > base * 2.0 && label_height > base * 0.8 && parents != "none" {
                 let head = Rect::new(t.x0 + base * 0.3, t.y0, t.x1 - base * 0.3, t.y0 + label_height);
                 label(
@@ -441,7 +476,7 @@ fn tree_treemap(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area:
             ctx.stroke_path(&t.to_path(0.1));
         }
     }
-    place(ctx, rctx, m, &tree, area, base, &|i| series_color(rctx, c, i), value_label, 0, c.extended.parent_labels.as_deref().unwrap_or("banner"));
+    place(ctx, rctx, c, m, &tree, area, base, &|i| series_color(rctx, c, i), value_label, 0, c.extended.parent_labels.as_deref().unwrap_or("banner"));
 }
 
 /// A multi-level sunburst: the top level as the inner ring, each deeper level in the next ring
@@ -464,6 +499,7 @@ fn tree_sunburst(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area
     fn ring_of(
         ctx: &mut RenderContext,
         rctx: &Ctx,
+        c: &Chart,
         m: Affine,
         nodes: &[TreeNode],
         a0: f64,
@@ -506,23 +542,26 @@ fn tree_sunburst(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area
             if sweep * rr > base * 2.5 && !n.name.is_empty() {
                 let lp = Point::new(cen.x + rr * mid.cos(), cen.y + rr * mid.sin());
                 let half = (ring * 0.48).max(base);
-                label(
+                hierarchy_label(
                     ctx,
                     rctx,
+                    c,
                     m,
+                    n.leaf,
                     &n.name,
                     Rect::new(lp.x - half, lp.y - base, lp.x + half, lp.y + base),
+                    Rect::new(0., 0., cen.x * 2., cen.y * 2.),
                     crate::chart::LabelStyle { size: base * 0.9, align: Align::Center, anchor: Anchor::Middle, col: Rgba::WHITE, bold: false },
                 );
             }
             if !n.children.is_empty() {
                 let k = lighten(fill, 0.15);
-                ring_of(ctx, rctx, m, &n.children, a, sweep, d + 1, (cen, hole, ring, total), base, &|_| k);
+                ring_of(ctx, rctx, c, m, &n.children, a, sweep, d + 1, (cen, hole, ring, total), base, &|_| k);
             }
             a = a1;
         }
     }
-    ring_of(ctx, rctx, m, &tree, -std::f64::consts::FRAC_PI_2, std::f64::consts::TAU, 0, (cen, hole, ring, total), base, &|i| {
+    ring_of(ctx, rctx, c, m, &tree, -std::f64::consts::FRAC_PI_2, std::f64::consts::TAU, 0, (cen, hole, ring, total), base, &|i| {
         series_color(rctx, c, i)
     });
 }

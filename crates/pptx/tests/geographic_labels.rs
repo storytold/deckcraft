@@ -428,3 +428,132 @@ fn map_point_labels_use_typography_hidden_overrides_and_authored_viewport() {
     assert_eq!(green, 0, "hidden label must not render");
     probe(&back, "map-rich-labels.pptx");
 }
+
+#[test]
+fn map_value_color_stops_rebuild_and_change_region_pixels() {
+    use deckcraft_model::geography::{ValueColorPosition as Pos, ValueColorScale, ValueColorStop};
+    let colors = [Rgba::rgb(232, 76, 61), Rgba::rgb(248, 211, 79), Rgba::rgb(33, 140, 116)];
+    for percentage in [false, true] {
+        let mut c = base(ChartType::RegionMap);
+        c.categories = vec!["A".into(), "B".into(), "C".into()];
+        let stop = |i: usize| ValueColorStop {
+            color: Some(ColorRef::rgb(colors[i])),
+            position: Some(if percentage { Pos::Percent(i as f64 * 50.) } else { Pos::Number(i as f64 * 50.) }),
+        };
+        c.series.push(Series {
+            values: vec![Some(0.), Some(50.), Some(100.)],
+            value_colors: Some(ValueColorScale { three_color: true, minimum: stop(0), middle: stop(1), maximum: stop(2) }),
+            geography: Some(Geography {
+                viewed_region: "dataOnly".into(),
+                regions: (0..3)
+                    .map(|i| {
+                        let x = i as f64 * 5.;
+                        GeoRegion {
+                            entity_id: format!("original-{i}"),
+                            name: format!("Original {i}"),
+                            point: Some(i),
+                            rings: vec![vec![[x, 0.], [x + 4., 0.], [x + 4., 4.], [x, 4.]]],
+                            ..Default::default()
+                        }
+                    })
+                    .collect(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        });
+        let expected = c.series[0].value_colors.clone();
+        let mut p = original();
+        append(&mut p, c);
+        let back = rebuilt(&p);
+        assert_eq!(chart(&back).series[0].value_colors, expected);
+        let image = render_slide(&back, 0, &RenderOpts::default());
+        for color in colors {
+            let count = image.pixels.chunks_exact(4).filter(|p| p[..3] == [color.r, color.g, color.b]).count();
+            assert!(count > 100, "missing stop {color:?}: {count}");
+        }
+    }
+}
+
+#[test]
+fn rich_label_soft_breaks_spacing_and_decorations_survive_rebuild() {
+    use deckcraft_model::text::{Caps, RunKind, Spacing, Strike, TabStop};
+    let mut c = base(ChartType::Column);
+    c.categories = vec!["A".into()];
+    c.y_max = Some(10.);
+    let mut text = TextBody::from_text("First");
+    text.body.anchor = Some(deckcraft_model::text::Anchor::Middle);
+    let p = &mut text.paragraphs[0];
+    p.props.line_spacing = Some(Spacing::Pts(32.));
+    p.props.space_after = Some(Spacing::Pts(8.));
+    p.props.margin_left = Some(7.);
+    p.props.tabs = Some(vec![TabStop { pos: 24., align: "l".into() }]);
+    p.def_props = RunProps {
+        size: Some(20.),
+        font: Some("Inter".into()),
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(210, 30, 40)))),
+        ..Default::default()
+    };
+    p.runs[0].props = RunProps { caps: Some(Caps::All), strike: Some(Strike::Single), ..Default::default() };
+    p.runs.push(Run { kind: RunKind::Break, ..Run::new("") });
+    p.runs.push(Run::new("Next"));
+    p.runs[2].props = RunProps {
+        size: Some(28.),
+        underline: Some("sng".into()),
+        underline_color: Some(ColorRef::rgb(Rgba::rgb(30, 100, 180))),
+        ..Default::default()
+    };
+    let mut s = Series { values: vec![Some(7.)], ..Default::default() };
+    s.point_labels.insert(0, DataLabel { text: Some(text), position: Some("ctr".into()), ..Default::default() });
+    c.series.push(s);
+    let mut p = original();
+    append(&mut p, c);
+    let back = rebuilt(&p);
+    let body = chart(&back).series[0].point_labels[&0].text.as_ref().unwrap();
+    let para = &body.paragraphs[0];
+    assert_eq!(para.props.line_spacing, Some(Spacing::Pts(32.)));
+    assert_eq!(para.props.margin_left, Some(7.));
+    assert_eq!(para.props.tabs.as_ref().unwrap()[0].pos, 24.);
+    assert_eq!(para.runs[1].kind, RunKind::Break);
+    assert_eq!(para.runs[0].props.caps, Some(Caps::All));
+    assert_eq!(para.runs[0].props.strike, Some(Strike::Single));
+    assert_eq!(para.runs[2].props.underline_color, Some(ColorRef::rgb(Rgba::rgb(30, 100, 180))));
+    let image = render_slide(&back, 0, &RenderOpts::default());
+    let rows: Vec<_> = (0..image.height)
+        .filter(|&y| {
+            (0..image.width).any(|x| {
+                let p = image.pixel(x, y);
+                p[0] > 150 && p[1] < 70 && p[2] < 90
+            })
+        })
+        .collect();
+    assert!(rows.last().unwrap() - rows.first().unwrap() > 40, "soft break must create two visible lines");
+    probe(&back, "rich-label-soft-breaks.pptx");
+}
+
+#[test]
+fn hierarchical_chart_leaf_labels_respect_point_typography_and_hidden_values() {
+    for kind in [ChartType::Treemap, ChartType::Sunburst] {
+        for hierarchy in [false, true] {
+            let mut c = base(kind);
+            c.categories = vec!["A".into(), "B".into(), "C".into()];
+            if hierarchy {
+                c.category_levels = vec![vec!["Group".into(); 3]];
+            }
+            let mut s = Series { values: vec![Some(5.); 3], data_labels: Some(true), ..Default::default() };
+            for (i, color) in [Rgba::rgb(250, 0, 0), Rgba::rgb(0, 250, 0), Rgba::rgb(0, 0, 250)].into_iter().enumerate() {
+                let mut body = TextBody::from_text("");
+                body.paragraphs[0].def_props = RunProps { size: Some(24.), fill: Some(Fill::solid(ColorRef::rgb(color))), ..Default::default() };
+                s.point_labels.insert(i, DataLabel { style: Some(body), hidden: Some(i == 1), ..Default::default() });
+            }
+            c.series.push(s);
+            let mut p = original();
+            append(&mut p, c);
+            let back = rebuilt(&p);
+            let im = render_slide(&back, 0, &RenderOpts::default());
+            let count = |i: usize| im.pixels.chunks_exact(4).filter(|p| p[i] > 230 && p[(i + 1) % 3] < 30 && p[(i + 2) % 3] < 30).count();
+            assert!(count(0) > 50 && count(2) > 50, "{kind:?}/{hierarchy}: {}/{}/{}", count(0), count(1), count(2));
+            assert_eq!(count(1), 0, "hidden hierarchy label");
+            probe(&back, &format!("labels-{kind:?}-{hierarchy}.pptx"));
+        }
+    }
+}

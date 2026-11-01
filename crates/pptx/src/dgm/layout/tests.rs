@@ -366,6 +366,40 @@ fn font_rule_does_not_shrink_to_floor_because_of_an_unrelated_geometry_dependenc
 }
 
 #[test]
+fn text_search_finds_interior_fit_when_endpoints_are_worse_or_infeasible() {
+    let data = source();
+    // Two labels share a fixed horizontal span. Growing the first too far starves the
+    // second; the endpoint is either worse or has a negative dependent extent.
+    for limit in [100, 120] {
+        let layout = layout(&format!(
+            "<layoutNode><alg type='composite'/><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode>
+            <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode><constrLst>
+            <constr type='w' for='ch' forName='a' val='20'/>
+            <constr type='l' for='ch' forName='b' refFor='ch' refForName='a' refType='w'/>
+            <constr type='r' for='ch' forName='b' val='100'/></constrLst>
+            <ruleLst><rule type='w' for='ch' forName='a' val='{limit}'/></ruleLst></layoutNode>"
+        ));
+        let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (40. * 72. / 25.4 - p.rect.w).max(0.)).collect());
+        let out = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
+        assert!((out[0].rect.w - 40. * 72. / 25.4).abs() < 0.02, "{limit}");
+        assert!(out[1].rect.w >= 40. * 72. / 25.4);
+    }
+}
+
+#[test]
+fn native_text_rule_can_override_a_same_property_bound() {
+    let data = source();
+    let layout = layout(
+        "<layoutNode><alg type='tx'/><shape type='rect'/><constrLst>
+      <constr type='primFontSz' val='36'/><constr type='primFontSz' op='gte' val='20'/></constrLst>
+      <ruleLst><rule type='primFontSz' val='5'/></ruleLst></layoutNode>",
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (p.font.unwrap() - 12.).max(0.)).collect());
+    let out = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((11. ..=12.).contains(&out[0].font.unwrap()));
+}
+
+#[test]
 fn constrained_cycle_starts_at_twelve_oclock_and_centres_partial_arc() {
     let data = source();
     for span in [180., 360.] {

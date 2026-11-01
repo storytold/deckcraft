@@ -122,6 +122,21 @@ fn placed<'a>(
     geometry::connect(&mut out, data);
     Ok(out)
 }
+/// An infeasible trial is a rejected candidate, not a failure of the whole diagram. Never
+/// swallow malformed-input, measurement or resource-budget errors while searching.
+fn trial<'a>(
+    tree: &Instance<'a>,
+    frame: Xfrm,
+    data: &Data<'a>,
+    changes: &constraints::Adjustments,
+    work: &mut usize,
+) -> Result<Option<Vec<Placed<'a>>>, &'static str> {
+    match placed(tree, frame, data, changes, work) {
+        Ok(out) => Ok(Some(out)),
+        Err("inconsistent diagram constraints" | "inconsistent diagram bounds" | "negative diagram extent") => Ok(None),
+        Err(e) => Err(e),
+    }
+}
 fn score(out: &[Placed<'_>], scope: &HashSet<usize>, measure: &mut Measure<'_>, prefer_words: bool, work: &mut usize) -> Result<f64, &'static str> {
     charge(work, out.len())?;
     let values = measure(out, prefer_words)?;
@@ -129,6 +144,38 @@ fn score(out: &[Placed<'_>], scope: &HashSet<usize>, measure: &mut Measure<'_>, 
         return Err("invalid diagram text measurement");
     }
     Ok(out.iter().zip(values).filter(|(p, _)| scope.contains(&p.node_key)).map(|(_, v)| v).sum())
+}
+
+struct Choice<'a> {
+    out: Vec<Placed<'a>>,
+    score: f64,
+    t: f64,
+    low: f64,
+}
+fn choose<'a>(
+    prefer_words: bool,
+    mut probe: impl FnMut(f64) -> Result<Option<Choice<'a>>, &'static str>,
+) -> Result<Option<Choice<'a>>, &'static str> {
+    let mut best = probe(1.)?;
+    // Geometry can trade width for height, so its endpoint need not be the best fit.
+    // Font endpoints keep the fast monotonic path; otherwise search the interior too.
+    if !prefer_words || best.as_ref().is_none_or(|c| c.score > 1e-6) {
+        for step in 1..16 {
+            if let Some(mut candidate) = probe(step as f64 / 16.)? {
+                let fit = candidate.score <= 1e-6;
+                if best.as_ref().is_none_or(|old| candidate.score < old.score - 1e-6 || (fit && candidate.t < old.t)) {
+                    if fit {
+                        candidate.low = (step - 1) as f64 / 16.;
+                    }
+                    best = Some(candidate);
+                }
+                if fit {
+                    break;
+                }
+            }
+        }
+    }
+    Ok(best)
 }
 
 pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, measure: &mut Measure<'_>) -> Result<Vec<Placed<'a>>, &'static str> {
@@ -176,36 +223,44 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             continue;
         }
         let old = changes.get(&key).copied();
-        changes.insert(key.clone(), if is_factor { Factor(limit) } else { Value(limit) });
-        let candidate = placed(tree, frame, data, &changes, &mut work)?;
-        let after = score(&candidate, &scope, measure, prefer_words, &mut work)?;
-        if after >= before - 1e-6 {
+        let selected = choose(prefer_words, |t| {
+            let value = start + (limit - start) * t;
+            changes.insert(key.clone(), if is_factor { Factor(value) } else { Value(value) });
+            let Some(candidate) = trial(tree, frame, data, &changes, &mut work)? else { return Ok(None) };
+            let score = score(&candidate, &scope, measure, prefer_words, &mut work)?;
+            Ok(Some(Choice { out: candidate, score, t, low: 0. }))
+        })?;
+        let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) = selected.filter(|c| c.score < before - 1e-6) else {
             if let Some(v) = old {
                 changes.insert(key, v);
             } else {
                 changes.remove(&key);
             }
             continue;
-        }
+        };
         if prefer_words {
             font_changed.extend(scope.iter().copied());
         } else if limit > start && matches!(control.property.as_str(), "w" | "h") {
             grown.push((key.clone(), start, is_factor, scope.clone()));
         }
         out = candidate;
+        let selected_value = start + (limit - start) * selected;
+        changes.insert(key.clone(), if is_factor { Factor(selected_value) } else { Value(selected_value) });
         if after > 1e-6 {
             continue;
         }
         // Stop at the first fitting value rather than always applying the extreme limit.
         // Every trial is measured using the exact renderer's glyph/paragraph metrics.
-        let (mut low, mut high) = (0.0, 1.0);
-        let mut best = limit;
+        let (mut low, mut high) = (bracket, selected);
+        let mut best = selected_value;
         for _ in 0..18 {
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
             changes.insert(key.clone(), if is_factor { Factor(value) } else { Value(value) });
-            let candidate = placed(tree, frame, data, &changes, &mut work)?;
-            if score(&candidate, &scope, measure, prefer_words, &mut work)? <= 1e-6 {
+            let candidate = trial(tree, frame, data, &changes, &mut work)?;
+            if let Some(candidate) = candidate
+                && score(&candidate, &scope, measure, prefer_words, &mut work)? <= 1e-6
+            {
                 high = t;
                 best = value;
                 out = candidate;
@@ -217,9 +272,12 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             }
         }
         if prefer_words && !is_factor && start > limit {
-            best = best.floor().max(limit);
-            changes.insert(key.clone(), Value(best));
-            out = placed(tree, frame, data, &changes, &mut work)?;
+            let rounded = best.floor().max(limit);
+            changes.insert(key.clone(), Value(rounded));
+            if let Some(candidate) = trial(tree, frame, data, &changes, &mut work)? {
+                best = rounded;
+                out = candidate;
+            }
         }
         changes.insert(key, if is_factor { Factor(best) } else { Value(best) });
     }
@@ -237,8 +295,10 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
             changes.insert(key.clone(), if is_factor { Factor(value) } else { Value(value) });
-            let candidate = placed(tree, frame, data, &changes, &mut work)?;
-            if score(&candidate, &scope, measure, true, &mut work)? <= 1e-6 {
+            let candidate = trial(tree, frame, data, &changes, &mut work)?;
+            if let Some(candidate) = candidate
+                && score(&candidate, &scope, measure, true, &mut work)? <= 1e-6
+            {
                 high = t;
                 best = value;
                 out = candidate;

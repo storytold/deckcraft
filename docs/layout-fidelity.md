@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.9): measured numeric diagram rules, circular placement, raw-DEFLATE
-geographic caches and extended label typography, with native observations and explicit limits.
+Updated 2026-11-01 (PPTX.11): interior measured-rule trials, native map bindings and colour scales,
+cropped projections, rich paragraph and hierarchy-label rendering, with explicit native limits.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -456,3 +456,62 @@ original/private probes export directly at 3840px width in 5.112 seconds locally
 source hashes and no external document converter on PATH. Hierarchical list alignment and map
 label visibility/colors were visually inspected after the final rebuild. These timings and
 checks do not certify arbitrary-deck pixel equality.
+
+
+## PPTX.11 — interior trials, numeric maps and rich label bodies (2026-11-01)
+
+Rule search now samples interior geometry before refining a fit. A growing box can take space
+from a reference-linked neighbour: the limit can be worse or produce a negative extent while
+an interior value fits both labels. Such infeasible trials are rejected individually; malformed
+coefficients, invalid text measurements and resource-budget errors still fail explicitly. Search
+retains authored order, instance identity, full dependency resolution and the existing work/text
+budgets. It is bounded numeric search, not an exhaustive proof over all coupled rule combinations.
+
+A native test also disproved an attempted immutable-bound interpretation: a font rule can replace
+a constraint with the same property even when its operator is `gte`. That native behaviour is
+retained. An owned height-bound probe opened/exported but rendered differently (native text
+outside its shape); it is not counted as a visual-parity success. Cyclic-layout fallback and the
+full native rule/algorithm search policy remain open.
+
+Offline maps now bind repeated region rows to their **first** value while all numeric rows still
+participate in the colour range. This replaces the earlier speculative duplicate-aggregation
+requirement with observed behaviour. A complete cached location → coordinate → entity query
+chain produces three correctly coloured native regions; explicit IDs without those queries do
+not. Private native cache observations are not shipped as fixtures or assets.
+
+Numeric `valueColors` and `valueColorPositions` import, rebuild and render two/three-stop scales,
+including finite numeric/percentage positions, clipping, theme-relative colours and alpha.
+The default light/dark endpoints use luminance transforms of the document's accent, not bundled
+palette artwork. Native automatic two/three-stop colour probes agree. **Explicit numeric/percent
+stop children caused PowerPoint for Mac's PDF export to stall in this test environment**, including
+alternate scalar encodings. These are not interoperability passes; the public-format controls are
+retained, and their native compatibility remains an explicit investigation item. Normative
+position definitions: [MS-ODRAWXML CT_ValueColorPositions](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-odrawxml/f2cae9d3-c8f0-4afc-a293-d3219902efb9)
+and [CT_ValueColorEndPosition](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-odrawxml/6b29dfec-eade-47f4-a355-44a2e66dcda5).
+
+`dataOnly` clips a cached world projection without changing its central meridian or stretching
+regions. Default map outlines no longer invent white internal borders; explicit series outlines
+still render. Attribution includes only displayed regions and retains source copyrights.
+Intermediate administrative scopes, uncached provider data and all automatic projection policies
+are not certified. No boundary service or proprietary map/font asset is embedded.
+
+Rich chart labels now retain paragraph spacing, margins, tabs, RTL and line-break controls, plus
+caps, strike, highlight, underline colour and kerning. Their bounds use whole-body text shaping
+rather than adding run widths and counting paragraphs, so soft breaks and mixed sizes allocate
+actual space. Flat and hierarchical treemap/sunburst leaf labels use the shared point-label
+renderer and honour hidden points. An owned classic two-line mixed-size/decorated label opens,
+exports and visibly agrees in its text styling in PowerPoint. The hierarchy probes open/export,
+but native ignores the first point's style in the tested files while retaining a later point's
+style; this discrepancy and automatic hierarchy/callout placement remain open.
+
+LibreOffice 26.8 remains a comparison oracle, not a render dependency: the valid cached map
+exports its unsupported-chart message, the uncached font-rule diagram is blank, and the rich
+label's soft break is flattened in extracted PDF text. None of these is counted as a fidelity
+pass. DeckCraft's direct export is exercised with no converter on PATH.
+
+Final local validation for this arc: all eight `cargo xtask ci` stages pass (2,383 tests including
+three doctests). Five original/private observation packages pass Open XML SDK validation with
+zero errors, including the custom-stop package that stalls native PDF export. Thirteen direct
+4K probes exported with converter-free PATH and unchanged source hashes; a final six-map rerun
+covers the last viewport correction. These results establish bounded renderer coverage, not
+pixel identity: world auto margins, some projection outlines and hierarchy placement still differ.

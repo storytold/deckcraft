@@ -6,6 +6,29 @@ pub const MAX_GEO_POINTS: usize = 2_000_000;
 pub const MAX_GEO_RINGS: usize = 100_000;
 const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-";
 
+/// chartEx's two/three-stop numeric colour scale. Positions are data values or percentages
+/// of the complete numeric range, not quantiles of the regions that happen to be visible.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ValueColorScale {
+    pub three_color: bool,
+    pub minimum: ValueColorStop,
+    pub middle: ValueColorStop,
+    pub maximum: ValueColorStop,
+}
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ValueColorStop {
+    pub color: Option<crate::style::ColorRef>,
+    pub position: Option<ValueColorPosition>,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub enum ValueColorPosition {
+    Extreme,
+    Number(f64),
+    Percent(f64),
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Geography {

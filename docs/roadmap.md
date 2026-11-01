@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
+
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (beta item 9 drops Play From, now in; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: PPTX corpus, presenter and show controls, review navigation, starter decks, Grid Options and New Window, WordArt gallery and handles, pen pressure; beta items 9 and 10 narrowed; duplicated rows and headers folded; previous: minor, core-workflow alpha gate added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Forward-looking: where DeckCraft is going and in what order. The one-page summary is
@@ -153,5 +155,5 @@ geographic caches and extended label typography. Remaining native/provider gaps 
 
 PPTX.10 (2026-11-01): hierarchical secondary text, property-scoped font fitting, measurement reuse,
 offline geographic joins, data/world scopes and map label typography implemented. Intermediate
-administrative viewport selection, duplicate-row aggregation and native cyclic fallback remain
+administrative viewport selection and native cyclic fallback remain
 explicit gaps. PowerPoint and LibreOffice comparisons are detailed in layout-fidelity.md.

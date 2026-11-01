@@ -221,6 +221,8 @@ impl Default for Trendline {
 #[serde(default, rename_all = "camelCase")]
 pub struct Series {
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub value_colors: Option<crate::geography::ValueColorScale>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub geography: Option<crate::geography::Geography>,
     pub label_defaults: DataLabel,
     pub point_labels: std::collections::BTreeMap<usize, DataLabel>,

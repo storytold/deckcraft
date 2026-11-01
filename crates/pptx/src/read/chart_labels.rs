@@ -3,8 +3,44 @@ use super::chart::{label_run_props, manual_layout, simple_fill, simple_line};
 use crate::xml::El;
 use deckcraft_model::{
     chart::{DataLabel, Series},
-    text::{Align, Paragraph, Run, RunKind, TextBody},
+    text::{Align, ParaProps, Paragraph, Run, RunKind, Spacing, TabStop, TextBody},
 };
+
+fn paragraph_props(e: &El) -> ParaProps {
+    let pt = |attr| e.f64(attr).filter(|v| v.is_finite()).map(|v| (v / 12700.).clamp(-1e6, 1e6));
+    let spacing = |tag| {
+        e.child(tag).and_then(|s| {
+            s.child("spcPct").and_then(|s| s.f64("val")).filter(|v| v.is_finite()).map(|v| Spacing::Pct((v / 100000.).clamp(0., 100.))).or_else(
+                || s.child("spcPts").and_then(|s| s.f64("val")).filter(|v| v.is_finite()).map(|v| Spacing::Pts((v / 100.).clamp(0., 10000.))),
+            )
+        })
+    };
+    ParaProps {
+        align: e.attr("algn").and_then(Align::from_xml),
+        margin_left: pt("marL"),
+        margin_right: pt("marR"),
+        indent: pt("indent"),
+        default_tab: pt("defTabSz"),
+        rtl: e.bool("rtl"),
+        font_align: e.attr("fontAlgn").map(str::to_string),
+        east_asian_line_break: e.bool("eaLnBrk"),
+        latin_line_break: e.bool("latinLnBrk"),
+        hanging_punct: e.bool("hangingPunct"),
+        line_spacing: spacing("lnSpc"),
+        space_before: spacing("spcBef"),
+        space_after: spacing("spcAft"),
+        tabs: e.child("tabLst").map(|l| {
+            l.children_named("tab")
+                .take(64)
+                .filter_map(|t| {
+                    let pos = t.f64("pos").filter(|v| v.is_finite())? / 12700.;
+                    Some(TabStop { pos: pos.clamp(-1e6, 1e6), align: t.attr("algn").unwrap_or("l").into() })
+                })
+                .collect()
+        }),
+        ..Default::default()
+    }
+}
 
 pub(super) fn body(e: &El) -> TextBody {
     let mut body = TextBody { body: e.child("bodyPr").map(super::dml::body_pr).unwrap_or_default(), ..Default::default() };
@@ -13,7 +49,9 @@ pub(super) fn body(e: &El) -> TextBody {
     let mut budget = 4096;
     for p in e.children_named("p").take(256) {
         let mut para = Paragraph::default();
-        para.props.align = p.child("pPr").and_then(|e| e.attr("algn")).and_then(Align::from_xml);
+        let ppr = p.child("pPr");
+        para.level = ppr.and_then(|p| p.u32("lvl")).unwrap_or(0).min(8) as u8;
+        para.props = ppr.map(paragraph_props).unwrap_or_default();
         para.def_props = p.path(&["pPr", "defRPr"]).map(label_run_props).unwrap_or_default();
         para.def_props.inherit(&list_default);
         para.end_props = p.child("endParaRPr").map(label_run_props).unwrap_or_default();

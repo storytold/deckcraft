@@ -11,7 +11,43 @@ fn body(w: &mut W, tag: &str, body: &TextBody) {
     w.empty0("a:lstStyle");
     for p in body.paragraphs.iter().take(256) {
         w.open0("a:p");
-        w.open("a:pPr", A::new().o("algn", p.props.align.map(|a| a.xml())));
+        let pp = &p.props;
+        let emu = |v: f64| (v.clamp(-1e6, 1e6) * 12700.).round() as i64;
+        w.open(
+            "a:pPr",
+            A::new()
+                .o("algn", pp.align.map(|a| a.xml()))
+                .o("lvl", (p.level > 0).then_some(p.level))
+                .o("marL", pp.margin_left.map(emu))
+                .o("marR", pp.margin_right.map(emu))
+                .o("indent", pp.indent.map(emu))
+                .o("defTabSz", pp.default_tab.map(emu))
+                .o("rtl", pp.rtl.map(u8::from))
+                .o("fontAlgn", pp.font_align.as_deref())
+                .o("eaLnBrk", pp.east_asian_line_break.map(u8::from))
+                .o("latinLnBrk", pp.latin_line_break.map(u8::from))
+                .o("hangingPunct", pp.hanging_punct.map(u8::from)),
+        );
+        for (tag, spacing) in [("a:lnSpc", pp.line_spacing), ("a:spcBef", pp.space_before), ("a:spcAft", pp.space_after)] {
+            if let Some(spacing) = spacing {
+                let (kind, value) = match spacing {
+                    deckcraft_model::text::Spacing::Pct(v) => ("a:spcPct", v.clamp(0., 100.) * 100000.),
+                    deckcraft_model::text::Spacing::Pts(v) => ("a:spcPts", v.clamp(0., 10000.) * 100.),
+                };
+                if value.is_finite() {
+                    w.open0(tag);
+                    w.val(kind, value.round() as i64);
+                    w.close(tag);
+                }
+            }
+        }
+        if let Some(tabs) = &pp.tabs {
+            w.open0("a:tabLst");
+            for tab in tabs.iter().take(64) {
+                w.empty("a:tab", A::new().a("pos", emu(tab.pos)).a("algn", &tab.align));
+            }
+            w.close("a:tabLst");
+        }
         chart_rpr(w, "a:defRPr", &p.def_props);
         w.close("a:pPr");
         for run in p.runs.iter().take(4096) {

@@ -1,5 +1,7 @@
 # PowerPoint feature checklist
 
+> **PPTX.11 update 2026-11-01:** interior diagram-rule trials, native duplicate-map binding, two/three-stop map scales, stable cropped projection and richer paragraph/leaf-label typography are implemented. Native custom numeric map stops and full coupled-rule/native fallback parity remain open; scores are unchanged.
+
 > **PPTX.10 update 2026-11-01:** hierarchical diagram text, property-scoped font rules, offline geographic query joins, explicit data/world scopes and styled map labels have regression coverage. Native cyclic-layout fallback and intermediate/automatic viewport policies remain partial; scores are unchanged.
 
 > **Reviewed 2026-10-31:** Lock shapes remains D after partial restriction round-trip coverage. Edit chart data, Chart elements, Insert SmartArt and Text pane remain P: categorical data patches and flat process export improve fidelity but do not cover structural chart edits or the remaining diagram layouts.

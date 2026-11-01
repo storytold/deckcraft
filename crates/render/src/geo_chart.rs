@@ -13,6 +13,51 @@ use deckcraft_model::{
 use kurbo::{Affine, BezPath, Point, Rect, Shape as _};
 use vello_cpu::RenderContext;
 
+fn scale_position(position: Option<deckcraft_model::geography::ValueColorPosition>, range: (f64, f64), fallback: f64) -> f64 {
+    use deckcraft_model::geography::ValueColorPosition;
+    let value = match position {
+        Some(ValueColorPosition::Number(v)) => v,
+        Some(ValueColorPosition::Percent(v)) => range.0 * (1. - v / 100.) + range.1 * (v / 100.),
+        _ => fallback,
+    };
+    if value.is_finite() { value } else { fallback }
+}
+fn ramp(value: f64, stops: &[(f64, Rgba)]) -> Rgba {
+    let Some(&(low, first)) = stops.first() else { return Rgba::BLACK };
+    if value <= low {
+        return first;
+    }
+    for pair in stops.windows(2) {
+        let [(a, ca), (b, cb)] = pair else { continue };
+        if value <= *b {
+            // Normalise first to avoid overflow for large, finite chart numbers.
+            let scale = a.abs().max(b.abs()).max(value.abs()).max(1.);
+            let t = if b > a { ((value / scale - a / scale) / (b / scale - a / scale)).clamp(0., 1.) } else { 1. };
+            return crate::chartex::mix(*ca, *cb, t);
+        }
+    }
+    stops.last().map_or(first, |(_, color)| *color)
+}
+fn value_stops(rctx: &Ctx, c: &Chart, series: &deckcraft_model::chart::Series, range: (f64, f64)) -> Vec<(f64, Rgba)> {
+    use deckcraft_color::ColorTransform::{LumMod, LumOff};
+    let base = series_color(rctx, c, 0);
+    let lo = deckcraft_color::apply(base, &[LumMod(20000), LumOff(80000)]);
+    let hi = deckcraft_color::apply(base, &[LumMod(75000)]);
+    let mid = (range.0 / 2. + range.1 / 2., base);
+    let Some(scale) = &series.value_colors else { return vec![(range.0, lo), (range.1, hi)] };
+    let resolve = |stop: &deckcraft_model::geography::ValueColorStop, fallback: (f64, Rgba)| {
+        (scale_position(stop.position, range, fallback.0), stop.color.as_ref().map_or(fallback.1, |color| rctx.color(color, None)))
+    };
+    let mut stops = vec![resolve(&scale.minimum, (range.0, lo))];
+    if scale.three_color {
+        stops.push(resolve(&scale.middle, mid));
+    }
+    stops.push(resolve(&scale.maximum, (range.1, hi)));
+    // Malformed/reversed stops must not make interpolation divide by zero or escape bounds.
+    stops.sort_by(|a, b| a.0.total_cmp(&b.0));
+    stops
+}
+
 fn project(lon: f64, lat: f64, kind: &str) -> Point {
     let x = lon.to_radians();
     let y = lat.clamp(-85.0, 85.0).to_radians();
@@ -46,12 +91,13 @@ fn project(lon: f64, lat: f64, kind: &str) -> Point {
     }
 }
 
-fn paths(map: &Geography) -> Vec<BezPath> {
+fn paths(map: &Geography) -> (Vec<BezPath>, bool) {
     let included = |r: &&deckcraft_model::geography::GeoRegion| map.viewed_region != "dataOnly" || r.point.is_some();
     let mut longs: Vec<_> = map
         .regions
         .iter()
-        .filter(included)
+        // Projection and central meridian belong to the cached geographic extent. A
+        // dataOnly viewport crops that map; it must not reproject its remaining regions.
         .flat_map(|r| &r.rings)
         .flatten()
         .take(deckcraft_model::geography::MAX_GEO_POINTS)
@@ -79,7 +125,8 @@ fn paths(map: &Geography) -> Vec<BezPath> {
     // selected projection; small local extents retain a cylindrical default.
     let projection = if map.projection.is_empty() && world { "robinson" } else { &map.projection };
     let mut budget = deckcraft_model::geography::MAX_GEO_POINTS;
-    map.regions
+    let paths = map
+        .regions
         .iter()
         .take(4096)
         .map(|region| {
@@ -108,18 +155,19 @@ fn paths(map: &Geography) -> Vec<BezPath> {
             }
             path
         })
-        .collect()
+        .collect();
+    (paths, world)
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, area: Rect, base: f64, text_col: Rgba) -> bool {
     let Some(series) = c.series.first() else { return false };
     let Some(map) = series.geography.as_ref().filter(|g| !g.regions.is_empty()) else { return false };
-    let paths = paths(map);
+    let (paths, world) = paths(map);
     let Some(mut bounds) = paths.iter().filter(|p| !p.elements().is_empty()).map(|p| p.bounding_box()).reduce(|a, b| a.union(b)) else {
         return false;
     };
-    if map.viewed_region == "world" {
+    if world && map.viewed_region != "dataOnly" {
         let kind = if map.projection.is_empty() { "robinson" } else { &map.projection };
         for lat in (-90..=90).step_by(5) {
             for lon in (-180..=180).step_by(5) {
@@ -130,7 +178,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
     if bounds.width() < 1e-9 || bounds.height() < 1e-9 {
         return false;
     }
-    let plot = area.inset(-base * 0.35);
+    let plot = area;
     if plot.width() <= 0.0 || plot.height() <= 0.0 {
         return false;
     }
@@ -141,7 +189,7 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
         Some(deckcraft_model::Fill::Solid { color }) => rctx.color(color, None),
         _ => series_color(rctx, c, 0),
     };
-    let lo = crate::chartex::mix(hi, Rgba::WHITE, 0.85);
+    let stops = value_stops(rctx, c, series, (min, max));
     let mut labels = Vec::new();
     for (region, path) in map.regions.iter().zip(paths) {
         if path.elements().is_empty() {
@@ -153,16 +201,16 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
         let fill = if matches!(series.fill, Some(deckcraft_model::Fill::Solid { .. })) {
             hi
         } else {
-            t.map_or(Rgba::rgb(224, 224, 224), |t| crate::chartex::mix(lo, hi, t))
+            value.map_or(Rgba::rgb(224, 224, 224), |v| ramp(v, &stops))
         };
         ctx.set_transform(m);
         ctx.set_fill_rule(vello_cpu::peniko::Fill::EvenOdd);
         ctx.set_paint(color(fill, 1.0));
         ctx.fill_path(&path);
         ctx.set_fill_rule(vello_cpu::peniko::Fill::NonZero);
-        ctx.set_stroke(kurbo::Stroke::new(0.7));
-        ctx.set_paint(color(Rgba::WHITE, 1.0));
-        ctx.stroke_path(&path);
+        if let Some(line) = &series.line {
+            crate::stroke::stroke(ctx, rctx, line, None, &path, None, m, line.width.unwrap_or(0.75).clamp(0., 2000.), 1.);
+        }
         let point_label = region.point.and_then(|i| c.point_label(series, i));
         if point_label.is_some() || (region.point.is_none() && c.series_data_labels(series)) {
             let bounds = path.bounding_box();
@@ -194,21 +242,30 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
             label(ctx, rctx, m, &text, r, style);
         }
     }
-    let mut attribution = vec![map.attribution.clone()];
-    for region in &map.regions {
+    let mut copyrights = Vec::new();
+    for region in map.regions.iter().filter(|r| map.viewed_region != "dataOnly" || r.point.is_some()) {
         for text in &region.copyrights {
-            if !attribution.contains(text) {
-                attribution.push(text.clone());
+            if !copyrights.contains(text) {
+                copyrights.push(text.clone());
             }
         }
+    }
+    copyrights.sort();
+    let mut attribution = map.attribution.clone();
+    if !copyrights.is_empty() {
+        if !attribution.is_empty() {
+            attribution.push('\n');
+        }
+        attribution.push_str("© ");
+        attribution.push_str(&copyrights.join(", "));
     }
     label(
         ctx,
         rctx,
         m,
-        &attribution.join(" · "),
-        Rect::new(area.x0, area.y1 - base * 1.3, area.x1, area.y1),
-        LabelStyle { size: base * 0.65, align: Align::Center, anchor: Anchor::Middle, col: text_col, bold: false },
+        &attribution,
+        Rect::new(area.x0, area.y1 - 14.4, area.x1, area.y1),
+        LabelStyle { size: 6., align: Align::Right, anchor: Anchor::Bottom, col: text_col, bold: false },
     );
     true
 }
@@ -216,6 +273,35 @@ pub(crate) fn draw(ctx: &mut RenderContext, rctx: &Ctx, c: &Chart, m: Affine, ar
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn numeric_colour_ramp_clamps_interpolates_and_handles_large_values() {
+        use deckcraft_model::geography::ValueColorPosition as P;
+        let a = Rgba::rgba(240, 20, 20, 100);
+        let b = Rgba::rgba(20, 220, 20, 200);
+        let stops = [(0., a), (10., b)];
+        assert_eq!(ramp(-1., &stops), a);
+        assert_eq!(ramp(11., &stops), b);
+        assert_eq!(ramp(5., &stops), Rgba::rgba(130, 120, 20, 150));
+        assert_eq!(ramp(0., &[(-1e308, a), (1e308, b)]), Rgba::rgba(130, 120, 20, 150));
+        assert_eq!(scale_position(Some(P::Percent(25.)), (-20., 60.), 0.), 0.);
+        assert_eq!(scale_position(Some(P::Number(f64::NAN)), (0., 1.), 0.5), 0.5);
+    }
+    #[test]
+    fn data_only_crops_world_projection_without_reprojecting_selected_regions() {
+        use deckcraft_model::geography::GeoRegion;
+        let mut map = Geography {
+            regions: vec![
+                GeoRegion { point: Some(0), rings: vec![vec![[-110., 45.], [-90., 45.], [-90., 70.]]], ..Default::default() },
+                GeoRegion { rings: vec![(-180..=180).step_by(30).map(|x| [x as f64, -60.]).collect()], ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let original = paths(&map).0;
+        map.viewed_region = "dataOnly".into();
+        let cropped = paths(&map).0;
+        assert_eq!(original[0], cropped[0]);
+        assert!(cropped[1].elements().is_empty());
+    }
     #[test]
     fn dateline_is_narrow_and_holes_remain_holes() {
         let map = Geography {
@@ -225,7 +311,7 @@ mod tests {
             }],
             ..Default::default()
         };
-        let path = &paths(&map)[0];
+        let path = &paths(&map).0[0];
         assert!(path.bounding_box().width() < 0.04);
         for kind in ["mercator", "miller", "albers", "robinson"] {
             assert!(project(180., 90., kind).is_finite());
@@ -244,7 +330,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = paths(&map);
+        let p = paths(&map).0;
         assert!(p[0].bounding_box().width() < 0.3);
         assert!(p[1].bounding_box().width() < 0.3);
     }
@@ -259,11 +345,11 @@ mod tests {
             ],
             ..Default::default()
         };
-        let p = paths(&map);
+        let p = paths(&map).0;
         assert!(!p[0].elements().is_empty() && p[1].elements().is_empty());
         assert_eq!(map.regions[1].rings[0].len(), 3);
         let mut world = map.clone();
         world.viewed_region = "world".into();
-        assert!(paths(&world).iter().all(|p| !p.elements().is_empty()));
+        assert!(paths(&world).0.iter().all(|p| !p.elements().is_empty()));
     }
 }

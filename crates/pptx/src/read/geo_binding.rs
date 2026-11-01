@@ -129,21 +129,16 @@ pub(super) fn resolve(clear: &El, categories: &[String], levels: &[Vec<String>],
         }
     }
     let mut output = HashMap::new();
-    let mut repeated = HashSet::new();
     for (i, entity) in chosen.into_iter().enumerate() {
         if ambiguous.contains(&i) {
             continue;
         }
         let entity = entity.or_else(|| regions.get(&name(&categories[i])).cloned().flatten());
         if let Some(entity) = entity {
-            // Do not silently use the first of conflicting data rows for the same region.
-            if output.insert(entity.clone(), i).is_some() {
-                repeated.insert(entity);
-            }
+            // Native maps paint a repeated entity with its first data row. All values are
+            // retained separately in Series: later rows still affect the colour scale.
+            output.entry(entity).or_insert(i);
         }
-    }
-    for entity in repeated {
-        output.remove(&entity);
     }
     output
 }
@@ -180,10 +175,11 @@ mod tests {
         assert!(ambiguous.is_empty(), "ambiguous names must never choose cache order");
     }
     #[test]
-    fn explicit_ids_win_and_conflicting_rows_are_not_silently_dropped() {
+    fn explicit_ids_win_and_repeated_entities_use_the_first_row() {
         let result = resolve(&cache(), &["Local alias".into()], &[], &["second".into()]);
         assert_eq!(result.get("second"), Some(&0));
-        assert!(resolve(&cache(), &["Unique".into(), "Unique".into()], &[], &[]).is_empty());
+        assert_eq!(resolve(&cache(), &["Unique".into(), "Unique".into()], &[], &[]).get("third"), Some(&0));
+        assert_eq!(resolve(&cache(), &["X".into(), "Y".into()], &[], &["third".into(), "third".into()]).get("third"), Some(&0));
         let query = crate::xml::parse(br#"<geoLocation entityType="Region" latitude="NaN" longitude="0"/>"#).unwrap();
         assert!(location(&query.root).is_none());
     }

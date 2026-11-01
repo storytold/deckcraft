@@ -91,12 +91,42 @@ pub(super) fn chart_rpr(w: &mut W, tag: &str, p: &deckcraft_model::text::RunProp
             .o("b", p.bold.map(u8::from))
             .o("i", p.italic.map(u8::from))
             .o("u", p.underline.as_deref())
+            .o(
+                "strike",
+                p.strike.map(|v| match v {
+                    deckcraft_model::text::Strike::None => "noStrike",
+                    deckcraft_model::text::Strike::Single => "sngStrike",
+                    deckcraft_model::text::Strike::Double => "dblStrike",
+                }),
+            )
+            .o(
+                "cap",
+                p.caps.map(|v| match v {
+                    deckcraft_model::text::Caps::None => "none",
+                    deckcraft_model::text::Caps::Small => "small",
+                    deckcraft_model::text::Caps::All => "all",
+                }),
+            )
+            .o("kern", p.kern.filter(|v| v.is_finite()).map(|v| (v.clamp(0., 4000.) * 100.).round() as i64))
+            .o("noProof", p.no_proof.map(u8::from))
             .o("baseline", p.baseline.filter(|n| n.is_finite()).map(|n| (n.clamp(-10., 10.) * 100000.).round() as i64))
             .o("spc", p.spacing.filter(|n| n.is_finite()).map(|n| (n.clamp(-4000., 4000.) * 100.).round() as i64))
             .o("lang", p.lang.as_deref()),
     );
     if let Some(fill) = &p.fill {
         simple_fill(w, fill);
+    }
+    if let Some(color) = &p.highlight {
+        w.open0("a:highlight");
+        super::dml::color(w, color);
+        w.close("a:highlight");
+    }
+    if let Some(color) = &p.underline_color {
+        w.open0("a:uFill");
+        w.open0("a:solidFill");
+        super::dml::color(w, color);
+        w.close("a:solidFill");
+        w.close("a:uFill");
     }
     for (tag, family) in [("a:latin", &p.font), ("a:ea", &p.font_ea), ("a:cs", &p.font_cs), ("a:sym", &p.font_sym)] {
         if let Some(family) = family {
@@ -1017,6 +1047,7 @@ pub fn build_chartex(c: &Chart) -> Vec<u8> {
         w.open("cx:series", A::new().a("layoutId", layout).a("uniqueId", format!("{{DC00000{i}-0000-4000-8000-000000000000}}")));
         cx_text(&mut w, &s.name);
         sp_pr_tag(&mut w, s.fill.as_ref(), s.line.as_ref(), "cx:spPr");
+        value_colors(&mut w, s.value_colors.as_ref());
         if c.series_data_labels(s) || !s.point_labels.is_empty() || s.label_defaults != Default::default() {
             super::chart_labels::write(&mut w, c, s, true);
         }
@@ -1271,6 +1302,37 @@ mod tests {
         c.cat_reversed = false;
         assert!(!crate::read::chart::read_chart_xml(&super::chart_xml(&c).0).unwrap().cat_reversed);
     }
+}
+
+fn value_colors(w: &mut W, scale: Option<&deckcraft_model::geography::ValueColorScale>) {
+    let Some(scale) = scale else { return };
+    use deckcraft_model::geography::ValueColorPosition;
+    let stops = [("min", &scale.minimum), ("mid", &scale.middle), ("max", &scale.maximum)];
+    w.open0("cx:valueColors");
+    for (name, stop) in stops {
+        if let Some(color) = &stop.color {
+            let tag = format!("cx:{name}Color");
+            w.open0(&tag);
+            super::dml::color(w, color);
+            w.close(&tag);
+        }
+    }
+    w.close("cx:valueColors");
+    w.open("cx:valueColorPositions", A::new().a("count", if scale.three_color { 3 } else { 2 }));
+    for (name, stop) in stops {
+        let Some(position) = stop.position else { continue };
+        let (kind, number) = match position {
+            ValueColorPosition::Extreme if name != "mid" => ("extremeValue", None),
+            ValueColorPosition::Number(v) if v.is_finite() => ("number", Some(v)),
+            ValueColorPosition::Percent(v) if v.is_finite() => ("percent", Some(v)),
+            _ => continue,
+        };
+        let tag = format!("cx:{name}");
+        w.open0(&tag);
+        w.empty(&format!("cx:{kind}"), A::new().o("val", number.map(fmt_num)));
+        w.close(&tag);
+    }
+    w.close("cx:valueColorPositions");
 }
 
 fn write_geography(w: &mut W, g: &deckcraft_model::geography::Geography) {
