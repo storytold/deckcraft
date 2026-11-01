@@ -148,6 +148,7 @@ app's JSON control channel (`deckcraft --control PORT`).
 
 | Date | What landed |
 |---|---|
+| 2026-11-01 | PPTX.15: selector-bound SmartArt font rules, synchronized shared groups with local triggers, and explicit-font autofit control; real-text and round-trip regressions; native reference/fallback gaps remain explicit |
 | 2026-11-01 | PPTX.14: native composite coordinate ownership and axis priority; root occupied-bounds fitting; literal column-label wrapping with no-wrap/manual overrides; original geometry and pixel regressions |
 | 2026-11-01 | PPTX.13: native-validated linear/cycle container fitting; custom map stop interoperability; first-paragraph literal-label inheritance; bounded regression coverage and explicit schema/native discrepancy |
 | 2026-11-01 | PPTX.12: bounded joint trials for connected text rules; native constant-map colour behavior; per-level rich label inheritance and isolated literal bodies with intrinsic bounds; native layout differences remain documented |

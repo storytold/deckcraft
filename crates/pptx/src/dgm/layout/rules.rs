@@ -18,25 +18,33 @@ fn unit(property: &str) -> f64 {
 }
 struct Control<'a> {
     target: usize,
+    members: Vec<usize>,
     property: String,
     rule: &'a El,
     constraint: Option<&'a El>,
+}
+fn same_selector(a: &El, b: &El) -> bool {
+    [("for", "self"), ("forName", ""), ("ptType", "all")]
+        .iter()
+        .all(|(key, default)| a.attr(key).unwrap_or(default) == b.attr(key).unwrap_or(default))
 }
 fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &mut usize) -> Result<Vec<Control<'a>>, &'static str> {
     let mut effective = HashMap::new();
     for owner in (0..entries.len()).rev() {
         for c in &entries[owner].node.constraints {
             charge(work, entries[owner].end - owner)?;
-            if matches!(c.attr("op"), Some("gte" | "lte")) {
-                continue;
-            }
             for target in constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data) {
                 let ty = c.attr("type").unwrap_or("");
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
                     if !constraints::applies(entries, owner, target, property) {
                         continue;
                     }
-                    effective.insert((target, property.to_string()), *c);
+                    let key = (target, property.to_string());
+                    if matches!(c.attr("op"), Some("gte" | "lte")) {
+                        effective.entry(key).or_insert((owner, *c));
+                    } else {
+                        effective.insert(key, (owner, *c));
+                    }
                 }
             }
         }
@@ -50,22 +58,61 @@ fn controls<'a>(entries: &[constraints::Entry<'_, 'a>], data: &Data<'_>, work: &
             if rule.f64("val").zip(rule.f64("max")).is_some_and(|(v, m)| v > m) {
                 return Err("diagram rule limit exceeds its maximum");
             }
-            for target in constraints::selected(entries, owner, rule.attr("for").unwrap_or("self"), rule.attr("forName"), rule.attr("ptType"), data) {
+            let targets = constraints::selected(entries, owner, rule.attr("for").unwrap_or("self"), rule.attr("forName"), rule.attr("ptType"), data);
+            let remote = rule.attr("for").unwrap_or("self") != "self";
+            let font = matches!(ty, "primFontSz" | "secFontSz");
+            if remote && matches!(ty, "w" | "h" | "diam") {
+                continue;
+            }
+            if !remote && font && entry.node.alg != "tx" && entry.node.points.is_empty() {
+                continue;
+            }
+            for &target in &targets {
                 for property in if ty == "diam" { vec!["w", "h"] } else { vec![ty] } {
                     if !constraints::applies(entries, owner, target, property) {
                         continue;
                     }
-                    out.push(Control {
-                        target,
-                        property: property.into(),
-                        rule,
-                        constraint: effective.get(&(target, property.to_string())).copied(),
-                    });
+                    let binding = if remote && font {
+                        charge(work, entry.node.constraints.len())?;
+                        entry.node.constraints.iter().rev().find(|c| c.attr("type") == Some(property) && same_selector(c, rule)).map(|c| (owner, *c))
+                    } else {
+                        effective.get(&(target, property.to_string())).copied()
+                    };
+                    if remote && font && binding.is_none() {
+                        continue;
+                    }
+                    let members = if remote && font {
+                        targets.clone()
+                    } else if let Some((owner, c)) = binding.filter(|(_, c)| font && matches!(c.attr("op"), Some("equ" | "gte" | "lte"))) {
+                        charge(work, entries[owner].end - owner)?;
+                        constraints::selected(entries, owner, c.attr("for").unwrap_or("self"), c.attr("forName"), c.attr("ptType"), data)
+                    } else {
+                        vec![target]
+                    };
+                    out.push(Control { target, members, property: property.into(), rule, constraint: binding.map(|(_, c)| c) });
+                }
+                if remote && font {
+                    break;
                 }
             }
         }
     }
     Ok(out)
+}
+fn control_scope(
+    entries: &[constraints::Entry<'_, '_>],
+    data: &Data<'_>,
+    control: &Control<'_>,
+    work: &mut usize,
+) -> Result<HashSet<usize>, &'static str> {
+    let mut scope = HashSet::new();
+    // Shared constraints synchronize changes, not the trigger of a local rule. A local
+    // short label does not fit a longer sibling on its behalf; a parent rule selects both.
+    let targets = if control.rule.attr("for").unwrap_or("self") == "self" { std::slice::from_ref(&control.target) } else { &control.members };
+    for &target in targets {
+        scope.extend(dependent_scope(entries, data, target, &control.property, work)?);
+    }
+    Ok(scope)
 }
 // Reference-linked text nodes must be measured together. A short source label must not
 // suppress a font rule while a longer dependent label still overflows.
@@ -189,8 +236,10 @@ fn choose<'a>(
     Ok(best)
 }
 
+#[derive(Clone)]
 struct Range {
     key: (usize, String),
+    keys: Vec<(usize, String)>,
     start: f64,
     limit: f64,
     is_factor: bool,
@@ -199,16 +248,22 @@ struct Range {
 impl Range {
     fn set(&self, changes: &mut constraints::Adjustments, t: f64) {
         let value = self.start + (self.limit - self.start) * t;
-        changes.insert(self.key.clone(), if self.is_factor { constraints::Adjustment::Factor(value) } else { constraints::Adjustment::Value(value) });
+        self.set_value(changes, value);
+    }
+    fn set_value(&self, changes: &mut constraints::Adjustments, value: f64) {
+        for key in &self.keys {
+            changes.insert(key.clone(), if self.is_factor { constraints::Adjustment::Factor(value) } else { constraints::Adjustment::Value(value) });
+        }
     }
 }
 fn range(
     control: &Control<'_>,
-    entry: &constraints::Entry<'_, '_>,
+    entries: &[constraints::Entry<'_, '_>],
     solution: &constraints::Solution,
     changes: &constraints::Adjustments,
 ) -> Result<Option<Range>, &'static str> {
     use constraints::Adjustment::Factor;
+    let entry = &entries[control.target];
     let key = (constraints::id(entry.node), control.property.clone());
     let Some(current) = constraints::lookup(solution, entry.node).and_then(|s| s.get(&control.property)) else { return Ok(None) };
     let scale = unit(&control.property);
@@ -233,6 +288,7 @@ fn range(
     };
     Ok((start.is_finite() && limit.is_finite() && (start - limit).abs() >= 1e-9).then_some(Range {
         key,
+        keys: control.members.iter().map(|i| (constraints::id(entries[*i].node), control.property.clone())).collect(),
         start,
         limit,
         is_factor,
@@ -251,39 +307,41 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
     let mut font_changed = HashSet::new();
     let mut out = placed(tree, frame, data, &changes, &mut work)?;
     for control in &controls {
-        let entry = &entries[control.target];
-        let scope = dependent_scope(&entries, data, control.target, &control.property, &mut work)?;
+        let scope = control_scope(&entries, data, control, &mut work)?;
         let prefer_words = matches!(control.property.as_str(), "primFontSz" | "secFontSz");
         let before = score(&out, &scope, measure, prefer_words, &mut work)?;
         if before <= 1e-6 {
             continue;
         }
         let solution = constraints::resolve_adjusted(tree, frame, data, &mut work, &changes)?;
-        let Some(Range { key, start, limit, is_factor, .. }) = range(control, entry, &solution, &changes)? else { continue };
-        let old = changes.get(&key).copied();
+        let Some(range) = range(control, &entries, &solution, &changes)? else { continue };
+        let (start, limit, is_factor) = (range.start, range.limit, range.is_factor);
+        let old: Vec<_> = range.keys.iter().map(|k| (k.clone(), changes.get(k).copied())).collect();
         let selected = choose(prefer_words, |t| {
             let value = start + (limit - start) * t;
-            changes.insert(key.clone(), if is_factor { Factor(value) } else { Value(value) });
+            range.set_value(&mut changes, value);
             let Some(candidate) = trial(tree, frame, data, &changes, &mut work)? else { return Ok(None) };
             let score = score(&candidate, &scope, measure, prefer_words, &mut work)?;
             Ok(Some(Choice { out: candidate, score, t, low: 0. }))
         })?;
         let Some(Choice { out: candidate, score: after, t: selected, low: bracket }) = selected.filter(|c| c.score < before - 1e-6) else {
-            if let Some(v) = old {
-                changes.insert(key, v);
-            } else {
-                changes.remove(&key);
+            for (key, value) in old {
+                if let Some(value) = value {
+                    changes.insert(key, value);
+                } else {
+                    changes.remove(&key);
+                }
             }
             continue;
         };
         if prefer_words {
             font_changed.extend(scope.iter().copied());
         } else if limit > start && matches!(control.property.as_str(), "w" | "h") {
-            grown.push((key.clone(), start, is_factor, scope.clone()));
+            grown.push((range.clone(), scope.clone()));
         }
         out = candidate;
         let selected_value = start + (limit - start) * selected;
-        changes.insert(key.clone(), if is_factor { Factor(selected_value) } else { Value(selected_value) });
+        range.set_value(&mut changes, selected_value);
         if after > 1e-6 {
             continue;
         }
@@ -294,7 +352,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         for _ in 0..18 {
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
-            changes.insert(key.clone(), if is_factor { Factor(value) } else { Value(value) });
+            range.set_value(&mut changes, value);
             let candidate = trial(tree, frame, data, &changes, &mut work)?;
             if let Some(candidate) = candidate
                 && score(&candidate, &scope, measure, prefer_words, &mut work)? <= 1e-6
@@ -311,28 +369,29 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
         }
         if prefer_words && !is_factor && start > limit {
             let rounded = best.floor().max(limit);
-            changes.insert(key.clone(), Value(rounded));
+            range.set_value(&mut changes, rounded);
             if let Some(candidate) = trial(tree, frame, data, &changes, &mut work)? {
                 best = rounded;
                 out = candidate;
             }
         }
-        changes.insert(key, if is_factor { Factor(best) } else { Value(best) });
+        range.set_value(&mut changes, best);
     }
     // A later font rule can make previously required box growth redundant. Keep the selected
     // font and return space to neighbours, stopping at the first non-overflowing geometry.
-    for (key, start, is_factor, scope) in grown {
+    for (range, scope) in grown {
+        let start = range.start;
         if scope.is_disjoint(&font_changed) || score(&out, &scope, measure, true, &mut work)? > 1e-6 {
             continue;
         }
-        let Some(change) = changes.get(&key).copied() else { continue };
+        let Some(change) = changes.get(&range.key).copied() else { continue };
         let (Value(limit) | Factor(limit)) = change;
         let (mut low, mut high) = (0.0, 1.0);
         let mut best = limit;
         for _ in 0..18 {
             let t = (low + high) / 2.0;
             let value = start + (limit - start) * t;
-            changes.insert(key.clone(), if is_factor { Factor(value) } else { Value(value) });
+            range.set_value(&mut changes, value);
             let candidate = trial(tree, frame, data, &changes, &mut work)?;
             if let Some(candidate) = candidate
                 && score(&candidate, &scope, measure, true, &mut work)? <= 1e-6
@@ -347,7 +406,7 @@ pub(super) fn search<'a>(tree: &Instance<'a>, frame: Xfrm, data: &Data<'a>, meas
                 break;
             }
         }
-        changes.insert(key, if is_factor { Factor(best) } else { Value(best) });
+        range.set_value(&mut changes, best);
     }
     coupled::search(tree, frame, data, &entries, &controls, measure, &mut changes, &mut out, &mut work)?;
     Ok(out)

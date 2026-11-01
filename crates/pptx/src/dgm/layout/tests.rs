@@ -277,13 +277,14 @@ fn inconsistent_cycles_and_missing_named_references_fail_instead_of_guessing() {
 fn measured_rules_are_ordered_stop_at_fit_and_recompute_dependencies() {
     let data = source();
     let run = |rules: &str| {
+        let rules = rules.replace(r#" for="ch" forName="text""#, "");
         let l = layout(&format!(
             r#"<layoutNode><alg type="composite"/><constrLst>
           <constr type="w" for="ch" forName="text" val="50"/>
           <constr type="h" for="ch" forName="text" val="10"/>
           <constr type="h" for="ch" forName="mirror" refType="h" refFor="ch" refForName="text"/>
-          <constr type="primFontSz" for="ch" val="30"/></constrLst><ruleLst>{rules}</ruleLst>
-          <layoutNode name="text"><alg type="tx"/><presOf axis="ch" cnt="1"/><shape type="rect"/></layoutNode>
+          <constr type="primFontSz" for="ch" val="30"/></constrLst>
+          <layoutNode name="text"><alg type="tx"/><presOf axis="ch" cnt="1"/><shape type="rect"/><ruleLst>{rules}</ruleLst></layoutNode>
           <layoutNode name="mirror"><alg type="sp"/><shape type="rect"/></layoutNode></layoutNode>"#
         ));
         let mut measure = |items: &[Placed<'_>], _: bool| {
@@ -353,11 +354,11 @@ fn font_rule_does_not_shrink_to_floor_because_of_an_unrelated_geometry_dependenc
     let data = source();
     let layout = layout(
         r#"<layoutNode><alg type="composite"/>
-      <layoutNode name="a"><alg type="tx"/><shape type="rect"/></layoutNode>
+      <layoutNode name="a"><alg type="tx"/><shape type="rect"/><ruleLst><rule type="primFontSz" val="8"/></ruleLst></layoutNode>
       <layoutNode name="b"><alg type="tx"/><shape type="rect"/></layoutNode>
       <constrLst><constr type="primFontSz" for="ch" val="36"/>
       <constr type="w" for="ch" forName="b" refFor="ch" refForName="a" refType="w"/></constrLst>
-      <ruleLst><rule type="primFontSz" for="ch" forName="a" val="8"/></ruleLst></layoutNode>"#,
+      </layoutNode>"#,
     );
     let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 24.).max(0.) } else { 50. }).collect());
     let shapes = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
@@ -372,12 +373,12 @@ fn text_search_finds_interior_fit_when_endpoints_are_worse_or_infeasible() {
     // second; the endpoint is either worse or has a negative dependent extent.
     for limit in [100, 120] {
         let layout = layout(&format!(
-            "<layoutNode><alg type='composite'/><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode>
+            "<layoutNode><alg type='composite'/><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst><rule type='w' val='{limit}'/></ruleLst></layoutNode>
             <layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode><constrLst>
             <constr type='w' for='ch' forName='a' val='20'/>
             <constr type='l' for='ch' forName='b' refFor='ch' refForName='a' refType='w'/>
             <constr type='r' for='ch' forName='b' val='100'/></constrLst>
-            <ruleLst><rule type='w' for='ch' forName='a' val='{limit}'/></ruleLst></layoutNode>"
+            </layoutNode>"
         ));
         let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (40. * 72. / 25.4 - p.rect.w).max(0.)).collect());
         let out = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
@@ -397,6 +398,57 @@ fn native_text_rule_can_override_a_same_property_bound() {
     let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (p.font.unwrap() - 12.).max(0.)).collect());
     let out = evaluate_measured(&layout, &data, frame(), Some(&mut measure)).unwrap();
     assert!((11. ..=12.).contains(&out[0].font.unwrap()));
+}
+
+#[test]
+fn font_rule_binding_retains_selector_identity_and_schema_defaults() {
+    let data = source();
+    for (constraint, rule, fits) in [
+        ("for='ch' forName='a'", "for='ch' forName='a'", true),
+        ("for='ch' forName='a'", "for='ch'", false),
+        ("for='ch'", "for='ch' forName='a'", false),
+        ("for='des' forName='a'", "for='ch' forName='a'", false),
+        ("for='ch' forName='a'", "for='ch' forName='a' ptType='all'", true),
+        ("for='ch' forName='a'", "for='ch' forName='a' ptType='node'", false),
+        ("for='ch' forName='a' ptType='node'", "for='ch' forName='a' ptType='node'", true),
+    ] {
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' {constraint} val='36'/></constrLst><ruleLst><rule type='primFontSz' {rule} val='5'/></ruleLst><layoutNode name='a'><presOf axis='ch' cnt='1'/><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (p.font.unwrap() - 14.).max(0.)).collect());
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert!((out[0].font.unwrap() - if fits { 14. } else { 36. }).abs() <= 1., "{constraint} / {rule}");
+    }
+}
+
+#[test]
+fn shared_font_rules_fit_the_whole_group_but_unrelated_defaults_stay_independent() {
+    let data = source();
+    for (op, parent, expected_second) in [("none", false, 36.), ("equ", false, 14.), ("gte", false, 14.), ("none", true, 14.), ("equ", true, 14.)] {
+        let rule = "<rule type='primFontSz' val='5'/>";
+        let parent_rule = if parent { "<rule type='primFontSz' for='ch' val='5'/>" } else { "" };
+        let local_rule = if parent { "" } else { rule };
+        let l = layout(&format!(
+            "<layoutNode><alg type='composite'/><constrLst><constr type='primFontSz' for='ch' op='{op}' val='36'/></constrLst><ruleLst>{parent_rule}</ruleLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/><ruleLst>{local_rule}</ruleLst></layoutNode><layoutNode name='b'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>"
+        ));
+        let mut measure =
+            |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| if p.name == "a" { (p.font.unwrap() - 14.).max(0.) } else { 0. }).collect());
+        let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+        assert!((out[0].font.unwrap() - 14.).abs() <= 1., "{op}/{parent}");
+        assert!((out[1].font.unwrap() - expected_second).abs() <= 1., "{op}/{parent}");
+    }
+}
+
+#[test]
+fn parent_size_rules_and_unmapped_inherited_font_rules_do_not_fit_child_text() {
+    let data = source();
+    let l = layout(
+        "<layoutNode><alg type='composite'/><constrLst><constr type='w' for='ch' forName='a' val='20'/><constr type='primFontSz' val='36'/></constrLst><ruleLst><rule type='w' for='ch' forName='a' val='80'/><rule type='primFontSz' val='5'/></ruleLst><layoutNode name='a'><alg type='tx'/><shape type='rect'/></layoutNode></layoutNode>",
+    );
+    let mut measure = |p: &[Placed<'_>], _: bool| Ok(p.iter().map(|p| (100. - p.rect.w).max(0.) + (p.font.unwrap() - 14.).max(0.)).collect());
+    let out = evaluate_measured(&l, &data, frame(), Some(&mut measure)).unwrap();
+    assert!((out[0].rect.w - 20. * 72. / 25.4).abs() < 1e-6);
+    assert_eq!(out[0].font, Some(36.));
 }
 
 #[test]

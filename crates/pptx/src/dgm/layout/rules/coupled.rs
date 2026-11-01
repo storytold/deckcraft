@@ -1,6 +1,6 @@
 //! Joint fallback for rules whose independent moves make no text-fitting progress.
 //! It runs only after the authored single-rule pass, retaining its successful choices.
-use super::{Choice, Control, Data, Instance, Measure, Placed, Xfrm, charge, choose, constraints, dependent_scope, range, score, trial};
+use super::{Choice, Control, Data, Instance, Measure, Placed, Xfrm, charge, choose, constraints, control_scope, range, score, trial};
 use std::collections::{HashMap, HashSet};
 
 fn root(parent: &mut [usize], mut i: usize, work: &mut usize) -> Result<usize, &'static str> {
@@ -56,17 +56,19 @@ pub(super) fn search<'a>(
     let mut seen = HashSet::new();
     let mut duplicate = HashSet::new();
     for c in controls {
-        if let Some(r) = range(c, &entries[c.target], &solution, changes)? {
-            if !seen.insert(r.key.clone()) {
-                duplicate.insert(r.key.clone());
+        if let Some(r) = range(c, entries, &solution, changes)? {
+            for key in &r.keys {
+                if !seen.insert(key.clone()) {
+                    duplicate.insert(key.clone());
+                }
             }
             ranges.push(r);
-            scopes.push(dependent_scope(entries, data, c.target, &c.property, work)?);
+            scopes.push(control_scope(entries, data, c, work)?);
         }
     }
     for group in groups(&scopes, work)? {
         // Repeated rules for one property express an ordered policy, not independent axes.
-        if group.iter().any(|&i| duplicate.contains(&ranges[i].key)) {
+        if group.iter().any(|&i| ranges[i].keys.iter().any(|key| duplicate.contains(key))) {
             continue;
         }
         let scope = group.iter().flat_map(|&i| scopes[i].iter().copied()).collect();
@@ -88,7 +90,7 @@ pub(super) fn search<'a>(
                 for &i in &group {
                     let r = &ranges[i];
                     if let Some(max) = r.maximum
-                        && solution.get(&r.key.0).and_then(|s| s.get(&r.key.1)).is_some_and(|v| v > max + 1e-6)
+                        && r.keys.iter().any(|key| solution.get(&key.0).and_then(|s| s.get(&key.1)).is_some_and(|v| v > max + 1e-6))
                     {
                         return Ok(None);
                     }

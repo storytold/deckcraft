@@ -1,5 +1,7 @@
 # DeckCraft roadmap: milestones and what's next
 
+> **PPTX.15 update 2026-11-01:** font rules now retain selector/constraint ownership and synchronize shared groups without widening local fit triggers. Explicit diagram fonts no longer receive invented text-box autofit. Local reference-font propagation, recursive fallback, map viewport and label overflow remain partial; scores are unchanged.
+
 > **PPTX.14 update 2026-11-01:** composite coordinate ownership, redundant-axis priority and occupied-frame fitting now match native probes; literal column labels wrap to chart width while retaining explicit no-wrap/manual sizing. Complex rule ownership, geographic viewport policy and label overflow remain partial.
 
 > **PPTX.13 update 2026-11-01:** oversized linear/cycle diagrams fit their containers; native map-stop element names fix custom-gradient open/export; literal rich labels follow observed first-paragraph styling. Native geometry and colour probes pass; full solver, viewport and text-layout parity remains partial.

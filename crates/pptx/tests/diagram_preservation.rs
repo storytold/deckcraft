@@ -488,6 +488,69 @@ fn numeric_rule_fixture(rules: &str, height: &str, long: bool) -> Vec<u8> {
 }
 
 #[test]
+fn shared_font_rules_retain_their_trigger_scope_and_roundtrip_real_text() {
+    let long = "Observe changes in the landscape and record every result";
+    for (index, (op, parent, first, second, expected)) in [
+        ("none", Some(false), long, "OK", [14., 36.]),
+        ("equ", Some(false), long, "OK", [14., 14.]),
+        ("gte", Some(false), long, "OK", [14., 14.]),
+        ("none", Some(true), long, "OK", [14., 14.]),
+        ("equ", Some(false), "OK", long, [36., 36.]),
+        ("gte", Some(false), "OK", long, [36., 36.]),
+        ("equ", Some(false), "Observe changes", long, [21., 21.]),
+        ("none", Some(false), "Observe changes", long, [21., 36.]),
+        ("none", Some(true), "Observe changes", long, [14., 14.]),
+        ("equ", None, long, "OK", [36., 36.]),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut parts = files(&uncached_fixture());
+        let mut constraints = String::new();
+        let mut nodes = String::new();
+        for (i, x) in [10, 120].into_iter().enumerate() {
+            constraints.push_str(&format!(
+                r#"<dgm:constr type="w" for="ch" forName="card{i}" val="40"/><dgm:constr type="h" for="ch" forName="card{i}" val="40"/><dgm:constr type="l" for="ch" forName="card{i}" val="{x}"/><dgm:constr type="t" for="ch" forName="card{i}" val="20"/>"#
+            ));
+            let rule = if i == 0 && parent == Some(false) { r#"<dgm:rule type="primFontSz" val="5"/>"# } else { "" };
+            nodes.push_str(&format!(
+                r#"<dgm:layoutNode name="card{i}" styleLbl="node1"><dgm:alg type="tx"/><dgm:presOf axis="ch" ptType="node" st="{}" cnt="1"/><dgm:shape type="rect"/><dgm:constrLst/><dgm:ruleLst>{rule}</dgm:ruleLst></dgm:layoutNode>"#,
+                i + 1
+            ));
+        }
+        let rule = if parent == Some(true) { r#"<dgm:rule type="primFontSz" for="ch" val="5"/>"# } else { "" };
+        let layout = format!(
+            r#"<dgm:layoutDef xmlns:dgm="http://schemas.openxmlformats.org/drawingml/2006/diagram" uniqueId="urn:deckcraft:test:uncached-original" minVer="12.0"><dgm:title val="Original shared font probe"/><dgm:desc val="Separate local triggers from synchronized font changes"/><dgm:catLst><dgm:cat type="process" pri="99"/></dgm:catLst><dgm:layoutNode name="canvas"><dgm:alg type="composite"/><dgm:presOf/><dgm:shape type="none"/><dgm:constrLst>{constraints}<dgm:constr type="primFontSz" for="ch" op="{op}" val="36"/></dgm:constrLst><dgm:ruleLst>{rule}</dgm:ruleLst>{nodes}</dgm:layoutNode></dgm:layoutDef>"#
+        );
+        for (_, bytes) in &mut parts {
+            let Ok(doc) = parse_xml(bytes) else { continue };
+            if doc.root.is("layoutDef") {
+                *bytes = layout.as_bytes().to_vec();
+            } else if doc.root.is("dataModel") {
+                *bytes = String::from_utf8(bytes.clone()).unwrap().replace("Research", first).replace("Build", second).into_bytes();
+            }
+        }
+        let bytes = zip(parts);
+        let p = deckcraft_pptx::import(&bytes).unwrap();
+        let fonts = |p: &deckcraft_model::Presentation| -> Vec<f64> {
+            group(p).children().iter().map(|s| s.text.as_ref().unwrap().paragraphs[0].runs[0].props.size.unwrap()).collect()
+        };
+        assert_eq!(fonts(&p), expected, "case {index}");
+        for s in group(&p).children() {
+            assert_eq!(s.text.as_ref().unwrap().body.autofit, Some(deckcraft_model::text::AutoFit::None));
+        }
+        let back = deckcraft_pptx::import(&deckcraft_pptx::export(&p).unwrap()).unwrap();
+        assert_eq!(fonts(&back), expected, "roundtrip {index}");
+        assert_eq!(geometry(group(&p)), geometry(group(&back)));
+        if let Some(dir) = std::env::var_os("DECKCRAFT_RENDER_PROBES") {
+            let dir = std::path::PathBuf::from(dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("shared-font-{index}.pptx")), bytes).unwrap();
+        }
+    }
+}
+
+#[test]
 fn ordered_size_rules_ignore_local_edges_and_fit_real_text_to_the_container() {
     let rules = r#"<dgm:rule type="w" val="80"/><dgm:rule type="h" val="160"/>"#;
     let constraints = r#"<dgm:constr type="h" val="40"/><dgm:constr type="l" refType="w"/><dgm:constr type="r" refType="h"/>"#;

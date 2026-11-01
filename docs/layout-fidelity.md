@@ -1,7 +1,7 @@
 # Bounded layout fidelity and font diagnostics
 
-Updated 2026-11-01 (PPTX.14): native composite coordinate semantics and literal column-label
-wrapping, extending container fitting, geographic caches and paragraph inheritance.
+Updated 2026-11-01 (PPTX.15): selector-bound font rules, shared font groups and local
+fit triggers, extending composite geometry, geographic caches and rich-label layout.
 
 This work improves native rendering and PPTX round trips. It does not certify arbitrary
 presentations as visually equivalent to PowerPoint, or make every imported object fully editable.
@@ -664,3 +664,44 @@ that observed difference is retained as open work, not included in the geometry 
 Final validation: all eight workspace CI gates pass, including 2,399 tests and doctests.
 The new geometry/label export set contains 28 original pages at 3840px width, with unchanged
 input hashes and no external converter on PATH. All upstream changes are source/tests/docs.
+
+
+## Font-rule binding and shared constraint groups (PPTX.15)
+
+Rule selection is not just a list of destination nodes. Native parent font rules bind a
+same-owner constraint with matching `type`, `for`, `forName` and `ptType`. Omitted `for`
+and `ptType` normalize to `self` and `all`. Different selectors that happen to select the
+same node do not establish the same binding. Original controls vary named/broad selection,
+child/descendant axes and explicit/default point types. Remote size rules and an unmapped
+container's inherited self-font rule do not fit child text in these controls.
+
+A parent font rule updates all members selected by its constraint. A text node's local
+rule can bind an ancestor constraint. An explicit shared equality or bound synchronizes
+font changes across its selected members; ordinary defaults remain independent. The
+search stores one multi-member adjustment, preserves prior adjustments on rejected trials
+and detects overlapping property groups before joint search.
+
+Synchronization does not widen a local fit trigger. With a local rule on the first node,
+a fitting short label leaves both nodes at their initial size even when the second overflows.
+A moderately long first label shrinks both shared members only until that first label fits.
+A parent rule selecting both instead fits the longer label. Ten real-text variants exercise
+these differences and export/reimport font/geometry preservation. They include an explicit
+font without any rule: ordinary text-box autofit must not silently shrink it.
+
+These are bounded native observations, not complete SmartArt conformance. Further probes
+show that a local font rule does not propagate through a default reference constraint in
+the same way as a parent-owned rule; explicit reference equality changes that behavior.
+The generic reference solver still needs that distinction. A composite with its own mapped
+text also differs from native in geometry/font inheritance. Invalid custom-layout probes
+that native replaces with generic blocks or empty output are excluded from acceptance,
+not counted as matching the intended layout. Map provider/viewport selection and long rich
+label overflow remain separate open items. All probes use contributor-original layout XML;
+no native-produced files, screenshots, fonts or user content are published.
+
+
+Native comparison: of forty original ownership/group controls, thirty-nine agree in font
+sizes and painted shape bounds within 0.75pt. The mapped-composite own-text control is an
+explicit failure, not included in that passing count. The ten real-text regression variants
+have native counterparts; four representative packages have zero Open XML SDK errors.
+
+Final validation: all eight workspace CI stages pass, including 2,403 tests and doctests.

@@ -713,7 +713,13 @@ pub(super) fn diagram_text_layout(
         _ => Anchor::Middle,
     });
     body.body.wrap = Some(true);
-    body.body.autofit = Some(deckcraft_model::text::AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 });
+    // An explicit diagram font is final unless an authored numeric rule changes it.
+    // Ordinary text-box autofit must not invent a smaller font when no rule exists.
+    body.body.autofit = Some(if p.font.is_some() {
+        deckcraft_model::text::AutoFit::None
+    } else {
+        deckcraft_model::text::AutoFit::Shrink { font_scale: Some(1.0), line_reduction: 0.0 }
+    });
     body.body.inset_l = Some(p.margins[0]);
     body.body.inset_t = Some(p.margins[1]);
     body.body.inset_r = Some(p.margins[2]);
