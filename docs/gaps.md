@@ -362,7 +362,10 @@ Detail in [localization-parity.md](localization-parity.md).
 
 - **No Designer, Copilot, Speaker Coach, live subtitles or Translate.** All are Microsoft cloud
   services; an offline rule-based Designer is in the catalogue (P2). Local models (speech-to-text
-  for subtitles, translation) need an owner decision on licensed models. 20–40 h.
+  for subtitles, translation) need an owner decision on licensed models. 20–40 h. Ask Agent hands
+  a selection and an instruction to an agent the person already runs (over MCP), which edits the
+  presentation; Keep, Undo and follow-ups stay in the window, with no model or key in DeckCraft
+  ([control-protocol.md](control-protocol.md#ask-agent)).
 
 ## Revision history
 
@@ -371,6 +374,7 @@ Detail in [localization-parity.md](localization-parity.md).
 | 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
 | 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
 | 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |
+| 2026-10-15 | minor | AI features: Ask Agent (bring your own agent over MCP) noted |
 | 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
 | 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |

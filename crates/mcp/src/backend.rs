@@ -24,14 +24,27 @@ pub trait Backend {
 /// A running DeckCraft app, reached through its loopback control port.
 pub struct Remote {
     addr: String,
+    /// Presented first on every connection (see [`crate::auth`]).
+    token: Option<String>,
+    /// The token was looked up rather than given: look it up again on every reconnect, so a
+    /// restarted app (with a new token) is still reached.
+    lookup_token: bool,
     conn: Option<(BufReader<TcpStream>, TcpStream)>,
     next_id: u64,
 }
 
 impl Remote {
-    /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening.
+    /// Connect to `addr` (`127.0.0.1:7979`), failing fast when nothing is listening. The token
+    /// comes from [`crate::auth::token_for`]; without one the app refuses every request.
     pub fn connect(addr: &str) -> std::io::Result<Self> {
-        let mut r = Self { addr: addr.to_string(), conn: None, next_id: 1 };
+        let mut r = Self { addr: addr.to_string(), token: None, lookup_token: true, conn: None, next_id: 1 };
+        r.reconnect()?;
+        Ok(r)
+    }
+
+    /// [`Remote::connect`] with an explicit token (`None`: don't authenticate).
+    pub fn connect_with_token(addr: &str, token: Option<String>) -> std::io::Result<Self> {
+        let mut r = Self { addr: addr.to_string(), token, lookup_token: false, conn: None, next_id: 1 };
         r.reconnect()?;
         Ok(r)
     }
@@ -42,6 +55,9 @@ impl Remote {
 
     fn reconnect(&mut self) -> std::io::Result<()> {
         self.conn = None;
+        if self.lookup_token {
+            self.token = crate::auth::token_for(&self.addr);
+        }
         let mut last = std::io::Error::new(std::io::ErrorKind::NotFound, format!("cannot resolve {}", self.addr));
         for sa in self.addr.to_socket_addrs()? {
             match TcpStream::connect_timeout(&sa, Duration::from_millis(800)) {
@@ -51,12 +67,28 @@ impl Remote {
                     s.set_read_timeout(Some(Duration::from_secs(90))).ok();
                     let read = s.try_clone()?;
                     self.conn = Some((BufReader::new(read), s));
+                    if let Err(e) = self.authenticate() {
+                        self.conn = None;
+                        return Err(e);
+                    }
                     return Ok(());
                 }
                 Err(e) => last = e,
             }
         }
         Err(last)
+    }
+
+    /// Send `auth` with the token on a fresh connection; a refusal is a `PermissionDenied` error.
+    fn authenticate(&mut self) -> std::io::Result<()> {
+        let Some(token) = self.token.clone() else { return Ok(()) };
+        let line = json!({"id": 0, "method": "auth", "params": {"token": token}}).to_string();
+        let Some((_, writer)) = self.conn.as_mut() else {
+            return Err(std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected"));
+        };
+        writer.write_all(format!("{line}\n").as_bytes())?;
+        writer.flush()?;
+        self.receive(0)?.map(drop).map_err(|why| std::io::Error::new(std::io::ErrorKind::PermissionDenied, format!("authentication failed: {why}")))
     }
 
     /// Write one request line. A failure here means the app never got a complete line, so retrying is safe.

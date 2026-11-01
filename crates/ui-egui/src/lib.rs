@@ -6,6 +6,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod ask_agent;
 /// DeckCraft as craft-update knows it, with its 128 px icon and accent colour: the update
 /// prompt shows both, and an AppImage's menu entry gets the icon.
 #[cfg(not(target_arch = "wasm32"))]
@@ -45,6 +46,7 @@ use deckcraft_model::{LayoutId, MasterId, SlideId};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+pub use ask_agent::AgentHub;
 pub use control::{ControlRequest, ControlResponse};
 
 mod app;
@@ -157,6 +159,12 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
     ("app.find", "Find…", Some("Cmd+F"), "{}"),
     ("app.replace", "Replace…", Some("Cmd+H"), "{}"),
     ("app.links", "Community Links", None, "{}"),
+    (
+        ask_agent::COMMAND,
+        "Ask Agent…",
+        Some(ask_agent::SHORTCUT),
+        "{instruction?: text (send without the bubble), scope?: slide|deck, cancel?: request id, close?: bool}",
+    ),
 ];
 
 pub struct Perf {
@@ -315,6 +323,8 @@ pub struct SlideApp {
     pub(crate) thumb_drag: Option<thumbs::SlideDrag>,
     /// Selection pane: folded groups, renaming, drag and drop.
     pub selpane: selpane::State,
+    /// Ask Agent: the queue shared with the control channel, the chip and the bubble.
+    pub ask_agent: ask_agent::AskAgent,
     /// Arrange ▸ Align: Align to Slide (`true`) or Align Selected Objects, ticked for that selection.
     pub(crate) align_to: Option<(Vec<deckcraft_model::ShapeId>, bool)>,
     /// View › New Window: a second window on one presentation. `None` when it is closed.

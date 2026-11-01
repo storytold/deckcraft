@@ -95,6 +95,7 @@ files it was given rather than guarding against other software on the computer.
 | `select`, `pointer`, `select_tool`, `key`, `type_text` | The same selection, mouse and keyboard paths as the UI |
 | `screenshot` | The whole window, UI included (connected mode) |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
+| `wait_for_request`, `reply_to_request` | Ask Agent, connected mode only: see [Ask Agent](#ask-agent) |
 
 A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
 
@@ -104,3 +105,12 @@ rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, close
 `chart.*` (`chart.options {textColor}` colours a chart's title, axes, legend and labels), `table.*`, `file.export {path, layout}` (PDF) or `{path, width, secondsPerSlide, loop}`
 (GIF). `deckcraft-cli describe COMMAND` prints any
 command's parameters.
+
+## Ask Agent
+
+With `--connect`, the person can hand work to the agent from DeckCraft via the Ask Agent bubble.
+
+| Tool | What it does |
+|---|---|
+| `wait_for_request` | Waits for the next request: `{id, instruction, history, selection, document}`, or `{none: true}` |
+| `reply_to_request` | `{id, text, done?, error?}`: sends progress notes (`done: false`) or a final answer (`done: true`) |
