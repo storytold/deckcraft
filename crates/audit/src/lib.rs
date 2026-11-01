@@ -73,6 +73,7 @@ fn attr_rel<'a>(el: &'a Element, local: &str) -> Option<&'a str> {
 const NS_DC: &[u8] = b"http://purl.org/dc/elements/1.1/";
 const NS_CP: &[u8] = b"http://schemas.openxmlformats.org/package/2006/metadata/core-properties";
 const NS_EP: &[u8] = b"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
+const NS_EP_STRICT: &[u8] = b"http://purl.oclc.org/ooxml/officeDocument/extendedProperties";
 const NS_RELS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";
 
 /// Bounds shared with the `deckcraft-pptx` importer (`crates/pptx/src/opc.rs`
@@ -487,6 +488,7 @@ fn texts_of(xml: &[u8], part: &str, ns: &[u8], local: &str) -> Result<Vec<String
     let mut out = Vec::new();
     let mut depth: u32 = 0;
     let mut open: u32 = 0;
+    let mut root_seen = false;
     let mut current = String::new();
     let mut count: u64 = 0;
     loop {
@@ -494,6 +496,17 @@ fn texts_of(xml: &[u8], part: &str, ns: &[u8], local: &str) -> Result<Vec<String
         let (resolution, event) = reader.read_resolved_event_into(&mut buf).map_err(|e| AuditError::Xml(part.to_string(), e.to_string()))?;
         match event {
             Event::Start(ref e) => {
+                // Document boundary, as in for_each_element: exactly one
+                // root element, and nothing but whitespace, comments and
+                // processing instructions outside it. `open` (not the
+                // target-element `depth`) decides outside-root, so text
+                // inside a non-target element stays accepted.
+                if open == 0 {
+                    if root_seen {
+                        return Err(AuditError::Xml(part.to_string(), "multiple root elements".to_string()));
+                    }
+                    root_seen = true;
+                }
                 open = open.saturating_add(1);
                 if open > MAX_XML_DEPTH {
                     return Err(AuditError::Limit(format!("{part}: XML nesting deeper than {MAX_XML_DEPTH}")));
@@ -516,6 +529,12 @@ fn texts_of(xml: &[u8], part: &str, ns: &[u8], local: &str) -> Result<Vec<String
                 }
             }
             Event::Empty(ref e) => {
+                if open == 0 {
+                    if root_seen {
+                        return Err(AuditError::Xml(part.to_string(), "multiple root elements".to_string()));
+                    }
+                    root_seen = true;
+                }
                 open = open.saturating_add(1);
                 count += 1;
                 if count > MAX_XML_ELEMENTS {
@@ -548,16 +567,23 @@ fn texts_of(xml: &[u8], part: &str, ns: &[u8], local: &str) -> Result<Vec<String
                 if depth > 0 {
                     let decoded = t.xml10_content().map(|v| v.into_owned()).unwrap_or_else(|_| String::from_utf8_lossy(t.as_ref()).into_owned());
                     current.push_str(&decoded);
+                } else if open == 0 && !t.as_ref().iter().all(|b| matches!(b, b' ' | b'\t' | b'\n' | b'\r')) {
+                    return Err(AuditError::Xml(part.to_string(), "text outside the root element".to_string()));
                 }
             }
             Event::CData(ref t) => {
                 if depth > 0 {
                     current.push_str(&String::from_utf8_lossy(t.as_ref()));
+                } else if open == 0 {
+                    return Err(AuditError::Xml(part.to_string(), "CDATA outside the root element".to_string()));
                 }
             }
             Event::Eof => {
                 if open != 0 {
                     return Err(AuditError::Xml(part.to_string(), "unclosed elements at end of part".to_string()));
+                }
+                if !root_seen {
+                    return Err(AuditError::Xml(part.to_string(), "no root element".to_string()));
                 }
                 break;
             }
@@ -567,7 +593,14 @@ fn texts_of(xml: &[u8], part: &str, ns: &[u8], local: &str) -> Result<Vec<String
     Ok(out)
 }
 
-/// `rId` -> resolved part name for one part's relationships.
+/// Relationship types that mark an image part, Transitional and Strict.
+/// Only these count here: `rel_targets` feeds the crop scan, and a blip
+/// embed pointing at a non-image relationship is not a retained image part,
+/// so it must not produce an image/crop finding.
+const RT_IMAGE: &str = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image";
+const RT_IMAGE_STRICT: &str = "http://purl.oclc.org/ooxml/officeDocument/relationships/image";
+
+/// `rId` -> resolved part name for one part's image relationships.
 fn rel_targets(parts: &BTreeMap<String, Vec<u8>>, rels_name: &str) -> Result<BTreeMap<String, String>, AuditError> {
     let mut map = BTreeMap::new();
     let Some(xml) = parts.get(rels_name) else { return Ok(map) };
@@ -576,7 +609,8 @@ fn rel_targets(parts: &BTreeMap<String, Vec<u8>>, rels_name: &str) -> Result<BTr
         if el.ns.as_slice() == NS_RELS
             && el.local == "Relationship"
             && attr(el, b"", "TargetMode") != Some("External")
-            && let (Some(id), Some(target)) = (attr(el, b"", "Id"), attr(el, b"", "Target"))
+            && let (Some(id), Some(target), Some(ty)) = (attr(el, b"", "Id"), attr(el, b"", "Target"), attr(el, b"", "Type"))
+            && (ty == RT_IMAGE || ty == RT_IMAGE_STRICT)
         {
             map.insert(id.to_string(), resolve_target(&source_dir, target));
         }
@@ -877,10 +911,12 @@ fn scan_core_properties(parts: &BTreeMap<String, Vec<u8>>, findings: &mut Vec<Au
 fn scan_extended_properties(parts: &BTreeMap<String, Vec<u8>>, findings: &mut Vec<AuditFinding>) -> Result<(), AuditError> {
     let Some(xml) = parts.get("docProps/app.xml") else { return Ok(()) };
     for local in ["Company", "Manager"] {
-        for value in texts_of(xml, "docProps/app.xml", NS_EP, local)? {
-            let value = value.trim();
-            if !value.is_empty() {
-                findings.push(AuditFinding::new(FindingKind::ExtendedProperties, format!("docProps/app.xml <{local}>"), value.to_string()));
+        for ns in [NS_EP, NS_EP_STRICT] {
+            for value in texts_of(xml, "docProps/app.xml", ns, local)? {
+                let value = value.trim();
+                if !value.is_empty() {
+                    findings.push(AuditFinding::new(FindingKind::ExtendedProperties, format!("docProps/app.xml <{local}>"), value.to_string()));
+                }
             }
         }
     }

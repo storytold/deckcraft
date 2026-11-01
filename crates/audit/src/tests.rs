@@ -216,6 +216,93 @@ fn strict_ole_relationship_is_reported() {
 }
 
 #[test]
+fn texts_of_rejects_malformed_document_boundary() {
+    // core.xml is read through texts_of, which must enforce the same
+    // document boundary as for_each_element: one root, nothing but
+    // whitespace outside it.
+    let variants = [
+        // Two roots.
+        r#"<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:creator>A</dc:creator></cp:coreProperties><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"/>"#,
+        // Non-whitespace text outside the root.
+        r#"junk<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"/>"#,
+        // CDATA outside the root.
+        r#"<![CDATA[x]]><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"/>"#,
+    ];
+    for core in variants {
+        let bytes = package(&[
+            ("[Content_Types].xml", &content_types()),
+            ("_rels/.rels", &root_rels()),
+            ("ppt/presentation.xml", &presentation()),
+            (
+                "ppt/_rels/presentation.xml.rels",
+                &pres_rels(
+                    r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+                ),
+            ),
+            ("ppt/slides/slide1.xml", &plain_slide()),
+            ("ppt/slides/_rels/slide1.xml.rels", &slide_rels("")),
+            ("docProps/core.xml", core.as_bytes()),
+        ]);
+        assert!(matches!(audit_bytes(&bytes), Err(crate::AuditError::Xml(_, _))), "{core}");
+    }
+}
+
+#[test]
+fn cropped_blip_pointing_at_non_image_rel_is_not_a_crop() {
+    let pic = format!(
+        r#"<p:pic xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}"><p:blipFill><a:blip r:embed="rId9"/><a:srcRect l="25000" t="0" r="0" b="0"/></p:blipFill></p:pic>"#
+    );
+    let slide_xml = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><p:sld xmlns:p="{P}" xmlns:a="{A}" xmlns:r="{R}"><p:cSld><p:spTree>{pic}</p:spTree></p:cSld></p:sld>"#
+    );
+    let bytes = package(&[
+        ("[Content_Types].xml", &content_types()),
+        ("_rels/.rels", &root_rels()),
+        ("ppt/presentation.xml", &presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            &pres_rels(
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+            ),
+        ),
+        ("ppt/slides/slide1.xml", slide_xml.as_bytes()),
+        (
+            "ppt/slides/_rels/slide1.xml.rels",
+            &slide_rels(
+                r#"<Relationship Id="rId9" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>"#,
+            ),
+        ),
+        ("ppt/charts/chart1.xml", b"<chart/>"),
+    ]);
+    let ids = ids_of(&bytes);
+    assert!(!ids.contains(&"image/crop-retains-data".to_string()), "{ids:?}");
+}
+
+#[test]
+fn strict_extended_properties_are_found() {
+    let app = r#"<?xml version="1.0" encoding="UTF-8"?><Properties xmlns="http://purl.oclc.org/ooxml/officeDocument/extendedProperties"><Company>Acme Corp</Company><Manager>Jane Doe</Manager></Properties>"#;
+    let bytes = package(&[
+        ("[Content_Types].xml", &content_types()),
+        ("_rels/.rels", &root_rels()),
+        ("ppt/presentation.xml", &presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            &pres_rels(
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+            ),
+        ),
+        ("ppt/slides/slide1.xml", &plain_slide()),
+        ("ppt/slides/_rels/slide1.xml.rels", &slide_rels("")),
+        ("docProps/app.xml", app.as_bytes()),
+    ]);
+    let findings = findings_of(&bytes);
+    let ext: Vec<_> = findings.iter().filter(|f| f.id == "author-pii/extended-properties").collect();
+    assert_eq!(ext.len(), 2, "{findings:?}");
+    assert!(ext.iter().any(|f| f.detail == "Acme Corp"));
+    assert!(ext.iter().any(|f| f.detail == "Jane Doe"));
+}
+
+#[test]
 fn oversized_xml_part_is_limited_at_read_time() {
     // 100 MiB of one repeated byte, deflated so the ZIP stays small: the
     // read must fail with Limit at the 96 MiB XML cap, not buffer the part
