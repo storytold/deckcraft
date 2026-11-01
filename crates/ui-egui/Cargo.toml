@@ -9,6 +9,7 @@ description = "DeckCraft egui frontend (PowerPoint-style UI); swappable — noth
 workspace = true
 
 [dependencies]
+craft-desktop = { path = "../../vendor/craft-desktop", default-features = false }
 deckcraft-geom = { workspace = true }
 deckcraft-color = { workspace = true }
 deckcraft-model = { workspace = true }

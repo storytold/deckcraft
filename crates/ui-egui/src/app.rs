@@ -86,9 +86,11 @@ impl SlideApp {
             #[cfg(not(target_arch = "wasm32"))]
             updates_rt: updates_ui::Runtime::default(),
             pending_copy: None,
+            desktop_clipboard: vec![],
             capture: capture::Capture::default(),
             styled: false,
             restyle: true,
+            desktop_dark: None,
             fonts_ready: false,
             last_time: 0.0,
             last_recovery: 0.0,
@@ -101,7 +103,6 @@ impl SlideApp {
             doc_window: None,
             sorter: sorter::State::default(),
             slides_focused: false,
-            v_seen: false,
             recent_checked: HashMap::new(),
             twisting: false,
             next_file_id: 1,
@@ -231,6 +232,7 @@ impl SlideApp {
         // target-changing work is deferred for a live batch; it still covers a target change
         // made by other logic, and keeps a logic-only batch pending for the next hook.
         self.retract_synthetic_after_logic(ctx);
+        self.guard_desktop_clipboard(ctx);
         // Queued/settling screenshots force the bounded hidden paints they need; issued ones
         // rely on the screenshot command and the completion callback, with only a deadline wake.
         self.capture.request_paint_if_needed(ctx, web_time::Instant::now());
@@ -289,6 +291,7 @@ impl SlideApp {
             self.requeue_injected_synthetic();
             return;
         }
+        self.guard_desktop_clipboard_delivery(&ctx);
         let t0 = now_ms();
         let t = theme::Tokens::get(&ctx);
         self.note_ui_text(&ctx);

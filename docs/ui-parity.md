@@ -19,6 +19,10 @@ ends and are omitted from thumbnails, slide shows and exports.
 
 ## Shell
 
+Linux integration update (2026-10-21): the tab strip and ribbon groups scroll when narrow;
+system appearance is an optional persisted preference without overriding old explicit themes.
+Native Linux decorations are retained. See [KDE.md](KDE.md) for the separate live-test checklist.
+
 | Element | PowerPoint for Mac | DeckCraft | Gap |
 |---|---|---|---|
 | Title bar: AutoSave, Home, Save, Undo/Redo, document title, Share, search | yes | yes, plus Export; no Share (cloud) | #71 macOS window controls misaligned |
@@ -31,7 +35,7 @@ ends and are omitted from thumbnails, slide shows and exports.
 | Start screen: new, themes, templates, recent, open | yes, the same page as File › Home | yes: File › Home with Home, New, Open, Account and Options (#76) | |
 | Status bar: slide counter, language, notes, comments, views, zoom slider | yes | yes | |
 | Command search (Tell Me) | yes | command palette | |
-| Light / dark appearance | follows the system | light or dark; doesn't follow the system (#41) | 1–2 h |
+| Light / dark appearance | follows the system | System, Light or Dark (File › Account, Preferences, View › Appearance); System follows the desktop portal on Linux and egui's system theme elsewhere (#41) | physical theme transitions and packaged desktop checks remain |
 | One window per presentation, New Window, Arrange All | yes | New Window opens one more window on the same presentation (its own slide, live with edits); tabs stay in the first window; no Arrange All | Arrange All |
 | Quick Access Toolbar customization | yes | yes: Customize menu (common commands, reset), right-click any ribbon button to add, right-click a toolbar button to remove; saved with the UI state | done |
 
@@ -179,6 +183,8 @@ consistency is open (#73, #56).
 | 2026-10-23 | trivial | Scroll bars on the zoomed slide pane (#1157) |
 | 2026-10-23 | minor | Shape Fill and Shape Outline (Home and Shape Format): the button applies the last colour picked from its menu, Accent 1 and Text 1 until one is picked. Line weight and dashes are not changed by the button; Font Color and Highlight stay as they were (#1080) |
 | 2026-10-22 | trivial | Group fill and outline commands reach members, including nested groups; selection and single-step undo are preserved (#1079). The existing Arrange / Group checklist score stays D |
+| 2026-10-22 | trivial | Review follow-up: align the Shell appearance row with System/Light/Dark and use revision-table entries |
+| 2026-10-21 | minor | Linux ribbon overflow, System appearance and clipboard-owner lifetime; regression coverage added, full compositor acceptance not implied |
 | 2026-10-16 | minor | Export › Change File Type › PNG and the Export… dialog offer a transparent background (#784) |
 | 2026-10-15 | minor | Edit Points: the right-click menu has Straight/Curved Segment on a segment and Open/Close Path on a point |
 | 2026-10-14 | minor | Gray list markers on empty paragraphs while editing; caret keeps the list indent before typing |

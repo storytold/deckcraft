@@ -51,6 +51,8 @@ pub enum ViewMode {
 #[serde(default, rename_all = "camelCase")]
 pub struct UiState {
     pub brightness: theme::Brightness,
+    /// Follow the desktop while retaining explicit choices from old preferences.
+    pub system_theme: bool,
     pub tab: String,
     pub ribbon_collapsed: bool,
     pub view: ViewMode,
@@ -100,6 +102,7 @@ impl Default for UiState {
     fn default() -> Self {
         UiState {
             brightness: theme::Brightness::Light,
+            system_theme: false,
             tab: "Home".into(),
             ribbon_collapsed: false,
             view: ViewMode::Normal,

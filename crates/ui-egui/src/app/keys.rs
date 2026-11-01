@@ -50,26 +50,9 @@ impl SlideApp {
     /// Keyboard and clipboard for the slide (when no text field has focus).
     pub(super) fn keyboard(&mut self, ctx: &egui::Context) {
         let events = ctx.input(|i| i.events.clone());
-        // Ctrl+V with only an image on the clipboard: egui-winit sends no Paste event and swallows the
-        // key press, so the release of a V press never seen is the paste. Tracked even while a text
-        // field has focus, so that a V typed there is not taken for one.
-        let mut image_paste = false;
-        let mut pasted_image_event = false;
-        for e in &events {
-            match e {
-                egui::Event::PasteImage(_) => {
-                    pasted_image_event = true;
-                    self.v_seen = true;
-                }
-                egui::Event::Paste(_) | egui::Event::Key { key: egui::Key::V, pressed: true, .. } => self.v_seen = true,
-                egui::Event::Key { key: egui::Key::V, pressed: false, modifiers, .. } => {
-                    // Only a release with Command/Ctrl held is a paste: a bare V release is not.
-                    let seen = std::mem::take(&mut self.v_seen);
-                    image_paste = !seen && (modifiers.command || modifiers.ctrl);
-                }
-                _ => {}
-            }
-        }
+        // Native image reads can complete several frames after the V release. Only the
+        // actual PasteImage event inserts a native image; guessing from a release duplicates it.
+        let pasted_image_event = events.iter().any(|event| matches!(event, egui::Event::PasteImage(_)));
         let viewport = self.ime_viewport_or(ctx);
         if self.session.active().is_none() {
             // No document: keep slide-editing input suspended, while the start screen's
@@ -108,13 +91,6 @@ impl SlideApp {
             self.route_backstage_keys(events);
             self.drain_requests();
             return;
-        }
-        let img = if image_paste { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
-        if let Some(png) = img {
-            let data = deckcraft_engine::cmd::base64_encode(&png);
-            if let Err(e) = self.session.execute("insert.picture", &json!({"name": "Pasted image.png", "data": data})) {
-                self.set_status(e.to_string());
-            }
         }
         for e in events {
             // An earlier command in this raw batch may have settled the composition. Request the

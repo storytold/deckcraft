@@ -1341,6 +1341,17 @@ fn dlg_preferences(app: &mut SlideApp, ui: &mut Ui, d: &mut Dialog) -> bool {
         d.params = json!({ "before": preferences_snapshot(app) });
     }
     ui.label(egui::RichText::new("General").font(theme::bold(13.0)));
+    let mut system = app.ui.system_theme;
+    if ui.checkbox(&mut system, "Follow system appearance").changed() {
+        let mode = if system {
+            "system"
+        } else if app.ui.brightness == theme::Brightness::Dark {
+            "dark"
+        } else {
+            "light"
+        };
+        let _ = app.run("view.theme", json!({"mode": mode}));
+    }
     let mut dark = app.ui.brightness == theme::Brightness::Dark;
     if ui.checkbox(&mut dark, "Dark appearance").changed() {
         let _ = app.run("view.dark", json!({"on": dark}));

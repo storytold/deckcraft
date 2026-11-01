@@ -31,6 +31,8 @@ use deckcraft_ui_egui::{Services, SlideApp};
 
 struct App(
     SlideApp,
+    #[cfg(target_os = "linux")] craft_desktop::appearance::Watcher,
+    #[cfg(target_os = "linux")] Option<craft_desktop::appmenu::Bridge>,
     /// Files opened from Finder and quit requests (see `apple_events`).
     #[cfg(target_os = "macos")]
     fmv_macos_events::Inbox,
@@ -38,6 +40,16 @@ struct App(
 
 impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        #[cfg(target_os = "linux")]
+        if let Some(menu) = &mut self.2 {
+            for click in menu.take_events() {
+                deckcraft_ui_egui::desktop_menu::activate(&mut self.0, ctx, click.document, &click.action);
+            }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(appearance) = self.1.take_change() {
+            self.0.set_desktop_dark(appearance.dark);
+        }
         #[cfg(target_os = "macos")]
         apple_events::poll(&self.1, &mut self.0, ctx);
         self.0.logic(ctx);
@@ -48,8 +60,14 @@ impl eframe::App for App {
     }
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.0.ui(ui);
+        #[cfg(target_os = "linux")]
+        if let Some(menu) = &self.2 {
+            menu.publish(deckcraft_ui_egui::desktop_menu::snapshot(&mut self.0));
+        }
     }
     fn on_exit(&mut self) {
+        #[cfg(target_os = "linux")]
+        self.2.take();
         save_prefs(&self.0);
         // macOS (#279): end the process here, before eframe tears the window down. AccessKit's
         // macOS adapter subclasses the window's content view and restores its class on teardown;
@@ -81,6 +99,8 @@ fn config_dir() -> Option<std::path::PathBuf> {
 }
 
 fn load_prefs(app: &mut SlideApp) {
+    // Fresh desktop profiles follow the desktop; old saved light/dark choices remain explicit.
+    app.ui.system_theme = true;
     if std::env::var_os("DECKCRAFT_NO_PREFS").is_some() {
         return;
     }
@@ -104,6 +124,9 @@ fn save_prefs(app: &SlideApp) {
 }
 
 fn services() -> Services {
+    let clipboard = std::rc::Rc::new(std::cell::RefCell::new(pasteboard::Pasteboard::default()));
+    let image_clipboard = clipboard.clone();
+    let html_clipboard = clipboard.clone();
     Services {
         pick_open: Some(Box::new(|purpose: &str| {
             let d = rfd::FileDialog::new();
@@ -126,9 +149,9 @@ fn services() -> Services {
         pick_save: Some(Box::new(|name: &str| rfd::FileDialog::new().set_file_name(name).save_file().map(|p| p.to_string_lossy().to_string()))),
         read: Some(Box::new(|p: &str| std::fs::read(p).map_err(|e| e.to_string()))),
         write: Some(Box::new(|p: &str, b: &[u8]| std::fs::write(p, b).map_err(|e| e.to_string()))),
-        clipboard_image: Some(Box::new(pasteboard::image_png)),
-        clipboard_html: Some(Box::new(pasteboard::html)),
-        clipboard_set_html: Some(Box::new(pasteboard::set_html)),
+        clipboard_image: Some(Box::new(move || image_clipboard.try_borrow_mut().ok()?.image_png())),
+        clipboard_html: Some(Box::new(move || html_clipboard.try_borrow_mut().ok()?.html())),
+        clipboard_set_html: Some(Box::new(move |html, text| clipboard.try_borrow_mut().is_ok_and(|mut cb| cb.set_html(html, text)))),
         // Media is mixed and clocked by the output device; `DECKCRAFT_NO_AUDIO` plays silently.
         audio_out: std::env::var_os("DECKCRAFT_NO_AUDIO")
             .is_none()
@@ -226,13 +249,15 @@ fn main() -> eframe::Result {
             .with_title("DeckCraft")
             .with_inner_size([1440.0, 900.0])
             .with_min_inner_size([900.0, 560.0])
-            .with_drag_and_drop(true)
-            .with_fullsize_content_view(true)
-            .with_titlebar_shown(false)
-            .with_title_shown(false),
+            .with_drag_and_drop(true),
         ..Default::default()
     };
     options.viewport = options.viewport.with_app_id(APP_ID);
+    // The integrated title row is macOS-only. Other desktops keep their native decorations.
+    #[cfg(target_os = "macos")]
+    {
+        options.viewport = options.viewport.with_fullsize_content_view(true).with_titlebar_shown(false).with_title_shown(false);
+    }
     if let Some(icon) = app_icon() {
         options.viewport = options.viewport.with_icon(icon);
     }
@@ -295,8 +320,24 @@ fn main() -> eframe::Result {
             if show {
                 app.start_show(0, false);
             }
+            #[cfg(target_os = "linux")]
+            let appearance = {
+                let ctx = cc.egui_ctx.clone();
+                craft_desktop::appearance::Watcher::start(move || ctx.request_repaint())
+            };
+            #[cfg(target_os = "linux")]
+            let menu = cc.winit_window().cloned().and_then(|window| {
+                let ctx = cc.egui_ctx.clone();
+                craft_desktop::appmenu::Bridge::start(window, APP_ID, "DECKCRAFT", deckcraft_ui_egui::desktop_menu::snapshot(&mut app), move || {
+                    ctx.request_repaint()
+                })
+            });
             Ok(Box::new(App(
                 app,
+                #[cfg(target_os = "linux")]
+                appearance,
+                #[cfg(target_os = "linux")]
+                menu,
                 #[cfg(target_os = "macos")]
                 apple_events.connect(&cc.egui_ctx),
             )))
@@ -315,6 +356,10 @@ mod tests {
         if std::env::var_os("DECKCRAFT_TEST_ON_EXIT").is_some() {
             let mut app = App(
                 SlideApp::new(Session::new(), Services::default()),
+                #[cfg(target_os = "linux")]
+                craft_desktop::appearance::Watcher::default(),
+                #[cfg(target_os = "linux")]
+                None,
                 #[cfg(target_os = "macos")]
                 fmv_macos_events::Inbox::default(),
             );
