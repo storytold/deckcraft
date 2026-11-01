@@ -1,15 +1,15 @@
 //! Interface localization only; never translate document content or command IDs.
-//! This module must be wired into the frontend before its translations are visible.
+//! UI call sites must opt into translation explicitly.
 
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Language {
+    #[serde(rename = "ru")]
+    Russian,
     #[default]
     #[serde(rename = "en", other)]
     English,
-    #[serde(rename = "ru")]
-    Russian,
 }
 
 impl Language {
@@ -77,6 +77,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn language_codes_round_trip_and_unknown_codes_use_english() {
+        assert_eq!(serde_json::to_string(&Language::Russian).ok().as_deref(), Some("\"ru\""));
+        assert_eq!(serde_json::to_string(&Language::English).ok().as_deref(), Some("\"en\""));
+        assert_eq!(serde_json::from_str::<Language>("\"ru\"").ok(), Some(Language::Russian));
+        assert_eq!(serde_json::from_str::<Language>("\"en\"").ok(), Some(Language::English));
+        assert_eq!(serde_json::from_str::<Language>("\"unknown\"").ok(), Some(Language::English));
+        assert_eq!(Language::default(), Language::English);
+    }
+
+    #[test]
     fn english_and_missing_translations_preserve_input() {
         let input = String::from("A diagnostic not in the catalog");
         assert_eq!(Language::English.text("Notes"), "Notes");
@@ -95,10 +105,24 @@ mod tests {
     #[test]
     fn russian_integer_forms_cover_teens_and_large_counts() {
         for (count, expected) in [
-            (0, 2), (1, 0), (2, 1), (4, 1), (5, 2),
-            (11, 2), (12, 2), (14, 2), (21, 0), (22, 1),
-            (25, 2), (101, 0), (111, 2), (112, 2),
-            (114, 2), (121, 0), (122, 1), (u64::MAX, 2),
+            (0, 2),
+            (1, 0),
+            (2, 1),
+            (4, 1),
+            (5, 2),
+            (11, 2),
+            (12, 2),
+            (14, 2),
+            (21, 0),
+            (22, 1),
+            (25, 2),
+            (101, 0),
+            (111, 2),
+            (112, 2),
+            (114, 2),
+            (121, 0),
+            (122, 1),
+            (u64::MAX, 2),
         ] {
             assert_eq!(russian_integer_form(count), expected, "count={count}");
         }
