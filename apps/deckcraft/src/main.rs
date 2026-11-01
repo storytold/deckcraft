@@ -161,18 +161,30 @@ enum Startup {
 }
 
 /// `--help` and `--version` leave before the window and the log file.
-fn startup(mut control_port: Option<u16>, args: impl IntoIterator<Item = String>) -> Startup {
+fn startup(control_port: Option<u16>, args: impl IntoIterator<Item = String>) -> Startup {
+    let env_token = std::env::var("DECKCRAFT_CONTROL_TOKEN").ok();
+    parse_startup(env_token, control_port, args)
+}
+
+/// The environment token is a parameter so the tests stay deterministic (no global env
+/// mutation). `DECKCRAFT_CONTROL_TOKEN` wins: `control_auth::client_token` (the client side)
+/// checks the environment first, so the CLI token only fills an unset environment — and the
+/// `--control-token` flag always consumes its value either way, so it never lands in `files`.
+fn parse_startup(env_token: Option<String>, mut control_port: Option<u16>, args: impl IntoIterator<Item = String>) -> Startup {
     let mut files = Vec::new();
     let mut sample = false;
     let mut show = false;
-    let mut control_token: Option<String> = std::env::var("DECKCRAFT_CONTROL_TOKEN").ok();
+    let mut control_token = env_token;
     let mut args = args.into_iter();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--control" => control_port = args.next().and_then(|p| p.parse().ok()),
-            // `DECKCRAFT_CONTROL_TOKEN` wins: `control_auth::client_token` (the client side)
-            // checks the environment first, so the CLI token only fills an unset environment.
-            "--control-token" if control_token.is_none() => control_token = args.next(),
+            "--control-token" => {
+                let value = args.next();
+                if control_token.is_none() {
+                    control_token = value;
+                }
+            }
             "--sample" => sample = true,
             "--show" => show = true,
             "--version" | "-V" => return Startup::Version,
@@ -365,6 +377,29 @@ mod tests {
         let launch = startup(None, ["-psn_0_1234567".to_string(), "talk.pptx".to_string()]);
         assert!(matches!(launch, Startup::Run { .. }));
         if let Startup::Run { files, .. } = launch {
+            assert_eq!(files, ["talk.pptx".to_string()]);
+        }
+    }
+
+    #[test]
+    fn the_cli_token_is_consumed_even_when_the_env_token_wins() {
+        // The env token wins, and the `--control-token` flag and its value are consumed
+        // either way: they must never fall through into `files`.
+        let launch = parse_startup(
+            Some("env-token-0123456789".to_string()),
+            None,
+            ["--control-token".to_string(), "cli-token-0123456789".to_string(), "talk.pptx".to_string()],
+        );
+        assert!(matches!(launch, Startup::Run { .. }));
+        if let Startup::Run { control_token, files, .. } = launch {
+            assert_eq!(control_token.as_deref(), Some("env-token-0123456789"));
+            assert_eq!(files, ["talk.pptx".to_string()]);
+        }
+        // Without the environment token, the CLI token is used.
+        let launch = parse_startup(None, None, ["--control-token".to_string(), "cli-token-0123456789".to_string(), "talk.pptx".to_string()]);
+        assert!(matches!(launch, Startup::Run { .. }));
+        if let Startup::Run { control_token, files, .. } = launch {
+            assert_eq!(control_token.as_deref(), Some("cli-token-0123456789"));
             assert_eq!(files, ["talk.pptx".to_string()]);
         }
     }
