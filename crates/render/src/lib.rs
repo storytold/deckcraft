@@ -54,7 +54,7 @@ pub use images::{decode as decode_image, gif_frame};
 pub use morph_path::PathMorph;
 pub use morph_text::TextMorph;
 pub use pattern::{is_fg as pattern_is_fg, presets as pattern_presets, tile as pattern_tile};
-pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts, place_slide, text_outline};
+pub use placed::{Placed, PlacedLink, PlacedShape, PlacedText, place_master_texts, place_slide, place_slide_with, text_outline};
 pub use table::cell_body as table_cell_body;
 pub use table::cell_rects as table_cell_rects;
 pub use table::row_heights as table_row_heights;
