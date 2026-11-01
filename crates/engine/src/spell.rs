@@ -529,16 +529,15 @@ fn valid_lang(lang: &str) -> bool {
     (1..=16).contains(&lang.len()) && lang.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// The script a language tag or a dictionary's name states, lowercased: a four-letter subtag
-/// (`sr-Latn`, `sr_Latn_RS`) or a `@latin`/`@cyrillic` modifier (Fedora's `sr_RS@latin`).
+/// The script a language tag or a dictionary's name states, lowercased: a script subtag
+/// (`sr-Latn`, `sr_Latn_RS`) or a `@latin`/`@cyrillic` modifier (Fedora's `sr_RS@latin`). Only
+/// the scripts a dictionary is chosen by are read (Latin and Cyrillic), so another part of a name
+/// (a variant such as `de-1996`, a suffix such as `en_US-wiki`) is never taken for one.
 fn named_script(name: &str) -> Option<String> {
-    name.split(['-', '_', '@']).skip(1).find_map(|p| {
-        let p = p.to_ascii_lowercase();
-        match p.as_str() {
-            "latin" => Some("latn".to_string()),
-            "cyrillic" => Some("cyrl".to_string()),
-            _ => (p.len() == 4 && p.bytes().all(|b| b.is_ascii_alphabetic())).then_some(p),
-        }
+    name.split(['-', '_', '@']).skip(1).find_map(|p| match p.to_ascii_lowercase().as_str() {
+        "latn" | "latin" => Some("latn".to_string()),
+        "cyrl" | "cyrillic" => Some("cyrl".to_string()),
+        _ => None,
     })
 }
 
@@ -1061,5 +1060,24 @@ SFX D Y 1\nSFX D 0 ed/S .\n";
         // Languages in one script are unchanged.
         assert_eq!(stem(&["de_DE"], "de-AT").as_deref(), Some("de_DE"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The script is read from a script subtag or a `@latin`/`@cyrillic` modifier, in tags and
+    /// dictionary names alike; a variant, a region or another suffix is not a script.
+    #[test]
+    fn a_script_is_read_only_from_a_script_subtag() {
+        let script = |n| named_script(n);
+        assert_eq!(script("sr-Cyrl").as_deref(), Some("cyrl"));
+        assert_eq!(script("sr-Cyrl-RS").as_deref(), Some("cyrl"));
+        assert_eq!(script("sr-Latn").as_deref(), Some("latn"));
+        assert_eq!(script("sr_Latn_RS").as_deref(), Some("latn"));
+        assert_eq!(script("sr_RS@latin").as_deref(), Some("latn"));
+        assert_eq!(script("sr_RS@cyrillic").as_deref(), Some("cyrl"));
+        for none in ["sr", "sr-RS", "sr_RS", "de-1996", "de_DE", "en_US-wiki", "en-GB-oxendict", "zh-Hans"] {
+            assert_eq!(script(none), None, "{none}");
+        }
+        // Plain Serbian, with no script, is Cyrillic.
+        assert!(same_script("sr", "sr", "sr") && same_script("sr-RS", "sr_Cyrl_RS", "sr"));
+        assert!(!same_script("sr", "sr-Latn", "sr"));
     }
 }
