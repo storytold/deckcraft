@@ -118,7 +118,8 @@ slide; `comment.list`, `comment.next` and `comment.prev` take `slide`. `batch` i
 `screenshot` without `path`) is refused and told to run on its own. A
 `batch` item with `"as": "a"` can be referred to by any later item's params as `"$a"` (its `id`,
 or its whole answer when it has none), so insert, connect and animate fit in one batch; a `$name`
-with no such earlier item is refused.
+with no such earlier item is refused. To send the text `$a` itself, write `"$$a"`; any other string
+(`"$$"`, `"$$5 off"`) is sent as it is.
 
 Answers carry what the next step needs, so it costs no inspect: `insert.table`, `insert.chart`,
 `insert.picture` and `insert.smartArt` (which takes a `rect` too) answer `{id, rect}`; the `table.insertRow*`/`insertColumn*` commands answer the
@@ -149,7 +150,7 @@ text in non-title placeholders, text boxes, shapes and tables, so a product name
 changed without touching titles or notes (the default is still everything).
 `animation.timing`'s `index` is the animation's position in the slide's list as `animation.get`
 numbers them; `indices: [..]` changes several and `all: true` every animation on the slide (one call
-retimes a slide), answering `{changed}`; give one of the three (two are refused, as in
+retimes a slide), answering `{changed}`; give at most one of the three (two are refused, as in
 `animation.options`); `animation.get` reports each one's click `step`. `review.spelling` answers `{dictionary, lang, issues}`:
 with `dictionary: false` no Hunspell dictionary was installed for `lang` and only the built-in
 common-misspellings list ran, so an empty `issues` is not a clean deck (`review.dictionary` says

@@ -93,7 +93,7 @@ pub fn tool_definitions() -> Vec<Value> {
         tool(
             "batch",
             "Run several commands",
-            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params; a tool that answers an image (render_slide) is refused here: call it on its own. An item with `as: \"box\"` can be referred to by a later item's params as \"$box\" (its id), so insert, connect and animate fit in one batch.",
+            "Run commands in order; stops at the first error unless keepGoing. Returns each result. Items may name a tool (add_shape, add_text_box, go_to_slide…) instead of a command, with the tool's arguments as params; a tool that answers an image (render_slide) is refused here: call it on its own. An item with `as: \"box\"` can be referred to by a later item's params as \"$box\" (its id), so insert, connect and animate fit in one batch; write \"$$box\" for the literal text \"$box\".",
             obj(
                 json!({"commands": {"type": "array", "items": obj(json!({"command": string("id"), "params": {"type": "object"}, "as": string("Name for this item's answer, for \"$name\" in later params")}), &["command"])}, "keepGoing": boolean("Continue after errors")}),
                 &["commands"],
@@ -327,7 +327,9 @@ fn is_tool(id: &str) -> bool {
 
 /// Replaces every `"$name"` string in a batch item's params with the answer of the earlier item
 /// named `as: "name"` (its `id`, else the whole answer). A `$` followed by an identifier that
-/// names no earlier item is an error, so a typo is not sent on as text.
+/// names no earlier item is an error, so a typo is not sent on as text; `$$` before such a name
+/// escapes it (`"$$revenue"` is the text `$revenue`). Any other string, `"$$"` or `"$$5 off"`
+/// included, is sent as it is.
 /// A batch item name `$name` can refer to: letters, digits and `_`, not starting with a digit.
 fn is_ref_name(key: &str) -> bool {
     !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !key.starts_with(|c: char| c.is_ascii_digit())
@@ -336,7 +338,9 @@ fn is_ref_name(key: &str) -> bool {
 fn substitute(v: &mut Value, named: &std::collections::HashMap<String, Value>) -> Result<(), String> {
     match v {
         Value::String(s) => {
-            if let Some(key) = s.strip_prefix('$')
+            if let Some(rest) = s.strip_prefix("$$").filter(|r| is_ref_name(r)) {
+                *s = format!("${rest}");
+            } else if let Some(key) = s.strip_prefix('$')
                 && is_ref_name(key)
             {
                 match named.get(key) {

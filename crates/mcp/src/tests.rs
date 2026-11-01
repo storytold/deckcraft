@@ -536,6 +536,21 @@ fn batch_items_can_reference_earlier_results() {
     );
     let text = bad["result"]["content"][0]["text"].as_str().unwrap();
     assert!(bad["result"]["isError"] == true && text.contains("$nope"), "{text}");
+    // `$$` is a literal `$`: text such as `$revenue` goes through a batch as it does through run_command.
+    let out = tool(
+        &mut s,
+        "batch",
+        json!({"commands": [
+            {"command": "set_text", "params": {"id": b, "text": "$$revenue"}},
+            {"command": "shape.insert", "params": {"preset": "rect", "rect": [50, 200, 100, 40], "text": "$$5 off"}},
+            {"command": "shape.insert", "params": {"preset": "rect", "rect": [50, 260, 100, 40], "text": "$$"}},
+        ]}),
+    );
+    assert!(out.as_array().unwrap().iter().all(|i| i["ok"] == true), "{out}");
+    let sl = tool(&mut s, "inspect_slide", json!({}));
+    let texts: Vec<&str> = sl["shapes"].as_array().unwrap().iter().filter_map(|x| x["text"].as_str()).collect();
+    // Only `$$` before a name is an escape; other text keeps its dollars.
+    assert!(texts.contains(&"$revenue") && texts.contains(&"$$5 off") && texts.contains(&"$$"), "{sl}");
 }
 
 /// A stand-in for the desktop app: records the control-channel calls and answers `ui.screenshot`
