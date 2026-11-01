@@ -485,3 +485,16 @@ fn background_all_clears_layout_overrides_even_if_slides_and_master_match() {
     s.execute("design.background", &json!({"color": "#AA0000", "all": true})).unwrap();
     assert_eq!(undo_len(&s), n + 1, "now it is truly a no-op");
 }
+
+#[test]
+fn background_rejects_invalid_index() {
+    let mut s = Session::with_new();
+    s.execute("slide.new", &json!({})).unwrap();
+    s.execute("slide.go", &json!({"index": 0})).unwrap();
+    let before = s.doc().unwrap().doc.slides[0].background.clone();
+    for bad in [json!(-1), json!(1.5)] {
+        assert!(s.execute("design.background", &json!({"color": "#0000C8", "index": bad})).is_err());
+        assert!(s.execute("design.background", &json!({"transparency": 0.5, "index": bad})).is_err());
+        assert_eq!(s.doc().unwrap().doc.slides[0].background, before);
+    }
+}

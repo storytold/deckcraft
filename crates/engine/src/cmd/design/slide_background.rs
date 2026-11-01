@@ -1,6 +1,6 @@
 use super::{
     Arc, BTreeSet, Background, Fill, NO_ID_SPACE, Presentation, Result, Session, Target, Value, bad, bool_or, bool_param, color_param, color_value,
-    f64_param, ok, usize_param, with_param,
+    f64_param, ok, opt_usize_param, usize_param, with_param,
 };
 
 pub(super) fn background(s: &mut Session, p: &Value) -> Result<Value> {
@@ -62,7 +62,7 @@ pub(super) fn background(s: &mut Session, p: &Value) -> Result<Value> {
         ));
     };
     let all = bool_or(p, "all", false);
-    let index = usize_param(p, "index");
+    let index = opt_usize_param(p, "index", "design.background")?;
     if matches!(op, BgOp::Adjust) {
         let next = {
             let st = s.doc()?;
