@@ -966,8 +966,9 @@ impl Editor {
             Cmd::Sym(c) => self.insert_char(c),
             Cmd::Nothing => {}
             Cmd::Leaf(node) => {
+                let units = node_units(&node);
                 if self.insert_nodes(vec![node]).is_some() {
-                    self.caret.pos += 1;
+                    self.caret.pos += units;
                 }
             }
             Cmd::Node(node, child) => {

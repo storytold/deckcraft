@@ -159,10 +159,7 @@ impl EquationEditor {
         }
         let hit = chosen.is_some();
         if let Some(m) = chosen {
-            self.set_math(m);
-            self.wants_canvas = true;
-            let id = self.canvas_id();
-            ui.memory_mut(|mem| mem.request_focus(id));
+            self.replace_equation(ui, m);
         }
         hit
     }

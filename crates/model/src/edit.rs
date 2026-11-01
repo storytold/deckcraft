@@ -341,7 +341,7 @@ pub fn word_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
     if let Some(span) = body.paragraphs.get(pi).and_then(|p| math_adjacent(p, ch, forward)) {
         return (pi, if forward { span.1 } else { span.0 });
     }
-    if forward {
+    let to = if forward {
         match words::next_stop(&t, ch) {
             Some(s) => (pi, s),
             None if pi + 1 < body.paragraphs.len() => (pi + 1, 0),
@@ -353,7 +353,8 @@ pub fn word_move(body: &TextBody, pos: Pos, forward: bool) -> Pos {
             None if pi > 0 => (pi - 1, body.paragraphs.get(pi - 1).map(Paragraph::char_len).unwrap_or(0)),
             None => (pi, 0),
         }
-    }
+    };
+    snap_math(body, to, forward)
 }
 
 /// Ctrl+Up: the start of the paragraph, or of the previous one when already there.

@@ -81,14 +81,16 @@ fn items_of(prims: Vec<Prim>, fonts: &dyn MathFonts) -> Vec<Item> {
                     }
                     let place = Affine::translate((f64::from(x), f64::from(y))) * skew * Affine::scale(k);
                     let path = (*o).clone();
-                    let mut placed = place * &path;
+                    let placed = place * &path;
+                    out.push(Item::Path(placed));
                     if synth_bold {
-                        // Fill and stroke are one shape: the stroke outline joins the fill.
+                        // Fill and stroke are separate paths (as in EquaSHionCraft's renderer):
+                        // one merged path could let the stroke ring cancel the glyph interior
+                        // under the non-zero fill rule.
                         let w = face.units_per_em() * SYNTH_BOLD_STROKE;
                         let stroked = kurbo::stroke(path.iter(), &kurbo::Stroke::new(w), &kurbo::StrokeOpts::default(), 0.1);
-                        placed.extend((place * &stroked).iter());
+                        out.push(Item::Path(place * &stroked));
                     }
-                    out.push(Item::Path(placed));
                 }
             }
         }

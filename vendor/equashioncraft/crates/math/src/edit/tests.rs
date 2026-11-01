@@ -707,6 +707,16 @@ fn typed_latex_commands_become_symbols_and_structures() {
 }
 
 #[test]
+fn typing_a_function_word_leaves_the_caret_after_the_whole_word() {
+    // `max` is a function word, not a bare one: it becomes a single multi-unit node, so the
+    // caret must move past all of it rather than one unit.
+    let mut e = typed("\\max");
+    assert_eq!(e.caret().pos, 3);
+    e.type_str("x");
+    assert_eq!(lin(&e), "maxx");
+}
+
+#[test]
 fn braces_after_a_latex_command_are_its_arguments() {
     assert_eq!(ty("\\frac{a+b}{c}"), ty("(a+b)/c"));
     assert_eq!(ty("\\frac{1}{2}+x"), "1/2+x");

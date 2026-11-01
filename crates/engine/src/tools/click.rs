@@ -217,6 +217,7 @@ impl Session {
         let Some(t) = st.selection.text.clone().filter(|t| !t.notes && t.cell.is_none()) else { return Ok(false) };
         let Some(sh) = st.shape(t.shape) else { return Ok(false) };
         if !xfrm_of(&st.doc, &st.selection, sh).bounds().inflate(tol, tol).contains(p)
+            || shape_in_front(st, st.shapes(), t.shape, p, tol, 0)
             || matches!(
                 self.hit_test(p, tol),
                 Some(Hit::Resize { .. } | Hit::Rotate { .. } | Hit::Adjust { .. } | Hit::Warp { .. } | Hit::Frame { .. })
