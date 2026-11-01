@@ -124,7 +124,7 @@ pub const UI_COMMANDS: &[(&str, &str, Option<&str>, &str)] = &[
         "show.presenter",
         "Presenter View",
         None,
-        "{on?: bool} → {on, window} (presenter view, with notes, a clock and the next slide, appears in its own separate window beside the show window when the show starts; window is false in the browser build, which draws it inside the page)",
+        "{on?: bool} → {on, window} (presenter view, with notes, a clock and the next slide, appears in its own separate window beside the show window when the show starts; browser hosts use a popup when available, otherwise window is false and presenter view is drawn inside the page)",
     ),
     ("show.keepCursor", "Keep Mouse Cursor Visible", None, "{on?: bool}"),
     ("show.end", "End Show", None, "{}"),

@@ -20,9 +20,10 @@ fn suggested_provider_name(title: &str, extension: &str) -> String {
 
 impl SlideApp {
     fn provider_save_host(&self) -> Option<Host> {
-        self.services.file_providers.clone().filter(|host| {
-            host.enabled() || self.session.active().is_some_and(|doc| host.bound(doc.uid) || host.pending_for(doc.uid))
-        })
+        self.services
+            .file_providers
+            .clone()
+            .filter(|host| host.enabled() || self.session.active().is_some_and(|doc| host.bound(doc.uid) || host.pending_for(doc.uid)))
     }
 
     pub(crate) fn choose_provider_save(&mut self, save_as: bool, format: &str) -> bool {
@@ -106,6 +107,7 @@ impl SlideApp {
             return;
         }
         if host.pending_for(close.document)
+            || self.show.is_some()
             || self.dialog.is_some()
             || document.interaction.is_some()
             || document.composition.is_some()
@@ -185,9 +187,7 @@ impl SlideApp {
         if self.session.active().is_none_or(|state| state.uid != doc) {
             return Err("Activate the presentation and finish its notes before saving it".into());
         }
-        self.session
-            .execute("slide.notes", &json!({"body":self.notes_buf.2.body,"index":self.notes_buf.1}))
-            .map_err(|error| error.to_string())?;
+        self.session.execute("slide.notes", &json!({"body":self.notes_buf.2.body,"index":self.notes_buf.1})).map_err(|error| error.to_string())?;
         self.notes_buf.2.edited = false;
         Ok(())
     }
@@ -277,6 +277,14 @@ impl SlideApp {
         let data = deckcraft_engine::cmd::base64_encode(&bytes);
         match self.run("file.openBytes", json!({"name":name,"data":data})) {
             Ok(_) => {
+                // The audience show reads the active document. Its old slide state and popup
+                // must not continue controlling the newly imported presentation.
+                if self.show.take().is_some() {
+                    self.media.stop_owned(crate::media::Owner::Show);
+                    if let Some(presenter) = self.services.presenter.as_mut() {
+                        presenter.close();
+                    }
+                }
                 self.backstage = None;
                 let capture = self.session.active().map(|doc| Capture { doc: doc.uid, revision: doc.revision, name, save_as: false });
                 host.opened(&request, capture, "The imported presentation has no document");
@@ -293,6 +301,32 @@ impl SlideApp {
 mod tests {
     use crate::file_providers::Host;
     use crate::{Services, SlideApp, json};
+
+    #[derive(Default)]
+    struct PresenterState {
+        opens: usize,
+        closes: usize,
+        commands: Vec<crate::presenter::Command>,
+    }
+
+    struct Presenter(std::rc::Rc<std::cell::RefCell<PresenterState>>);
+
+    impl crate::presenter::Host for Presenter {
+        fn open(&mut self) -> Result<(), String> {
+            self.0.borrow_mut().opens += 1;
+            Ok(())
+        }
+        fn is_open(&self) -> bool {
+            true
+        }
+        fn commands(&mut self) -> Vec<crate::presenter::Command> {
+            std::mem::take(&mut self.0.borrow_mut().commands)
+        }
+        fn update(&mut self, _: crate::presenter::Snapshot) {}
+        fn close(&mut self) {
+            self.0.borrow_mut().closes += 1;
+        }
+    }
 
     fn app() -> (SlideApp, Host) {
         let host = Host::default();
@@ -352,6 +386,89 @@ mod tests {
         host.result(request, "saved".into(), "closing-resource".into()).unwrap();
         harness.run_steps(4);
         assert!(harness.state().session.documents().is_empty());
+    }
+
+    #[test]
+    fn acknowledged_close_waits_for_the_running_presenter_show() {
+        let (mut app, host) = app();
+        let document = app.session.active().unwrap().uid;
+        let presenter = std::rc::Rc::new(std::cell::RefCell::new(PresenterState::default()));
+        app.services.presenter = Some(Box::new(Presenter(presenter.clone())));
+        let request = close_choice(&mut app, &host);
+        host.resolve_dialog(&request, "provider", "Closing.deckcraft").unwrap();
+        app.provider_tick();
+        assert!(host.take_events().iter().any(|event| event.metadata["type"] == "save"));
+        app.start_show(0, false);
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            app,
+        );
+        harness.run_steps(3);
+        assert_eq!(presenter.borrow().opens, 1);
+        host.result(request, "saved".into(), "closing-resource".into()).unwrap();
+        harness.run_steps(4);
+        assert_eq!(harness.state().session.active().unwrap().uid, document);
+        assert!(harness.state().show.is_some(), "a durable ACK must not close the audience's document mid-show");
+        assert!(harness.state().provider_close.is_some());
+        assert_eq!(presenter.borrow().closes, 0);
+
+        presenter.borrow_mut().commands.push(crate::presenter::Command::End);
+        harness.run_steps(4);
+        assert!(harness.state().show.is_none());
+        assert!(harness.state().session.documents().is_empty(), "the acknowledged close can settle after the show ends");
+        assert_eq!(presenter.borrow().closes, 1);
+    }
+
+    #[test]
+    fn provider_import_ends_the_old_show_only_after_a_successful_open() {
+        for valid in [false, true] {
+            let (mut app, host) = app();
+            let document = app.session.active().unwrap().uid;
+            let (request, bytes) = save(&mut app, &host);
+            host.result(request, "saved".into(), "resource-one".into()).unwrap();
+            app.provider_tick();
+            host.take_events();
+            let presenter = std::rc::Rc::new(std::cell::RefCell::new(PresenterState::default()));
+            app.services.presenter = Some(Box::new(Presenter(presenter.clone())));
+            app.start_show(1, false);
+            let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1000.0, 700.0)).build_ui_state(
+                |ui, app: &mut SlideApp| {
+                    app.logic(ui.ctx());
+                    app.ui(ui);
+                },
+                app,
+            );
+            harness.run_steps(3);
+            assert_eq!(presenter.borrow().opens, 1);
+            let request = host.request_open("resource-one").unwrap();
+            let bytes = if valid { bytes } else { b"invalid package".to_vec() };
+            host.open(request.clone(), "Presentation.deckcraft".into(), bytes).unwrap();
+            harness.run_steps(4);
+            let events = host.take_events();
+            let result = events
+                .iter()
+                .find(|event| event.metadata["requestId"] == request && matches!(event.metadata["type"].as_str(), Some("opened" | "openFailed")))
+                .unwrap();
+            if valid {
+                assert!(harness.state().show.is_none(), "old slide state must not follow the newly active provider document");
+                assert_eq!(presenter.borrow().closes, 1);
+                assert_eq!(harness.state().session.documents().len(), 2);
+                let imported = harness.state().session.active().unwrap().uid;
+                assert_ne!(imported, document);
+                assert!(host.bound(imported));
+                assert_eq!(result.metadata["type"], "opened");
+            } else {
+                assert_eq!(harness.state().session.active().unwrap().uid, document);
+                assert_eq!(harness.state().show.as_ref().unwrap().state.slide, 1);
+                assert_eq!(presenter.borrow().closes, 0);
+                assert_eq!(harness.state().session.documents().len(), 1);
+                assert_eq!(result.metadata["type"], "openFailed");
+            }
+            assert!(!host.busy());
+        }
     }
 
     #[test]
