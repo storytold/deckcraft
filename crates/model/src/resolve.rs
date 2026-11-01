@@ -4,7 +4,7 @@
 use deckcraft_color::{ColorScheme, Rgba, SchemeSlot};
 use deckcraft_geom::Xfrm;
 
-use crate::style::{ColorRef, Effects, Fill, Line};
+use crate::style::{ColorRef, Effects, Fill, Line, ShapeStyle};
 use crate::text::{Anchor, AutoFit, BodyProps, LevelStyle, ListStyle, ParaProps, RunProps};
 use crate::{Background, Layout, Master, PhType, Presentation, Shape, Slide};
 
@@ -229,30 +229,53 @@ pub fn detach_placeholder(ctx: &Ctx, shape: &mut Shape) {
     if shape.ph.is_none() {
         return;
     }
-    let (lp, mp) = parents(ctx, shape);
-    let parents = [lp, mp].into_iter().flatten();
-    shape.xfrm = Some(xfrm(ctx, shape));
-    if shape.fill.is_none() && shape.style.is_none() {
-        shape.fill = parents.clone().find_map(|s| s.fill.clone());
-    }
-    if shape.style.is_none() {
-        shape.style = parents.clone().find_map(|s| s.style.clone());
-    }
-    if shape.effects.is_none() {
-        shape.effects = parents.clone().find_map(|s| s.effects.clone());
-    }
-    let mut line = shape.line.clone();
-    for p in parents.filter_map(|s| s.line.as_ref()) {
-        line.get_or_insert_with(Line::default).inherit(p);
-    }
-    shape.line = line;
-    if shape.text.is_some() {
-        let body = body(ctx, shape);
-        let levels: Vec<Option<LevelStyle>> = (0..9).map(|l| Some(level_style(ctx, shape, l))).collect();
-        if let Some(t) = shape.text.as_mut() {
-            t.body = body;
-            t.list_style = ListStyle { levels };
+    // The text first: `level_style` reads the shape's own style, which changes below.
+    let text = shape.text.as_ref().map(|_| (body(ctx, shape), (0..9).map(|l| Some(level_style(ctx, shape, l))).collect::<Vec<_>>()));
+    let own = shape.clone();
+    let (lp, mp) = parents(ctx, &own);
+    let chain = [Some(&own), lp, mp].into_iter().flatten();
+
+    // Each property comes from where `fill`, `line` and `effects` take it: the first shape in the
+    // chain with an explicit value or a style. Lines merge explicit values up to the first styled
+    // shape, whose style line fills the rest.
+    let fill_src = chain.clone().find(|s| s.fill.is_some() || s.style.is_some());
+    let effects_src = chain.clone().find(|s| s.effects.is_some() || s.style.is_some());
+    let mut line = None;
+    let mut line_src = None;
+    for s in chain.clone() {
+        if let Some(l) = &s.line {
+            line.get_or_insert_with(Line::default).inherit(l);
         }
+        if s.style.is_some() {
+            line_src = Some(s);
+            break;
+        }
+    }
+    // Text takes its font reference from the shape's style or its layout placeholder's (a table's
+    // from its own only), never the master's.
+    let table = matches!(own.kind, crate::ShapeKind::Table(_));
+    let font_src = own.style.as_ref().or(lp.filter(|_| !table).and_then(|s| s.style.as_ref()));
+
+    // One style for the copy, each reference taken from the shape that supplied that property. A
+    // property with an explicit value ignores its reference, except a gradient without stops,
+    // which takes them from its own shape's style; a neutral reference (index 0) adds nothing.
+    let style_of = |s: Option<&Shape>| s.and_then(|s| s.style.clone());
+    let neutral = (0, ColorRef::scheme(SchemeSlot::Tx1));
+    let style = chain.clone().any(|s| s.style.is_some()).then(|| ShapeStyle {
+        fill_ref: style_of(fill_src).map_or_else(|| neutral.clone(), |st| st.fill_ref),
+        line_ref: style_of(line_src).map_or_else(|| neutral.clone(), |st| st.line_ref),
+        effect_ref: style_of(effects_src).map_or_else(|| neutral.clone(), |st| st.effect_ref),
+        font_ref: font_src.map_or_else(|| ("none".into(), None), |st| st.font_ref.clone()),
+    });
+
+    shape.xfrm = Some(xfrm(ctx, &own));
+    shape.fill = fill_src.and_then(|s| s.fill.clone());
+    shape.effects = effects_src.and_then(|s| s.effects.clone());
+    shape.line = line;
+    shape.style = style;
+    if let (Some(t), Some((body, levels))) = (shape.text.as_mut(), text) {
+        t.body = body;
+        t.list_style = ListStyle { levels };
     }
     shape.ph = None;
 }

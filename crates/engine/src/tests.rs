@@ -267,6 +267,106 @@ fn a_pasted_or_duplicated_placeholder_keeps_its_inherited_look() {
     assert!(s.doc().unwrap().doc.validate().is_empty());
 }
 
+/// The resolved fill, line and effects of shape `id` on the current slide, with their style colours.
+fn resolved_box(s: &Session, id: ShapeId) -> String {
+    use deckcraft_model::resolve;
+    let st = s.doc().unwrap();
+    let ctx = resolve::Ctx::for_slide(&st.doc, st.current_slide().unwrap()).unwrap();
+    let sh = st.shape(id).unwrap();
+    format!("{:?}\n{:?}\n{:?}", resolve::fill(&ctx, sh), resolve::line(&ctx, sh), resolve::effects(&ctx, sh))
+}
+
+/// Edit the title placeholders the current slide's title inherits from: its layout's and its
+/// master's. Returns the slide title's id.
+fn edit_title_parents(
+    s: &mut Session,
+    layout: impl FnOnce(&mut deckcraft_model::Shape),
+    master: impl FnOnce(&mut deckcraft_model::Shape),
+) -> ShapeId {
+    let st = s.doc_mut().unwrap();
+    let slide = st.current_slide().unwrap().clone();
+    let title = slide.shapes.iter().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap().id;
+    let doc = std::sync::Arc::make_mut(&mut st.doc);
+    let m = std::sync::Arc::make_mut(&mut doc.masters[0]);
+    let lay = m.layouts.iter_mut().find(|l| l.id == slide.layout).unwrap();
+    layout(lay.shapes.iter_mut().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap());
+    master(m.shapes.iter_mut().find(|x| x.ph_type().is_some_and(|k| k.is_title())).unwrap());
+    title
+}
+
+/// A copied placeholder takes each of fill, line and effects from where the original does: a
+/// style on the layout's placeholder (or on the slide's own) wins over an explicit value on the
+/// master's, as `resolve::fill`, `resolve::line` and `resolve::effects` decide.
+#[test]
+fn a_pasted_placeholder_keeps_the_style_precedence_of_its_box() {
+    use deckcraft_color::SchemeSlot;
+    use deckcraft_model::{ColorRef, Effects, Fill, Line, ShapeStyle};
+    for style_on_slide in [false, true] {
+        let mut s = session();
+        s.execute("slide.new", &json!({})).unwrap();
+        let style = ShapeStyle {
+            line_ref: (1, ColorRef::scheme(SchemeSlot::Accent2)),
+            fill_ref: (1, ColorRef::scheme(SchemeSlot::Accent1)),
+            effect_ref: (0, ColorRef::scheme(SchemeSlot::Accent3)),
+            font_ref: ("minor".into(), None),
+        };
+        let layout_style = (!style_on_slide).then(|| style.clone());
+        let title = edit_title_parents(
+            &mut s,
+            |l| l.style = layout_style,
+            |m| {
+                m.fill = Some(Fill::solid(ColorRef::scheme(SchemeSlot::Accent4)));
+                m.line = Some(Line::solid(ColorRef::scheme(SchemeSlot::Accent5), 20.0));
+                m.effects = Some(Effects { soft_edge: Some(5.0), ..Default::default() });
+            },
+        );
+        if style_on_slide {
+            s.edit(|doc, sel| {
+                let list = crate::shapes_mut(doc, sel).unwrap();
+                list.iter_mut().find(|x| x.id == title).unwrap().style = Some(style.clone());
+                Ok(())
+            })
+            .unwrap();
+        }
+        s.execute("text.set", &json!({"id": title.0, "text": "Styled title"})).unwrap();
+        let want = (resolved_box(&s, title), resolved_look(&s, title));
+        s.execute("selection.select", &json!({"id": title.0})).unwrap();
+        s.execute("edit.copy", &json!({})).unwrap();
+        s.execute("edit.paste", &json!({})).unwrap();
+        let copy = s.doc().unwrap().selection.shapes[0];
+        assert_eq!((resolved_box(&s, copy), resolved_look(&s, copy)), want, "style on the slide: {style_on_slide}");
+    }
+}
+
+/// The master's placeholder style never reaches the copy's text: the original's text ignores it
+/// (only the shape's or the layout's font reference counts), so the copy must too.
+#[test]
+fn a_pasted_placeholder_ignores_the_masters_font_reference() {
+    use deckcraft_color::SchemeSlot;
+    use deckcraft_model::{ColorRef, ShapeStyle};
+    let mut s = session();
+    s.execute("slide.new", &json!({})).unwrap();
+    let title = edit_title_parents(
+        &mut s,
+        |l| l.style = None,
+        |m| {
+            m.style = Some(ShapeStyle {
+                line_ref: (0, ColorRef::scheme(SchemeSlot::Accent2)),
+                fill_ref: (0, ColorRef::scheme(SchemeSlot::Accent1)),
+                effect_ref: (0, ColorRef::scheme(SchemeSlot::Accent3)),
+                font_ref: ("minor".into(), Some(ColorRef::scheme(SchemeSlot::Accent6))),
+            })
+        },
+    );
+    s.execute("text.set", &json!({"id": title.0, "text": "Title"})).unwrap();
+    let want = (resolved_box(&s, title), resolved_look(&s, title));
+    assert!(want.1.contains("+mj-lt"), "the title draws in the heading font: {}", want.1);
+    s.execute("selection.select", &json!({"id": title.0})).unwrap();
+    s.execute("edit.duplicate", &json!({})).unwrap();
+    let copy = s.doc().unwrap().selection.shapes[0];
+    assert_eq!((resolved_box(&s, copy), resolved_look(&s, copy)), want);
+}
+
 /// The same on every text placeholder of the sample deck (titles, bulleted bodies, subtitles).
 #[test]
 fn sample_placeholders_paste_with_their_look() {
