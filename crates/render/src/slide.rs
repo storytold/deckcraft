@@ -56,9 +56,12 @@ fn text_has_effects(rctx: &Ctx, s: &Shape) -> bool {
     let body = |t: &deckcraft_model::text::TextBody| {
         t.paragraphs.iter().any(|p| p.runs.iter().any(|r| fx(&r.props)) || fx(&p.end_props)) || styled(&t.list_style)
     };
-    // Table cells carry their own text bodies, whose runs can have shadows and glows too.
+    // Table cells carry their own text bodies, whose runs can have shadows and glows too,
+    // or inherit them from the master's other-text style.
     let in_cells = match &s.kind {
-        deckcraft_model::ShapeKind::Table(t) => t.rows.iter().flat_map(|r| &r.cells).any(|c| body(&c.text)),
+        deckcraft_model::ShapeKind::Table(t) => {
+            t.rows.iter().flat_map(|r| &r.cells).any(|c| body(&c.text) || (!c.text.paragraphs.is_empty() && styled(&rctx.master.other_style)))
+        }
         _ => false,
     };
     in_cells

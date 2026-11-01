@@ -1239,6 +1239,16 @@ fn table_cell_text_effects_need_filters() {
     let glow = Shape { id: ShapeId(742), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table), ..Default::default() };
     let p = deck_with(vec![glow]);
     assert!(needs_filters(&p, &p.slides[0]), "a glowing cell's text blurs");
+
+    // Master other_style glow inherited by a non-empty cell.
+    let mut table_plain = Table::new(1, 1, 200.0, 40.0);
+    table_plain.rows[0].cells[0].text = TextBody::from_text("Inherited");
+    let shape_table =
+        Shape { id: ShapeId(744), xfrm: Some(Xfrm::new(10.0, 10.0, 200.0, 40.0)), kind: ShapeKind::Table(table_plain), ..Default::default() };
+    let mut p_inherited = deck_with(vec![shape_table]);
+    std::sync::Arc::make_mut(&mut p_inherited.masters[0]).other_style.levels[0].as_mut().unwrap().run.glow =
+        Some(deckcraft_model::style::Glow { color: ColorRef::rgb(deckcraft_color::Rgba::rgb(0, 255, 0)), radius: 6.0 });
+    assert!(needs_filters(&p_inherited, &p_inherited.slides[0]), "inherited cell text glow blurs");
 }
 
 #[test]
