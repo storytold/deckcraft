@@ -161,7 +161,7 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Estimate:** 3–5 h. **Beta blocker.**
 
 ### Image paste fails on Windows (#1414)
-- **Evidence:** #53 is closed (PR #88 pastes an image-only clipboard as a picture); #1414 (Ctrl+V fails to paste external images on Windows) is open. From the egui 0.37 migration (#1350, v0.11.1) to 0.14.1 the desktop build left out eframe's `clipboard` feature, so egui simulated a clipboard inside the app and Ctrl+V never read the system clipboard on any platform. Fixed 2026-11-01. #1414 may have the same cause: re-test on Windows.
+- **Evidence:** #53 is closed (PR #88 pastes an image-only clipboard as a picture); #1414 (Ctrl+V fails to paste external images on Windows) is open. From the egui 0.37 migration (#1350, v0.11.1) to 0.14.1 the desktop build left out eframe's `clipboard` feature, so egui simulated a clipboard inside the app and Ctrl+V never read the system clipboard on any platform. Fixed 2026-11-01, as is a browser's Copy Image on Linux, which pasted its link because Ctrl+V preferred any text over the picture. #1414 may have either cause: re-test on Windows.
 - **Impact:** copy-paste of screenshots is a core workflow.
 - **Estimate:** 2–4 h. **Beta blocker.**
 

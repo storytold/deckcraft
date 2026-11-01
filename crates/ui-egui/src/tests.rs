@@ -378,6 +378,50 @@ fn title_bar_export_opens_the_export_dialog() {
     assert_eq!(harness.state().dialog.as_ref().map(|d| d.id.as_str()), Some("export"));
 }
 
+/// A browser's Copy Image puts the picture on the clipboard with text that only names it: the
+/// address (and the alt text), and an `<img>` fragment as HTML. Ctrl+V pastes the picture, as
+/// PowerPoint does, instead of a text box with the link. Without a picture the link pastes as text.
+#[test]
+fn ctrl_v_pastes_the_picture_a_browser_copied_not_its_link() {
+    let url = "https://github.com/storytold/deckcraft/raw/main/assets/app-icon/hicolor/256x256/apps/ai.storyteller.deckcraft.png";
+    let caption = format!("{url}\nDeckCraft icon: a presentation screen with a bar chart on an orange tile");
+    for (text, html, with_picture, pictures_after) in [
+        (caption.clone(), Some(format!("<img src=\"{url}\" alt=\"DeckCraft icon\">")), true, 1),
+        (url.to_string(), None, true, 1),
+        // Firefox's text/x-moz-url is UTF-16; read as UTF-8 it carries NULs.
+        (url.chars().flat_map(|c| [c, '\0']).collect(), None, true, 1),
+        (url.to_string(), None, false, 0),
+        ("See https://example.com for the photos".to_string(), None, true, 0),
+    ] {
+        let session = Session::with_new();
+        let png = {
+            let d = session.active().unwrap();
+            deckcraft_engine::cmd::file::render_png(&d.doc, 0, 0.1, false).0
+        };
+        let services = Services {
+            clipboard_image: Some(Box::new(move || with_picture.then(|| png.clone()))),
+            clipboard_html: Some(Box::new(move || html.clone())),
+            ..Default::default()
+        };
+        let mut harness = egui_kittest::Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_ui_state(
+            |ui, app: &mut SlideApp| {
+                app.logic(ui.ctx());
+                app.ui(ui);
+            },
+            SlideApp::new(session, services),
+        );
+        harness.run_steps(2);
+        let shapes_before = harness.state().session.active().unwrap().doc.slides[0].shapes.len();
+        harness.event(egui::Event::Paste(text.clone()));
+        harness.run_steps(2);
+        let d = harness.state().session.active().unwrap();
+        let shapes = &d.doc.slides[0].shapes;
+        let pictures = shapes.iter().filter(|s| matches!(s.kind, deckcraft_model::ShapeKind::Picture { .. })).count();
+        assert_eq!(pictures, pictures_after, "{text:?}");
+        assert_eq!(shapes.len(), shapes_before + 1, "one shape, picture or text, for {text:?}");
+    }
+}
+
 /// #53: Ctrl+V did nothing for an image-only clipboard: egui-winit sends no Paste event for it and
 /// swallows the key press, so only the V release reaches the app.
 #[test]

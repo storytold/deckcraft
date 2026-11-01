@@ -152,8 +152,10 @@ impl SlideApp {
                     // Text keeps its HTML (bold, italic, underline) when the host can read it.
                     let html = self.services.clipboard_html.as_mut().and_then(|f| f()).filter(|h| !h.is_empty());
                     // egui 0.37 sends `PasteImage` directly; the services fallback stays for
-                    // integrations that still send an empty `Paste`. Never insert twice.
-                    let img = if text.is_empty() && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
+                    // integrations that still send an empty `Paste`, and for a browser's Copy
+                    // Image, whose text is only the picture's link. Never insert twice.
+                    let wants_picture = text.is_empty() || super::clipboard::names_a_picture(&text, html.as_deref());
+                    let img = if wants_picture && !pasted_image_event { self.services.clipboard_image.as_mut().and_then(|f| f()) } else { None };
                     let revision = self.session.active().map(|d| d.revision);
                     let r = match img {
                         Some(png) => self
