@@ -11,7 +11,7 @@ use std::sync::Arc;
 use super::text::{format_body, format_para, format_run, format_run_levels};
 use super::{
     CommandSpec, always, bad, base64_decode, bool_or, bool_param, cmd, color_param, edit_shapes, f64_or, f64_param, has_doc, has_text,
-    has_text_or_shapes, ids_param, ok, str_param,
+    has_text_or_shapes, ok, str_param,
 };
 use crate::{Result, Session};
 use deckcraft_model::ShapeId;
@@ -62,7 +62,7 @@ pub fn specs() -> Vec<CommandSpec> {
         ),
         cmd!("format.superscript", "Superscript", ["Home", "Font"], Some("Cmd+Shift+="), "{on?: bool}", has_text_or_shapes, superscript),
         cmd!("format.subscript", "Subscript", ["Home", "Font"], Some("Cmd+="), "{on?: bool}", has_text_or_shapes, subscript),
-        cmd!("format.font", "Font", ["Home", "Font"], None, "{family}", has_text_or_shapes, font),
+        cmd!("format.font", "Font", ["Home", "Font"], None, "{family, eastAsia?: family, complexScript?: family}", has_text_or_shapes, font),
         cmd!("format.size", "Font Size", ["Home", "Font"], None, "{size: pt}", has_text_or_shapes, size),
         cmd!("format.grow", "Increase Font Size", ["Home", "Font"], Some("Cmd+Shift+."), "{}", has_text_or_shapes, grow),
         cmd!("format.shrink", "Decrease Font Size", ["Home", "Font"], Some("Cmd+Shift+,"), "{}", has_text_or_shapes, shrink),
@@ -199,7 +199,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Paragraph…",
             ["Format"],
             None,
-            "{align?, indentLeft?: pt, indentFirst?: pt (negative = hanging), spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines}",
+            "{align?, indentLeft?: pt, indentRight?: pt, indentFirst?: pt (negative = hanging), special?: none|firstLine|hanging, specialBy?: pt, spaceBefore?: pt, spaceAfter?: pt, lineSpacing?: lines, lineSpacingPt?: pt}",
             has_text_or_shapes,
             paragraph
         ),

@@ -674,6 +674,8 @@ fn print_slides_follow_the_settings() {
     bs.print_range = "2-4".into();
     bs.print_hidden = false;
     assert_eq!(print_slides(&doc, &bs, 0).unwrap(), vec![1, 3]);
+    bs.print_layout = "notes";
+    assert!(print_params(&bs, &[1, 3]).get("perPage").is_none(), "perPage is a handouts setting: {}", print_params(&bs, &[1, 3]));
     bs.print_layout = "h6";
     assert_eq!(print_params(&bs, &[1, 3])["perPage"], 6);
     assert_eq!(print_params(&bs, &[1, 3])["layout"], "handouts");

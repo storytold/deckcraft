@@ -1,41 +1,53 @@
 //! Table Design and Table Layout tabs.
 
 use deckcraft_geom::{Affine, Point, Rect};
-use deckcraft_model::{Shape, ShapeKind, Table};
+use deckcraft_model::{Shape, ShapeId, ShapeKind, Table};
 use serde_json::{Value, json};
 
 use super::{
     CommandSpec, bad, bool_or, bool_param, cmd, color_param, edit_shapes, f64_param, has_selection, has_slide, id_param, ok, opt_usize_param,
-    str_param, table_drawn_heights, xfrm_of,
+    rect_json, str_param, table_drawn_heights, xfrm_of,
 };
 use crate::{DocState, Result, Session};
 
 pub fn specs() -> Vec<CommandSpec> {
     vec![
-        cmd!("table.insertRowAbove", "Insert Above", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "rowAbove",
-            "table.insertRowAbove"
-        )),
-        cmd!("table.insertRowBelow", "Insert Below", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "rowBelow",
-            "table.insertRowBelow"
-        )),
-        cmd!("table.insertColumnLeft", "Insert Left", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colLeft",
-            "table.insertColumnLeft"
-        )),
-        cmd!("table.insertColumnRight", "Insert Right", ["Table Layout", "Rows & Columns"], None, "{col?, id?}", has_selection, |s, p| rows_cols(
-            s,
-            p,
-            "colRight",
-            "table.insertColumnRight"
-        )),
+        cmd!(
+            "table.insertRowAbove",
+            "Insert Above",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{row?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "rowAbove", "table.insertRowAbove")
+        ),
+        cmd!(
+            "table.insertRowBelow",
+            "Insert Below",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{row?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "rowBelow", "table.insertRowBelow")
+        ),
+        cmd!(
+            "table.insertColumnLeft",
+            "Insert Left",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "colLeft", "table.insertColumnLeft")
+        ),
+        cmd!(
+            "table.insertColumnRight",
+            "Insert Right",
+            ["Table Layout", "Rows & Columns"],
+            None,
+            "{col?, id?} → {changed, rect, rows, cols, overflows: bool}",
+            has_selection,
+            |s, p| rows_cols(s, p, "colRight", "table.insertColumnRight")
+        ),
         cmd!("table.deleteRow", "Delete Rows", ["Table Layout", "Rows & Columns"], None, "{row?, id?}", has_selection, |s, p| rows_cols(
             s,
             p,
@@ -63,7 +75,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Table Styles",
             ["Table Design", "Table Styles"],
             None,
-            "{style: medium2-accent1|light1-accent2|dark1-tx1|grid|none…, id?}",
+            "{style: none|grid|<light1|light2|medium2|medium4|dark1>-<tx1|accent1…accent6> (medium2-accent1, light1-accent2, dark1-tx1…; an unknown id is refused naming them), id?}",
             has_selection,
             style
         ),
@@ -269,6 +281,11 @@ fn at(s: &Session, p: &Value, cmd: &str) -> Result<(usize, usize)> {
 }
 
 fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> Result<()>) -> Result<Value> {
+    with_table_id(s, p, cmd, f).map(|(r, _)| r)
+}
+
+/// [`with_table`] that also answers which table was edited.
+fn with_table_id(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> Result<()>) -> Result<(Value, ShapeId)> {
     let id = match id_param(p, "id", cmd)? {
         Some(i) => i,
         None => {
@@ -310,13 +327,14 @@ fn with_table(s: &mut Session, p: &Value, cmd: &str, f: impl Fn(&mut Table) -> R
             t.caret = (0, 0);
         }
     })?;
-    Ok(r)
+    Ok((r, id))
 }
 
 fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result<Value> {
     let (r, c) = at(s, p, name)?;
+    let grows = matches!(op, "rowAbove" | "rowBelow" | "colLeft" | "colRight");
     let op = op.to_string();
-    with_table(s, p, name, move |t| {
+    let (answer, id) = with_table_id(s, p, name, move |t| {
         match op.as_str() {
             "rowAbove" => t.insert_row(r),
             "rowBelow" => t.insert_row(r.saturating_add(1)),
@@ -334,7 +352,26 @@ fn rows_cols(s: &mut Session, p: &Value, op: &str, name: &'static str) -> Result
             }
         }
         Ok(())
-    })
+    })?;
+    if !grows {
+        return Ok(answer);
+    }
+    // The table grew: its box, size and whether it now runs off the slide, so no inspect is needed.
+    let st = s.doc()?;
+    let Some(sh) = super::current_shapes(&st.doc, &st.selection).and_then(|v| deckcraft_model::find_shape(v, id)) else { return Ok(answer) };
+    let ShapeKind::Table(t) = &sh.kind else { return Ok(answer) };
+    let x = xfrm_of(&st.doc, &st.selection, sh);
+    let size = st.doc.slide_size;
+    let overflows = x.x < 0.0 || x.y < 0.0 || x.x + x.w > size.width || x.y + x.h > size.height;
+    let mut out = match answer {
+        Value::Object(o) => o,
+        n => serde_json::Map::from_iter([("changed".to_string(), n)]),
+    };
+    out.insert("rect".into(), rect_json(&x));
+    out.insert("rows".into(), json!(t.n_rows()));
+    out.insert("cols".into(), json!(t.n_cols()));
+    out.insert("overflows".into(), json!(overflows));
+    Ok(Value::Object(out))
 }
 
 fn merge(s: &mut Session, p: &Value) -> Result<Value> {
@@ -359,6 +396,12 @@ fn split(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn style(s: &mut Session, p: &Value) -> Result<Value> {
     let st = str_param(p, "style").ok_or_else(|| bad("table.style", "missing `style`"))?.to_string();
+    // The built-in ids, then the styles the file defines (by their GUID).
+    let mut known: Vec<String> = deckcraft_model::table::table_styles().into_iter().map(|(id, _)| id).collect();
+    known.extend(s.doc()?.doc.table_styles.iter().map(|d| d.id.clone()));
+    if !known.contains(&st) {
+        return Err(bad("table.style", format!("no table style `{st}`; the styles are {}", known.join(", "))));
+    }
     with_table(s, p, "table.style", move |t| {
         t.style = st.clone();
         Ok(())

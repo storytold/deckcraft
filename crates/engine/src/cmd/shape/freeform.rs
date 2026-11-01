@@ -3,8 +3,8 @@ use super::{ColorRef, Fill, Geom, Line, NO_ID_SPACE, Result, Session, Value, bad
 pub(super) fn sites(s: &mut Session, p: &Value) -> Result<Value> {
     let id = id_param(p, "id", "shape.sites")?.ok_or_else(|| bad("shape.sites", "missing `id`"))?;
     let st = s.doc()?;
-    let sh = st.shape(id).ok_or_else(|| bad("shape.sites", "no such shape"))?;
-    Ok(json!(crate::connect::sites(&st.doc, &st.selection, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
+    let (sh, ctx) = st.shape_anywhere(id).ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, "shape.sites"))?;
+    Ok(json!(crate::connect::sites(&st.doc, &ctx, sh).iter().map(|q| [q.x, q.y]).collect::<Vec<_>>()))
 }
 
 pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
@@ -12,8 +12,9 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         return Err(bad("shape.connect", "missing `from` / `to`"));
     };
     let st = s.doc()?;
-    let site_list = |id| st.shape(id).map(|sh| crate::connect::sites(&st.doc, &st.selection, sh)).unwrap_or_default();
-    let (a, b) = (site_list(from), site_list(to));
+    let shape = |id| st.shape(id).ok_or_else(|| crate::cmd::no_such_shape(&st.doc, &st.selection, id, "shape.connect"));
+    let (sa, sb) = (shape(from)?, shape(to)?);
+    let (a, b) = (crate::connect::sites(&st.doc, &st.selection, sa), crate::connect::sites(&st.doc, &st.selection, sb));
     if a.is_empty() || b.is_empty() {
         return Err(bad("shape.connect", "both shapes need connection sites (lines and groups have none)"));
     }
@@ -34,8 +35,23 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         }
     };
     let (p0, p1) = (a[ia], b[ib]);
+    // With `id`, `preset` changes the connector's kind (straight → bent, say) as it is re-glued;
+    // without it the preset was silently kept.
+    let mut regeom = None;
     let id = match id_param(p, "id", "shape.connect")? {
-        Some(id) => id,
+        Some(id) => {
+            if let Some(name) = str_param(p, "preset") {
+                let info = deckcraft_geom::preset::info(name).ok_or_else(|| bad("shape.connect", format!("unknown preset `{name}`")))?;
+                if !deckcraft_geom::preset::is_line_like(info.name) {
+                    return Err(bad(
+                        "shape.connect",
+                        format!("`{name}` is not a connector preset (straightConnector1, bentConnector3, curvedConnector3)"),
+                    ));
+                }
+                regeom = Some(Geom::preset(info.name));
+            }
+            id
+        }
         None => {
             let preset = str_param(p, "preset").unwrap_or("straightConnector1");
             let r = s.execute("shape.insert", &json!({"preset": preset, "rect": [p0.x, p0.y, 1.0, 1.0]}))?;
@@ -47,6 +63,9 @@ pub(super) fn connect(s: &mut Session, p: &Value) -> Result<Value> {
         let sh = deckcraft_model::find_shape_mut(list, id).ok_or_else(|| bad("shape.connect", "no such line"))?;
         if !sh.is_line() {
             return Err(bad("shape.connect", "`id` is not a line or connector"));
+        }
+        if let Some(geom) = regeom {
+            sh.geom = geom;
         }
         sh.xfrm = Some(crate::tools::line_xfrm(p0, p1, 0.0));
         sh.kind = deckcraft_model::ShapeKind::Connector { start: Some((from, ia as u32)), end: Some((to, ib as u32)) };

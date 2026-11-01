@@ -34,7 +34,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Connect Shapes",
             [],
             None,
-            "{from: shape id, to: shape id, fromSite?, toSite?: site index (default: the closest pair), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3} → {id}",
+            "{from: shape id, to: shape id (both on the current slide), fromSite?, toSite?: site index (default: the closest pair; shape.sites lists them, a box has 0 top, 1 left, 2 bottom, 3 right), id?: existing line to glue (else a new connector), preset?: straightConnector1|bentConnector3|curvedConnector3 (with id: changes the connector's kind as it is re-glued)} → {id, fromSite, toSite}",
             has_slide,
             connect
         ),
@@ -103,7 +103,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Fill",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color? | none?: true | background?: true (the slide background shows through; shapes and text boxes only) | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?}; pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} adjusts a picture fill; a group also formats its members",
+            "{color? | none?: true | background?: true (the slide background shows through; shapes and text boxes only) | gradient?: {stops: [[pos, color]], angle?, kind?: linear|radial} | picture?: base64 | pattern?: {preset, fg, bg} | transparency?: 0..1 | reset?: true, ids?, pictureProps?: {tile?: bool, offsetX?, offsetY?: pt, scaleX?, scaleY?: 0..10, align?: tl|t|tr|l|ctr|r|bl|b|br, mirror?: none|x|y|xy, stretch?: [l, t, r, b] fractions, rotateWithShape?: bool} (adjusts a picture fill)}; a group also formats its members",
             has_selection,
             fill
         ),
@@ -112,7 +112,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Shape Outline",
             ["Shape Format", "Shape Styles"],
             None,
-            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow, tail?, headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
+            "{color?, none?, width?: pt, dash?: solid|dot|dash|lgDash|dashDot|sysDot|sysDash, cap?: flat|round|square, join?: round|bevel|miter, compound?: single|double|thickThin|thinThick|triple, head?: none|triangle|stealth|diamond|oval|arrow (at the start of the line), tail? (at the end), headSize?: sm|med|lg, tailSize?, reset?, ids?}; a group also formats its members",
             has_selection,
             line
         ),

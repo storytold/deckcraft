@@ -1,5 +1,5 @@
 use super::{
-    Chart, ChartType, Result, RunKind, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json,
+    Chart, ChartType, Result, RunKind, Session, Shape, ShapeKind, Value, Xfrm, add_shape, bad, bool_param, color_value, edit_shapes, json, rect_json,
     rect_param, str_param,
 };
 
@@ -57,7 +57,7 @@ pub(super) fn chart(s: &mut Session, p: &Value) -> Result<Value> {
     let size = s.doc()?.doc.slide_size;
     let rect = rect_param(p, "rect").unwrap_or(Xfrm::new(size.width * 0.15, size.height * 0.15, size.width * 0.7, size.height * 0.7));
     let id = add_shape(s, "insert.chart", Shape { xfrm: Some(rect), kind: ShapeKind::Chart(Box::new(c)), ..Default::default() }, true)?;
-    Ok(json!({"id": id}))
+    Ok(json!({"id": id, "rect": rect_json(&rect)}))
 }
 
 #[allow(dead_code)]
@@ -187,6 +187,14 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
             Some(Some(color_value(v).ok_or_else(|| bad("chart.options", "`textColor` is a colour: #RRGGBB, accent1…accent6, tx1…, or null"))?))
         }
     };
+    // A palette is a name (colorful1…4, monochrome1…13); a list of colours was accepted and ignored.
+    let palette = match p.get("palette") {
+        None | Some(Value::Null) => None,
+        Some(v) => match v.as_str().filter(|n| is_palette_name(n)) {
+            Some(n) => Some(n.to_string()),
+            None => return Err(bad("chart.options", format!("`palette` is a name, one of {CHART_PALETTES}; not {v}"))),
+        },
+    };
     with_chart(s, p, "chart.options", |c| {
         if let Some(t) = &text_color {
             c.text_color = t.clone();
@@ -212,10 +220,21 @@ pub(super) fn chart_options(s: &mut Session, p: &Value) -> Result<Value> {
         if let Some(v) = bool_param(p, "gridlines") {
             c.gridlines = v;
         }
-        if let Some(v) = str_param(p, "palette") {
-            c.palette = v.to_string();
+        if let Some(v) = &palette {
+            c.palette.clone_from(v);
         }
         c.raw = None;
         Ok(())
     })
+}
+
+const CHART_PALETTES: &str = "colorful1, colorful2, colorful3, colorful4, monochrome1 … monochrome13";
+
+/// `colorful1`…`colorful4` or `monochrome1`…`monochrome13` (PowerPoint's chart colour sets).
+fn is_palette_name(n: &str) -> bool {
+    // The canonical spelling only: digits with no sign or leading zero.
+    let num = |rest: &str, max: u32| {
+        rest.bytes().all(|b| b.is_ascii_digit()) && !rest.starts_with('0') && rest.parse::<u32>().is_ok_and(|k| (1..=max).contains(&k))
+    };
+    n.strip_prefix("colorful").is_some_and(|r| num(r, 4)) || n.strip_prefix("monochrome").is_some_and(|r| num(r, 13))
 }
