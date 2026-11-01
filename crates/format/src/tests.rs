@@ -363,7 +363,15 @@ fn outline_keeps_leading_dash_text() {
     let n = outline_to_slides(&mut p, "-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\n- Bullets\n\t- Point\n\t• Other");
     assert_eq!(n, 2);
     let o = slides_to_outline(&p);
-    assert!(o.contains("-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\nBullets\n\tPoint\n\tOther"), "{o}");
+    assert!(o.contains("-5 °C tonight\n\t--verbose flag\n\t*args and **kwargs\n- Bullets\n\tPoint\n\tOther"), "{o}");
+}
+
+#[test]
+fn outline_roundtrip_keeps_bullet_prefixed_titles() {
+    let mut p = defaults::blank_presentation(defaults::WIDE, Default::default(), false);
+    assert_eq!(outline_to_slides(&mut p, "First\n- Sale today\n* Special offer\n• X"), 4);
+    let o = slides_to_outline(&p);
+    assert_eq!(o, "First\n- Sale today\n* Special offer\n• X\n");
 }
 
 #[test]
