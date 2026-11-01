@@ -193,3 +193,26 @@ fn mime_for(name: &str) -> &'static str {
         _ => "application/octet-stream",
     }
 }
+
+#[cfg(test)]
+mod wasm_smoke_tests {
+    use super::*;
+
+    wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+    // Run with wasm-bindgen-test-runner in a real browser. wasm panic=abort means a panic here
+    // would stop the test process; the hostile requests below must return Results instead.
+    #[wasm_bindgen_test::wasm_bindgen_test]
+    fn malformed_commands_return_errors_and_the_session_remains_usable() {
+        let mut session = Session::new();
+
+        let bad_font = session.execute("font.add", &serde_json::json!({"data": "%%%"}));
+        assert!(bad_font.is_err(), "invalid font data must return an error");
+
+        let bad_geometry = session.execute("shape.insert", &serde_json::json!({"preset": "not-a-shape"}));
+        assert!(bad_geometry.is_err(), "unknown geometry must return an error");
+
+        let valid = session.execute("shape.insert", &serde_json::json!({"preset": "rect", "rect": [0, 0, 10, 10]}));
+        assert!(valid.is_ok(), "a valid command must still work after malformed requests");
+    }
+}
