@@ -269,6 +269,18 @@ fn main() -> eframe::Result {
         Box::new(move |cc| {
             deckcraft_ui_egui::install_ime_pass_hooks(&cc.egui_ctx);
             let mut app = SlideApp::new(Session::new(), services());
+            // Asked when a show starts. Weak, so the app never keeps the window past eframe's teardown.
+            // Distinct monitors: winit's Wayland list can hold one output twice after a reconfigure.
+            if let Some(window) = cc.winit_window().map(std::sync::Arc::downgrade) {
+                app.services.display_count = Some(Box::new(move || {
+                    window.upgrade().map(|w| {
+                        let mut monitors: Vec<_> = w.available_monitors().collect();
+                        monitors.sort();
+                        monitors.dedup();
+                        monitors.len()
+                    })
+                }));
+            }
             load_prefs(&mut app);
             app.enable_update_checks();
             // AutoRecover: reopen what a previous run left unsaved, then keep it current.

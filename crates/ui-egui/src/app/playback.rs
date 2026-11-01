@@ -32,13 +32,20 @@ impl SlideApp {
     pub fn start_show(&mut self, from: usize, reading: bool) {
         self.anim_preview = None;
         self.media.stop_owned(media::Owner::Editor);
+        let presenter = self.ui.presenter_view && !reading && !self.single_display();
         if let Some(d) = self.session.active() {
             self.show_instance = self.show_instance.wrapping_add(1).max(1);
-            let mut show = show::Show::new(&d.doc, from, reading, self.ui.presenter_view && !reading);
+            let mut show = show::Show::new(&d.doc, from, reading, presenter);
             show.instance = self.show_instance;
             show.keep_cursor = self.ui.show_keep_cursor;
             self.show = Some(show);
         }
+    }
+
+    /// The host reports exactly one display. An unknown count (no hook, or none reported) is not
+    /// one, so presenter view keeps opening wherever the host cannot tell.
+    fn single_display(&mut self) -> bool {
+        self.services.display_count.as_mut().and_then(|count| count()) == Some(1)
     }
 
     /// Play custom show `name` from its first slide. Set Up Slide Show is left as it was.
