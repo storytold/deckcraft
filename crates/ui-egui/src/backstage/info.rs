@@ -42,13 +42,13 @@ pub(super) fn info(app: &mut SlideApp, ui: &mut Ui, bs: &mut Backstage) {
     if let Some(p) = &path {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
-            if ui.button("Copy path").clicked() {
+            if ui.button(tl!("Copy path")).clicked() {
                 ui.ctx().copy_text(p.clone());
-                app.set_status("Copied the path");
+                app.set_status(tl!("Copied the path"));
             }
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(dir) = std::path::Path::new(p).parent().and_then(std::path::Path::to_str)
-                && ui.button("Open file location").clicked()
+                && ui.button(tl!("Open file location")).clicked()
             {
                 app.open_url(&format!("file:///{}", dir.replace('\\', "/").trim_start_matches('/')));
             }
@@ -220,7 +220,7 @@ pub(super) fn account(app: &mut SlideApp, ui: &mut Ui) {
             ui.horizontal(|ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(40.0, 40.0), Sense::hover());
                 crate::dialogs::paint_logo(ui.painter(), r);
-                ui.label(RichText::new("DeckCraft").font(theme::bold(24.0)).color(t.text));
+                ui.label(RichText::new(tl!("DeckCraft")).font(theme::bold(24.0)).color(t.text));
             });
             dim(ui, &crate::dialogs::version_line());
             dim(ui, "Open source under MIT OR Apache-2.0. Not affiliated with Microsoft.");

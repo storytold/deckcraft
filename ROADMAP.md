@@ -17,6 +17,7 @@
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** trivial (progress log: a picture in a picture placeholder is cut into the layout's shape; previous: trivial, progress log: Ctrl+wheel zoom during the slide show, #1286; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-25 · **Change:** trivial (progress log: a picture in a picture placeholder is cut into the layout's shape; previous: trivial, progress log: picture and embedded object fills; previous: trivial, scroll bars on the zoomed slide pane, #1157; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** trivial (fill and outline edits reach group members, #1079; stage and scores unchanged) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Japanese interface, second step: dialog bodies, field labels, messages, panes and the File tab's page contents join the menus, ribbon, status bar and Preferences — 879 of ~1,050 strings, 84%; some tooltips and help still English; previous: minor, Japanese interface, first step: TSV catalogs, system-language following and an Interface language setting; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-18 · **Change:** minor (Symbol-font characters (U+F0xx) remap to the installed Symbol face's real Unicode on macOS, so they draw from Symbol instead of a look-alike; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 > **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-21 · **Change:** minor (proofing language for the whole presentation; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: ~60 landed items in the progress log, among them the Font, Paragraph, Photo Album, theme colour and font and Date and Time dialogs, presenter and show controls, the SmartArt Text Pane and PPTX corpus slices; breadth 84% after `cargo xtask parity`, ready stays ~55%, stage stays alpha; duplicated rows and headers folded; previous: minor, hours to ~95% per audience added) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
@@ -101,7 +102,9 @@ EMF/SVG pictures, the data-loss and startup-crash bugs (#60, #40, #59) and the b
 
 ## Languages
 
-English only today; no string catalog yet (Ukrainian is in review as PR #34). Detail:
+English today; the catalog system landed with Japanese as its first catalog (menus, ribbon,
+status bar, command labels, Preferences and most dialog bodies and messages; some tooltips and
+help text still English), and Ukrainian is in review as PR #34. Detail:
 [docs/localization-parity.md](docs/localization-parity.md).
 
 | Language | Code | UI strings | Status | Hours to full |
@@ -114,13 +117,14 @@ English only today; no string catalog yet (Ukrainian is in review as PR #34). De
 | French | fr | 0% | none | 3–5 |
 | Portuguese | pt | 0% | none | 3–5 |
 | Indonesian | id | 0% | none | 3–5 |
-| Japanese | ja | 0% | none | 4–7 |
+| Japanese | ja | 84% (879 of ~1,050; menus, ribbon, status bar, Preferences and most dialog bodies) | partial (in review) | 2–4 |
 | German | de | 0% | none | 3–5 |
 | Korean | ko | 0% | none | 4–7 |
 | Vietnamese | vi | 0% | none | 3–5 |
 
-Plus 8–14 h once for the catalog infrastructure. Other languages shipped: none. PowerPoint for Mac
-ships 26.
+The catalog infrastructure is in place (the sibling apps' TSV format, system-language following,
+the Interface language setting and catalog tests); a new language is its catalog file plus one row
+in `LANGUAGES`. Other languages shipped: none. PowerPoint for Mac ships 26.
 
 ## Upcoming
 
@@ -178,6 +182,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-24 | Slide Show: Ctrl+wheel (Cmd+wheel on a Mac) over the slide zooms in and out around the pointer, four notches per doubling, up to 4×, as in PowerPoint; zooming back to the whole slide leaves the zoom, and the plain wheel still turns the page (#1286) |
 | 2026-10-23 | Normal view: a slide zoomed past the window gets a horizontal and a vertical scroll bar on the axes that overflow; drag the thumb or click the track to reach every edge (#1157) |
 | 2026-10-22 | Shape Fill and Shape Outline format the members of a selected group, including nested groups, in one undo step. Fill transparency retains each member's effective colour (#1079) |
+| 2026-10-22 | Japanese interface, second step: 325 more catalog entries (879 of ~1,050 strings, 84%). The dialog bodies (Insert Table, Slide Size, Font, Paragraph, Tabs, Header & Footer, Hyperlink, Set Up Show, Zoom, Export, Date and Time, Spelling, Photo Album, theme colours and fonts, Accessibility Checker, AutoCorrect, chart data, SmartArt, About and the rest), their field labels and error/status messages, the Format and selection panes, the File tab's page contents and the About/Credits window are drawn in Japanese; the shared field/check/choice helpers and the backstage heading, dim and tile helpers translate their labels, and an i18n test pins the coverage. Some tooltips/help text still English. |
+| 2026-10-21 | Interface language: a per-language TSV catalog (the sibling apps' system), system-language following, and Preferences ▸ Interface language (auto \| English \| 日本語). The Japanese catalog covers the menus, ribbon tabs and buttons, status bar, command labels, command palette and Preferences; other dialog bodies still English |
 | 2026-10-21 | 3-D contours, extrusion depths and bevels keep their size in points inside a group whose child coordinates scale its shapes: a 1 pt contour on a small extruded cube in a legacy group drew hundreds of points wide, a band across the slide |
 | 2026-10-21 | Groups nest at most 32 deep (`arrange.group` refuses more), as deep as PPTX import reads and slides draw: a deck grouped 39 or more levels deep saved without complaint and then could not be opened again |
 | 2026-10-21 | Review › Language has *Whole presentation*: one proofing language for every text box, table cell, note, master and layout, and the default for new text (`format.languageAll`, one undo step); the per-selection language still works |
@@ -335,6 +341,8 @@ app's JSON control channel (`deckcraft --control PORT`).
 | 2026-10-23 | trivial | Progress log: scroll bars on the zoomed slide pane (#1157). Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: the Columns dialog. Scores and milestone names unchanged |
 | 2026-10-24 | trivial | Progress log: Edit Points handle drags with Shift, Ctrl/Cmd or Alt/Option. Scores and milestone names unchanged |
+| 2026-10-22 | minor | Japanese interface, second step: 325 more catalog entries (879 of ~1,050, 84%) for dialog bodies and messages, panes and the File tab; the shared label helpers translate their labels; some tooltips and help remain English |
+| 2026-10-21 | minor | Japanese interface, first step: TSV catalogs, system-language following, the Interface language setting and 554 Japanese strings for menus, ribbon, status bar, command labels, command palette and Preferences; other dialog bodies still English |
 | 2026-10-20 | trivial | Explicit empty chart number-format sections hide their values; blank whole-code General fallback is retained. Synthetic formatter regressions; chart-element scores and readiness estimates unchanged |
 | 2026-10-21 | trivial | Progress log: Reuse Slides picker (#1103). Scores and milestone names unchanged |
 | 2026-10-21 | trivial | Progress log: slide range selection (#1105). Scores and milestone names unchanged |
