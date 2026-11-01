@@ -7,6 +7,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use deckcraft_model::resolve::Ctx;
 use deckcraft_model::{MediaId, Presentation, Shape, ShapeId, ShapeKind, Slide, SlideId};
 use serde::Serialize;
 
@@ -92,6 +93,12 @@ pub struct Change {
     pub kind: ChangeKind,
     /// Index in the open deck (for inserted: where it would go).
     pub slide: usize,
+    /// The editor's number of that slide (`slide` + 1).
+    pub number: usize,
+    /// Which side has it alone: `deck` (the open presentation; accepting deletes it) or `file`
+    /// (the compared file; accepting adds it). Absent when both have it and differ.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub only_in: Option<&'static str>,
     /// Index in the revised deck (none for deleted).
     pub revised: Option<usize>,
     /// What differs, readable: `Title 1: text`, `Picture 3 inserted`, `notes`…
@@ -118,19 +125,33 @@ pub fn diff(cur: &Presentation, rev: &Presentation, by_position: bool) -> Vec<Ch
         let (Some(a), Some(b)) = (cur.slides.get(*i), rev.slides.get(*j)) else { continue };
         let details = slide_details(cur, a, rev, b);
         if !details.is_empty() {
-            out.push(Change { kind: ChangeKind::Changed, slide: *i, revised: Some(*j), details });
+            out.push(Change { kind: ChangeKind::Changed, slide: *i, number: i.saturating_add(1), only_in: None, revised: Some(*j), details });
         }
     }
     for (i, s) in cur.slides.iter().enumerate() {
         if !cur_matched.contains(&i) {
-            out.push(Change { kind: ChangeKind::Deleted, slide: i, revised: None, details: vec![slide_title(s)] });
+            out.push(Change {
+                kind: ChangeKind::Deleted,
+                slide: i,
+                number: i.saturating_add(1),
+                only_in: Some("deck"),
+                revised: None,
+                details: vec![slide_title(s)],
+            });
         }
     }
     for (j, s) in rev.slides.iter().enumerate() {
         if !rev_matched.contains(&j) {
             // After the open slide that matches the revised slide before it.
             let at = (0..j).rev().find_map(|k| pairs.iter().find(|p| p.1 == k).map(|p| p.0 + 1)).unwrap_or(0);
-            out.push(Change { kind: ChangeKind::Inserted, slide: at, revised: Some(j), details: vec![slide_title(s)] });
+            out.push(Change {
+                kind: ChangeKind::Inserted,
+                slide: at,
+                number: at.saturating_add(1),
+                only_in: Some("file"),
+                revised: Some(j),
+                details: vec![slide_title(s)],
+            });
         }
     }
     out.sort_by_key(|c| (c.slide, c.revised.unwrap_or(0)));
@@ -172,7 +193,18 @@ fn plain_shape(s: &Shape) -> Shape {
     c
 }
 
-fn shape_details(cp: &Presentation, a: &Shape, rp: &Presentation, b: &Shape, out: &mut Vec<String>) {
+/// The box a shape is drawn with: its own, else the one it inherits from its layout or master
+/// placeholder (`ctx`).
+fn drawn_box(ctx: Option<&Ctx>, s: &Shape) -> Option<deckcraft_model::Xfrm> {
+    s.xfrm.or_else(|| ctx.map(|c| deckcraft_model::resolve::xfrm(c, s)))
+}
+
+/// The rotation and flips a shape is drawn with (none without a box).
+fn turn(ctx: Option<&Ctx>, s: &Shape) -> (f64, bool, bool) {
+    drawn_box(ctx, s).map_or((0.0, false, false), |x| (x.rot, x.flip_h, x.flip_v))
+}
+
+fn shape_details(cp: &Presentation, ca: Option<&Ctx>, a: &Shape, rp: &Presentation, cb: Option<&Ctx>, b: &Shape, out: &mut Vec<String>) {
     let label = shape_label(b);
     let text = |s: &Shape| s.text.as_ref().map(|t| t.text()).unwrap_or_default();
     let mut what = vec![];
@@ -181,11 +213,23 @@ fn shape_details(cp: &Presentation, a: &Shape, rp: &Presentation, b: &Shape, out
     } else if a.text != b.text {
         what.push("text formatting");
     }
-    match (&a.xfrm, &b.xfrm) {
+    // Boxes as drawn: a stored box equal to the inherited one is no change.
+    match (&drawn_box(ca, a), &drawn_box(cb, b)) {
         (Some(x), Some(y)) if (x.x, x.y) != (y.x, y.y) && (x.w, x.h) == (y.w, y.h) => what.push("moved"),
         (Some(x), Some(y)) if (x.w, x.h) != (y.w, y.h) => what.push("resized"),
-        (x, y) if x.as_ref().map(|x| x.rot) != y.as_ref().map(|y| y.rot) => what.push("rotated"),
         _ => {}
+    }
+    // Rotation and flips are reported alongside a move or resize, not hidden behind it. No stored
+    // box means the inherited one (the layout's or master's), as the shape is drawn.
+    let (ta, tb) = (turn(ca, a), turn(cb, b));
+    if ta.0 != tb.0 {
+        what.push("rotated");
+    }
+    if (ta.1, ta.2) != (tb.1, tb.2) {
+        what.push("flipped");
+    }
+    if a.geom != b.geom {
+        what.push("shape");
     }
     if a.fill != b.fill || a.line != b.line || a.style != b.style || a.effects != b.effects {
         what.push("formatting");
@@ -197,17 +241,24 @@ fn shape_details(cp: &Presentation, a: &Shape, rp: &Presentation, b: &Shape, out
     if pic(cp, a) != pic(rp, b) {
         what.push("picture");
     }
-    if what.is_empty() {
-        let (mut x, mut y) = (plain_shape(a), plain_shape(b));
-        x.text = None;
-        y.text = None;
-        if let (ShapeKind::Picture { .. }, ShapeKind::Picture { .. }) = (&x.kind, &y.kind) {
-            x.kind = ShapeKind::Shape;
-            y.kind = ShapeKind::Shape;
-        }
-        if x != y {
-            what.push("properties");
-        }
+    // Anything the checks above do not cover (alt text, hidden, a link…) is reported too, also
+    // beside them: the fields they compared are left out of this comparison.
+    let (mut x, mut y) = (plain_shape(a), plain_shape(b));
+    for z in [&mut x, &mut y] {
+        z.text = None;
+        z.xfrm = None;
+        z.geom = Default::default();
+        z.fill = None;
+        z.line = None;
+        z.style = None;
+        z.effects = Default::default();
+    }
+    if let (ShapeKind::Picture { .. }, ShapeKind::Picture { .. }) = (&x.kind, &y.kind) {
+        x.kind = ShapeKind::Shape;
+        y.kind = ShapeKind::Shape;
+    }
+    if x != y {
+        what.push("properties");
     }
     if !what.is_empty() {
         out.push(format!("{label}: {}", what.join(", ")));
@@ -217,6 +268,7 @@ fn shape_details(cp: &Presentation, a: &Shape, rp: &Presentation, b: &Shape, out
 fn slide_details(cp: &Presentation, a: &Slide, rp: &Presentation, b: &Slide) -> Vec<String> {
     let mut out = vec![];
     let mut used: HashSet<usize> = HashSet::new();
+    let (ca, cb) = (Ctx::for_slide(cp, a), Ctx::for_slide(rp, b));
     for sa in &a.shapes {
         let k = b
             .shapes
@@ -227,15 +279,15 @@ fn slide_details(cp: &Presentation, a: &Slide, rp: &Presentation, b: &Slide) -> 
             Some(k) if !used.contains(&k) => {
                 used.insert(k);
                 if let Some(sb) = b.shapes.get(k) {
-                    shape_details(cp, sa, rp, sb, &mut out);
+                    shape_details(cp, ca.as_ref(), sa, rp, cb.as_ref(), sb, &mut out);
                 }
             }
-            _ => out.push(format!("{} deleted", shape_label(sa))),
+            _ => out.push(format!("{} deleted (only in the deck)", shape_label(sa))),
         }
     }
     for (k, sb) in b.shapes.iter().enumerate() {
         if !used.contains(&k) {
-            out.push(format!("{} inserted", shape_label(sb)));
+            out.push(format!("{} inserted (only in the file)", shape_label(sb)));
         }
     }
     let order = |s: &Slide| s.shapes.iter().map(|x| x.name.clone()).collect::<Vec<_>>();
@@ -353,6 +405,25 @@ pub fn adopt(doc: &mut Presentation, rev: &Presentation, slide: &Slide, replacin
         let name = rev.layout(slide.layout).map(|(_, l)| l.name.clone());
         let by_name = name.and_then(|n| doc.masters.iter().flat_map(|m| &m.layouts).find(|l| l.name == n).map(|l| l.id));
         sl.layout = by_name.or_else(|| doc.masters.first().and_then(|m| m.layouts.first()).map(|l| l.id)).unwrap_or_default();
+    }
+    // A placeholder without a box of its own is drawn with its layout's; where this deck's layout
+    // draws it otherwise (placed or turned differently), the file's box is stored on it, so the
+    // accepted slide looks as the file does and compares equal to it.
+    if let (Some(file), Some(here)) = (Ctx::for_slide(rev, slide), Ctx::for_slide(doc, &sl)) {
+        let boxes: Vec<Option<deckcraft_model::Xfrm>> = slide
+            .shapes
+            .iter()
+            .zip(&sl.shapes)
+            .map(|(f, h)| {
+                let want = deckcraft_model::resolve::xfrm(&file, f);
+                (h.xfrm.is_none() && deckcraft_model::resolve::xfrm(&here, h) != want).then_some(want)
+            })
+            .collect();
+        for (h, b) in sl.shapes.iter_mut().zip(boxes) {
+            if b.is_some() {
+                h.xfrm = b;
+            }
+        }
     }
     match replacing {
         Some(id) => sl.id = id,
@@ -492,6 +563,136 @@ mod tests {
         let own = &doc.slides[0];
         let Some(Background::Fill { fill: Fill::Picture(back) }) = &own.background else { panic!("no background picture") };
         assert_eq!(bytes(back.media), b"open background");
+    }
+
+    /// NN6: a slide reset drops the placeholders' stored boxes; comparing it with the copy from
+    /// before the reset must not call that a rotation (no stored box is rotation 0).
+    #[test]
+    fn a_reset_slide_is_not_rotated_against_its_earlier_copy() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleAndContent", "title": "T", "body": "b"})).unwrap();
+        let ids: Vec<u32> = s.doc().unwrap().doc.slides[1].shapes.iter().map(|x| x.id.0).collect();
+        for id in &ids {
+            s.execute("shape.move", &json!({"ids": [id], "dx": 10, "dy": 0})).unwrap();
+            s.execute("shape.move", &json!({"ids": [id], "dx": -10, "dy": 0})).unwrap();
+        }
+        let before = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        s.execute("slide.reset", &json!({"index": 1})).unwrap();
+        let v = s.execute("review.compare", &json!({"name": "before.deckcraft", "data": before})).unwrap();
+        assert!(!v.to_string().contains("rotated"), "{v}");
+    }
+
+    /// A shape both moved and rotated reports both, not only the move.
+    #[test]
+    fn a_moved_and_rotated_shape_reports_both() {
+        let mut s = Session::with_new();
+        let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+        let before = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        s.execute("shape.move", &json!({"ids": [id], "dx": 40, "dy": 0})).unwrap();
+        s.execute("shape.rotate", &json!({"ids": [id], "deg": 30})).unwrap();
+        let v = s.execute("review.compare", &json!({"name": "before.deckcraft", "data": before})).unwrap().to_string();
+        assert!(v.contains("moved") && v.contains("rotated"), "{v}");
+    }
+
+    /// A property no other check covers (here the alt text) is reported beside a flip.
+    #[test]
+    fn a_flipped_shape_with_new_alt_text_reports_both() {
+        let mut s = Session::with_new();
+        let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+        let before = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        s.execute("shape.flip", &json!({"ids": [id]})).unwrap();
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sl = std::sync::Arc::make_mut(&mut doc.slides[0]);
+        sl.shapes.iter_mut().find(|x| x.id.0 as u64 == id).unwrap().descr = "A red box".into();
+        let v = s.execute("review.compare", &json!({"name": "before.deckcraft", "data": before})).unwrap().to_string();
+        assert!(v.contains("flipped") && v.contains("properties"), "{v}");
+    }
+
+    /// A flip and a change of shape (rectangle to ellipse) are both reported.
+    #[test]
+    fn a_flipped_shape_that_changed_shape_reports_both() {
+        let mut s = Session::with_new();
+        let id = s.execute("shape.insert", &json!({"preset": "rect", "rect": [100, 100, 100, 50]})).unwrap()["id"].as_u64().unwrap();
+        let before = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        s.execute("shape.flip", &json!({"ids": [id]})).unwrap();
+        s.execute("shape.change", &json!({"ids": [id], "preset": "ellipse"})).unwrap();
+        let v = s.execute("review.compare", &json!({"name": "before.deckcraft", "data": before})).unwrap().to_string();
+        assert!(v.contains("flipped") && v.contains("shape\""), "{v}");
+    }
+
+    /// A placeholder with no box of its own is drawn with its layout's rotation; setting it to 0
+    /// on the slide is a rotation change, and compare says so.
+    #[test]
+    fn an_inherited_rotation_counts_when_compared() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleOnly", "title": "T"})).unwrap();
+        s.execute("slide.reset", &json!({"index": 1})).unwrap();
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let layout = doc.slides[1].layout;
+        let title = |sh: &deckcraft_model::Shape| sh.ph.as_ref().is_some_and(|p| matches!(p.kind, deckcraft_model::PhType::Title));
+        let (mi, li) = doc.masters.iter().enumerate().find_map(|(m, x)| x.layouts.iter().position(|l| l.id == layout).map(|l| (m, l))).unwrap();
+        let ph = std::sync::Arc::make_mut(&mut doc.masters[mi]).layouts[li].shapes.iter_mut().find(|x| title(x)).unwrap();
+        let mut x = ph.xfrm.unwrap();
+        x.rot = 30.0;
+        ph.xfrm = Some(x);
+        assert!(doc.slides[1].shapes.iter().find(|x| title(x)).unwrap().xfrm.is_none(), "the title inherits its box");
+        let before = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let sl = std::sync::Arc::make_mut(&mut doc.slides[1]);
+        let t = sl.shapes.iter_mut().find(|x| title(x)).unwrap();
+        x.rot = 0.0;
+        t.xfrm = Some(x);
+        let v = s.execute("review.compare", &json!({"name": "before.deckcraft", "data": before})).unwrap();
+        assert!(v.to_string().contains("rotated"), "{v}");
+    }
+
+    /// The file's placeholder inherits an unturned box from its layout while this deck's layout
+    /// turns it: accepting stores the file's box on the placeholder, so the slide is drawn as in the
+    /// file and nothing is left to accept.
+    #[test]
+    fn accepting_an_inherited_box_takes_the_files_box() {
+        let mut s = Session::with_new();
+        s.execute("slide.new", &json!({"layout": "titleOnly", "title": "T"})).unwrap();
+        s.execute("slide.reset", &json!({"index": 1})).unwrap();
+        let file = s.execute("file.saveBytes", &json!({})).unwrap()["data"].as_str().unwrap().to_string();
+        let title = |sh: &deckcraft_model::Shape| sh.ph.as_ref().is_some_and(|p| matches!(p.kind, deckcraft_model::PhType::Title));
+        let st = s.doc_mut().unwrap();
+        let doc = std::sync::Arc::make_mut(&mut st.doc);
+        let layout = doc.slides[1].layout;
+        let (mi, li) = doc.masters.iter().enumerate().find_map(|(m, x)| x.layouts.iter().position(|l| l.id == layout).map(|l| (m, l))).unwrap();
+        let ph = std::sync::Arc::make_mut(&mut doc.masters[mi]).layouts[li].shapes.iter_mut().find(|x| title(x)).unwrap();
+        let mut x = ph.xfrm.unwrap();
+        x.rot = 30.0;
+        ph.xfrm = Some(x);
+        let v = s.execute("review.compare", &json!({"name": "file.deckcraft", "data": file})).unwrap();
+        assert!(v.to_string().contains("rotated"), "{v}");
+        s.execute("review.accept", &json!({"all": true})).unwrap();
+        let st = s.doc().unwrap();
+        let t = st.doc.slides[1].shapes.iter().find(|x| title(x)).unwrap();
+        assert_eq!(t.xfrm.map(|x| x.rot), Some(0.0), "the file's box is stored: {:?}", t.xfrm);
+        let v = s.execute("review.compare", &json!({"name": "file.deckcraft", "data": file})).unwrap();
+        assert!(v["changes"].as_array().is_some_and(|c| c.is_empty()), "nothing left to accept: {v}");
+    }
+
+    #[test]
+    fn each_change_says_which_side_it_is_on() {
+        let (mut s, rev, _) = decks();
+        let v = s.execute("review.compare", &json!({"name": "rev.deckcraft", "data": rev})).unwrap();
+        for c in v["changes"].as_array().unwrap() {
+            assert_eq!(c["number"].as_u64().unwrap(), c["slide"].as_u64().unwrap() + 1, "{c}");
+            match c["kind"].as_str().unwrap() {
+                "deleted" => assert_eq!(c["onlyIn"], "deck", "{c}"),
+                "inserted" => assert_eq!(c["onlyIn"], "file", "{c}"),
+                _ => assert!(c.get("onlyIn").is_none(), "{c}"),
+            }
+        }
+        // A shape only in the open deck reads as only in the deck.
+        s.execute("shape.insert", &json!({"preset": "ellipse", "rect": [10.0, 10.0, 40.0, 40.0]})).unwrap();
+        let v = s.execute("review.revisions", &json!({})).unwrap();
+        assert!(v.to_string().contains("deleted (only in the deck)"), "{v}");
     }
 
     #[test]

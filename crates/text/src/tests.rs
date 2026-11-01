@@ -178,6 +178,27 @@ fn only_the_first_character_of_a_bullet_is_drawn() {
 }
 
 #[test]
+fn bullet_in_an_unavailable_unicode_symbol_font_keeps_its_character() {
+    // Google Slides bullets in "Noto Sans Symbols" (not installed) draw ❑ ❖, not a generic dot (#1347).
+    for c in ["\u{2751}", "\u{2756}", "\u{f0a7}"] {
+        assert_eq!(map_symbol_bullet(c, Some("Noto Sans Symbols")), c);
+    }
+    // The legacy symbol fonts still map their codes.
+    assert_eq!(map_symbol_bullet("q", Some("Wingdings")), "\u{2751}");
+    let (p, mut sh) = setup("One", 600.0, 300.0);
+    let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+    para.props.bullet = Some(Bullet::Char { char: "\u{2751}".into() });
+    para.props.bullet_font = Some("Noto Sans Symbols".into());
+    let l = lay(&p, &sh, 600.0, 300.0);
+    let bullet = l.runs.iter().find(|r| r.chars == (0, 0)).expect("bullet run");
+    assert_eq!(bullet.glyphs.len(), 1);
+    let square = deckcraft_fonts::first_glyph(&bullet.face, &['\u{2751}']);
+    let expected = if square != 0 { square } else { deckcraft_fonts::first_glyph(&bullet.face, &['\u{2022}']) };
+    assert_ne!(expected, 0, "the selected face must draw ❑ or the fallback dot");
+    assert_eq!(bullet.glyphs[0].0, expected, "draw the requested bullet when covered, else the dot");
+}
+
+#[test]
 fn shrink_on_overflow() {
     let text = (0..30).map(|i| format!("Line number {i}")).collect::<Vec<_>>().join("\n");
     let (p, sh) = setup(&text, 600.0, 200.0);
@@ -1256,6 +1277,43 @@ fn symbol_font_characters_draw_in_the_sym_font() {
 }
 
 #[test]
+fn a_space_after_a_symbol_font_character_keeps_the_runs_font() {
+    // PowerPoint stores "→ Only" typed in a Wingdings run as U+F0E0, a space and the words, all
+    // with `<a:sym typeface="Wingdings"/>`: only the symbol code draws in Wingdings. The space
+    // stayed in the arrow's face, and Wingdings' space is about four times as wide. Skipped
+    // without Wingdings.
+    let db = FontDb::global();
+    if !db.has_family("Wingdings") || !covers_symbol(&db.face("Wingdings", "Regular"), '\u{F0E0}') {
+        eprintln!("skipped: no installed Wingdings face draws U+F0E0");
+        return;
+    }
+    let laid = |split: bool| {
+        let (p, mut sh) = setup("\u{F0E0} Only", 900.0, 300.0);
+        let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
+        para.props.bullet = Some(Bullet::None);
+        para.runs[0].props.font = Some("Arial".into());
+        para.runs[0].props.font_sym = Some("Wingdings".into());
+        if split {
+            // The arrow alone carries the symbol font.
+            let mut rest = para.runs[0].clone();
+            rest.text = " Only".into();
+            rest.props.font_sym = None;
+            para.runs[0].text = "\u{F0E0}".into();
+            para.runs.push(rest);
+        }
+        lay(&p, &sh, 900.0, 300.0)
+    };
+    let whole = laid(false);
+    let families: Vec<(String, (usize, usize))> = whole.runs.iter().map(|r| (r.face.family.clone(), r.chars)).collect();
+    assert!(families.iter().any(|(f, c)| f.eq_ignore_ascii_case("Wingdings") && c.0 == 0), "the arrow: {families:?}");
+    let in_wingdings = |i: usize| families.iter().any(|(f, c)| (c.0..c.1).contains(&i) && f.eq_ignore_ascii_case("Wingdings"));
+    assert!(!in_wingdings(1) && !in_wingdings(2), "the space and words: {families:?}");
+    // "Only" starts where it does when the arrow alone is in Wingdings.
+    let o = |l: &TextLayout| l.lines[0].caret_x[2];
+    assert!((o(&whole) - o(&laid(true))).abs() < 0.01, "{} vs {}", o(&whole), o(&laid(true)));
+}
+
+#[test]
 fn small_capitals_draw_smaller_than_the_capitals_beside_them() {
     let (p, mut sh) = setup("HxHx", 2000.0, 300.0);
     let para = &mut sh.text.as_mut().unwrap().paragraphs[0];
@@ -1844,4 +1902,29 @@ fn an_empty_paragraph_keeps_its_paragraph_mark_height() {
     assert_eq!(l.lines.len(), 3);
     let h = l.lines[1].bottom - l.lines[1].top;
     assert!((h - h10).abs() < 0.5, "a 10pt empty paragraph should give {h10}, got {h}");
+}
+
+#[test]
+fn a_paragraph_with_its_own_start_at_restarts_the_count_there() {
+    // PowerPoint's "Start at" on a paragraph begins a new run of numbers at that value, so setting
+    // start k on paragraph k reads 1, 2, 3, not 1, 3, 5.
+    // The bullets' glyph ids next to those of the expected labels, as pairs (drawn, expected).
+    let check = |starts: &[u32], expect: &[u32]| {
+        let (p, mut sh) = setup("a\nb\nc\nd", 600.0, 300.0);
+        for (para, st) in sh.text.as_mut().unwrap().paragraphs.iter_mut().zip(starts) {
+            para.props.bullet = Some(Bullet::AutoNum { scheme: "arabicPeriod".into(), start_at: *st });
+        }
+        let l = lay(&p, &sh, 600.0, 300.0);
+        let bullets: Vec<_> = l.runs.iter().filter(|r| r.cells.is_empty()).collect();
+        assert_eq!(bullets.len(), expect.len());
+        for (b, n) in bullets.iter().zip(expect) {
+            let want = measure_str(&b.face, b.size, &format!("{n}.")).1.iter().map(|g| g.0).collect::<Vec<_>>();
+            assert_eq!(b.glyphs.iter().map(|g| g.0).collect::<Vec<_>>(), want, "expected {n}. for starts {starts:?}");
+        }
+    };
+    check(&[1, 2, 3, 4], &[1, 2, 3, 4]);
+    // The same start on every paragraph still counts on from it (a whole box numbered at once).
+    check(&[3, 3, 3, 3], &[3, 4, 5, 6]);
+    // A later paragraph with a new start begins a fresh run.
+    check(&[1, 1, 7, 7], &[1, 2, 7, 8]);
 }

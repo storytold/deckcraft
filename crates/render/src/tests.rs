@@ -978,6 +978,7 @@ fn a_linear_gradient_ramps_like_powerpoint() {
             stops: vec![stop(0.0, deckcraft_color::Rgba::rgb(0, 0, 0)), stop(1.0, deckcraft_color::Rgba::rgb(255, 255, 255))],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1003,6 +1004,7 @@ fn a_gradient_with_a_stop_off_the_end_stays_linear() {
             stops: vec![stop(0.2, deckcraft_color::Rgba::rgb(0, 0, 0)), stop(1.0, deckcraft_color::Rgba::rgb(255, 255, 255))],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1044,6 +1046,7 @@ fn a_shape_filled_with_the_background_shows_the_slide_background() {
             stops: vec![stop(0.0, 0), stop(0.5, 0), stop(1.0, 200)],
             shape: GradientShape::Linear { angle: 0.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         }),
     });
     let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
@@ -1145,6 +1148,7 @@ fn a_text_gradient_starts_over_on_every_line() {
             stops: vec![stop(0.0, 0), stop(1.0, 255)],
             shape: GradientShape::Linear { angle: 90.0, scaled: false },
             rotate_with_shape: true,
+            flip: None,
         }));
     }
     sh.text = Some(t);
@@ -1306,6 +1310,7 @@ fn rect_path_gradients_draw_x_shaped_contours() {
             stops: vec![stop(0.0, 0), stop(0.5, 128), stop(1.0, 255)],
             shape: GradientShape::Path { path: "rect".into(), focus: [0.5, 0.5, 0.5, 0.5] },
             rotate_with_shape: true,
+            flip: None,
         })),
         line: Some(deckcraft_model::style::Line { fill: Some(Fill::None), ..Default::default() }),
         ..Default::default()
@@ -1774,6 +1779,28 @@ fn the_editor_pasteboard_draws_shapes_off_the_slide() {
     assert_eq!(at(200, 300), [255, 255, 255, 255]);
     // The drawing's reach, in slide space.
     assert!(drawn.x0 <= -100.0 && drawn.y1 >= 660.0 && drawn.x1 >= 960.0, "{drawn:?}");
+}
+
+#[test]
+fn animation_state_skips_layout_and_master_shapes_sharing_a_slide_shape_id() {
+    let mut p = Presentation::default();
+    let bar = |x| Shape {
+        id: ShapeId(77),
+        xfrm: Some(Xfrm::new(x, 400.0, 100.0, 60.0)),
+        fill: Some(Fill::solid(ColorRef::rgb(Rgba::rgb(200, 0, 0)))),
+        ..Default::default()
+    };
+    let lid = p.slides[0].layout;
+    let m = std::sync::Arc::make_mut(&mut p.masters[0]);
+    m.shapes.push(bar(100.0));
+    m.layouts.iter_mut().find(|l| l.id == lid).expect("layout").shapes.push(bar(400.0));
+    std::sync::Arc::make_mut(&mut p.slides[0]).shapes.push(bar(700.0));
+    let hide = |_: ShapeId| ShapeState { visible: false, ..Default::default() };
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, state: Some(&hide), ..Default::default() });
+    for x in [150, 450] {
+        assert_eq!(img.pixel(x, 430)[..3], [200, 0, 0], "the backdrop bar at x={x} stays");
+    }
+    assert_ne!(img.pixel(750, 430)[..3], [200, 0, 0], "the slide's own shape with that id is hidden");
 }
 
 #[test]
@@ -2950,4 +2977,60 @@ fn pie_data_labels_take_the_chart_text_colour_when_it_has_one() {
     assert_eq!(count(&plain, &red), 0, "no red without a text colour");
     assert!(count(&coloured, &red) > 30, "the labels take the chart's red: {} red pixels", count(&coloured, &red));
     assert!(count(&plain, &white) > count(&coloured, &white), "the labels were white before");
+}
+
+/// #1165: an ellipse sized at the EMU limit, crossing the slide, made vello's flattener allocate a
+/// buffer from its on-screen length and abort. It is skipped; the rest of the slide still draws.
+#[test]
+fn a_shape_far_larger_than_any_screen_is_skipped_not_flattened() {
+    let huge = Shape {
+        id: ShapeId(501),
+        geom: Geom::preset("ellipse"),
+        xfrm: Some(Xfrm::new(-5e17, -5e17, 1e18, 1e18)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent2)),
+        ..Default::default()
+    };
+    let normal = Shape {
+        id: ShapeId(502),
+        xfrm: Some(Xfrm::new(100.0, 100.0, 200.0, 100.0)),
+        style: Some(ShapeStyle::accent(deckcraft_color::SchemeSlot::Accent1)),
+        ..Default::default()
+    };
+    let p = deck_with(vec![huge, normal]);
+    let img = render_slide(&p, 0, &RenderOpts { scale: 1.0, ..Default::default() });
+    let accent = p.masters[0].theme.colors.get(deckcraft_color::SchemeSlot::Accent1);
+    let px = img.pixel(200, 150);
+    assert!((px[0] as i32 - accent.r as i32).abs() <= 2, "{px:?} vs {accent:?}");
+    assert_eq!(img.pixel(50, 50), [255, 255, 255, 255], "the huge ellipse is not drawn");
+}
+
+/// #1165: a path with a NaN point is not drawn, even when the shape's frame is finite and small
+/// (a bounding box, or a union with the frame, would hide the NaN).
+#[test]
+fn a_shape_whose_outline_is_not_finite_is_not_drawable() {
+    let geo = |pts: &[(f64, f64)]| {
+        let mut path = kurbo::BezPath::new();
+        path.move_to(pts[0]);
+        for p in &pts[1..] {
+            path.line_to(*p);
+        }
+        deckcraft_geom::preset::Geometry {
+            paths: vec![deckcraft_geom::preset::SubPath { path, fill: deckcraft_geom::preset::FillMode::Norm, stroke: true, even_odd: false }],
+            text_rect: kurbo::Rect::ZERO,
+            handles: vec![],
+            sites: vec![],
+        }
+    };
+    let m = kurbo::Affine::IDENTITY;
+    assert!(crate::geometry::drawable(&geo(&[(0.0, 0.0), (100.0, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (f64::NAN, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (f64::INFINITY, 50.0)]), m, 100.0, 50.0));
+    assert!(!crate::geometry::drawable(&geo(&[(0.0, 0.0), (1e18, 50.0)]), m, 100.0, 50.0));
+    // A quadratic whose extremum overflows kurbo's bounding box: its control point still counts.
+    let mut path = kurbo::BezPath::new();
+    path.move_to((0.0, 0.0));
+    path.quad_to((1e308, 0.0), (0.0, 0.0));
+    let mut quad = geo(&[(0.0, 0.0), (1.0, 1.0)]);
+    quad.paths[0].path = path;
+    assert!(!crate::geometry::drawable(&quad, m, 100.0, 50.0));
 }

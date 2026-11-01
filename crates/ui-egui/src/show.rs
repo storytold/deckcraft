@@ -27,6 +27,8 @@ use presenter::{NOTES_MAX, NOTES_MIN, NOTES_STEP, format_elapsed, presenter_note
 #[cfg(test)]
 use render::{below_playing_video, next_rect, render_frame, start_prefetch};
 use render::{render_backdrop, render_threads};
+#[cfg(test)]
+use ui::transition_layers;
 pub use ui::ui;
 use zoom::Zoom;
 #[cfg(test)]
@@ -44,6 +46,8 @@ pub struct Show {
     /// Play every step automatically (animation preview).
     pub autoplay: bool,
     pub rehearse: bool,
+    /// Set Up Slide Show ▸ Keep mouse cursor visible: a still pointer is not hidden (#1445).
+    pub keep_cursor: bool,
     timeline: Option<(usize, Timeline)>,
     step_start: f64,
     slide_start: f64,
@@ -52,7 +56,13 @@ pub struct Show {
     tex: Option<(Key, TextureHandle)>,
     /// The shapes stacked above the playing videos, drawn over the video frames (#1005).
     overlay: Option<(Key, Vec<ShapeId>, TextureHandle)>,
-    next_tex: Option<(usize, TextureHandle)>,
+    /// The Presenter View's next-slide preview: the presentation and slide it shows.
+    next_tex: Option<(std::sync::Arc<Presentation>, usize, TextureHandle)>,
+    /// The one next-slide preview being rendered on another thread (#964).
+    next_job: Option<(std::sync::Arc<Presentation>, usize, std::sync::mpsc::Receiver<egui::ColorImage>)>,
+    /// Preview renders started on another thread.
+    #[cfg(test)]
+    preview_spawns: usize,
     /// The next slide's first frame, rendered in the background while this one is shown so
     /// advancing only uploads it (#240).
     prefetch: Option<Prefetch>,
@@ -156,6 +166,9 @@ struct Transition {
     kind: String,
     option: String,
     dur: f64,
+    /// Going back: the transition of the slide left behind plays from its end to its start, so
+    /// the old slide takes the new slide's part (#1531).
+    reverse: bool,
 }
 
 /// A copy of the show's clock origins for regressions that must not depend on wall time.
@@ -206,6 +219,7 @@ impl Show {
             preview_only: false,
             autoplay: false,
             rehearse: false,
+            keep_cursor: false,
             timeline: None,
             step_start: 0.0,
             slide_start: 0.0,
@@ -214,6 +228,9 @@ impl Show {
             tex: None,
             overlay: None,
             next_tex: None,
+            next_job: None,
+            #[cfg(test)]
+            preview_spawns: 0,
             prefetch: None,
             backdrop: None,
             blank: None,
@@ -362,6 +379,12 @@ impl Show {
         now - self.last_move < 2.5
     }
 
+    /// Whether a still pointer is hidden: after 2.5 s in a full-screen show, unless Keep mouse
+    /// cursor visible is on. Reading View always keeps it.
+    fn hides_idle_cursor(&self, now: f64) -> bool {
+        !self.pointer_awake(now) && !self.reading && !self.keep_cursor
+    }
+
     /// Pen and laser are different pointers: turning one on puts the other away.
     fn set_pen(&mut self, on: bool) {
         self.pen = on;
@@ -450,12 +473,6 @@ impl Show {
                 if self.rehearse {
                     self.timings.push((self.timeline.as_ref().map(|t| t.0).unwrap_or(i), now - self.slide_start));
                 }
-                let (kind, option, dur) = doc
-                    .slides
-                    .get(i)
-                    .and_then(|s| s.transition.as_ref())
-                    .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
-                    .unwrap_or(("none".into(), String::new(), 0.0));
                 // Take the old slide's texture rather than cloning its handle: the new slide is
                 // otherwise rendered into the same texture, and the transition blends the new
                 // slide with itself (#33).
@@ -463,8 +480,20 @@ impl Show {
                 if from != Some(i) {
                     self.last_viewed = from;
                 }
+                // Going back plays the transition the slide left behind came in with, reversed
+                // (#1531); a queued Back that a later step overtook keeps the forward one.
+                let back = self.state.backward && self.state.slide == i && from.is_some_and(|f| f != i);
+                let (kind, option, dur) = doc
+                    .slides
+                    .get(if back { from.unwrap_or(i) } else { i })
+                    .and_then(|s| s.transition.as_ref())
+                    .map(|t| (t.kind.clone(), t.option.clone(), t.duration_ms as f64 / 1000.0))
+                    .unwrap_or(("none".into(), String::new(), 0.0));
+                // Morph needs no reversing: a Morph from the old slide to the new one is the
+                // reversed Morph.
+                let reverse = back && kind != "morph";
                 self.trans = if kind != "none" && dur > 0.0 && !doc.show.without_animation {
-                    Some(Transition { old, from, morph: None, parts: None, start: now, kind, option, dur })
+                    Some(Transition { old, from, morph: None, parts: None, start: now, kind, option, dur, reverse })
                 } else {
                     None
                 };

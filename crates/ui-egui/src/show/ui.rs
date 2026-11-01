@@ -9,8 +9,8 @@ use super::zoom::{
     wheel_zoom_lines,
 };
 use super::{
-    Align2, BackKey, Click, Color32, CornerRadius, Key, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction, SlideApp,
-    Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
+    Align2, BackKey, Click, Color32, CornerRadius, Key, Layer, LinkJump, Pos2, Rect, RenderOpts, Sense, ShapeId, ShapeState, Show, ShowAction,
+    SlideApp, Source, Stroke, TextureHandle, Ui, json, pos2, show_fills_screen, state_for, theme, vec2, viewport_visible,
 };
 use deckcraft_anim::{StepStamp, TriggerPlay};
 use deckcraft_model::Presentation;
@@ -391,7 +391,7 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
             let aspect = doc.slide_size.width / doc.slide_size.height.max(1.0);
             let part = |k: usize| tr.parts.as_ref().and_then(|p| p.get(k).cloned().flatten());
             let parts = [part(0), part(1), part(2), part(3)];
-            for l in deckcraft_anim::transition_frame(&tr.kind, &tr.option, p, aspect) {
+            for l in transition_layers(&tr.kind, &tr.option, tr.reverse, p, aspect) {
                 let old_or_black = |t: Option<&TextureHandle>| match t {
                     Some(o) => quad_mesh(Some(o.id()), srect, &l, Color32::WHITE),
                     None => quad_mesh(None, srect, &l, Color32::BLACK),
@@ -419,6 +419,32 @@ fn draw_transition(show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, te
         }
     }
     drew
+}
+
+/// The layers of a transition at progress `p`. A reversed transition (going back, #1531) runs
+/// from its end to its start, so the slide being left plays the part of the new slide and the
+/// slide coming back the part of the old one.
+pub(super) fn transition_layers(kind: &str, option: &str, reverse: bool, p: f64, aspect: f64) -> Vec<Layer> {
+    if !reverse {
+        return deckcraft_anim::transition_frame(kind, option, p, aspect);
+    }
+    let mut layers = deckcraft_anim::transition_frame(kind, option, 1.0 - p, aspect);
+    for l in &mut layers {
+        l.source = swap_old_new(l.source);
+    }
+    layers
+}
+
+fn swap_old_new(s: Source) -> Source {
+    match s {
+        Source::Old => Source::New,
+        Source::New => Source::Old,
+        Source::OldBack => Source::NewBack,
+        Source::NewBack => Source::OldBack,
+        Source::OldContent => Source::NewContent,
+        Source::NewContent => Source::OldContent,
+        Source::Black | Source::White => s,
+    }
 }
 
 fn draw_videos(app: &mut SlideApp, show: &mut Show, f: &Fr, sl: &Sl, painter: &egui::Painter, tex: &Option<TextureHandle>) -> (Vec<ShapeId>, bool) {
@@ -579,7 +605,7 @@ fn draw_pen_and_hints(ui: &mut Ui, show: &mut Show, f: &Fr, painter: &egui::Pain
         ctx.set_cursor_icon(egui::CursorIcon::None);
     } else if show.zoom_arm || show.grid {
         ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
-    } else if !show.pointer_awake(now) && !show.reading {
+    } else if show.hides_idle_cursor(now) {
         // Idle first: a still pointer hides also over a clickable shape, such as a playing clip.
         ctx.set_cursor_icon(egui::CursorIcon::None);
         ctx.request_repaint_after(std::time::Duration::from_millis(500));

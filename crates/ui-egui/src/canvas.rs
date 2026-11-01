@@ -396,3 +396,7 @@ mod ruler_tests;
 
 #[cfg(test)]
 mod guides_tests;
+
+#[cfg(test)]
+#[path = "media_bar_tests.rs"]
+mod media_bar_tests;

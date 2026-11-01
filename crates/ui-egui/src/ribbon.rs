@@ -237,6 +237,17 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
                 });
             });
         let r = scroll.inner_rect;
+        // A gallery sized from this reads it on the next frame, so a change (a resize, a tab
+        // shown for the first time) asks for one; within half a point it is the same layout.
+        let spare = r.width() - scroll.content_size.x;
+        let moved = ui.ctx().data_mut(|d| {
+            let was = d.get_temp::<f32>(spare_room_id(&tab));
+            d.insert_temp(spare_room_id(&tab), spare);
+            was.is_none_or(|was| (was - spare).abs() > 0.5)
+        });
+        if moved {
+            ui.ctx().request_repaint();
+        }
         let overflow = (scroll.content_size.x - r.width()).max(0.0);
         let offset = scroll.state.clamped_offset().x;
         // Record the rendered offset for `InputTarget`: the same window point hits a different
@@ -261,6 +272,17 @@ pub fn show(app: &mut SlideApp, ui: &mut Ui) {
             ui.ctx().request_repaint();
         }
     });
+}
+
+fn spare_room_id(tab: &str) -> egui::Id {
+    egui::Id::unique(("ribbon_spare_room", tab))
+}
+
+/// The width the tab's groups left free in the ribbon on the last frame it was drawn; negative
+/// when they ran past its edge. A gallery that gives way to the groups after it sizes itself
+/// from this.
+pub(super) fn spare_room(ctx: &egui::Context, tab: &str) -> Option<f32> {
+    ctx.data(|d| d.get_temp::<f32>(spare_room_id(tab)))
 }
 
 /// A chevron over a ribbon edge that scrolls it; `true` on the frame it is clicked.
@@ -408,6 +430,9 @@ mod master_layout_tests;
 mod icons_popup_tests;
 
 #[cfg(test)]
+mod add_animation_menu_tests;
+
+#[cfg(test)]
 mod align_tests;
 
 #[cfg(test)]
@@ -434,3 +459,6 @@ mod drawtable_tests;
 
 #[cfg(test)]
 mod inktoshape_tests;
+
+#[cfg(test)]
+mod picture_styles_tests;

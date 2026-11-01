@@ -95,7 +95,7 @@ the round trip even though DeckCraft doesn't model it.
 | Audio / video (`p14:media`, trim, fades, bookmarks) | yes | partly | Playback options lost on save (#74) |
 | Ink (`contentPart`) | yes | as a group of freeform lines | PowerPoint sees shapes, not ink |
 | Transitions incl. p14/p15 (Vortex, Morph…) | all 48 | all 48 | `every_transition_kind_round_trips` |
-| Animations: timing tree, build paragraphs, triggers, motion paths | yes (flattened to the Animation Pane list) | yes (rebuilt) | `every_animation_effect_survives`; repeat, triggers and bounce end kept; rewind lost (#77) |
+| Animations: timing tree, build paragraphs, triggers, motion paths | yes (flattened to the Animation Pane list) | yes (rebuilt) | `every_animation_effect_survives`; repeat, triggers, bounce end and rewind kept |
 | Comments: legacy | yes | yes | |
 | Comments: modern threaded (`p188`) | yes | yes | Written next to the flattened legacy part; replies and resolved state round-trip (`threads_and_resolved_round_trip`) |
 | Unknown slide-level elements (`graphicFrame` OLE, extensions, `mc:AlternateContent`) | kept | kept | Rendered as a labelled placeholder with the preview picture when present |
@@ -112,7 +112,7 @@ the round trip even though DeckCraft doesn't model it.
    `corpus_kinds.rs` already check open → save → reopen (parts and text) for decks we author:
    tables, charts, animations, media, sections and masters/layouts among them. Still needed:
    render checks and a PowerPoint reference render for each (owner runs PowerPoint).
-2. The round-trip losses above (#70, #74, #77).
+2. The round-trip losses above (#70, #74).
 3. SVG rendering. EMF+ records inside EMF/WMF are still not drawn.
 
 ## Revision history

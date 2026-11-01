@@ -1,7 +1,6 @@
 # Where DeckCraft falls short of PowerPoint
 
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-22 · **Change:** minor (Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
-> **Last reviewed:** 2026-10-14 · **Last updated:** 2026-10-20 · **Change:** trivial (empty chart number-format sections hide values; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
+> **Last reviewed:** 2026-10-30 · **Last updated:** 2026-10-30 · **Change:** minor (slide-show hit testing follows each shape’s own animation state; scale and rotation covered; previous: trivial, AutoFormat lists run independently of Replace text as you type; previous: minor, slide-show click targets follow animated shapes and text links; previous: minor, Animation Pane ▸ Play From; previous: minor, native chart payloads stored in bounded ZIP members; previous: major, community PR wave 2026-10-14: soak tests, PPTX corpus, comment threads (#70), embedded fonts, SmartArt Text Pane, Animation Pane timeline, Hunspell spelling, thesaurus, AutoCorrect, 14 new dialogs, pen pressure and trackpad gestures; duplicated entries and headers folded; previous: minor, 3-D bevel, camera and face lighting rendered) · **Target:** Microsoft PowerPoint for Mac 16.113 (Microsoft 365)
 
 Every known shortfall, one entry each, ranked by how much it stops someone who presents with
 PowerPoint from switching. This is the work list: pick from the top. Numbers are summarized in
@@ -20,12 +19,12 @@ revision history.
 |---|---|---|:-:|---|---|
 | 1 | PPTX corpus is only decks we author (no PowerPoint reference renders) | File format | B | 20–35 | [file-format-parity.md](file-format-parity.md) |
 | 2 | Data loss and crashes on common paths (#60, #40, #59) | Stability | B | 6–12 | this file |
-| 3 | PPTX round trip drops media options and rewind (#74, #77) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
+| 3 | PPTX round trip drops media playback options (#74) | File format | B | 2–4 | [file-format-parity.md](file-format-parity.md) |
 | 4 | SVG pictures don't render (EMF/WMF do) | File format | B | 4–8 | [file-format-parity.md](file-format-parity.md) |
 | 5 | No localization: English only | Localization | B (infra + 5 languages) | 55–90 | [localization-parity.md](localization-parity.md) |
 | 6 | No printing | Feature | B | 5–8 | [file-format-parity.md](file-format-parity.md) |
 | 7 | Fonts: only Regular, Bold and Italic faces (#69) | Feature | B | 3–5 | [ui-parity.md](ui-parity.md) |
-| 8 | Image paste fails on Windows and Linux (#53) | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
+| 8 | Image paste fails on Windows (#1414); Linux not re-checked | Feature | B | 2–4 | [ui-parity.md](ui-parity.md) |
 | 9 | Presenter view isn't placed on the second display | Hardware | B | 3–5 | [slideshow-parity.md](slideshow-parity.md) |
 | 10 | Animation Pane: 64 of ~190 effects, effect options (timeline and Play From done) | Feature | B (pane) | 7–13 | [animation-parity.md](animation-parity.md) |
 | 11 | Charts: data grid editing, elements, `chartex` types | Feature | B (data, elements) | 12–20 | [parity-checklist.md](parity-checklist.md) |
@@ -37,9 +36,9 @@ revision history.
 ## Stability
 
 ### Close discards an edited presentation without asking (#60)
-- **Evidence:** issue #60; quitting prompts, `file.close` doesn't. PR #75 is open.
+- **Evidence:** issue #60 is open; quitting prompts, `file.close` doesn't. PR #75 was closed without merging.
 - **Impact:** silent data loss on a common path. The worst kind of bug for a presentation app.
-- **Estimate:** 0.5–1 h (land and test #75). **Beta blocker.**
+- **Estimate:** 0.5–1 h (a new prompt and its tests, since #75 was not merged). **Beta blocker.**
 
 ### Startup crashes on some Windows GPUs (#40, #59)
 - **Evidence:** #59 (Intel UHD, access violation in `igvk64.dll` during Vulkan enumeration), #40
@@ -90,17 +89,15 @@ Detail in [file-format-parity.md](file-format-parity.md).
   repeat, bounce end and triggers). Losses these checks found are fixed: notes- and handout-master
   text, paragraph default run properties (`defRPr`, including a link), action sounds, a run's
   inner shadow, reflection and soft edge, a bevel preset with no kept `sp3d`, and text Mouse Over
-  actions. Still open: media options (#74), animation rewind (#77) and a corpus of decks from
+  actions. Still open: media options (#74) and a corpus of decks from
   outside this repo.
 - **Impact:** the main reason to switch is "open my PowerPoint decks". Fidelity on real decks
   (corporate templates, SmartArt, `chartex` charts, embedded fonts, EMF) is still mostly unknown.
-- **Estimate:** 20–35 h: grow the owned corpus in `storytold/photocraft-corpus` style (craftrules
-  `standards/test-corpora.md`), add render checks, have the owner open outputs in PowerPoint, fix
+- **Estimate:** 20–35 h: grow the owned corpus in `storytold/photocraft-corpus` style, add render checks, have the owner open outputs in PowerPoint, fix
   what breaks. **Beta blocker.**
 
-### Round trip loses media playback options and animation rewind (#74, #77)
-- **Evidence:** issues filed 2026-10-10 by an automated reviewer; media playback options and the
-  animation rewind flag aren't written back. Comment threads left with #70: the writer now emits
+### Round trip loses media playback options (#74)
+- **Evidence:** issue #74 (filed 2026-10-10 by an automated reviewer) is open: media playback options aren't written back. Animation rewind (#77) is fixed (PR #83 merged). Comment threads left with #70: the writer now emits
   the `p188` modern part next to the legacy one.
 - **Impact:** a deck opened and saved silently loses show behaviour.
 - **Estimate:** 2–4 h. **Beta blocker.**
@@ -163,8 +160,8 @@ Detail in [file-format-parity.md](file-format-parity.md).
 - **Impact:** Light, Medium and Semibold headings (common in modern templates) render wrong.
 - **Estimate:** 3–5 h. **Beta blocker.**
 
-### Image paste fails on Windows and Linux (#53)
-- **Evidence:** #53 (v0.3.0, Fedora AppImage and Windows).
+### Image paste fails on Windows (#1414)
+- **Evidence:** #53 is closed (PR #88 pastes an image-only clipboard as a picture); #1414 (Ctrl+V fails to paste external images on Windows) is open. Linux was not re-checked after #53 closed.
 - **Impact:** copy-paste of screenshots is a core workflow.
 - **Estimate:** 2–4 h. **Beta blocker.**
 
@@ -219,11 +216,12 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   found by running three classroom game decks (Jeopardy-style boards, hide-and-reveal, score
   counters): a click on a shape whose action is "play sound" (`ppaction://media`, 126 and 486
   shapes in two decks) does nothing; triggers that start on `onStopAudio` or `begin` conditions are
-  not read as triggers; click boxes are the shape's bounding box (a hexagon's corners count) and do
-  not follow a shape that a motion path has moved. Trigger sequences now keep their separate
+  not read as triggers; click boxes are the shape's bounding box (a hexagon's corners count).
+  Slide-show click targets now follow animated translations and scales, including text links.
+  Trigger sequences now keep their separate
   click steps on PPTX save, including paragraph builds (`crates/pptx/tests/it/trigger_steps.rs`).
-- **Impact:** games built around sound effects on buttons, audio-triggered effects or moving
-  clickable shapes do not play as authored.
+- **Impact:** games built around sound effects on buttons or audio-triggered effects do not play
+  as authored.
 - **Estimate:** 4–8 h.
 
 ### Notes and Handout masters
@@ -268,8 +266,8 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
   PowerPoint's options (two initial capitals, sentence and day capitals, caps lock, fractions, an
   editable replace list), and AutoFormat superscripts ordinals (1st) and starts bulleted and
   numbered lists (`* `, `1. `) as you type; no undo of a single correction. Automatic lists start
-  only while Replace text as you type is on, where PowerPoint has a separate AutoFormat option,
-  and Backspace right after one puts the typed lead back, which PowerPoint does not.
+  independently of Replace text as you type, and Backspace right after one puts the typed lead
+  back, which PowerPoint does not.
 - **Estimate:** 1–2 h (bundle openly licensed dictionaries; under 1 h for the AutoFormat option).
 
 ### Copying text and cell ranges
@@ -286,11 +284,10 @@ and starts at that effect. The pane has an advanced timeline with draggable bars
 ### Smaller missing rows
 Zoom: live thumbnails, the zoom-in animation and the native `p166:sldZm` element (3–5 h;
 `insert.zoom` makes linked pictures with Return to Zoom), reuse slides pane with thumbnails
-(1–2 h; `slide.reuse` inserts from a file), laser pointer from the presenter window (1–2 h),
+(1–2 h; `slide.reuseList` picks which slides of a file to insert, #1103), laser pointer from the presenter window (1–2 h),
 artistic effects (3–6 h for the other 15 of 22; 7 approximated and round-tripped), remove
 background (6–10 h; needs a model or a classical matte), insert screenshot (2–3 h), record
-audio/screen and record slide show (8–12 h), compare presentations beyond slide-level accept
-and reject (per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
+audio/screen and record slide show (8–12 h), compare presentations beyond accepting and rejecting each revision, or all (#850; per-object accept and reject, markers on the slide: 2–4 h), password protection (4–6 h, ECMA-376
 agile encryption), ink to text and math beyond Ink to Shape (6–10 h), 3-D models and stock content
 (6–10 h; Insert › Icons places a Lucide stroke set).
 
@@ -306,7 +303,7 @@ Detail in [ui-parity.md](ui-parity.md).
   choice, video/GIF/CD exports or document protection. 4–8 h for the parts that need no cloud.
 - **Window chrome** (#71 macOS controls misaligned, #26 GNOME title bar, #41 system light/dark).
   2–4 h.
-- **Icon consistency across Craft apps** (#73, #56). 2–4 h; coordinate in craftrules.
+- **Icon consistency across Craft apps** (#73, #56). 2–4 h.
 - **Dialogs**: 42 dialogs vs PowerPoint's ~60. In since the d556ff9 count of 27: Font, Paragraph
   and Tabs, Columns, Bullets and Numbering, Find and Replace, Replace Fonts, Action Settings, Size and
   Position, Date and Time, Photo Album (Edit Photo Album reopens it), Create New Theme Colors and
@@ -351,7 +348,6 @@ Detail in [localization-parity.md](localization-parity.md).
   open, per-slide render, save, PPTX round trip and PDF export, and peak memory, against a saved
   baseline; show frame rate isn't measured and there are no PowerPoint numbers to set beside it.
   2–4 h.
-- **Morph aligns outlines every frame** (#67, PR open). 1 h.
 
 ## Ecosystem
 
@@ -372,6 +368,9 @@ Detail in [localization-parity.md](localization-parity.md).
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-30 | minor | Slide-show click targets use each shape’s own animation state; scale and rotation test added |
+| 2026-10-28 | trivial | Automatic lists now run independently of Replace text as you type; proofing gap description updated |
+| 2026-10-27 | minor | Refreshed against merged PRs: removed the Morph alignment entry (#67 merged 2026-10-14); #77 (animation rewind, PR #83) is fixed, leaving #74 in the round-trip gap; #75 was closed unmerged, so #60 stays open with no fix PR; #53 is closed and the image-paste gap is now Windows #1414; Reuse Slides (#1103) and Compare reject (#850) noted in the smaller rows; the duplicate header line is gone |
 | 2026-10-25 | trivial | New entries: copying text and cell ranges (no media, no table), a control-server timing test that may fail under load; Proofing notes that automatic lists follow Replace text as you type and that Backspace puts the typed lead back |
 | 2026-10-24 | trivial | AutoFormat starts bulleted and numbered lists as you type (`* `, `-- `, `> `, `1. `, `a) ` and the rest), with an AutoCorrect option to turn it off |
 | 2026-10-22 | minor | Animation Pane ▸ Play From starts the preview at the selected effect; gap 10 keeps the effect gallery (7–13 h) |

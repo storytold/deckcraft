@@ -3,7 +3,9 @@
 `deckcraft-cli mcp` runs a Model Context Protocol server on stdio. By default it drives its own
 headless engine (no window); with `--connect PORT` it drives a running DeckCraft started with
 `--control PORT`, so an agent and a person can work on the same deck. `--sample` opens the sample
-deck.
+deck. Stdio request frames are limited to 16 MiB including the newline; oversized frames receive a
+JSON-RPC error and are drained so the next request can still be handled. Invalid UTF-8 frames receive
+a parse error.
 
 Connected mode accepts only newline-terminated replies of at most 16 MiB (including the newline),
 with the current request's numeric `id`, a boolean `ok`, and either `result` on success or a string
@@ -36,8 +38,8 @@ deckcraft-cli mcp --automation-read-root /work/project --automation-write-root /
   "args": ["mcp", "--automation-read-root", "/work/project", "--automation-write-root", "/work/project/out"]}}}
 ```
 
-The two flags (VectorCraft, PhotoCraft and the other Craft apps take the same ones, so one client
-config works across the suite) keep the agent to the folders you give it:
+The two flags keep the agent to the folders you give it. Repeat either flag to allow access to more
+folders:
 
 - Every file a command reads must lie inside the **read root**: `open_presentation` and
   `file.open`, and `insert_picture`, `insert.picture`, `picture.change`, `insert.audio` and
@@ -59,8 +61,8 @@ config works across the suite) keep the agent to the folders you give it:
 - A refused path is an ordinary tool error the agent can read and correct, for example
   `automation path rejected: outside the write root /work/project/out: /etc/x.pptx` or
   `automation filesystem access is not granted: write authority is absent: /work/project/out/x.pptx`.
-- The roots must be existing folders; a missing one stops the server with an error. Each flag is
-  given once (`--flag <dir>` or `--flag=<dir>`).
+- The roots must be existing folders; a missing one stops the server with an error. Repeat either flag
+  to allow access to another folder; both `--flag <dir>` and `--flag=<dir>` forms work.
 
 The flags confine the in-process server, so `--connect` together with them is an error: the server
 would otherwise talk to an app that isn't confined. DeckCraft's desktop app has no equivalent flags
@@ -94,7 +96,7 @@ files it was given rather than guarding against other software on the computer.
 | `screenshot` | The whole window, UI included (connected mode) |
 | `call_app` | Any [control protocol](control-protocol.md) method (connected mode) |
 
-A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, series, title, type)`). Keys inside `run_command`'s `params` are that command's parameters.
+A tool refuses an argument that is not in its schema (`insert_chart: unknown argument "data" (expected: categories, h, series, title, type, w, x, y)`). Keys inside `run_command`'s `params` are that command's parameters.
 
 Useful commands for building decks: `slide.new {layout, title, body}`, `shape.insert {preset,
 rect, text}`, `shape.connect {from, to, preset}`, `shape.freeform {points, closed, smooth}`,
