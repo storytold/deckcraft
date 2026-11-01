@@ -7,6 +7,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
+pub mod clipboard;
 pub mod cmd;
 pub mod compare;
 pub mod connect;
@@ -467,6 +468,9 @@ pub struct Clipboard {
     pub source_theme: Option<(deckcraft_color::ColorScheme, deckcraft_model::theme::FontScheme)>,
     /// How many times the shapes were pasted (each paste offsets further).
     pub pastes: u32,
+    /// Which copy this is (`clipboard::fresh_token`): a paste carrying this token from the
+    /// system clipboard is our own copy, any other is another window's. 0: nothing copied yet.
+    pub token: u64,
 }
 
 pub struct Session {
