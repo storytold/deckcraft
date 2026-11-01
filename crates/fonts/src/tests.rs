@@ -216,9 +216,13 @@ fn missing_document_fonts_are_drawn_in_calibri() {
         assert_eq!(f.family, db.face(MISSING_FONT_FAMILY, "Bold").family, "{missing:?}");
     }
     // PowerPoint's own twins and Windows' substitutes, when the font itself is missing.
-    for (missing, twin) in
-        [("Liberation Sans", "Arial"), ("Liberation Serif", "Times New Roman"), ("Arial CE", "Arial"), ("Times New Roman CYR", "Times New Roman")]
-    {
+    for (missing, twin) in [
+        ("Liberation Sans", "Arial"),
+        ("Liberation Serif", "Times New Roman"),
+        ("Arial CE", "Arial"),
+        ("Times New Roman CYR", "Times New Roman"),
+        ("Courier New CE", "Courier New"),
+    ] {
         if !db.has_family(missing) {
             assert_eq!(db.document_face(missing, "Regular").family, db.face(twin, "Regular").family, "{missing}");
         }
@@ -261,7 +265,7 @@ fn office_fonts_have_substitutes() {
         assert!(is_monospace_family(mono), "{mono} should be recognized as monospace");
     }
 
-    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monotype Baskerville", "zzz"] {
+    for prop in ["Calibri", "Arial", "Times New Roman", "Inter", "Monotype Corsiva", "Monotype Baskerville", "Code Pro", "zzz"] {
         assert!(!is_monospace_family(prop), "{prop} should not be recognized as monospace");
     }
 }

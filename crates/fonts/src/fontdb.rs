@@ -105,7 +105,7 @@ pub fn is_monospace_family(family: &str) -> bool {
         || s.ends_with(" console")
         || s.ends_with(" typewriter")
         || s.ends_with(" monospace")
-        || s.split_whitespace().any(|w| w == "mono" || w == "code" || w == "terminal" || w == "monospace")
+        || s.split_whitespace().any(|w| w == "mono" || w == "terminal" || w == "monospace")
 }
 
 /// Families whose open substitutes ([`substitutes`]) keep their metrics, so text drawn with
@@ -1149,16 +1149,14 @@ impl FontDb {
     /// Monospaced families keep a monospaced substitute instead of falling back to Calibri.
     /// DeckCraft's own default family keeps [`FontDb::face`]'s fallbacks.
     pub fn document_face(&self, family: &str, style: &str) -> Arc<FontFace> {
-        if family.eq_ignore_ascii_case(FALLBACK_FAMILY)
-            || has_metric_twin(family)
-            || is_monospace_family(family)
-            || is_office_cloud_font(family)
-            || self.has_family(family)
-        {
+        if family.eq_ignore_ascii_case(FALLBACK_FAMILY) || has_metric_twin(family) || is_office_cloud_font(family) || self.has_family(family) {
             return self.face(family, style);
         }
         if let Some(twin) = office_twin(family) {
             return self.face(twin, style);
+        }
+        if is_monospace_family(family) {
+            return self.face(family, style);
         }
         self.face(MISSING_FONT_FAMILY, style)
     }
