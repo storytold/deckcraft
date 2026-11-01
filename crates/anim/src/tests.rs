@@ -740,6 +740,18 @@ fn morph_frame_morphs_the_outline_of_a_changed_geometry() {
     a.shapes = vec![table("rect")];
     b.shapes = vec![table("ellipse")];
     assert!(morph_frame(&p, &a, &b, 0.5, &|_| false).paths.is_empty());
+
+    // Groups with matching children move as one shape instead of duplicating into two cross-fading groups.
+    let child = |id, name: &str| Shape { id: ShapeId(id), name: name.into(), geom: deckcraft_model::Geom::preset("rect"), ..Default::default() };
+    let group = |id, c1, c2| Shape {
+        id: ShapeId(id),
+        kind: deckcraft_model::ShapeKind::Group { children: vec![child(c1, "A"), child(c2, "B")], child: Default::default() },
+        ..Default::default()
+    };
+    a.shapes = vec![group(1, 10, 11)];
+    b.shapes = vec![group(2, 20, 21)];
+    let f = morph_frame(&p, &a, &b, 0.5, &|_| false);
+    assert_eq!(f.shapes.len(), 1, "matching groups move as one");
 }
 
 fn pres(n: usize) -> Presentation {

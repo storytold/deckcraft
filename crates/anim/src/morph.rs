@@ -166,7 +166,13 @@ fn box_of(ctx: Option<&Ctx>, s: &Shape) -> Option<Xfrm> {
 
 /// The content of a shape apart from what Morph interpolates (identity, box and fill).
 fn content(s: &Shape) -> Shape {
-    Shape { id: ShapeId(0), name: String::new(), xfrm: None, fill: None, ..s.clone() }
+    let mut c = Shape { id: ShapeId(0), name: String::new(), xfrm: None, fill: None, ..s.clone() };
+    if let ShapeKind::Group { children, .. } = &mut c.kind {
+        for child in children {
+            *child = content(child);
+        }
+    }
+    c
 }
 
 /// Whether two shapes differ in their geometry only, and it is drawn as an outline (shapes,

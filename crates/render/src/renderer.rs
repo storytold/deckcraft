@@ -215,19 +215,28 @@ impl Renderer {
         self.in_shadow_pass = false;
         let (mut ctx, w, h, view) = Self::canvas(pres, opts, needs_filters(pres, old.0) || needs_filters(pres, new.0));
         let (Some(co), Some(cn)) = (Ctx::for_slide(pres, old.0), Ctx::for_slide(pres, new.0)) else { return self.finish(ctx, w, h) };
-        if mix < 1.0 {
-            let f = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
-            self.backdrop(&mut ctx, &f, &co, old.0, view);
-        }
-        if mix > 0.0 {
+        let same_backdrop = co.layout == cn.layout
+            && old.0.background == new.0.background
+            && old.0.color_map == new.0.color_map
+            && old.0.show_master_shapes == new.0.show_master_shapes;
+        if same_backdrop {
             let f = Frame { pres, opts, fields: Self::fields(pres, new.1, opts) };
-            let layered = mix < 1.0;
-            if layered {
-                ctx.push_layer(None, None, Some(mix as f32), None, None);
-            }
             self.backdrop(&mut ctx, &f, &cn, new.0, view);
-            if layered {
-                ctx.pop_layer();
+        } else {
+            if mix < 1.0 {
+                let f = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
+                self.backdrop(&mut ctx, &f, &co, old.0, view);
+            }
+            if mix > 0.0 {
+                let f = Frame { pres, opts, fields: Self::fields(pres, new.1, opts) };
+                let layered = mix < 1.0;
+                if layered {
+                    ctx.push_layer(None, None, Some(mix as f32), None, None);
+                }
+                self.backdrop(&mut ctx, &f, &cn, new.0, view);
+                if layered {
+                    ctx.pop_layer();
+                }
             }
         }
         let fo = Frame { pres, opts, fields: Self::fields(pres, old.1, opts) };
