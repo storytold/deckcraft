@@ -170,11 +170,7 @@ mod provider_tests {
         let host = Host::default();
         host.set_session("0123456789abcdef0123456789abcdef".into()).unwrap();
         let connection = host.connect("test".into(), "Test storage".into(), "account".into()).unwrap();
-        host.set_resources(
-            &connection,
-            vec![Resource { id: "one".into(), name: "Blocked.deckcraft".into(), updated_at: String::new() }],
-        )
-        .unwrap();
+        host.set_resources(&connection, vec![Resource { id: "one".into(), name: "Blocked.deckcraft".into(), updated_at: String::new() }]).unwrap();
         for _ in 0..16 {
             host.request_open("one").unwrap();
         }
