@@ -51,14 +51,23 @@ const NS_CP: &[u8] = b"http://schemas.openxmlformats.org/package/2006/metadata/c
 const NS_EP: &[u8] = b"http://schemas.openxmlformats.org/officeDocument/2006/extended-properties";
 const NS_RELS: &[u8] = b"http://schemas.openxmlformats.org/package/2006/relationships";
 
-/// Cap on ZIP entries read: a package is a handful of parts, not millions.
-const MAX_PARTS: usize = 100_000;
+/// Bounds shared with the `deckcraft-pptx` importer (`crates/pptx/src/opc.rs`
+/// and `crates/pptx/src/xml.rs`): a file the importer accepts must not be one
+/// the audit rejects for a different size reason, and vice versa. The element
+/// count below is the one extra guard the importer does not have; it is
+/// stricter, never looser, and is documented here so the divergence is explicit.
+const MAX_PARTS: usize = 50_000;
 /// Cap on decompressed bytes read from a single part (zip-bomb guard).
-const MAX_PART_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PART_BYTES: u64 = 512 * 1024 * 1024;
+/// Cap on decompressed bytes in a single XML part, matching the importer.
+const MAX_XML_PART_BYTES: u64 = 96 * 1024 * 1024;
 /// Cap on total decompressed bytes across all scanned parts. Per-part caps
 /// alone don't bound N parts that each compress well (zip-bomb guard).
-const MAX_TOTAL_BYTES: u64 = 1024 * 1024 * 1024;
-/// Cap on XML elements walked in a single part.
+const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+/// Cap on XML nesting depth, matching the importer's `MAX_DEPTH`.
+const MAX_XML_DEPTH: u32 = 256;
+/// Cap on XML elements walked in a single part (audit-only guard; the
+/// importer caps nodes at 4M, so this is stricter, never looser).
 const MAX_XML_ELEMENTS: u64 = 2_000_000;
 
 /// What the audit found, as a stable machine-readable vocabulary.
@@ -280,6 +289,9 @@ struct Element {
 /// Call `f` for every start/empty element in `xml`, resolving names by
 /// namespace URI so producer-chosen prefixes do not matter.
 fn for_each_element(xml: &[u8], part: &str, f: &mut impl FnMut(&Element) -> Result<(), AuditError>) -> Result<(), AuditError> {
+    if xml.len() as u64 > MAX_XML_PART_BYTES {
+        return Err(AuditError::Limit(format!("{part}: XML part over {MAX_XML_PART_BYTES} bytes")));
+    }
     let mut reader = NsReader::from_reader(xml);
     {
         let config = reader.config_mut();
@@ -319,6 +331,9 @@ fn for_each_element(xml: &[u8], part: &str, f: &mut impl FnMut(&Element) -> Resu
             Event::Start(ref e) => {
                 check_root(depth, part)?;
                 depth = depth.saturating_add(1);
+                if depth > MAX_XML_DEPTH {
+                    return Err(AuditError::Limit(format!("{part}: XML nesting deeper than {MAX_XML_DEPTH}")));
+                }
                 count += 1;
                 if count > MAX_XML_ELEMENTS {
                     return Err(AuditError::Limit(format!("{part}: too many XML elements")));
@@ -409,6 +424,9 @@ fn root_element(xml: &[u8], part: &str) -> Result<Element, AuditError> {
 
 /// Collect the text content of every element matching (`ns`, `local`).
 fn texts_of(xml: &[u8], part: &str, ns: &[u8], local: &str) -> Result<Vec<String>, AuditError> {
+    if xml.len() as u64 > MAX_XML_PART_BYTES {
+        return Err(AuditError::Limit(format!("{part}: XML part over {MAX_XML_PART_BYTES} bytes")));
+    }
     let mut reader = NsReader::from_reader(xml);
     {
         let config = reader.config_mut();
@@ -430,6 +448,9 @@ fn texts_of(xml: &[u8], part: &str, ns: &[u8], local: &str) -> Result<Vec<String
         match event {
             Event::Start(ref e) => {
                 open = open.saturating_add(1);
+                if open > MAX_XML_DEPTH {
+                    return Err(AuditError::Limit(format!("{part}: XML nesting deeper than {MAX_XML_DEPTH}")));
+                }
                 count += 1;
                 if count > MAX_XML_ELEMENTS {
                     return Err(AuditError::Limit(format!("{part}: too many XML elements")));
@@ -582,6 +603,9 @@ fn scan_cropped_images(parts: &BTreeMap<String, Vec<u8>>, findings: &mut Vec<Aud
 /// One slide part: pair each `p:pic`'s `a:blip` embed with its `a:srcRect`.
 /// A dedicated walker (not `for_each_element`) because pairing needs nesting.
 fn scan_slide_crops(xml: &[u8], part: &str, targets: &BTreeMap<String, String>, findings: &mut Vec<AuditFinding>) -> Result<(), AuditError> {
+    if xml.len() as u64 > MAX_XML_PART_BYTES {
+        return Err(AuditError::Limit(format!("{part}: XML part over {MAX_XML_PART_BYTES} bytes")));
+    }
     let mut reader = NsReader::from_reader(xml);
     {
         let config = reader.config_mut();
@@ -622,6 +646,9 @@ fn scan_slide_crops(xml: &[u8], part: &str, targets: &BTreeMap<String, String>, 
             Event::Start(ref e) => {
                 check_root(depth, part)?;
                 depth = depth.saturating_add(1);
+                if depth > MAX_XML_DEPTH {
+                    return Err(AuditError::Limit(format!("{part}: XML nesting deeper than {MAX_XML_DEPTH}")));
+                }
                 count += 1;
                 if count > MAX_XML_ELEMENTS {
                     return Err(AuditError::Limit(format!("{part}: too many XML elements")));

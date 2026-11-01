@@ -85,6 +85,28 @@ fn ids_of(bytes: &[u8]) -> Vec<String> {
 }
 
 #[test]
+fn xml_deeper_than_importer_depth_is_an_error() {
+    // Bounds match the pptx importer (depth 256): nesting past it must fail
+    // closed, never scan partially.
+    let nested = "<a:g>".repeat(300) + &"</a:g>".repeat(300);
+    let deep_slide = slide(&nested);
+    let bytes = package(&[
+        ("[Content_Types].xml", &content_types()),
+        ("_rels/.rels", &root_rels()),
+        ("ppt/presentation.xml", &presentation()),
+        (
+            "ppt/_rels/presentation.xml.rels",
+            &pres_rels(
+                r#"<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="slides/slide1.xml"/>"#,
+            ),
+        ),
+        ("ppt/slides/slide1.xml", &deep_slide),
+        ("ppt/slides/_rels/slide1.xml.rels", &slide_rels("")),
+    ]);
+    assert!(matches!(audit_bytes(&bytes), Err(AuditError::Limit(_))));
+}
+
+#[test]
 fn finding_ids_are_stable() {
     let kinds = [
         (crate::FindingKind::NotesSlide, "notes/slide"),
